@@ -56,6 +56,10 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  // Keyless by choice: a full cycle must not reach a real embedding provider,
+  // and since a failed phase now exits 1 (E4) an unkeyed provider would end
+  // the in-process run. The embed phase reports skipped(embedding_disabled).
+  await engine.setConfig('embedding_disabled', 'true');
   fixture.reset();
 }, 300_000);
 

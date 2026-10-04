@@ -49,6 +49,7 @@ import {
 } from '../core/config.ts';
 import { HOST_BRAIN_ID, loadMounts } from '../core/brain-registry.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 import { connectWithRetry } from '../core/db.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { deriveSessionPoolerUrl } from '../core/connection-manager.ts';
@@ -72,6 +73,11 @@ import {
 } from '../core/docker-postgres.ts';
 import { rewriteCooldownBlocked, writeReceipt } from '../core/db-repair-receipts.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import type { Action } from '../core/agent-output.ts';
+import { writeJsonDocument } from '../core/cli-force-exit.ts';
+import { opError, type OperationError } from '../core/ops/contract.ts';
+import type { RegistryCode } from '../core/error-registry.ts';
+import { writeCliError, writeCliRefusal } from '../cli/cli-error.ts';
 
 class UnknownFlagError extends Error {}
 
@@ -287,10 +293,37 @@ interface JsonReport {
   remaining?: PgAccessDiagnosis | null;
 }
 
+/**
+ * D2: a healthy/fixed report is the --json document; an unfixed one (exit 1)
+ * is the error envelope leading with the report's keys (code
+ * database_error, reason = the diagnosis reason, the tier's next step as
+ * the fix).
+ */
 function emit(json: boolean, report: JsonReport, humanLines: string[]): void {
-  if (json) console.log(JSON.stringify(report, null, 2));
-  else console.log(humanLines.join('\n'));
+  if (!json) { console.log(humanLines.join('\n')); return; }
+  if (report.fixed) { void writeJsonDocument(JSON.stringify(report, null, 2)); return; }
+  const d = report.remaining ?? report.diagnosis;
+  const applied = report.applied.length > 0;
+  const fix: Action | undefined = applied || report.tier === 'manual' || report.tier === undefined ? undefined
+    : report.tier === 'auto'
+      ? { argv: ['gbrain', 'db-repair', '--yes'], consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting gbrain\'s own docker container).' }
+      : { argv: ['gbrain', 'db-repair', '--yes', '--apply-rewrites'], consent: ['credentials'], actor: 'agent', requires_exclusive: false,
+        why: 'Rewrites database_url in ~/.gbrain/config.json as the plan says (undo: gbrain db-repair --yes --undo-last-rewrite).',
+        user_message: 'gbrain wants to rewrite the database connection URL in its config to reach your database. Allow it? (It can be undone.)' };
+  const e = opError('database_error', d?.message ?? 'The database is still not reachable.',
+    fix ? `Apply the plan: ${fix.argv!.join(' ')}` : (d?.remediation ?? 'Follow the remediation in the report.'),
+    { ...(report.reason ? { reason: report.reason } : {}), ...(fix ? { fix } : {}), ...(d?.remediation ? { why: d.remediation } : {}) });
+  writeCliError(e, 'db-repair', { json: true, stderr: false, legacy: { ...report } });
 }
+
+/** A refusal before any probe: the human line on stderr (unchanged), the envelope under --json. Returns `exitCode`. */
+function refuse(json: boolean, exitCode: number, human: string, code: RegistryCode, suggestion: string, fix?: Action): number {
+  writeCliRefusal(opError(code, human, suggestion, fix ? { fix } : {}), 'db-repair', { json });
+  return exitCode;
+}
+
+const helpFix = (why: string): Action => ({ argv: ['gbrain', 'db-repair', '--help'], consent: [], actor: 'agent', requires_exclusive: false, why });
 
 function tierOf(reason: PgAccessReason): 'auto' | 'rewrite' | 'manual' {
   switch (reason) {
@@ -332,43 +365,40 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
   try {
     opts = parseArgs(args);
   } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    return 2;
+    return refuse(args.includes('--json'), 2, e instanceof Error ? e.message : String(e), 'unknown_flag',
+      'Run `gbrain db-repair --help` for the accepted flags.', helpFix('Lists the flags db-repair accepts.'));
   }
   if (opts.help) {
     printHelp();
     return 0;
   }
   if (opts.applyRewrites && !opts.yes) {
-    console.error('--apply-rewrites requires --yes (rewrites are the higher consent tier, not a lower one).');
-    return 2;
+    return refuse(opts.json, 2, '--apply-rewrites requires --yes (rewrites are the higher consent tier, not a lower one).', 'invalid_params',
+      'Example: gbrain db-repair --yes --apply-rewrites');
   }
   if (opts.undoLastRewrite && !opts.yes) {
-    console.error('--undo-last-rewrite requires --yes.');
-    return 2;
+    return refuse(opts.json, 2, '--undo-last-rewrite requires --yes.', 'invalid_params', 'Example: gbrain db-repair --yes --undo-last-rewrite');
   }
 
-  const brainId = resolveBrainId(null);
+  const brainId = resolveBrainId(getCliOptions().brain);
 
   // A mount outage must never repair — or rewrite — the HOST config.
   if (brainId !== HOST_BRAIN_ID) {
     const mount = (() => { try { return loadMounts().find((m) => m.id === brainId) ?? null; } catch { return null; } })();
-    console.error(
+    return refuse(opts.json, 1,
       `db-repair targets the host brain, but this context resolves to mount '${brainId}'` +
       (mount ? ` (engine ${mount.engine}, ${mount.database_url ? 'url: ' + redactPgUrl(mount.database_url) : 'path: ' + (mount.database_path ?? '?')})` : '') +
-      `.\nMount-targeted repair is not supported yet — fix that brain on its host, or unset GBRAIN_BRAIN_ID/.gbrain-mount to repair the host brain.`,
-    );
-    return 1;
+      `.\nMount-targeted repair is not supported yet — fix that brain on its host, or pass --brain host to repair the host brain.`,
+      'config_error', 'Run db-repair on the mounted brain\'s host, or pass --brain host (or unset GBRAIN_BRAIN_ID / remove .gbrain-mount) to repair the host brain.');
   }
 
   const cfg = loadConfig();
 
   if (isThinClient(cfg)) {
-    console.error(
+    return refuse(opts.json, 1,
       'This machine is a thin client — there is no local database to repair. ' +
       'The brain lives on the remote MCP server; run db-repair on that host.',
-    );
-    return 1;
+      'requires_local_engine', 'Ask the brain host\'s operator to run `gbrain db-repair` there.');
   }
 
   if (!cfg) {
@@ -382,18 +412,22 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
         schema_version: 1, brain_id: brainId, reason: d.reason, tier: 'manual',
         marker: formatDbAccessMarker(d), diagnosis: d, plan: [d.remediation], applied: [], fixed: false, remaining: d,
       }, [`${formatDbAccessMarker(d)}`, d.remediation]);
+      return 1;
     }
+    if (opts.json) writeCliError(opError('no_brain', 'No brain is configured, so there is no database to repair.',
+      'Create a brain first: `gbrain init` (`gbrain init --help` lists the keyless local and Postgres options).'), 'db-repair', { json: true, stderr: false });
     return 1;
   }
 
   if (cfg.engine === 'pglite') {
-    console.error('This brain runs PGLite — its repair lane is: gbrain pglite-repair (WAL/data-dir recovery).');
-    return 1;
+    return refuse(opts.json, 1, 'This brain runs PGLite — its repair lane is: gbrain pglite-repair (WAL/data-dir recovery).', 'config_error',
+      'Run `gbrain pglite-repair` for PGLite brains.',
+      { argv: ['gbrain', 'pglite-repair', '--help'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows the PGLite WAL/data-dir recovery options.' });
   }
 
   if (!acquireRepairLock()) {
-    console.error('repair in progress — another db-repair holds the advisory lock. Wait for it (do not retry in a loop).');
-    return 1;
+    return refuse(opts.json, 1, 'repair in progress — another db-repair holds the advisory lock. Wait for it (do not retry in a loop).', 'lock_busy',
+      'Wait for the running db-repair to finish, then run `gbrain db-repair` once to read its result.');
   }
 
   try {
@@ -411,15 +445,14 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
 async function runUndo(opts: DbRepairOpts, brainId: string, deps: DbRepairDeps): Promise<number> {
   const rec = readUndoRecord();
   if (!rec) {
-    console.error('No rewrite to undo (no undo record on file).');
-    return 1;
+    return refuse(opts.json, 1, 'No rewrite to undo (no undo record on file).', 'not_found', 'Nothing to undo; run `gbrain db-repair` to diagnose the current URL.');
   }
   // The undo file is 0600 and same trust class as config.json, but validate
   // the scheme anyway before writing it INTO config — a corrupted/edited
   // record must not plant a non-postgres value in database_url.
   if (!/^postgres(ql)?:\/\//.test(rec.prior_url)) {
-    console.error('The undo record does not hold a postgres:// URL — refusing to restore it. Remove it: rm ~/.gbrain/db-repair-undo.json');
-    return 1;
+    return refuse(opts.json, 1, 'The undo record does not hold a postgres:// URL — refusing to restore it. Remove it: rm ~/.gbrain/db-repair-undo.json',
+      'config_error', 'Remove ~/.gbrain/db-repair-undo.json; it cannot be restored.');
   }
   const fileCfg = loadConfigFileOnly();
   const rewrittenUrl = fileCfg?.database_url; // the URL undo is about to replace

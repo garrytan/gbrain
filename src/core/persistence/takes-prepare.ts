@@ -1,6 +1,8 @@
 import type { BrainEngine, TakeBatchInput } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
+import type { RegistryCode } from '../error-registry.ts';
 import { parseTakesFence, upsertTakeRow, supersedeRow, type ParsedTake, type TakeQuality } from '../takes-fence.ts';
 import { takesPreparation as edit, TakesWriteError } from '../takes-write.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -31,6 +33,13 @@ export async function normalizeTakesIntent(ctx: OperationContext, params: Record
     since_supplied: params.since !== undefined };
 }
 
+/** A refused takes publication: the journal keeps code and message only, so the suggestion stands alone. */
+function takesRefusal(code: RegistryCode, message: string, row: WriteRequest, cause: string): OperationError {
+  return opError(code, message, `${cause} Takes request ${row.request_id} on ${row.slug} in source ${row.source_id} failed before anything was written; correct it and submit it as a new request with a new request_id.`,
+    { fix: readFix(`Shows page ${row.slug} in source ${row.source_id} as it is now, with its takes table and revision, read-only.`,
+      { argv: ['gbrain', 'get', '--source', row.source_id, '--', row.slug], mcp: { tool: 'get_page', arguments: { slug: row.slug, source_id: row.source_id } } }) });
+}
+
 function fail(error: unknown): never {
   if (!(error instanceof TakesWriteError)) throw error;
   const code = error.code === 'holder_denied' ? 'permission_denied' : error.code === 'row_not_found' ? 'not_found'
@@ -42,14 +51,15 @@ export async function prepareTakesMutation(engine: BrainEngine, row: WriteReques
 }
 async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
-  if (!snapshot || snapshot.page.id !== row.page_id) throw new OperationError('page_identity_changed','The accepted page no longer exists.');
+  if (!snapshot || snapshot.page.id !== row.page_id) throw takesRefusal('page_identity_changed','The accepted page no longer exists.',row,
+    `Page ${row.slug} was deleted or replaced after the takes request was accepted.`);
   const p = row.intent!;
   if (p.expected_revision !== undefined) assertPageRevision(snapshot,engineMutationPrecondition(parseMutationPrecondition(p)));
   const body = serializePageToMarkdown(snapshot.page,snapshot.tags);
   const parsed = parseTakesFence(body);
   edit.assertFenceRoundTrips(parsed);
   for (const key of ['claim','kind','holder','source','evidence','unit','resolved_by']) {
-    if (p[key] !== undefined && typeof p[key] !== 'string') throw new OperationError('invalid_params',`${key} must be text.`);
+    if (p[key] !== undefined && typeof p[key] !== 'string') throw takesRefusal('invalid_params',`${key} must be text.`,row,`Its ${key} is not text; pass ${key} as a string.`);
     edit.assertSafeCellText(key,p[key] as string | undefined);
   }
   edit.assertValidWeight(p.weight as number | undefined);
@@ -61,21 +71,24 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   let result: Record<string, unknown>;
   let oldRow: number | undefined;
   if (row.operation === 'takes_add') {
-    if (typeof p.claim !== 'string' || !p.claim.trim() || typeof p.kind !== 'string' || typeof p.holder !== 'string') throw new OperationError('invalid_params','claim, kind and holder are required.');
+    if (typeof p.claim !== 'string' || !p.claim.trim() || typeof p.kind !== 'string' || typeof p.holder !== 'string') throw takesRefusal('invalid_params','claim, kind and holder are required.',row,
+      'takes_add needs claim, kind and holder as non-empty text.');
     edit.assertHolderAllowed(p.holder,holders); requiredHolders.add(p.holder);
     const added = upsertTakeRow(body,{claim:p.claim,kind:p.kind,holder:p.holder,weight:p.weight as number ?? 0.5,
       source:p.source as string | undefined,sinceDate:p.since as string,active:true});
     next=added.body; changed=parseTakesFence(next).takes.filter(t=>t.rowNum===added.rowNum);
     result={slug:row.slug,row_num:added.rowNum,holder:p.holder};
   } else {
-    if (!Number.isSafeInteger(p.row_num) || Number(p.row_num)<1) throw new OperationError('invalid_params','row_num must be a positive integer.');
+    if (!Number.isSafeInteger(p.row_num) || Number(p.row_num)<1) throw takesRefusal('invalid_params','row_num must be a positive integer.',row,
+      `Pass row_num as the take's row number on the page (takes_list with page_slug ${row.slug} lists them).`);
     const number=Number(p.row_num);
     const target=edit.findFenceRow(parsed.takes,number,holders,row.slug);
     requiredHolders.add(target.holder);
     if (target.resolvedAt) throw new TakesWriteError('already_resolved','Resolved takes are immutable.');
     if (!target.active) throw new TakesWriteError('row_inactive','The take was superseded.');
     if (row.operation==='takes_supersede') {
-      if (typeof p.claim!=='string' || !p.claim.trim()) throw new OperationError('invalid_params','claim is required.');
+      if (typeof p.claim!=='string' || !p.claim.trim()) throw takesRefusal('invalid_params','claim is required.',row,
+        'takes_supersede needs the replacement claim as non-empty text.');
       const holder=typeof p.holder==='string'?p.holder:target.holder;
       edit.assertHolderAllowed(holder,holders); requiredHolders.add(holder);
       const superseded=supersedeRow(body,number,{claim:p.claim,kind:p.kind as string ?? target.kind,holder,
@@ -90,13 +103,16 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
         updated={...target,weight:p.weight as number ?? target.weight,source:p.source as string ?? target.source,
           sinceDate:p.since_supplied===true?p.since as string:target.sinceDate};
       } else if (row.operation==='takes_resolve') {
-        if (!['correct','incorrect','partial','unresolvable'].includes(String(p.quality))) throw new OperationError('invalid_params','Unknown resolution quality.');
-        if (p.value!==undefined && (typeof p.value!=='number' || !Number.isFinite(p.value))) throw new OperationError('invalid_params','value must be finite.');
+        if (!['correct','incorrect','partial','unresolvable'].includes(String(p.quality))) throw takesRefusal('invalid_params','Unknown resolution quality.',row,
+          'Pass quality as one of: correct, incorrect, partial, unresolvable.');
+        if (p.value!==undefined && (typeof p.value!=='number' || !Number.isFinite(p.value))) throw takesRefusal('invalid_params','value must be finite.',row,
+          'Pass value as a finite number, or omit it.');
         updated={...target,resolvedAt:String(p.resolved_at),resolvedQuality:p.quality as TakeQuality,
           resolvedOutcome:p.quality==='correct'?true:p.quality==='incorrect'?false:undefined,
           resolvedEvidence:p.evidence as string | undefined,resolvedValue:p.value as number | undefined,
           resolvedUnit:p.unit as string | undefined,resolvedBy:String(p.resolved_by)};
-      } else throw new OperationError('invalid_params','Unsupported takes mutation.');
+      } else throw takesRefusal('invalid_params','Unsupported takes mutation.',row,
+        `${row.operation} is not a takes mutation this release can publish (takes_add, takes_update, takes_supersede or takes_resolve).`);
       changed=[updated]; next=edit.replaceFence(body,parsed.takes.map(t=>t.rowNum===number?updated:t));
       result={slug:row.slug,row_num:number,...(row.operation==='takes_resolve'?{quality:p.quality,resolved_by:p.resolved_by}:{})};
     }

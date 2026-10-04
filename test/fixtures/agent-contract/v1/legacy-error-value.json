@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"error\": \"unknown_operation\",\n  \"code\": \"unknown_tool\",\n  \"message\": \"Unknown: list_pagez\",\n  \"suggestion\": \"Call request_tools to see the tools this connection can call.\",\n  \"docs\": \"{{DOCS_BASE}}/docs/guides/error-codes.md#unknown_tool\",\n  \"docs_cmd\": [\n    \"gbrain\",\n    \"errors\",\n    \"unknown_tool\"\n  ],\n  \"class\": \"caller\",\n  \"retryable\": false,\n  \"contract_version\": 1\n}"
+    }
+  ],
+  "isError": true
+}

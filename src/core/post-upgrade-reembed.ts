@@ -112,18 +112,11 @@ export interface PromptResult {
 export const REEMBED_DEFERRED_HINT = '[chunker-bump] Not re-embedding without your consent. When ready: `gbrain reindex --markdown` '
   + '(re-embeds), or `gbrain repair safe-chunks --apply --no-embed` to re-chunk without provider calls, then `gbrain embed --stale`.';
 
+/** interaction.readLine: EOF, a 5-minute silence or no human at the terminal read as "no". */
 async function askYesNo(question: string): Promise<boolean> {
-  const { createInterface } = await import('readline');
-  return new Promise<boolean>(resolveAnswer => {
-    const rl = createInterface({ input: process.stdin, output: process.stderr });
-    let answered = false;
-    rl.question(question, answer => {
-      answered = true;
-      resolveAnswer(/^y(es)?$/i.test(answer.trim()));
-      rl.close();
-    });
-    rl.on('close', () => { if (!answered) resolveAnswer(false); });
-  });
+  const { readLine } = await import('./interaction.ts');
+  const read = await readLine({ prompt: question });
+  return read.kind === 'line' && /^y(es)?$/i.test(read.text);
 }
 
 /**
@@ -162,7 +155,7 @@ export async function runPostUpgradeReembedPrompt(
 
   writeFn(formatReembedPrompt(estimate));
 
-  const isTTY = typeof opts.isTTY === 'boolean' ? opts.isTTY : Boolean(process.stdin.isTTY);
+  const isTTY = typeof opts.isTTY === 'boolean' ? opts.isTTY : (await import('./interaction.ts')).isInteractive();
   if (!isTTY) {
     writeFn(REEMBED_DEFERRED_HINT);
     return { proceeded: false, reason: 'consent_required', estimate };

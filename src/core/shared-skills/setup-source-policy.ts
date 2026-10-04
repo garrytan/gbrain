@@ -12,7 +12,10 @@ export async function sharedSkillSourcePolicy(engine: BrainEngine, sourceId: str
   if (company?.noWriteback) return { mode: 'preserve_files',
     reason: 'source_writeback_required: the approved company-brain ingestion contract is file-preserving (noWriteback:true). Shared-skill setup cannot modify this repository, even if it contains a pack. Use a separately authorized content source; ingestion approval, files and grants remain unchanged.' };
   const [source] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
-  if (!source) throw new OperationError('source_changed', 'The selected content source is missing or archived.');
+  if (!source) {
+    throw new OperationError('source_changed', 'The selected content source is missing or archived.',
+      `Source ${sourceId} is archived or not registered; choose an active content source (gbrain sources list --json shows them).`);
+  }
   const config = parseSourceConfig(source.config);
   if (config.kind != null) return { mode: 'preserve_files',
     reason: 'source_skill_adoption_required: this connector-managed source is not a shared-skill write target. Preserve its generated/imported files and put approved shared skills in a separate content source.' };
@@ -23,5 +26,8 @@ export async function sharedSkillSourcePolicy(engine: BrainEngine, sourceId: str
 
 export async function assertPackagedSkillSource(engine: BrainEngine, sourceId: string): Promise<void> {
   const policy = await sharedSkillSourcePolicy(engine, sourceId);
-  if (policy.mode !== 'content') throw new OperationError('source_writeback_required', policy.reason);
+  if (policy.mode !== 'content') {
+    throw new OperationError('source_writeback_required', policy.reason,
+      `Source ${sourceId} is not a shared-skill write target, so nothing was added to it. Install packaged skills into a separate content source the user owns (gbrain init --content-root with a new directory creates one).`);
+  }
 }

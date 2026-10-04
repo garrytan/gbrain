@@ -1,6 +1,6 @@
 # GBrain
 
-> GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.
+> GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, fat-markdown skills, and one agent operator contract for every error and recommendation. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.
 
 Repo: https://github.com/garrytan/gbrain
 
@@ -18,11 +18,12 @@ Repo: https://github.com/garrytan/gbrain
 
 ## Core entry points
 
-- [AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md): Start here if you are not Claude Code. Install order, trust boundary, skill resolver, config/debug/migration pointers.
+- [AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md): Start here if you are not Claude Code. Install order, the agent operator quick contract, trust boundary, skill resolver, config/debug/migration pointers.
 - [CLAUDE.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md): Orientation + resolver. North Star, two axes, architecture + cross-cutting invariants, the reference map pointing at on-demand docs, and the inline ship IRON RULES.
 - [docs/architecture/KEY_FILES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/KEY_FILES.md): Bounded navigation index for subsystem references: find a source file's current behavior, invariants, and test evidence without loading the entire reference corpus.
 - [docs/architecture/thin-client.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/thin-client.md): The thin-client / remote-MCP / cross-modal routing seam: isThinClient detection, callRemoteTool, SSRF-hardened URL validation, per-command routing.
-- [INSTALL_FOR_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md): 9-step agent installation.
+- [INSTALL_FOR_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md): Step-by-step agent installation (steps 0-9): install, keyless init, the first-run decision bundle, harness wiring, verification and upgrades.
+- [docs/protocol/AGENT_OPERATOR_v1.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/protocol/AGENT_OPERATOR_v1.md): The agent operator contract: read `code`, follow `fix.next` (run / ask_user / tell_user_to_run / wait / report), run `fix.verify`. Error envelope, notices and mute, effects/actor/next table, consent and preapproval, exit codes, marker grammar, compatibility policy, first run, and how to make gbrain work better for your user.
 - [skills/RESOLVER.md](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/RESOLVER.md): Skill dispatcher. Read first for any task.
 - [README.md](https://raw.githubusercontent.com/garrytan/gbrain/master/README.md): Project overview, benchmarks, 30-minute setup.
 
@@ -42,7 +43,7 @@ Repo: https://github.com/garrytan/gbrain
 - [docs/evidence-delivery.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/evidence-delivery.md): Evidence delivery (`return_unit`): window / section / page / auto evidence instead of chunks on search, query, recall and think, packed into a token budget; response fields, fallback codes, authorization guarantees, latency, and the frozen-hit `assemble_evidence` interface for evals.
 - [docs/guides/github-source.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/github-source.md): Mirror GitHub issues, PRs, comments, reviews and CI checks as brain pages. One key + one registration command to a searchable mirror; webhook-driven instant refresh, poll-sweep fallback, daily reconcile, App-credential option.
 - [docs/mcp/DEPLOY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY.md): MCP server deployment.
-- [docs/protocol/MEMORY_VERBS_v1.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/protocol/MEMORY_VERBS_v1.md): The frozen five-verb memory protocol (recall/remember/entity/synthesize/forget): response envelopes, error contract, additive-forever versioning, surface modes, conformance certification, per-harness installs.
+- [docs/protocol/MEMORY_VERBS_v1.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/protocol/MEMORY_VERBS_v1.md): The frozen memory-verb protocol (recall/remember/entity/synthesize/forget plus context_pack and delta): response envelopes, error contract, additive-forever versioning, surface modes, conformance certification, per-harness installs.
 
 ## AI providers
 
@@ -51,7 +52,10 @@ Repo: https://github.com/garrytan/gbrain
 
 ## Debugging
 
-- [docs/GBRAIN_VERIFY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_VERIFY.md): 7-check post-setup verification. Start here when something feels off.
+- [docs/GBRAIN_VERIFY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_VERIFY.md): Post-setup verification checks for the capabilities you enabled. When a gbrain call fails or something feels off, start with docs/protocol/AGENT_OPERATOR_v1.md, then run these checks.
+- [docs/guides/troubleshooting.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/troubleshooting.md): Symptom table with who acts, consent and a read-only verify step per row, then the long-form fixes.
+- [docs/guides/error-codes.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/error-codes.md): Generated: every error code with meaning, why, next step, who acts and consent, verify, exit code and retryability. Offline: `gbrain errors <code>`.
+- [docs/guides/exit-codes.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/exit-codes.md): Exit statuses (3 = confirmation_required only, 10 pending write, 11 resumable budget stop) and what changed in this release.
 - [docs/guides/minions-fix.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-fix.md): Troubleshooting the Minions job queue.
 - [docs/guides/repair.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/repair.md): `gbrain repair timeline|visibility|safe-chunks`: dry run vs --apply, --source/--limit/--json, resume, capacity stop, thin-client refusal, what each kind fixes and costs.
 - [docs/guides/write-refusals.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/write-refusals.md): Refusal reasons (file_database_drift, ambiguous_source_path, physical_root_device_changed, cursor_processing_options_conflict, take_row_collision, invalid_source_uri, queue_capacity, parked effects) with the exact recovery command.
@@ -86,3 +90,4 @@ Repo: https://github.com/garrytan/gbrain
 - `gbrain repair-jsonb [--dry-run]` - repair v0.12.0 double-encoded JSONB rows.
 - `gbrain repair [<kind>] [--apply]` - preview, then fix timeline, visibility and safe-chunk damage doctor reports.
 - `gbrain upgrade` runs post-upgrade + apply-migrations.
+- `gbrain errors <code> [--json]` - explain any error code offline; follow its `fix.next`.

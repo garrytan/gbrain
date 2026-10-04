@@ -79,6 +79,18 @@ async function captureOutput<T>(fn: () => Promise<T>): Promise<{ result: T; stdo
 }
 
 describe('gbrain reindex --markdown (v0.32.7)', () => {
+  // #5937 (absorbed in agent contract v1 D4)
+  test('rejects invalid --limit values before dispatching any reindex mode', () => {
+    for (const value of ['NaN', '0', '-1', '1.5', '1oops', '9007199254740992']) {
+      expect(validateReindexModeScope(['--multimodal', '--limit', value]), `multimodal ${value}`)
+        .toBe('invalid --limit: expected a positive integer');
+      expect(validateReindexModeScope(['--aliases', `--limit=${value}`]), `aliases ${value}`)
+        .toBe('invalid --limit: expected a positive integer');
+    }
+    expect(validateReindexModeScope(['--multimodal', '--limit', '3'])).toBeNull();
+    expect(validateReindexModeScope(['--aliases', '--limit=3'])).toBeNull();
+  });
+
   test('dry-run reports pending count and does not write', async () => {
     await seedLegacyPage('note-a', 'body a');
     await seedLegacyPage('note-b', 'body b');

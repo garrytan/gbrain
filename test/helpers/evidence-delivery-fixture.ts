@@ -61,7 +61,11 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
     for (const name of ['search', 'query', 'recall']) {
       const res = await dispatchToolCall(engine, name, { query: 'ocelot', ...(name === 'query' ? { expand: false } : {}) },
         { remote: true, transport: 'stdio', sourceId: 'default' });
-      out[`mcp-${name}`] = JSON.stringify(res);
+      // Agent contract v1 notices (extra prefixed blocks + _meta.gbrain_notices, e.g. degraded_recall on this
+      // keyless corpus) are additive and pinned in test/mcp-notice-channels.test.ts; the off path compares the rest.
+      const content = res.content.filter(c => !c.text.startsWith('[gbrain notice '));
+      const { gbrain_notices: _notices, ...meta } = res._meta ?? {};
+      out[`mcp-${name}`] = JSON.stringify({ ...res, content, ...(res._meta ? { _meta: meta } : {}) });
     }
   });
   const prompts: string[] = [];

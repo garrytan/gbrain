@@ -8,8 +8,9 @@
  * Discipline copied from the two proven one-shot surfaces:
  *   - `runPostUpgrade`'s search-mode banner (upgrade.ts): DOUBLE gate
  *     (sentinel + the setting still unset), whole block try/catch
- *     ("cosmetic, never block"), sentinel stamped AFTER printing so a
- *     decline is permanent.
+ *     ("cosmetic, never block"). The fire-once sentinel is a legacy
+ *     stamp only: the ask now repeats (init / post-upgrade) until the
+ *     user ANSWERS by setting memory.auto_writeback (agent contract F7).
  *   - `runModePicker`'s non-TTY arm (init-mode-picker.ts): `[AGENT]` lines
  *     carry the ask — agents MUST relay them to the operator (AGENTS.md
  *     contract). Unlike runInitNudge this does NOT short-circuit on non-TTY:
@@ -23,6 +24,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { agentBlock } from '../agent-markers.ts';
 import { loadConfig, isThinClient } from '../config.ts';
 import { resolveBrainId } from '../brain-resolver.ts';
 import { HOST_BRAIN_ID } from '../brain-registry.ts';
@@ -33,18 +35,21 @@ import {
   DEFAULT_TRANSIENT_TTL,
 } from '../facts/writeback-config.ts';
 
-export async function runWritebackNudge(
-  engine: BrainEngine,
-  opts: { context?: 'init' | 'post-upgrade' } = {},
-): Promise<void> {
+/**
+ * Whether the writeback ask applies to this brain right now: a personal host
+ * brain whose operator has not answered yet, with no bypass. The gate behind
+ * both this nudge and init's first-run `writeback` decision. Never throws
+ * (any failure → false).
+ */
+export async function writebackAskApplies(engine: BrainEngine): Promise<boolean> {
   try {
-    if (process.env.GBRAIN_NO_ONBOARD_NUDGE === '1') return;
+    if (process.env.GBRAIN_NO_ONBOARD_NUDGE === '1') return false;
     const cfg = loadConfig();
-    if (cfg && isThinClient(cfg)) return;
+    if (cfg && isThinClient(cfg)) return false;
     try {
-      if (resolveBrainId(undefined) !== HOST_BRAIN_ID) return;
+      if (resolveBrainId(undefined) !== HOST_BRAIN_ID) return false;
     } catch {
-      return; // mount resolution failed — fail-quiet
+      return false; // mount resolution failed — fail-quiet
     }
 
     // Double gate: shown once ever, and never when the operator already
@@ -53,10 +58,21 @@ export async function runWritebackNudge(
       engine.getConfig(AUTO_WRITEBACK_NOTICE_KEY),
       engine.getConfig(AUTO_WRITEBACK_KEY),
     ]);
-    if (shown === 'true' || mode) return;
+    if (shown === 'true' || mode) return false;
 
     const audience = await classifyBrainAudience(engine, cfg);
-    if (audience.audience !== 'personal') return;
+    return audience.audience === 'personal';
+  } catch {
+    return false;
+  }
+}
+
+export async function runWritebackNudge(
+  engine: BrainEngine,
+  opts: { context?: 'init' | 'post-upgrade' } = {},
+): Promise<void> {
+  try {
+    if (!(await writebackAskApplies(engine))) return;
 
     const line = console.log;
     line('');
@@ -77,17 +93,19 @@ export async function runWritebackNudge(
     line('[gbrain] Off switch (anytime): gbrain config set memory.auto_writeback off,');
     line('[gbrain]   then gbrain bootstrap harness --yes to remove installed instruction blocks.');
     line('═══════════════════════════════════════════════════════════════');
-    line('[AGENT] One-time ask — relay to your operator: enable ambient memory');
-    line('[AGENT] writeback for this personal brain? Recommended mode: salient.');
-    line('[AGENT] If they say yes, run:  gbrain config set memory.auto_writeback salient');
-    line('[AGENT] then:                  gbrain bootstrap harness --yes');
-    line('[AGENT] If they decline, do nothing — this ask never repeats.');
-    line('');
-
-    // Stamp AFTER printing, unconditionally: a decline is permanent (the
-    // advisor keeps a quiet, non-applyable reminder; `gbrain config set
-    // memory.auto_writeback salient` reopens the door at any time).
-    await engine.setConfig(AUTO_WRITEBACK_NOTICE_KEY, 'true');
+    // Agent contract v1 (F7): the ask is a decision for the user; the
+    // sentinel is stamped on their ANSWER (any memory.auto_writeback value,
+    // `off` included), never on print — a non-TTY print nobody relayed must
+    // not burn the only ask.
+    line(agentBlock({
+      ask: 'Enable ambient memory writeback for this personal brain? Recommended mode: salient.',
+      why: 'Agents would save durable facts the user states directly, with provenance; nothing is enabled until the user agrees.',
+      consent: 'persistent_install',
+      actor: 'user',
+      if_yes: 'gbrain config set memory.auto_writeback salient, then gbrain bootstrap harness --yes',
+      if_no: 'gbrain config set memory.auto_writeback off (records the answer; this ask then stops)',
+      verify: 'gbrain config get memory.auto_writeback',
+    }, { showUser: 'Should I save important facts from our conversations automatically (ambient writeback, "salient" mode)? You can turn it off any time.' }));
   } catch {
     /* Nudge is cosmetic — init/upgrade MUST succeed even if it crashes. */
   }

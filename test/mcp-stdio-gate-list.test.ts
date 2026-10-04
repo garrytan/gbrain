@@ -7,7 +7,8 @@
  * gate-off publish-gated ops or it advertises tools that deny at call time
  * (the listed-but-denied class the honest-catalog wave exists to kill).
  * localOnly ops stay listed: locality is the transport axis (D7), consent is
- * the gate axis. These tests pin stdioVisibleTools, the extracted per-request
+ * the gate axis — except owner-only (`cliOnly`) ops, which refuse every MCP
+ * caller and so are never listed (agent contract v1, F5). These tests pin stdioVisibleTools, the extracted per-request
  * list builder.
  */
 import { describe, test, expect } from 'bun:test';
@@ -16,7 +17,8 @@ import { operations } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 const GATED = operations.filter(op => op.publishGateKey).map(op => op.name);
-const LOCAL_ONLY = operations.filter(op => op.localOnly).map(op => op.name);
+const LOCAL_ONLY = operations.filter(op => op.localOnly && !op.cliOnly).map(op => op.name);
+const CLI_ONLY = operations.filter(op => op.cliOnly).map(op => op.name);
 
 function engineWithGates(values: Record<string, string | null>): BrainEngine {
   return {
@@ -38,6 +40,9 @@ describe('stdioVisibleTools (B1)', () => {
     for (const gated of GATED) expect(names).not.toContain(gated);
     // D7: stdio IS the local surface — localOnly ops remain listed.
     for (const local of LOCAL_ONLY) expect(names).toContain(local);
+    // F5: owner-only ops always refuse on stdio, so they are not listed.
+    expect(CLI_ONLY.length).toBeGreaterThan(0);
+    for (const owner of CLI_ONLY) expect(names).not.toContain(owner);
     expect(names).toContain('get_page');
   });
 
@@ -52,7 +57,7 @@ describe('stdioVisibleTools (B1)', () => {
   test('both gates on: full surfaced set returned unchanged', async () => {
     const engine = engineWithGates({ 'mcp.publish_skills': 'true', 'mcp.publish_advisor': 'true' });
     const visible = await stdioVisibleTools(engine, operations);
-    expect(visible.map(op => op.name)).toEqual(operations.filter(op => !op.requiredScopes?.length).map(op => op.name));
+    expect(visible.map(op => op.name)).toEqual(operations.filter(op => !op.requiredScopes?.length && !op.cliOnly).map(op => op.name));
     for (const op of operations.filter(op => op.requiredScopes?.length)) expect(visible).not.toContain(op);
   });
 
@@ -67,7 +72,7 @@ describe('stdioVisibleTools (B1)', () => {
   });
 
   test('surfaced set without gated ops passes through untouched (no gate read needed)', async () => {
-    const ungated = operations.filter(op => !op.publishGateKey && !op.requiredScopes?.length);
+    const ungated = operations.filter(op => !op.publishGateKey && !op.requiredScopes?.length && !op.cliOnly);
     let reads = 0;
     const engine = {
       getConfig: async () => { reads += 1; return null; },

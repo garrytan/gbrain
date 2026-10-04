@@ -6,7 +6,9 @@ import type { BrainEngine } from '../engine.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { materializePageSnapshot } from '../page-state/materialize.ts';
@@ -36,6 +38,21 @@ import { recoveryStagingFile } from './staging.ts';
 import { selectEffectRecoveries } from './effect-recovery-scan.ts';
 import { nativeFileTarget } from './native-file-target.ts';
 import { sourceMirrorReadOnly } from './mirror-read-only.ts';
+
+const effectStatusFix = (effect: Pick<PersistenceEffect, 'source_id'>): Action => readFix(
+  `Shows source ${effect.source_id}'s canonical owner with its blocking, retrying and parked effects, read-only.`,
+  { argv: ['gbrain', 'sources', 'writer', 'status', '--source', effect.source_id, '--json'] });
+const embeddingsFix = (): Action => readFix('Reports whether this brain has a usable embedding provider, model and dimensions, read-only.',
+  { argv: ['gbrain', 'doctor', '--only', 'embeddings', '--json'] });
+const writerBusy = (effect: Pick<PersistenceEffect, 'source_id'>) => opError('writer_busy', 'The canonical worktree is busy.',
+  `Another write holds source ${effect.source_id}'s canonical worktree. The committed write is unaffected and the effect worker tries this effect again shortly; nothing needs resubmitting.`,
+  { fix: effectStatusFix(effect) });
+const recoveryFirst = (effect: Pick<PersistenceEffect, 'source_id'>) => opError('recovery_required', 'Canonical publication recovery must finish first.',
+  `An earlier publication in source ${effect.source_id}'s worktree is still being recovered, so this effect waits; the worker resumes it once recovery completes. Inspect the owner rather than resubmitting writes.`,
+  { fix: effectStatusFix(effect) });
+const gitTargetEscaped = (effect: Pick<PersistenceEffect, 'source_id'>) => opError('source_changed', 'The Git target escaped its registered source.',
+  `The effect's file path resolves outside source ${effect.source_id}'s registered root (a symlink or a moved checkout), so nothing was committed for it. Inspect the owner; the user decides how to repair the checkout.`,
+  { fix: effectStatusFix(effect) });
 
 export interface EffectWorkerOptions {
   hostId: string;
@@ -86,7 +103,9 @@ async function materializeAndAdvance(engine: BrainEngine, effect: PersistenceEff
     await guardEffectSource(tx, effect, hostId);
     await tx.lockPageKeys([{ sourceId: effect.source_id, slug: snapshot.page.slug }]);
     const current = await tx.readPageSnapshot(snapshot.page.slug, { sourceId: effect.source_id, includeDeleted: true });
-    if (current?.revision !== snapshot.revision || current.page.id !== snapshot.page.id) throw new OperationError('revision_conflict', 'The withdrawal page changed during preparation.');
+    if (current?.revision !== snapshot.revision || current.page.id !== snapshot.page.id) throw opError('revision_conflict', 'The withdrawal page changed during preparation.',
+      `Page ${snapshot.page.slug} in source ${effect.source_id} changed while its withdrawal was materializing; the effect worker picks up the new revision on its next pass. Nothing needs resubmitting.`,
+      { fix: effectStatusFix(effect) });
     await materializePageSnapshot(tx, current);
     if (skipped) await recordSkippedTarget(tx, effect, { slug: current.page.slug, reason: skipped });
     await finishPage(tx, effect, current);
@@ -121,7 +140,9 @@ async function mirrorPage(engine: BrainEngine, effect: PersistenceEffect, bindin
   const snapshot = await selectedEffectPage(engine, effect);
   if (!snapshot) { await completeEffect(engine, effect); return; }
   attempt.target = snapshot.page.slug;
-  if (snapshot.sourceIncarnation !== effect.source_incarnation) throw new OperationError('source_changed', 'The mirror source was replaced.');
+  if (snapshot.sourceIncarnation !== effect.source_incarnation) throw opError('source_changed', 'The mirror source was replaced.',
+    `Source ${effect.source_id} was replaced after this withdrawal mirror was queued, so the effect ends without writing; the new source has its own effects. Check the owner if files still look stale.`,
+    { fix: effectStatusFix(effect) });
   if (isMetafilePage(snapshot)) { await materializeAndAdvance(engine, effect, snapshot, opts.hostId, 'metafile'); return; }
   const content = serializePageToMarkdown(snapshot.page, snapshot.tags);
   let file: Awaited<ReturnType<typeof prepareFileTarget>>;
@@ -154,14 +175,16 @@ async function mirrorPage(engine: BrainEngine, effect: PersistenceEffect, bindin
  */
 async function singleFileGitTarget(engine: BrainEngine, effect: PersistenceEffect, binding: WorktreeBinding & { local_path: string },
   attempt: EffectAttempt): Promise<string | null> {
-  if (!effect.data.relative_path) throw new OperationError('storage_error', 'The Git effect lost its target.');
+  if (!effect.data.relative_path) throw opError('storage_error', 'The Git effect lost its target.',
+    `The Git effect queued by request ${effect.request_id} in source ${effect.source_id} has no recorded file path, so nothing was committed to Git; the page write itself is committed. Inspect the owner's effects before resubmitting anything.`,
+    { fix: effectStatusFix(effect) });
   attempt.target = effect.data.slug ?? effect.data.relative_path;
   const sourceRoot = join(binding.local_path, binding.relative_path);
   let path = join(binding.local_path, effect.data.relative_path);
-  if (!isWriteTargetContained(path, sourceRoot)) throw new OperationError('source_changed', 'The Git target escaped its registered source.');
+  if (!isWriteTargetContained(path, sourceRoot)) throw gitTargetEscaped(effect);
   path = nativeFileTarget(binding.local_path, path, 'git_target_unsafe');
   if (persistenceFileHash(path) !== effect.data.expected_hash) { await completeEffect(engine, effect, { git: 'superseded' }); return null; }
-  if (!isWriteTargetContained(path, sourceRoot)) throw new OperationError('source_changed', 'The Git target escaped its registered source.');
+  if (!isWriteTargetContained(path, sourceRoot)) throw gitTargetEscaped(effect);
   // Declared db_only content stays out of Git. Its gitignored local cache file
   // is invisible to `git status`, so publishing it would be refused as unsafe.
   // An invalid gbrain.yml (logged by the loader) publishes as before.
@@ -201,11 +224,13 @@ async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: 
     await skip('file_database_drift');
     return;
   }
-  if (!file) throw new OperationError('source_changed', 'The Git binding changed.');
+  if (!file) throw opError('source_changed', 'The Git binding changed.',
+    `Source ${effect.source_id} lost or changed its canonical checkout while this Git effect ran, so page ${snapshot.page.slug} was not committed. Check the owner; the effect resumes once the binding is active again.`,
+    { fix: effectStatusFix(effect) });
   const path = file.path;
   if (!existsSync(path)) { await materializeAndAdvance(engine, effect, snapshot, opts.hostId); return; }
   if (snapshot.page.deleted_at && existsSync(path)) { await finishPage(engine, effect, snapshot, { reason: 'deleted_page_file_present' }); return; }
-  if (!isWriteTargetContained(path, join(root, binding.relative_path))) throw new OperationError('source_changed', 'The Git target escaped its registered source.');
+  if (!isWriteTargetContained(path, join(root, binding.relative_path))) throw gitTargetEscaped(effect);
   if (isSourceDbOnlySlug(join(root, binding.relative_path), snapshot.page.slug, 'not_db_only')) {
     await finishPage(engine, effect, snapshot, { git: 'skipped', reason: 'db_only' });
     return;
@@ -221,7 +246,9 @@ export async function readEmbeddingEffectProjection(engine: BrainEngine, effect:
     await guardEffectSource(tx, effect, hostId);
     const prepared = await readProjectionSnapshot(tx, snapshot.page.slug, effect.source_id);
     if (!prepared || prepared.snapshot.revision !== snapshot.revision || prepared.snapshot.page.id !== snapshot.page.id) {
-      throw new OperationError('projection_pending', 'The current text projection is not ready.');
+      throw opError('projection_pending', 'The current text projection is not ready.',
+        `Page ${snapshot.page.slug} in source ${effect.source_id} has no current text chunks for revision ${snapshot.revision} yet; the effect worker embeds it once the projection lands. Nothing needs resubmitting.`,
+        { fix: effectStatusFix(effect) });
     }
     const column = prepared.embeddingColumn;
     const completion = await tx.executeRaw<{ id: number; complete: boolean }>(`SELECT cc.id,
@@ -242,7 +269,9 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
     await completeEffect(engine, effect, { embedding: 'superseded', reason: 'revision_changed' }); return;
   }
   const signature = opts.embedding?.signature ?? currentEmbeddingSignature();
-  if (!signature) throw new OperationError('embedding_unconfigured', 'Configure an embedding provider before explicitly retrying.');
+  if (!signature) throw opError('embedding_unconfigured', 'Configure an embedding provider before explicitly retrying.',
+    `Page ${snapshot.page.slug} in source ${effect.source_id} was saved but cannot be embedded: this brain has no embedding provider. Pages and keyword search keep working; check embedding readiness and ask the user before configuring a paid provider.`,
+    { fix: embeddingsFix() });
   const { prepared, pending } = await readEmbeddingEffectProjection(engine, effect, snapshot, opts.hostId, signature, opts.embedding?.model);
   if (pending.length) {
     await assertEmbeddingEffectEnabled(engine, config);
@@ -255,7 +284,9 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
     const signal = opts.signal ? AbortSignal.any([opts.signal, lease.signal]) : lease.signal;
     let renewing: Promise<void> | undefined;
     const renew = () => renewPersistenceEffectClaim({ executeRaw: engine.executeRawDirect.bind(engine) }, effect).then(live => {
-      if (!live) lease.abort(new OperationError('write_claim_lost', 'The embedding claim changed.'));
+      if (!live) lease.abort(opError('write_claim_lost', 'The embedding claim changed.',
+        `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt stops without installing vectors and the owning claim finishes it.`,
+        { fix: effectStatusFix(effect) }));
     }).catch(error => { lease.abort(embeddingStorageFailure(error)); });
     const interval = setInterval(() => {
       if (!renewing && !signal.aborted) renewing = renew().finally(() => { renewing = undefined; });
@@ -283,12 +314,16 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
     }
     signal.throwIfAborted();
     if (vectors.length !== pending.length || pending.some((_, index) => !vectors[index]?.length && !refused?.failures.some(f => f.index === index))) {
-      throw new OperationError('embedding_unavailable', 'The provider returned an incomplete embedding batch.');
+      throw opError('embedding_unavailable', 'The provider returned an incomplete embedding batch.',
+        `No vectors were installed for ${snapshot.page.slug} in source ${effect.source_id}; the effect worker tries again with backoff up to its attempt limit. If it keeps failing, check the embedding provider.`,
+        { fix: embeddingsFix() });
     }
     const installed = await engine.transaction(async tx => {
       await guardEffectSource(tx, effect, opts.hostId);
       const [claim] = await tx.executeRaw<PersistenceEffect>('SELECT state,execution_token FROM persistence_effects WHERE id=$1 FOR UPDATE', [effect.id]);
-      if (claim?.state !== 'running' || claim.execution_token !== effect.execution_token) throw new OperationError('write_claim_lost', 'The embedding claim changed.');
+      if (claim?.state !== 'running' || claim.execution_token !== effect.execution_token) throw opError('write_claim_lost', 'The embedding claim changed.',
+        `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt installed nothing and the owning claim finishes it.`,
+        { fix: effectStatusFix(effect) });
       await tx.executeRaw("SELECT key FROM config WHERE key='embedding_disabled' FOR SHARE");
       await assertEmbeddingEffectEnabled(tx, config);
       signal.throwIfAborted();
@@ -316,7 +351,9 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
       return;
     }
     if (!installed) {
-      if (targetedWithdrawalEffect(effect) || effect.data.source_scan) throw new OperationError('revision_conflict', 'The page changed while embedding.');
+      if (targetedWithdrawalEffect(effect) || effect.data.source_scan) throw opError('revision_conflict', 'The page changed while embedding.',
+        `Page ${snapshot.page.slug} in source ${effect.source_id} changed while its vectors were computed, so none were installed; the scan embeds the new revision on its next pass.`,
+        { fix: effectStatusFix(effect) });
       await completeEffect(engine, effect, { embedding: 'superseded', reason: 'revision_changed' }); return;
     }
     return;
@@ -328,14 +365,18 @@ export async function assertEmbeddingEffectEnabled(engine: BrainEngine, config: 
   assertEmbeddingEnabled(config);
   const disabled = await engine.getConfig('embedding_disabled').catch(error => { throw embeddingStorageFailure(error); });
   if (disabled !== null && disabled !== 'true' && disabled !== 'false') {
-    throw new OperationError('embedding_configuration', 'Selected brain embedding_disabled must be true or false.');
+    throw opError('embedding_configuration', 'Selected brain embedding_disabled must be true or false.',
+      `The brain's embedding_disabled setting is neither true nor false, so embedding is paused. Read it, then have the user set it to true or false with gbrain config set embedding_disabled.`,
+      { fix: readFix('Shows the stored embedding_disabled value and the plane it comes from, read-only.', { argv: ['gbrain', 'config', 'get', 'embedding_disabled'] }) });
   }
-  assertEmbeddingEnabled({ embedding_disabled: disabled === 'true' });
+  assertEmbeddingEnabled({ engine: engine.kind, ...config, embedding_disabled: disabled === 'true' });
 }
 
 function embeddingStorageFailure(error: unknown): unknown {
   return transientDatabaseFailure(error)
-    ? new OperationError('embedding_storage_unavailable', 'Embedding policy or claim storage is temporarily unavailable.') : error;
+    ? opError('embedding_storage_unavailable', 'Embedding policy or claim storage is temporarily unavailable.',
+      'The database did not answer an embedding policy or claim read; no vectors were installed and the effect worker tries again with backoff. If it persists, check database health.',
+      { fix: readFix('Checks the brain database connection and schema health, read-only.', { argv: ['gbrain', 'doctor', '--json'] }) }) : error;
 }
 
 async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, error: unknown, signal?: AbortSignal, target?: string): Promise<void> {
@@ -446,16 +487,18 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
     const recordOnly = effect.kind === 'git' && hardened === false && !targetedWithdrawalEffect(effect) && !effect.data.source_scan;
     try {
       if (effect.worktree_id && !['embedding', 'facts-backstop'].includes(effect.kind)) {
-        if (!binding) throw new OperationError('owner_unavailable', 'The canonical effect owner is unavailable.');
+        if (!binding) throw opError('owner_unavailable', 'The canonical effect owner is unavailable.',
+          `This host does not hold source ${effect.source_id}'s canonical worktree, so its ${effect.kind} effect waits for the owner. Check which host owns the source; the effect runs there.`,
+          { fix: effectStatusFix(effect) });
         lock = await acquireWorktree(binding, 0, undefined, engine);
-        if (!lock) throw new OperationError('writer_busy', 'The canonical worktree is busy.');
+        if (!lock) throw writerBusy(effect);
         if (recordOnly) { await lock.release(); lock = null; }
       }
       await engine.transaction(async tx => {
         await guardEffectSource(tx, effect, opts.hostId);
         if (effect.worktree_id) {
           const blocked = await tx.executeRaw('SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [effect.worktree_id]);
-          if (blocked.length) throw new OperationError('recovery_required', 'Canonical publication recovery must finish first.');
+          if (blocked.length) throw recoveryFirst(effect);
         }
       });
       effect = await upgradeWithdrawalEffect(engine, effect, opts.hostId);
@@ -496,7 +539,7 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
     let lock: Awaited<ReturnType<typeof acquireWorktree>> = null;
     try {
       lock = await acquireWorktree(binding, 0, undefined, engine);
-      if (!lock) throw new OperationError('writer_busy', 'The canonical worktree is busy.');
+      if (!lock) throw writerBusy(effects[0]!);
     } catch (error) {
       for (const effect of effects) await recordFailure(engine, effect, error, opts.signal);
       return;
@@ -510,10 +553,12 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
           const own = await engine.transaction(async tx => {
             const guarded = await guardEffectSource(tx, effect, opts.hostId);
             const blocked = await tx.executeRaw('SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [effect.worktree_id]);
-            if (blocked.length) throw new OperationError('recovery_required', 'Canonical publication recovery must finish first.');
+            if (blocked.length) throw recoveryFirst(effect);
             return guarded;
           });
-          if (!own?.local_path || own.local_path !== binding.local_path) throw new OperationError('source_changed', 'The effect canonical binding changed.');
+          if (!own?.local_path || own.local_path !== binding.local_path) throw opError('source_changed', 'The effect canonical binding changed.',
+            `Source ${effect.source_id}'s canonical checkout no longer matches the worktree this Git group is committing, so its file was left out. Check the owner; the effect resumes under the current binding.`,
+            { fix: effectStatusFix(effect) });
           const path = await singleFileGitTarget(engine, effect, { ...own, local_path: own.local_path }, attempt);
           if (path !== null) targets.push({ effect, path, attempt });
         } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target); }
@@ -569,7 +614,7 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
     let lock: Awaited<ReturnType<typeof acquireWorktree>> = null;
     try {
       lock = await acquireWorktree(binding, 0, undefined, engine);
-      if (!lock) throw new OperationError('writer_busy', 'The canonical worktree is busy.');
+      if (!lock) throw writerBusy(items[0]!.effect);
       pushed = await pushGitRoot(root, opts.signal);
     } catch (error) { failure = error; } finally { await lock?.release(); }
     for (const { effect, git, target } of items) {

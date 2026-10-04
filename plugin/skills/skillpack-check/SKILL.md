@@ -112,6 +112,13 @@ a required subcommand crashed. Check:
 }
 ```
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- Exit 2 means the health check itself could not run (crashed doctor): report it as worse than a failing check, with `gbrain doctor --json` output.
+- An action like `gbrain apply-migrations --yes` or an embedding backfill: confirm scope and budget with the user before running anything that changes the brain or spends money.
+
 ## Anti-Patterns
 
 - ❌ Running without `--quiet` in a cron that emails its output — you'll get

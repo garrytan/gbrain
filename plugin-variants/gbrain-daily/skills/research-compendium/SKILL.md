@@ -338,6 +338,14 @@ render the compendium via [brain-pdf](../brain-pdf/SKILL.md) or publish a
 shareable HTML page with `gbrain publish`. Run the fact-check gate BEFORE
 exporting — export packages, it does not re-verify.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain lsd "<question>" --save --max-cost <n>` stops at its cost cap: report what finished; raise the cap only with the user's agreement.
+- `no_pricing` under the user's cap: look up the model rate and, after the user agrees, ask the brain host's operator to run `gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`.
+- The compendium page write returns `revision_conflict` or `write_pending`: re-read and merge, or poll `gbrain write-request <request_id>`; confirm the compendium and index pages exist before reporting done.
+
 ## Anti-Patterns
 
 - **Assumed-context writing (the locked door)** — names with no gloss, terms

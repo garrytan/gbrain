@@ -277,6 +277,14 @@ up 100 bad pages is enormous.
 - Back-links: every entity mention creates a back-link (Iron Law)
 - Filing: file by primary subject, not format or source (see filing rules)
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- The sub-skill this routes to fails: report which one and why, using that skill's own failure guidance; do not silently re-route to a generic page write.
+- `put_page` returns `write_pending` (exit 10) or `revision_conflict`: poll `gbrain write-request <request_id>`, or re-read and merge; never write a duplicate page.
+- `gbrain files upload-raw` is refused for size or path: store a pointer and tell the user the raw file was not uploaded.
+
 ## Anti-Patterns
 
 - **Appending to State sections.** State is rewritten with the current best understanding on every update. Append-only State sections grow stale and contradictory.

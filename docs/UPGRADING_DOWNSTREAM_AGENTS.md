@@ -21,8 +21,9 @@ Cross-reference against your fork's local skill files.
 
 ## Why this exists
 
-`gbrain upgrade` ships the new binary. `gbrain post-upgrade [--execute --yes]` runs
-the schema migrations and backfills the data. But the **skill files themselves**
+`gbrain upgrade` ships the new binary and runs `gbrain post-upgrade`, which applies
+the schema migrations and backfills the data (`gbrain apply-migrations --yes` runs
+them by hand). But the **skill files themselves**
 that tell the agent how to behave — those are user-owned. If your `~/git/<your-agent>/workspace/skills/brain-ops/SKILL.md`
 says `# Based on gbrain v0.10.0` at the top, it doesn't know about v0.12.0 features.
 

@@ -111,13 +111,17 @@ type CallOpts = { remote?: boolean; transport?: 'stdio' | 'http' };
 
 // Default transport is 'stdio' — the ONLY transport the notice fires on.
 // Trust-pin tests pass 'http' / undefined explicitly.
-function callSearch(opts: CallOpts = {}) {
-  return dispatchToolCall(engineStub, 'search', { query: 'anything at all' }, {
+async function callSearch(opts: CallOpts = {}) {
+  const out = await dispatchToolCall(engineStub, 'search', { query: 'anything at all' }, {
     remote: true,
     transport: 'stdio',
     sourceId: 'default',
     ...opts,
   });
+  // F3's degraded_recall notice (this keyless stub searches keyword-only) is
+  // orthogonal to the backup block under test; it is pinned in
+  // test/mcp-notice-channels.test.ts.
+  return { ...out, content: out.content.filter(c => !c.text.startsWith('[gbrain notice degraded_recall ')) };
 }
 
 async function waitFor(pred: () => boolean, ms = 2000): Promise<boolean> {

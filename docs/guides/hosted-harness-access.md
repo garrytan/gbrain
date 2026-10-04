@@ -309,17 +309,19 @@ state as well as canonical content; Git alone cannot restore memberships,
 policy history, revocations, or receipts. See
 [shared-skills recovery limits](shared-brain-skills.md#troubleshoot-leave-and-recover).
 
-| Symptom | Next action |
-| --- | --- |
-| PGLite is busy | Use authenticated host administration (`--admin-token-file ~/.gbrain/serve/admin-token` against the running server) or wait for the current owner to close. Never remove a live lock. |
-| Published URL unreachable from the agent | On the host, `gbrain mcp expose --status`. A cloud agent needs `--funnel`; tailnet-only reach serves only the owner's own devices. Certificate issuance can leave tailnet health `pending` for a minute. See the [remote MCP troubleshooting table](remote-mcp.md#troubleshooting). |
-| Configuration conflict | Select a fresh connection name/root or inspect the changed entry; do not overwrite unrelated settings. |
-| `grant_conflict` | Fetch the new revision and preview again. |
-| Delegation missing | Inspect repair reasons and explicitly bind supported tools, an active source, path policy, and positive concurrency. |
-| Read works, writes fail | Check issued/current scopes, operation snapshot, source grant, and direct fence. Full surface alone adds no authority. |
-| Work queues but never finishes | Check the host worker and terminal job status; queue admission is not worker verification. |
-| Finite cap blocks a call | Inspect unresolved reservations and provider pricing/bounds; do not treat unknown usage as zero. |
-| Server checks pass, new conversation fails | Verify native instruction activation, reload, absolute launcher, and observed GBrain calls inside that harness. |
+<a id="hosted-harness-troubleshooting"></a>
+
+| Symptom | Next action | Who acts | Consent | Verify |
+| --- | --- | --- | --- | --- |
+| PGLite is busy | Use authenticated host administration (`--admin-token-file ~/.gbrain/serve/admin-token` against the running server) or wait for the current owner to close. Never remove a live lock. | brain host | none | `gbrain doctor --only connection --json` on the host |
+| Published URL unreachable from the agent | On the host, `gbrain mcp expose --status`. A cloud agent needs `--funnel`; tailnet-only reach serves only the owner's own devices. Certificate issuance can leave tailnet health `pending` for a minute. See the [remote MCP troubleshooting table](remote-mcp.md#troubleshooting). | brain host | `egress` when switching to `--funnel` | `gbrain mcp expose --status --json` |
+| Configuration conflict | Select a fresh connection name/root or inspect the changed entry; do not overwrite unrelated settings. | agent | none | re-read the harness's MCP configuration |
+| `grant_conflict` | Fetch the new revision and preview again. | agent, after the user agrees | none | preview the grant again |
+| Delegation missing | Inspect repair reasons and explicitly bind supported tools, an active source, path policy, and positive concurrency. | brain host | none | the harness's tool list |
+| Read works, writes fail | Check issued/current scopes, operation snapshot, source grant, and direct fence. Full surface alone adds no authority. | brain host | none | `whoami` (where callable) or `gbrain doctor --json` on the host |
+| Work queues but never finishes | Check the host worker and terminal job status; queue admission is not worker verification. | brain host | none | `gbrain jobs stats` on the host |
+| Finite cap blocks a call | Inspect unresolved reservations and provider pricing/bounds; do not treat unknown usage as zero. | user (sets or raises the cap) | `paid` | `gbrain doctor --json` on the host |
+| Server checks pass, new conversation fails | Verify native instruction activation, reload, absolute launcher, and observed GBrain calls inside that harness. | user (restarts or reloads the harness) | none | a `recall` from a new conversation |
 
 ## Evidence and release gates
 

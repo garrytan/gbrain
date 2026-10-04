@@ -69,7 +69,7 @@ describe('gbrain eval longmemeval — documented invocation end-to-end', () => {
 
   test('a typo is still refused by the validator before any eval code runs', () => {
     const r = run(['eval', 'longmemeval', FIXTURE, '--retrieval-only', '--frobnicate']);
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown flag --frobnicate for 'gbrain eval'");
     expect(r.stderr).not.toContain('[longmemeval]');
   }, 60_000);

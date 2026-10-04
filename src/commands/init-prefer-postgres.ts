@@ -402,11 +402,13 @@ export async function runPreferPostgresLadder(o: PreferPostgresOpts): Promise<vo
   }
 
   if (o.jsonOutput) {
-    console.log(JSON.stringify({
+    // D2: the ladder's envelope replaces the inner init's document (written once by runInit).
+    const { setInitJsonResult } = await import('./init-json.ts');
+    setInitJsonResult({
       status: 'ok',
       engine: rung === 'pglite' ? 'pglite' : 'postgres',
       ladder_rung: rung,
       url_source: urlSource,
-    }));
+    }, { replace: true });
   }
 }

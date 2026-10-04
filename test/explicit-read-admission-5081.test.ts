@@ -30,6 +30,7 @@ import { dispatchToolCall, buildOperationContext, type DispatchOpts } from '../s
 import { resolveMcpStdioSourceScope } from '../src/mcp/server.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
+import { docsUrl } from '../src/core/agent-output.ts';
 
 let engine: PGLiteEngine;
 let outsideCwd: string;
@@ -149,7 +150,8 @@ describe('#5081 — explicit reads from a GBRAIN_SOURCE-bound stdio connection',
       expect(['permission_denied', 'scope_denied']).toContain(body.error);
       expect(body.suggestion).toBe(
         'This connection is bound to source work (GBRAIN_SOURCE). private is not federated; the brain owner can run '
-        + '`gbrain sources federate private` on the brain host, or start this connection without GBRAIN_SOURCE.',
+        // A1: the quoted command is the rendered fix, so it names the brain.
+        + '`gbrain sources federate private --brain host` on the brain host, or start this connection without GBRAIN_SOURCE.',
       );
     });
   }
@@ -165,14 +167,15 @@ describe('#5081 — explicit reads from a GBRAIN_SOURCE-bound stdio connection',
 
   test('denials carry the docs anchor', async () => {
     const { body } = await call(await bound(), 'search', { query: MARKER, source_id: 'private' });
-    expect(body.docs).toBe('docs/guides/multi-source-brains.md#explicit-reads-from-a-bound-agent-connection');
+    // Agent contract v1: the wire docs value is the absolute, version-pinned URL of the anchor.
+    expect(body.docs).toBe(docsUrl('docs/guides/multi-source-brains.md#explicit-reads-from-a-bound-agent-connection'));
   });
 
   test('a target that opted out is named as opted out', async () => {
     const { body } = await call(await bound(), 'search', { query: MARKER, source_id: 'iso' });
     expect(body.error).toBe('permission_denied');
     expect(body.suggestion).toContain('iso opted out of federation (federated: false)');
-    expect(body.suggestion).toContain('`gbrain sources federate iso`');
+    expect(body.suggestion).toContain('`gbrain sources federate iso --brain host`');
   });
 
   test('unqualified reads stay scalar on the bound source', async () => {
@@ -192,7 +195,7 @@ describe('#5081 — explicit reads from a GBRAIN_SOURCE-bound stdio connection',
     expect(isError).toBe(true);
     expect(body.suggestion).toBe(
       'This connection is bound to source iso (GBRAIN_SOURCE). iso opted out of federation (federated: false), so it '
-      + 'reads no other source; the brain owner can run `gbrain sources federate iso` on the brain host, or start this '
+      + 'reads no other source; the brain owner can run `gbrain sources federate iso --brain host` on the brain host, or start this '
       + 'connection without GBRAIN_SOURCE.',
     );
     const own = await call(await bound('iso'), 'search', { query: MARKER, source_id: 'iso' });
@@ -207,7 +210,7 @@ describe('#5081 — explicit reads from a GBRAIN_SOURCE-bound stdio connection',
     const { body } = await call(opts, 'search', { query: MARKER, source_id: 'private' });
     expect(body.suggestion).toBe(
       'This connection is bound to source work (.gbrain-source). private is not federated; the brain owner can run '
-      + '`gbrain sources federate private` on the brain host, or start this connection outside the directory pinned by .gbrain-source.',
+      + '`gbrain sources federate private --brain host` on the brain host, or start this connection outside the directory pinned by .gbrain-source.',
     );
   });
 });
@@ -220,14 +223,14 @@ describe('#5081 — callers that pass no admission set keep denying (ENG-O6 pins
     const { isError, body } = await call(await bound(), 'search_by_image', { image_data: png, source_id: 'notes' });
     expect(isError).toBe(true);
     expect(body.error).toBe('permission_denied');
-    expect(body.suggestion).toBe(ORIGINAL_HINT);
+    expect(body.suggestion).toContain(ORIGINAL_HINT);
   });
 
   test('open_loops still denies an explicit federated source', async () => {
     const { isError, body } = await call(await bound(), 'open_loops', { source_id: 'notes' });
     expect(isError).toBe(true);
     expect(body.error).toBe('permission_denied');
-    expect(body.suggestion).toBe(ORIGINAL_HINT);
+    expect(body.suggestion).toContain(ORIGINAL_HINT);
   });
 
   test('code-intel scope resolution still denies an explicit federated source', async () => {
@@ -303,6 +306,6 @@ describe('#5081 — HTTP tokens and unbound stdio keep the no-widening rule', ()
     const auth = { token: '', clientId: 'legacy', scopes: ['read'], sourceId: 'work', hasSourceGrant: true } as AuthInfo;
     const { body } = await call({ remote: true, transport: 'http', sourceId: 'work', auth }, 'search', { query: MARKER, source_id: 'notes' });
     expect(body.error).toBe('permission_denied');
-    expect(body.suggestion).toBe('Your token is not granted notes; ask the brain owner to grant it.');
+    expect(body.suggestion).toContain('Your token is not granted notes; ask the brain owner to grant it.');
   });
 });

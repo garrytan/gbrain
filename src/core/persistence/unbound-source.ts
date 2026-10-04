@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 
 /**
@@ -21,7 +21,8 @@ export const UNBOUND_COLLISION_MESSAGE = 'A database-only page written while its
 
 export function parseUnboundWriteValue(value: string): UnboundWritePolicy {
   if ((UNBOUND_WRITE_VALUES as readonly string[]).includes(value)) return value as UnboundWritePolicy;
-  throw new OperationError('invalid_params', `${UNBOUND_WRITE_KEY} must be one of: ${UNBOUND_WRITE_VALUES.join(', ')} (got '${value}').`);
+  throw opError('invalid_params', `${UNBOUND_WRITE_KEY} must be one of: ${UNBOUND_WRITE_VALUES.join(', ')} (got '${value}').`,
+    `Set it with gbrain config set ${UNBOUND_WRITE_KEY} ${UNBOUND_WRITE_VALUES[0]} (the default) or ${UNBOUND_WRITE_VALUES[1]}.`);
 }
 
 /** A missing or unreadable value keeps the refusal. */

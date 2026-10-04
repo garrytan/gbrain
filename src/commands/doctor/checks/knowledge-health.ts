@@ -12,6 +12,7 @@ import { computeEffectiveDate } from '../../../core/effective-date.ts';
 import { zeroTotalContradictionsCheck } from '../../../core/eval-contradictions/run-health.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { checkError, doctorVerify } from '../check-fix.ts';
 
 async function runEvalCapture(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -43,8 +44,13 @@ async function runEvalCapture(ctx: DoctorContext): Promise<Check[]> {
         name: 'eval_capture',
         status: 'warn',
         message: `${failures.length} capture failure(s) in the last 24h (${breakdown}). ` +
-          `If you care about replay fidelity, investigate. If not, set eval.capture: false ` +
-          `in ~/.gbrain/config.json to silence.`,
+          'Captured queries feed retrieval evals; if the user does not use them, capture can be turned off.',
+        fix: {
+          argv: ['gbrain', 'config', 'set', 'eval.capture', 'false'], consent: [], actor: 'user', requires_exclusive: false,
+          why: 'Query capture only feeds retrieval evals (gbrain eval export/replay). Turning it off stops these failures; it is the user\'s preference, so ask first.',
+          user_message: 'gbrain failed to record some queries for its retrieval evals. If you don\'t run gbrain evals, I can turn query capture off. Should I?',
+          verify: doctorVerify('eval_capture'),
+        },
       });
     }
   } catch (err) {
@@ -62,11 +68,7 @@ async function runEvalCapture(ctx: DoctorContext): Promise<Check[]> {
         message: 'RLS denies SELECT on eval_capture_failures. Capture INSERTs are almost certainly failing too. Run as a role with BYPASSRLS or grant SELECT on this table.',
       });
     } else {
-      checks.push({
-        name: 'eval_capture',
-        status: 'warn',
-        message: `Could not read eval_capture_failures: ${(err as Error)?.message ?? String(err)}`,
-      });
+      checks.push(checkError('eval_capture', 'read eval_capture_failures', err));
     }
   }
   return checks;
@@ -153,11 +155,7 @@ async function runContradictions(ctx: DoctorContext): Promise<Check[]> {
     if (code === '42P01') {
       checks.push({ name: 'contradictions', status: 'ok', message: 'Skipped (eval_contradictions_runs table unavailable — apply migrations to enable)' });
     } else {
-      checks.push({
-        name: 'contradictions',
-        status: 'warn',
-        message: `Could not read contradictions trend: ${(err as Error)?.message ?? String(err)}`,
-      });
+      checks.push(checkError('contradictions', 'read contradictions trend', err));
     }
   }
   return checks;
@@ -294,11 +292,7 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
         message: 'RLS denies SELECT on ingest_log. The check can\'t see facts:absorb rows. Run as a BYPASSRLS role or grant SELECT on this table.',
       });
     } else {
-      checks.push({
-        name: 'facts_extraction_health',
-        status: 'warn',
-        message: `Could not read ingest_log for facts:absorb: ${(err as Error)?.message ?? String(err)}`,
-      });
+      checks.push(checkError('facts_extraction_health', 'read ingest_log for facts:absorb', err));
     }
   }
   return checks;
@@ -430,7 +424,7 @@ async function runEffectiveDate(ctx: DoctorContext): Promise<Check[]> {
       // column doesn't exist — pre-v0.29.1 brain
       checks.push({ name: 'effective_date_health', status: 'ok', message: 'Skipped (effective_date column unavailable — run gbrain apply-migrations)' });
     } else {
-      checks.push({ name: 'effective_date_health', status: 'warn', message: `Could not read pages: ${(err as Error)?.message ?? String(err)}` });
+      checks.push(checkError('effective_date_health', 'read pages', err));
     }
   }
   return checks;
@@ -489,7 +483,7 @@ async function runSalience(ctx: DoctorContext): Promise<Check[]> {
     if (code === '42703' || code === '42P01') {
       checks.push({ name: 'salience_health', status: 'ok', message: 'Skipped (emotional_weight or takes table unavailable — pre-v0.29 brain)' });
     } else {
-      checks.push({ name: 'salience_health', status: 'warn', message: `Could not read pages: ${(err as Error)?.message ?? String(err)}` });
+      checks.push(checkError('salience_health', 'read pages', err));
     }
   }
   return checks;

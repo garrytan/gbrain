@@ -1,0 +1,2 @@
+{"schema_version":1,"id":1,"tool_name":"search","query":"hello world","retrieved_slugs":["example"],"source_ids":["notes"],"latency_ms":12,"created_at":"2026-01-01T00:00:00.000Z"}
+{"schema_version":1,"id":2,"tool_name":"search","query":"example note","retrieved_slugs":[],"source_ids":["notes"],"latency_ms":9,"created_at":"2026-01-01T00:00:01.000Z"}

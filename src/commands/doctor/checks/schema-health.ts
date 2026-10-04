@@ -7,6 +7,7 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
+import { embedBackfillFix } from '../../../core/embed-consent.ts';
 import * as db from '../../../core/db.ts';
 import { loadConfig } from '../../../core/config.ts';
 import { LATEST_VERSION } from '../../../core/migrate.ts';
@@ -21,6 +22,8 @@ import { checkPostgresCancellationDriver } from './postgres-cancellation.ts';
 import { checkProjectionReadiness } from './projection-readiness.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { embeddingsDisabled } from '../../../core/embedding-disabled.ts';
+import { checkError, infoCheck, keylessEnablementFix } from '../check-fix.ts';
 
 async function runPgvector(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -173,7 +176,7 @@ async function runRls(ctx: DoctorContext): Promise<Check[]> {
         });
       }
     } catch {
-      checks.push({ name: 'rls', status: 'warn', message: 'Could not check RLS status' });
+      checks.push(checkError('rls', 'check RLS status'));
     }
   }
   return checks;
@@ -233,11 +236,11 @@ async function runSchemaVersion(ctx: DoctorContext): Promise<Check[]> {
           });
         }
       } catch {
-        checks.push({ name: 'schema_columns', status: 'warn', message: 'Could not verify live schema columns' });
+        checks.push(checkError('schema_columns', 'verify live schema columns'));
       }
     }
   } catch {
-    checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
+    checks.push(checkError('schema_version', 'check schema version'));
   }
   ctx.schemaVersion = schemaVersion;
   return checks;
@@ -310,11 +313,7 @@ async function runRlsEventTrigger(ctx: DoctorContext): Promise<Check[]> {
         });
       }
     } catch {
-      checks.push({
-        name: 'rls_event_trigger',
-        status: 'warn',
-        message: 'Could not check RLS event trigger',
-      });
+      checks.push(checkError('rls_event_trigger', 'check RLS event trigger'));
     }
   }
   return checks;
@@ -336,8 +335,8 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
   try {
     // A keyless brain has no embedding backlog to drain: recommending a paid
     // catch-up there would send the agent into a refusal.
-    if (loadConfig()?.embedding_disabled === true || await engine.getConfig('embedding_disabled') === 'true') {
-      checks.push({ name: 'embeddings', status: 'ok', message: 'Not applicable: embeddings are disabled on this brain (keyword search keeps working).' });
+    if (await embeddingsDisabled(engine)) {
+      checks.push(infoCheck('embeddings', 'Not applicable: embeddings are disabled on this brain (keyword search keeps working).', 'disabled_by_choice', keylessEnablementFix()));
       return checks;
     }
     const health = await engine.getHealth();
@@ -367,15 +366,15 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
       'It makes paid embedding calls: confirm with the user unless embedding spend is already approved.';
     if (health.embed_coverage >= 0.9) {
       checks.push(backlog > 0
-        ? { name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails }
+        ? { name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) }
         : { name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}` });
     } else if (health.embed_coverage > 0) {
-      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails });
+      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) });
     } else {
-      checks.push({ name: 'embeddings', status: 'warn', message: `No embeddings yet${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails });
+      checks.push({ name: 'embeddings', status: 'warn', message: `No embeddings yet${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) });
     }
   } catch {
-    checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });
+    checks.push(checkError('embeddings', 'check embedding health'));
   }
   return checks;
 }

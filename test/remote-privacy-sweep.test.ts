@@ -370,6 +370,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   loops_close: 'error',
   loops_mute: 'error',
   loops_unmute: 'error',
+  // agent contract v1 A6: the generic invocation omits the required `code` → validation error.
+  mute_notice: 'error',
   sources_remove: 'error',
   submit_job: 'error',
   get_job: 'error',

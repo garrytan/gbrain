@@ -305,17 +305,19 @@ hosted access, also revoke that installation's grant on the host.
 
 ## Troubleshooting
 
-| Symptom | Action |
-| --- | --- |
-| Setup reports unowned state | Choose an empty root; use `--adopt` only after reviewing a compatible existing local brain |
-| Runtime executable disappeared | Run the retained helper or fetch it again with the same root |
-| Config is malformed or initialized memory is missing | Preserve the root; recover config or restore a full backup into a new root |
-| Generated instructions were edited | Preserve your edited file under a different name, then rerun repair and reattach your additions separately |
-| `pglite_busy` | Wait for the active command to finish and retry; stop a long-lived server through its owning process before using finite CLI mode |
-| Fresh conversation cannot recall the test | Inspect the native skill attachment and exact launcher invocation, then run explicit entity recall |
-| Backup says files changed | Pause the writer and create a new snapshot; do not treat the failed output as a backup |
-| Restore target already exists | Choose another absent root; restore never overwrites existing state |
-| A package or host URL is blocked | Complete the app's normal approval flow; preserve the error if access is denied |
+<a id="in-agent-troubleshooting"></a>
+
+| Symptom | Action | Who acts | Consent | Verify |
+| --- | --- | --- | --- | --- |
+| Setup reports unowned state | Choose an empty root; use `--adopt` only after reviewing a compatible existing local brain | agent, after the user agrees | none | the setup receipt |
+| Runtime executable disappeared | Run the retained helper or fetch it again with the same root | agent | none | the setup receipt |
+| Config is malformed or initialized memory is missing | Preserve the root; recover config or restore a full backup into a new root | agent, after the user agrees | `destructive` when restoring | the setup receipt |
+| Generated instructions were edited | Preserve your edited file under a different name, then rerun repair and reattach your additions separately | agent | none | the setup receipt |
+| `pglite_busy` | Wait for the active command to finish and retry; stop a long-lived server through its owning process before using finite CLI mode | agent | none | retry the read-only command |
+| Fresh conversation cannot recall the test | Inspect the native skill attachment and exact launcher invocation, then run explicit entity recall | user (reloads the native skill) | none | a `recall` from a fresh conversation |
+| Backup says files changed | Pause the writer and create a new snapshot; do not treat the failed output as a backup | agent | none | the new snapshot's verification output |
+| Restore target already exists | Choose another absent root; restore never overwrites existing state | agent | none | the restore output |
+| A package or host URL is blocked | Complete the app's normal approval flow; preserve the error if access is denied | user | none | retry after approval |
 
 ## What has been verified
 

@@ -49,10 +49,13 @@ the same registry.
 
 ```bash
 gbrain init --pglite                                      # 2-second local brain
-claude mcp add gbrain -- gbrain serve --surface verbs     # the memory-verb surface
-gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me
-gbrain recall people/me                                   # …now ask your agent in a NEW session
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs     # the memory-verb surface
+gbrain remember "gbrain install check" --provenance install-check
+gbrain recall --query "gbrain install check"              # …now ask your agent in a NEW session
 ```
+
+The marker is a test value, never a fact about the user; ask the agent to
+`forget` it once the new session recalled it.
 
 > Memories agents save are readable by every agent connected to this brain;
 > pass `visibility: "private"` for local-CLI-only facts.
@@ -61,17 +64,17 @@ If `claude` is not found: install Claude Code first, or use a block below.
 
 **Codex**
 ```bash
-codex mcp add gbrain -- gbrain serve --surface verbs
+codex mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs
 ```
 
 **Grok Build** (verify with `grok mcp doctor gbrain` — the add is lazy)
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- gbrain serve --surface verbs
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface verbs
 ```
 
 **opencode** (verify with `opencode mcp list` — the add is lazy, and list SPAWNS the server)
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- gbrain serve --surface verbs
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface verbs
 ```
 
 **OpenClaw / any stdio MCP host** — register the server command

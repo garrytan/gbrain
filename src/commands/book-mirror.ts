@@ -51,6 +51,8 @@ import type { MinionJobInput, SubagentHandlerData } from '../core/minions/types.
 import { operations } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { getCliOptions } from '../core/cli-options.ts';
+import { intFlagValue } from '../cli/flag-values.ts';
+import { consentGateOrExit, engineConsentEnv } from '../core/consent-cli.ts';
 
 const COST_PER_CHAPTER_OPUS = 0.30;     // rough; depends on chapter length
 const COST_PER_CHAPTER_SONNET = 0.06;
@@ -102,8 +104,11 @@ function parseFlags(args: string[]): BookMirrorFlags {
   const title = parseFlag(args, '--title');
   const author = parseFlag(args, '--author');
   const model = parseFlag(args, '--model') ?? 'claude-opus-4-7';
-  const maxTurnsStr = parseFlag(args, '--max-turns');
-  const timeoutMsStr = parseFlag(args, '--timeout-ms');
+  // #5909 (D4): a present flag needs a positive safe integer (usage error, exit 2), never a parseInt NaN.
+  const positiveInt = (flag: string, example: number) =>
+    hasFlag(args, flag) ? intFlagValue(parseFlag(args, flag), flag, { min: 1, example }) : undefined;
+  const maxTurns = positiveInt('--max-turns', DEFAULT_MAX_TURNS);
+  const timeoutMs = positiveInt('--timeout-ms', 600000);
 
   return {
     chaptersDir,
@@ -112,8 +117,8 @@ function parseFlags(args: string[]): BookMirrorFlags {
     title,
     author,
     model,
-    maxTurns: maxTurnsStr ? parseInt(maxTurnsStr, 10) : DEFAULT_MAX_TURNS,
-    timeoutMs: timeoutMsStr ? parseInt(timeoutMsStr, 10) : undefined,
+    maxTurns: maxTurns ?? DEFAULT_MAX_TURNS,
+    timeoutMs,
     noConfirm: hasFlag(args, '--no-confirm') || hasFlag(args, '--yes'),
     follow: process.stdout.isTTY === true && !hasFlag(args, '--no-follow'),
     dryRun: hasFlag(args, '--dry-run'),
@@ -147,7 +152,8 @@ OPTIONAL
                             right-column quality drops.
   --max-turns <n>           Per-chapter subagent turn budget. Default ${DEFAULT_MAX_TURNS}.
   --timeout-ms <n>          Per-chapter wall-clock timeout.
-  --no-confirm / --yes      Skip the cost-estimate confirmation prompt.
+  --yes / --no-confirm      The user's approval of the printed estimate; without it a
+                            non-interactive run submits nothing and exits 3.
   --no-follow               Submit and exit; don't tail children.
   --dry-run                 Validate inputs + print plan; submit nothing.
 
@@ -218,30 +224,6 @@ function loadChapters(dir: string): ChapterEntry[] {
 function estimateCost(chapters: ChapterEntry[], model: string): number {
   const perChapter = model.includes('opus') ? COST_PER_CHAPTER_OPUS : COST_PER_CHAPTER_SONNET;
   return chapters.length * perChapter;
-}
-
-async function confirmInteractive(estimateUsd: number, chapters: number): Promise<boolean> {
-  if (process.stdin.isTTY !== true) {
-    // Non-TTY: refuse to spend without an explicit --yes / --no-confirm.
-    process.stderr.write(
-      `gbrain book-mirror: refusing to spend ~$${estimateUsd.toFixed(2)} on ${chapters} chapters from a non-TTY context. ` +
-      `Pass --yes to confirm.\n`
-    );
-    return false;
-  }
-  process.stderr.write(
-    `\nThis will spawn ${chapters} subagent jobs at ~$${(estimateUsd / chapters).toFixed(2)} each = ~$${estimateUsd.toFixed(2)} total.\n` +
-    `Continue? [y/N] `
-  );
-  return new Promise(resolve => {
-    process.stdin.setEncoding('utf8');
-    process.stdin.once('data', (chunk) => {
-      const reply = chunk.toString().trim().toLowerCase();
-      resolve(reply === 'y' || reply === 'yes');
-      process.stdin.pause();
-    });
-    process.stdin.resume();
-  });
 }
 
 // ── prompt assembly ────────────────────────────────────────
@@ -431,13 +413,21 @@ export async function runBookMirrorCmd(engine: BrainEngine, args: string[]): Pro
     return;
   }
 
-  if (!flags.noConfirm) {
-    const ok = await confirmInteractive(estimateUsd, chapters.length);
-    if (!ok) {
-      process.stderr.write(`gbrain book-mirror: cancelled by user.\n`);
-      process.exit(0);
-    }
-  }
+  // A4: paid fan-out. --yes (or its legacy alias --no-confirm), --max-usd,
+  // tokenmax or a per-run preapproval authorize it; otherwise a TTY prompt
+  // (interaction.readLine: EOF/timeout = decline, never a hang) or exit 3
+  // with the consent payload. Nothing is submitted before consent.
+  await consentGateOrExit({
+    command: 'book-mirror', effects: ['paid'], actor: 'agent',
+    what: `Run ${chapters.length} chapter subagent(s) for ${targetSlug}`,
+    why: `Writes a personalized two-column mirror of "${bookTitle}" from the brain's context, one ${flags.model} subagent per chapter.`,
+    risk: `Spends about $${estimateUsd.toFixed(2)} (~$${(estimateUsd / chapters.length).toFixed(2)} per chapter) with the model provider. Subagents are read-only; the result is one new page.`,
+    user_message: `Spend about $${estimateUsd.toFixed(2)} to mirror ${chapters.length} chapter(s) of "${bookTitle}" against your brain?`,
+    argv: ['gbrain', 'book-mirror', ...args.filter(a => a !== '--yes' && a !== '--no-confirm')],
+    preview_argv: ['gbrain', 'book-mirror', ...args.filter(a => a !== '--yes' && a !== '--no-confirm'), '--dry-run'],
+    est_usd: estimateUsd,
+    args: flags.noConfirm ? [...args, '--yes'] : args,
+  }, { json: false, env: engineConsentEnv(engine) });
 
   const publish = await prepareBookMirrorPublication(engine, targetSlug);
 

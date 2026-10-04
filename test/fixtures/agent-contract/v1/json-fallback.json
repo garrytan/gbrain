@@ -1,0 +1,8 @@
+{
+  "error": "command_failed",
+  "code": "command_failed",
+  "message": "The command exited with status 1 without writing its JSON result.",
+  "suggestion": "Re-run without --json to read the error on stderr, or run `gbrain doctor --json`.",
+  "exit_code": 1,
+  "contract_version": 1
+}

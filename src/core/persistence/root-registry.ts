@@ -3,7 +3,7 @@ import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, open
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { configDir } from '../config.ts';
 import { flushDirectory } from '../fs-durable.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 
 export interface ManagedRootRecord {
   local_path: string;
@@ -48,7 +48,8 @@ function markerExists(path: string): boolean {
   try { lstatSync(path); return true; }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw new OperationError('writer_coordinator_required', 'Managed-root marker cannot be inspected.');
+    throw opError('writer_coordinator_required', 'Managed-root marker cannot be inspected.',
+      `gbrain could not read ${path} (${(error as NodeJS.ErrnoException).code ?? 'unknown error'}), so it cannot tell whether this checkout is managed and refuses the write. Fix the path's permissions for this user, then run the command again.`);
   }
 }
 /** Shared refusal marker helps installations with separate homes. It NEVER grants ownership. */
@@ -101,7 +102,10 @@ function resolveFilesystemPath(path: string, realpath: (path: string) => string)
  * them. Per-root files prevent independent registration from dropping siblings.
  */
 export function recordManagedRoots(brainId: string, records: ManagedRootRecord[], modeEpoch?: number): void {
-  if (!/^[a-f0-9-]{36}$/i.test(brainId)) throw new OperationError('storage_error', 'Invalid managed-root brain identity.');
+  if (!/^[a-f0-9-]{36}$/i.test(brainId)) {
+    throw opError('storage_error', 'Invalid managed-root brain identity.',
+      'The managed-root registry was given a brain identity that is not a UUID, so nothing was recorded. This is an internal fault: run gbrain doctor --json and report it to the user.');
+  }
   if (!records.length) return;
   const directory = registryDirectory(); mkdirSync(directory, { recursive: true, mode: 0o700 }); ensureMode(directory, 0o700);
   let changed = false;

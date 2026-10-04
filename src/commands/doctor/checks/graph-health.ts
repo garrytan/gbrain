@@ -11,6 +11,7 @@ import { startHeartbeat } from '../../../core/progress.ts';
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { brainScorePlanFix, checkError } from '../check-fix.ts';
 
 async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -110,12 +111,13 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
         name: 'brain_score',
         status: health.brain_score >= 70 ? 'ok' : 'warn',
         message: `Brain score ${health.brain_score}/100 (${parts.join(', ')})`,
+        ...(health.brain_score >= 70 ? {} : { fix: brainScorePlanFix() }),
       });
     } else {
       checks.push({ name: 'brain_score', status: 'ok', message: `Brain score 100/100` });
     }
   } catch {
-    checks.push({ name: 'graph_coverage', status: 'warn', message: 'Could not check graph coverage' });
+    checks.push(checkError('graph_coverage', 'check graph coverage'));
   }
   return checks;
 }
@@ -202,7 +204,7 @@ async function runOrphanRatio(ctx: DoctorContext): Promise<Check[]> {
       }
     }
   } catch {
-    checks.push({ name: 'orphan_ratio', status: 'warn', message: 'Could not check orphan ratio' });
+    checks.push(checkError('orphan_ratio', 'check orphan ratio'));
   }
   return checks;
 }

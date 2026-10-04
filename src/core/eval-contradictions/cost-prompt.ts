@@ -25,6 +25,8 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { isInteractive } from '../interaction.ts';
+import { agentBlock } from '../agent-markers.ts';
 import { estimateUpperBoundCost } from './cost-tracker.ts';
 import { PROMPT_VERSION } from './types.ts';
 
@@ -103,7 +105,7 @@ export async function maybePromptForCostBeforeProbe(
   }
 
   const stderr = opts.stderrWriter ?? ((text: string) => process.stderr.write(text));
-  const isTty = opts.isTtyOverride ?? (process.stderr.isTTY === true);
+  const isTty = opts.isTtyOverride ?? isInteractive();
 
   // Conservative pair-count upper bound — same formula the runner uses for
   // its own pre-flight check. Cost estimate covers the worst-case re-judge.
@@ -122,7 +124,9 @@ export async function maybePromptForCostBeforeProbe(
 
   if (!isTty) {
     // Autopilot / scripted invocation: emit the estimate and proceed.
-    stderr(`${banner}\nNon-TTY: proceeding automatically. Set GBRAIN_NO_PROBE_PROMPT=1 to suppress.\n`);
+    // A4 "no silent flip": unattended runs proceed under the --budget-usd hard cap and say so.
+    stderr(`${banner}\nNon-TTY: proceeding automatically. Set GBRAIN_NO_PROBE_PROMPT=1 to suppress.\n`
+      + agentBlock({ why: `The contradiction probe re-judges unattended (upper bound ~$${estimatedCost.toFixed(2)}), capped by --budget-usd.`, consent: 'paid', next: 'run' }));
     return { kind: 'proceed', reason: 'non_tty_auto' };
   }
 

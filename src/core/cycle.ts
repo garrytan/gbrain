@@ -367,6 +367,8 @@ export interface PhaseResult {
   summary: string;
   details: Record<string, unknown>;
   error?: PhaseError;
+  code?: string; // agent contract v1: canonical registry code for `error` (sibling, additive)
+  fix?: import('./agent-output.ts').RenderedAction; // agent contract v1: the next step for `error`
 }
 
 export type CycleStatus = 'ok' | 'clean' | 'partial' | 'skipped' | 'failed';
@@ -1288,13 +1290,10 @@ async function runPhaseSync(
     // sync overruns into the next cron tick. Report it as a skip.
     const { SyncLockBusyError } = await import('../commands/sync.ts');
     if (e instanceof SyncLockBusyError) {
-      return {
-        phase: 'sync',
-        status: 'skipped',
-        duration_ms: 0,
-        summary: 'sync already in progress elsewhere — skipped',
-        details: { syncStatus: 'lock_busy' },
-      };
+      return { phase: 'sync', status: 'skipped', duration_ms: 0, summary: 'sync already in progress elsewhere — skipped', details: { syncStatus: 'lock_busy' } };
+    }
+    if ((e as { code?: unknown } | null)?.code === 'sync_not_applicable') {
+      return { phase: 'sync', status: 'skipped', duration_ms: 0, summary: (e as Error).message, details: { reason: 'sync_not_applicable' } };
     }
     return {
       phase: 'sync',

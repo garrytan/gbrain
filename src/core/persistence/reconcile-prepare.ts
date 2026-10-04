@@ -5,7 +5,9 @@ import type { GBrainConfig } from '../config.ts';
 import { importFromContent, type ParsedPage } from '../import-file.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, restoreHiddenFactRows } from '../facts-fence.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
+import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
 import { sameCanonicalImport } from '../page-state/import-guard.ts';
 import { transferLegacyAtomPageState } from '../cycle/extract-atoms-page-state.ts';
@@ -22,12 +24,20 @@ import { assertReconcilePins, readReconcileState, staleReconcile, validateReconc
 import { verifyReconcileBackup } from './reconcile-backup.ts';
 import { assertAutoDecisions } from './reconcile-additive.ts';
 
+const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as stored now, with its revision, read-only.`,
+  { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] });
+const receiptFix = (row: WriteRequest): Action => readFix('Reads the reconcile request\'s durable receipt: its state, outcome and recorded error, read-only.',
+  { argv: ['gbrain', 'write-request', '--', row.request_id] });
+const freshPreview = (sourceId: string, slug: string) => `Generate a fresh preview with gbrain sources reconcile ${sourceId} ${slug} --preview (with the same --brain), review it and apply that file; nothing from this attempt was written.`;
+
 function preservePrivateFacts(incoming: string, stored: string): string {
   const next = parseFactsFence(incoming), prior = parseFactsFence(stored);
-  if (next.warnings.length || prior.warnings.length) throw new OperationError('invalid_params', 'Fact fences must parse losslessly before reconciliation.');
+  if (next.warnings.length || prior.warnings.length) throw opError('invalid_params', 'Fact fences must parse losslessly before reconciliation.',
+    'The ## Facts table of the file or of the stored page has rows that do not parse cleanly, so reconciliation cannot prove its private facts are kept; nothing was written. Repair the malformed rows in the file, then generate a fresh preview and apply it.');
   for (const fact of prior.facts.filter(f => f.visibility !== 'world')) {
     if (next.facts.some(f => f.claim === fact.claim && (f.visibility !== fact.visibility || f.rowNum === fact.rowNum && digest(f) !== digest(fact)))) {
-      throw new OperationError('permission_denied', 'Reconciliation cannot modify protected private facts; use the scoped fact workflow.');
+      throw opError('permission_denied', 'Reconciliation cannot modify protected private facts; use the scoped fact workflow.',
+        'The reconciled page would edit, renumber or change the visibility of a private fact, which reconcile never does; nothing was written. Keep those fact rows as stored, generate a fresh preview, and change private facts through the fact tools (remember, forget) instead.');
     }
   }
   const merged = restoreHiddenFactRows(next, prior);
@@ -52,7 +62,9 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
     prepareFrontmatter: page => stabilizeSafetyAssessments(page.frontmatter, state.snapshot.page.frontmatter, state.pins.assessment_at),
     prepare: async prepared => { ready = prepared; return prepared.result; },
   });
-  if (!ready || ready.slug !== state.pins.slug) throw new OperationError('invalid_params', imported.error ?? 'Reconciliation cannot change page identity or deduplicate to another page.');
+  if (!ready || ready.slug !== state.pins.slug) throw opError('invalid_params', imported.error ?? 'Reconciliation cannot change page identity or deduplicate to another page.',
+    `The reconciled content of ${state.pins.slug} in source ${state.pins.source_id} does not import as that same page (a changed frontmatter slug or a match to another page), and reconcile never changes page identity. Keep its slug as ${state.pins.slug} in the file. ${freshPreview(state.pins.source_id, state.pins.slug)}`,
+    { fix: pageFix(state.pins.source_id, state.pins.slug) });
   if (ready.observedRevision !== state.snapshot.revision) staleReconcile('revision changed during policy assessment');
   const resolved = reconcileCanonical(ready.parsedPage, [...new Set([...state.snapshot.tags, ...ready.parsedPage.tags])]);
   const project = await prepareCanonicalProjections(engine, resolved, state.pins.slug, state.pins.source_id, state.snapshot, writer);
@@ -61,15 +73,19 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
 
 export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
   if (row.operation !== 'put_page' || row.intent?.kind !== 'canonical_reconcile' || row.authority.remote !== false || row.authority.principal.kind !== 'local_cli') {
-    throw new OperationError('permission_denied', 'Canonical reconciliation requires trusted local administration.');
+    throw trustedCliRequired('Canonical reconciliation requires trusted local administration.');
   }
   await authorizeStoredRequest(engine, row);
   const artifact = validateReconcileArtifact(row.intent.preview);
   const reference = row.intent.backup_reference;
-  if (typeof reference !== 'string') throw new OperationError('storage_error', 'Reconciliation has no retained preimages.');
+  if (typeof reference !== 'string') throw opError('storage_error', 'Reconciliation has no retained preimages.',
+    `Reconcile request ${row.request_id} for ${row.slug} in source ${row.source_id} carries no backup reference, so it cannot publish without its preimages. ${freshPreview(row.source_id, row.slug)}`,
+    { fix: receiptFix(row) });
   verifyReconcileBackup(reference, artifact);
   if (artifact.status !== 'ready' || artifact.preconditions.source_id !== row.source_id || artifact.preconditions.slug !== row.slug || artifact.preconditions.page_id !== row.page_id) {
-    throw new OperationError('invalid_params', 'The reconciliation artifact does not name the accepted page.');
+    throw opError('invalid_params', 'The reconciliation artifact does not name the accepted page.',
+      `The resolved preview applied by request ${row.request_id} is not ready or names a different source, page or page id than ${row.slug} in source ${row.source_id}. ${freshPreview(row.source_id, row.slug)}`,
+      { fix: receiptFix(row) });
   }
   const state = await readReconcileState(engine, row.source_id, row.slug, artifact.preconditions.assessment_at);
   assertReconcilePins(artifact.preconditions, state.pins);
@@ -103,7 +119,9 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
       const scanStateTransferred = final ? await transferLegacyAtomPageState(tx, state.snapshot, final) : false;
       const file = parseMarkdown(readFileSync(state.path, 'utf8'), row.slug);
       if (!sameCanonicalImport(final, prepared.result) || digest(reconcileCanonical(file, file.tags)) !== artifact.result_digest) {
-        throw new OperationError('storage_error', 'Reconciliation canonical readback did not match the reviewed result.');
+        throw opError('storage_error', 'Reconciliation canonical readback did not match the reviewed result.',
+          `After publishing, ${row.slug} in source ${row.source_id} read back differently from the reviewed result, so the database change rolled back and the owner's recovery restores the file. Inspect request ${row.request_id}'s receipt before anything else and do not apply the preview again until it is terminal.`,
+          { fix: receiptFix(row) });
       }
       return { status: 'reconciled', source_id: row.source_id, slug: row.slug, backup_reference: reference,
         result_digest: artifact.result_digest, database_changed: !ready.noop, file_changed: sha256(content) !== state.pins.raw_file_hash,

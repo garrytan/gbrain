@@ -1,0 +1,6 @@
+{
+  "name": "fixture-bad-help",
+  "scripts": {
+    "build": "bun build --compile --no-compile-autoload-bunfig --outfile bin/tool src/cli.ts"
+  }
+}

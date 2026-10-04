@@ -73,7 +73,7 @@ describe('autopilot operator pause', () => {
       const engine = { kind: 'postgres', getConfig: async () => null } as never;
       const log = console.log;
       console.log = () => {};
-      try { await runAutopilot(engine, ['--install', '--target', 'ephemeral-container', '--repo', repo, '--no-inject']); } finally { console.log = log; }
+      try { await runAutopilot(engine, ['--install', '--yes', '--target', 'ephemeral-container', '--repo', repo, '--no-inject']); } finally { console.log = log; }
       expect(existsSync(autopilotPausedMarkerPath())).toBe(false);
       expect(existsSync(autopilotOperatorPauseMarkerPath())).toBe(true);
       expect(autopilotPaused()).toBe(true);

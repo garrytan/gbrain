@@ -120,6 +120,14 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 - **Video/podcast link:** Note that only metadata can be ingested unless a transcript is available. Ask the user for a transcript.
 - **Raw upload:** Use the `file_upload` tool (not CLI `gbrain files upload-raw`) when operating as an agent.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- The fetch fails (paywall, 404, timeout): save a stub with URL, metadata and the failure reason (`status: fetch_failed`) and ask the user to paste the content.
+- `gbrain files upload-raw` / `file_upload` is refused (path outside the allowed root, payload too large): tell the user the limit and offer a link or an excerpt instead.
+- `write_pending` (exit 10) on the page write: poll `gbrain write-request <request_id>` before reporting `ingested`.
+
 ## Anti-Patterns
 
 - Just summarizing without connecting to brain knowledge

@@ -17,6 +17,7 @@ import {
 import type { SyncEmbedBackfillOutcome } from '../../core/sync-embed-backfill.ts';
 import { runBreakLock } from '../../core/sync-lock.ts';
 import { isSyncDisabledConfig } from '../../core/sync-policy.ts';
+import { syncContentDirectory } from '../../core/sync-applicability.ts';
 import { composeAbortSignals } from '../../core/sync-reconcile.ts';
 import { acknowledgeFailures, unacknowledgedSyncFailures } from '../../core/sync.ts';
 import type { SyncResult, SyncOpts } from '../sync.ts';
@@ -33,6 +34,10 @@ import {
   isFailedPartial,
 } from './report.ts';
 import { runSyncTrigger } from './trigger.ts';
+import { writeJsonDocument } from '../../core/cli-force-exit.ts';
+
+/** D2: under the `--json` guard only writeStdoutFinal reaches fd 1 (writeJsonDocument). */
+const emitJson = (text: string): void => { void writeJsonDocument(text); };
 
 type SyncAllSourceRow = { id: string; name: string; local_path: string | null; config: Record<string, unknown>; last_commit: string | null; chunker_version: string | null };
 
@@ -133,7 +138,7 @@ async function runSyncBreakLock(
     // (no local_path) don't hold sync locks.
     const activeSources = sources.filter((s) => s.local_path);
     if (activeSources.length === 0) {
-      if (jsonOut) console.log(JSON.stringify({ status: 'no_sources' }));
+      if (jsonOut) emitJson(JSON.stringify({ status: 'no_sources' }));
       else console.error('No active sources to break-lock against.');
       process.exit(0);
     }
@@ -234,7 +239,7 @@ async function resolveCliSyncSource(
     catch (error) {
       if (!syncAll) {
         if (!(error instanceof EmbeddingCredentialError)) throw error;
-        if (jsonOut) console.log(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: error.diagnosis }));
+        if (jsonOut) emitJson(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: error.diagnosis }));
         else console.error(`\n${error.userMessage}\n`);
         process.exit(1);
       }
@@ -316,13 +321,20 @@ async function runSyncAll(
   //     performSync get the [<source-id>] prefix under parallel mode (D6)
   //   - stable JSON envelope {schema_version:1, sources, ...} when --json
   // v0.41.31: v2Enabled resolved once above (cost gate). Reused here.
-  const activeSources = sources.filter((s) => !isSyncDisabledConfig(s.config));
-  const disabledCount = sources.length - activeSources.length;
+  const notApplicable: string[] = [];
+  for (const s of sources) {
+    if (await syncContentDirectory(engine, { sourceId: s.id, repoPath: s.local_path ?? undefined })) notApplicable.push(s.id);
+  }
+  const activeSources = sources.filter((s) => !isSyncDisabledConfig(s.config) && !notApplicable.includes(s.id));
+  const disabledCount = sources.filter((s) => isSyncDisabledConfig(s.config)).length;
   const humanSink: NodeJS.WriteStream = jsonOut ? process.stderr : process.stdout;
   const writeHuman = (line: string) => humanSink.write(line + '\n');
 
   if (disabledCount > 0) {
     writeHuman(`Skipping ${disabledCount} disabled source(s).`);
+  }
+  if (notApplicable.length > 0) {
+    writeHuman(`Skipping ${notApplicable.length} source(s) where sync does not apply (gbrain-owned content directory, not a Git checkout): ${notApplicable.join(', ')}. Add markdown files with \`gbrain import <dir> --source <id>\`.`);
   }
 
   // --missing-path skip: classify sources whose checkout is not on this
@@ -344,7 +356,7 @@ async function runSyncAll(
 
   if (runnableSources.length === 0) {
     if (jsonOut) {
-      console.log(JSON.stringify({
+      emitJson(JSON.stringify({
         schema_version: 1,
         sources: skippedMissingPath
           .slice()
@@ -667,7 +679,7 @@ function emitSyncAllEnvelope(input: {
         ? { embed_backfill: embedBackfillBySource.get(r.sourceId) }
         : {}),
     }));
-  console.log(JSON.stringify({
+  emitJson(JSON.stringify({
     schema_version: 1,
     sources: sortedSources,
     parallel: effectiveParallel,
@@ -843,7 +855,7 @@ async function runSingleSourceSync(
       }
     }
     if (jsonOut) {
-      console.log(JSON.stringify({ ...buildSingleSyncJsonEnvelope(sourceId, result, singleEmbedBackfill, singleCostGate),
+      emitJson(JSON.stringify({ ...buildSingleSyncJsonEnvelope(sourceId, result, singleEmbedBackfill, singleCostGate),
         ...(result.managedWrite ? { managed_write: result.managedWrite } : {}) }));
     }
     return;

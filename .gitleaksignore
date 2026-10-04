@@ -4,3 +4,20 @@
 5458344c9193ed39eb40a2549732500ccff92a9e:test/connector-holds.test.ts:generic-api-key:153
 5458344c9193ed39eb40a2549732500ccff92a9e:test/connector-holds.test.ts:generic-api-key:188
 5458344c9193ed39eb40a2549732500ccff92a9e:test/connector-holds.test.ts:generic-api-key:210
+# Agent operator wave Lane B: a synthetic legacy-token principal UUID constant in test/ops-error-fixes-g1.test.ts (commit db17f07)
+# read as generic-api-key; the tree renamed the constant. This history-only fingerprint is not a secret.
+db17f07948a0778a8af637f224a40261a9063323:test/ops-error-fixes-g1.test.ts:generic-api-key:22
+# Collector base (foundations / wave 8 merges): full git SHAs quoted in TODOS.md and CHANGELOG.md read as sourcegraph-access-token.
+# History-only fingerprints, not secrets (they fail origin/master..collector on gitleaks 8.30.1 as well).
+9a1b55a1ed33dc98b97cd68643f10111c559914f:TODOS.md:sourcegraph-access-token:428
+9a1b55a1ed33dc98b97cd68643f10111c559914f:TODOS.md:sourcegraph-access-token:2360
+9a1b55a1ed33dc98b97cd68643f10111c559914f:CHANGELOG.md:sourcegraph-access-token:11
+9aff60d378b261c2992c04ab02635e6ff630f13a:TODOS.md:sourcegraph-access-token:428
+9aff60d378b261c2992c04ab02635e6ff630f13a:TODOS.md:sourcegraph-access-token:2360
+ee280a34288d697285fd41c35d423e49b61fe54d:TODOS.md:sourcegraph-access-token:391
+ee280a34288d697285fd41c35d423e49b61fe54d:TODOS.md:sourcegraph-access-token:2323
+9aff60d378b261c2992c04ab02635e6ff630f13a:CHANGELOG.md:sourcegraph-access-token:11
+ee280a34288d697285fd41c35d423e49b61fe54d:CHANGELOG.md:sourcegraph-access-token:11
+7530e1d4a813209c1033f9fe2a1349b2610c2357:TODOS.md:sourcegraph-access-token:391
+7530e1d4a813209c1033f9fe2a1349b2610c2357:TODOS.md:sourcegraph-access-token:2323
+7530e1d4a813209c1033f9fe2a1349b2610c2357:CHANGELOG.md:sourcegraph-access-token:11

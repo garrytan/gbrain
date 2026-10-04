@@ -207,6 +207,8 @@ class Extractor {
   lastAdded: string | null = null;
   private seenNames = new Set<string>();
   private active = new Set<string>();
+  /** Call-site string arguments bound to the walked function's parameters (name-forwarding helpers such as `checkError(name, …)`). */
+  private paramBindings = new Map<string, string>();
 
   add(name: string) {
     this.lastAdded = name;
@@ -222,6 +224,8 @@ class Extractor {
     if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
     if (ts.isTemplateExpression(e)) return templateText(e);
     if (ts.isIdentifier(e)) {
+      const bound = this.paramBindings.get(e.text);
+      if (bound !== undefined && isParameterOfEnclosingFunction(e)) return bound;
       const decl = findDeclaration(e);
       if (decl?.initializer) return this.nameValue(decl.initializer, file);
     }
@@ -276,7 +280,7 @@ class Extractor {
         return;
       }
       const fn = resolveCallee(file, e.expression);
-      if (fn) this.fromFunction(fn);
+      if (fn) this.fromFunction(fn, e.arguments, file);
       else this.unresolved.push(`${relative(REPO_ROOT, file)}: unresolved call ${e.expression.getText()}`);
       return;
     }
@@ -303,10 +307,18 @@ class Extractor {
   }
 
   /** Every check a function can emit: Check-shaped literals + Check-returning callees, in source order. */
-  fromFunction(fn: FnRef) {
+  fromFunction(fn: FnRef, args: readonly ts.Expression[] = [], argFile = fn.file) {
     const key = `${fn.file}#${fn.name}`;
     if (this.active.has(key)) return;
     this.active.add(key);
+    const saved = this.paramBindings;
+    const bindings = new Map<string, string>();
+    fn.node.parameters.forEach((p, i) => {
+      if (!ts.isIdentifier(p.name) || !args[i]) return;
+      const v = this.nameValue(args[i], argFile);
+      if (v !== null && !v.startsWith('${')) bindings.set(p.name.text, v);
+    });
+    this.paramBindings = bindings;
     const visit = (node: ts.Node) => {
       if (ts.isObjectLiteralExpression(node)) {
         const n = this.checkObjectName(node, fn.file);
@@ -316,14 +328,23 @@ class Extractor {
           for (const id of waveCheckIds(node, fn.file)) this.add(id);
         } else {
           const callee = resolveCallee(fn.file, node.expression);
-          if (callee && returnsCheck(callee.node)) this.fromFunction(callee);
+          if (callee && returnsCheck(callee.node)) this.fromFunction(callee, node.arguments, fn.file);
         }
       }
       ts.forEachChild(node, visit);
     };
     if (fn.node.body) visit(fn.node.body);
+    this.paramBindings = saved;
     this.active.delete(key);
   }
+}
+
+/** True when `id` names a parameter of the function it appears in (and no closer local shadows it). */
+function isParameterOfEnclosingFunction(id: ts.Identifier): boolean {
+  if (findDeclaration(id)) return false;
+  let n: ts.Node | undefined = id.parent;
+  while (n && !ts.isFunctionLike(n)) n = n.parent;
+  return !!n && (n as ts.SignatureDeclaration).parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === id.text);
 }
 
 function returnsCheck(fn: FnNode): boolean {

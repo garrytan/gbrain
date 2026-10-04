@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { isImageFilePath, type ImportResult } from '../import-file.ts';
 import { loadConfig } from '../config.ts';
-import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
@@ -15,21 +15,25 @@ import { submissionAuthority } from './authority.ts';
 import { inspectUnchanged, screeningRequest } from './noop-kernel.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
+import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 
 export async function importManagedFile(engine: BrainEngine, filePath: string, sourcePath: string,
   opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string } = {}): Promise<ImportResult> {
   const caller = currentSubmissionAuthority();
   if (caller && caller.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
-    throw new OperationError('permission_denied', 'Managed filesystem import requires the trusted local CLI.');
+    throw trustedCliRequired('Managed filesystem import requires the trusted local CLI.');
   }
   opts.signal?.throwIfAborted();
   if (isImageFilePath(sourcePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL !== 'true') {
-    throw new OperationError('invalid_params', 'Image import requires GBRAIN_EMBEDDING_MULTIMODAL=true.');
+    throw opError('invalid_params', 'Image import requires GBRAIN_EMBEDDING_MULTIMODAL=true.',
+      `${sourcePath} is an image and multimodal embeddings are off, so it was not imported. Import only text files, or ask the user whether to enable GBRAIN_EMBEDDING_MULTIMODAL=true for the gbrain process (image embeddings can cost money).`);
   }
   const sourceId = opts.sourceId ?? 'default';
   const binding = await getWorktreeBinding(engine, sourceId);
   if (!binding?.local_path || binding.owner_host_id !== localHostId() || binding.state !== 'active') {
-    throw new OperationError('owner_unavailable', 'Managed import must run on the active canonical owner for the selected source.');
+    throw opError('owner_unavailable', 'Managed import must run on the active canonical owner for the selected source.',
+      `This host is not the active owner of source ${sourceId}, so nothing was imported. Run the import on the owner host that writer status names, or wait until its owner is active.`,
+      { fix: readFix(`Shows source ${sourceId}'s owner host and state, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] }) });
   }
   const root = join(binding.local_path, binding.relative_path);
   const inputPath = resolve(filePath);

@@ -116,6 +116,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 
 export const v0_31_0: Migration = {
   version: '0.31.0',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'Hot memory ships — your brain remembers what you said today, across sessions',
     description:

@@ -9,6 +9,7 @@ import { parseDurationSeconds, parseWorkers } from '../../core/sync-concurrency.
 import { resolveNoEmbed } from '../../core/sync-git.ts';
 import type { SyncOpts } from '../sync.ts';
 import { parseMissingPathMode } from './missing-path.ts';
+import { intFlagValue } from '../../cli/flag-values.ts';
 import type { MissingPathMode } from './missing-path.ts';
 
 export function printSyncHelp(): void {
@@ -115,11 +116,16 @@ See also:
 }
 
 /** Flags read before the `--break-lock` branch. */
+/** setTimeout treats delays above 2^31-1 ms as ~1 ms; --interval stays within that bound. */
+const MAX_WATCH_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000);
+
 export function parseSyncFlags(args: string[]) {
   const repoPath = args.find((a, i) => args[i - 1] === '--repo') || undefined;
   const watch = args.includes('--watch');
-  const intervalStr = args.find((a, i) => args[i - 1] === '--interval');
-  const interval = intervalStr ? parseInt(intervalStr, 10) : 60;
+  // #5931 (D4): timers coerce delays above 2^31-1 ms (and NaN/0) to ~1 ms, so a bad
+  // --interval used to spin the watch loop; it is a usage error (exit 2) instead.
+  const intervalAt = args.indexOf('--interval');
+  const interval = intervalAt === -1 ? 60 : intFlagValue(args[intervalAt + 1], '--interval', { min: 1, max: MAX_WATCH_INTERVAL_SECONDS, example: 60 });
   const dryRun = args.includes('--dry-run');
   const full = args.includes('--full');
   const noPull = args.includes('--no-pull');

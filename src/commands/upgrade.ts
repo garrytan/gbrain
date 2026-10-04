@@ -2,8 +2,11 @@ import { execSync, execFileSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
 import { parseSemver, semverGt } from '../core/semver.ts';
-import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { jsonRequested, setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
+import { opError, type OperationError } from '../core/ops/contract.ts';
+import { writeCliError } from '../cli/cli-error.ts';
 import { VERSION } from '../version.ts';
+import type { InteractiveProbe } from '../core/interaction.ts';
 import { migrationLedgerSummary } from '../core/migration-ledger.ts';
 import { MIGRATIONS_RUNNING_EXIT_CODE, readMigrationLockHolder } from '../core/migration-orchestration-lock.ts';
 import {
@@ -577,12 +580,16 @@ async function applySelfUpgradeSetup(noAutopilotInstall: boolean): Promise<void>
 
 export async function runPostUpgrade(args: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain post-upgrade [--no-autopilot-install]');
+    console.log('Usage: gbrain post-upgrade [--no-autopilot-install] [--json]');
     console.log('Prints feature pitches for new migrations and runs apply-migrations.');
     console.log('--no-autopilot-install (or GBRAIN_NO_AUTOPILOT_INSTALL=1) skips autopilot installation and service rewrites.');
+    console.log('--json prints one result document on stdout (progress and banners go to stderr).');
     console.log('Idempotent — safe to re-run any time.');
     return;
   }
+  // D2: under --json the human lines go to stderr (the guard) and this report is the one document.
+  const json = jsonRequested(args);
+  const report: PostUpgradeReport = { status: 'ok', warnings: [] };
 
   // v0.35.8.0: lay down ~/.gbrain/.gitignore retroactively. Existing users
   // never re-run `gbrain init`, so init-only coverage misses them entirely
@@ -590,9 +597,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   try {
     const { ensureGitignore } = await import('../core/config.ts');
     ensureGitignore();
-  } catch {
-    // Best-effort hygiene; never block upgrade.
-  }
+  } catch { /* Best-effort hygiene; never block upgrade. */ }
 
   // v0.42 self-upgrade setup: default existing installs to NOTIFY (a nudge, no
   // autonomy), inform once, and rewrite an existing systemd unit to
@@ -625,12 +630,19 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     // Pitch printing is cosmetic — don't gate migrations on it.
   }
 
+  (await import('../core/post-upgrade-notice.ts')).writePostUpgradeCliNotice(); // F7: safety notice ([AGENT] block for agents)
   // Mechanical: run every outstanding migration. Idempotent; exits 0 quickly
   // when nothing is pending. Stays inside the same process so a long Phase F
   // (autopilot install) doesn't hit a subprocess boundary.
   try {
-    const { runApplyMigrations } = await import('./apply-migrations.ts');
-    await runApplyMigrations(['--yes', '--non-interactive', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])]);
+    const { applyMigrations } = await import('./apply-migrations.ts');
+    const { exitCode, failure } = await applyMigrations(['--yes', '--non-interactive', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])]);
+    report.apply_migrations = { exit_code: exitCode ?? 0 };
+    // A failure, a consent refusal (3) or a held migration lock (75) ends
+    // post-upgrade here. 0 ("all migrations up to date", the common case on
+    // an upgrade with no new orchestrator migration) continues: the schema
+    // pass, banners, prompts and recovery checks below still run.
+    if (exitCode !== undefined && exitCode !== 0) process.exit(finishPostUpgrade(json, report, exitCode, failure));
   } catch (e) {
     // Surface the error but don't throw — post-upgrade is best-effort.
     // Users can re-run `gbrain apply-migrations` manually if they want
@@ -638,6 +650,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`\napply-migrations failed: ${msg}`);
     console.error('Run `gbrain apply-migrations --yes` manually to retry.');
+    report.warnings.push(`apply-migrations failed: ${msg}`);
   }
 
   // v0.28.5 (X1): explicitly apply pending schema migrations.
@@ -659,6 +672,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         await engine.connect(toCfgSchema(cfgSchema));
         await engine.initSchema();
         console.log('  Schema up to date.');
+        report.schema = 'up_to_date';
 
         // v0.32.3 search-lite mode banner. One-shot: fires at most once per
         // install (state persisted via `search.mode_upgrade_notice_shown`).
@@ -669,38 +683,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           const shown = await engine.getConfig('search.mode_upgrade_notice_shown');
           const existingMode = await engine.getConfig('search.mode');
           if (shown !== 'true' && !existingMode) {
-            console.log('');
-            console.log('═══════════════════════════════════════════════════════════════');
-            console.log('[gbrain] v0.32.3 added named search modes (conservative/balanced/tokenmax).');
-            console.log('[gbrain] Your current behavior is unchanged — the `query` op still defaults');
-            console.log('[gbrain] expand=true and limit=20, same as v0.31.x.');
-            console.log('═══════════════════════════════════════════════════════════════');
-            console.log('');
-            console.log('[AGENT] Relay this matrix to your operator and ask which mode they want.');
-            console.log('[AGENT] Recommended default: tokenmax (preserves current retrieval shape).');
-            console.log('[AGENT] Run `gbrain config set search.mode <mode>` after they decide.');
-            console.log('');
-            console.log('Per-query cost @ 10K queries/mo (typical single-user volume):');
-            console.log('');
-            console.log('                  Haiku 4.5    Sonnet 4.6   Opus 4.7');
-            console.log('                  ($1/M)       ($3/M)       ($5/M)');
-            console.log('  conservative    $40/mo       $120/mo      $200/mo');
-            console.log('  balanced        $100/mo      $300/mo      $500/mo');
-            console.log('  tokenmax        $200/mo      $600/mo      $1,000/mo');
-            console.log('');
-            console.log('  (scales linearly — multiply by 10 for 100K/mo)');
-            console.log('  25x corner-to-corner spread. Natural diagonal pairings span ~4x.');
-            console.log('');
-            console.log('To pick:');
-            console.log('  gbrain search modes              # see what is running');
-            console.log('  gbrain config set search.mode <conservative|balanced|tokenmax>');
-            console.log('  gbrain search tune               # data-driven recommendations');
-            console.log('');
-            console.log('tokenmax bumps limit to 50 (current default is 20). To preserve');
-            console.log('your EXACT current shape:');
-            console.log('  gbrain config set search.mode tokenmax');
-            console.log('  gbrain config set search.searchLimit 20');
-            console.log('');
+            printSearchModeBanner();
             await engine.setConfig('search.mode_upgrade_notice_shown', 'true');
           }
         } catch {
@@ -773,29 +756,11 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             console.log('[gbrain] remote MCP callers you have authorized. Source code is NOT exposed.');
             console.log('[gbrain] Following updates, bundle bytes and skill editing require separate approval.');
             console.log('═══════════════════════════════════════════════════════════════');
-            const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+            const { isInteractive } = await import('../core/interaction.ts');
+            const isTty = isInteractive();
             let enabled = false;
             if (isTty) {
-              const { createInterface } = await import('readline');
-              // #4318 residual: rl.close() must not run before the answer's
-              // resolveAns() — the unguarded rl.on('close', ...) below would
-              // otherwise settle the promise `false` first (the close event
-              // fires synchronously during rl.close()), so an operator
-              // pressing Enter to accept this [Y/n]-default-yes prompt would
-              // always land on "declined" regardless of what they typed.
-              enabled = await new Promise<boolean>((resolveAns) => {
-                const rl = createInterface({ input: process.stdin, output: process.stdout });
-                let answered = false;
-                rl.question('[gbrain] Enable skill publishing now? (recommended) [Y/n] ', (answer) => {
-                  answered = true;
-                  const a = answer.trim().toLowerCase();
-                  resolveAns(a === '' || a === 'y' || a === 'yes');
-                  rl.close();
-                });
-                rl.on('close', () => {
-                  if (!answered) resolveAns(false);
-                });
-              });
+              enabled = await promptEnableSkillPublishing();
             } else {
               console.log('[AGENT] Relay this to your operator. Recommended: enable it.');
               console.log('[AGENT] Enable with: gbrain config set mcp.publish_skills true');
@@ -832,6 +797,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         } catch (re) {
           const msg = re instanceof Error ? re.message : String(re);
           console.warn(`\nChunker-bump reindex skipped: ${msg}`);
+          report.warnings.push(`chunker-bump reindex skipped: ${msg}`);
           console.warn('Run `gbrain reindex --markdown` manually when ready.');
         }
 
@@ -854,6 +820,8 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     // hint to run `gbrain init --migrate-only`.
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`\nSchema auto-apply skipped: ${msg}`);
+    report.schema = 'skipped';
+    report.warnings.push(`schema auto-apply skipped: ${msg}`);
     console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
   }
 
@@ -893,6 +861,67 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   } catch {
     // Fail-open per A18: never crash post-upgrade from the banner.
   }
+  if (json) await writeJsonDocument(JSON.stringify(report));
+}
+
+/** The v0.32.3 one-shot search-mode banner post-upgrade prints (stdout; stderr under --json). */
+function printSearchModeBanner(): void {
+  console.log('');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('[gbrain] v0.32.3 added named search modes (conservative/balanced/tokenmax).');
+  console.log('[gbrain] Your current behavior is unchanged — the `query` op still defaults');
+  console.log('[gbrain] expand=true and limit=20, same as v0.31.x.');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('');
+  console.log('[AGENT] Relay this matrix to your operator and ask which mode they want.');
+  console.log('[AGENT] Recommended default: tokenmax (preserves current retrieval shape).');
+  console.log('[AGENT] Run `gbrain config set search.mode <mode>` after they decide.');
+  console.log('');
+  console.log('Per-query cost @ 10K queries/mo (typical single-user volume):');
+  console.log('');
+  console.log('                  Haiku 4.5    Sonnet 4.6   Opus 4.7');
+  console.log('                  ($1/M)       ($3/M)       ($5/M)');
+  console.log('  conservative    $40/mo       $120/mo      $200/mo');
+  console.log('  balanced        $100/mo      $300/mo      $500/mo');
+  console.log('  tokenmax        $200/mo      $600/mo      $1,000/mo');
+  console.log('');
+  console.log('  (scales linearly — multiply by 10 for 100K/mo)');
+  console.log('  25x corner-to-corner spread. Natural diagonal pairings span ~4x.');
+  console.log('');
+  console.log('To pick:');
+  console.log('  gbrain search modes              # see what is running');
+  console.log('  gbrain config set search.mode <conservative|balanced|tokenmax>');
+  console.log('  gbrain search tune               # data-driven recommendations');
+  console.log('');
+  console.log('tokenmax bumps limit to 50 (current default is 20). To preserve');
+  console.log('your EXACT current shape:');
+  console.log('  gbrain config set search.mode tokenmax');
+  console.log('  gbrain config set search.searchLimit 20');
+  console.log('');
+}
+
+interface PostUpgradeReport {
+  status: 'ok' | 'failed';
+  apply_migrations?: { exit_code: number };
+  schema?: 'up_to_date' | 'skipped';
+  warnings: string[];
+}
+
+/**
+ * D2: the exit status once apply-migrations ended the run. Success under
+ * --json writes the report; a failure (apply-migrations already printed its
+ * human lines) is one envelope leading with the report's keys.
+ */
+function finishPostUpgrade(json: boolean, report: PostUpgradeReport, exitCode: number, failure?: OperationError): number {
+  if (exitCode === 0) {
+    if (json) void writeJsonDocument(JSON.stringify(report));
+    return 0;
+  }
+  report.status = 'failed';
+  if (!json) return exitCode;
+  const e = failure ?? opError('migration_failed', `apply-migrations exited with status ${exitCode}.`,
+    'Read stderr for the failing migration, fix it, then run `gbrain post-upgrade` again.');
+  return writeCliError(e, 'post-upgrade', { json: true, stderr: false, legacy: { ...report } });
 }
 
 /**
@@ -1151,4 +1180,20 @@ function printSquatterRecovery(): void {
   console.warn('');
   console.warn('  See docs/INSTALL_FOR_AGENTS.md for the canonical install paths.');
   console.warn('');
+}
+
+/**
+ * The one-time "Enable skill publishing now? (recommended) [Y/n]" prompt
+ * (#4318 residual). Default yes: an empty line (Enter), `y` or `yes`
+ * accepts; anything else, EOF, the prompt timeout or a non-interactive
+ * caller declines (A5: never hang on a silent stdin). Seams for tests.
+ */
+export async function promptEnableSkillPublishing(
+  opts: { input?: NodeJS.ReadableStream; output?: NodeJS.WritableStream; probe?: InteractiveProbe; timeoutMs?: number } = {},
+): Promise<boolean> {
+  const { readLine } = await import('../core/interaction.ts');
+  const answer = await readLine({ prompt: '[gbrain] Enable skill publishing now? (recommended) [Y/n] ', ...opts });
+  if (answer.kind !== 'line') return false;
+  const a = answer.text.toLowerCase();
+  return a === '' || a === 'y' || a === 'yes';
 }

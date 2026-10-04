@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { slugUnderBoundPrefixes, matchesSlugAllowList, noSourceGrantError } from '../ops/context.ts';
 import { NO_SOURCES } from '../source-id.ts';
 import { hasScope } from '../scope.ts';
@@ -25,7 +26,7 @@ function assertSkillWriteScopes(scopes: readonly string[], operation: string, re
   }
 }
 export async function submissionAuthority(ctx: OperationContext, operation: string, sourceId: string, sourceIncarnation: string, slug: string): Promise<WriteAuthority> {
-  if (ctx.auth?.sourceId === NO_SOURCES || sourceId === NO_SOURCES) throw noSourceGrantError(operation);
+  if (ctx.auth?.sourceId === NO_SOURCES || sourceId === NO_SOURCES) throw noSourceGrantError(operation, ctx.auth);
   if (ctx.auth?.fenceProjectionDegraded || ctx.auth?.grantProjectionDegraded) deny('The grant projection is incomplete.');
   let principal: Principal;
   let localGrant: LocalGrant | undefined;
@@ -106,7 +107,11 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
 export async function authorizeStoredRequest(engine: SqlEngine, row: WriteRequest, lock = false): Promise<void> {
   const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean }>(
     `SELECT incarnation,archived FROM sources WHERE id=$1${lock ? ' FOR SHARE' : ''}`, [row.source_id]);
-  if (!source || source.archived || source.incarnation !== row.source_incarnation) throw new OperationError('source_changed', 'The accepted source is no longer active.');
+  if (!source || source.archived || source.incarnation !== row.source_incarnation) {
+    throw opError('source_changed', 'The accepted source is no longer active.',
+      `Source ${row.source_id} was archived, removed, or recreated after request ${row.request_id} was accepted, so it will not be applied. Check the source's writer status; a new write must target the current source.`,
+      { fix: readFix(`Shows source ${row.source_id}'s current registration and requests, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', row.source_id, '--json'] }) });
+  }
   await authorizeWrite(engine, row.authority, row.operation, row.slug, lock);
   if (skillWrite(row.operation)) {
     const affected = (row.authority as WriteAuthority & { skillSlugsUsed?: unknown }).skillSlugsUsed;

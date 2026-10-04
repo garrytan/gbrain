@@ -269,7 +269,7 @@ describe('sources remove', () => {
   test("refuses to remove the 'default' source", async () => {
     const { engine } = makeStub();
     const code = await withExitCapture(() => runSources(engine, ['remove', 'default', '--yes']));
-    expect(code).toBe(3);
+    expect(code).toBe(2); // agent contract v1 A3: invalid input exits 2 (3 is confirmation_required)
   });
 
   test('refuses without --yes', async () => {

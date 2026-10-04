@@ -4,7 +4,8 @@
  * the permissions they were written with (typically 0644), and only a rewrite
  * tightens them. Detection only: the notice names each directory, the count
  * of group/world-readable entries found now and the opt-in repair commands.
- * Nothing is chmod-ed here. A config marker makes it print once per brain.
+ * Nothing is chmod-ed here. A config marker makes it print once per brain; a
+ * brain with no such source has nothing to remember, so no marker is written.
  */
 import type { BrainEngine } from '../../core/engine.ts';
 import { googleFileModesApplyCommand, googleFileModesPreviewCommand, scanGoogleFileModes } from '../../core/google/file-modes.ts';
@@ -24,6 +25,7 @@ export async function googleFileModesNoticePhase(engine: BrainEngine | null, opt
   if (!engine) return { name: 'google_file_modes_notice', status: 'skipped', detail: 'no_brain_configured' };
   if (await engine.getConfig(GOOGLE_FILE_MODES_NOTICE_KEY)) return { name: 'google_file_modes_notice', status: 'skipped', detail: 'already_shown' };
   const lines = googleFileModesNoticeLines(await scanGoogleFileModes(engine));
+  if (lines.length === 0) return { name: 'google_file_modes_notice', status: 'complete', detail: '0 custom-dir Google source(s)' };
   for (const line of lines) (opts.print ?? console.log)(line);
   await engine.setConfig(GOOGLE_FILE_MODES_NOTICE_KEY, new Date().toISOString());
   return { name: 'google_file_modes_notice', status: 'complete', detail: `${lines.length} custom-dir Google source(s)` };

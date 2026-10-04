@@ -1,3 +1,5 @@
+import { writeJsonDocument } from '../core/cli-force-exit.ts';
+import { opError } from '../core/ops/contract.ts';
 import { hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal } from '../core/minions/source-filesystem.ts';
 import { readdirSync, lstatSync, existsSync, mkdirSync } from 'fs';
 import { execFileSync } from 'child_process';
@@ -185,6 +187,30 @@ export interface RunImportResult {
   resealed?: { pages: number; pending_chunks: number; embedding_usd: number | null };
 }
 
+/**
+ * D2 + A1: under `--json` a keyless brain's import refusal is the one document.
+ * The step the agent can take now is the same import with --no-embed (pages
+ * stay keyword-searchable; vectors come later), routed explicitly to the brain
+ * and source this run resolved; turning embeddings on asks the user.
+ */
+async function keylessImportRefusal(engine: BrainEngine, args: string[], e: unknown) {
+  const { brainRoutingArgs } = await import('../core/brain-resolver.ts');
+  const { resolveSourceWithTier } = await import('../core/source-resolver.ts');
+  const named = args.some(a => a === '--source' || a === '--source-id' || a.startsWith('--source=') || a.startsWith('--source-id='));
+  const target = named ? undefined : await resolveSourceWithTier(engine, null).then(r => r.source_id, () => undefined);
+  return opError('embedding_disabled', String(e instanceof Error ? e.message.split('\n')[0] : e),
+    'Embeddings are off by choice on this brain, so import needs --no-embed; turning embeddings on needs the user\'s consent (gbrain doctor --only embeddings --json shows the command).', {
+      reason: 'disabled_by_choice',
+      why: 'This brain was set up keyword-only. Importing with --no-embed keeps every page keyword-searchable; `gbrain embed --stale` adds vectors once embeddings are enabled.',
+      fix: {
+        argv: ['gbrain', 'import', ...args.filter(a => a !== '--json' && a !== '--no-embed'), '--no-embed', '--json',
+          ...(target ? ['--source', target] : []), ...brainRoutingArgs()],
+        consent: [], actor: 'agent', requires_exclusive: true,
+        why: 'Imports the same files without computing vectors, which needs no provider key.',
+      },
+    });
+}
+
 export async function runImport(
   engine: BrainEngine,
   args: string[],
@@ -259,8 +285,8 @@ export async function runImport(
     try {
       assertEmbeddingEnabled(loadConfig());
     } catch (e) {
-      console.error(`\n${e instanceof Error ? e.message : e}`);
-      console.error('Tip: run `gbrain import <dir> --no-embed` to import without embedding now.');
+      if (jsonOutput) throw await keylessImportRefusal(engine, args, e);
+      console.error(`\n${e instanceof Error ? e.message : e}\nTip: run \`gbrain import <dir> --no-embed\` to import without embedding now.`);
       throw new ImportAbortError('embedding disabled (deferred-setup sentinel)');
     }
 
@@ -273,7 +299,7 @@ export async function runImport(
     } catch (e) {
       if (e instanceof EmbeddingCredentialError) {
         if (jsonOutput) {
-          console.log(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: e.diagnosis }));
+          await writeJsonDocument(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: e.diagnosis }));
         } else {
           console.error('');
           console.error(e.userMessage);
@@ -1116,7 +1142,7 @@ export async function runImport(
     // written only for git-repo dirs (see the gitHead gate below), so a caller
     // importing a scratch directory has no other channel. Emit the per-file
     // list so state can be gated per file.
-    console.log(JSON.stringify({
+    await writeJsonDocument(JSON.stringify({
       status: errors > 0 ? 'partial' : 'success', duration_s: parseFloat(totalTime),
       imported, skipped, errors, chunks: chunksCreated,
       ...(resealSummary ? { resealed: resealSummary } : {}),

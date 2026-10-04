@@ -196,6 +196,14 @@ connectors, and schedules explicitly.
 | Native instructions or routine unavailable | Keep the content and report the remaining activation step. |
 | Optional health check unavailable | Name the missing capability; do not silently expand grants, spend, or connector access. |
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain init` prints `[AGENT]` blocks with the search-mode cost matrix: relay it and get the operator's choice before continuing.
+- An initialization error: never replace existing memory to recover. Run `gbrain doctor --json` and follow its `fix`.
+- `gbrain mcp verify` reports overall `partial` (exit 2): native evidence is missing; say activation is unverified instead of claiming it works.
+
 ## Anti-Patterns
 
 - Replacing an existing agent's identity or creating a private repository during ordinary memory setup.

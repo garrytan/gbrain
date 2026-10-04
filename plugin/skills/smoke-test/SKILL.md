@@ -153,6 +153,14 @@ not the OpenAI Codex CLI.)
 - **Cause:** `GBRAIN_DATABASE_URL` not propagated to worker subprocess
 - **Auto-fix:** Script explicitly passes both `DATABASE_URL` and `GBRAIN_DATABASE_URL`
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- Exit code = number of unfixed failures: report each by name and the attempted fix; never report all-green when a test was skipped.
+- The database test fails with a `GBRAIN_DB_ACCESS` marker: run `gbrain db-repair` and re-test; the rewrite tier needs the user's agreement.
+- The embedding API key check fails: there is no auto-fix. Tell the user which key is missing and that search runs keyword-only until it is set.
+
 ## Anti-Patterns
 
 - ❌ Running smoke tests on every chat turn. Once per container restart (or

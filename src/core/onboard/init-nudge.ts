@@ -10,10 +10,11 @@
 // codex #7 finding's wrong shape. Cancelled queries actually stop on
 // Postgres; PGLite has a documented gap.
 //
-// Bypass: GBRAIN_NO_ONBOARD_NUDGE=1 short-circuits. Non-TTY default
-// also short-circuits (CI/scripted callers see nothing).
+// Bypass: GBRAIN_NO_ONBOARD_NUDGE=1 short-circuits. Non-interactive callers
+// (agents) get the same coaching as an [AGENT] block (agent contract F7).
 
 import type { BrainEngine } from '../engine.ts';
+import { writeCliNotices } from '../interop-notices.ts';
 
 const NUDGE_BUDGET_MS = 3000;
 
@@ -22,18 +23,17 @@ const NUDGE_BUDGET_MS = 3000;
  *
  * Returns silently when:
  *   - GBRAIN_NO_ONBOARD_NUDGE=1
- *   - Non-TTY environment (CI, scripted)
  *   - All 4 onboard checks complete within 3s AND surface 0 recommendations
  *   - ANY error during check execution (logged to stderr, suppressed)
  *
- * Prints a nudge to stderr when:
+ * Emits an `onboard_opportunities` coaching notice (stderr on a terminal,
+ * an [AGENT] block on stdout for a non-interactive caller) when:
  *   - Recommendations exist within budget
  *   - Some checks ran but budget fired (partial-results path)
  */
 export async function runInitNudge(engine: BrainEngine): Promise<void> {
   try {
     if (process.env.GBRAIN_NO_ONBOARD_NUDGE === '1') return;
-    if (!process.stderr.isTTY) return;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), NUDGE_BUDGET_MS);
@@ -138,19 +138,17 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
     }
     if (takesCount === 0) parts.push('0 takes');
 
-    if (parts.length === 0 && partial) {
-      process.stderr.write(
-        `\n[onboard] Init checks incomplete (${checksRan}/${checksAttempted}) — run 'gbrain onboard --check' for full recommendations.\n`,
-      );
-      return;
-    }
-
-    process.stderr.write(
-      `\n[onboard] Brain has opportunities: ${parts.join(', ')}.\n` +
-      `[onboard] Run 'gbrain onboard --check' to see the plan.` +
-      (partial ? ` (${checksRan}/${checksAttempted} checks complete; run gbrain onboard --check for full recommendations)` : '') +
-      `\n`,
-    );
+    // Agent contract v1 (F7): a coaching notice on every surface — terminal
+    // lines, an [AGENT] block for a non-interactive caller (no more silence
+    // exactly when an agent runs init).
+    const why = parts.length === 0
+      ? `Init checks incomplete (${checksRan}/${checksAttempted}) — run 'gbrain onboard --check' for full recommendations.`
+      : `Brain has opportunities: ${parts.join(', ')}. Run 'gbrain onboard --check' to see the plan.` +
+        (partial ? ` (${checksRan}/${checksAttempted} checks complete; run gbrain onboard --check for full recommendations)` : '');
+    writeCliNotices([{
+      code: 'onboard_opportunities', kind: 'coaching', why,
+      fix: { argv: ['gbrain', 'onboard', '--check'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists each recommendation with its command; read-only.' },
+    }]);
   } catch (err) {
     // A18: NEVER crash init from the nudge. Log and continue.
     process.stderr.write(`[onboard] nudge skipped (${err instanceof Error ? err.message : String(err)})\n`);
@@ -164,10 +162,11 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
 export async function runUpgradeBanner(_engine: BrainEngine): Promise<void> {
   try {
     if (process.env.GBRAIN_NO_ONBOARD_NUDGE === '1') return;
-    if (!process.stderr.isTTY) return;
-    process.stderr.write(
-      `\n[onboard] Upgrade complete. Run 'gbrain onboard --check' to see if the new version surfaces any new opportunities.\n`,
-    );
+    writeCliNotices([{
+      code: 'onboard_opportunities', kind: 'coaching',
+      why: "Upgrade complete. Run 'gbrain onboard --check' to see if the new version surfaces any new opportunities.",
+      fix: { argv: ['gbrain', 'onboard', '--check'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists each recommendation with its command; read-only.' },
+    }]);
   } catch {
     // A18 posture for symmetry.
   }

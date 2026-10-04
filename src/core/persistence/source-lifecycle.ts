@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { EXPIRED_ARCHIVE_SQL } from '../source-delete.ts';
@@ -38,10 +40,20 @@ export interface SourceLifecycleInput {
 }
 interface SourceState {id:string;incarnation:string;archived:boolean;local_path:string|null;config:Record<string,unknown>;name:string;last_commit:string|null;}
 
+function sourcesListFix():Action{
+  return readFix('Lists every registered source (archived ones included) with its ID and local path.',{argv:['gbrain','sources','list','--json']});
+}
+function ownerStatusFix(sourceId:string):Action{
+  return readFix('Shows the canonical binding, owner host, incarnation and any pending recovery; read it before deciding on a topology change.',
+    {argv:['gbrain','sources','writer','status','--source',sourceId,'--json']});
+}
+
 function localRoot(path:string,create=false):{source:string;worktree:string}{
-  if(!isAbsolute(path)||path.includes('\0')) throw new OperationError('invalid_params','Source path must be an absolute directory on this host.');
+  if(!isAbsolute(path)||path.includes('\0')) throw opError('invalid_params','Source path must be an absolute directory on this host.',
+    'Pass the source directory as an absolute path on the brain host, then rerun the command; nothing was changed.');
   const source=create?canonicalFilesystemPath(resolve(path)):realpathSync(resolve(path));
-  if(existsSync(source)&&!statSync(source).isDirectory()) throw new OperationError('invalid_params','Source path must be a directory.');
+  if(existsSync(source)&&!statSync(source).isDirectory()) throw opError('invalid_params','Source path must be a directory.',
+    'The path names a file. Pass the directory that holds the source content, then rerun the command; nothing was changed.');
   let worktree=source;
   let ancestor=source;while(!existsSync(ancestor))ancestor=dirname(ancestor);
   try{worktree=realpathSync(discoverGitRoot(ancestor));}catch{/* directory source */}
@@ -53,11 +65,15 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
     FROM persistence_source_bindings b JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid
     WHERE b.source_id<>$2`,[localHostId(),sourceId]);
   const sourcePath=nativeFilesystemPath(root.source);
-  if(others.some(other=>{const path=nativeFilesystemPath(join(other.local_path,other.relative_path));return containsPath(path,sourcePath)||containsPath(sourcePath,path);}))
-    throw new OperationError('overlapping_path','Sources cannot claim overlapping canonical directories.');
+  const overlap=others.find(other=>{const path=nativeFilesystemPath(join(other.local_path,other.relative_path));return containsPath(path,sourcePath)||containsPath(sourcePath,path);});
+  if(overlap) throw opError('overlapping_path','Sources cannot claim overlapping canonical directories.',
+    `Source '${sourceId}' would nest inside or around source '${overlap.source_id}'. Choose a directory outside that source's checkout; nothing was changed.`,
+    {fix:ownerStatusFix(overlap.source_id)});
   const compatible=bindings.find(binding=>binding.local_path && containsPath(binding.local_path,root.worktree));
   const overlapping=bindings.find(binding=>binding.local_path && containsPath(root.worktree,binding.local_path));
-  if(overlapping&&!compatible) throw new OperationError('topology_change_required','The proposed root encloses another registered worktree. Rebind those sources explicitly first.');
+  if(overlapping&&!compatible) throw opError('topology_change_required','The proposed root encloses another registered worktree. Rebind those sources explicitly first.',
+    `The directory for '${sourceId}' contains the checkout of source '${overlapping.source_id}'. Move that source first with gbrain sources set-path ${overlapping.source_id} and its verified new directory (a topology change the user decides), or choose a directory that does not enclose it.`,
+    {fix:ownerStatusFix(overlapping.source_id)});
   const worktree=compatible?.local_path??root.worktree;
   const physical=await claimPhysicalRoot(tx,worktree,{hostId:localHostId(),
     ...(compatible?{worktreeId:compatible.worktree_id,coordinationPath:compatible.coordination_path!}:{})});
@@ -92,30 +108,42 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
   before(tx: BrainEngine): Promise<void>;
   after(tx: BrainEngine, incarnation: string): Promise<void>;
 }):Promise<Record<string,unknown>>{
-  if(!['add','claim','archive','restore','remove','purge','rebind','reclone'].includes(input.operation)) throw new OperationError('invalid_params','Unknown source lifecycle operation.');
-  for(const key of ['dryRun','refederate','confirmDestructive','createDirectory','expiredOnly','requireGitContent'] as const) if(input[key]!==undefined&&typeof input[key]!=='boolean') throw new OperationError('invalid_params',`${key} must be a boolean.`);
-  for(const key of ['path','name','expectedIncarnation','requestId','remoteUrl'] as const) if(input[key]!==undefined&&(typeof input[key]!=='string'||input[key]!.length>8192)) throw new OperationError('invalid_params',`${key} must be a bounded string.`);
-  if(input.config!==undefined&&(!input.config||Array.isArray(input.config)||typeof input.config!=='object'||Buffer.byteLength(JSON.stringify(input.config))>8192)) throw new OperationError('invalid_params','Source configuration must be a bounded object.');
-  if(!isValidSourceId(input.sourceId)) throw new OperationError('invalid_params','A valid explicit source ID is required.');
+  if(!['add','claim','archive','restore','remove','purge','rebind','reclone'].includes(input.operation)) throw opError('invalid_params','Unknown source lifecycle operation.',
+    'Use one of: add, claim, archive, restore, remove, purge, rebind, reclone.');
+  for(const key of ['dryRun','refederate','confirmDestructive','createDirectory','expiredOnly','requireGitContent'] as const) if(input[key]!==undefined&&typeof input[key]!=='boolean') throw opError('invalid_params',`${key} must be a boolean.`,`Pass ${key} as true or false, or omit it.`);
+  for(const key of ['path','name','expectedIncarnation','requestId','remoteUrl'] as const) if(input[key]!==undefined&&(typeof input[key]!=='string'||input[key]!.length>8192)) throw opError('invalid_params',`${key} must be a bounded string.`,`Pass ${key} as a string of at most 8192 characters, or omit it.`);
+  if(input.config!==undefined&&(!input.config||Array.isArray(input.config)||typeof input.config!=='object'||Buffer.byteLength(JSON.stringify(input.config))>8192)) throw opError('invalid_params','Source configuration must be a bounded object.',
+    'Pass the source configuration as one JSON object whose serialized form is at most 8192 bytes.');
+  if(!isValidSourceId(input.sourceId)) throw opError('invalid_params','A valid explicit source ID is required.',
+    'Name the source by its ID: lowercase letters, digits and inner hyphens, at most 32 characters. The command in fix lists registered IDs.',{fix:sourcesListFix()});
   const requestId=input.requestId??randomUUID();
   if(!isWriteRequestId(requestId) || input.expectedIncarnation!==undefined&&!isWriteRequestId(input.expectedIncarnation))
-    throw new OperationError('invalid_params','request_id and expected_incarnation must be UUIDs.');
-  if(['remove','purge','archive'].includes(input.operation)&&input.sourceId==='default') throw new OperationError('invalid_params','The default source cannot be removed or archived.');
+    throw opError('invalid_params','request_id and expected_incarnation must be UUIDs.',
+      `Omit request_id to get a generated one or pass a UUID; expected_incarnation is the source_incarnation the command in fix reports for '${input.sourceId}'.`,
+      {fix:ownerStatusFix(input.sourceId)});
+  if(['remove','purge','archive'].includes(input.operation)&&input.sourceId==='default') throw opError('invalid_params','The default source cannot be removed or archived.',
+    `The default source holds the brain's primary pages and always stays registered. ${input.operation} a named source instead; the command in fix lists them.`,{fix:sourcesListFix()});
   const principal=await topologyPrincipal(engine);
   const intent={...input,requestId:undefined,dryRun:undefined,automaticClaim:undefined};
   const prior=await priorTopologyChange(engine,principal,requestId,intent);
   if(prior) return topologyReceipt(prior);
   if(input.requireGitContent&&input.path&&(!isInsideGitRepo(input.path)||!hasTrackedContent(input.path)))
-    throw new OperationError('not_a_git_repo','The source path must contain committed Git content. Use --force to register an ordinary directory.');
+    throw opError('not_a_git_repo','The source path must contain committed Git content. Use --force to register an ordinary directory.',
+      `Commit the content in that directory with git first, or, if '${input.sourceId}' is meant to be a plain directory, rerun the add with --force; nothing was registered.`);
   if(input.operation==='reclone'||input.operation==='add'&&input.remoteUrl){
     const {runManagedSourceClone}=await import('./topology-clone.ts');
     return runManagedSourceClone(engine,input,principal,requestId,intent);
   }
   const root=input.path?localRoot(input.path,input.operation==='add'&&input.createDirectory):undefined;
-  if(['rebind','claim'].includes(input.operation)&&!root) throw new OperationError('invalid_params','The source operation requires its canonical path.');
+  if(['rebind','claim'].includes(input.operation)&&!root) throw opError('invalid_params','The source operation requires its canonical path.',
+    `Pass the canonical directory for '${input.sourceId}' (the one the command in fix reports, or its verified successor), then rerun the ${input.operation}.`,
+    {fix:ownerStatusFix(input.sourceId)});
   const [before]=await engine.executeRaw<SourceState>('SELECT id,incarnation,archived,local_path,config,name,last_commit FROM sources WHERE id=$1',[input.sourceId]);
-  if(input.operation!=='add'&&!before) throw new OperationError('not_found','Source not found.');
-  if(input.expectedIncarnation&&input.expectedIncarnation!==before?.incarnation) throw new OperationError('source_changed','The source was replaced.');
+  if(input.operation!=='add'&&!before) throw opError('not_found','Source not found.',
+    `No source '${input.sourceId}' is registered on this brain. Check the ID against the command in fix, which lists archived sources too.`,{fix:sourcesListFix()});
+  if(input.expectedIncarnation&&input.expectedIncarnation!==before?.incarnation) throw opError('source_changed','The source was replaced.',
+    `Source '${input.sourceId}' was removed and re-added after expected_incarnation was read, so nothing was changed. Read its current incarnation with the command in fix and confirm the ${input.operation} still applies before running it again.`,
+    {fix:ownerStatusFix(input.sourceId)});
   if(input.dryRun) return {dry_run:true,operation:input.operation,source_id:input.sourceId,source_incarnation:before?.incarnation??null,path:root?.source??before?.local_path??null};
   return withTopologyLocks(engine,input.sourceId,async bindings=>{
     // Hash canonical bytes while holding native exclusion, without a database
@@ -141,20 +169,32 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     if(source)source.config=parseSourceConfig(source.config);
     const repeated=await priorTopologyChange(tx,principal,requestId,intent);
     if(repeated){await lockTopologyPrincipal(tx,principal);return topologyReceipt(repeated);}
-    if((source?.incarnation??null)!==(before?.incarnation??null)) throw new OperationError('source_changed','The source changed during lifecycle preparation.');
+    if((source?.incarnation??null)!==(before?.incarnation??null)) throw opError('source_changed','The source changed during lifecycle preparation.',
+      `Source '${input.sourceId}' was replaced while this ${input.operation} was being prepared; the transaction rolled back and nothing changed. Check its current state with the command in fix before running the ${input.operation} again.`,
+      {fix:ownerStatusFix(input.sourceId)});
     if(admission) await admission.before(tx);
-    if(input.operation==='add'&&source&&(!root||source.local_path!==null)) throw new OperationError('source_id_taken','Source ID is already registered.');
-    if(input.operation==='purge'&&!input.expiredOnly&&!source?.archived) throw new OperationError('invalid_params','Only an archived source can be purged.');
-    if(['remove','purge'].includes(input.operation)&&!input.confirmDestructive) throw new OperationError('invalid_params','Source removal requires explicit destructive confirmation.');
+    if(input.operation==='add'&&source&&(!root||source.local_path!==null)) throw opError('source_id_taken','Source ID is already registered.',
+      `A source named '${input.sourceId}' already exists; nothing was added. Pick a different ID, or inspect the existing source with the command in fix.`,{fix:sourcesListFix()});
+    if(input.operation==='purge'&&!input.expiredOnly&&!source?.archived) throw opError('invalid_params','Only an archived source can be purged.',
+      `Source '${input.sourceId}' is active. Purge only follows an archive: gbrain sources archive ${input.sourceId} first, and confirm the purge with the user because it deletes the source's pages.`,{fix:sourcesListFix()});
+    if(['remove','purge'].includes(input.operation)&&!input.confirmDestructive) throw opError('invalid_params','Source removal requires explicit destructive confirmation.',
+      `Nothing was changed. ${input.operation} deletes the pages of source '${input.sourceId}' from the brain (its files stay on disk); ask the user, and only with their agreement run the command in fix.`,
+      {fix:{argv:['gbrain','sources',input.operation,input.sourceId,'--confirm-destructive'],preview_argv:['gbrain','sources',input.operation,input.sourceId,'--dry-run'],
+        consent:['destructive'],actor:'agent',requires_exclusive:false,
+        why:`Deletes every page of source '${input.sourceId}' from the brain database; local storage is retained.`,
+        user_message:`Removing source '${input.sourceId}' deletes its pages from the brain. Its files on disk stay. Do you want to go ahead?`}});
     if(missingCheckout) await assertRetirableWithoutCheckout(tx,input.sourceId,missingCheckout);
     const worktrees=bindings.map(binding=>binding.worktree_id);
     const currentBinding=bindings.find(binding=>binding.source_id===input.sourceId);
     const sameBinding=!!root&&!!currentBinding?.local_path&&currentBinding.local_path===root.worktree
       &&nativeFilesystemPath(join(currentBinding.local_path,currentBinding.relative_path))===nativeFilesystemPath(root.source);
     if(input.operation==='claim'&&currentBinding&&!sameBinding)
-      throw new OperationError('writer_transfer_required','The source already has a different canonical binding. Use rebind or verified ownership transfer.');
+      throw opError('writer_transfer_required','The source already has a different canonical binding. Use rebind or verified ownership transfer.',
+        `Source '${input.sourceId}' is already bound to another directory or host; nothing was claimed. Inspect the binding with the command in fix. Moving it (gbrain sources set-path on this host, or a writer transfer between hosts) is a topology change for the user to decide.`,
+        {fix:ownerStatusFix(input.sourceId)});
     if(input.operation==='claim'&&!currentBinding&&source?.local_path&&realpathSync(source.local_path)!==root!.source)
-      throw new OperationError('source_changed','The requested claim path differs from the configured source root.');
+      throw opError('source_changed','The requested claim path differs from the configured source root.',
+        `Claim '${input.sourceId}' at the local_path the command in fix reports, or move it to the new directory with gbrain sources set-path ${input.sourceId}; nothing was claimed.`,{fix:sourcesListFix()});
     const expired=input.expiredOnly?await tx.executeRaw(`SELECT id FROM sources WHERE id=$1 AND ${EXPIRED_ARCHIVE_SQL}`,[input.sourceId]):null;
     const noop=expired?.length===0 || input.operation==='archive'&&source?.archived || input.operation==='restore'&&!source?.archived
       || input.operation==='claim'&&!!currentBinding || input.operation==='rebind'&&sameBinding;
@@ -170,11 +210,17 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       const binding=bindings.find(value=>value.source_id===input.sourceId);
       if(!binding&&source?.local_path===null)throw new OperationError('writer_registration_required','This source has no canonical filesystem binding.',
         WRITER_INSPECTION_HINT);
-      if(!binding?.local_path || !existsSync(binding.local_path)) throw new OperationError('recovery_required','The original checkout is unavailable; recover its last verified manifest before rebinding.');
-      if(manifests.get(binding.local_path)!.digest!==manifests.get(root!.worktree)!.digest) throw new OperationError('writer_manifest_mismatch','The new checkout differs from the current canonical manifest, including deletions.');
+      if(!binding?.local_path || !existsSync(binding.local_path)) throw opError('recovery_required','The original checkout is unavailable; recover its last verified manifest before rebinding.',
+        `Nothing was rebound. Restore the original checkout of '${input.sourceId}' at the path the command in fix reports, with its last verified contents, then rerun set-path.`,
+        {fix:ownerStatusFix(input.sourceId)});
+      if(manifests.get(binding.local_path)!.digest!==manifests.get(root!.worktree)!.digest) throw opError('writer_manifest_mismatch','The new checkout differs from the current canonical manifest, including deletions.',
+        `Nothing was rebound. Make the new directory an exact copy of the current checkout of '${input.sourceId}' (same files, nothing extra or missing), then rerun set-path.`,
+        {fix:ownerStatusFix(input.sourceId)});
     }
     const ownedSourcePath=currentBinding?.local_path?join(currentBinding.local_path,currentBinding.relative_path):source?.local_path;
-    if(input.operation==='restore'&&ownedSourcePath&&!existsSync(ownedSourcePath)) throw new OperationError('recovery_required','Restore requires the verified canonical checkout. Reclone it before restoring the source.');
+    if(input.operation==='restore'&&ownedSourcePath&&!existsSync(ownedSourcePath)) throw opError('recovery_required','Restore requires the verified canonical checkout. Reclone it before restoring the source.',
+      `Nothing was restored. Recreate the checkout of '${input.sourceId}' with gbrain sources reclone ${input.sourceId}, then run gbrain sources restore ${input.sourceId} again.`,
+      {fix:ownerStatusFix(input.sourceId)});
     await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));
     await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
     const result=await withCoordinatedWrite(tx,sources,async()=>{
@@ -195,8 +241,10 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         await tx.executeRaw('UPDATE sources SET local_path=$2 WHERE id=$1',[input.sourceId,root!.source]);
         const id=await installTopologyBinding(tx,input.sourceId,incarnation,root!,bindings);if(!worktrees.includes(id))worktrees.push(id);
       }else{
-        const refs=await tx.executeRaw('SELECT client_id FROM oauth_clients WHERE source_id=$1 LIMIT 1',[input.sourceId]);
-        if(refs.length) throw new OperationError('source_referenced','OAuth clients still reference this source. Revoke and remove those registrations first.');
+        const refs=await tx.executeRaw<{client_id:string}>('SELECT client_id FROM oauth_clients WHERE source_id=$1 LIMIT 1',[input.sourceId]);
+        if(refs.length) throw opError('source_referenced','OAuth clients still reference this source. Revoke and remove those registrations first.',
+          `Nothing was removed. OAuth client ${refs[0].client_id} (and possibly others) is bound to '${input.sourceId}'; list them with the command in fix and ask the user before revoking any, since revoking disconnects that client.`,
+          {fix:readFix('Lists OAuth clients with the source each is bound to.',{argv:['gbrain','auth','clients','--json']})});
         const [impact]=await tx.executeRaw<{count:string}>('SELECT count(*)::text AS count FROM pages WHERE source_id=$1',[input.sourceId]);
         pagesDeleted=Number(impact.count);
         await tx.executeRaw('DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid',[input.sourceId,incarnation]);

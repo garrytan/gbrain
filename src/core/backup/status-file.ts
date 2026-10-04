@@ -109,6 +109,26 @@ export interface BackupStatus {
   degraded?: boolean;
   remote_check_at?: string;
   recovery_scope?: string;
+  /**
+   * E7: how much the brain holds and since when, measured with the verdict.
+   * Backup coaching (doctor warn, MCP notice, CLI rail) waits until the brain
+   * holds >= BACKUP_COACH_MIN_ITEMS pages+facts or is >= BACKUP_COACH_MIN_AGE_DAYS
+   * old; before that doctor reports `severity: 'info'`. Absent on old caches
+   * (treated as mature, the pre-E7 behaviour).
+   */
+  maturity?: { items: number; since: string | null };
+}
+
+export const BACKUP_COACH_MIN_ITEMS = 25;
+export const BACKUP_COACH_MIN_AGE_DAYS = 7;
+
+/** E7: is the brain old or full enough that a missing backup is worth coaching about? */
+export function backupCoachingDue(s: Pick<BackupStatus, 'maturity'>, now: number = Date.now()): boolean {
+  const m = s.maturity;
+  if (!m) return true;
+  if (m.items >= BACKUP_COACH_MIN_ITEMS) return true;
+  const since = m.since ? Date.parse(m.since) : NaN;
+  return Number.isFinite(since) && now - since >= BACKUP_COACH_MIN_AGE_DAYS * 24 * 60 * 60 * 1000;
 }
 
 export const BACKUP_VERIFICATION_MAX_AGE_MS = 60 * 60 * 1000;
@@ -471,7 +491,7 @@ const NOOP_DECISION: BackupNagDecision = { show: false, record: () => {} };
  */
 export function backupNagGate(channel: string, s: BackupStatus, now: number = Date.now()): BackupNagDecision {
   try {
-    if (s.overall !== 'warn' || backupCheckDisabled()) return NOOP_DECISION;
+    if (s.overall !== 'warn' || backupCheckDisabled() || !backupCoachingDue(s, now)) return NOOP_DECISION;
     const state = loadBackupNagState();
     const nowIso = new Date(now).toISOString();
     const month = monthBucket(nowIso);

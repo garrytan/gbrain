@@ -49,6 +49,7 @@ import { readAllSourceHolds } from '../src/core/connectors/item-holds-store.ts';
 import { retryHeld } from '../src/commands/sources-retry-held.ts';
 import { planRepairSteps } from '../src/core/remediation/repairs.ts';
 import { runRemediate } from '../src/commands/doctor/remediate.ts';
+import { approvedRemediateArgs } from './helpers/remediate-approval.ts';
 import { AUTO_REPAIR_REGISTRY } from '../src/core/repair/registry.ts';
 import { capture } from './helpers/wave-scenarios.ts';
 import { createConnectorFixture, contact, json, options, withGoogleAccount } from './helpers/connector-fixture.ts';
@@ -223,7 +224,7 @@ test('X11: the remediation run reaches every new repair kind, runs the free ones
     const planned = Object.fromEntries((await planRepairSteps(engine, { noEmbed: true })).map(step => [step.kind, step]));
     expect(planned['request-indexes']).toMatchObject({ paid: false, embeds: 'none', command: 'gbrain repair request-indexes --apply' });
     expect(planned['orphan-bindings']).toMatchObject({ paid: false, embeds: 'none', command: 'gbrain repair orphan-bindings --apply' });
-    const run = JSON.parse((await capture(() => runRemediate(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json']))).out);
+    const run = JSON.parse((await capture(async () => runRemediate(engine, await approvedRemediateArgs(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json'])))).out);
     await disposePersistenceConsumer(engine);
     const byKind = Object.fromEntries(run.repairs.map((r: { kind: string }) => [r.kind, r]));
     expect(byKind['request-indexes']).toMatchObject({ status: 'completed' });

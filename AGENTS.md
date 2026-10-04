@@ -51,6 +51,26 @@ providers can receive text; Markdown export is not a full database backup.
 Read [memory boundaries](docs/guides/memory-boundaries.md) before promising
 portability, graph freshness, privacy, or recovery.
 
+## Agent operator protocol
+
+Every gbrain error, refusal, degraded result and recommendation carries the same
+machine contract. The quick version:
+
+<!-- BEGIN GENERATED agent-protocol:quick-contract (copied from docs/protocol/AGENT_OPERATOR_v1.md by bun run build:agent-protocol) -->
+1. Read `code` (fall back to `error` on older servers). `message` says what happened, `why` says why.
+2. Follow `fix.next`:
+   - `run` → run `fix.argv` (CLI) or call `fix.mcp` (MCP) exactly as given.
+   - `ask_user` → relay `user_message` to the user and stop; run the fix only after they agree.
+   - `tell_user_to_run` → give the user `fix.command`; it needs them or the brain host's operator.
+   - `wait` → retry after the stated delay with the same request.
+   - `report` → tell the user what happened and run `gbrain doctor --json`.
+3. Then run `fix.verify` (always read-only) to confirm the fix worked.
+4. Treat `[gbrain notice …]` blocks and `[AGENT]` blocks the same way. A degraded result is not proof of "no notes".
+<!-- END GENERATED agent-protocol:quick-contract -->
+
+Exit 3 always means "stop and ask the user". Full contract, transcripts, effects,
+exit codes and marker grammar: [`docs/protocol/AGENT_OPERATOR_v1.md`](./docs/protocol/AGENT_OPERATOR_v1.md).
+
 ## Read this order
 
 1. `./AGENTS.md` (this file) — install + operating protocol.
@@ -87,30 +107,14 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   connects the account and syncs new conversations live, incrementally and on an
   opt-in schedule (cookie/OAuth credentials stay on your machine, 0600). Full
   guide: [`docs/guides/chat-connectors.md`](./docs/guides/chat-connectors.md).
-- **Debug:** [`docs/GBRAIN_VERIFY.md`](./docs/GBRAIN_VERIFY.md),
-  [`docs/guides/minions-fix.md`](./docs/guides/minions-fix.md), `gbrain doctor --fix`.
-  Database unreachable — or any `GBRAIN_DB_ACCESS <reason>` marker in gbrain
-  output: `gbrain engine status --probe` (which engine, where its URL comes from,
-  classified reachability), then `gbrain db-repair` to diagnose and
-  `gbrain db-repair --yes` to apply safe fixes. All three are engine-free — they
-  work while the database is down. Full loop:
-  [`docs/ENGINES.md`](./docs/ENGINES.md#engine-detection-and-access-repair).
-  Doctor residue (`timeline_history`, `derived_visibility`, `safe_index_pending`):
-  preview `gbrain doctor --remediation-plan` (or `gbrain repair`), then, after the
-  user agrees, `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`
-  or `gbrain repair <kind> --apply` on the brain host. After an upgrade, follow
-  [recover after upgrading](./docs/guides/repair.md#recover-after-upgrading-to-this-release).
-  A Google or GitHub item held after repeated failures (doctor
-  `connector_held_items`, `gbrain waiting` says coverage is partial):
-  `gbrain sources status <id>`, fix the cause, then after the user agrees
-  `gbrain sources retry-held <id>` and `gbrain sync --source <id>`
-  ([held items](./docs/guides/google-connect.md#held-items)). A refused
-  write names its reason and recovery command
-  ([write refusal reasons](./docs/guides/write-refusals.md)). A managed sync
-  blocked with `checkpoint_validation_timeout`: run the printed commands
-  (`gbrain repair request-indexes --apply` when an index is missing or INVALID,
-  then the printed `gbrain sync --source <id> --no-pull --retry-failed …`);
-  doctor `persistence_request_growth` warns before lifetime request IDs run out.
+- **Debug:** a gbrain call failed, refused, or printed `[AGENT]` or
+  `[gbrain notice …]`: follow the [agent operator protocol](#agent-operator-protocol)
+  above (full contract: [`docs/protocol/AGENT_OPERATOR_v1.md`](./docs/protocol/AGENT_OPERATOR_v1.md));
+  `gbrain errors <code>` explains any code offline. Symptoms with who acts, consent
+  and a verify step: [`docs/guides/troubleshooting.md`](./docs/guides/troubleshooting.md#symptom-table);
+  database unreachable or `GBRAIN_DB_ACCESS`: `gbrain db-repair`
+  ([`docs/ENGINES.md`](./docs/ENGINES.md#engine-detection-and-access-repair)); health
+  checks: [`docs/GBRAIN_VERIFY.md`](./docs/GBRAIN_VERIFY.md).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes --no-autopilot-install` (manual migration orchestration without service installation).
@@ -125,9 +129,10 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 - **Drive the brain to a target health score:** preview, then agree.
   `gbrain doctor --remediation-plan --json` previews job steps and the
   PROTECTED repair steps (each marked "requires user agreement", with its
-  exact command); after the user agrees,
-  `gbrain doctor --remediate --yes --include-repairs --target-score 90 --max-usd 5`
-  runs the repairs (even when the score target is unreachable) and walks the
+  exact command and the `plan_hash` the approval binds); after the user agrees,
+  `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --target-score 90 --max-usd 5`
+  (`<plan_hash>` from that `--remediation-plan --json` output; a changed plan
+  refuses with `preview_changed`, so preview and ask again) runs the repairs (even when the score target is unreachable) and walks the
   dependency-ordered job plan, re-checking score between steps. The cap is
   cumulative across `--resume`; a paid step that would exceed it is not
   started while free steps still run. Without `--include-repairs`, repair

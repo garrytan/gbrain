@@ -49,6 +49,7 @@ import { runExtractConversationFactsCore } from '../src/commands/extract-convers
 import { writeSingleFact } from '../src/core/facts/write-single.ts';
 import { postUpgradeRecoveryBanner } from '../src/commands/doctor/upgrade-banner.ts';
 import { runRemediate, runRemediationPlan } from '../src/commands/doctor/remediate.ts';
+import { approvedRemediateArgs } from './helpers/remediate-approval.ts';
 import { AUTO_REPAIR_REGISTRY } from '../src/core/repair/registry.ts';
 import { HOOK_EVENTS, runHook } from '../src/commands/hook.ts';
 import { CORPUS_INGESTED_SUFFIX, runMaintenanceSweep } from '../src/core/sweep.ts';
@@ -220,7 +221,7 @@ for (const backend of testBackends()) {
         expect(planText).not.toMatch(/gbrain repair (stale-atoms|extractor-facts) --apply/);
 
         // gbrain doctor --remediate --include-repairs never runs them; each finding says explicit_kind_required with the preview.
-        const run = JSON.parse((await capture(() => runRemediate(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json']))).out) as {
+        const run = JSON.parse((await capture(async () => runRemediate(engine, await approvedRemediateArgs(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json'])))).out) as {
           repairs?: Array<{ kind: string }>; findings: Array<{ check_id: string; class: string; repair_kind?: string; command?: string }> };
         expect((run.repairs ?? []).map(r => r.kind).filter(kind => kind in previews)).toEqual([]);
         expect(run.findings.filter(f => f.class === 'explicit_kind_required').map(f => [f.check_id, f.repair_kind, f.command])).toEqual([

@@ -1,4 +1,4 @@
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
 import { REMOTE_PRIVATE_PAGES_KEY, privatePagesFilterFragment } from '../search/private-visibility.ts';
 import type { SqlEngine, WriteAuthority } from './model.ts';
 
@@ -15,5 +15,5 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
   if (!(authority.excludePrivate ?? true) && !await excludesPrivateWrites(engine, true)) return;
   const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
     AND NOT (${privatePagesFilterFragment('pages')}) LIMIT 1`, [authority.sourceId, slug]);
-  if (rows.length) throw new OperationError('page_not_found', 'Page not found.');
+  if (rows.length) throw opError('page_not_found', 'Page not found.', 'This page does not exist or is not visible to this connection, so nothing was written. Write to a different slug, or confirm the slug with a search first.');
 }

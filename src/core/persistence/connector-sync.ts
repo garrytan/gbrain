@@ -8,7 +8,9 @@ import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { slugifyPath } from '../sync.ts';
 import type { Page } from '../types.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import type { Action } from '../agent-output.ts';
+import type { RegistryCode } from '../error-registry.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
@@ -31,7 +33,7 @@ import { LockStolenError, syncLockId, withRefreshingLock, type DbLockHandle } fr
 import { ownedGoogleReceipts, prepareGoogleReceiptPatch, type GoogleReceipts } from './connector-google-receipts.ts';
 import { connectorCheckpointKey, connectorIdentity, type ConnectorIdentity, type ConnectorKind } from './connector-identity.ts';
 import { readManagedConnectorState, recordConnectorSyncAttempt, sameConnectorAccount, writeManagedConnectorState, type ConnectorAccount, type ConnectorPendingEntry, type ConnectorRunCounts, type ConnectorState } from './connector-state.ts';
-import { connectorAccountChanged, connectorFenceHint, docsAnchor, CONNECTOR_INTENT_OUTDATED_OLD_HOST, CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE } from './connector-errors.ts';
+import { connectorAccountChanged, connectorFenceHint, docsAnchor, receiptDeliveredHint, CONNECTOR_INTENT_OUTDATED_OLD_HOST, CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE } from './connector-errors.ts';
 import { inspectUnchanged, screeningRequest } from './noop-kernel.ts';
 import { conceptPreservationHold, preserveCanonicalFences } from '../cycle/concept-publication.ts';
 import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
@@ -108,13 +110,43 @@ interface ConnectorIntent extends Record<string, unknown> {
   fileBeforeHash: string | null;
 }
 
+/** Read-only: the owner's view of a source's binding, queue and blocking receipts. */
+function ownerStatusFix(sourceId: string, why: string): Action {
+  return { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', why, requires_exclusive: false };
+}
+
+/** Read-only: one connector write receipt; connector writes run under the local CLI writer, so the CLI reads its own receipt. */
+function receiptFix(requestId: string, why: string): Action {
+  return { argv: ['gbrain', 'write-request', '--', requestId], consent: [], actor: 'agent', why, requires_exclusive: false };
+}
+
+/** The next run of a connector source's sync: it resolves the recorded pending set before it sweeps. */
+function connectorSyncFix(sourceId: string, why: string): Action {
+  return { argv: ['gbrain', 'sync', '--source', sourceId], consent: [], actor: 'agent', why, requires_exclusive: false };
+}
+
+/**
+ * Publishing an admitted connector item was refused. The coordinator keeps
+ * only code and message, so the suggestion stands alone: read the receipt,
+ * then re-attempt the item explicitly once the cause is fixed.
+ */
+function connectorPublicationRefusal(code: RegistryCode, message: string, row: WriteRequest, cause: string): OperationError {
+  return opError(code, message, `${cause} Read receipt ${row.request_id} first (gbrain write-request -- ${row.request_id}); once it is final and the cause is fixed, `
+    + `gbrain sync --source ${row.source_id} --retry-failed re-attempts the item under a new request ID.`,
+  { fix: receiptFix(row.request_id, 'The receipt records whether this connector write published anything; nothing is resubmitted until it is final.') });
+}
+
 /** The connector binding's owner and incarnation checks; returns the paths they prove present. */
 function checkedConnectorBinding(sourceId: string, source: ConnectorSource, binding: WorktreeBinding) {
   if (binding.owner_host_id !== localHostId() || !binding.local_path || !binding.coordination_path) {
-    throw new OperationError('owner_unavailable', 'The connector canonical owner is unavailable on this host.');
+    throw opError('owner_unavailable', 'The connector canonical owner is unavailable on this host.',
+      `Source ${sourceId} is owned by another host or its worktree binding is incomplete; run its connector sync on the owner host that gbrain sources writer status --source ${sourceId} --json names.`,
+      { fix: ownerStatusFix(sourceId, 'Shows which host owns the source and whether its binding records a local and coordination path.') });
   }
   if (binding.source_id !== sourceId || binding.source_incarnation !== source.incarnation || !source.local_path) {
-    throw new OperationError('source_changed', 'The connector source does not match its canonical binding.');
+    throw opError('source_changed', 'The connector source does not match its canonical binding.',
+      `The canonical binding of ${sourceId} belongs to another source incarnation, or the source has no local path. Inspect the binding before syncing ${sourceId} again; nothing was written.`,
+      { fix: ownerStatusFix(sourceId, 'Shows the binding\'s source incarnation and recorded paths next to the source registration.') });
   }
   return { localPath: binding.local_path, coordinationPath: binding.coordination_path, sourcePath: source.local_path };
 }
@@ -132,7 +164,9 @@ function connectorBindingRoot(sourceId: string, source: ConnectorSource, binding
     }
     return root;
   } catch {
-    throw new OperationError('source_changed', 'The connector directory no longer matches its canonical source root.');
+    throw opError('source_changed', 'The connector directory no longer matches its canonical source root.',
+      `The directory configured for ${sourceId} (g_dir, gh_dir or the source path) no longer resolves to the owner's recorded canonical root. Restore that directory, then run gbrain sync --source ${sourceId}; nothing was written.`,
+      { fix: ownerStatusFix(sourceId, 'Shows the canonical root the owner recorded, to compare with the configured connector directory.') });
   }
 }
 
@@ -161,7 +195,9 @@ async function connectorFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 
   snapshot: PageSnapshot | null, content: string | null, sourcePath: string | null, root: string | null): Promise<PreparedMutation['file']> {
   if (!row.worktree_id || snapshot || !sourcePath || !root) return prepareFileTarget(engine, row, snapshot, content);
   const path = resolve(root, sourcePath);
-  if (!isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The canonical file target is outside its registered source.');
+  if (!isWriteTargetContained(path, root)) throw opError('source_changed', 'The canonical file target is outside its registered source.',
+    `The file for ${row.slug} would resolve outside the registered root of ${row.source_id}, so nothing was written. Check the root with gbrain sources writer status --source ${row.source_id} --json before syncing again.`,
+    { fix: ownerStatusFix(row.source_id, 'Shows the registered canonical root the connector file must stay inside.') });
   const before = persistenceFileHash(path);
   if (before && content !== null && before !== sha256(content)) {
     throw new OperationError('source_changed', 'An unindexed file already occupies the canonical page path.', 'Import the file before replacing it.');
@@ -177,16 +213,27 @@ export async function beginConnectorSync(engine: BrainEngine, sourceId: string, 
   validateManagedSyncOptions(opts);
   if (opts.dryRun || opts.skipFailed || opts.srcSubpath || opts.exclude?.length || opts.includeHidden?.length ||
       opts.includeGitignored || opts.workingTree || opts.strategy === 'code' || connector === 'google' && opts.githubItem) {
-    throw new OperationError('invalid_params', 'Managed connector sync does not support dry runs, Git file filters, or --skip-failed.');
+    throw opError('invalid_params', 'Managed connector sync does not support dry runs, Git file filters, or --skip-failed.',
+      `Run gbrain sync --source ${sourceId} without --dry-run, --skip-failed, --src-subpath, --exclude, --include-hidden, --include-gitignored, --working-tree or --strategy code; a connector imports provider items, not Git files. Nothing was synced.`,
+      { fix: connectorSyncFix(sourceId, 'The plain connector sync is the supported managed run; it keeps every pending-write and checkpoint guard.') });
   }
   const caller = currentSubmissionAuthority();
-  if (caller && caller.kind !== 'application') throw new OperationError('permission_denied', 'Connector sync requires a trusted local CLI writer; remote jobs cannot acquire connector credentials.');
+  if (caller && caller.kind !== 'application') throw opError('permission_denied', 'Connector sync requires a trusted local CLI writer; remote jobs cannot acquire connector credentials.',
+    `Connector credentials stay on the brain host, so ${sourceId} syncs only from the gbrain CLI there: gbrain sync --source ${sourceId}. Ask the brain host's operator to run it.`,
+    { fix: { ...connectorSyncFix(sourceId, 'Only the trusted local CLI on the brain host can read connector credentials.'), actor: 'host_admin',
+      user_message: `The ${connector} connector source ${sourceId} has to sync on the machine that hosts the brain. Please ask whoever runs it to run the command shown there.` } });
   const [source] = await engine.executeRaw<ConnectorSource>('SELECT incarnation,archived,local_path,config FROM sources WHERE id=$1', [sourceId]);
-  if (!source || source.archived) throw new OperationError('source_changed', 'The connector source is not active.');
-  if (source.config.kind !== connector) throw new OperationError('writer_coordinator_required', 'Managed connector sync requires a registered connector source; legacy filesystem calls are unsupported.');
+  if (!source || source.archived) throw opError('source_changed', 'The connector source is not active.',
+    `Source ${sourceId} is missing or archived, so nothing was synced. Check it in gbrain sources list --json; an archived connector source syncs again only after gbrain sources restore ${sourceId}.`,
+    { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', why: 'Lists every source with its archived state.', requires_exclusive: false } });
+  if (source.config.kind !== connector) throw opError('writer_coordinator_required', 'Managed connector sync requires a registered connector source; legacy filesystem calls are unsupported.',
+    `Source ${sourceId} is not registered as a ${connector} connector source. Run gbrain sync --source ${sourceId}, which dispatches to the importer its registration names.`,
+    { fix: connectorSyncFix(sourceId, 'The sync command routes a source to its registered connector or filesystem importer.') });
   const identity = connectorIdentity(connector, source.config, source.local_path);
   if (digest(identity.config) !== digest(suppliedConfig) || opts.sourceId !== undefined && opts.sourceId !== sourceId) {
-    throw new OperationError('source_changed', 'Connector options do not match the registered source.');
+    throw opError('source_changed', 'Connector options do not match the registered source.',
+      `The connector options supplied for ${sourceId} differ from its registered configuration, so nothing was synced. Run gbrain sync --source ${sourceId}, which reads the registered configuration itself.`,
+      { fix: connectorSyncFix(sourceId, 'The sync command loads the source\'s registered connector configuration instead of caller-supplied options.') });
   }
   const authority = await managedSyncAuthority(engine, sourceId, source.incarnation, source.local_path ?? '');
   const binding = await getWorktreeBinding(engine, sourceId);
@@ -222,7 +269,9 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
     const combined = opts.signal ? AbortSignal.any([opts.signal, signal]) : signal;
     const options = { ...opts, signal: combined };
     const session = await beginConnectorSync(engine, sourceId, connector, config, options, { handle, signal: combined });
-    if (!session) throw new OperationError('source_changed', 'The managed connector mode changed before the sweep.');
+    if (!session) throw opError('source_changed', 'The managed connector mode changed before the sweep.',
+      `Managed persistence was switched while the sync of ${sourceId} started, so nothing was swept. Check the mode with gbrain sources writer status --source ${sourceId} --json, then run gbrain sync --source ${sourceId}.`,
+      { fix: ownerStatusFix(sourceId, 'Shows whether managed persistence is active for this brain and source.') });
     // Only a validated, authorized sweep opens the autopilot dispatch gate (#5673); the
     // session keeps the stamp in the state row it writes back.
     await recordConnectorSyncAttempt(engine, sourceId);
@@ -396,13 +445,17 @@ export class ManagedConnectorSync {
     const [source] = await engine.executeRaw<ConnectorSource>('SELECT incarnation,archived,local_path,config FROM sources WHERE id=$1', [this.sourceId]);
     if (!source || source.archived || source.incarnation !== this.source.incarnation || source.local_path !== this.source.local_path ||
         source.config.kind !== this.connector || connectorIdentity(this.connector, source.config, source.local_path).digest !== this.identity.digest) {
-      throw new OperationError('source_changed', 'The connector source changed during the sweep.');
+      throw opError('source_changed', 'The connector source changed during the sweep.',
+        `The configuration, path or incarnation of ${this.sourceId} changed while this sweep ran; writes it already admitted keep their receipts. Inspect the source on the owner before running gbrain sync --source ${this.sourceId} again.`,
+        { fix: ownerStatusFix(this.sourceId, 'Shows the current registration and every pending or blocked receipt of the source.') });
     }
     const binding = await getWorktreeBinding(engine, this.sourceId);
     if ((binding?.worktree_id ?? null) !== (this.binding?.worktree_id ?? null) ||
         String(binding?.owner_epoch) !== String(this.binding?.owner_epoch) ||
         connectorBindingRoot(this.sourceId, source, binding) !== this.canonicalRoot) {
-      throw new OperationError('source_changed', 'The connector ownership changed during the sweep.');
+      throw opError('source_changed', 'The connector ownership changed during the sweep.',
+        `The owner binding or canonical root of ${this.sourceId} changed while this sweep ran; writes it already admitted keep their receipts. Inspect the owner before running gbrain sync --source ${this.sourceId} again.`,
+        { fix: ownerStatusFix(this.sourceId, 'Shows the current owner, epoch and canonical root of the source.') });
     }
     return binding;
   }
@@ -415,7 +468,10 @@ export class ManagedConnectorSync {
   }
   private async authorizeRetryReceipt(engine: BrainEngine, row: WriteRequest): Promise<void> {
     if (row.source_id !== this.sourceId || row.principal_kind !== this.authority.writer.principal.kind || row.principal_id !== this.authority.writer.principal.id) {
-      throw new OperationError('write_pending', 'Other accepted work must drain before connector retry approval.');
+      throw opError('write_pending', 'Other accepted work must drain before connector retry approval.',
+        `Request ${row.request_id} of another writer or source is still ahead of the connector retry for ${this.sourceId}; nothing was re-approved. `
+          + `Inspect it with gbrain sources writer status --source ${row.source_id} --json and let it finish before the next run of the same connector sync.`,
+        { fix: ownerStatusFix(row.source_id, 'Shows the accepted request that blocks the retry and whether it is still running or needs recovery.') });
     }
     await authorizeStoredRequest(engine, row);
   }
@@ -423,8 +479,11 @@ export class ManagedConnectorSync {
     const row = await this.retryBlocker(engine);
     if (!row) return;
     await this.authorizeRetryReceipt(engine, row);
-    const error = new OperationError(row.recovery || isTerminal(row) ? 'recovery_required' : 'write_pending',
-      'Accepted work must finish before connector retry approval.');
+    const error = opError(row.recovery || isTerminal(row) ? 'recovery_required' : 'write_pending',
+      'Accepted work must finish before connector retry approval.',
+      `Request ${row.request_id} for ${row.slug} in ${row.source_id} is ${row.state}${row.recovery ? ' and needs recovery' : ''}; nothing was re-approved. `
+        + `Read its receipt with gbrain write-request -- ${row.request_id} and do not resubmit it; once it is final, run the same connector sync for ${this.sourceId} again.`,
+      { fix: receiptFix(row.request_id, 'The receipt says whether the blocking write committed, failed or still needs recovery.') });
     error.writeRequest = receiptFor(row);
     error.writeError = row.recovery || isTerminal(row) ? 'recovery_required' : 'write_pending';
     throw error;
@@ -465,7 +524,10 @@ export class ManagedConnectorSync {
     throw error;
   }
   state<T>(empty: T): T {
-    if (this.resetRequested) throw new OperationError('storage_error', 'A requested checkpoint reset runs after the connector account check, before the checkpoint is read.');
+    if (this.resetRequested) throw opError('storage_error', 'A requested checkpoint reset runs after the connector account check, before the checkpoint is read.',
+      `The ${this.connector} connector read its checkpoint before the account check that applies the reset, so nothing was reset or synced for ${this.sourceId}. `
+        + 'This is a defect in gbrain, not a caller mistake: report it to the user along with the output of gbrain doctor --json.',
+      { fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', why: 'Doctor output identifies the installed version and brain state for the bug report.', requires_exclusive: false } });
     return structuredClone((this.checkpoint[0] as { state?: T } | undefined)?.state ?? empty);
   }
   async page(slug: string) {
@@ -490,7 +552,9 @@ export class ManagedConnectorSync {
     return done.pending || done.row.outcome?.noop !== true;
   }
   async patchGoogleReceipts(slug: string, receipts: GoogleReceipts, pageId: number): Promise<GoogleReceipts> {
-    if (this.connector !== 'google') throw new OperationError('invalid_params', 'Attachment repair requires a Google source.');
+    if (this.connector !== 'google') throw opError('invalid_params', 'Attachment repair requires a Google source.',
+      `Source ${this.sourceId} is a ${this.connector} connector; Gmail attachment repair runs only on a Google source with Gmail. Pick one from gbrain sources list --json, then run gbrain google attachments backfill --source with its id.`,
+      { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', why: 'Lists every source with its connector kind.', requires_exclusive: false } });
     const done = await this.submit('connector_v2_google_receipts', slug, null, { googleReceipts: receipts, googlePageId: pageId, noEmbed: true });
     return (done.row!.intent as ConnectorIntent).googleReceipts!;
   }
@@ -702,14 +766,18 @@ export class ManagedConnectorSync {
     await this.recover(slug);
     const snapshot = await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId, includeDeleted: true });
     if (kind === 'connector_v2_google_receipts') {
-      if (!snapshot || snapshot.page.id !== extra.googlePageId) throw new OperationError('page_identity_changed', 'The historical Gmail page was deleted or recreated.');
+      if (!snapshot || snapshot.page.id !== extra.googlePageId) throw opError('page_identity_changed', 'The historical Gmail page was deleted or recreated.',
+        `Page ${slug} in ${this.sourceId} was deleted or recreated after the attachment repair read it, so its receipts were not patched. Read the current page, then run gbrain google attachments backfill --source ${this.sourceId} again.`,
+        { fix: { argv: ['gbrain', 'get', '--source', this.sourceId, '--', slug], consent: [], actor: 'agent', why: 'Shows whether the page exists now and which page id it carries.', requires_exclusive: false } });
       extra.googleReceipts = ownedGoogleReceipts(snapshot, (this.identity.config as GoogleSourceConfig).account, extra.googleReceipts!);
       sourcePath = snapshot!.page.source_path!;
     }
     const file = kind === 'connector_v2_checkpoint' ? undefined : await connectorFileTarget(this.engine,
       { source_id: this.sourceId, worktree_id: this.binding?.worktree_id ?? null, slug }, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
     if (file && sourcePath && resolve(file.path) !== resolve(this.canonicalRoot!, sourcePath)) {
-      throw new OperationError('source_changed', 'The connector source path no longer names its canonical file.');
+      throw opError('source_changed', 'The connector source path no longer names its canonical file.',
+        `The recorded path of ${slug} no longer resolves to its canonical file under the root of ${this.sourceId}, so nothing was submitted. Inspect the root and binding before running gbrain sync --source ${this.sourceId} again.`,
+        { fix: ownerStatusFix(this.sourceId, 'Shows the canonical root the connector file path must resolve under.') });
     }
     const intent: ConnectorIntent = { kind, connector: this.connector, sourceRoot: this.source.local_path,
       configHash: this.identity.digest, syncAuthority: this.authority, expected_revision: snapshot?.revision ?? null,
@@ -739,7 +807,9 @@ export class ManagedConnectorSync {
       if (row) {
         await authorizeStoredRequest(engine, row);
         assertReplayIntent(row, intentDigest(input));
-      } else if (retry && !retry.pending) throw new OperationError('storage_error', 'The approved connector retry receipt is unavailable.');
+      } else if (retry && !retry.pending) throw opError('storage_error', 'The approved connector retry receipt is unavailable.',
+        `The retry approved for ${slug} in ${this.sourceId} points at request ${retry.requestId}, which no longer exists; nothing was admitted. Inspect the source's receipts, then re-approve held items with gbrain sources retry-held ${this.sourceId}.`,
+        { fix: ownerStatusFix(this.sourceId, 'Shows the source\'s receipts and any retained recovery before a retry is approved again.') });
       return { retry, input, row };
     };
     const automatic = this.autoRetry.has(baseRequestId);
@@ -754,7 +824,9 @@ export class ManagedConnectorSync {
       try {
         if (this.binding && !lock) {
           await this.refuseRetryBlocker(this.engine);
-          throw new OperationError('write_pending', 'The canonical owner is busy; retry approval has not changed.');
+          throw opError('write_pending', 'The canonical owner is busy; retry approval has not changed.',
+            `The owner of ${this.sourceId} is busy, so the failed write ${failedRow.request_id} for ${slug} was not re-approved and nothing new was admitted. Check the owner's queue; the next run of the same connector sync re-attempts it once the owner is free.`,
+            { fix: ownerStatusFix(this.sourceId, 'Shows what the canonical owner is running and what is queued behind it.') });
         }
         row = await this.engine.transaction(async tx => {
           if (this.binding) await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [this.binding.worktree_id]);
@@ -762,13 +834,17 @@ export class ManagedConnectorSync {
           await this.validate(tx, slug);
           await authorizeWrite(tx, this.authority.writer, 'submit_job', slug, true);
           const current = await selected(tx);
-          if (!current.row) throw new OperationError('storage_error', 'The failed connector receipt is unavailable.');
+          if (!current.row) throw opError('storage_error', 'The failed connector receipt is unavailable.',
+            `Failed request ${failedRow.request_id} for ${slug} in ${this.sourceId} disappeared before its retry was approved; nothing was admitted. Inspect the source's receipts before running the same connector sync again.`,
+            { fix: ownerStatusFix(this.sourceId, 'Shows the source\'s current receipts and recovery state.') });
           await authorizeStoredRequest(tx, current.row, true);
           if (!mayRetry(current.row)) return current.row;
           await this.refuseRetryBlocker(tx);
           const [checkpoint] = await tx.executeRaw<{ completed_keys: unknown[] }>(
             "SELECT completed_keys FROM op_checkpoints WHERE op='managed-connector' AND fingerprint=$1 FOR UPDATE", [this.checkpointKey]);
-          if (digest(checkpoint?.completed_keys ?? []) !== digest(this.checkpoint)) throw new OperationError('revision_conflict', 'The connector cursor changed before retry approval.');
+          if (digest(checkpoint?.completed_keys ?? []) !== digest(this.checkpoint)) throw opError('revision_conflict', 'The connector cursor changed before retry approval.',
+            `Another run moved the connector cursor of ${this.sourceId} while this one re-approved ${slug}; nothing was admitted. Run gbrain sync --source ${this.sourceId} to continue from the new cursor.`,
+            { fix: connectorSyncFix(this.sourceId, 'A new run reads the current cursor and resolves the recorded pending set first.') });
           const attempt = (current.retry?.attempt ?? 0) + 1;
           const retry: ConnectorRetry = { checkpointKey: this.checkpointKey,
             principalId: principal.id, principalKind: principal.kind, baseRequestId, retryOf: current.row.request_id, attempt,
@@ -845,38 +921,49 @@ export class ManagedConnectorSync {
 export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   const p = row.intent as ConnectorIntent | null;
   if (!p || !CONNECTOR_V2_KINDS.includes(p.kind) ||
-      p.syncAuthority.writer.remote || p.syncAuthority.remoteJob) throw new OperationError('permission_denied', 'Unsupported connector authority.');
+      p.syncAuthority.writer.remote || p.syncAuthority.remoteJob) throw connectorPublicationRefusal('permission_denied', 'Unsupported connector authority.', row,
+    'The request does not carry a local connector writer\'s authority; only the trusted local CLI publishes connector content.');
   if (!row.worktree_id && (row.authority.databaseOnlyReason !== 'connector_database' || p.syncAuthority.writer.databaseOnlyReason !== 'connector_database') ||
       row.worktree_id && (row.authority.databaseOnlyReason !== undefined || p.syncAuthority.writer.databaseOnlyReason !== undefined)) {
-    throw new OperationError('permission_denied', 'Connector database-only authority does not match its binding.');
+    throw connectorPublicationRefusal('permission_denied', 'Connector database-only authority does not match its binding.', row,
+      `The request's database-only authority no longer matches whether ${row.source_id} has a worktree binding (the source was bound or unbound after admission).`);
   }
   const validate = async (tx: BrainEngine) => {
     await validateSyncAuthority(tx, p.syncAuthority, row.slug);
     const [source] = await tx.executeRaw<ConnectorSource>('SELECT incarnation,archived,local_path,config FROM sources WHERE id=$1', [row.source_id]);
     if (!source || source.archived || source.incarnation !== row.source_incarnation || source.config.kind !== p.connector ||
         connectorIdentity(p.connector, source.config, source.local_path).digest !== p.configHash || source.local_path !== p.sourceRoot) {
-      throw new OperationError('source_changed', 'The connector configuration changed after admission.');
+      throw connectorPublicationRefusal('source_changed', 'The connector configuration changed after admission.', row,
+        `The connector configuration, path or incarnation of ${row.source_id} changed after this write was admitted.`);
     }
     const binding = await getWorktreeBinding(tx, row.source_id);
     if ((binding?.worktree_id ?? null) !== row.worktree_id || (binding ? String(binding.owner_epoch) : null) !== p.ownerEpoch) {
-      throw new OperationError('source_changed', 'The connector ownership binding changed after admission.');
+      throw connectorPublicationRefusal('source_changed', 'The connector ownership binding changed after admission.', row,
+        `The owner binding of ${row.source_id} changed after this write was admitted.`);
     }
-    if (connectorBindingRoot(row.source_id, source, binding) !== p.canonicalRoot) throw new OperationError('source_changed', 'The connector canonical root changed after admission.');
+    if (connectorBindingRoot(row.source_id, source, binding) !== p.canonicalRoot) throw connectorPublicationRefusal('source_changed', 'The connector canonical root changed after admission.', row,
+      `The canonical root of ${row.source_id} changed after this write was admitted.`);
     if (p.filePath !== null && (!p.canonicalRoot || !isWriteTargetContained(p.filePath, p.canonicalRoot) || persistenceFileHash(p.filePath) !== p.fileBeforeHash)) {
-      throw new OperationError('source_changed', 'The connector canonical file changed after admission.');
+      throw connectorPublicationRefusal('source_changed', 'The connector canonical file changed after admission.', row,
+        `The canonical file of ${row.slug} in ${row.source_id} changed on disk after this write was admitted.`);
     }
     if (p.kind !== 'connector_v2_checkpoint') {
       const [checkpoint] = await tx.executeRaw<{ completed_keys: unknown[] }>("SELECT completed_keys FROM op_checkpoints WHERE op='managed-connector' AND fingerprint=$1", [p.checkpointKey]);
-      if (digest(cursorOnly(checkpoint?.completed_keys)) !== digest(cursorOnly(p.checkpointBefore))) throw new OperationError('revision_conflict', 'The connector checkpoint changed before publication.');
+      if (digest(cursorOnly(checkpoint?.completed_keys)) !== digest(cursorOnly(p.checkpointBefore))) throw connectorPublicationRefusal('revision_conflict', 'The connector checkpoint changed before publication.', row,
+        `Another run moved the connector cursor of ${row.source_id} before this write published.`);
     }
   };
   await validate(engine);
   if (p.kind === 'connector_v2_checkpoint') return { observedRevision: null, sourceExclusive: true, validate, apply: async tx => {
     const [current] = await tx.executeRaw<{ completed_keys: unknown[] }>("SELECT completed_keys FROM op_checkpoints WHERE op='managed-connector' AND fingerprint=$1 FOR UPDATE", [p.checkpointKey]);
-    if (digest(current?.completed_keys ?? []) !== digest(p.checkpointBefore)) throw new OperationError('revision_conflict', 'The connector checkpoint changed during the sweep.');
+    if (digest(current?.completed_keys ?? []) !== digest(p.checkpointBefore)) throw opError('revision_conflict', 'The connector checkpoint changed during the sweep.',
+      `Another run moved the connector cursor of ${row.source_id} during this sweep, so checkpoint request ${row.request_id} was refused and the cursor stayed where that run left it. Read the receipt; the next gbrain sync --source ${row.source_id} saves the cursor again.`,
+      { fix: receiptFix(row.request_id, 'The receipt confirms the checkpoint save did not commit.') });
     const receipts = p.receipts ?? [];
     const committed = await tx.executeRaw<{ id: string }>("SELECT id FROM persistence_requests WHERE id=ANY($1::uuid[]) AND source_id=$2 AND source_incarnation=$3::uuid AND state='committed'", [receipts, row.source_id, row.source_incarnation]);
-    if (committed.length !== new Set(receipts).size) throw new OperationError('write_pending', 'A connector page receipt has not committed.');
+    if (committed.length !== new Set(receipts).size) throw opError('write_pending', 'A connector page receipt has not committed.',
+      `A page write that checkpoint request ${row.request_id} depends on has not committed, so the cursor of ${row.source_id} did not advance. Read the receipt; the next gbrain sync --source ${row.source_id} waits for the pending page writes before it saves the cursor again.`,
+      { fix: receiptFix(row.request_id, 'The receipt confirms the checkpoint save did not commit.') });
     await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-connector',$1,$2::text::jsonb)
       ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`, [p.checkpointKey, JSON.stringify(p.checkpointAfter)]);
     if (p.fresh) await tx.executeRaw('UPDATE sources SET last_sync_at=now(),newest_content_at=COALESCE($3::timestamptz,newest_content_at) WHERE id=$1 AND incarnation=$2::uuid',
@@ -886,7 +973,8 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   if ((snapshot?.revision ?? null) !== p.expected_revision || (snapshot?.page.id ?? null) !== row.page_id ||
       snapshot?.page.source_path != null && snapshot.page.source_path !== p.sourcePath) {
-    throw new OperationError('revision_conflict', 'The connector page changed after admission.');
+    throw connectorPublicationRefusal('revision_conflict', 'The connector page changed after admission.', row,
+      `Page ${row.slug} in ${row.source_id} changed after this connector write was admitted.`);
   }
   const deleteFile = p.kind === 'connector_v2_delete' ? await prepareFileTarget(engine, row, snapshot, null) : undefined;
   if (p.kind === 'connector_v2_delete') return { observedRevision: snapshot?.revision ?? null, sourceExclusive: true, validate,
@@ -899,7 +987,8 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop: !snapshot || snapshot.page.deleted_at != null };
     } };
   if (p.kind === 'connector_v2_google_receipts') {
-    if (p.connector !== 'google' || !p.googleReceipts) throw new OperationError('invalid_params', 'Invalid Google attachment receipt mutation.');
+    if (p.connector !== 'google' || !p.googleReceipts) throw connectorPublicationRefusal('invalid_params', 'Invalid Google attachment receipt mutation.', row,
+      'The request is not an attachment-receipt patch for a Google source.');
     const [source] = await engine.executeRaw<ConnectorSource>('SELECT incarnation,archived,local_path,config FROM sources WHERE id=$1', [row.source_id]);
     const account = (connectorIdentity('google', source.config, source.local_path).config as GoogleSourceConfig).account;
     const prepared = await prepareGoogleReceiptPatch(engine, row, snapshot, account, p.googleReceipts);
@@ -907,11 +996,13 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   }
   if (!p.sourcePath || typeof p.content !== 'string' || slugifyPath(p.sourcePath) !== row.slug ||
       p.sourcePath.split('/').some(part => !part || part === '.' || part === '..') || p.sourcePath.includes('\\')) {
-    throw new OperationError('invalid_params', 'The connector import path is invalid.');
+    throw connectorPublicationRefusal('invalid_params', 'The connector import path is invalid.', row,
+      `The recorded source path is empty, escapes the source, or does not map to ${row.slug}.`);
   }
   const activePack = p.noSchemaPack ? undefined : (await loadActivePackForEngine(engine, { remote: false, sourceId: row.source_id }).catch(() => null))?.manifest;
   const parsed = parseMarkdown(p.content, row.slug, { activePack });
-  if (parsed.slug !== row.slug) throw new OperationError('invalid_params', 'The connector content changes its page identity.');
+  if (parsed.slug !== row.slug) throw connectorPublicationRefusal('invalid_params', 'The connector content changes its page identity.', row,
+    `The provider content's frontmatter names a slug other than ${row.slug}.`);
   // #5567: carry materialized and database-only timeline rows forward into the connector render.
   const carried = await materializeTimeline(engine, parsed, row.slug, snapshot, 'preserving');
   // Facts and takes fences added on the brain (remember, loop extraction) are not part of the provider's render;
@@ -935,16 +1026,19 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       if (snapshot?.page.frontmatter.visibility === 'private') page.frontmatter.visibility = 'private';
     },
     prepare: async value => { prepared = value; return value.result; } });
-  if (!prepared || prepared.slug !== row.slug) throw new OperationError('revision_conflict', result.error ?? 'A different page owns this connector content.');
+  if (!prepared || prepared.slug !== row.slug) throw connectorPublicationRefusal('revision_conflict', result.error ?? 'A different page owns this connector content.', row,
+    `Another page already owns this connector content's identity, so ${row.slug} was not written.`);
   const ready = prepared;
-  if (ready.observedRevision !== (snapshot?.revision ?? null)) throw new OperationError('revision_conflict', 'The connector page changed during preparation.');
+  if (ready.observedRevision !== (snapshot?.revision ?? null)) throw connectorPublicationRefusal('revision_conflict', 'The connector page changed during preparation.', row,
+    `Page ${row.slug} in ${row.source_id} changed while this connector write was being prepared.`);
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, snapshot, 'preserving');
   const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
   const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
   const target = await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
   // Google pages hold private mail: derived here from the stored connector, never submitted, so request ids are unchanged.
   const file = target && p.connector === 'google' ? { ...target, publishMode: 0o600 } : target;
-  if (file && (file.path !== p.filePath || file.expectedBeforeHash !== p.fileBeforeHash)) throw new OperationError('source_changed', 'The connector canonical file changed during preparation.');
+  if (file && (file.path !== p.filePath || file.expectedBeforeHash !== p.fileBeforeHash)) throw connectorPublicationRefusal('source_changed', 'The connector canonical file changed during preparation.', row,
+    `The canonical file of ${row.slug} in ${row.source_id} changed on disk while this connector write was being prepared.`);
   return { observedRevision: ready.observedRevision, sourceExclusive: true,
     validate: async tx => { await validate(tx); await ready.validate(tx); },
     file, ...databaseOnlyPublication(row, file), noop: ready.noop, deferEmbedding: p.noEmbed, apply: async tx => {
@@ -966,7 +1060,13 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
 export async function prepareOutdatedConnectorMutation(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   const cutoff = await readConnectorV2Cutoff(engine);
   const preUpgrade = cutoff !== null && new Date(row.created_at).getTime() < new Date(cutoff).getTime();
-  throw new OperationError('connector_intent_outdated', preUpgrade ? CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE : CONNECTOR_INTENT_OUTDATED_OLD_HOST);
+  const message = preUpgrade ? CONNECTOR_INTENT_OUTDATED_PRE_UPGRADE : CONNECTOR_INTENT_OUTDATED_OLD_HOST;
+  const hint = receiptDeliveredHint({ error_code: 'connector_intent_outdated', error_message: message, source_id: row.source_id })!;
+  throw opError('connector_intent_outdated', message, hint.suggestion, { docs: hint.docs, ...(hint.detail ? { detail: hint.detail } : {}),
+    fix: preUpgrade ? connectorSyncFix(row.source_id, 'The item is fetched again under a new request ID; no host upgrade is needed.')
+      : { argv: ['gbrain', 'upgrade'], consent: [], actor: 'user', requires_exclusive: false,
+        why: `A host running an older gbrain admitted this connector write for ${row.source_id} in the retired format.`,
+        user_message: `Please run the command shown on the host that runs connector jobs for ${row.source_id}, then sync it again.` } });
 }
 
 /** `connector_fence_below_timeline`: the item is counted toward a hold; the repair moves the fence above the sentinel. */

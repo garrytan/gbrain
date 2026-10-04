@@ -72,13 +72,13 @@ describe('onboard E2E — runAllOnboardChecks', () => {
     ]);
   });
 
-  test('empty brain: stale/link/timeline ok, takes_count warns (0 takes)', async () => {
+  test('empty brain: stale/link/timeline ok, takes_count is opt-in information (0 takes)', async () => {
     const results = await runAllOnboardChecks(engine);
     const byName = Object.fromEntries(results.map((r) => [r.check.name, r.check.status]));
     expect(byName.embed_staleness).toBe('ok');
     expect(byName.entity_link_coverage).toBe('ok');
     expect(byName.timeline_coverage).toBe('ok');
-    expect(byName.takes_count).toBe('warn'); // 0 takes is a warn
+    expect(byName.takes_count).toBe('ok'); // 0 takes with the bootstrap off is opt-in: ok + severity info (E2)
   });
 
   test('empty brain remediations: takes_count gated, pack_upgrade_available may surface', async () => {

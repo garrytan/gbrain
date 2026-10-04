@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest } from './authority.ts';
 import { completeWrite, getWriteRequest, lockCounters } from './journal.ts';
 import { isTerminal, principalKey, type Principal, type WriteRequest } from './model.ts';
@@ -8,7 +8,7 @@ export async function listWriteRequests(engine: BrainEngine, principal: Principa
   opts: { sourceId: string; before?: string; limit?: number; slugPrefixes?: string[]; operations?: string[]; slugAllowList?: string[];
     authorize?: (row: WriteRequest) => Promise<boolean> }): Promise<{ requests: WriteRequest[]; next: string | null }> {
   const limit = Math.min(100, Math.max(1, Math.floor(opts.limit ?? 25)));
-  if (opts.before !== undefined && !/^\d+$/.test(opts.before)) throw new OperationError('invalid_params', 'Invalid write request cursor.');
+  if (opts.before !== undefined && !/^\d+$/.test(opts.before)) throw opError('invalid_params', 'Invalid write request cursor.', 'Pass the next cursor exactly as the previous page returned it (a numeric sequence), or omit it to start from the newest requests.');
   // Principal/source restrictions are applied before SQL pagination. Additional
   // current fences filter candidates without leaking counts or foreign cursors.
   const visible: WriteRequest[] = [];

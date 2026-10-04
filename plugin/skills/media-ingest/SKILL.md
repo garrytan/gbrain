@@ -137,6 +137,14 @@ Brain page created with summary, highlights, and entity cross-links. Report to u
 4. **Video transcript without speaker diarization is low-value.** If multiple speakers are present but no diarization is available, note this limitation prominently rather than attributing all speech to one person.
 5. **Large audio files (>2hr) can timeout transcription services.** Split into chunks before transcription if needed.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- Transcription fails: write `[transcript unavailable]` and continue with metadata; never fabricate content.
+- A transient API failure (network, `timeout`, `rate_limited`): retry once. On an auth failure, abort and tell the user which provider key is missing.
+- `file_upload` refused (size, path outside the allowed root): tell the user the raw file was not stored and keep a pointer in the page.
+
 ## Anti-Patterns
 
 - Dumping raw transcripts without analysis
@@ -144,3 +152,13 @@ Brain page created with summary, highlights, and entity cross-links. Report to u
 - Filing **raw ingest** by format (all videos in `media/videos/`) instead of by subject. Note: format-prefixed paths under `media/<format>/<slug>` ARE sanctioned for **synthesized one-of-one output** like book-mirror's `media/books/<slug>-personalized.md`. The anti-pattern is for raw ingest, not for sui generis synthesis. See `skills/_brain-filing-rules.md` "Sanctioned exception: synthesis output is sui generis."
 - Not preserving raw source files
 - Creating stub pages without meaningful content
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `file_upload` → `gbrain call file_upload <params_json>`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

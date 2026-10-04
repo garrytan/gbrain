@@ -133,6 +133,14 @@ After any migration:
 4. Spot-check 5-10 pages by reading them from gbrain
 5. Test search: search gbrain for "someone you know is in the data"
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain sources inspect` reports blockers or the import exits 3 asking for confirmation: show the preview, and rerun with `--yes` only after the operator approves it.
+- A collision or recovery refusal: do not remove the source or activate a global schema to bypass it; report it.
+- Missing embeddings after the import are expected and backfill may be blocked by the source profile (`source_profile_no_backfill`); tell the user search runs keyword-only until embeddings exist.
+
 ## Anti-Patterns
 
 - **Bulk import without sample test.** Never import the full dataset before verifying with 5-10 files. The cost of cleaning up hundreds of bad pages is enormous.

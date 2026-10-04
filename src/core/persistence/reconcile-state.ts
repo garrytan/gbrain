@@ -6,7 +6,8 @@ import { loadConfig, loadConfigWithEngine } from '../config.ts';
 import { loadOperatorLiterals } from '../content-sanity-literals.ts';
 import { parseMarkdown, resolveSourceLocalFilePath } from '../markdown.ts';
 import { parseDataFrontmatter } from '../data-frontmatter.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode } from '../write-through.ts';
@@ -78,7 +79,9 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   }
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
   const snapshot = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
-  if (!snapshot || snapshot.page.deleted_at) throw new OperationError('page_not_found', 'Reconciliation requires an existing live page; use the separate restore workflow for deleted pages.');
+  if (!snapshot || snapshot.page.deleted_at) throw opError('page_not_found', 'Reconciliation requires an existing live page; use the separate restore workflow for deleted pages.',
+    `Page ${slug} in '${sourceId}' is deleted or missing; nothing changed. If it was deleted by mistake, restore it (gbrain restore, within the 72-hour window) and then preview it again.`,
+    { fix: readFix('Shows whether the page exists or is soft-deleted in this source.', { argv: ['gbrain', 'get', '--source', sourceId, '--include-deleted', '--', slug] }) });
   if (binding.source_incarnation !== snapshot.sourceIncarnation) staleReconcile('source binding incarnation');
   const [storedPage] = await engine.executeRaw<Record<string, unknown>>(`SELECT id,source_id,slug,type,title,compiled_truth,timeline,frontmatter,
     content_hash,source_path,source_kind,source_uri,ingested_via,ingested_at,knowledge_revision,deleted_at FROM pages WHERE id=$1 AND source_id=$2`, [snapshot.page.id, sourceId]);
@@ -90,17 +93,23 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
     database_only_reason: await isUnboundSourcePage(engine, sourceId, slug) ? 'unbound_source' : null }) ? slugDerivedOrigin(root, slug, mode) : null;
   const origin = derived ? 'slug_derived' : 'recorded';
   const path = recordedPath ?? derived?.path ?? null;
-  if (!path || !isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The page has no unambiguous confined recorded Markdown origin.');
+  if (!path || !isWriteTargetContained(path, root)) throw opError('source_changed', 'The page has no unambiguous confined recorded Markdown origin.',
+    `Page ${slug} in '${sourceId}' records no Markdown file inside the source checkout, so there is nothing to reconcile it against; nothing changed. Check its recorded source path with the command in fix.`,
+    { fix: readFix('Shows the page and its recorded source path.', { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] }) });
   let size: number;
   try {
     const info = lstatSync(path);
     if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new Error('not an ordinary file');
     size = info.size;
-  } catch { throw new OperationError('source_changed', 'The recorded canonical file is missing or is not an ordinary file; repair does not restore files.'); }
+  } catch {
+    throw opError('source_changed', 'The recorded canonical file is missing or is not an ordinary file; repair does not restore files.',
+      `Nothing changed. Restore the canonical file of ${slug} in '${sourceId}' as a regular file (for example from git), then preview the page again.`);
+  }
   const { readJournalLimits } = await import('./limits.ts');
   const limits = await readJournalLimits(engine);
   if (size > Math.min(limits.principalIntentBytes, limits.brainIntentBytes, limits.worktreeRecoveryBytes)) {
-    throw new OperationError('request_too_large', 'The canonical file exceeds reconciliation capacity.');
+    throw opError('request_too_large', 'The canonical file exceeds reconciliation capacity.',
+      `Nothing changed. The canonical file of ${slug} in '${sourceId}' is larger than the journal's request and recovery limits; tell the user the page needs a manual edit of that file.`);
   }
   const fileName = basename(path), uriName = pathToFileURL(path).pathname.split('/').pop()!;
   const candidates = await engine.executeRaw<{ slug: string; source_path: string | null; source_uri: string | null }>(
@@ -119,19 +128,26 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
     try { canonicalCandidate = realpathSync(candidatePath); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      throw new OperationError('source_changed', 'A candidate canonical file origin could not be verified.');
+      throw opError('source_changed', 'A candidate canonical file origin could not be verified.',
+        `Nothing changed. Page ${candidate.slug} in '${sourceId}' records a file that could not be resolved; check that the source checkout is readable, then preview ${slug} again.`);
     }
-    if (canonicalCandidate === canonicalPath) throw new OperationError('source_changed', 'Several pages claim the recorded canonical file.');
+    if (canonicalCandidate === canonicalPath) throw opError('source_changed', 'Several pages claim the recorded canonical file.',
+      `Nothing changed. Pages ${slug} and ${candidate.slug} in '${sourceId}' both record the same file, so reconcile cannot tell which owns it; decide with the user which page owns the file before reconciling either.`);
   }
   const raw = readFileSync(path), text = raw.toString('utf8');
-  if (!Buffer.from(text).equals(raw)) throw new OperationError('invalid_params', 'The canonical file must contain valid UTF-8.');
+  if (!Buffer.from(text).equals(raw)) throw opError('invalid_params', 'The canonical file must contain valid UTF-8.',
+    `Nothing changed. Re-save the canonical file of ${slug} in '${sourceId}' as UTF-8, then preview the page again.`);
   try { parseDataFrontmatter(text); }
-  catch { throw new OperationError('invalid_params', 'Canonical file metadata cannot be parsed losslessly; repair its syntax before previewing.'); }
+  catch {
+    throw opError('invalid_params', 'Canonical file metadata cannot be parsed losslessly; repair its syntax before previewing.',
+      `Nothing changed. Fix the frontmatter of the canonical file of ${slug} in '${sourceId}' (quote values containing ': ', close the --- block), then preview the page again.`);
+  }
   // Preserve a terminal .md in the page key while parsing the canonical Markdown.
   const parsed = parseMarkdown(text, `${slug}.md`, { validate: true, expectedSlug: slug });
   const errors = parsed.errors?.filter(e => !['MISSING_OPEN', 'MISSING_CLOSE', 'EMPTY_FRONTMATTER'].includes(e.code)) ?? [];
   if (errors.length || parsed.errors?.some(e => e.code === 'MISSING_CLOSE') || parsed.slug !== slug) {
-    throw new OperationError('invalid_params', 'Canonical file metadata cannot be parsed losslessly; repair its syntax before previewing.');
+    throw opError('invalid_params', 'Canonical file metadata cannot be parsed losslessly; repair its syntax before previewing.',
+      `Nothing changed. Fix the frontmatter of the canonical file of ${slug} in '${sourceId}' (close the --- block, keep its slug), then preview the page again.`);
   }
   const pins: ReconcilePins = { brain_id: brain.brain_id, source_id: sourceId, source_incarnation: snapshot.sourceIncarnation, slug,
     page_id: snapshot.page.id, worktree_id: binding.worktree_id, binding_digest: digest({ binding, root, path: canonicalPath }), owner_epoch: String(binding.owner_epoch),
@@ -149,12 +165,14 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
     ...(v2 ? ['auto_decisions'] : [])], ['format_version', 'preview_id', 'preconditions', 'preimages', 'decisions', 'conflicts', 'result', 'result_digest', 'status',
     ...(v2 ? ['auto_decisions'] : [])]);
   if (v2) {
-    if (!Array.isArray(value.auto_decisions) || !value.auto_decisions.length || value.auto_decisions.length > 1000) throw new OperationError('invalid_params', 'Malformed automatic reconciliation decisions.');
+    if (!Array.isArray(value.auto_decisions) || !value.auto_decisions.length || value.auto_decisions.length > 1000) throw opError('invalid_params', 'Malformed automatic reconciliation decisions.',
+      'Re-run the same reconcile preview with --auto-additive to recreate the file instead of editing it by hand.');
     for (const entry of value.auto_decisions as unknown[]) {
       strictReconcileKeys(entry, ['path', 'rule', 'rule_version', 'evidence_digest']);
       if (typeof entry.path !== 'string' || typeof entry.rule !== 'string' || !Number.isSafeInteger(entry.rule_version)
         || typeof entry.evidence_digest !== 'string' || !/^[a-f0-9]{64}$/.test(entry.evidence_digest)) {
-        throw new OperationError('invalid_params', 'Malformed automatic reconciliation decisions.');
+        throw opError('invalid_params', 'Malformed automatic reconciliation decisions.',
+      'Re-run the same reconcile preview with --auto-additive to recreate the file instead of editing it by hand.');
       }
     }
   }
@@ -179,12 +197,16 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
     digest(value.result) !== value.result_digest || typeof value.preconditions.assessment_at !== 'string' ||
     !Number.isFinite(Date.parse(value.preconditions.assessment_at)) || !Number.isSafeInteger(value.preconditions.page_id) ||
     Object.entries(value.preconditions).some(([key, v]) => key !== 'page_id' && typeof v !== 'string')) {
-    throw new OperationError('invalid_params', 'Malformed or modified reconciliation artifact.');
+    throw opError('invalid_params', 'Malformed or modified reconciliation artifact.',
+      'Pass the preview file exactly as reconcile wrote it with --out; change it only through --decisions. If it was edited, make a fresh preview.');
   }
   for (const key of ['brain_id', 'source_incarnation', 'worktree_id', 'revision']) requireUuid(value.preconditions[key] as string);
   requireUuid(value.preview_id as string);
   for (const key of ['binding_digest', 'raw_file_hash', 'policy_digest', 'withdrawals_digest']) {
-    if (!/^[a-f0-9]{64}$/.test(value.preconditions[key] as string)) throw new OperationError('invalid_params', 'Invalid reconciliation fingerprint.');
+    if (!/^[a-f0-9]{64}$/.test(value.preconditions[key] as string)) {
+      throw opError('invalid_params', 'Invalid reconciliation fingerprint.',
+        'Pass the preview file exactly as reconcile wrote it with --out; if it was edited, make a fresh preview.');
+    }
   }
   for (const conflict of value.conflicts as unknown[]) strictReconcileKeys(conflict, ['path', 'file', 'database']);
   for (const withdrawal of value.preimages.database.withdrawals as unknown[]) strictReconcileKeys(withdrawal, ['visibility', 'fact_hash', 'withdrawn_at']);

@@ -171,13 +171,15 @@ describe('checkVoiceGateHealth', () => {
     expect(out.message).toContain('1/10 failed');
   });
 
-  test('30%+ fail rate → warn with rubric-review hint', async () => {
+  test('30%+ fail rate → warn telling the agent to report it (no pointer into gbrain source)', async () => {
     const out = await checkVoiceGateHealth(
       buildMockEngine({ voiceTotal: 10, voiceFailures: 4 }),
     );
     expect(out.status).toBe('warn');
     expect(out.message).toContain('4/10');
-    expect(out.message).toContain('voice-gate.ts');
+    expect(out.message).not.toContain('voice-gate.ts');
+    expect(out.message).toContain('gbrain doctor --json');
+    expect(out.fix_unavailable_reason).toBe('operator_judgement');
   });
 
   test('engine throw → warn with diagnostic', async () => {

@@ -41,6 +41,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { askHarnessConsent } from './harness-consent.ts';
+import { CONFIRMATION_REQUIRED_EXIT_CODE } from '../exit-codes.ts';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -163,6 +165,8 @@ export interface HarnessFlags {
   skills?: 'follow' | 'memory-only';
   /** #4618 `--seat <label>` ('' = `--no-seat`); undefined keeps the installed seat. */
   seat?: string;
+  /** The raw argv, for the approved command in a consent refusal (the token value is never repeated). */
+  raw: string[];
   error?: string;
 }
 
@@ -181,6 +185,7 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
     refreshSkills: false,
     yes: false,
     json: false,
+    raw: [...rest],
   };
   // [X14] Fail closed: an unattended setup command must never resolve a
   // malformed invocation by silent precedence. Missing values error.
@@ -855,7 +860,7 @@ function logAmbientPostureNotes(
   if (!registrarMode && wb.visibility_posture === 'private') {
     d.logError(
       'WARNING: facts.default_visibility is private, but this harness reads the brain over HTTP MCP — ' +
-        `${PRIVATE_DEFAULT_REMOTE_CONSEQUENCE} (then re-run gbrain bootstrap harness --yes).`,
+        `${PRIVATE_DEFAULT_REMOTE_CONSEQUENCE} (then run gbrain bootstrap harness again; it asks the user first).`,
     );
   }
 }
@@ -989,17 +994,8 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     ...(instructionsPaths.length > 0 ? { instructionsPaths } : {}),
   });
   d.log(consent);
-  if (!flags.yes) {
-    if (!d.isTTY) {
-      d.logError('\nnon-interactive shell: pass --yes to confirm the wiring above.');
-      return 2;
-    }
-    const answer = (await d.prompt('\nProceed? (y/N) ')).trim().toLowerCase();
-    if (answer !== 'y' && answer !== 'yes') {
-      d.log('aborted — nothing written.');
-      return 1;
-    }
-  }
+  const harnesses = [wireClaude ? 'Claude Code' : null, wireCodex ? 'Codex' : null, wireOpencode ? 'opencode' : null].filter(Boolean).join(', ');
+  if (!(await askHarnessConsent({ flags, url, harnesses, skillsPolicy, wireHooks, hookScope }, d))) return CONFIRMATION_REQUIRED_EXIT_CODE;
 
   // Prior receipt: carries the previous minted token for post-wire rotation
   // [C7], and the prior hook-scope for the user-XOR-project exclusivity check

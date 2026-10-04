@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { loadConfig } from '../config.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
+import type { RegistryCode } from '../error-registry.ts';
 import { currentSourceFilesystemSignal } from '../minions/source-filesystem.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { digest, sha256 } from './digest.ts';
@@ -23,7 +25,7 @@ import { importAnalyzeEveryPages, maybeRefreshPlannerStats } from '../planner-st
 import { recordManagedSyncFailure, clearManagedSyncFailureAfterSuccess, formatManagedSyncFailure, type ManagedSyncFailure } from './sync-failures.ts';
 import { writeFailureDiagnostic } from './verb-errors.ts';
 import { extractManagedStaleLinks } from './links-maintenance.ts';
-import { CHECKPOINT_VALIDATION_TIMEOUT, checkpointTimeoutHint } from './checkpoint-validation.ts';
+import { CHECKPOINT_VALIDATION_TIMEOUT, checkpointRetryCommand, checkpointTimeoutHint } from './checkpoint-validation.ts';
 import { isTerminalWriteState, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import type { WriteRequest } from './model.ts';
 import { assertManagedSyncAllowed } from './worktree-refresh.ts';
@@ -52,6 +54,12 @@ interface Cursor extends SyncDiscovery { runId: string; index: number; authority
 const OP = 'managed-sync';
 type CursorHeader = Omit<Cursor, 'entries' | 'companyPlan'> & { total: number };
 const header = ({ entries, companyPlan: _plan, ...value }: Cursor): CursorHeader => ({ ...value, total: entries.length });
+/** A managed sync run stopped before admitting the current entry; the recorded failure lets --retry-failed rediscover. */
+function syncRunRefusal(code: RegistryCode, message: string, retry: Parameters<typeof checkpointRetryCommand>[0], cause: string): OperationError {
+  return opError(code, message, `${cause} Pages committed earlier in this run stay committed. Check the source with the command in fix, then run: ${checkpointRetryCommand(retry)}`,
+    { fix: readFix(`Shows source ${retry.sourceId}'s owner and every pending, failed or recovering request, read-only.`,
+      { argv: ['gbrain', 'sources', 'writer', 'status', '--source', retry.sourceId, '--json'] }) });
+}
 class MissingSyncManifest extends OperationError {
   constructor(readonly cursor: CursorHeader) { super('storage_error', 'The durable sync manifest is unavailable.'); }
 }
@@ -90,7 +98,8 @@ async function saveCursor(engine: BrainEngine, key: string, before: Cursor | nul
       await tx.executeRaw('UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2', [`${OP}-manifest`, next.runId]);
     }
     const current = await readCursor(tx, key, next);
-    if (!current) throw new OperationError('storage_error', 'The durable sync cursor disappeared.');
+    if (!current) throw syncRunRefusal('storage_error', 'The durable sync cursor disappeared.', next,
+      `The durable sync cursor of source ${next.sourceId} vanished inside the transaction that saved it (another run of the source finished or replaced it), so this run stopped.`);
     assertActive?.();
     return current;
   });
@@ -153,6 +162,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
   run: { syncOptions: SyncCursorOptions; repoPath?: string }): Promise<Pending> {
   assertActive();
   const entry = cursor.entries[cursor.index];
+  const retry = { sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? run.syncOptions, repoPath: run.repoPath };
   let slug = '__managed_sync_checkpoint__', pageId: number | null = null, revision: string | null = null;
   let content: string | null = null, rawHash: string | null = null;
   let lineEndingOnly = false, occupantRebound = false;
@@ -167,7 +177,9 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     if (entry.action === 'import' && cursor.companyPlan) {
       const company = currentCompanyBrainSync(cursor.sourceId);
       const blob = company?.entries.get(entry.path);
-      if (company?.receiptId !== cursor.companyReceiptId || !blob || blob.disposition !== 'included') throw new OperationError('plan_stale', 'The durable cursor does not match its approved content manifest.');
+      if (company?.receiptId !== cursor.companyReceiptId || !blob || blob.disposition !== 'included') throw syncRunRefusal('plan_stale', 'The durable cursor does not match its approved content manifest.',
+        retry,
+        `Source ${cursor.sourceId}'s approved company-brain content manifest no longer includes ${entry.path} for this run (its approval changed, or the file is no longer an included path), so nothing was imported for it. If the approval changed, inspect and approve the repository again first (gbrain sources inspect --help).`);
       content = (await readCommittedBlob(cursor.companyPlan.revision!, blob, cursor.companyPlan.limits)).toString('utf8');
       assertActive();
     } else content = entry.action === 'import' ? readSyncContent(cursor, entry) : null;
@@ -177,21 +189,24 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     const snapshot = await engine.readPageSnapshot(slug, { sourceId: cursor.sourceId, includeDeleted: true });
     assertActive();
     if (occupant && !await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content!, rawHash, lineEndingOnly)) {
-      throw new OperationError('page_identity_changed', 'The imported origin no longer identifies exactly the accepted page.');
+      throw syncRunRefusal('page_identity_changed', 'The imported origin no longer identifies exactly the accepted page.', retry,
+        `Page ${slug} was imported from ${entry.path} by another run of source ${cursor.sourceId} with different content after this run enumerated it, so the run stopped before admitting it.`);
     }
     occupantRebound = occupant !== null;
     const moved = entry.renameFrom;
     const recorded = moved?.slug === slug ? moved.sourcePath : entry.sourcePath;
     const foreignOrigin = snapshot?.page.source_path != null && !sameSyncOrigin(snapshot.page.source_path, recorded, originScope, snapshot.page.slug);
     if ((snapshot?.page.id ?? null) !== pageId || (snapshot?.revision ?? null) !== revision || (entry.unownedDeletion ? !foreignOrigin : foreignOrigin)) {
-      throw new OperationError('revision_conflict', 'A page changed after this sync cursor was enumerated.');
+      throw syncRunRefusal('revision_conflict', 'A page changed after this sync cursor was enumerated.', retry,
+        `Page ${slug} in source ${cursor.sourceId} was edited, deleted or re-bound after this sync enumerated ${entry.path}, so the run stopped before admitting it.`);
     }
     if (moved && moved.slug !== slug) {
       const previous = await engine.readPageSnapshot(moved.slug, { sourceId: cursor.sourceId, includeDeleted: true });
       assertActive();
       if (previous?.page.id !== moved.pageId || previous.revision !== moved.revision || previous.page.deleted_at != null ||
           previous.page.source_path == null || !sameSyncOrigin(previous.page.source_path, moved.sourcePath, originScope, previous.page.slug)) {
-        throw new OperationError('revision_conflict', 'A renamed page changed after this sync cursor was enumerated.');
+        throw syncRunRefusal('revision_conflict', 'A renamed page changed after this sync cursor was enumerated.', retry,
+          `Page ${moved.slug}, which ${entry.path} was renamed from, changed or was deleted after this sync enumerated it, so the run stopped before admitting the rename.`);
       }
     }
   }
@@ -310,7 +325,9 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       assertActive();
       if (!unfinished.length && (failed && ['failed', 'conflict', 'cancelled'].includes(failed.state) || !cursor.pending && !cursor.processingOptions)) {
         if (cursor.processingOptions && digest(cursor.processingOptions) !== digest(processingOptions)) {
-          throw new OperationError('invalid_params', 'The approved company sync must retain its original processing options.');
+          throw syncRunRefusal('invalid_params', 'The approved company sync must retain its original processing options.',
+            { sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? syncOptions, repoPath: frozenRun.repoPath },
+            `The unfinished company-brain sync of source ${cursor.sourceId} was approved with ${SYNC_PROCESSING_KEYS.map(key => `${key}=${cursor!.processingOptions![key]}`).join(', ')}, and its retry must keep exactly those processing options; nothing was retried.`);
         }
         phase = 'freeze';
         const retry = { ...cursor, processingOptions };
@@ -373,7 +390,9 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
     if (cursor.incarnation !== context.incarnation || cursor.binding.worktree_id !== context.binding.worktree_id ||
         String(cursor.binding.topology_generation) !== String(context.binding.topology_generation) ||
         String(cursor.binding.owner_epoch) !== String(context.binding.owner_epoch) || cursor.root !== context.root) {
-      throw new OperationError('source_changed', 'The unfinished sync cursor belongs to an older source binding.');
+      throw syncRunRefusal('source_changed', 'The unfinished sync cursor belongs to an older source binding.',
+        { sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? syncOptions, repoPath: frozenRun.repoPath },
+        `The unfinished sync cursor of source ${cursor.sourceId} was written under an older binding (its owner epoch, topology generation, worktree or root changed since), so this run stopped without importing; the retry rediscovers against the current binding.`);
     }
     const stored = cursor.processingOptions;
     if (stored ? digest(stored) !== digest(processingOptions) : !cursor.pending) {
@@ -478,7 +497,9 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       }
       if (pending.intent.kind === 'managed_sync_checkpoint') {
         cursor = (await readCursor(engine, key))!;
-        if (!cursor?.done) throw new OperationError('storage_error', 'Committed sync checkpoint lost its cursor.');
+        if (!cursor?.done) throw syncRunRefusal('storage_error', 'Committed sync checkpoint lost its cursor.',
+          { sourceId: context.sourceId, processingOptions: pending.intent.processingOptions, syncOptions: pending.intent.syncOptions ?? syncOptions, repoPath: pending.intent.repoPath ?? frozenRun.repoPath },
+          `The final checkpoint request ${pending.requestId} of this sync committed, but its cursor could not be read back to finish the run.`);
         await clearManagedSyncFailureAfterSuccess(engine, key);
         if (cursor.counts.added + cursor.counts.modified + cursor.counts.deleted > 0) await refreshProjectionStatistics(engine);
         assertActive();

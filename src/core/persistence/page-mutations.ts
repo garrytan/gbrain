@@ -40,9 +40,14 @@ export async function initializeLocalPersistence(ctx: OperationContext): Promise
 /** Validate explicit routing before any admission, including dry-run adapters. */
 export function pageMutationSource(ctx: OperationContext, params: Record<string, unknown>, operation: string): string {
   const sourceId = parseSourceIdParam(params.source_id, operation) ?? ctx.sourceId ?? 'default';
-  if (sourceId === '__all__') throw new OperationError('invalid_params', 'A mutation must target exactly one source.');
-  if (ctx.remote !== false && sourceId !== (ctx.auth?.sourceId ?? ctx.sourceId ?? 'default')) {
-    throw new OperationError('permission_denied', 'This source is outside the current write grant.');
+  if (sourceId === '__all__') {
+    throw new OperationError('invalid_params', 'A mutation must target exactly one source.',
+      `Pass source_id as one source (for example ${ctx.sourceId && ctx.sourceId !== '__all__' ? ctx.sourceId : 'default'}); writes never fan out across sources.`);
+  }
+  const granted = ctx.auth?.sourceId ?? ctx.sourceId ?? 'default';
+  if (ctx.remote !== false && sourceId !== granted) {
+    throw new OperationError('permission_denied', 'This source is outside the current write grant.',
+      `This connection writes only to source ${granted}. Pass source_id ${granted} (or omit it), or ask the brain host's operator to grant write access to ${sourceId}.`);
   }
   return sourceId;
 }
@@ -52,7 +57,9 @@ export function pageMutationSource(ctx: OperationContext, params: Record<string,
  * that file, so only a capture under that slug binds the file as its origin.
  */
 async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Record<string, unknown>): Promise<string | null> {
-  if (Object.hasOwn(p, 'capture_path')) throw new OperationError('invalid_params', 'capture_path is reserved for the capture owner.');
+  if (Object.hasOwn(p, 'capture_path')) {
+    throw new OperationError('invalid_params', 'capture_path is reserved for the capture owner.', 'Drop capture_path and pass the text as content; gbrain sets the capture path itself.');
+  }
   if (p.local_file === undefined) return null;
   if (ctx.remote !== false || typeof p.local_file !== 'string' || !isAbsolute(p.local_file)) {
     throw new OperationError('invalid_params', 'Capture file paths are accepted only from the trusted local CLI.',
@@ -81,7 +88,8 @@ export async function submitPageMutation(ctx: OperationContext,
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || input.params.kind !== 'managed_file_import' ||
       ['preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
-      throw new OperationError('invalid_params', 'Reserved persistence fields cannot be submitted through put_page. Use trusted local reconciliation administration.');
+      throw new OperationError('invalid_params', 'Reserved persistence fields cannot be submitted through put_page. Use trusted local reconciliation administration.',
+        'Drop kind, preview and backup_reference from put_page; reconciling a canonical file runs through gbrain sources reconcile on the brain host.');
     }
   }
   assertPersistenceAccepting(ctx.engine);
@@ -104,7 +112,10 @@ export async function submitPageMutation(ctx: OperationContext,
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
   const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
-  if (!source || source.archived) throw new OperationError('source_changed', 'The write source is not active.');
+  if (!source || source.archived) {
+    throw new OperationError('source_changed', 'The write source is not active.',
+      `Source ${sourceId} is archived or not registered, so nothing was written. Write to an active source (sources_list shows them).`);
+  }
   let slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : '';
   const intent = ['takes_add','takes_update','takes_supersede','takes_resolve'].includes(input.operation)
     ? await (await import('./takes-prepare.ts')).normalizeTakesIntent(ctx,p) : { ...p };
@@ -114,7 +125,8 @@ export async function submitPageMutation(ctx: OperationContext,
     ? await undeclaredPageTypeWarning(ctx, { ...intent, slug }, sourceId) : null;
   if (input.operation === 'capture') {
     if (typeof p.content !== 'string' || !normalizeForHash(p.content) || detectBinaryNullByte(Buffer.from(p.content)) !== -1) {
-      throw new OperationError('invalid_params', 'Capture requires nonempty text without binary NUL bytes.');
+      throw new OperationError('invalid_params', 'Capture requires nonempty text without binary NUL bytes.',
+        'Pass content as non-empty text; binary files are not captured (store them with file_upload instead).');
     }
     const explicitType = explicitCaptureType(p.content, typeof p.type === 'string' ? p.type : undefined);
     if (explicitType) {

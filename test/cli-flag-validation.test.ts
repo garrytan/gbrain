@@ -280,7 +280,7 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
 
   test('init --migrate-only --dry-run fails loud BEFORE any engine work', () => {
     const r = run(['init', '--migrate-only', '--dry-run']);
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown flag --dry-run for 'gbrain init'");
     // Pre-engine: no migration output may appear.
     expect(r.stderr).not.toContain('migration');
@@ -288,7 +288,7 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
 
   test('typo on an op command fails loud with the command named', () => {
     const r = run(['search', 'needle', '--jsno']);
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown flag --jsno for 'gbrain search'");
   });
 
@@ -302,7 +302,7 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
     // --quiet is a parseGlobalFlags global: it never reaches the validator.
     // The bogus flag proves validation still ran on what remained.
     const r = run(['init', '--migrate-only', '--quiet', '--definitely-bogus-xyz']);
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown flag --definitely-bogus-xyz for 'gbrain init'");
     expect(r.stderr).not.toContain('--quiet');
   });
@@ -311,7 +311,7 @@ describe('#2185 subprocess smokes — end-to-end error surface', () => {
     // Fast path: --help short-circuits AFTER global parse, so a bogus flag
     // alongside --source proves ordering: --source accepted, bogus rejected.
     const r = run(['search', 'needle', '--source', 'nope-source', '--definitely-bogus-xyz']);
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown flag --definitely-bogus-xyz for 'gbrain search'");
     expect(r.stderr).not.toContain('unknown flag --source');
   });
@@ -393,9 +393,9 @@ describe('#5700 subprocess smoke — the reported invocation fails loud', () => 
       env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
     });
 
-  test('put --content --source <id> exits 1 naming both flags', () => {
+  test('put --content --source <id> exits 2 naming both flags', () => {
     const r = run(['put', 'repro-a', '--content', '--source', 'default']);
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(2);
     expect(r.stderr).toContain("--content requires a value, but '--source' is a flag");
     // Pre-write: the page must not have been created with a flag token body.
     expect(r.stdout).not.toContain('created_or_updated');

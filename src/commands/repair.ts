@@ -54,7 +54,8 @@ Options:
   --json         Machine-readable output with a stable shape.
 
 Any other option is refused. There is no --max-usd here: to cap paid embedding
-work, run the repairs through gbrain doctor --remediate --yes --include-repairs --max-usd <n>.
+work, preview gbrain doctor --remediation-plan --json and, after the user agrees, run
+gbrain doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash>.
 With no kind, previews every kind. Run it on the brain host.`;
 
 const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous']);
@@ -75,7 +76,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     if (flag === '--max-usd' || flag === '--max-cost') {
       const cap = equal < 0 ? args[i + 1] : token.slice(equal + 1);
       throw new OperationError('invalid_params', `${flag} is not a gbrain repair option; the repair did not run.`,
-        `To cap paid repair work, run: gbrain doctor --remediate --yes --include-repairs --max-usd ${cap && !cap.startsWith('-') ? cap : '<n>'}`);
+        `To cap paid repair work, preview gbrain doctor --remediation-plan --json, then after the user agrees run: gbrain doctor --remediate --yes --include-repairs --max-usd ${cap && !cap.startsWith('-') ? cap : '<n>'} --expect <plan_hash> (plan_hash from the preview)`);
     }
     if (BOOLEAN_FLAGS.has(flag)) {
       if (equal >= 0) throw new OperationError('invalid_params', `${flag} does not accept a value.`);
@@ -151,7 +152,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     console.log(`Scope: brain ${scope.brain_id}; sources ${scope.source_ids.join(', ') || '(none)'}`);
     for (const result of results) console.log(human(result));
     if (!apply && paidKinds.length) console.log(`Kinds that may queue paid embeddings: ${paidKinds.join(', ')} (pass --no-embed to skip; `
-      + 'page-write kinds are re-embedded by their publication either way; cap spend with gbrain doctor --remediate --yes --include-repairs --max-usd <n>).');
+      + 'page-write kinds are re-embedded by their publication either way; cap spend with gbrain doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash> from gbrain doctor --remediation-plan --json).');
     if (explicitKindsNotRun.length) console.log(`Explicit-only kinds (not run without their name; preview each): ${explicitKindsNotRun.map(n => n.preview_command).join('; ')}`);
   }
   if (results.some(r => r.stopped)) setCliExitVerdict(1);

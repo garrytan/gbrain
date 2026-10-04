@@ -4495,7 +4495,7 @@
       "getTimeline": {
         "default": [
           {
-            "paramCount": 2,
+            "paramCount": 3,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -4506,7 +4506,7 @@
         ],
         "excludePrivate": [
           {
-            "paramCount": 2,
+            "paramCount": 3,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

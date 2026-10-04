@@ -233,7 +233,7 @@
           "link_coverage: number | null",
           "link_density_score: number",
           "linkable_page_count: number",
-          "migrations?: { pending: string[]; partial: string[]; wedged: string[]; skipped_future: number; } | { error: \"ledger_unreadable\"; } | undefined",
+          "migrations?: { pending: string[]; pending_fresh_install: string[]; partial: string[]; wedged: string[]; skipped_future: number; } | { error: \"ledger_unreadable\"; } | undefined",
           "missing_embeddings: number",
           "most_connected: { slug: string; link_count: number; }[]",
           "no_dead_links_score: number",
@@ -1554,7 +1554,7 @@
         "kind": "type",
         "name": "ChatRole",
         "signature": [
-          "\"user\" | \"system\" | \"assistant\" | \"tool\""
+          "\"user\" | \"tool\" | \"system\" | \"assistant\""
         ]
       },
       {
@@ -1644,7 +1644,7 @@
           "cause?: unknown",
           "message: string",
           "name: string",
-          "reason: \"unknown\" | \"timeout\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"network\" | \"auth\" | \"rate_limit\" | \"payload_too_large\"",
+          "reason: \"unknown\" | \"timeout\" | \"no_key\" | \"empty_result_set\" | \"malformed_shape\" | \"payload_too_large\" | \"network\" | \"auth\" | \"rate_limit\"",
           "stack?: string | undefined",
           "status?: number | undefined"
         ],
@@ -2446,6 +2446,7 @@
           "brain?: { audience?: string; } | undefined",
           "chat_fallback_chain?: string[] | undefined",
           "chat_model?: string | undefined",
+          "consent?: { preapprove?: { paid?: { max_usd_per_run?: number; }; persistent_install?: boolean; }; } | undefined",
           "content_sanity?: { bytes_warn?: number; bytes_block?: number; junk_patterns_enabled?: boolean; disabled_patterns?: string[]; disabled?: boolean; junk_disposition?: \"quarantine\" | \"reject\"; max_markup_ratio?: number; prose_check_enabled?: boolean; } | undefined",
           "cycle?: Record<string, string> | undefined",
           "dashscope_api_key?: string | undefined",
@@ -5405,8 +5406,10 @@
           "annotations?: { title?: string; readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; } | undefined",
           "area?: string | undefined",
           "cliHints?: { name?: string; aliases?: string[]; positional?: string[]; stdin?: string; hidden?: boolean; } | undefined",
+          "cliOnly?: { argv: readonly string[]; } | undefined",
           "description: string",
           "handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>",
+          "idempotent?: boolean | undefined",
           "localOnly?: boolean | undefined",
           "mutating?: boolean | undefined",
           "name: string",
@@ -5414,7 +5417,7 @@
           "params: Record<string, ParamDef>",
           "publishGateKey?: \"mcp.publish_skills\" | \"mcp.publish_advisor\" | undefined",
           "requiredScopes?: readonly string[] | undefined",
-          "scope?: \"read\" | \"write\" | \"admin\" | \"sources_admin\" | \"users_admin\" | \"agent\" | undefined",
+          "scope?: \"agent\" | \"read\" | \"write\" | \"admin\" | \"sources_admin\" | \"users_admin\" | undefined",
           "verb?: boolean | undefined"
         ],
         "name": "Operation"
@@ -5429,6 +5432,7 @@
           "config: GBrainConfig",
           "deferEmbeds?: boolean | undefined",
           "dryRun: boolean",
+          "emitNotice?: ((n: Notice) => void) | undefined",
           "emitResponseMeta?: ((key: string, value: unknown) => void) | undefined",
           "engine: BrainEngine",
           "explicitReadBinding?: ExplicitReadBinding | undefined",
@@ -5451,16 +5455,24 @@
       {
         "kind": "class",
         "members": [
+          "canonical?: \"unknown\" | \"projection_pending\" | \"timeout\" | \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"rate_limited\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | \"access_command_failed\" | \"access_denied_test_user\" | \"access_env_missing\" | \"acknowledgment_unavailable\" | \"admin_policy_enforced\" | \"ambiguous_id\" | \"ambiguous_skill\" | \"api_not_enabled\" | \"approval_required\" | \"autopilot_job_owned_by_other_brain\" | \"benchmark_duplicate_task_id\" | \"benchmark_empty\" | \"benchmark_exists\" | \"benchmark_judge_llm_no_rubric\" | \"benchmark_judge_qrels_no_expected\" | \"benchmark_judge_rule_no_checks\" | \"benchmark_judge_unknown_kind\" | \"benchmark_malformed\" | \"benchmark_missing_judge\" | \"benchmark_missing_task\" | \"benchmark_missing_task_id\" | \"benchmark_not_found\" | \"benchmark_rule_check_bad_arg\" | \"benchmark_rule_check_malformed\" | \"benchmark_rule_check_unknown_op\" | \"bootstrap_empty\" | \"bootstrap_pending_review\" | \"bridge_ownership_conflict\" | \"catalog_unavailable\" | \"checkpoint_missing\" | \"claim_already_used\" | \"client_json_unreadable\" | \"client_json_wrong_type\" | \"client_shape_invalid\" | \"code_callees_requires_symbol\" | \"code_callers_requires_symbol\" | \"code_def_requires_symbol\" | \"code_refs_requires_symbol\" | \"code_reused\" | \"colon_slug_windows_write_through\" | \"command_failed\" | \"config_error\" | \"confirmation_required\" | \"conflicting_source_scope\" | \"consent_timeout\" | \"cost_cap_exceeded\" | \"cost_preview_requires_yes\" | \"cycle_failed\" | \"d_sel_too_small\" | \"demo_graph_failed\" | \"demo_import_failed\" | \"demo_verification_failed\" | \"derived_cap_exhausted\" | \"destination_not_ready\" | \"dirty_tree\" | \"effect_not_failed\" | \"embedding_auth_failed\" | \"embedding_configuration\" | \"embedding_disabled\" | \"embedding_model_mismatch\" | \"embedding_plane_split\" | \"embedding_storage_unavailable\" | \"embedding_unavailable\" | \"embedding_unconfigured\" | \"embedding_width_mismatch\" | \"export_limit\" | \"extractor_identity_mismatch\" | \"facts_absorb_write_refused\" | \"facts_payload_expired\" | \"fetch_failed\" | \"full_resync_required\" | \"gate_failed\" | \"git_index_locked\" | \"git_index_stale\" | \"git_push_unavailable\" | \"git_target_unsafe\" | \"git_unavailable\" | \"graph_incomplete\" | \"held_out_overlaps_benchmark\" | \"held_out_required_for_bundled\" | \"independent_principal_required\" | \"insufficient_scope\" | \"internal\" | \"internal_error\" | \"interrupted\" | \"invalid_client\" | \"invalid_grant_clock_skew\" | \"invalid_grant_revoked\" | \"invalid_grant_testing_expiry\" | \"invalid_request\" | \"invalid_source\" | \"invalid_source_pin\" | \"invalid_token\" | \"invalid_write_wait\" | \"legacy_job_selection_invalid\" | \"legacy_jobs_active\" | \"local_conflict\" | \"lock_busy\" | \"managed_pull_skipped\" | \"method_not_allowed\" | \"migration_failed\" | \"migrations_pending\" | \"migrations_running\" | \"missing_source_scope\" | \"missing_source_value\" | \"models_strict_violation\" | \"no_pricing\" | \"no_refresh_token\" | \"no_routing_eval\" | \"no_skill_md\" | \"no_worker\" | \"no_worker_surface\" | \"not_a_git_repo\" | \"not_connected\" | \"no_brain\" | \"overlapping_path\" | \"parse_error\" | \"pasted_wrong_url\" | \"payload_too_large\" | \"pending_writes\" | \"pglite_busy\" | \"plan_output_failed\" | \"plan_stale\" | \"port_in_use\" | \"preview_changed\" | \"profile_incompatible\" | \"projection_owner_resident\" | \"publication_pending\" | \"redirect_uri_mismatch\" | \"refresh_dirty\" | \"refresh_diverged\" | \"refresh_drain_timeout\" | \"refresh_no_upstream\" | \"refresh_not_managed\" | \"refresh_not_owner\" | \"refresh_source_changed\" | \"relay_disabled\" | \"relay_session_expired\" | \"relay_unreachable\" | \"request_already_submitted\" | \"requirements_changed\" | \"requires_local_engine\" | \"resume_spec_mismatch\" | \"revision_unavailable\" | \"scope_missing\" | \"serve_port_in_use\" | \"serve_status_only\" | \"shared_skills_unavailable\" | \"shared_skills_unsupported\" | \"skill_asset_not_found\" | \"skill_candidate_invalid\" | \"skill_not_found\" | \"skill_retention_capacity\" | \"source_binding_required\" | \"source_id_taken\" | \"source_not_ready\" | \"source_profile_no_backfill\" | \"source_referenced\" | \"source_root_conflict\" | \"split_bad_ratio\" | \"split_unparseable\" | \"state_mismatch\" | \"sync_not_applicable\" | \"sync_in_progress\" | \"target_escape\" | \"topology_change_required\" | \"trusted_local_only\" | \"unexpected_file_bytes\" | \"unexpected_staging_bytes\" | \"unknown_command\" | \"unknown_flag\" | \"unknown_method\" | \"unknown_source\" | \"unknown_tool\" | \"unmanaged_path\" | \"unsupported_export_data\" | \"upstream\" | \"verification_failed\" | \"withdrawal_capacity\" | \"withdrawal_provenance\" | \"writer_admin_intent_required\" | \"writer_admin_state_changed\" | \"writer_busy\" | \"writer_identity_publish_failed\" | \"writer_manifest_mismatch\" | \"writer_manifest_unsafe\" | \"writer_regrant_required\" | \"writer_transfer_conflict\" | \"writer_transfer_required\" | \"wrong_account_consented\" | undefined",
+          "canonicalCode: string",
           "cause?: unknown",
           "code: ErrorCode",
+          "contractVersion?: 1 | undefined",
           "detail?: string | undefined",
           "docs?: string | undefined",
+          "fix?: Action | undefined",
           "message: string",
           "name: string",
+          "notices?: Notice[] | undefined",
           "protocolVersion?: number | undefined",
+          "reason?: string | undefined",
+          "receiptFields?: { operation: string; source_id: string; slug: string | null; principal_kind: string; principal_id: string; } | undefined",
           "stack?: string | undefined",
           "suggestion?: string | undefined",
-          "toJSON: () => { write_error?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | undefined; write_request?: WriteReceipt | undefined; error: ErrorCode; message: string; suggestion: string | undefined; docs: string | undefined; detail: string | undefined; protocol_version: number | undefined; }",
+          "toJSON: () => { contract_version?: 1 | undefined; notices?: unknown[] | undefined; fix?: unknown; why?: string | undefined; reason?: string | undefined; write_error?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | undefined; write_request?: WriteReceipt | undefined; error: ErrorCode; code: string; message: string; suggestion: string | undefined; docs: string | undefined; detail: string | undefined; protocol_version: number | undefined; }",
+          "why?: string | undefined",
           "writeError?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | undefined",
           "writeRequest?: WriteReceipt | undefined"
         ],
@@ -5469,6 +5481,7 @@
           "new (code: ErrorCode, message: string, suggestion?: string | undefined, docs?: string | undefined) => OperationError"
         ],
         "statics": [
+          "bare: (code: RegistryCode, message: string, reason: string) => OperationError",
           "captureStackTrace: { (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; }",
           "isError: { (error: unknown): error is Error; (value: unknown): value is Error; (value: unknown): value is Error; }",
           "prepareStackTrace: (err: Error, stackTraces: NodeJS.CallSite[]) => any",
@@ -5538,6 +5551,13 @@
         ]
       },
       {
+        "kind": "function",
+        "name": "opError",
+        "signature": [
+          "(code: RegistryCode, message: string, suggestion: string, opts?: OpErrorOpts) => OperationError"
+        ]
+      },
+      {
         "kind": "variable",
         "name": "operations",
         "signature": [
@@ -5562,14 +5582,14 @@
         "kind": "function",
         "name": "resolveCodeIntelScope",
         "signature": [
-          "(ctx: OperationContext, sourceIdParam: string | undefined, allSourcesParam?: boolean) => { allSources: boolean; sourceId?: string; }"
+          "(ctx: OperationContext, sourceIdParam: string | undefined, allSourcesParam?: boolean, opName?: string) => { allSources: boolean; sourceId?: string; }"
         ]
       },
       {
         "kind": "function",
         "name": "resolvePerCallMode",
         "signature": [
-          "(ctx: OperationContext, raw: unknown) => string | undefined"
+          "(ctx: OperationContext, raw: unknown, opName?: string) => string | undefined"
         ]
       },
       {
@@ -5938,13 +5958,15 @@
           "message: string",
           "name: string",
           "readonly code: \"pglite_busy\"",
+          "readonly ownerPid?: number | undefined",
+          "readonly ownerTransport?: \"stdio\" | \"http\" | undefined",
           "readonly retryable: true",
           "reason: \"timeout\" | \"live_serve\"",
           "stack?: string | undefined"
         ],
         "name": "LiveServeLockError",
         "signature": [
-          "new (message: string) => LiveServeLockError"
+          "new (message: string, owner?: { pid?: number; transport?: \"stdio\" | \"http\"; }) => LiveServeLockError"
         ],
         "statics": [
           "captureStackTrace: { (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; }",
@@ -5957,6 +5979,7 @@
         "kind": "interface",
         "members": [
           "acquired: boolean",
+          "acquiredAt?: number | undefined",
           "heartbeat?: NodeJS.Timeout | undefined",
           "lockDir: string",
           "lockPath?: string | undefined",
@@ -5979,7 +6002,9 @@
       {
         "kind": "interface",
         "members": [
+          "acquiredAt?: number | undefined",
           "held: boolean",
+          "http?: boolean | undefined",
           "isServe?: boolean | undefined",
           "pid?: number | undefined"
         ],
@@ -6026,6 +6051,13 @@
         "name": "getPgliteMigrationLockPath",
         "signature": [
           "(dataDir: string) => string"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "heldLockFor",
+        "signature": [
+          "(dataDir: string | undefined) => LockHandle | null"
         ]
       },
       {
@@ -7129,7 +7161,7 @@
           "link_coverage: number | null",
           "link_density_score: number",
           "linkable_page_count: number",
-          "migrations?: { pending: string[]; partial: string[]; wedged: string[]; skipped_future: number; } | { error: \"ledger_unreadable\"; } | undefined",
+          "migrations?: { pending: string[]; pending_fresh_install: string[]; partial: string[]; wedged: string[]; skipped_future: number; } | { error: \"ledger_unreadable\"; } | undefined",
           "missing_embeddings: number",
           "most_connected: { slug: string; link_count: number; }[]",
           "no_dead_links_score: number",

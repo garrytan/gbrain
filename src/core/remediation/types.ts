@@ -11,6 +11,7 @@
 import type { RemediationStep } from '../remediation-step.ts';
 import type { RepairPlanStep, RepairStepResult } from './repairs.ts';
 import type { ExplicitRepairNotice } from '../repair/registry.ts';
+import type { CapSource } from '../consent.ts';
 
 /**
  * Options for computeRemediationPlan. All fields are optional with
@@ -65,10 +66,18 @@ export interface RemediationPlan {
 export interface RemediationOpts {
   /** Target brain_score (default: 90). */
   targetScore?: number;
+  /**
+   * Run each submitted job step in this process when no registered worker
+   * serves the queue (PGLite always lacks one), as `jobs submit --follow`
+   * does, instead of waiting out the step timeout. Set by the CLI entry point.
+   */
+  inlineJobs?: boolean;
   /** Cap inner loop iterations (default: Infinity). */
   maxJobs?: number;
   /** USD cap for total plan cost. Pre-flight refuse + mid-run BudgetExhausted gate. */
   maxUsd?: number;
+  /** A4: where `maxUsd` came from (default `user`); a `derived` cap warns-and-runs an unpriced model and logs its exhaustion. */
+  capSource?: CapSource;
   /** Read-only dry-run; submits no jobs; returns plan in result. */
   dryRun?: boolean;
   /** Resume from checkpoint matching this plan_hash, OR newest if undefined+resume=true. */
@@ -137,8 +146,11 @@ export interface RemediationResult {
     target: number;
     ceiling: number;
   };
-  /** Set when job steps were skipped for an unreachable target while repair steps still ran. */
-  job_steps_skipped?: { reason: 'target_unreachable'; target: number; ceiling: number };
+  /**
+   * Set when the score target is unreachable: the paid job steps (`skipped`
+   * ids) were not run; free job steps and included repair steps still ran.
+   */
+  job_steps_skipped?: { reason: 'target_unreachable'; target: number; ceiling: number; skipped?: string[] };
   /** Set when `--resume` refused (a checkpoint for another brain). */
   resume_refused?: { reason: string; checkpoint_brain_id: string; brain_id: string; plan_hash: string };
   /** Repair steps the run applied or refused (only when `repairs` was passed). */

@@ -90,6 +90,7 @@ export function gbrainInvocations(code: string): Invocation[] {
     const verb = m[1]!;
     if (!/^[a-z][a-z0-9_-]{2,}$/.test(verb)) continue;
     if (!commandPosition(code.slice(0, m.index))) continue;
+    if (verb === 'notice' && code[m.index! - 1] === '[') continue; // `[gbrain notice <code> …]` block prefix, not a command
     out.push({ verb, argv: shellWords(code.slice(m.index! + m[0].length - verb.length)) });
   }
   return out;

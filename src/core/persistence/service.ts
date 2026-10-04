@@ -11,6 +11,7 @@ import { registerPgliteReopen } from '../pglite-lifecycle.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { pendingWriteHint } from './health.ts';
 import { receiptDeliveredHint } from './connector-errors.ts';
+import { isMissingPageMessage } from './page-identity.ts';
 
 interface Service { consumer: PersistenceConsumer; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
@@ -23,12 +24,12 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   assertMutationProtocol(row);
   const registered = preparers.get(row.operation);
   if (registered) {
-    if (registered.target !== (row.target_kind ?? 'page')) throw new OperationError('unsupported_mutation_protocol', 'The registered preparer does not support this mutation target.');
+    if (registered.target !== (row.target_kind ?? 'page')) throw new OperationError('unsupported_mutation_protocol', 'The registered preparer does not support this mutation target.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
     return registered.prepare(e, row, cfg, signal);
   }
   if (row.target_kind === 'skill_bundle') {
     if (['put_skill', 'delete_skill'].includes(row.operation)) return (await import('../shared-skills/publication.ts')).prepareSharedSkillMutation(e, row, cfg);
-    throw new OperationError('unsupported_mutation_protocol', 'No compatible skill mutation preparer is registered.');
+    throw new OperationError('unsupported_mutation_protocol', 'No compatible skill mutation preparer is registered.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
   }
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_atom_')) return (await import('./atom-maintenance.ts')).prepareManagedAtomMutation(e, row, cfg);
   if (row.operation === 'extract_facts' && String(row.intent?.kind).startsWith('managed_facts_')) return (await import('./facts-prepare.ts')).prepareManagedFactsMutation(e, row, cfg);
@@ -47,12 +48,15 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (['takes_add','takes_update','takes_supersede','takes_resolve'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
   if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal);
-  throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.');
+  throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
 }
 export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConfig): PersistenceConsumer {
   const prior = services.get(engine);
   if (prior) {
-    if (prior.stopping) throw new OperationError('unavailable', 'The persistence owner is closing.');
+    if (prior.stopping) {
+      throw new OperationError('unavailable', 'The persistence owner is closing.',
+        'The persistence owner in this process is shutting down; start the command again after it exits. Accepted writes stay journaled and resume on the next owner.');
+    }
     return prior.consumer;
   }
   const consumer = new PersistenceConsumer(engine, config, preparePersistedMutation);
@@ -97,7 +101,10 @@ export function persistenceConsumerStatus(engine: BrainEngine) {
     : { state: 'not_running', accepting: false, active_preparations: 0, active_worktrees: 0 };
 }
 export function assertPersistenceAccepting(engine: BrainEngine): void {
-  if (services.get(engine)?.stopping) throw new OperationError('unavailable', 'The persistence owner is closing. Retry the same request_id after restart.');
+  if (services.get(engine)?.stopping) {
+    throw new OperationError('unavailable', 'The persistence owner is closing. Retry the same request_id after restart.',
+      'Nothing new was accepted. After the owner restarts, resubmit with the same request_id so a write that was already accepted is never applied twice.');
+  }
 }
 /** The waiter never owns a provider, database connection, or kernel lock. */
 export async function waitForWrite(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, waitMs = 5000): Promise<WriteRequest> {
@@ -133,6 +140,13 @@ export async function waitForWrite(engine: BrainEngine, row: WriteRequest, confi
   }
   return row;
 }
+/** B4: what a terminal receipt means for the caller, without guessing a mutation. */
+function terminalReceiptHint(row: WriteRequest, reason: string): string {
+  const what = `The ${row.operation ? `${row.operation} ` : ''}write (request_id ${row.request_id}) ended ${row.state} with ${reason}; it will not publish.`;
+  return row.state === 'cancelled'
+    ? `${what} Submit again only if the change is still wanted, with a new request_id.`
+    : `${what} Read the receipt and the current state before deciding to submit again; a new attempt needs a new request_id.`;
+}
 export function writeResponse(row: WriteRequest): Record<string, unknown> {
   const receipt = receiptFor(row);
   if (row.state === 'committed') return { ...receipt, write_request: receipt };
@@ -141,8 +155,10 @@ export function writeResponse(row: WriteRequest): Record<string, unknown> {
   const error = new OperationError(reason, !isTerminal(row) ? 'The write is accepted and is still pending.'
     : row.error_message ?? 'The write did not commit.', !isTerminal(row)
       ? pendingWriteHint(receipt)
-      : delivered?.suggestion ?? 'Inspect this receipt before submitting a new request_id.', delivered?.docs);
+      : delivered?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
   if (delivered?.detail) error.detail = delivered.detail;
+  if (reason === 'page_identity_changed' && isMissingPageMessage(row.error_message)) error.canonical = 'page_not_found';
+  error.receiptFields = { operation: row.operation, source_id: row.source_id, slug: row.slug || null, principal_kind: row.principal_kind, principal_id: row.principal_id };
   error.writeRequest = receipt as WriteReceipt;
   error.writeError = isWriteErrorCode(reason) ? reason : reason === 'page_identity_changed' ? 'source_changed' : 'storage_error';
   throw error;

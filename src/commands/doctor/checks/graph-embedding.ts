@@ -7,6 +7,7 @@
 import { loadConfigFileOnly } from '../../../core/config.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
+import { checkError } from '../check-fix.ts';
 
 /**
  * v0.40.4 graph_signals_coverage doctor check.
@@ -106,11 +107,7 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Ch
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return {
-      name: 'graph_signals_coverage',
-      status: 'warn',
-      message: `Could not check graph_signals_coverage: ${msg}`,
-    };
+    return checkError('graph_signals_coverage', 'check graph_signals_coverage', msg);
   }
 }
 
@@ -297,11 +294,7 @@ export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promi
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return {
-      name: 'embedding_width_consistency',
-      status: 'warn',
-      message: `Could not check embedding width: ${msg}`,
-    };
+    return checkError('embedding_width_consistency', 'check embedding width', msg);
   }
 }
 
@@ -382,11 +375,7 @@ export async function checkFactsEmbeddingWidthConsistency(engine: BrainEngine): 
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return {
-      name: 'facts_embedding_width_consistency',
-      status: 'warn',
-      message: `Could not check facts.embedding width: ${msg}`,
-    };
+    return checkError('facts_embedding_width_consistency', 'check facts.embedding width', msg);
   }
 }
 
@@ -499,10 +488,6 @@ export async function checkJunkEntityHubs(
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return {
-      name: 'junk_entity_hubs',
-      status: 'warn',
-      message: `Could not check for junk entity hubs: ${msg}`,
-    };
+    return checkError('junk_entity_hubs', 'check for junk entity hubs', msg);
   }
 }

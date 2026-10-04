@@ -1,4 +1,4 @@
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
 import { DEFAULT_JOURNAL_LIMITS, type JournalLimits, type SqlEngine } from './model.ts';
 
 export const RECEIPT_RETENTION_KEY = 'persistence.receipt_retention_days';
@@ -13,7 +13,8 @@ export const JOURNAL_CONFIG_KEYS: readonly string[] = [
 ];
 export function parseJournalConfigValue(key:string,value:string):number {
   if(!/^(0|[1-9]\d*)$/.test(value) || !Number.isSafeInteger(Number(value))) {
-    throw new OperationError('invalid_params',`Invalid ${key}: expected a nonnegative integer.`);
+    throw opError('invalid_params',`Invalid ${key}: expected a nonnegative integer.`,
+      `Set ${key} to a whole number of 0 or more with gbrain config set ${key} followed by the number, or unset it to use the default.`);
   }
   return Number(value);
 }

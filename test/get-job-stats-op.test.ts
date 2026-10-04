@@ -69,7 +69,14 @@ describe('get_job_stats op', () => {
     expect(res.isError).toBe(true);
     const body = parsed(res);
     expect(body.error).toBe('unavailable');
-    expect(body.suggestion).toContain('apply-migrations');
+    expect(body.reason).toBe('schema_missing');
+    expect(body.message).not.toContain('relation "minion_jobs"');
+    // The cause (pending migrations or a dropped table) is not knowable here: the fix is the diagnostic
+    // doctor read, and the suggestion quotes it instead of naming a different command.
+    expect(body.suggestion).toContain('pending schema migrations');
+    expect(body.fix.mcp).toEqual({ tool: 'run_doctor', arguments: {} });
+    expect(body.suggestion).toContain('Next: run_doctor {}');
+    expect(body.suggestion).not.toContain('apply-migrations');
   });
 });
 

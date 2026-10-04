@@ -1,5 +1,7 @@
-import { afterEach, expect, spyOn, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { PersistenceIpcTransportError } from '../src/core/persistence/ipc.ts';
+import { renderCliError } from '../src/core/agent-output.ts';
 import { frozenVerbWriteError, runMemoryWrite, writeFailureDiagnostic } from '../src/core/persistence/verb-errors.ts';
 import type { WriteReceipt } from '../src/core/persistence/types.ts';
 import { reportPersistenceCliError, runDeferredPersistenceCommand } from '../src/commands/persistence-delegate.ts';
@@ -119,4 +121,42 @@ test.each(['blocked_by_failures', 'partial'] as const)('managed %s rendering use
   expect(output).not.toContain('frontmatter validate');
   expect(output).not.toContain('sync --skip-failed');
   if (pending) { expect(output).toContain('not committed'); expect(output).not.toContain('First sync complete'); }
+});
+
+describe('delegated CLI JSON carries the v1 envelope fields beside the legacy keys', () => {
+  async function report(error: unknown): Promise<Record<string, any>> {
+    const stderr = spyOn(console, 'error').mockImplementation(() => {});
+    let stdout = '';
+    try {
+      expect(await reportPersistenceCliError(error, true, async text => { stdout += text; })).toBe(true);
+      return JSON.parse(stdout);
+    } finally { stderr.mockRestore(); }
+  }
+
+  test('an OperationError keeps error/message/suggestion values and gains code, fix, docs_cmd, class and contract_version', async () => {
+    const e = new OperationError('source_changed', driftMessage, 'Read the receipt first.');
+    e.writeError = 'source_changed';
+    e.writeRequest = receipt;
+    const legacy = e.toJSON() as Record<string, unknown>;
+    const doc = await report(e);
+    for (const [key, value] of Object.entries(legacy)) expect(doc[key], key).toEqual(value);
+    const rendered = JSON.parse(renderCliError(e, { json: true, command: 'capture', tty: false }).stdout!);
+    expect(doc.code).toBe(rendered.code);
+    expect(doc.fix).toEqual(rendered.fix);
+    expect(doc.docs_cmd).toEqual(['gbrain', 'errors', doc.code]);
+    expect(typeof doc.class).toBe('string');
+    expect(typeof doc.retryable).toBe('boolean');
+    expect(doc.contract_version).toBe(1);
+  });
+
+  test('a lost IPC acknowledgment is owner_unavailable with a receipt read, never a bare internal_error', async () => {
+    const doc = await report(new PersistenceIpcTransportError(true, requestId));
+    expect(doc).toMatchObject({ error: 'owner_unavailable', code: 'owner_unavailable', submission_status: 'unknown', request_id: requestId, contract_version: 1 });
+    expect(doc.fix.argv.slice(0, 2)).toEqual(['gbrain', 'write-request']);
+    expect(doc.fix.argv.slice(-2)).toEqual(['--', requestId]);
+    expect(doc.retryable).toBe(false);
+    const unsent = await report(new PersistenceIpcTransportError(false));
+    expect(unsent).toMatchObject({ error: 'owner_unavailable', code: 'owner_unavailable', submission_status: 'not_sent' });
+    expect(unsent.fix.argv.slice(0, 4)).toEqual(['gbrain', 'sources', 'writer', 'status']);
+  });
 });

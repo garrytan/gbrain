@@ -53,6 +53,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 
 export const v0_18_1: Migration = {
   version: '0.18.1',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'Row Level Security hardened on all public tables + escape hatch.',
     description:

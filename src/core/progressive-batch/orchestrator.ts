@@ -42,6 +42,7 @@
 
 import { getCurrentBudgetTracker } from '../ai/gateway.ts';
 import type { BudgetTracker } from '../budget/budget-tracker.ts';
+import { isInteractive } from '../interaction.ts';
 import { logProgressiveBatchEvent } from './audit.ts';
 import { defaultStageReport } from './stage-report.ts';
 import type {
@@ -161,17 +162,6 @@ function trackerHeadroom(tracker: BudgetTracker): number | null {
   const snapshot = tracker.snapshot();
   if (snapshot.maxCostUsd === undefined) return null;
   return Math.max(0, snapshot.maxCostUsd - snapshot.cumulativeCostUsd);
-}
-
-/**
- * Detect TTY for interactive grace. Skips when stdin OR stdout is
- * not a TTY (e.g. piped output, cron, launchd, Minion workers).
- *
- * GBRAIN_PROGRESSIVE_BATCH_AUTO=1 forces non-interactive.
- */
-function isInteractive(): boolean {
-  if (process.env.GBRAIN_PROGRESSIVE_BATCH_AUTO === '1') return false;
-  return Boolean(process.stdin.isTTY && process.stderr.isTTY);
 }
 
 /**
@@ -488,7 +478,7 @@ export async function runProgressiveBatch<T>(
 
   const stagesCompleted: Stage[] = [];
   const interactiveMs = policy.interactiveAbortMs ?? 0;
-  const interactiveOn = interactiveMs > 0 && isInteractive() && !disabled;
+  const interactiveOn = interactiveMs > 0 && process.env.GBRAIN_PROGRESSIVE_BATCH_AUTO !== '1' && isInteractive() && !disabled;
   const maxErrorRate = policy.maxErrorRate ?? 0.02;
 
   for (let i = 0; i < stageSequence.length; i++) {

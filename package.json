@@ -130,6 +130,11 @@
     "check:skill-refs": "bun scripts/check-skill-refs.mjs",
     "gate:skills": "bash scripts/skills-commit-gate.sh",
     "check:guard-self-test": "bash scripts/guard-self-test.sh",
+    "build:error-codes": "bun scripts/build-error-codes.ts",
+    "check:error-codes": "bun scripts/build-error-codes.ts --check",
+    "build:agent-protocol": "bun scripts/build-agent-protocol.ts",
+    "check:agent-protocol": "bun scripts/build-agent-protocol.ts --check",
+    "check:agent-contract": "bun scripts/check-agent-contract.ts",
     "check:no-legacy-getconnection": "bash scripts/check-no-legacy-getconnection.sh",
     "check:module-size": "bash scripts/check-module-size.sh",
     "check:function-size": "bun scripts/check-function-size.ts",
@@ -207,7 +212,7 @@
     "bun": ">=1.4.0"
   },
   "license": "MIT",
-  "version": "0.60.41.0",
+  "version": "0.60.42.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",

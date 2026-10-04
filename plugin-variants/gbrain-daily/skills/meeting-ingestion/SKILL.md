@@ -498,6 +498,14 @@ Phase 6, list each flag — the user resolves them, not silence. If any
 checklist item cannot be made to pass, report the meeting as NOT ingested and
 name the failing item.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- A contradiction with an existing page blocks ingestion until the user fixes or waives it: show both sources and wait.
+- `add_link` / auto-link reports an error after the meeting page was written: the page is saved but the links are not; list the failed links and add them after fixing slugs.
+- `put_page` returns `revision_conflict` on an attendee page: re-read and merge; never overwrite a person page from an old read.
+
 ## Anti-Patterns
 
 - Creating the meeting page without enriching attendees
@@ -530,3 +538,14 @@ name the failing item.
   transit between them
 - Re-checking substance in the sequence pass (or order in V1–V5) — the axes
   are orthogonal by design
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `chronicle_day` → `gbrain day`
+- `get_timeline` → `gbrain timeline`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

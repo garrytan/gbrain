@@ -15,6 +15,7 @@
  * is re-exported below.
  */
 
+import { listenOrRefuse } from './serve-http-listen.ts';
 import express from 'express';
 import type { Socket } from 'net';
 import type { Request, RequestHandler, CookieOptions } from 'express';
@@ -50,6 +51,8 @@ import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import { isUndefinedColumnError } from '../core/utils.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { VERSION } from '../version.ts';
+import { NoticeLedger } from '../core/notice-ledger.ts';
+import { createReadinessCache, type ReadinessCache } from '../core/readiness.ts';
 
 export { extractGitHubItemRef, githubKindCoversRepo, selectGitHubItemSources } from './serve-http-webhooks.ts';
 export { HEALTH_TIMEOUT_MS, probeHealth, probeLiveness, type ProbeHealthResult } from './serve-http-metrics.ts';
@@ -460,6 +463,8 @@ export async function embeddingWidthStartupWarning(engine: BrainEngine): Promise
  */
 export interface ServeHttpContext {
   engine: BrainEngine;
+  noticeLedger?: NoticeLedger; // A6: notice dedupe/coaching budget keyed by principal + session (HTTP is stateless)
+  readinessCache?: ReadinessCache; // A7/F1/F2: probed readiness (60 s, single-flight) for initialize tails and gbrain://capabilities
   config: GBrainConfig | (Partial<GBrainConfig> & { engine: 'pglite' });
   sql: SqlQuery;
   bind: string;
@@ -808,7 +813,7 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   const requireAdmin = createRequireAdmin(adminSessions);
   const { ingestRateLimiter, githubWebhookLimiter } = createWebhookLimiters();
   const ctx: ServeHttpContext = {
-    engine, config, sql, bind, enableDcr, logFullParams, surface: options.surface, mcpOperationsBase,
+    noticeLedger: new NoticeLedger(), readinessCache: createReadinessCache(), engine, config, sql, bind, enableDcr, logFullParams, surface: options.surface, mcpOperationsBase,
     issuerUrl, mcpResourceUrl, resourceMetadataUrl, oauthProvider, resourceVerifier,
     bootstrapHash, adminSessions, adminCookie,
     magicLinkNonces: new Map<string, number>(),
@@ -843,8 +848,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
-  const httpServer = app.listen(port, bind, () => {
-    console.error(`
+  const httpServer = await listenOrRefuse(app, port, bind);
+  console.error(`
 ╔══════════════════════════════════════════════════════╗
 ║  GBrain MCP Server v${VERSION.padEnd(37)}║
 ╠══════════════════════════════════════════════════════╣
@@ -867,7 +872,6 @@ ${bootstrapFromEnv
     ? '║  Admin Token: hidden (non-TTY log-leak guard)        ║\n║  set $GBRAIN_ADMIN_BOOTSTRAP_TOKEN, or pass          ║\n║  --print-admin-token on a trusted terminal.          ║\n╚══════════════════════════════════════════════════════╝'
     : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
 `);
-  });
 
   // #4474: bind the resolve-IPC unix socket under --http too. This is the
   // exact posture `gbrain bootstrap harness` targets — without the listener

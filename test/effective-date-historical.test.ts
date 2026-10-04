@@ -42,7 +42,9 @@ test('an explicit 1851 event_date is stored as the effective date', async () => 
 test('reindex-frontmatter recomputes a page stored under the old floor', async () => {
   await importFromContent(engine, SLUG, PAGE, { noEmbed: true });
   await engine.executeRaw(`UPDATE pages SET effective_date = created_at, effective_date_source = 'fallback' WHERE slug = $1`, [SLUG]);
-  const result = await runReindexFrontmatter(engine, { yes: true, json: true });
+  // C3: an apply binds the previewed plan (--yes --expect <plan_hash>).
+  const { plan_hash } = await runReindexFrontmatter(engine, { dryRun: true, json: true });
+  const result = await runReindexFrontmatter(engine, { yes: true, expect: plan_hash, json: true });
   expect(result.updated).toBe(1);
   expect(await stored()).toEqual({ effective_date: '1851-10-18', effective_date_source: 'event_date' });
 });

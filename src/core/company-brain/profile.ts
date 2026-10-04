@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { basename, relative } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import type { Action } from '../agent-output.ts';
+import { opError, OperationError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { importFromContent } from '../import-file.ts';
 import { readCommittedBlob } from './revision.ts';
 import { parseMarkdown } from '../markdown.ts';
@@ -13,13 +15,25 @@ import type { SourceIngestionCheckpoint } from './receipts.ts';
 import { companyBrainProfile, companyBrainPolicyFingerprint, type CompanyBrainProfile } from './policy.ts';
 export { companyBrainProfile, type CompanyBrainProfile } from './policy.ts';
 
+function statusFix(sourceId: string): Action {
+  return readFix(`Shows source ${sourceId}'s registration, ingestion receipt, and outstanding phase.`, { argv: ['gbrain', 'sources', 'status', '--json'] });
+}
+
+function resumeCommand(sourceId: string): string {
+  return `gbrain sync --source ${sourceId} --no-embed --no-pull`;
+}
+
 export async function getCompanyBrainProfile(engine: BrainEngine, sourceId: string): Promise<CompanyBrainProfile | null> {
   const [source] = await engine.executeRaw<{ config: unknown; incarnation: string }>('SELECT config,incarnation FROM sources WHERE id=$1', [sourceId]);
   if (!source) return null;
   const profile = companyBrainProfile(source.config);
   if (!profile) {
     const [receipt] = await engine.executeRaw("SELECT id FROM source_ingestion_receipts WHERE source_id=$1 AND source_incarnation=$2::uuid AND profile='company-brain' LIMIT 1", [sourceId, source.incarnation]);
-    if (receipt) throw new OperationError('profile_incompatible', 'The durable company approval has no source policy. Reconnect explicitly; sync cannot fall back to an unrestricted profile.');
+    if (receipt) {
+      throw opError('profile_incompatible', 'The durable company approval has no source policy. Reconnect explicitly; sync cannot fall back to an unrestricted profile.',
+        `Source ${sourceId} has a company-brain receipt but no stored source policy. Check its status; reconnecting means previewing removal with gbrain sources remove ${sourceId} --dry-run and connecting again, a destructive step the user approves. Do not edit stored policy fields.`,
+        { fix: statusFix(sourceId) });
+    }
   }
   return profile;
 }
@@ -50,7 +64,9 @@ export async function withCompanyBrainSource<T>(engine: BrainEngine, sourceId: s
     const profile = source ? companyBrainProfile(source.config) : null;
     if (!source || source.incarnation !== context.sourceIncarnation || !profile || source.local_path !== profile.repository.root || profile.receiptId !== context.receiptId ||
       companyBrainPolicyFingerprint(profile, sourceId!) !== context.policyFingerprint) {
-      throw new OperationError('source_changed', 'The source incarnation or approved ingestion changed before publication.');
+      throw opError('source_changed', 'The source incarnation or approved ingestion changed before publication.',
+        `Another connect or sync changed source ${sourceId}'s registration or approval while this import ran, so this page was not published. Check the receipt, then resume with ${resumeCommand(sourceId!)}.`,
+        { fix: statusFix(sourceId!) });
     }
     return run(tx);
   });
@@ -63,16 +79,28 @@ export function softDeleteSyncPages(engine: BrainEngine, slugs: string[], opts: 
 export async function readCompanyBrainPlan(engine: BrainEngine, receiptId: string): Promise<CompanyBrainPlan> {
   const [row] = await engine.executeRaw<{ completed_keys: CompanyBrainPlan[] }>(
     "SELECT completed_keys FROM op_checkpoints WHERE op='company-brain-plan' AND fingerprint=$1", [receiptId]);
-  if (!row?.completed_keys?.[0]) throw new OperationError('checkpoint_missing', 'The approved source plan is missing; do not restart from a different revision.');
+  if (!row?.completed_keys?.[0]) {
+    throw opError('checkpoint_missing', 'The approved source plan is missing; do not restart from a different revision.',
+      `Receipt ${receiptId}'s approved plan checkpoint is gone, so gbrain will not resume from another revision. Check the source status; starting over needs a removal preview and a new reviewed connection, which the user approves.`,
+      { fix: readFix(`Shows which source holds receipt ${receiptId} and its outstanding phase.`, { argv: ['gbrain', 'sources', 'status', '--json'] }) });
+  }
   return row.completed_keys[0];
 }
 
 export async function importCompanyBrainFile(engine: BrainEngine, filePath: string, sourceId: string) {
   const context = currentCompanyBrainSync(sourceId);
-  if (!context?.plan.revision) throw new OperationError('plan_stale', 'An approved committed source plan is required.');
+  if (!context?.plan.revision) {
+    throw opError('plan_stale', 'An approved committed source plan is required.',
+      `This import of source ${sourceId} ran outside an approved company-brain sync. Run ${resumeCommand(sourceId)} so the approved plan governs it.`,
+      { fix: statusFix(sourceId) });
+  }
   const path = relative(context.plan.revision.root, filePath).split('\\').join('/');
   const entry = context.entries.get(path);
-  if (!entry?.page || entry.disposition !== 'included') throw new OperationError('plan_stale', 'The import path is outside the approved selection.');
+  if (!entry?.page || entry.disposition !== 'included') {
+    throw opError('plan_stale', 'The import path is outside the approved selection.',
+      `${path} is not in source ${sourceId}'s approved selection. Changing the selection needs a new inspection and a separately approved connection.`,
+      { fix: statusFix(sourceId) });
+  }
   const content = (await readCommittedBlob(context.plan.revision, entry, context.plan.limits)).toString('utf8');
   const pack = context.pack;
   const parsed = parseMarkdown(content, entry.page.slug, { activePack: pack.manifest });
@@ -84,10 +112,13 @@ export async function importCompanyBrainFile(engine: BrainEngine, filePath: stri
     prepare: async ready => {
       const tags = [...(snapshot?.tags ?? []), ...ready.parsedPage.tags];
       if (digest(canonical(parsed, parsed.tags)) !== digest(canonical(ready.parsedPage, tags))) {
-        throw new OperationError('source_writeback_required', 'Canonical preparation requires a source-content correction; this profile never writes repository files.');
+        throw opError('source_writeback_required', 'Canonical preparation requires a source-content correction; this profile never writes repository files.',
+          `${path} would change when published canonically (for example normalized frontmatter or tags), and this profile never edits repository files. Review the needed correction with the user, commit it, then resume with ${resumeCommand(sourceId)}.`);
       }
       if (ready.slug !== entry.page!.slug || ready.observedRevision !== (snapshot?.revision ?? null)) {
-        throw new OperationError('revision_conflict', 'The approved file no longer names the same page revision.');
+        throw opError('revision_conflict', 'The approved file no longer names the same page revision.',
+          `Page ${entry.page!.slug} in source ${sourceId} changed after this sync read it, so nothing was published for it. Resume with ${resumeCommand(sourceId)} to import against the current revision.`,
+          { fix: statusFix(sourceId) });
       }
       const project = await prepareCanonicalProjections(engine, ready.parsedPage, ready.slug, sourceId, snapshot, 'immutable');
       await withCompanyBrainSource(engine, sourceId, async tx => { await ready.apply(tx); await project(tx); });

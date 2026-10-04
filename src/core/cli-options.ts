@@ -434,6 +434,10 @@ export interface MaybeBackgroundOpts {
   source?: string;
 }
 
+let lastBackgroundJobId: number | null = null;
+/** D2: the job `maybeBackground` submitted in this process (for `--json` result documents). */
+export function lastBackgroundJob(): number | null { return lastBackgroundJobId; }
+
 /**
  * If `--background` is in args, submit a Minion job and return true
  * (caller should exit). Otherwise return false (caller does inline work).
@@ -475,16 +479,15 @@ export async function maybeBackground(opts: MaybeBackgroundOpts): Promise<boolea
       max_attempts: 2,
     });
     process.stdout.write(`job_id=${job.id}\n`);
+    lastBackgroundJobId = job.id;
 
     if (follow) {
       // exec `gbrain jobs follow <id>` so the user sees live stream
       // without losing the durable-queue submission.
-      const { spawn } = await import('child_process');
+      const { spawnCliChild } = await import('./cli-force-exit.ts');
       const cmd = process.argv[0] ?? 'bun';
       const script = process.argv[1] ?? '';
-      const child = spawn(cmd, [script, 'jobs', 'follow', String(job.id)], {
-        stdio: 'inherit',
-      });
+      const child = spawnCliChild(cmd, [script, 'jobs', 'follow', String(job.id)]);
       await new Promise<void>((resolve) => child.on('exit', () => resolve()));
     }
     return true;  // caller exits

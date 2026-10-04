@@ -29,6 +29,8 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'fs';
+import { isInteractive, readLine } from '../core/interaction.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join, resolve } from 'path';
 import { homedir } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
@@ -345,36 +347,40 @@ export async function runNotabilityEval(args: RunNotabilityEvalArgs): Promise<vo
         console.error(`No candidates found at ${inPath}. Run mine first.`);
         return;
       }
-      // The interactive TTY review loop is implemented as a thin shim
-      // over readline. Tests cover the pure mining path; the TTY loop
-      // gets a smoke-only test that injects answers via process.stdin.
+      // Hand-confirming tiers is a human task: with no one at the terminal
+      // (an agent, a pipe, closed stdin) refuse up front instead of reading
+      // EOF as answers or hanging on a silent pipe (C5). Prompts go through
+      // interaction.readLine: EOF or a 5-minute silence ends the review and
+      // keeps what was confirmed so far.
+      if (!isInteractive()) {
+        console.error(
+          `notability-eval review needs a person at a terminal to confirm each tier; nothing was read or written. `
+          + `Ask the user to run: gbrain notability-eval review --in ${inPath}`,
+        );
+        setCliExitVerdict(1);
+        return;
+      }
       const confirmed: ConfirmedCase[] = [];
-      const { default: readline } = await import('readline');
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const ask = (q: string) => new Promise<string>(r => rl.question(q, a => r(a)));
-
-      try {
+      // eslint-disable-next-line no-console
+      console.log(`Reviewing ${candidates.length} candidates. Press q to quit early.`);
+      // eslint-disable-next-line no-console
+      console.log(`Confirmed cases will write to ${outPath}.`);
+      const now = () => new Date().toISOString();
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
         // eslint-disable-next-line no-console
-        console.log(`Reviewing ${candidates.length} candidates. Press q to quit early.`);
+        console.log(`\n--- ${i + 1}/${candidates.length} (${c.path}) ---`);
         // eslint-disable-next-line no-console
-        console.log(`Confirmed cases will write to ${outPath}.`);
-        const now = () => new Date().toISOString();
-        for (let i = 0; i < candidates.length; i++) {
-          const c = candidates[i];
-          // eslint-disable-next-line no-console
-          console.log(`\n--- ${i + 1}/${candidates.length} (${c.path}) ---`);
-          // eslint-disable-next-line no-console
-          console.log(c.paragraph);
-          // eslint-disable-next-line no-console
-          console.log(`Predicted: ${c.predicted_tier}`);
-          const ans = (await ask('Confirm tier (h/m/l) or q to quit, s to skip: ')).trim().toLowerCase();
-          if (ans === 'q') break;
-          if (ans === 's') continue;
-          const tier = ans === 'h' ? 'high' : ans === 'l' ? 'low' : 'medium';
-          confirmed.push({ ...c, confirmed_tier: tier, confirmed_at: now() });
-        }
-      } finally {
-        rl.close();
+        console.log(c.paragraph);
+        // eslint-disable-next-line no-console
+        console.log(`Predicted: ${c.predicted_tier}`);
+        const read = await readLine({ prompt: 'Confirm tier (h/m/l) or q to quit, s to skip: ' });
+        if (read.kind !== 'line') break;
+        const ans = read.text.trim().toLowerCase();
+        if (ans === 'q') break;
+        if (ans === 's') continue;
+        const tier = ans === 'h' ? 'high' : ans === 'l' ? 'low' : 'medium';
+        confirmed.push({ ...c, confirmed_tier: tier, confirmed_at: now() });
       }
       writeJsonlCases(outPath, confirmed);
       // eslint-disable-next-line no-console

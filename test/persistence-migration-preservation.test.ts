@@ -74,6 +74,7 @@ test('withdrawals, ownership and compacted cancelled IDs refuse legacy engine mi
     expect(await compactWriteReceipts(engine)).toBe(1);
     await expect(assertLegacyEngineMigration(engine)).rejects.toMatchObject({ code: 'writer_coordinator_required' });
     // Must reject before parsing the target or touching its datastore/config.
-    await expect(runMigrateEngine(engine, [])).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    // A well-formed invocation (usage mistakes exit 2 before any state check) is still refused on a managed brain.
+    await expect(runMigrateEngine(engine, ['--to', 'pglite'])).rejects.toMatchObject({ code: 'writer_coordinator_required' });
   }
 });

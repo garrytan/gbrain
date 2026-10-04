@@ -31,9 +31,11 @@ describe('enrich parseArgs — --max-usd off → uncapped (Infinity sentinel)', 
 describe('reindex / onboard off-switch dispatch (regression guards)', () => {
   test('reindex-code: --max-cost off proceeds past the confirmation gate', async () => {
     const src = await Bun.file(new URL('../src/commands/reindex-code.ts', import.meta.url)).text();
-    // off sets maxCostOff and the gate proceeds when (tokenmax || maxCostOff).
+    // off sets maxCostOff and proceeds without asking; tokenmax authorizes
+    // through requireConsent and stays uncapped (C2: tokenmaxUncappedEnv).
     expect(src).toMatch(/maxCostOff\s*=\s*true/);
-    expect(src).toMatch(/posture === 'tokenmax' \|\| maxCostOff/);
+    expect(src).toMatch(/if \(maxCostOff\) \{/);
+    expect(src).toMatch(/tokenmaxUncappedEnv\(engine/);
   });
 
   test('onboard: --max-usd off lifts the --auto missing-cap refusal', async () => {
@@ -48,6 +50,8 @@ describe('reindex / onboard off-switch dispatch (regression guards)', () => {
     // The sentinel must become `undefined` at the tracker (never raw Infinity,
     // which serializes to null in audit rows).
     expect(src).toMatch(/opts\.maxCostUsd === Infinity \? undefined/);
-    expect(src).toMatch(/uncapped \? Infinity : parsed\.maxCostUsd/);
+    // C2: `--max-usd off` (Infinity) skips consent; tokenmax keeps Infinity via tokenmaxUncappedEnv.
+    expect(src).toMatch(/const uncapped = !parsed\.dryRun && maxCostUsd === Infinity/);
+    expect(src).toMatch(/tokenmaxUncappedEnv\(engine/);
   });
 });

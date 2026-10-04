@@ -1,6 +1,8 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { isValidSourceId, ALL_SOURCES } from '../core/source-id.ts';
 import { isEngineDegraded } from '../core/degraded-marker.ts';
+import { opError } from '../core/ops/contract.ts';
+import { readFix } from '../core/ops/op-fix.ts';
 
 /**
  * Stdio-lane preflight: a well-formed `GBRAIN_SOURCE` that names NO active
@@ -56,11 +58,13 @@ export async function assertStdioSourceBindable(
     return;
   }
   if (rows.length === 0) {
-    throw new Error(
+    throw opError('unknown_source',
       `GBRAIN_SOURCE="${env}" is not a registered active source (missing or archived); ` +
       `refusing to serve a phantom scope (reads would return nothing, writes would fail ` +
       `on the sources foreign key). Run \`gbrain sources list\`, then set GBRAIN_SOURCE ` +
       `to a listed id or unset it.`,
-    );
+      'Set GBRAIN_SOURCE to an id that `gbrain sources list` shows (or unset it) in the environment that launches this MCP server, then restart it.',
+      { fix: { ...readFix('Lists the registered sources so GBRAIN_SOURCE can name one.', { argv: ['gbrain', 'sources', 'list'] }), actor: 'user',
+        user_message: 'The MCP server is bound to a source that does not exist. Please set GBRAIN_SOURCE to one of the ids `gbrain sources list` prints, or unset it, and restart the server.' } });
   }
 }

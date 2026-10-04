@@ -27,6 +27,7 @@ import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts'
 import { migrateConnectorCheckpoints } from '../src/core/persistence/connector-checkpoint-migration.ts';
 import { readConnectorSourceStatuses } from '../src/core/persistence/connector-status.ts';
 import { runRemediate, runRemediationPlan } from '../src/commands/doctor/remediate.ts';
+import { approvedRemediateArgs } from './helpers/remediate-approval.ts';
 import { postUpgradeRecoveryBanner } from '../src/commands/doctor/upgrade-banner.ts';
 import { capture } from './helpers/wave-scenarios.ts';
 import { waveBrain } from './helpers/wave-fixture.ts';
@@ -80,7 +81,7 @@ for (const backend of testBackends()) test(`${backend}: post-upgrade to a clean 
       expect(banner).not.toContain('--yes');
       expect(banner).not.toContain('--apply');
 
-      const run = await capture(() => runRemediate(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '1', '--json']));
+      const run = await capture(async () => runRemediate(engine, await approvedRemediateArgs(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '1', '--json'])));
       commands.push('gbrain doctor --remediate --yes --include-repairs --no-embed --max-usd 1');
       const body = JSON.parse(run.out);
       expect(body.repairs.map((r: { kind: string; status: string }) => [r.kind, r.status])).toEqual([

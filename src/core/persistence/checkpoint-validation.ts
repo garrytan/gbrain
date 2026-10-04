@@ -18,7 +18,7 @@
  * `gbrain write-request` / MCP `get_write_request`.
  */
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
 import { PERSISTENCE_SYNC_RUN_INDEXES } from './schema.ts';
 import { docsAnchor } from './connector-errors.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
@@ -49,7 +49,9 @@ export async function findIncompleteSyncReceipt(tx: Pick<BrainEngine, 'executeRa
   } catch (error) {
     const failure = error as { code?: string; message?: string };
     if (failure?.code !== '57014' || !/statement timeout/.test(String(failure.message))) throw error;
-    throw new OperationError(CHECKPOINT_VALIDATION_TIMEOUT, CHECKPOINT_VALIDATION_TIMEOUT_MESSAGE);
+    throw opError(CHECKPOINT_VALIDATION_TIMEOUT, CHECKPOINT_VALIDATION_TIMEOUT_MESSAGE,
+      `Page writes that sync run ${runId} already committed stay committed; only its checkpoint did not. This usually means the request table lacks its lookup indexes: preview that repair and apply it after the user approves, then sync again.`,
+      { fix: { argv: ['gbrain', 'repair', 'request-indexes', '--json'], consent: [], actor: 'agent', why: 'Previews the missing request-table indexes without changing anything.', requires_exclusive: false } });
   }
 }
 

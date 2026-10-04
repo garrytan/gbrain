@@ -14,8 +14,14 @@ Read `AGENTS.md` at the repo root first. It's the non-Claude-agent operating
 protocol (install, read order, trust boundary, common tasks). Claude Code reads
 `CLAUDE.md` automatically and can skip ahead.
 
+Every gbrain error, refusal and recommendation follows one machine contract: read
+`code`, follow `fix.next` (`run`, `ask_user`, `tell_user_to_run`, `wait`, `report`),
+then run `fix.verify`. Exit 3 means stop and ask the user. Full contract:
+[`docs/protocol/AGENT_OPERATOR_v1.md`](docs/protocol/AGENT_OPERATOR_v1.md).
+
 If you fetched this file by URL without cloning yet, the companion files live at:
 - `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
+- `https://raw.githubusercontent.com/garrytan/gbrain/master/docs/protocol/AGENT_OPERATOR_v1.md` — how to act on gbrain errors and notices
 - `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — full doc map
 - `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — same map, inlined
 
@@ -104,6 +110,23 @@ gbrain init --pglite --no-embedding     # keyless memory, no server needed
 gbrain doctor --json                   # inspect diagnostics and any warnings
 ```
 
+**The first-run decision bundle.** Init asks every first-run question once, in
+one bundle, and does not wait for the answers: it applies defaults and exits 0.
+Human output prints it as an `[AGENT]` block; `gbrain init --json` carries it
+as a notice of kind `ask` with `decisions[]`:
+
+| Decision | What the user picks | Default |
+|---|---|---|
+| `search_mode` | `conservative`, `balanced` or `tokenmax`, with the cost matrix (Step 3.5) | the mode init applied, with its reason |
+| `writeback` | whether you save salient facts from conversations without being asked | recommended `salient`; off until the user agrees |
+| `harness_wiring` | registering gbrain in the harness you run in (Step 5) | the exact registration command for the detected harness |
+| `skills_scaffold` | optional bundled skills in the agent workspace | skip |
+
+Relay the bundle's one `user_message` to the user ("Reply 'defaults' to accept
+…") and apply each answer with the command its option names. One round-trip
+covers Step 3.5 and the wiring question. Details:
+[first run](docs/protocol/AGENT_OPERATOR_v1.md#first-run).
+
 The user's markdown files and canonical skills are SEPARATE from this tool repo.
 Fresh local init creates a combined source at
 `configDir()/content/<persistent-brain-id>/default`, normally
@@ -120,9 +143,9 @@ receipt's repository kind, pending actions, and backup status. Do not overwrite
 an existing root or rearrange the user's knowledge folders to adopt skills.
 See [shared brain skills](docs/guides/shared-brain-skills.md).
 
-Read `~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
-structure (people/, companies/, concepts/, etc.) inside the user's brain repo,
-NOT inside ~/gbrain.
+Read [`docs/GBRAIN_RECOMMENDED_SCHEMA.md`](https://github.com/garrytan/gbrain/blob/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md)
+and set up the MECE directory structure (people/, companies/, concepts/, etc.)
+inside the user's brain repo, never inside gbrain's own install or clone.
 
 ### Engine preference for harness installs (optional — the Postgres-first lane)
 
@@ -184,6 +207,7 @@ loop; full reference in `docs/ENGINES.md` ("Engine detection and access repair")
 
 ## Step 3.5: Confirm search mode with the user (DO NOT SKIP)
 
+This is the `search_mode` decision from the first-run bundle.
 `gbrain init` auto-applied a default search mode (`tokenmax` unless your subagent
 tier is Haiku-class or no expansion-capable API key — Anthropic, OpenAI, or
 Google — is configured). The init output included the cost matrix below preceded
@@ -394,7 +418,7 @@ Keep `--args` last (everything after it becomes server argv) and verify with
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- gbrain serve --surface verbs
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface verbs
 ```
 
 The add is lazy (exit 0 without connecting) — verify with
@@ -410,7 +434,7 @@ install, follow `BOOTSTRAP_FOR_AGENTS.md` instead of this page. For the
 brain-only MCP registration:
 
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- gbrain serve --surface verbs
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface verbs
 ```
 
 The add is lazy (exit 0 without connecting) — verify with `opencode mcp list`,
@@ -419,8 +443,8 @@ even on failure; read the output). Restart opencode afterwards — it reads
 config at session start. Verified against opencode v1.18.18. Full reference:
 [docs/mcp/OPENCODE.md](docs/mcp/OPENCODE.md).
 
-Whether you scaffolded or not, read `skills/RESOLVER.md` (in your workspace, or the
-bundled copy at `~/gbrain/skills/RESOLVER.md` when running from the cloned repo). It's
+Whether you scaffolded or not, read `skills/RESOLVER.md` (in your workspace, or
+[the published copy](https://github.com/garrytan/gbrain/blob/master/skills/RESOLVER.md)). It's
 the skill dispatcher — tells you which skill to read for any task. Save this to your
 memory permanently.
 
@@ -476,15 +500,22 @@ platform glue entirely with `gbrain autopilot --install` (built-in self-maintain
 
 ## Step 8: Integrations
 
-Run `gbrain integrations list`. Each recipe in `~/gbrain/recipes/` is a self-contained
-installer. It tells you what credentials to ask for, how to validate, and what cron
+Run `gbrain integrations list`, then `gbrain integrations show <id>` for one recipe.
+Each recipe is a self-contained installer. It tells you what credentials to ask for, how to validate, and what cron
 to register. Ask the user which integrations they want (email, calendar, voice, Twitter).
 
 Verify: `gbrain integrations doctor` (after at least one is configured)
 
 ## Step 9: Verify
 
-For memory-only installs, save one user-approved generic test note or fact with
+For memory-only installs, run the install check from the
+[first-run protocol](docs/protocol/AGENT_OPERATOR_v1.md#first-run): the read-only
+smoke check `gbrain doctor --only harness_wiring --json` (it reads the
+registration and runs initialize, tools/list and one `recall` against it), then
+`remember` an install-check marker with
+provenance `install-check`, ask the user to restart the harness, `recall` it in
+the new session and `forget` it. Never save a made-up fact about the user.
+Also save one user-approved generic test note or fact with
 provenance, retrieve it, exit the CLI, and retrieve it again in a new process.
 Check exact keyword retrieval as well as `remember`/`recall`. A process reopen
 proves local persistence, not a new conversation in the native harness; verify
@@ -549,8 +580,9 @@ For an existing service deployment, review its migration guide instead of
 assuming memory-only options are the desired maintenance policy. Verify a known
 keyword query after upgrading, not just the version string.
 
-Then read `~/gbrain/skills/migrations/v<NEW_VERSION>.md` (and any intermediate
-versions you skipped) and run any backfill or verification steps it lists. Skipping
+Then read `skills/migrations/v<NEW_VERSION>.md` (published at
+`https://github.com/garrytan/gbrain/blob/master/skills/migrations/v<NEW_VERSION>.md`;
+also read any intermediate versions you skipped) and run any backfill or verification steps it lists. Skipping
 this is how features ship in the binary but stay dormant in the user's brain.
 
 **v0.32.3 search modes (one-time upgrade prompt):** if the user's brain was
@@ -626,4 +658,10 @@ grants.
 ```bash
 export GBRAIN_NO_ONBOARD_NUDGE=1
 ```
-Init + upgrade banners auto-skip in non-TTY too.
+Init and upgrade notices do not skip themselves when there is no terminal:
+non-interactive callers get the onboarding nudge, the init decision bundle and
+the post-upgrade summary as `[AGENT]` blocks (or the `notices` key under
+`--json`), and stdio MCP sessions get the post-upgrade summary once as a notice
+block. `GBRAIN_NO_ONBOARD_NUDGE=1` silences the onboarding nudges and the
+post-upgrade summary everywhere. Only the remote-brain identity banner stays
+TTY-only (`GBRAIN_BANNER=1` forces it, `GBRAIN_NO_BANNER=1` hides it).

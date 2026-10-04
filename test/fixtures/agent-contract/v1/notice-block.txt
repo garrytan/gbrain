@@ -1,0 +1,5 @@
+[gbrain notice empty_retrieval kind=info]
+why: No pages matched. Search ran keyword-only because embeddings are not configured.
+fix: gbrain doctor --json --brain host
+next: {{next}}
+user_message: I found no notes on that topic. Your brain searches keywords only right now.

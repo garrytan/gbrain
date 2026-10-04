@@ -95,7 +95,11 @@ describe('reindex-frontmatter + backfill on PGLite (#1963 double-connect)', () =
 
       // Pre-fix: exits 1 after the 30s PGLite lock timeout, naming ITSELF as
       // the holder. Post-fix: reuses cli.ts's connected engine and succeeds.
-      const reindex = await runCli(['reindex-frontmatter', '--yes', '--json'], env, 120_000);
+      // C3: the apply binds the plan its dry run printed (--yes --expect <plan_hash>).
+      const preview = await runCli(['reindex-frontmatter', '--dry-run', '--json'], env, 120_000);
+      expect(preview.exitCode).toBe(0);
+      const planHash = JSON.parse(preview.stdout).plan_hash as string;
+      const reindex = await runCli(['reindex-frontmatter', '--yes', '--expect', planHash, '--json'], env, 120_000);
       const reindexOut = reindex.stdout + reindex.stderr;
       if (reindex.exitCode !== 0) {
         console.error('--- reindex-frontmatter stdout ---\n' + reindex.stdout);

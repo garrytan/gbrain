@@ -1,0 +1,4 @@
+# shrink-only baseline for scripts/check-agent-contract.ts rule in-scope-placeholder: path<TAB>count
+src/commands/sources-retry-held.ts	2
+src/core/connectors/connector-text.ts	1
+src/core/persistence/effect-git.ts	1

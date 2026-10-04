@@ -54,7 +54,7 @@ tools use the plugin lane's own approval flow.
 ## Option 1: Local (recommended, zero server needed)
 
 ```bash
-claude mcp add gbrain -- gbrain serve --surface verbs
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs
 ```
 
 That's it. Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no

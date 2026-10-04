@@ -34,6 +34,47 @@ pointing at this switch.
 over posture. `tokenmax` only governs the default/absent case — it never overrides a
 number you typed on the command line.
 
+## Consent and caps for paid commands (agent operator contract v1)
+
+Since v0.60.42.0 every command that spends money asks for authorization the
+same way ([protocol](../protocol/AGENT_OPERATOR_v1.md#consent-and-preapproval)).
+Without a terminal and without authorization, nothing runs: the command exits
+3 with a `confirmation_required` payload whose `user_message` the agent relays
+to the user, and whose `fix` is the exact command to run once they agree.
+`--json` never implies consent.
+
+What authorizes paid work, and the cap it runs under:
+
+| Authorization | Cap | `cap_source` |
+|---|---|---|
+| `--max-usd <n>` / `--max-cost <n>` | `<n>` | `user` |
+| a configured cap for the command (for example `embed.backfill_max_usd`) | that value | `user` |
+| the user's preapproval `consent.preapprove.paid.max_usd_per_run <usd>` (covers runs whose estimate is at or under it) | the preapproved limit | `user` |
+| `--yes` alone | the estimate × 1.5, floor $0.25, printed before the run | `derived` |
+| `--yes` alone, no estimate and no configured cap | the default cap ($5), printed | `default` |
+| `spend.posture=tokenmax` | the derived/default cap above, except `enrich` and `reindex-code` (below) | `derived` / `default` |
+
+- **`tokenmax` on `enrich` and `reindex-code` stays uncapped.** Those two
+  commands already ran without a ceiling under `spend.posture=tokenmax`
+  before the consent wave, so the posture keeps that meaning there: an
+  unattended run proceeds with no ceiling (spend still ledgered). Everywhere
+  else `tokenmax` authorizes the run under the derived cap. An explicit
+  `--max-usd` always wins.
+- **A derived cap that runs out** stops the command with exit 1, a checkpoint
+  and the exact resume command (`--max-usd <n>`); doctor's `agent_contract`
+  check then suggests the preapproval command. Raise the cap only with the
+  user's agreement.
+- **Unpriced models** (a model gbrain has no per-token rate for, for example
+  one released after this version): under a derived or default cap the run
+  **warns and proceeds** (`BUDGET_TRACKER_NO_PRICING` on stderr; the cap
+  cannot meter it). Under a cap the user set (`--max-usd`, a configured cap
+  or a preapproval) it **blocks** with `no_pricing` and nothing is spent: the
+  refusal's `fix` has `inputs` telling the agent to look up the model's
+  per-token rates (for example by web search on the provider's pricing page)
+  and register them with `gbrain pricing set` (see
+  [Registering a model price](#registering-a-model-price)), then retry the
+  same command.
+
 ## Off switches (`off` / `unlimited` / `none`)
 
 The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to mean
@@ -58,9 +99,9 @@ The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to m
 | Backfill 24h per-source spend cap | `embed.backfill_max_usd_per_source_24h` | `25` | refuses submission | `off` (`0` → default) | bypassed (still ledgered) |
 | Backfill per-job budget | `embed.backfill_max_usd` | `10` | caps the job's tracker | `off` (`0`/garbage → default, fail-closed) | uncapped (still ledgered) |
 | Backfill cooldown | `embed.backfill_cooldown_min` | `10` | skips re-submission inside window | — (latency knob, not spend) | **not** bypassed |
-| `reindex-code` cost gate | — (preview before re-embed) | — | TTY prompt / non-TTY refuse + exit 2 | `--max-cost off` | informational |
-| `migrate embeddings` consent gate | — (plan + estimate before provider migration) | — | TTY y/N prompt / non-TTY refuse + exit 2 | `--yes` | estimate marked informational, but **still prompts** (guards a destructive schema rebuild, not just spend) |
-| `enrich` / `onboard --auto` | `--max-usd` (per-call) | — | refuse without a cap (non-TTY) | `--max-usd off` | runs uncapped (still ledgered) |
+| `reindex-code` cost gate | — (preview before re-embed) | — | TTY prompt / non-TTY refuse + exit 3 (`confirmation_required`) | `--max-cost off` | runs uncapped (still ledgered) |
+| `migrate embeddings` consent gate | — (plan + estimate before provider migration) | — | TTY y/N prompt / non-TTY refuse + exit 3 (`confirmation_required`) | `--yes` | estimate marked informational, but **still prompts** (guards a destructive schema rebuild, not just spend) |
+| `enrich` / `onboard --auto` | `--max-usd` (per-call) | — | non-TTY without `--yes`/`--max-usd`: refuse + exit 3 (`confirmation_required`); `--yes` runs under the derived cap | `--max-usd off` | runs uncapped (still ledgered) |
 | Image-OCR per-run ceiling | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
 | Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker (one tracker per drain attempt, across all its batches) | — | **not** consulted (phase budget enforces regardless) |
 | Atom auto-drain daily cap | `autopilot.auto_drain.max_usd_per_day` | `2.00` | daily cap on drain **attempts** (`floor(max / 0.30)` = 6), not a dollar ledger | `gbrain config set autopilot.auto_drain.enabled false` | **not** consulted |

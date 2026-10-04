@@ -1,7 +1,9 @@
 import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { flushDirectory, sameFileMode } from '../fs-durable.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
 import { sha256 } from './digest.ts';
 import type { BundleRecoveryRecord, FileRecoveryRecord, WriteRequest } from './model.ts';
 import type { WorktreeBinding } from './ownership.ts';
@@ -15,8 +17,16 @@ export interface MutationFile {
 }
 export const BUNDLE_FILE_LIMITS = Object.freeze({ files: 128, fileBytes: 1024 * 1024, totalBytes: 8 * 1024 * 1024, depth: 16 });
 
+const ownersFix = (): Action => readFix('Shows each source\'s canonical root and owner with any pending or recovering skill publication, read-only.',
+  { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] });
+const requestFix = (row: WriteRequest): Action => row.principal_kind === 'local_cli'
+  ? readFix(`Reads skill request ${row.request_id}'s durable receipt: its state and recorded error, read-only.`, { argv: ['gbrain', 'write-request', '--', row.request_id] })
+  : readFix(`Shows source ${row.source_id}'s owner and its pending or recovering requests, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', row.source_id, '--json'] });
+
 function unsafe(): OperationError {
-  return new OperationError('storage_error', 'Skill publication requires bounded regular files without aliases, links, or special files.');
+  return opError('storage_error', 'Skill publication requires bounded regular files without aliases, links, or special files.',
+    `A skill bundle path is a symlink, hard link or special file, sits under a symlinked directory, is deeper than ${BUNDLE_FILE_LIMITS.depth} levels, or holds a file over ${BUNDLE_FILE_LIMITS.fileBytes} bytes, so it was not published or restored. Replace it with a regular file inside the source's canonical root, then publish the skill again as a new request; during recovery the owner keeps the files fenced and re-checks them on each pass.`,
+    { fix: ownersFix() });
 }
 
 /**
@@ -79,13 +89,19 @@ export function prepareBundleRecovery(files: MutationFile[], binding: WorktreeBi
     for (const path of seen) if (path.startsWith(`${normalized}${sep}`) || normalized.startsWith(`${path}${sep}`)) throw unsafe();
     seen.add(normalized);
     const nextSize = file.content === null ? 0 : typeof file.content === 'string' ? Buffer.byteLength(file.content) : file.content.byteLength;
-    if (nextSize > BUNDLE_FILE_LIMITS.fileBytes) throw new OperationError('request_too_large', 'Skill file exceeds the publication byte limit.');
+    if (nextSize > BUNDLE_FILE_LIMITS.fileBytes) throw opError('request_too_large', 'Skill file exceeds the publication byte limit.',
+      `A file of skill request ${row.request_id} in source ${row.source_id} is over the ${BUNDLE_FILE_LIMITS.fileBytes}-byte per-file limit, so nothing was published. Shrink or split it, then publish the skill again as a new request with a new request_id.`,
+      { fix: requestFix(row) });
     const before = readBundleFile(file.path, root);
     const beforeHash = before ? sha256(before.bytes) : null;
-    if (beforeHash !== file.expectedBeforeHash) throw new OperationError('source_changed', 'A canonical skill file changed after preparation.');
+    if (beforeHash !== file.expectedBeforeHash) throw opError('source_changed', 'A canonical skill file changed after preparation.',
+      `A canonical file of skill request ${row.request_id} in source ${row.source_id} changed on disk after the request was prepared, so nothing was published. Read the skill as it is now and publish again against it with a new request_id.`,
+      { fix: requestFix(row) });
     beforeBytes += before?.bytes.byteLength ?? 0;
     afterBytes += nextSize;
-    if (beforeBytes > BUNDLE_FILE_LIMITS.totalBytes || afterBytes > BUNDLE_FILE_LIMITS.totalBytes) throw new OperationError('request_too_large', 'Skill bundle exceeds the publication byte limit.');
+    if (beforeBytes > BUNDLE_FILE_LIMITS.totalBytes || afterBytes > BUNDLE_FILE_LIMITS.totalBytes) throw opError('request_too_large', 'Skill bundle exceeds the publication byte limit.',
+      `Skill request ${row.request_id} in source ${row.source_id} would hold more than ${BUNDLE_FILE_LIMITS.totalBytes} bytes before or after publication, so nothing was published. Shrink the bundle, then publish it again as a new request with a new request_id.`,
+      { fix: requestFix(row) });
     records.push({ version: 1, path: file.path, root,
       before: before?.bytes.toString('base64') ?? null, beforeHash,
       afterHash: file.content === null ? null : sha256(file.content), mode: before?.mode ?? null,
@@ -104,7 +120,9 @@ export function prepareBundleRecovery(files: MutationFile[], binding: WorktreeBi
 }
 
 export function assertBundleRecoveryBinding(record: BundleRecoveryRecord, binding: WorktreeBinding, attempt: string | null): void {
-  const refuse = () => new OperationError('recovery_required', 'Skill recovery identity or before-image is invalid; canonical files remain fenced.');
+  const refuse = () => opError('recovery_required', 'Skill recovery identity or before-image is invalid; canonical files remain fenced.',
+    `The recovery record for skill files under ${record.root} does not match this owner (root, owner epoch ${binding.owner_epoch} or claim) or carries a malformed before-image, so recovery stopped and the files stay fenced; nothing was restored or deleted. Show the user the owner status; never delete the files or the record to force progress.`,
+    { fix: ownersFix() });
   if (!binding.local_path || record.root !== resolve(binding.local_path, binding.relative_path)
     || record.ownerEpoch !== String(binding.owner_epoch) || record.attempt !== attempt) throw refuse();
   const seen = new Set<string>();
@@ -126,7 +144,9 @@ export function bundleFileHash(record: FileRecoveryRecord): string | null {
   const current = readBundleFile(record.path, record.root);
   const hash = current ? sha256(current.bytes) : null;
   const expectedMode = hash === record.beforeHash ? record.mode : record.afterMode ?? record.mode;
-  if (current && expectedMode !== null && !sameFileMode(current.mode, expectedMode)) throw new OperationError('unexpected_file_bytes', 'A canonical skill file mode changed outside publication.');
+  if (current && expectedMode !== null && !sameFileMode(current.mode, expectedMode)) throw opError('unexpected_file_bytes', 'A canonical skill file mode changed outside publication.',
+    `The permissions of ${record.path} changed outside skill publication, so it was neither published nor restored and stays fenced. Show the user the path; restoring its mode (${expectedMode.toString(8)}) is their decision, and the owner re-checks it on its next recovery pass.`,
+    { fix: ownersFix() });
   return hash;
 }
 
@@ -151,7 +171,9 @@ export function stageBundleFile(file: MutationFile, record: FileRecoveryRecord):
     let offset = 0;
     while (offset < content.byteLength) {
       const written = writeSync(fd, content, offset, content.byteLength - offset);
-      if (written <= 0) throw new OperationError('storage_error', 'Skill staging did not write the complete file.');
+      if (written <= 0) throw opError('storage_error', 'Skill staging did not write the complete file.',
+        `Staging ${file.path} stopped writing before the file was complete (a full disk or a failing volume), so it was not published; the canonical file is unchanged. Check free space on that volume, then inspect the request's receipt before publishing again.`,
+        { fix: ownersFix() });
       offset += written;
     }
     const mode = record.afterMode ?? record.mode;
@@ -162,7 +184,9 @@ export function stageBundleFile(file: MutationFile, record: FileRecoveryRecord):
 }
 
 export function publishStagedBundleFile(record: FileRecoveryRecord, boundary?: (phase: 'file_replaced' | 'directory_flushed') => void): void {
-  if (bundleFileHash(record) !== record.beforeHash) throw new OperationError('source_changed', 'The canonical skill file changed before publication.');
+  if (bundleFileHash(record) !== record.beforeHash) throw opError('source_changed', 'The canonical skill file changed before publication.',
+    `${record.path} no longer holds the bytes recorded for this skill publication (it was edited outside it), so it was not replaced. Read the skill as it is now and publish again against it with a new request_id; during recovery the owner re-checks it on each pass.`,
+    { fix: ownersFix() });
   if (record.afterHash === null) {
     if (record.beforeHash === null) return;
     unlinkSync(record.path);

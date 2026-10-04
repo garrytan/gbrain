@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createEngine } from '../src/core/engine-factory.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import type { AuthInfo, OperationContext } from '../src/core/ops/contract.ts';
+import type { AuthInfo, OperationContext, OperationError } from '../src/core/ops/contract.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -193,7 +193,11 @@ describe('explicit no-source grant is enforced (O-ENG-7)', () => {
         const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/ingest`, { method: 'POST',
           headers: { authorization: `Bearer ${token}`, 'content-type': 'text/markdown' }, body: '# Capture\n\nno-source prose' });
         expect(response.status).toBe(403);
-        expect(await response.json()).toMatchObject({ error: 'permission_denied', detail: 'fence=no_source_grant', docs_url: 'docs/mcp/ADMIN.md#legacy-token-grants' });
+        const [{ id }] = await engine.executeRaw<{ id: string }>("SELECT id::text AS id FROM access_tokens WHERE name = 'tok-ingest'");
+        const body = await response.json();
+        expect(body).toMatchObject({ error: 'permission_denied', detail: 'fence=no_source_grant', docs_url: 'docs/mcp/ADMIN.md#legacy-token-grants',
+          fix: { argv: ['gbrain', 'auth', 'rescope-token', '--id', id, '--sources', '<sources>'], actor: 'host_admin', next: 'tell_user_to_run', inputs: [{ name: 'sources' }] } });
+        expect(JSON.stringify(body)).not.toContain('<name>');
         const [jobs] = await engine.executeRaw<{ n: number }>("SELECT COUNT(*)::int AS n FROM minion_jobs WHERE name = 'ingest_capture'");
         expect(jobs.n).toBe(0);
       } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
@@ -219,5 +223,23 @@ describe('explicit no-source grant is enforced (O-ENG-7)', () => {
     await withBrain(async engine => {
       await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'permission_denied' });
     });
+  }, 120_000);
+
+  test('a no-source refusal at submission names the token, and its fix restores the grant when run', async () => {
+    const token = await mint('tok-submit');
+    expect((await cli('auth', 'rescope-token', 'tok-submit', '--sources', 'none')).exitCode).toBe(0);
+    const refusal = await withBrain(async engine => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      const auth = await provider.verifyAccessToken(token) as unknown as AuthInfo;
+      const ctx = { engine, config: { engine: 'pglite' }, sourceId: 'default', auth, remote: true, transport: 'http', dryRun: false,
+        logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+      const [source] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation FROM sources WHERE id='default'");
+      return submissionAuthority(ctx, 'put_page', 'default', source.incarnation, 'notes/shared').then(() => null, (e: OperationError) => e);
+    });
+    const [{ id }] = await withBrain(engine => engine.executeRaw<{ id: string }>("SELECT id::text AS id FROM access_tokens WHERE name = 'tok-submit'"));
+    expect(refusal).toMatchObject({ code: 'permission_denied', detail: 'fence=no_source_grant',
+      fix: { argv: ['gbrain', 'auth', 'rescope-token', '--id', id, '--sources', '<sources>'], actor: 'host_admin' } });
+    expect((await cli(...refusal!.fix!.argv!.slice(1).map(a => a === '<sources>' ? 'default' : a))).exitCode).toBe(0);
+    expect((await permissions('tok-submit')).source_id).toEqual(['default']);
   }, 120_000);
 });

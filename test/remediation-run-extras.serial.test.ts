@@ -108,4 +108,39 @@ describe('runRemediation extraRemediations threading', () => {
       'extract-timeline-from-meetings',
     ]);
   });
+
+  test('E3: an unreachable score target still runs the free job steps and skips only the paid ones', async () => {
+    const { runRemediation } = await import('../src/core/remediation/run.ts');
+    submittedJobs.length = 0;
+    const paid = makeRemediationStep({
+      id: 'onboard.paid_step', job: 'extract-takes-from-pages', params: {}, severity: 'medium', est_seconds: 5,
+      est_usd_cost: 2, rationale: 'synthetic paid extra', status: 'remediable',
+    });
+    let unreachable = false;
+    const { registerWorker } = await import('../src/core/minions/worker-registry.ts');
+    const unregister = registerWorker({ pid: process.pid, queue: 'default', nice_requested: null, nice_effective: null, started_at: Date.now() });
+    let result;
+    try {
+      result = await runRemediation(
+        engine,
+        { targetScore: 101, extraRemediations: [extra('onboard.free_step', 'extract-ner'), paid], maxJobs: 5, maxUsd: 10 },
+        { onTargetUnreachable: () => { unreachable = true; } },
+      );
+    } finally {
+      unregister();
+    }
+    expect(unreachable).toBe(true);
+    expect(result.submitted.map((s) => s.id)).toEqual(['onboard.free_step']);
+    expect(result.job_steps_skipped).toMatchObject({ reason: 'target_unreachable', target: 101, skipped: ['onboard.paid_step'] });
+    expect(submittedJobs.map((j) => j.name)).toEqual(['extract-ner']);
+  });
+
+  test('E3: with no worker serving the queue, an unreachable target runs no job step (it would only time out)', async () => {
+    const { runRemediation } = await import('../src/core/remediation/run.ts');
+    submittedJobs.length = 0;
+    const result = await runRemediation(engine, { targetScore: 101, extraRemediations: [extra('onboard.free_step', 'extract-ner')], maxJobs: 5 });
+    expect(result.submitted).toEqual([]);
+    expect(result.target_unreachable).toMatchObject({ target: 101 });
+    expect(submittedJobs).toEqual([]);
+  });
 });

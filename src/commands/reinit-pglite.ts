@@ -3,26 +3,25 @@ import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-gua
 /**
  * `gbrain reinit-pglite` — wipe-and-reinit PGLite brain in one command.
  *
- * v0.37 fix wave (deferred TODO, shipped end-of-wave): the canonical path
- * for switching embedding models / dimensions on PGLite is wipe-and-reinit
- * (PGLite cannot `ALTER COLUMN TYPE vector(N)` — pgvector ships as WASM).
- * The recipe is 3 commands by hand:
+ * Last-resort width change on PGLite (PGLite cannot `ALTER COLUMN TYPE
+ * vector(N)` — pgvector ships as WASM): moves the datastore aside to
+ * `<path>.bak`, re-inits at the new width and re-syncs the brain repo.
+ * DB-only pages and `remember` facts are NOT carried over (they live only in
+ * the moved-aside datastore). Turning embeddings on for a keyless brain never
+ * needs this: readiness's `embeddingEnablement` enables in place and keeps
+ * everything; a width change with preserved data is
+ * `gbrain migrate embeddings --to <model> --dim <N>`.
  *
- *   mv ~/.gbrain/brain.pglite ~/.gbrain/brain.pglite.bak
- *   gbrain init --pglite --embedding-model X --embedding-dimensions N
- *   gbrain sync
- *
- * This command wraps that into one call so users (and agents reading
- * `embeddingMismatchMessage` recipes) don't have to type the wipe + the
- * init + the sync separately.
- *
- * Destructive. TTY confirmation required unless `--yes` is passed. JSON
- * output via `--json` for scripted callers.
+ * Destructive. Consent via requireConsent (A4): a TTY prompt, or
+ * `--yes --expect <plan_hash>` (bound to this brain and target); non-TTY
+ * without it exits 3 with the consent payload. `--json` for scripts.
  */
 
 import { existsSync, statSync, rmSync } from 'fs';
 import { dirname } from 'path';
 import { loadConfig, loadConfigFileOnly, gbrainPath } from '../core/config.ts';
+import { computePlanHash, type PlanSelection } from '../core/consent.ts';
+import { consentGateOrExit } from '../core/consent-cli.ts';
 
 interface ReinitOpts {
   embeddingModel: string;
@@ -87,30 +86,13 @@ export async function runReinitPglite(args: string[]): Promise<void> {
     console.log('');
   }
 
-  // TTY confirmation.
-  if (!opts.yes) {
-    if (!process.stdin.isTTY) {
-      fail(
-        opts.jsonOutput,
-        'no_tty_no_yes',
-        'Non-TTY environment requires --yes to confirm destruction.',
-      );
-    }
-    const confirmed = await promptYesNo('Wipe and reinit?');
-    if (!confirmed) {
-      if (opts.jsonOutput) {
-        console.log(JSON.stringify({ status: 'aborted', reason: 'user_declined' }));
-      } else {
-        console.log('Aborted. Brain untouched.');
-      }
-      process.exit(0);
-    }
-  }
-
-  // Step 1: back up existing brain.
-  // If a previous .bak exists, refuse rather than silently overwriting it —
-  // the user's last rollback target is more valuable than this attempt's.
+  // Consent (A4): destructive, bound to the plan (this brain path and the new
+  // model/width): the approved command is `--yes --expect <plan_hash>`, so a
+  // bare `--yes` retry re-asks instead of wiping.
+  // Non-TTY without --yes refuses with exit 3 and the consent payload; --json
+  // never implies consent; EOF/timeout at the TTY prompt is a decline.
   const bakPath = dbPath + '.bak';
+  // Refuse before asking: the user's last rollback target is more valuable than this attempt's.
   if (existsSync(bakPath)) {
     fail(
       opts.jsonOutput,
@@ -118,6 +100,28 @@ export async function runReinitPglite(args: string[]): Promise<void> {
       `Backup already exists at ${bakPath}. Move or delete it first to avoid clobbering your previous rollback target.`,
     );
   }
+  const reinitArgv = ['gbrain', 'reinit-pglite', '--embedding-model', opts.embeddingModel,
+    '--embedding-dimensions', String(opts.embeddingDimensions),
+    ...(opts.customPath ? ['--path', opts.customPath] : []), ...(opts.noSync ? ['--no-sync'] : [])];
+  const selection: PlanSelection = { brain: dbPath, source: null, operation: 'reinit-pglite', records: [{ id: dbPath }],
+    parameters: { embedding_model: opts.embeddingModel, embedding_dimensions: opts.embeddingDimensions, sync: !opts.noSync },
+    effects: ['destructive'] };
+  await consentGateOrExit({
+    command: 'reinit-pglite', effects: ['destructive'], actor: 'agent',
+    what: `Wipe and re-create the PGLite brain at ${dbPath}`,
+    why: `PGLite cannot change the vector width in place, so the brain is moved aside and re-initialized at ${opts.embeddingDimensions} dimensions for ${opts.embeddingModel}.`,
+    risk: `Every page, chunk and embedding is removed from the active brain; DB-only pages and remember facts are NOT carried over `
+      + `(they stay only in the backup). The brain is first moved to ${bakPath}; restore with: mv ${bakPath} ${dbPath}. `
+      + `To keep everything instead, use gbrain migrate embeddings --to <model> --dim <N>.`,
+    user_message: `Wipe and re-create your brain (${sizeMb > 0 ? `${sizeMb} MB, ` : ''}${dbPath}) for ${opts.embeddingModel}? `
+      + `DB-only pages and remembered facts are not carried over; a backup is kept at ${bakPath}.`,
+    argv: reinitArgv,
+    plan_hash: computePlanHash(selection),
+    selection,
+    args: opts.yes ? [...args, '--yes'] : args,
+  }, { json: opts.jsonOutput });
+
+  // Step 1: back up existing brain (the .bak collision was refused above).
 
   // Preserve user config BEFORE init (Lane B.4 already does this, but
   // belt-and-suspenders for the reinit command's contract).
@@ -130,7 +134,7 @@ export async function runReinitPglite(args: string[]): Promise<void> {
   // the same path must not inherit the old brain's open repair episode,
   // cooldown, or reap quarantine — a stale episodeBackupPath would be reused
   // over the NEW brain's WAL).
-  for (const sibling of [`${dbPath}.wal-repair-attempt.json`, `${dbPath}.lock-reap.json`]) {
+  for (const sibling of [`${dbPath}.wal-repair-attempt.json`, `${dbPath}.lock-reap.json`, `${dbPath}.repair-failed.json`]) {
     try { rmSync(sibling, { force: true }); } catch { /* best-effort */ }
   }
   } catch (e: unknown) {
@@ -302,7 +306,8 @@ flag nor the config file provides a value, the command fails.
 
 Optional:
   --path <path>                        Active brain path (default: ~/.gbrain/brain.pglite).
-  --yes / -y                           Skip the TTY confirmation prompt.
+  --yes --expect <plan_hash>           Authorize the wipe without a prompt, only after the user
+                                       approved it (the refusal prints the exact command).
   --no-sync                            Skip the post-init \`gbrain sync\`.
   --json                               Emit structured JSON output on stdout.
 
@@ -314,8 +319,9 @@ Examples:
   gbrain reinit-pglite --embedding-model openai:text-embedding-3-large \\
     --embedding-dimensions 1536 --no-sync
 
-  # Rebuild with the model/dimensions already in the config file:
-  gbrain reinit-pglite --yes
+  # Rebuild with the model/dimensions already in the config file (prints
+  # the plan and asks; non-interactive callers get the approved command):
+  gbrain reinit-pglite
 
 The old brain is preserved as \`<path>.bak\`. To roll back, mv it back.
 
@@ -332,32 +338,4 @@ function fail(jsonOutput: boolean, reason: string, message: string): never {
     console.error(message);
   }
   process.exit(1);
-}
-
-async function promptYesNo(question: string): Promise<boolean> {
-  // W0 fix-wave (Tier-1 #15): non-interactive stdin (CI, pipes, spawned
-  // agents) resolves to the safe default instead of hanging — this prompt
-  // had no TTY guard and no end/EOF path, so a closed stdin parked the
-  // process permanently. This command wipes the store; decline-by-default
-  // is the only safe non-interactive answer (--yes stays the escape hatch).
-  if (!process.stdin.isTTY) return false;
-  // Prompt on stderr so stdout stays clean for --json payloads.
-  process.stderr.write(`${question} (y/N): `);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const stdin = process.stdin as any;
-  stdin.setEncoding?.('utf8');
-  return new Promise<boolean>((resolve) => {
-    const cleanup = () => {
-      stdin.off?.('data', onData);
-      stdin.off?.('end', onEnd);
-    };
-    const onEnd = () => { cleanup(); resolve(false); }; // EOF = decline
-    const onData = (chunk: string) => {
-      const answer = chunk.trim().toLowerCase();
-      cleanup();
-      resolve(answer === 'y' || answer === 'yes');
-    };
-    stdin.on?.('data', onData);
-    stdin.on?.('end', onEnd);
-  });
 }

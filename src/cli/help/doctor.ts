@@ -1,0 +1,46 @@
+/** D3 curated help for `gbrain doctor` (flags read by src/cli/commands/doctor.ts, src/commands/doctor.ts, src/commands/doctor/remediate.ts). */
+import type { CliHelpSpec } from '../command-table.ts';
+
+export const help: CliHelpSpec = {
+  summary: 'Check brain health; preview and run remediation.',
+  usage: [
+    'gbrain doctor [--fast] [--json] [--fix [--dry-run]] [--scope=brain] [--source <id>] [--no-migrate] [--locks]',
+    'gbrain doctor --only <check>[,<check>…] [--json]',
+    'gbrain doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]',
+    'gbrain doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]',
+    '              [--max-jobs <n>] [--no-embed] [--dry-run] [--resume [<plan_hash>]] [--json]',
+  ].join('\n'),
+  flags: [
+    { name: '--json', type: 'boolean', desc: 'Print one JSON document (checks, score, findings) on stdout.' },
+    { name: '--only', type: 'string', desc: 'Read-only: run just the named checks (comma-separated or repeated; no migrations). The usual fix.verify. An unknown name exits 2 with the valid list.' },
+    { name: '--fast', type: 'boolean', desc: 'Skip database checks; filesystem and config checks only.' },
+    { name: '--fix', type: 'boolean', desc: 'Apply the local fixes doctor knows (skill files, stale locks); pair with --dry-run to preview.' },
+    { name: '--dry-run', type: 'boolean', desc: 'Preview --fix or --remediate without changing anything.' },
+    { name: '--scope', type: 'enum', values: ['all', 'brain'], desc: 'Pass --scope=brain to skip the skill-file check group (default all).' },
+    { name: '--source', type: 'string', desc: 'Scope the orphan_ratio check to one source id.' },
+    { name: '--skills-dir', type: 'string', desc: 'Override the auto-detected skills/ directory.' },
+    { name: '--no-migrate', type: 'boolean', desc: 'Report on the database as-is; do not apply pending schema migrations first.' },
+    { name: '--locks', type: 'boolean', desc: 'List idle-in-transaction backends holding locks (Postgres) and exit.' },
+    { name: '--probe', type: 'boolean', desc: 'Also send one tiny paid test request to the configured embedding provider (plain doctor never calls a provider). Non-interactive runs need --yes.', consent: ['paid', 'egress'] },
+    { name: '--probe-pglite', type: 'boolean', desc: 'Run the PGLite runtime probe (a 5-20 s cold start) even when the disk diagnosis explains a failed connect.' },
+    { name: '--index-audit', type: 'boolean', desc: 'Report Postgres indexes with zero recorded scans (informational; never drops anything).' },
+    { name: '--content-audit', type: 'boolean', desc: 'Scan every page in the content-quality check instead of the first 1000.' },
+    { name: '--remediation-plan', type: 'boolean', desc: 'Read-only: the job and repair steps that would raise the brain score, each with its exact command.' },
+    { name: '--remediate', type: 'boolean', desc: 'Run the remediation job steps (asks before any work; non-interactive runs need --yes).', consent: ['paid'] },
+    { name: '--yes', type: 'boolean', desc: 'Authorize the paid job steps (and, with --include-repairs, the repair steps). Capped at the estimate x1.5 without --max-usd.', consent: ['paid', 'destructive'] },
+    { name: '--expect', type: 'string', desc: 'With --include-repairs: the plan_hash the user approved; a changed plan asks again.' },
+    { name: '--include-repairs', type: 'boolean', desc: 'Also run the protected repair steps (local brain host only; needs the user\'s agreement).', consent: ['destructive'] },
+    { name: '--max-usd', type: 'number', desc: 'Cumulative USD cap across the run and every --resume; authorizes paid steps up to it.', consent: ['paid'] },
+    { name: '--max-cost', type: 'number', desc: 'Alias of --max-usd.', consent: ['paid'] },
+    { name: '--target-score', type: 'number', desc: 'Brain score the job steps aim for (default 90).' },
+    { name: '--max-jobs', type: 'number', desc: 'Submit at most this many job steps.' },
+    { name: '--no-embed', type: 'boolean', desc: 'Repair steps re-seal or stamp text only (no paid embeddings).' },
+    { name: '--resume', type: 'string', desc: 'Resume a budget-stopped --remediate run (optionally naming its plan_hash).' },
+  ],
+  examples: [
+    'gbrain doctor --json',
+    'gbrain doctor --only harness_wiring --json',
+    'gbrain doctor --remediation-plan --json',
+    'gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --max-usd 5',
+  ],
+};

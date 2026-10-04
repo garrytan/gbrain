@@ -132,6 +132,74 @@ interface RepairSidecar {
   attempts: Array<{ ts: number; outcome: 'repaired' | 'failed'; backupPath: string | null }>;
 }
 
+/**
+ * Durable repair-failed marker: a sibling `<dataDir>.repair-failed.json`
+ * (never inside the data dir). Written when automatic WAL repair failed (or a
+ * recently failed attempt put it on cooldown); while it exists
+ * `PGLiteEngine.connect()` refuses before the lock or PGLite touch the data
+ * dir, so no command keeps writing pg_wal/pg_subtrans into a damaged brain.
+ * Cleared only by a completed `gbrain pglite-repair` (consented) or
+ * `gbrain reinit-pglite`.
+ */
+const REPAIR_FAILED_SUFFIX = '.repair-failed.json';
+
+/** Said plainly on every repair-failed refusal (an agent once rebuilt the catalog by hand and swapped it in). */
+export const HANDS_OFF_BRAIN_FILES = 'Do not copy, rebuild, move or modify the brain.pglite files yourself (no manual WAL or catalog surgery, '
+  + 'no swapping in a rebuilt copy, no moving the directory aside): ask the user which recovery they want.';
+
+export interface RepairFailedMarker {
+  ts: number;
+  /** What the automatic repair did (PgliteInitRepairContext.repair). */
+  repair: string;
+  backup_path?: string;
+  detail?: string;
+}
+
+export function repairFailedMarkerPath(dataDir: string): string {
+  return `${dataDir}${REPAIR_FAILED_SUFFIX}`;
+}
+
+/** The marker, or null when absent. An unreadable marker still counts (fail closed). */
+export function readRepairFailedMarker(dataDir: string): RepairFailedMarker | null {
+  const path = repairFailedMarkerPath(dataDir);
+  if (!existsSync(path)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf-8')) as Partial<RepairFailedMarker>;
+    return {
+      ts: typeof raw.ts === 'number' ? raw.ts : 0,
+      repair: typeof raw.repair === 'string' ? raw.repair : 'unknown',
+      ...(typeof raw.backup_path === 'string' ? { backup_path: raw.backup_path } : {}),
+      ...(typeof raw.detail === 'string' ? { detail: raw.detail } : {}),
+    };
+  } catch {
+    return { ts: 0, repair: 'unknown' };
+  }
+}
+
+export function writeRepairFailedMarker(dataDir: string, marker: RepairFailedMarker): void {
+  try {
+    const tmp = `${repairFailedMarkerPath(dataDir)}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(marker), { mode: 0o644 });
+    renameSync(tmp, repairFailedMarkerPath(dataDir));
+  } catch { /* best-effort: the open still fails with the repair error */ }
+}
+
+/**
+ * After a failed open: automatic repair ran and failed, or a recent failure put
+ * it on cooldown. Records the marker (so later commands refuse before touching
+ * the data dir) and returns it; null for every other outcome.
+ */
+export function recordFailedAutoRepair(dataDir: string, repair: string, backupPath: string | undefined, original: string): RepairFailedMarker | null {
+  if (repair !== 'failed-restored' && repair !== 'failed-not-restored' && repair !== 'skipped-cooldown') return null;
+  const marker: RepairFailedMarker = { ts: Date.now(), repair, ...(backupPath ? { backup_path: backupPath } : {}), detail: original.slice(0, 500) };
+  writeRepairFailedMarker(dataDir, marker);
+  return marker;
+}
+
+export function clearRepairFailedMarker(dataDir: string): void {
+  try { rmSync(repairFailedMarkerPath(dataDir), { force: true }); } catch { /* best-effort */ }
+}
+
 function sidecarPath(dataDir: string): string {
   return `${dataDir}${SIDECAR_SUFFIX}`;
 }

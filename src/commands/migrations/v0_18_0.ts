@@ -215,6 +215,7 @@ function finalize(phases: OrchestratorPhaseResult[], status: 'complete' | 'parti
 
 export const v0_18_0: Migration = {
   version: '0.18.0',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'Multi-source brains: one database, many knowledge repos. Federation flag keeps them from polluting each other.',
     description:

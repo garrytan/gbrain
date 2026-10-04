@@ -2476,13 +2476,19 @@ export class MinionQueue {
  * zero live-lock active rows, waiting > 0, and the last completion is older
  * than the threshold (or absent). Threshold matches the doctor wedged_queue
  * check: GBRAIN_WEDGED_QUEUE_WARN_MINUTES (server-side env), default 15.
+ *
+ * Queue honesty (agent-first operator wave E5): when the caller knows no
+ * worker is running for the queue (`workerAlive: false` — always on PGLite
+ * unless a `gbrain jobs work` drain is live), waiting work is `no_worker`, not
+ * wedged: nothing is stuck, nothing is running it. Omitted liveness keeps the
+ * pre-E5 derivation (doctor's wedged_queue check).
  */
 export function deriveWedgeSignal(wedge: {
   queue?: string;
   active_healthy: number;
   waiting: number;
   minutes_since_completion: number | null;
-}): { wedged: boolean; wedge_threshold_minutes: number; private_queue: boolean } {
+}, liveness: { workerAlive?: boolean } = {}): { wedged: boolean; no_worker: boolean; wedge_threshold_minutes: number; private_queue: boolean } {
   const raw = parseInt(process.env.GBRAIN_WEDGED_QUEUE_WARN_MINUTES ?? '', 10);
   const wedge_threshold_minutes = Number.isFinite(raw) && raw > 0 ? raw : 15;
   // A dream-inline private queue is parent-owned: no shared worker will ever
@@ -2491,7 +2497,8 @@ export function deriveWedgeSignal(wedge: {
   // (jobs stats, get_job_stats op, doctor) points at reconciliation.
   const private_queue = wedge.queue !== undefined && isDreamInlinePrivateQueue(wedge.queue);
   const mins = wedge.minutes_since_completion;
-  const wedged = !private_queue && wedge.active_healthy === 0 && wedge.waiting > 0
+  const no_worker = !private_queue && liveness.workerAlive === false && wedge.waiting > 0;
+  const wedged = !private_queue && !no_worker && wedge.active_healthy === 0 && wedge.waiting > 0
     && (mins === null || mins > wedge_threshold_minutes);
-  return { wedged, wedge_threshold_minutes, private_queue };
+  return { wedged, no_worker, wedge_threshold_minutes, private_queue };
 }

@@ -14,8 +14,10 @@ import { federatedSearchScope, parseSourceIdParam } from './context.ts';
 
 const resolve_slugs: Operation = {
   name: 'resolve_slugs',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Fuzzy-resolve a partial slug to matching page slugs',
+  description: 'Fuzzy-match a partial name or slug to existing page slugs. Use when a slug is uncertain before get_page, links or tags. Needs read scope. On no matches: search for the name instead.',
   params: {
     partial: { type: 'string', required: true, description: "Partial slug or title text to match, e.g. 'alice-ex' or 'meeting notes'. This is the search text param — there is no `text` param." },
     source_id: {
@@ -39,8 +41,10 @@ const resolve_slugs: Operation = {
 
 const get_chunks: Operation = {
   name: 'get_chunks',
+  mutating: false,
+  idempotent: true,
   outputRedaction: { exempt: 'explicit chunk read by slug, the page-read twin of get_page (CEO-17 raw-read exception)' },
-  description: 'Get content chunks for a page',
+  description: 'Return a page\'s indexed content chunks (the units search ranks). Use when debugging why search did or did not match a page. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose content chunks to return.' },
   },

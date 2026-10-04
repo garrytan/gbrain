@@ -18,7 +18,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { renderTakesFence } from '../src/core/takes-fence.ts';
-import { editableView } from '../src/core/persistence/page-edit.ts';
+import { editDiff, editableView } from '../src/core/persistence/page-edit.ts';
 import { STARTER_OPS } from '../src/mcp/surface.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import type { Page } from '../src/core/types.ts';
@@ -100,6 +100,15 @@ describe('edit_page schema and catalog', () => {
   });
 });
 
+describe('edit_page receipt diff', () => {
+  bunTest('each change block lists removed lines before added lines', () => {
+    const { diff } = editDiff('notes/order', 'Keep.\nOld one.\nOld two.\nKeep too.\nOld three.\n', 'Keep.\nNew one.\nNew two.\nKeep too.\nNew three.\n');
+    expect(diff.split('\n').filter(l => /^[-+ ]/.test(l) && !/^(---|\+\+\+) /.test(l))).toEqual([
+      ' Keep.', '-Old one.', '-Old two.', '+New one.', '+New two.', ' Keep too.', '-Old three.', '+New three.',
+    ]);
+  });
+});
+
 describe('edit_page matching', () => {
   test('a unique match publishes one new revision with a caller-view diff and write-through', async () => {
     await seed('notes/a', 'First line.\n\nSecond line.\n');
@@ -111,6 +120,7 @@ describe('edit_page matching', () => {
     expect(result.body.revision).not.toBe(before.revision);
     expect(result.body.diff).toContain('-Second line.');
     expect(result.body.diff).toContain('+Second line, edited.');
+    expect(result.body.diff.indexOf('-Second line.')).toBeLessThan(result.body.diff.indexOf('+Second line, edited.'));
     expect((await read('notes/a')).content).toBe(before.content.replace('Second line.', 'Second line, edited.'));
     expect(readFileSync(join(fixture, 'brain', 'notes/a.md'), 'utf8')).toContain('Second line, edited.');
   });

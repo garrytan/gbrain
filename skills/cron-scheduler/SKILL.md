@@ -81,6 +81,14 @@ per-source cron pattern doesn't benefit from the parallelism that
 `gbrain doctor` surfaces the recommended line as a `sync_consolidation`
 check whenever it detects 2+ active sources. Paste-ready from there.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- A scheduled `gbrain sync` hits `sync_in_progress` / `lock_busy`: an earlier tick still runs. Widen the interval or stagger the job; never add a second overlapping schedule.
+- Doctor reports a stale source after the cron change: check `gbrain sources status <id>` for held items or errors before changing the schedule again.
+- `checkpoint_validation_timeout` in a sync log: run the retry command the error prints; do not cancel the request.
+
 ## Anti-Patterns
 
 - Scheduling jobs at the same minute (:00 for everything)

@@ -502,6 +502,15 @@ Parent #ID — waiting-children
 Total tokens so far: 4.3k
 ```
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain jobs submit` over MCP for a protected job returns `permission_denied`: it must run from the trusted local CLI on the brain host; tell the user.
+- A shell job dead-letters immediately with the flag named in `error_text` (shell jobs disabled): tell the user which env flag the host operator must set; do not retry.
+- `rate_limited` from the submission cap: back off for the stated delay before resubmitting; do not fan out more submissions meanwhile.
+- A job sits in `waiting` with no worker: confirm a worker is registered (`gbrain jobs get <id>`) before resubmitting.
+
 ## Anti-Patterns
 
 - Don't spawn a Minion for a single search query (use search tool directly)
@@ -530,3 +539,19 @@ Total tokens so far: 4.3k
 - Get structured progress — `get_job_progress` (MCP)
 - Queue stats — `get_job_stats` (MCP; admin scope over HTTP, same as the other
   jobs ops here — includes the wedged-queue silent-halt signal) or `gbrain jobs stats` (CLI)
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `get_job` → `gbrain jobs get`
+- `get_job_progress` → `gbrain call get_job_progress <params_json>`
+- `list_jobs` → `gbrain jobs list`
+- `pause_job` → `gbrain call pause_job <params_json>`
+- `replay_job` → `gbrain call replay_job <params_json>`
+- `resume_job` → `gbrain call resume_job <params_json>`
+- `send_job_message` → `gbrain call send_job_message <params_json>`
+- `submit_job` → `gbrain jobs submit`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

@@ -2,7 +2,8 @@ import { PGLiteEngine } from '../pglite-engine.ts';
 import { importFromContent } from '../import-file.ts';
 import { loadResolvedPackByName } from '../schema-pack/load-active.ts';
 import { reconcileSourceLinks } from '../link-reconciliation.ts';
-import { OperationError } from '../ops/contract.ts';
+import type { RegistryCode } from '../error-registry.ts';
+import { opError, type OperationError } from '../ops/contract.ts';
 import { COMPANY_BRAIN_SAMPLE } from './sample.ts';
 
 export interface CompanyBrainDemoResult {
@@ -14,6 +15,11 @@ export interface CompanyBrainDemoResult {
   types: Record<string, number>;
   links: number;
   answers: Array<{ question: string; answer: string; citations: string[] }>;
+}
+
+function demoFailure(code: RegistryCode, message: string): OperationError {
+  return opError(code, message,
+    'The bundled fictional sample failed in a throwaway in-memory brain, so this is a gbrain packaging or code fault, not a problem with your data. Report it to the user with gbrain --version; no brain was touched.');
 }
 
 export async function runCompanyBrainDemo(): Promise<CompanyBrainDemoResult> {
@@ -29,10 +35,10 @@ export async function runCompanyBrainDemo(): Promise<CompanyBrainDemoResult> {
         sourceId, noEmbed: true, remote: false, activePack: pack.manifest,
         sourcePath: `${page.slug}.md`, ingested_via: 'company-brain-demo',
       });
-      if (!['imported', 'skipped'].includes(imported.status)) throw new OperationError('demo_import_failed', 'The fictional page did not import successfully.');
+      if (!['imported', 'skipped'].includes(imported.status)) throw demoFailure('demo_import_failed', 'The fictional page did not import successfully.');
     }
     const graph = await reconcileSourceLinks(engine, sourceId, { pack: pack.manifest });
-    if (!graph.ok || !graph.complete || graph.unresolved.length) throw new OperationError('demo_graph_failed', 'The fictional graph did not verify.');
+    if (!graph.ok || !graph.complete || graph.unresolved.length) throw demoFailure('demo_graph_failed', 'The fictional graph did not verify.');
     const customer = 'customers/acme-example';
     const currentDecision = 'decisions/2026-08-20-focus-3pl';
     const accountLinks = await engine.getLinks(customer, { sourceId });
@@ -41,15 +47,15 @@ export async function runCompanyBrainDemo(): Promise<CompanyBrainDemoResult> {
     const championSlug = accountLinks.find(link => link.link_type === 'champion')?.to_slug;
     const olderSlug = decisionLinks.find(link => link.link_type === 'supersedes')?.to_slug;
     const meetingSlug = decisionLinks.find(link => link.link_type === 'decided_in')?.to_slug;
-    if (!ownerSlug || !championSlug || !olderSlug || !meetingSlug) throw new OperationError('demo_verification_failed', 'Expected ownership or decision provenance is missing.');
+    if (!ownerSlug || !championSlug || !olderSlug || !meetingSlug) throw demoFailure('demo_verification_failed', 'Expected ownership or decision provenance is missing.');
     const owner = await engine.getPage(ownerSlug, { sourceId });
     const champion = await engine.getPage(championSlug, { sourceId });
     const decision = await engine.getPage(currentDecision, { sourceId });
-    if (!owner || !champion || !decision) throw new OperationError('demo_verification_failed', 'The cited fictional pages could not be read back.');
+    if (!owner || !champion || !decision) throw demoFailure('demo_verification_failed', 'The cited fictional pages could not be read back.');
     const rows = await engine.executeRaw<{ type: string; count: number }>('SELECT type,COUNT(*)::int AS count FROM pages WHERE source_id=$1 AND deleted_at IS NULL GROUP BY type', [sourceId]);
     const types = Object.fromEntries(rows.map(row => [row.type, Number(row.count)]));
     const pages = Object.values(types).reduce((a, b) => a + b, 0);
-    if (pages !== COMPANY_BRAIN_SAMPLE.length || types.product !== 1 || types.company !== 1) throw new OperationError('demo_verification_failed', 'The fictional type distribution did not survive import.');
+    if (pages !== COMPANY_BRAIN_SAMPLE.length || types.product !== 1 || types.company !== 1) throw demoFailure('demo_verification_failed', 'The fictional type distribution did not survive import.');
     const cite = (slug: string) => `${sourceId}::${slug}`;
     return { schema_version: 1, status: 'complete', fictional: true, profile: 'company-brain', pages, types, links: graph.linksCreated,
       answers: [

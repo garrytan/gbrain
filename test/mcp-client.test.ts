@@ -513,3 +513,16 @@ describe('unpackToolResult', () => {
     expect(() => unpackToolResult(wire)).toThrow(RemoteMcpError);
   });
 });
+
+describe('agent contract v1: tool_error body is content[0] alone', () => {
+  test('an extra block never joins the envelope; v1 fields survive', async () => {
+    mcpResponseFor = () => ({ isError: true, content: [
+      { type: 'text', text: JSON.stringify({ error: 'permission_denied', code: 'insufficient_scope', message: 'needs write', suggestion: 'ask the host', contract_version: 1 }) },
+      { type: 'text', text: '[gbrain notice backup_coverage kind=coaching]\nwhy: stray block' },
+    ] });
+    await expect(callRemoteTool(makeConfig(), 'get_page', { slug: 'notes/x' })).rejects.toMatchObject({
+      reason: 'tool_error',
+      detail: { code: 'permission_denied', canonical_code: 'insufficient_scope', suggestion: 'ask the host', contract_version: 1 },
+    });
+  });
+});

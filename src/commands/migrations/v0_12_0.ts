@@ -11,7 +11,8 @@
  *
  * Phases (all idempotent; resumable from a prior status:"partial" run):
  *   A. Schema   — gbrain init --migrate-only (applies v8/v9/v10).
- *   B. Config   — verify auto_link is not explicitly disabled. If it's
+ *   B. Config   — verify auto_link is not explicitly disabled (read
+ *                 in-process, file/env plane then database). If it's
  *                 set to false, leave it alone (user intent) but warn.
  *   C. Backfill — gbrain extract links --source db (idempotent; the
  *                 UNIQUE constraint on (from, to, link_type) guarantees
@@ -34,6 +35,8 @@ import { execSync } from 'child_process';
 import { gbrainChildCommand, runGbrainSubprocess } from './in-process.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { childGlobalFlags } from '../../core/cli-options.ts';
+import { loadConfig, toEngineConfig } from '../../core/config.ts';
+import { createEngine } from '../../core/engine-factory.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // ── Phase A — Schema ────────────────────────────────────────
@@ -61,18 +64,35 @@ interface ConfigCheckResult {
   raw?: string;
 }
 
-function phaseBConfigCheck(opts: OrchestratorOpts): OrchestratorPhaseResult & { autoLink: ConfigCheckResult } {
+/**
+ * Reads `auto_link` in-process the way `gbrain config get` resolves it: the
+ * file/env plane wins over the database plane. Unset means enabled
+ * (isAutoLinkEnabled's default). Never spawns a CLI child.
+ */
+async function readAutoLink(): Promise<string> {
+  const config = loadConfig();
+  if (!config) return '';
+  const fileValue = (config as unknown as Record<string, unknown>).auto_link;
+  if (fileValue !== undefined && fileValue !== null) return String(fileValue).trim();
+  const engine = await createEngine(toEngineConfig(config));
+  try {
+    await engine.connect(toEngineConfig(config));
+    return (await engine.getConfig('auto_link'))?.trim() ?? '';
+  } finally {
+    await engine.disconnect().catch(() => {});
+  }
+}
+
+async function phaseBConfigCheck(opts: OrchestratorOpts): Promise<OrchestratorPhaseResult & { autoLink: ConfigCheckResult }> {
   if (opts.dryRun) {
     return { name: 'config', status: 'skipped', detail: 'dry-run', autoLink: { status: 'unknown' } };
   }
-  // gbrain config get auto_link returns the raw value (or empty if unset).
-  // Default behavior when unset = enabled (per isAutoLinkEnabled).
   let raw = '';
+  let unreadable = '';
   try {
-    raw = execSync(gbrainChildCommand('gbrain config get auto_link'), { encoding: 'utf-8', timeout: 10_000, env: process.env }).trim();
-  } catch {
-    // get exits non-zero when the key isn't set — that's fine, defaults to enabled.
-    raw = '';
+    raw = await readAutoLink();
+  } catch (e) {
+    unreadable = ` (could not read auto_link: ${e instanceof Error ? e.message : String(e)}; default applies)`;
   }
   const lc = raw.toLowerCase();
   const disabled = ['false', '0', 'no', 'off'].includes(lc);
@@ -84,7 +104,7 @@ function phaseBConfigCheck(opts: OrchestratorOpts): OrchestratorPhaseResult & { 
     console.log('  Note: auto_link is explicitly disabled (config: auto_link=' + raw + ').');
     console.log('  Skipping backfill phases. Re-enable with: gbrain config set auto_link true');
   }
-  return { name: 'config', status: 'complete', detail: result.status, autoLink: result };
+  return { name: 'config', status: 'complete', detail: result.status + unreadable, autoLink: result };
 }
 
 // ── Phases C/D — Backfill (links + timeline) ────────────────
@@ -197,7 +217,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   }
 
   // B. Config check
-  const b = phaseBConfigCheck(opts);
+  const b = await phaseBConfigCheck(opts);
   phases.push({ name: b.name, status: b.status, detail: b.detail });
   const autoLinkDisabled = b.autoLink.status === 'disabled';
 
@@ -237,6 +257,7 @@ function finalizeResult(phases: OrchestratorPhaseResult[], status: 'complete' | 
 
 export const v0_12_0: Migration = {
   version: '0.12.0',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'Knowledge Graph wires itself — every page write extracts typed links automatically',
     description:
@@ -250,3 +271,6 @@ export const v0_12_0: Migration = {
   },
   orchestrator,
 };
+
+/** Exported for unit tests. */
+export const __testing = { phaseBConfigCheck };

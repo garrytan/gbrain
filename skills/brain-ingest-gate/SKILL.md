@@ -263,6 +263,14 @@ Every "linked" or "duplicate" row MUST name the matched slug. If any row says
 "written", the enrichment delegation (which skill handled it) should be
 recoverable from the conversation.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- The "is this already in the brain?" search is empty with a degraded notice: an empty keyword-only result is not proof the content is missing. Check by slug, URL or exact title before importing.
+- `gbrain capture` / `put` returns `write_pending` (exit 10): the content is accepted. Poll `gbrain write-request <request_id>`; do not capture it again.
+- `source_binding_required` or `insufficient_scope` on an MCP write: this connection cannot write that source. Tell the user which source and scope are missing; the brain host's operator grants them.
+
 ## Anti-Patterns
 
 - ❌ `cp file.md <brain-repo>/concepts/` — raw copy, no gate, no enrichment.

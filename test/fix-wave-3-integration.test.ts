@@ -46,6 +46,7 @@ import { runWaveChecks, remoteWaveHandoff, WAVE_CHECKS } from '../src/commands/d
 import { writerVersionCheck } from '../src/commands/doctor/checks/writer-version.ts';
 import { checkUnboundSource } from '../src/commands/doctor/checks/unbound-source.ts';
 import { runRemediate } from '../src/commands/doctor/remediate.ts';
+import { approvedRemediateArgs } from './helpers/remediate-approval.ts';
 import { runPhaseSynthesizeConcepts } from '../src/core/cycle/synthesize-concepts.ts';
 import { timeContainedPhase } from '../src/core/cycle/phase-containment.ts';
 import { LockStolenError } from '../src/core/db-lock.ts';
@@ -258,7 +259,7 @@ test('check 4 (S1): a checkpoint orphaned by a content change is listed by the r
     const steps = await planRepairSteps(engine, { noEmbed: true });
     const step = steps.find(s => s.kind === 'connector-checkpoints');
     expect(step).toMatchObject({ command: 'gbrain repair connector-checkpoints --apply', paid: false, embeds: 'none', lifetime_ids: 0, checks: ['connector_checkpoints'] });
-    const run = await capture(() => runRemediate(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json']));
+    const run = await capture(async () => runRemediate(engine, await approvedRemediateArgs(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json'])));
     const body = JSON.parse(run.out);
     expect(body.repairs.find((r: { kind: string }) => r.kind === 'connector-checkpoints')).toMatchObject({ status: 'completed' });
     expect(body.findings.find((r: { check_id: string }) => r.check_id === 'connector_checkpoints')).toMatchObject({ class: 'cleared' });
@@ -437,7 +438,7 @@ test('check 9: every registered repair kind reaches the remediation plan with it
     expect(planned['connector-checkpoints']).toMatchObject({ paid: false, embeds: 'none' });
     expect(planned['safe-chunks']).toBeDefined();
     expect(planned['contextual-mode'].rationale).toContain('after safe-chunks re-seals them');
-    const run = JSON.parse((await capture(() => runRemediate(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json']))).out);
+    const run = JSON.parse((await capture(async () => runRemediate(engine, await approvedRemediateArgs(engine, ['--remediate', '--yes', '--include-repairs', '--no-embed', '--max-usd', '0', '--json'])))).out);
     const byKind = Object.fromEntries(run.repairs.map((r: { kind: string }) => [r.kind, r]));
     expect(byKind['contextual-mode']).toMatchObject({ status: 'completed' });
     expect(byKind['connector-checkpoints']).toMatchObject({ status: 'completed' });

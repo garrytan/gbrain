@@ -14,8 +14,9 @@ import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 
 const add_tag: Operation = {
   name: 'add_tag',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Add tag to page',
+  description: 'Add one tag to a page (idempotent). Use when filing or grouping pages for later get_tags / list_pages tag filters. Needs write scope. On page_not_found: resolve the slug with resolve_slugs, then call again.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
     slug: { type: 'string', required: true, description: "Slug of the page to tag, e.g. 'people/alice-example'." },
@@ -34,8 +35,9 @@ const add_tag: Operation = {
 
 const remove_tag: Operation = {
   name: 'remove_tag',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Remove tag from page',
+  description: 'Remove one tag from a page. Use when a tag was wrong or no longer applies. Needs write scope. On page_not_found: resolve the slug with resolve_slugs, then call again.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
     slug: { type: 'string', required: true, description: 'Slug of the page to untag.' },
@@ -53,8 +55,10 @@ const remove_tag: Operation = {
 
 const get_tags: Operation = {
   name: 'get_tags',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'List tags for a page',
+  description: 'List the tags on one page. Use when checking how a page is filed before adding or removing tags. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose tags to list.' },
   },

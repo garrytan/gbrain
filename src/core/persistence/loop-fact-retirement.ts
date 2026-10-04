@@ -24,7 +24,8 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { formatFenceDate, type ParsedFact } from '../facts-fence.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
@@ -79,6 +80,12 @@ function heldReason(state: LoopFactState): 'loop_not_found' | 'no_fact' | 'fact_
 
 const stateKey = (s: LoopFactState) => JSON.stringify([s.loop?.status, s.loop?.fact_id, s.fact?.source_id, s.fact?.expired_at, s.fact?.row_num, s.fact?.source_markdown_slug, s.shared]);
 
+function retirementRefusal(code: 'invalid_params' | 'revision_conflict', message: string, row: WriteRequest, what: string): OperationError {
+  return opError(code, message,
+    `${what} Request ${row.request_id} on ${row.slug} in source ${row.source_id} did not retire the loop's commitment fact; nothing was published. Preview the remaining loop-fact drift; applying that preview (--apply --expect with its hash) is a separate step the user approves.`,
+    { fix: readFix('Previews commitment facts still active for closed loops, without changing anything.', { argv: ['gbrain', 'repair', 'loop-facts', '--source', row.source_id, '--json'] }) });
+}
+
 /** A closed loop's fence row: struck, valid until today, with the close recorded in its context. */
 function closedLoopRow(fact: ParsedFact, today: string, status: string): ParsedFact {
   const context = [`loop closed: ${status}`, fact.context?.trim()].filter(Boolean).join(' | ');
@@ -91,7 +98,7 @@ export async function prepareLoopFactRetirement(engine: BrainEngine, row: WriteR
   const intent = row.intent as { kind?: string; loop_id?: number } | null;
   const loopId = Number(intent?.loop_id);
   if (row.operation !== LOOP_FACT_RETIREMENT_OPERATION || intent?.kind !== LOOP_FACT_RETIREMENT_KIND || !Number.isSafeInteger(loopId)) {
-    throw new OperationError('invalid_params', 'Unsupported loop fact retirement intent.');
+    throw retirementRefusal('invalid_params', 'Unsupported loop fact retirement intent.', row, 'The request does not carry a loop fact retirement intent.');
   }
   const state = await loopFactState(engine, loopId);
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
@@ -104,17 +111,17 @@ export async function prepareLoopFactRetirement(engine: BrainEngine, row: WriteR
   const page = struck !== null ? await (await import('./page-prepare.ts')).preparePageMutation(engine, { ...row, intent: {
     content: serializePageToMarkdown({ ...snapshot!.page, compiled_truth: struck }, snapshot!.tags), expected_revision: observedRevision, force: false,
   } }, config) : undefined;
-  if (page && page.observedRevision !== observedRevision) throw new OperationError('revision_conflict', 'The fact page changed during preparation.');
+  if (page && page.observedRevision !== observedRevision) throw retirementRefusal('revision_conflict', 'The fact page changed during preparation.', row, 'The entity page changed while the retirement was prepared.');
   const validate = async (tx: BrainEngine) => {
     if (stateKey(await loopFactState(tx, loopId, true)) !== stateKey(state)) {
-      throw new OperationError('revision_conflict', 'The loop or its commitment fact changed during preparation.');
+      throw retirementRefusal('revision_conflict', 'The loop or its commitment fact changed during preparation.', row, `Loop ${loopId} or its commitment fact changed while the retirement was prepared.`);
     }
     await page?.validate?.(tx);
   };
   const apply = async (tx: BrainEngine): Promise<Record<string, unknown>> => {
     const expired = await tx.executeRaw(`UPDATE facts SET expired_at=now(), valid_until=LEAST(COALESCE(valid_until, now()), now())
       WHERE id=$1 AND source_id=$2 AND expired_at IS NULL RETURNING id`, [fact.id, fact.source_id]);
-    if (expired.length !== 1) throw new OperationError('revision_conflict', 'The commitment fact changed during publication.');
+    if (expired.length !== 1) throw retirementRefusal('revision_conflict', 'The commitment fact changed during publication.', row, `Fact ${fact.id} changed during publication, so the transaction rolled back.`);
     const published = page ? await page.apply(tx) : {};
     return { ...published, fact_expired: true, retryable: false, fence_struck: page !== undefined, fact_id: fact.id, loop_id: loopId };
   };

@@ -16,6 +16,7 @@ import { refreshProjectionStatistics } from '../../core/search/projection-statis
 import { withRefreshingLock, LockUnavailableError, LockStolenError, syncLockId } from '../../core/db-lock.ts';
 import { readSyncAnchor } from '../../core/sync-anchor.ts';
 import { recordUpstreamObservation } from '../../core/sync-upstream.ts';
+import { assertSyncApplicable } from '../../core/sync-applicability.ts';
 import { SyncLockBusyError, formatLockBusyMessage, buildPartialResult } from '../../core/sync-lock.ts';
 import type { SyncOpts, SyncResult } from '../sync.ts';
 import { runConnectorSync } from './connector.ts';
@@ -25,6 +26,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   assertSyncDispatchActive();
   const inheritedSignal = currentSourceFilesystemSignal();
   if (inheritedSignal) opts = { ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, inheritedSignal]) : inheritedSignal };
+  await assertSyncApplicable(engine, opts);
   const managed = await resolveSyncPersistenceMode(engine, opts);
   const finish = async (result: SyncResult, refresh = false): Promise<SyncResult> => {
     assertSyncDispatchActive();

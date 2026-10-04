@@ -139,8 +139,10 @@ describe('ambient writeback — hermetic 5-step lifecycle', () => {
     const initOut = execFileSync('bun', ['run', join(REPO, 'src/cli.ts'), 'init', '--pglite', '--no-embedding', '--non-interactive'], {
       env: childEnv() as NodeJS.ProcessEnv, encoding: 'utf8', timeout: 180_000,
     });
-    expect(initOut).toContain('[AGENT] One-time ask');
-    expect(initOut).toContain('gbrain config set memory.auto_writeback salient');
+    // G5: the ask is the `writeback` decision in init's one first-run bundle ([AGENT] block).
+    expect(initOut).toContain('(id: writeback)');
+    expect(initOut).toContain('(run: gbrain config set memory.auto_writeback salient)');
+    expect(initOut).toContain('default: salient');
 
     // The ask fires ONCE: a second init pass over the same brain stays quiet
     // (sentinel stamped) — checked implicitly by step 2's config set instead

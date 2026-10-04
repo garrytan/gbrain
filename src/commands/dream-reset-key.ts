@@ -7,7 +7,9 @@ import {
   countDeadDreamSubmissions, dreamBreakerBaseKey, dreamBreakerResetCommand, loadDreamBreakerThreshold,
   resetDreamBreakerKey, DREAM_BREAKER_CONFIG_KEY, DREAM_BREAKER_KEY_PREFIXES,
 } from '../core/cycle/dream-breaker.ts';
-import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
+import { opError } from '../core/ops/contract.ts';
+import { usageError, writeCliRefusal } from '../cli/cli-error.ts';
 
 const HELP = `Usage: gbrain dream reset-key <base-key>
        gbrain dream reset-key --list [--json]
@@ -28,13 +30,13 @@ export async function runDreamResetKey(engine: BrainEngine | null, args: string[
   const json = args.includes('--json');
   const positional = args.filter(arg => !arg.startsWith('--'));
   if (list === (positional.length === 1) || positional.length > 1) {
-    console.error(HELP);
-    setCliExitVerdict(2);
+    setCliExitVerdict(writeCliRefusal(usageError('gbrain dream reset-key takes exactly one of <base-key> or --list.',
+      'Example: gbrain dream reset-key --list --json'), 'dream', { json, human: HELP }));
     return;
   }
   if (!engine) {
-    console.error('gbrain dream reset-key needs the brain database; the connection failed.');
-    setCliExitVerdict(1);
+    setCliExitVerdict(writeCliRefusal(opError('database_error', 'gbrain dream reset-key needs the brain database; the connection failed.',
+      'Fix the brain connection (`gbrain doctor --json` names the cause), then retry.'), 'dream', { json }));
     return;
   }
   if (list) {
@@ -42,7 +44,7 @@ export async function runDreamResetKey(engine: BrainEngine | null, args: string[
     const rows = await countDeadDreamSubmissions(engine);
     const tripped = threshold === 0 ? [] : rows.filter(row => row.dead_submissions >= threshold);
     if (json) {
-      console.log(JSON.stringify({ threshold, enabled: threshold > 0, tripped: tripped.map(row => ({ ...row, reset_command: dreamBreakerResetCommand(row.base_key) })) }, null, 2));
+      await writeJsonDocument(JSON.stringify({ threshold, enabled: threshold > 0, tripped: tripped.map(row => ({ ...row, reset_command: dreamBreakerResetCommand(row.base_key) })) }, null, 2));
       return;
     }
     if (threshold === 0) { console.log(`The paid-loop breaker is disabled (${DREAM_BREAKER_CONFIG_KEY}=0).`); return; }
@@ -53,11 +55,12 @@ export async function runDreamResetKey(engine: BrainEngine | null, args: string[
   }
   const baseKey = dreamBreakerBaseKey(positional[0]!);
   if (!DREAM_BREAKER_KEY_PREFIXES.some(prefix => baseKey.startsWith(prefix))) {
-    console.error(`Not a dream breaker key: ${baseKey}. Keys start with ${DREAM_BREAKER_KEY_PREFIXES.join(' or ')}; run gbrain dream reset-key --list.`);
-    setCliExitVerdict(2);
+    setCliExitVerdict(writeCliRefusal(usageError(`Not a dream breaker key: ${baseKey}. Keys start with ${DREAM_BREAKER_KEY_PREFIXES.join(' or ')}; run gbrain dream reset-key --list.`,
+      'Run `gbrain dream reset-key --list --json` for the tripped keys and their reset commands.'), 'dream', { json }));
     return;
   }
   const before = (await countDeadDreamSubmissions(engine)).find(row => row.base_key === baseKey)?.dead_submissions ?? 0;
   await resetDreamBreakerKey(engine, baseKey);
   console.log(`Reset ${baseKey} (${before} dead submission(s) in the last 24h no longer count). The next dream cycle may submit it again.`);
+  if (json) await writeJsonDocument(JSON.stringify({ status: 'reset', base_key: baseKey, dead_submissions_before: before }));
 }

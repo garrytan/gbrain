@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { gbrainPath, isThinClient } from '../config.ts';
-import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { opError, type OperationContext } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { claimWorktree, getWorktreeBinding } from '../persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../persistence/skill-activation.ts';
 import { checkedContentRoot } from './setup-files.ts';
@@ -50,7 +51,10 @@ export async function saveContentReceipt(ctx: OperationContext, receipt: SharedC
 }
 
 export async function setupSharedBrainContent(ctx: OperationContext, options: SharedContentOptions = {}): Promise<SharedContentReceipt> {
-  if (ctx.remote !== false) throw new OperationError('permission_denied', 'Content-root setup requires the trusted local host.');
+  if (ctx.remote !== false) {
+    throw opError('permission_denied', 'Content-root setup requires the trusted local host.',
+      'Content-root setup runs only from gbrain init on the brain host; a remote connection cannot create or choose content directories.');
+  }
   const receipt: SharedContentReceipt = {
     version: 1, brain_id: null, source_id: options.sourceId ?? ctx.sourceId ?? 'default', source_incarnation: null,
     root: null, repository_kind: 'remote', backup: 'not_verified', status: 'action_required', stage: 'root', pending_actions: [], owned_root: false,
@@ -63,7 +67,11 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   const [brain] = await ctx.engine.executeRaw<{ brain_id: string; enabled: boolean; skill_bundles_enabled: boolean }>('SELECT brain_id,enabled,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
   const [source] = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
     'SELECT id,incarnation,local_path FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
-  if (!brain || !source) throw new OperationError('source_changed', 'Content setup requires the persistent brain identity and an active selected source.');
+  if (!brain || !source) {
+    throw opError('source_changed', 'Content setup requires the persistent brain identity and an active selected source.',
+      `Source ${sourceId} is archived or not registered, or this brain has no persistence identity yet. Check the registered sources, then run gbrain init again for an active one.`,
+      { fix: readFix('Lists the registered sources and whether each is archived.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
+  }
   receipt.brain_id = brain.brain_id;
   receipt.source_id = sourceId;
   receipt.source_incarnation = source.incarnation;
@@ -83,12 +91,25 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   const saved = await ctx.engine.getConfig(key);
   let prior: SharedContentReceipt | null = null;
   if (saved) {
-    try { prior = JSON.parse(saved); } catch { throw new OperationError('local_conflict', 'The content setup checkpoint is malformed.'); }
-    if (prior?.version !== 1 || prior.brain_id !== brain.brain_id || prior.source_incarnation !== source.incarnation) throw new OperationError('local_conflict', 'The content setup checkpoint does not match this brain.');
+    const checkpointFix = { fix: readFix('Prints the saved content setup checkpoint.', { argv: ['gbrain', 'config', 'get', key] }) };
+    try { prior = JSON.parse(saved); } catch {
+      throw opError('local_conflict', 'The content setup checkpoint is malformed.',
+        `The saved content setup checkpoint for source ${sourceId} (config key ${key}) is not valid JSON. Show it to the user and ask how to proceed before changing it.`, checkpointFix);
+    }
+    if (prior?.version !== 1 || prior.brain_id !== brain.brain_id || prior.source_incarnation !== source.incarnation) {
+      throw opError('local_conflict', 'The content setup checkpoint does not match this brain.',
+        `The content setup checkpoint for source ${sourceId} (config key ${key}) belongs to another brain or source incarnation. Show it to the user and ask how to proceed before changing it.`, checkpointFix);
+    }
   }
   const existingRoot = source.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
-  if (options.root && existingRoot && resolve(options.root) !== resolve(existingRoot)) throw new OperationError('local_conflict', 'The selected source already has a different content root; use an explicit source rebind.');
-  if (options.dbOnly && existingRoot) throw new OperationError('local_conflict', 'DB-only setup cannot detach an existing canonical source root. Preserve it or use an explicit topology migration.');
+  if (options.root && existingRoot && resolve(options.root) !== resolve(existingRoot)) {
+    throw opError('local_conflict', 'The selected source already has a different content root; use an explicit source rebind.',
+      `Source ${sourceId} already uses ${existingRoot}. Run gbrain init without --content-root to keep it; moving it is a deliberate rebind the user must approve.`);
+  }
+  if (options.dbOnly && existingRoot) {
+    throw opError('local_conflict', 'DB-only setup cannot detach an existing canonical source root. Preserve it or use an explicit topology migration.',
+      `Source ${sourceId} already has the canonical root ${existingRoot}; run gbrain init without --db-only to keep it.`);
+  }
   if (options.dbOnly || !options.root && !existingRoot && prior?.repository_kind === 'db_only') {
     receipt.repository_kind = 'db_only';
     receipt.pending_actions = ['Memory remains available. Select a host canonical root and validate a full export/import round trip before shared publication.'];
@@ -109,13 +130,23 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   const gitProbe = existsSync(join(root, '.git')) ? spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 15_000 }) : null;
   receipt.repository_kind = gitProbe?.status === 0 && resolve(gitProbe.stdout.trim()) === root ? 'git' : 'content_directory';
   const existed = existsSync(root);
-  if (prior?.root && prior.root !== root) throw new OperationError('local_conflict', 'The canonical root changed after setup began.');
-  if (existingRoot && !existed) throw new OperationError('local_conflict', 'The registered content root is missing; restore it rather than creating a replacement.');
-  if (!existingRoot && existed && !prior && readdirSync(root).length > 0) throw new OperationError('local_conflict', 'The requested root contains unowned files; register an existing source explicitly instead.');
+  if (prior?.root && prior.root !== root) {
+    throw opError('local_conflict', 'The canonical root changed after setup began.',
+      `Content setup for source ${sourceId} began at ${prior.root}; resume it with --content-root ${prior.root}, or ask the user before abandoning that setup.`);
+  }
+  if (existingRoot && !existed) {
+    throw opError('local_conflict', 'The registered content root is missing; restore it rather than creating a replacement.',
+      `Source ${sourceId}'s registered root ${root} does not exist. Restore it (for example from its Git remote or backup), then run gbrain init again.`);
+  }
+  if (!existingRoot && existed && !prior && readdirSync(root).length > 0) {
+    throw opError('local_conflict', 'The requested root contains unowned files; register an existing source explicitly instead.',
+      `${root} already has files. Pass --content-root a new or empty directory, or register that directory as a source with gbrain sources add.`);
+  }
   if (prior?.owned_root && existed) {
     const stat = statSync(root);
     if (prior.root_identity ? prior.root_identity.device !== stat.dev || prior.root_identity.inode !== stat.ino : readdirSync(root).length > 0) {
-      throw new OperationError('local_conflict', 'The owned root changed or gained unverified files after setup was interrupted.');
+      throw opError('local_conflict', 'The owned root changed or gained unverified files after setup was interrupted.',
+        `${root} was replaced or gained files after content setup was interrupted, so setup stopped. Ask the user whether those files belong there before resuming gbrain init.`);
     }
     receipt.root_identity = { device: stat.dev, inode: stat.ino };
   }
@@ -141,7 +172,10 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     await saveContentReceipt(ctx, receipt);
   }
   if (options.git === 'init' && receipt.repository_kind !== 'git') {
-    if (!receipt.owned_root || readdirSync(root).length !== 0) throw new OperationError('local_conflict', 'Git initialization is allowed only in a newly owned empty content directory.');
+    if (!receipt.owned_root || readdirSync(root).length !== 0) {
+      throw opError('local_conflict', 'Git initialization is allowed only in a newly owned empty content directory.',
+        `${root} is not a new empty directory gbrain created; run gbrain init without --git and initialize Git there yourself if the user wants it.`);
+    }
     const git = spawnSync('git', ['init', '--quiet', root], { encoding: 'utf8', timeout: 15_000 });
     if (!git.error && git.status === 0) receipt.repository_kind = 'git';
     else receipt.pending_actions.push('Git initialization was unavailable; install Git and explicitly initialize this content directory later.');
@@ -149,7 +183,10 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   if (receipt.repository_kind === 'content_directory' && !receipt.pending_actions.length) receipt.pending_actions.push('Optional: initialize Git explicitly; configure an off-host backup separately.');
   if (receipt.owned_root && receipt.repository_kind === 'content_directory') {
     const enclosing = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 15_000 });
-    if (enclosing.status === 0 && resolve(enclosing.stdout.trim()) !== root) throw new OperationError('local_conflict', 'The new content directory is inside another Git worktree. Choose a separate root or explicitly initialize Git here; setup will not claim its parent repository.');
+    if (enclosing.status === 0 && resolve(enclosing.stdout.trim()) !== root) {
+      throw opError('local_conflict', 'The new content directory is inside another Git worktree. Choose a separate root or explicitly initialize Git here; setup will not claim its parent repository.',
+        `${root} is inside the Git worktree ${enclosing.stdout.trim()}. Pass --content-root a path outside any repository, or add --git so the content directory gets its own repository.`);
+    }
   }
   if (!existingRoot) await ctx.engine.executeRaw('UPDATE sources SET local_path=$1 WHERE id=$2 AND incarnation=$3::uuid AND local_path IS NULL', [root, sourceId, source.incarnation]);
   receipt.stage = 'owner';
@@ -166,7 +203,11 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   }
   let binding = await getWorktreeBinding(ctx.engine, sourceId);
   if (!binding) binding = await claimWorktree(ctx.engine, sourceId, root);
-  if (binding.state !== 'active' || !binding.owner_host_id) throw new OperationError('owner_unavailable', 'The canonical content owner is not active.');
+  if (binding.state !== 'active' || !binding.owner_host_id) {
+    throw opError('owner_unavailable', 'The canonical content owner is not active.',
+      `Source ${sourceId}'s canonical owner is ${binding.state}, so the packaged skills were not installed. Inspect the binding; activating or moving ownership is the user's decision.`,
+      { fix: readFix(`Shows source ${sourceId}'s owner binding and any pending recovery.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] }) });
+  }
   if (!brain.skill_bundles_enabled) await activateSharedSkillPersistence(ctx.engine, { confirmQuiesced: true });
   receipt.stage = 'pack';
   await saveContentReceipt(ctx, receipt);
@@ -197,7 +238,10 @@ export async function installPackagedSharedSkills(ctx: OperationContext, sourceI
       files: [{ path: `${path}/SKILL.md`, content: files[`${path}/SKILL.md`], file_class: 'prose' }],
     })),
   });
-  if (result.receipts.some(receipt => (receipt.write_request as { state?: string } | undefined)?.state !== 'committed')) {
-    throw new OperationError('publication_pending', 'The default pack was accepted but is not fully committed; rerun init to resume its durable requests.');
+  const pending = result.receipts.map(receipt => receipt.write_request as { state?: string; request_id?: string } | undefined).find(request => request?.state !== 'committed');
+  if (pending) {
+    throw opError('publication_pending', 'The default pack was accepted but is not fully committed; rerun init to resume its durable requests.',
+      `Inspect the accepted request${pending.request_id ? ` ${pending.request_id}` : ''} first; gbrain init resumes the same durable request (same request_id), so it never publishes the pack twice.`,
+      pending.request_id ? { fix: readFix('Shows whether the default pack publication committed, is still pending, or failed.', { argv: ['gbrain', 'write-request', '--', pending.request_id] }) } : {});
   }
 }

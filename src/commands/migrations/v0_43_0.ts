@@ -23,6 +23,7 @@ async function orchestrator(_opts: OrchestratorOpts): Promise<OrchestratorResult
 
 export const v0_43_0: Migration = {
   version: '0.43.0',
+  fresh_install_noop: true,
   featurePitch: {
     headline:
       'Five memory verbs — recall, remember, entity, synthesize, forget — are now the agent-facing memory protocol (MEMORY_VERBS v1).',

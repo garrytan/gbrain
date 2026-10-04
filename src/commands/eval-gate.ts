@@ -30,6 +30,9 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
+import { jsonGuardActive, jsonRequested, writeJsonLine } from '../core/cli-force-exit.ts';
+import { usageError, writeCliError, writeCliRefusal } from '../cli/cli-error.ts';
+import { opError } from '../core/ops/contract.ts';
 import {
   parseBaselineFile,
   type BaselineFile,
@@ -457,42 +460,31 @@ export async function runEvalGate(engine: BrainEngine, args: string[]): Promise<
     return;
   }
 
+  const json = jsonRequested(args);
+  const usage: (message: string, suggestion?: string) => never = (message, suggestion = 'Example: gbrain eval gate --qrels Y.qrels.json --json') =>
+    process.exit(writeCliRefusal(usageError(message, suggestion), 'eval', { json }));
   if (!opts.baseline && !opts.qrels) {
-    console.error('Error: at least one of --baseline or --qrels must be set\n');
     printHelp();
-    process.exit(2);
+    usage('Error: at least one of --baseline or --qrels must be set');
   }
 
-  if (opts.baseline && !existsSync(opts.baseline)) {
-    console.error(`Error: baseline file not found: ${opts.baseline}`);
-    process.exit(2);
-  }
-  if (opts.qrels && !existsSync(opts.qrels)) {
-    console.error(`Error: qrels file not found: ${opts.qrels}`);
-    process.exit(2);
-  }
+  if (opts.baseline && !existsSync(opts.baseline)) usage(`Error: baseline file not found: ${opts.baseline}`, 'Pass an existing --baseline file (write one with `gbrain bench publish`).');
+  if (opts.qrels && !existsSync(opts.qrels)) usage(`Error: qrels file not found: ${opts.qrels}`, 'Pass an existing --qrels file.');
 
   // Hermetic embedder validation. Only 'deterministic' is supported; the
   // regression gate is out of scope (replay re-embeds captured queries via
   // the gateway, which needs a provider key — defeating the hermetic point).
   if (opts.embedder !== undefined) {
     if (opts.embedder !== 'deterministic') {
-      console.error(
-        `Error: unsupported embedder "${opts.embedder}" — the only supported value is "deterministic".`,
-      );
-      process.exit(2);
+      usage(`Error: unsupported embedder "${opts.embedder}" — the only supported value is "deterministic".`,
+        'Example: gbrain eval gate --qrels Y.qrels.json --embedder deterministic');
     }
     if (opts.baseline) {
-      console.error(
-        'Error: the deterministic embedder cannot be combined with the baseline regression gate ' +
+      usage('Error: the deterministic embedder cannot be combined with the baseline regression gate ' +
         '(replay re-embeds captured queries via the gateway). Use it with the qrels correctness gate only.',
-      );
-      process.exit(2);
+      'Run the deterministic embedder with --qrels only.');
     }
-    if (!opts.qrels) {
-      console.error('Error: the deterministic embedder requires a qrels file.');
-      process.exit(2);
-    }
+    if (!opts.qrels) usage('Error: the deterministic embedder requires a qrels file.', 'Example: gbrain eval gate --qrels Y.qrels.json --embedder deterministic');
   }
 
   const result: GateResult = {
@@ -527,10 +519,8 @@ export async function runEvalGate(engine: BrainEngine, args: string[]): Promise<
         const { buildQrelsQueryEmbedFn } = await import('../eval/deterministic-embed.ts');
         queryEmbedFn = buildQrelsQueryEmbedFn(readFileSync(opts.qrels, 'utf-8'));
       } catch (err) {
-        console.error(
-          `Error: could not build the deterministic embedder from ${opts.qrels}: ${(err as Error).message}`,
-        );
-        process.exit(2);
+        usage(`Error: could not build the deterministic embedder from ${opts.qrels}: ${(err as Error).message}`,
+          'Fix the qrels file (it must parse as a qrels fixture).');
       }
       const { hybridSearch } = await import('../core/search/hybrid.ts');
       deterministicSearchFn = async (e, q, o) => {
@@ -550,12 +540,21 @@ export async function runEvalGate(engine: BrainEngine, args: string[]): Promise<
   }
 
   if (opts.json) {
-    console.log(JSON.stringify(result, null, 2));
+    // D2: one NDJSON line under the --json guard; the legacy pretty document otherwise.
+    await writeJsonLine(result, () => console.log(JSON.stringify(result, null, 2)));
   } else {
     printHumanOutput(result);
   }
 
-  if (result.verdict === 'fail') process.exit(1);
+  if (result.verdict !== 'fail') return;
+  // D2: under the --json guard the stream ends with the status:error line naming the failed gate.
+  if (jsonGuardActive()) {
+    const breached = [...(result.regression_gate.breaches ?? []), ...(result.correctness_gate.breaches ?? [])].map(b => b.metric);
+    process.exit(writeCliError(opError('gate_failed', `The eval gate failed: ${breached.join(', ') || 'thresholds breached'}.`,
+      'Read the result line\'s breaches. Fix the retrieval regression, or (if the change is intended) publish a new baseline with `gbrain bench publish`.'),
+    'eval', { json: true, stderr: false }));
+  }
+  process.exit(1);
 }
 
 // Exported for tests + e2e LOOP test

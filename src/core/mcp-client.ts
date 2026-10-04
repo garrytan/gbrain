@@ -24,6 +24,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { anySignal } from './abort-check.ts';
+import { canonicalCodeFor } from './error-catalogue.ts';
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken } from './remote-mcp-probe.ts';
 import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from './persistence/types.ts';
@@ -63,6 +64,10 @@ export type RemoteMcpErrorReason =
   | 'discovery'
   | 'auth'
   | 'auth_after_refresh'
+  /** OAuth /token answered 429; `detail.retry_after_s` carries its Retry-After. */
+  | 'rate_limited'
+  /** OAuth /token failed after discovery succeeded (non-auth HTTP status or bad body). */
+  | 'token'
   | 'network'
   | 'tool_error'
   | 'parse';
@@ -74,6 +79,8 @@ export interface RemoteMcpErrorDetail {
   kind?: 'timeout' | 'aborted' | 'unreachable';
   /** v0.31.1: server-supplied error code on tool_error (e.g. 'missing_scope'). */
   code?: string;
+  /** Seconds the server asked us to wait before minting again (rate_limited). */
+  retry_after_s?: number;
   /** An accepted mutation's receipt survives the transport's tool-error wrapper. */
   write_request?: WriteReceipt;
   write_error?: WriteErrorCode;
@@ -85,6 +92,15 @@ export interface RemoteMcpErrorDetail {
   protocol_version?: 1;
   server_detail?: string;
   docs?: string;
+  /** Agent contract v1: canonical registry code (`code`) when it differs from or adds to the wire `error` (kept in `code` above). */
+  canonical_code?: string;
+  reason?: string;
+  why?: string;
+  /** Rendered fix as the server sent it (`next` included). */
+  fix?: Record<string, unknown>;
+  /** Notices from the envelope's `notices` key (error results carry exactly one block). */
+  notices?: Array<Record<string, unknown>>;
+  contract_version?: 1;
 }
 
 export class RemoteMcpError extends Error {
@@ -101,8 +117,10 @@ export class RemoteMcpError extends Error {
   toJSON() {
     const detail = this.detail;
     const unknown = detail?.submission_status === 'unknown';
+    const wire = detail?.code ?? 'unavailable';
     return {
-      error: detail?.code ?? 'unavailable',
+      error: wire,
+      code: detail?.canonical_code ?? canonicalCodeFor(wire),
       message: detail?.message ?? this.message,
       ...(detail?.request_id ? { request_id: detail.request_id } : {}),
       ...(detail?.submission_status ? { submission_status: detail.submission_status } : {}),
@@ -114,8 +132,31 @@ export class RemoteMcpError extends Error {
       ...(detail?.docs ? { docs: detail.docs } : {}),
       ...(detail?.write_request ? { write_request: publicWriteReceipt(detail.write_request) } : {}),
       ...(detail?.write_error ? { write_error: detail.write_error } : {}),
+      ...(detail?.reason ? { reason: detail.reason } : {}),
+      ...(detail?.why ? { why: detail.why } : {}),
+      ...(detail?.fix ? { fix: detail.fix } : {}),
+      ...(detail?.notices?.length ? { notices: detail.notices } : {}),
+      ...(detail?.contract_version === 1 ? { contract_version: 1 } : {}),
     };
   }
+}
+
+/**
+ * B5 (#5949): a 429 on the /token mint is the host's mint budget, not a
+ * connectivity fault: code `rate_limited`, a provider-side wait, and the
+ * read-only check to run once the wait is over.
+ */
+function rateLimitedMintDetail(retryAfterS: number | undefined): RemoteMcpErrorDetail {
+  const wait = retryAfterS !== undefined ? `${retryAfterS}s` : 'a few minutes';
+  return {
+    code: 'rate_limited',
+    why: `The brain host's OAuth /token mint budget is spent (HTTP 429); it clears by itself in ${wait}.`,
+    suggestion: `Wait ${wait}, then re-run the same command. If this repeats, the host operator can raise GBRAIN_OAUTH_TOKEN_RATE_LIMIT_MAX.`,
+    fix: {
+      argv: ['gbrain', 'remote', 'doctor', '--json'], consent: [], actor: 'provider',
+      why: `Retry after ${wait}; remote doctor confirms the token mint works again.`, requires_exclusive: false,
+    },
+  };
 }
 
 /**
@@ -210,6 +251,12 @@ export function extractToolErrorDetail(message: string): RemoteMcpErrorDetail {
     if (envelope.protocol_version === 1) detail.protocol_version = 1;
     if (typeof envelope.detail === 'string') detail.server_detail = envelope.detail;
     if (typeof envelope.docs === 'string') detail.docs = envelope.docs;
+    if (typeof envelope.code === 'string' && envelope.code !== code) detail.canonical_code = envelope.code;
+    if (typeof envelope.reason === 'string') detail.reason = envelope.reason;
+    if (typeof envelope.why === 'string') detail.why = envelope.why;
+    if (envelope.fix && typeof envelope.fix === 'object' && !Array.isArray(envelope.fix)) detail.fix = envelope.fix as Record<string, unknown>;
+    if (Array.isArray(envelope.notices)) detail.notices = envelope.notices.filter(n => n && typeof n === 'object') as Array<Record<string, unknown>>;
+    if (envelope.contract_version === 1) detail.contract_version = 1;
     if (isWriteReceipt(envelope.write_request)) detail.write_request = publicWriteReceipt(envelope.write_request);
     if (isWriteErrorCode(envelope.write_error)) detail.write_error = envelope.write_error;
   } catch { /* Older servers can return plain text; preserve existing code extraction. */ }
@@ -264,10 +311,15 @@ async function getAccessToken(config: GBrainConfig, force = false, signal?: Abor
   const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, remote.oauth_client_id, secret, { signal });
   signal?.throwIfAborted();
   if (!tokenRes.ok) {
+    // Discovery already succeeded, so a /token failure is never 'discovery'.
     throw new RemoteMcpError(
-      tokenRes.reason === 'auth' ? 'auth' : tokenRes.reason === 'network' ? 'network' : 'discovery',
+      tokenRes.reason === 'http' || tokenRes.reason === 'parse' ? 'token' : tokenRes.reason,
       `OAuth /token failed: ${tokenRes.message}`,
-      { ...(tokenRes.status ? { status: tokenRes.status } : {}), ...(tokenRes.kind ? { kind: tokenRes.kind } : {}), mcp_url: remote.mcp_url },
+      {
+        ...(tokenRes.status ? { status: tokenRes.status } : {}), ...(tokenRes.kind ? { kind: tokenRes.kind } : {}),
+        ...(tokenRes.retry_after_s !== undefined ? { retry_after_s: tokenRes.retry_after_s } : {}), mcp_url: remote.mcp_url,
+        ...(tokenRes.reason === 'rate_limited' ? rateLimitedMintDetail(tokenRes.retry_after_s) : {}),
+      },
     );
   }
 
@@ -424,9 +476,10 @@ export async function callRemoteTool(
         submitted = true;
         const res = await client.callTool({ name: toolName, arguments: args }, undefined, buildMcpRequestOptions(opts, signal));
         if (res.isError) {
-          const message = Array.isArray(res.content)
-            ? res.content.map((c: unknown) => (c as { text?: string }).text ?? '').join('\n')
-            : 'unknown tool error';
+          // Agent contract v1: the envelope is content[0] alone. A notice
+          // block from a newer server never joins the body.
+          const first = Array.isArray(res.content) ? (res.content[0] as { text?: unknown } | undefined) : undefined;
+          const message = typeof first?.text === 'string' ? first.text : 'unknown tool error';
           // v0.31.1: extract structured error code (e.g. 'missing_scope') so
           // the dispatcher can produce a pinpoint hint instead of a generic
           // "tool error" message.
@@ -529,6 +582,33 @@ export function unpackToolResult<T = unknown>(res: unknown): T {
 }
 
 /**
+ * Agent contract v1 notices on a SUCCESS result: `_meta.gbrain_notices`
+ * (rendered) when present, else the prefixed extra text blocks after
+ * content[0] (`[gbrain notice <code> kind=<kind>]` first line), for hosts
+ * that drop `_meta`. Old servers return none.
+ */
+export function extractNotices(res: unknown): Array<Record<string, unknown>> {
+  const meta = extractResponseMeta(res)?.gbrain_notices;
+  if (Array.isArray(meta)) return meta.filter(n => n && typeof n === 'object') as Array<Record<string, unknown>>;
+  const content = (res as { content?: unknown[] } | undefined)?.content;
+  const out: Array<Record<string, unknown>> = [];
+  for (const block of Array.isArray(content) ? content.slice(1) : []) {
+    const text = (block as { text?: unknown })?.text;
+    if (typeof text !== 'string' || !text.startsWith('[gbrain notice ')) continue;
+    const [head, ...rest] = text.split('\n');
+    const m = /^\[gbrain notice (\S+) kind=(\S+)\]$/.exec(head);
+    if (!m) continue;
+    const notice: Record<string, unknown> = { code: m[1], kind: m[2] };
+    for (const line of rest) {
+      const kv = /^(why|fix|next|user_message): (.*)$/.exec(line);
+      if (kv) notice[kv[1]] = kv[2];
+    }
+    out.push(notice);
+  }
+  return out;
+}
+
+/**
  * T15/FOV-1: read the response-level `_meta` from a tool-call envelope
  * (see docs/protocol/MCP_META_CHANNELS.md). Old servers simply lack the
  * field — callers must treat undefined as "no meta", never as an error.
@@ -559,7 +639,7 @@ export function ignoredRemoteParams(res: unknown): string[] {
   for (const block of Array.isArray(content) ? content.slice(1) : []) {
     const text = (block as { text?: unknown })?.text;
     if (typeof text !== 'string') continue;
-    for (const m of text.matchAll(/^warning: unknown parameter "([^"]+)" ignored/gm)) names.add(m[1]);
+    for (const m of text.matchAll(/^(?:why: )?warning: unknown parameter "([^"]+)" ignored/gm)) names.add(m[1]);
   }
   return [...names];
 }

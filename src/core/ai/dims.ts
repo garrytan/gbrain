@@ -179,8 +179,8 @@ export function dimsProviderOptions(
           const max = maxOpenAITextEmbedding3Dim(modelId)!;
           throw new AIConfigError(
             `OpenAI model "${modelId}" supports embedding_dimensions in 1..${max}, got ${dims}.`,
-            `Set \`embedding_dimensions\` to a value between 1 and ${max} ` +
-            `(\`gbrain config set embedding_dimensions ${Math.min(1024, max)}\` is a common default).`,
+            `Use a width between 1 and ${max} (${Math.min(1024, max)} is a common default). On an existing brain a width change re-embeds; ` +
+            `preview it with \`gbrain migrate embeddings --to openai:${modelId} --dim ${Math.min(1024, max)} --dry-run\` (pages and facts are kept).`,
           );
         }
         return { openai: { dimensions: dims } };
@@ -267,8 +267,8 @@ export function dimsProviderOptions(
           const max = maxOpenAITextEmbedding3Dim(bareModelId)!;
           throw new AIConfigError(
             `OpenAI model "${modelId}" supports embedding_dimensions in 1..${max}, got ${dims}.`,
-            `Set \`embedding_dimensions\` to a value between 1 and ${max} ` +
-            `(\`gbrain config set embedding_dimensions ${Math.min(1024, max)}\` is a common default).`,
+            `Use a width between 1 and ${max} (${Math.min(1024, max)} is a common default). On an existing brain a width change re-embeds; ` +
+            `preview it with \`gbrain migrate embeddings --to <provider>:${modelId} --dim ${Math.min(1024, max)} --dry-run\` (pages and facts are kept).`,
           );
         }
         return { openaiCompatible: { dimensions: dims } };

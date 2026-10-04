@@ -7,6 +7,7 @@ import { LocalConfigurationError, isLocalConfigurationError } from '../../core/m
 import { WORKER_EXIT_CONFIGURATION, WORKER_EXIT_RSS_WATCHDOG } from '../../core/minions/worker-exit-codes.ts';
 import { MinionWorker, type UnhealthyReason } from '../../core/minions/worker.ts';
 import type { MinionQueue } from '../../core/minions/queue.ts';
+import type { BrainEngine } from '../../core/engine.ts';
 
 export async function maybeRunWorkerStartupRecovery(
   queue: MinionQueue,
@@ -41,14 +42,6 @@ export async function maybeRunWorkerStartupRecovery(
 export async function runJobsWork({ args, engine, queue }: JobsCommandContext): Promise<void> {
   // Lazy: jobs.ts imports this module statically, so a static import back would be a cycle.
   const { registerBuiltinHandlers } = await import('../jobs.ts');
-  // Check if PGLite
-  const config = (await import('../../core/config.ts')).loadConfig();
-  if (config?.engine === 'pglite') {
-    console.error('Error: Worker daemon requires Postgres. PGLite uses an exclusive file lock that blocks other processes.');
-    console.error('Use --follow for inline execution: gbrain jobs submit <name> --follow');
-    process.exit(1);
-  }
-
   // --allow-shell-jobs (supervisor pass-through, see buildWorkerArgs): the
   // startup cwd-.env quarantine drops GBRAIN_ALLOW_SHELL_JOBS when a .env
   // in this worker's cwd assigns it, so the flag re-asserts the operator's
@@ -56,6 +49,10 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
   if (hasFlag(args, '--allow-shell-jobs')) process.env.GBRAIN_ALLOW_SHELL_JOBS = '1';
 
   const queueName = parseFlag(args, '--queue') ?? 'default';
+  if (engine.kind === 'pglite') {
+    await drainPgliteQueue(engine, queue, queueName, registerBuiltinHandlers);
+    return;
+  }
   const concurrency = resolveWorkerConcurrency(args);
   // --max-rss: explicit value wins (including 0 to disable the watchdog).
   // Absent → cgroup-aware auto-size (issue #1678): the flat 2048MB default
@@ -288,6 +285,47 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
       process.exit(WORKER_EXIT_RSS_WATCHDOG);
     }
   }
+}
+
+/**
+ * PGLite has no background worker (the brain is single-writer, so a daemon
+ * would lock every other command out). There `gbrain jobs work` drains (agent-
+ * first operator wave E5): it runs the queue's waiting jobs in the foreground,
+ * registered as a live worker, and exits once none it can run are waiting or
+ * active. Jobs scheduled for a later retry stay queued and are named.
+ */
+export async function drainPgliteQueue(
+  engine: BrainEngine,
+  queue: MinionQueue,
+  queueName: string,
+  registerHandlers: (worker: MinionWorker, engine: BrainEngine) => Promise<void>,
+): Promise<{ delayed: number }> {
+  await queue.ensureSchema();
+  const worker = new MinionWorker(engine, { queue: queueName, pollInterval: 200, healthCheckInterval: 0 });
+  await registerHandlers(worker, engine);
+  const names = worker.registeredNames;
+  const count = async (statuses: string[]): Promise<number> => {
+    const [row] = await engine.executeRaw<{ n: number }>(
+      'SELECT count(*)::int AS n FROM minion_jobs WHERE queue = $1 AND status = ANY($2::text[]) AND name = ANY($3::text[])',
+      [queueName, statuses, names]);
+    return Number(row?.n ?? 0);
+  };
+  const { registerWorker } = await import('../../core/minions/worker-registry.ts');
+  const unregister = registerWorker({ pid: process.pid, queue: queueName, nice_requested: null, nice_effective: null, started_at: Date.now() });
+  console.log(`Draining queue '${queueName}' in the foreground (PGLite has no background worker): ${await count(['waiting', 'active'])} runnable job(s).`);
+  const running = worker.start();
+  const poll = setInterval(() => {
+    count(['waiting', 'active']).then(n => { if (n === 0) worker.stop(); }, () => worker.stop());
+  }, 500);
+  try {
+    await running;
+  } finally {
+    clearInterval(poll);
+    unregister();
+  }
+  const delayed = await count(['delayed']);
+  console.log(`Queue '${queueName}' drained.${delayed > 0 ? ` ${delayed} job(s) are scheduled for a later retry; run \`gbrain jobs work${queueName === 'default' ? '' : ` --queue ${queueName}`}\` again after their backoff.` : ''}`);
+  return { delayed };
 }
 
 /**

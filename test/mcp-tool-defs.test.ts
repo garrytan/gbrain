@@ -11,7 +11,7 @@
 import { describe, test, expect } from 'bun:test';
 import { operations } from '../src/core/operations.ts';
 import { buildToolDefs, paramDefToSchema, toolAnnotations } from '../src/mcp/tool-defs.ts';
-import type { ParamDef } from '../src/core/operations.ts';
+import type { Operation, ParamDef } from '../src/core/operations.ts';
 
 // Reference shape — mirrors the canonical `paramDefToSchema` helper from
 // src/mcp/tool-defs.ts. Drift between the helper and this reference fails
@@ -72,8 +72,8 @@ function legacyInlineMap(ops: typeof operations) {
 }
 function referenceAnnotations(op: (typeof operations)[number]) {
   if (op.annotations) return op.annotations;
-  if (op.mutating === true) return { readOnlyHint: false };
-  if (op.mutating === false && op.scope === 'read') return { readOnlyHint: true };
+  if (op.mutating === true) return op.idempotent === true ? { readOnlyHint: false, idempotentHint: true } : { readOnlyHint: false };
+  if (op.mutating === false) return { readOnlyHint: true };
   return undefined;
 }
 
@@ -90,7 +90,7 @@ describe('buildToolDefs', () => {
     expect(JSON.stringify(buildToolDefs(operations, { strictParams: false }))).toBe(base);
   });
 
-  test('ops without annotations or a mutating tag keep the pre-annotations shape exactly (no annotations key)', () => {
+  test('ops without annotations or a mutating tag keep the pre-annotations shape exactly (no annotations key; none exist today)', () => {
     const extracted = buildToolDefs(operations);
     for (const def of extracted) {
       const op = operations.find(o => o.name === def.name)!;
@@ -101,19 +101,19 @@ describe('buildToolDefs', () => {
     }
   });
 
-  test('#5037: annotations derive conservatively from scope and explicit mutating tags', () => {
+  test('#5037: annotations derive conservatively from the required mutating/idempotent tags', () => {
     const base = { name: 'x', description: 'x', params: {}, handler: async () => null, outputRedaction: 'no_stored_text' } as const;
     expect(toolAnnotations({ ...base, scope: 'read', mutating: false })).toEqual({ readOnlyHint: true });
-    expect(toolAnnotations({ ...base, scope: 'write', mutating: false })).toBeUndefined();
+    expect(toolAnnotations({ ...base, scope: 'admin', mutating: false, idempotent: true })).toEqual({ readOnlyHint: true });
     expect(toolAnnotations({ ...base, scope: 'read' })).toBeUndefined();
     expect(toolAnnotations({ ...base, scope: 'write', mutating: true })).toEqual({ readOnlyHint: false });
+    expect(toolAnnotations({ ...base, scope: 'write', mutating: true, idempotent: true })).toEqual({ readOnlyHint: false, idempotentHint: true });
     expect(toolAnnotations({ ...base, mutating: true, annotations: { title: 'curated', idempotentHint: true } })).toEqual({ title: 'curated', idempotentHint: true });
     const defs = new Map(buildToolDefs(operations).map(def => [def.name, def]));
-    expect(defs.get('put_page')?.annotations).toEqual({ readOnlyHint: false });
-    expect(defs.get('edit_page')?.annotations).toEqual({ readOnlyHint: false });
+    expect(defs.get('put_page')?.annotations).toEqual({ readOnlyHint: false, idempotentHint: true });
+    expect(defs.get('submit_job')?.annotations).toEqual({ readOnlyHint: false });
     expect(defs.get('recall')?.annotations?.readOnlyHint).toBe(true);
-    // The core reads in ops/pages.ts and ops/search.ts carry explicit tags, so agents see them as read-only.
-    for (const name of ['get_page', 'fetch', 'list_pages', 'search', 'query', 'assemble_evidence', 'search_modes']) {
+    for (const name of ['get_page', 'fetch', 'list_pages', 'search', 'query', 'assemble_evidence', 'search_modes', 'get_links', 'traverse_graph']) {
       expect({ name, readOnlyHint: defs.get(name)?.annotations?.readOnlyHint }).toEqual({ name, readOnlyHint: true });
     }
     for (const op of operations) {
@@ -207,6 +207,57 @@ describe('buildToolDefs', () => {
 // strip them from arguments. Both emission states are pinned here; the
 // default state's byte-identity is pinned above.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// #5952 (#5037), ported to the agent-contract rule: hints derive from the
+// required `mutating`/`idempotent` tags, not from scope.
+// ---------------------------------------------------------------------------
+
+describe('default ToolAnnotations (#5952, ported)', () => {
+  const defs = new Map(buildToolDefs(operations).map(d => [d.name, d]));
+  const synthetic = (name: string, extra: Partial<Operation>): Operation => ({
+    name,
+    description: `${name} test op`,
+    params: {},
+    handler: async () => null,
+    outputRedaction: 'no_stored_text',
+    ...extra,
+  });
+
+  test('writes never carry readOnlyHint: true', () => {
+    for (const name of ['put_page', 'delete_page', 'add_link', 'submit_job']) {
+      expect(defs.get(name)!.annotations?.readOnlyHint, name).toBe(false);
+    }
+  });
+
+  test('a read-scoped op that declares mutating is never marked read-only', () => {
+    const readScopedWriters = operations.filter(o => o.scope === 'read' && o.mutating === true);
+    expect(readScopedWriters.map(o => o.name)).toContain('think');
+    for (const op of readScopedWriters) {
+      expect(defs.get(op.name)!.annotations?.readOnlyHint, op.name).not.toBe(true);
+    }
+  });
+
+  test('an untagged synthetic op stays unannotated', () => {
+    const [write, read] = buildToolDefs([synthetic('w', { scope: 'write' }), synthetic('r', { scope: 'read', mutating: false })]);
+    expect('annotations' in write).toBe(false);
+    expect(read.annotations).toEqual({ readOnlyHint: true });
+  });
+
+  test("an op's own annotations win verbatim, with nothing merged in", () => {
+    const [def] = buildToolDefs([synthetic('r', { scope: 'read', mutating: false, annotations: { title: 'custom' } })]);
+    expect(def.annotations).toEqual({ title: 'custom' });
+    expect(defs.get('forget')!.annotations).toEqual(operations.find(o => o.name === 'forget')!.annotations!);
+  });
+
+  test('every derived readOnlyHint sits on a non-mutating op', () => {
+    for (const def of defs.values()) {
+      const op = operations.find(o => o.name === def.name)!;
+      if (op.annotations || def.annotations?.readOnlyHint !== true) continue;
+      expect(op.mutating, def.name).toBe(false);
+    }
+  });
+});
 
 describe('buildToolDefs strictParams emission (WP3/D14.1)', () => {
   const strictDefs = buildToolDefs(operations, { strictParams: true });

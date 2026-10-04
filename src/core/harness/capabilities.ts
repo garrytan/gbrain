@@ -61,7 +61,12 @@ export async function resolveAuthCapabilities(auth: AuthInfo, engine: BrainEngin
   const visibleOperations = filterOpsForSurface(operations.filter(op => !op.localOnly), surface).filter(op =>
     operationScopesAllowed(auth.scopes, op)
     && opAllowedForBoundClient(auth, op) && !disabled.has(op.name)).map(op => op.name);
-  return describeAuthCapabilities(auth, { surface, visibleOperations, delegatedTools: grantCatalog().delegateToolNames });
+  // F2: config-plane readiness in the HTTP view (probed entries are host posture, never sent over HTTP).
+  const { configReadiness, readinessHttpView } = await import('../readiness.ts');
+  return {
+    ...describeAuthCapabilities(auth, { surface, visibleOperations, delegatedTools: grantCatalog().delegateToolNames }),
+    readiness: readinessHttpView(configReadiness(config, { transport: 'http' }).entries),
+  };
 }
 
 /** No credentials or private inventories. Uses the already authenticated grant

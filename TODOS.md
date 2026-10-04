@@ -1,5 +1,58 @@
 # TODOS
 
+## Agent-first operator wave follow-ups (filed 2026-10-03, follow-up from v0.60.42.0)
+
+Spec: `docs/designs/AGENT_OPERATOR_WAVE.md` (Deferred list). Contract: `docs/protocol/AGENT_OPERATOR_v1.md`.
+
+- [ ] **P2 — Tool-call proxy for a second `gbrain serve`.**
+  **What:** a second stdio serve on a held brain answers in status-only mode with one `gbrain_status` tool. **Why:** the user has to move both harnesses to a shared `serve --http` to get memory in the second session. **Fix:** authenticated IPC forwarding to the owning serve, carrying the proxied caller's surface and scopes. **Effort:** L. **Priority:** P2.
+- [ ] **P2 — Status-only mode for `serve --http` lock contention.**
+  **What:** status-only mode covers stdio; a `serve --http` that loses the lock still exits. **Why:** an HTTP client sees a dead endpoint instead of the `gbrain_status` explanation. **Fix:** the same status-only server on the HTTP transport, re-probing with `peekLock()`. **Effort:** M. **Priority:** P2.
+- [ ] **P2 — Support policy and removal of legacy shapes.**
+  **What:** legacy JSON shapes, frozen `error` values and duplicate receipt copies stay under contract v1. **Why:** they double the surface harness authors read. **Fix:** a written support policy plus consumer evidence, then removal in `AGENT_OPERATOR_v2`. **Effort:** M. **Priority:** P2.
+- [ ] **P2 — Exit 3 for `mcp expose` and `google` under contract v2.**
+  **What:** both still exit 2 for `confirmation_required` (documented v1 legacy); `mcp expose`'s document already carries the consent fields. **Fix:** move them to 3 with the v2 contract. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — `run_doctor` and CLI `doctor` from one registry with a `remote_safe` flag.**
+  **What:** MCP `run_doctor` and CLI `doctor` agree on the same brain through parity tests, but the check lists are still two code paths. **Why:** a new check can land on one surface only. **Fix:** one registry; each entry declares `remote_safe`, and `run_doctor` runs exactly the remote-safe subset. **Effort:** M. **Priority:** P2.
+- [ ] **P2 — Submit-time job authorization and pre-upgrade queued jobs.**
+  **What:** `book-mirror`'s paid fan-out asks at the CLI, but the queued child jobs carry no authorization record, and jobs queued before the upgrade run under the configured budget with no consent record. **Fix:** persist the `Authorization` (effects, cap, cap source) on the submitted job and check it in the worker; a pre-upgrade job without one runs under the configured budget and says so. **Effort:** M. **Priority:** P2.
+- [ ] **P2 — `consent.preapprove.paid.max_usd_per_day`.**
+  **What:** only the per-run preapproval ships. **Fix:** a daily preapproval through the durable reservation model (`src/core/minions/budget-meter.ts`, `delegated-policy.ts`) with concurrency and crash-recovery tests, plus the C9 rows. **Effort:** M. **Priority:** P2.
+- [ ] **P2 — Onboarding notices over MCP.**
+  **What:** the post-upgrade summary reaches stdio MCP sessions as a notice and the advisor carries the writeback finding, but the onboarding nudges (`onboard_opportunities`) and init's first-run decision bundle reach only CLI callers. **Why:** an agent that only talks MCP never sees them. **Fix:** emit them through the notice channel once per session, under the coaching budget and mute rules. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Connectors two-step OAuth.**
+  **What:** `connectors auth --try-oauth` refuses headless and hands over the cookie lane. **Fix:** print the authorize URL and exit awaiting consent, then a second command completes with the pasted redirect (the Google connect shape). **Effort:** M. **Priority:** P2.
+- [ ] **P2 — Unify MCP surfaces across wiring paths.**
+  **What:** `bootstrap hooks` registers `full` (`src/commands/bootstrap.ts:~1282`) while the readiness fix and init register `--surface verbs`. **Fix:** one surface choice for every registration path. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Make `gbrain bootstrap verify` read-only, then mark it `read_only`.**
+  **What:** it is excluded from the verify-field scanner rule until it writes nothing. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — `structuredContent` with per-op `outputSchema`.**
+  **What:** emitted only as a semantic superset of `content`, after client behaviour converges. **Fix:** include Codex and VS Code scenarios proving the body reaches the model. **Effort:** M. **Priority:** P2.
+- [ ] **P2 — Re-baseline BrainBench after the wave** if notice blocks change harness behaviour. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Tier 3 carry-over: D3's remaining curated helps.**
+  **What:** B10 shipped in this release; D3's remaining curated helps are the 33 rows in `test/fixtures/cli-contract/help-baseline.json` (stub helps, `missing_yes`, `exit`). **Fix:** burn them down; the D5 baseline is shrink-only. **Effort:** M. **Priority:** P2.
+- [ ] **P2 — Backfill the last 74 suggestion-less `OperationError` sites (31 files).**
+  **What:** B10 took the scanner baseline from 1,116 sites in 143 files to 74 in 31. What remains: `src/commands/` (persistence-admin 11, repair 6, reindex-code-delegate 5, embed-facts-delegate 5, sync-persistence-delegate 4, extract-stale-delegate 4, capture 4, recall 3, and smaller), `src/cli.ts`, and single-digit core sites (effect-facts 3, effect-targets, company-brain/policy, embed-facts, shared-skills/adapter, source-local-reference-index, and 1-site files). **Fix:** the B10 pattern (`opError` + filled `fix`, receipts by `request_id` for CLI-principal rows only); `scripts/agent-contract-baselines/suggestionless-operation-error.tsv` lists them. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Module-local `fail(code, message)` helpers carry a generic next step.**
+  **What:** `shared-skills/adapter.ts` and `shared-skills/membership.ts` funnel about 40 refusals through one suggestion-less helper each, and `persistence/administration.ts` gives its ~28 parameter checks a shared default. **Fix:** a per-code suggestion table, so each refusal names its own next step. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Ratchet burn-down of the other agent-contract scanner baselines.**
+  **What:** counts at filing (`scripts/agent-contract-baselines/`, after B10): legacy advice keys 237, hand-built command strings 51, marker literals 26, `stdio: 'inherit'` 12, flag text in MCP-visible strings 6, raw "re-run with --yes" 5, in-scope placeholders 4, `throw new Error` in ops 3, non-read-only verify 1; suggestion-less `OperationError` is the 74 above; interactive I/O and retry-on-mutating are at 0. **Fix:** shrink per file as files are touched; the baselines refuse growth. **Effort:** L. **Priority:** P3.
+- [ ] **P3 — `sync_freshness` fix placeholder.**
+  **What:** the check's fail/warn message still says ``gbrain sync --source <id>`` instead of naming each stale source's command, because `checkSyncFreshness` sits at its function-size ceiling. **Fix:** split the function, then emit one filled `fix` per stale source. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Collapse the five error classes into `opError` + the registry.** **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Harness-author community channel** linked from `AGENT_OPERATOR_v1.md`. **Effort:** XS. **Priority:** P3.
+- [ ] **P3 — Recall relevance on tiny keyless brains.** Measure first. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Trim the AGENTS.md pre-install preamble** (owner rewrite). **Effort:** S. **Priority:** P3.
+- [ ] **P3 — MCP elicitation for consent.**
+  **What:** trigger is the first MCP op whose fix has non-empty consent and an MCP-callable re-invocation; stdio first, HTTP needs a session-bound transport. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Doctor report `schema_version: 3`** with a first-class informational status (today `ok` + `severity: 'info'`). **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Retire the `--json` exit-time fallback document** once direct-exit paths reach zero. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Retire the `promptLine` / `promptLineStderr` / `promptYesNo` and legacy `readStdinBounded` shims.** **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Curated annotation titles and a `destructiveHint` / `openWorldHint` review** for every mutating op. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — HTTP session-scoped coaching dedupe** when the transport becomes session-bound (today principal + transport session id, principal only when absent). **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Status-mode recovery for clients that ignore `tools/list_changed`.** Measure per harness and document. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Keep `getStats` / `getHealth` off agent paths** (cross-ref #5061; the readiness cache is the pattern). **Effort:** S. **Priority:** P3.
+
 ## Foundations 1 follow-ups (filed 2026-10-03, follow-up from v0.60.37.0)
 
 - [ ] **P1 — Mutation attribution for the writers still unattributed.**

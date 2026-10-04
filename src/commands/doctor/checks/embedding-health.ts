@@ -15,7 +15,25 @@ import { providerKeyShadows, providerKeySource } from '../../../core/ai/provider
 import { credentialEnvName, keyShadowWarning } from '../../../core/ai/key-warnings.ts';
 import { getRecipe } from '../../../core/ai/recipes/index.ts';
 import type { Check } from '../../doctor.ts';
+import { embeddingsDisabled } from '../../../core/embedding-disabled.ts';
+import { checkError, doctorVerify, infoCheck, keylessEnablementFix } from '../check-fix.ts';
+import { brainRoutingArgs } from '../../../core/brain-resolver.ts';
+import type { Action } from '../../../core/agent-output.ts';
+import { embeddingProviderIsFree } from '../../../core/embed-consent.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+
+/** The opt-in live probe: one ~9-token embedding request, so `paid` + `egress` (runs verbatim once approved). */
+export function embeddingProbeFix(model: string, free = false): Action {
+  return {
+    argv: ['gbrain', 'doctor', '--only', 'embedding_provider', '--probe', ...(free ? [] : ['--yes']), '--json', ...brainRoutingArgs()],
+    consent: free ? [] : ['paid', 'egress'],
+    actor: 'agent',
+    why: `Plain doctor never calls the provider. The probe sends one short embedding request to ${model} to confirm the key, model and dimensions work; it costs a fraction of a cent.`,
+    user_message: `To confirm your embedding provider works, gbrain can send it one tiny test request (${model}, well under a cent). OK to run it?`,
+    verify: doctorVerify('embedding_provider'),
+    requires_exclusive: false,
+  };
+}
 
 async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -25,6 +43,10 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
   // 8b. Embedding provider eval — live smoke test of the configured provider.
   //     Verifies: correct model, API key works, dimensions match config, DB column matches.
   progress.heartbeat('embedding_provider');
+  if (await embeddingsDisabled(engine)) {
+    checks.push(infoCheck('embedding_provider', 'Not probed: embeddings are disabled on this brain by choice (keyword search keeps working).', 'disabled_by_choice', keylessEnablementFix()));
+    return checks;
+  }
   try {
     const {
       getEmbeddingModel,
@@ -101,6 +123,31 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
         status: 'ok',
         message: `Skipped (no provider credentials). Model: ${configuredModel}.`,
       });
+    } else if (!ctx.args.includes('--probe')) {
+      let colDims: number | null = null;
+      try {
+        const { readContentChunksEmbeddingDim } = await import('../../../core/embedding-dim-check.ts');
+        const colDim = await readContentChunksEmbeddingDim(engine);
+        colDims = colDim.exists ? colDim.dims : null;
+      } catch { /* column or table missing: fresh brain */ }
+      const details = { probed: false, model: configuredModel, dimensions: configuredDims };
+      if (colDims !== null && colDims !== configuredDims) {
+        checks.push({
+          name: 'embedding_provider',
+          status: 'warn',
+          message: `${configuredModel} is configured for ${configuredDims} dims but the DB column is vector(${colDims}) (not probed). See docs/embedding-migrations.md for a verified backup, migration preview and explicitly authorized repair.`,
+          fix_unavailable_reason: 'operator_judgement',
+          details,
+        });
+      } else {
+        checks.push({
+          name: 'embedding_provider',
+          status: 'ok',
+          message: `${configuredModel} configured (${configuredDims} dims, credentials present, DB column aligned); not probed: a live probe sends one tiny paid embedding request to the provider and runs only when authorized.`,
+          fix: embeddingProbeFix(configuredModel, await embeddingProviderIsFree(configuredModel)),
+          details,
+        });
+      }
     } else {
       // Live embed test
       const start = Date.now();
@@ -404,11 +451,7 @@ async function runEmbeddingColumnRegistry(ctx: DoctorContext): Promise<Check[]> 
   } catch (err) {
     // Pre-config brains, registry-validation throws, etc. Surfaces the
     // error message but doesn't fail the doctor run.
-    checks.push({
-      name: 'embedding_column_registry',
-      status: 'warn',
-      message: `Could not check embedding column registry: ${(err as Error).message}`,
-    });
+    checks.push(checkError('embedding_column_registry', 'check embedding column registry', err));
   }
   return checks;
 }

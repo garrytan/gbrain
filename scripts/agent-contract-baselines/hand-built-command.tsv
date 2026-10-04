@@ -1,0 +1,15 @@
+# shrink-only baseline for scripts/check-agent-contract.ts rule hand-built-command: path<TAB>count
+src/commands/doctor/checks/auto-chronicle.ts	1
+src/commands/doctor/checks/vector-coverage.ts	2
+src/commands/models.ts	1
+src/commands/serve-http-grants.ts	1
+src/core/ai/decide/outcomes.ts	20
+src/core/creds/errors.ts	16
+src/core/facts/relink-reasons.ts	3
+src/core/grants/legacy-token.ts	1
+src/core/harness/verify.ts	1
+src/core/onboard/checks.ts	1
+src/core/persistence/effect-retry.ts	1
+src/core/persistence/page-input.ts	1
+src/core/search/modes-report.ts	1
+src/mcp/capabilities.ts	1

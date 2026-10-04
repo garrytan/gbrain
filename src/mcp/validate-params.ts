@@ -16,31 +16,93 @@ import type { Operation } from '../core/operations.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
+import type { OperationError } from '../core/ops/contract.ts';
+import { invalidParam } from '../core/ops/op-fix.ts';
+import type { Action } from '../core/agent-output.ts';
 
-/** Validate required params exist and have the expected type. Returns null on success, error message on failure. */
-export function validateParams(op: Operation, params: Record<string, unknown>): string | null {
+/** One validation failure: the message (never echoes the caller's value) and the param it names. */
+export interface ParamValidationFailure { message: string; param: string }
+
+/** Validate required params exist and have the expected type. Returns the first failure, or null. */
+export function findInvalidParam(op: Operation, params: Record<string, unknown>): ParamValidationFailure | null {
   for (const [key, def] of Object.entries(op.params)) {
+    const fail = (message: string) => ({ message, param: key });
     if (def.required && (params[key] === undefined || params[key] === null)) {
-      return `Missing required parameter: ${key}`;
+      return fail(`Missing required parameter: ${key}`);
     }
     if (params[key] !== undefined && params[key] !== null) {
       const val = params[key];
       const expected = def.type;
-      if (expected === 'string' && typeof val !== 'string') return `Parameter "${key}" must be a string`;
-      if (expected === 'number' && typeof val !== 'number') return `Parameter "${key}" must be a number`;
-      if (expected === 'boolean' && typeof val !== 'boolean') return `Parameter "${key}" must be a boolean`;
-      if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return `Parameter "${key}" must be an object`;
-      if (expected === 'array' && !Array.isArray(val)) return `Parameter "${key}" must be an array`;
+      if (expected === 'string' && typeof val !== 'string') return fail(`Parameter "${key}" must be a string`);
+      if (expected === 'number' && typeof val !== 'number') return fail(`Parameter "${key}" must be a number`);
+      if (expected === 'boolean' && typeof val !== 'boolean') return fail(`Parameter "${key}" must be a boolean`);
+      if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return fail(`Parameter "${key}" must be an object`);
+      if (expected === 'array' && !Array.isArray(val)) return fail(`Parameter "${key}" must be an array`);
       // WP3: enum membership is a TYPE error, enforced in BOTH strict modes
       // (warn and reject). The message names the declared values only — the
       // caller's raw value is never echoed (it can land in persistent logs
       // via the error_message column; declared values are safe by definition).
       if (def.enum && typeof val === 'string' && !def.enum.includes(val)) {
-        return `Parameter "${key}" must be one of: ${def.enum.join(', ')}`;
+        return fail(`Parameter "${key}" must be one of: ${def.enum.join(', ')}`);
       }
     }
   }
   return null;
+}
+
+/** Validate required params exist and have the expected type. Returns null on success, error message on failure. */
+export function validateParams(op: Operation, params: Record<string, unknown>): string | null {
+  return findInvalidParam(op, params)?.message ?? null;
+}
+
+/**
+ * B3: the `invalid_params` error for a schema failure — the param's type,
+ * description, valid choices and one example call on the caller's surface
+ * (from the op's ParamDef), never the caller's raw value in `message`.
+ * Over MCP, a read op's wrong-typed or out-of-enum param also gets a `fix`:
+ * the same call with the caller's other arguments and a valid value for the
+ * param (H1a: a caller mistake returns a fix the agent can run).
+ */
+export function schemaInvalidParams(
+  op: Operation,
+  failure: ParamValidationFailure,
+  ctx: { remote?: boolean; transport?: 'stdio' | 'http' },
+  params?: Record<string, unknown>,
+): OperationError {
+  const fix = params && ctx.remote !== false ? retryWithValidParam(op, failure, params) : undefined;
+  return invalidParam({ remote: ctx.remote ?? true, transport: ctx.transport }, op.cliHints?.name && ctx.remote === false ? op.cliHints.name : op.name,
+    failure.param, failure.message, { def: op.params[failure.param], ...(fix ? { fix } : {}) });
+}
+
+/**
+ * The corrected call, or undefined when no safe one exists: never for a
+ * mutating op (an example value could change what gets written), a missing
+ * required param (only the caller knows its value), or a param whose valid
+ * value is not a closed choice, number or boolean. Arguments that are not
+ * short scalars are dropped; if a required one would be dropped, no fix.
+ */
+function retryWithValidParam(op: Operation, failure: ParamValidationFailure, params: Record<string, unknown>): Action | undefined {
+  if (op.mutating !== false) return undefined;
+  const def = op.params[failure.param];
+  if (!def || params[failure.param] === undefined || params[failure.param] === null) return undefined;
+  const value = def.enum?.length ? (def.default !== undefined && def.enum.includes(String(def.default)) ? def.default : def.enum[0])
+    : def.type === 'number' ? (typeof def.default === 'number' ? def.default : 10)
+      : def.type === 'boolean' ? (typeof def.default === 'boolean' ? def.default : true)
+        : undefined;
+  if (value === undefined) return undefined;
+  const args: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(params)) {
+    if (key === failure.param || !(key in op.params)) continue;
+    const scalar = typeof val === 'number' || typeof val === 'boolean' || (typeof val === 'string' && val.length <= 200);
+    if (scalar) args[key] = val;
+    else if (op.params[key]?.required) return undefined;
+  }
+  args[failure.param] = value;
+  return {
+    mcp: { tool: op.name, arguments: args },
+    consent: [], actor: 'agent', requires_exclusive: false,
+    why: `The call failed validation before it ran, so nothing changed. This is the same call with your other arguments kept and \`${failure.param}\` set to ${JSON.stringify(value)}.`,
+  };
 }
 
 /**

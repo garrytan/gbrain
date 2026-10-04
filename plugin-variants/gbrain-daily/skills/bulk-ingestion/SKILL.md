@@ -380,6 +380,15 @@ Before declaring a pipeline "done":
   external corpora (exports, APIs, archives) that must be transformed into
   pages first.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- Paid batch work (`gbrain agent run`, LLM extraction) stops for confirmation (exit 3) or with `cost_cap_exceeded`: relay the estimate and get the user's agreement before raising a cap; never add `--yes` or a bigger `--max-usd` yourself.
+- A budget stop exits 11 (`derived_cap_exhausted`): run the printed `resume_command`; it is safe to re-run and skips finished items.
+- `gbrain jobs submit` returns `rate_limited` or `queue_capacity`: back off for the stated delay; keep the manifest cursor so nothing is ingested twice.
+- `sync_in_progress` / `lock_busy` on `gbrain sync`: another run owns the source; wait and retry rather than starting a second pipeline.
+
 ## Anti-Patterns
 
 - ❌ Jumping straight to bulk without trial (garbage at scale)

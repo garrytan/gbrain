@@ -29,12 +29,13 @@
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import { VERSION } from '../version.ts';
 import { loadConfig, loadConfigFileOnly, saveConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { resolveGbrainHome } from '../core/gbrain-home.ts';
+import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
 import { realpathOrResolve } from '../core/path-confine.ts';
 import { loadQuestionBank } from '../core/bootstrap/assets.ts';
@@ -96,6 +97,7 @@ import {
   writeOpencodeMcpEntry,
 } from '../core/bootstrap/opencode-json.ts';
 import { promptLine } from '../core/cli-util.ts';
+import { isInteractive } from '../core/interaction.ts';
 import {
   appendInstallLog,
   gitOriginUrl,
@@ -371,20 +373,6 @@ export function detectHarness(env: Record<string, string | undefined> = process.
   if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return 'claude-code';
   if (env.CODEX_HOME || env.CODEX_SANDBOX || env.CODEX_CI) return 'codex';
   if (env.OPENCODE || env.OPENCODE_PID) return 'opencode';
-  return null;
-}
-
-/** Absolute gbrain binary path for registrations/hook commands [CX-P1.4].
- * GUI hosts inherit no PATH, so a bare name is never acceptable. */
-function resolveGbrainBin(): string | null {
-  try {
-    const which = Bun.which('gbrain');
-    if (which && isAbsolute(which)) return which;
-  } catch {
-    /* fall through */
-  }
-  // Compiled-binary case: this process IS the gbrain binary.
-  if (basename(process.execPath).startsWith('gbrain')) return process.execPath;
   return null;
 }
 
@@ -1759,7 +1747,9 @@ async function runHarness(rest: string[], home: string, runner: ExecRunner, dete
     // Fallback only — the flag itself is parsed (and error-checked) once, by
     // parseHarnessArgs; flags.gbrainBin wins inside applyHarness.
     gbrainBin: resolveGbrainBin(),
-    isTTY: process.stdout.isTTY === true,
+    // C6: a prompt only when a human can answer it (agent markers, CI and
+    // GBRAIN_NON_INTERACTIVE count as no human); promptLine reads EOF as ''.
+    isTTY: isInteractive(),
     prompt: promptLine,
     ...harnessDetectDeps(detect),
   };

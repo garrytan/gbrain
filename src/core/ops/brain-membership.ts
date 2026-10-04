@@ -4,6 +4,7 @@ import { joinBrain, leaveBrain, syncBrain } from '../shared-skills/membership.ts
 export const brainMembershipOperations: Operation[] = [
   {
     name: 'join_brain', description: 'Enroll this authenticated principal to follow approved shared skills. Shared credentials are one principal. Never grants memory-write or editor authority.',
+    idempotent: false,
     outputRedaction: 'no_stored_text',
     scope: 'read', mutating: true, requiredScopes: ['skills_member_self'],
     cliHints: { name: 'join-brain', positional: [] },
@@ -12,6 +13,7 @@ export const brainMembershipOperations: Operation[] = [
   },
   {
     name: 'sync_brain_skills', description: 'Get a complete authorized shared-skills view and optionally record an own issued-batch delivery acknowledgment. Unavailable is never an empty catalog.',
+    idempotent: false,
     outputRedaction: { exempt: 'skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions' },
     scope: 'read', mutating: true, requiredScopes: ['skills_member_self'],
     cliHints: { name: 'sync-brain-skills', positional: [] },
@@ -20,6 +22,7 @@ export const brainMembershipOperations: Operation[] = [
   },
   {
     name: 'leave_brain', description: 'Stop only this principal’s enrollment. Does not revoke credentials or prove native cached instructions were disabled.',
+    idempotent: false,
     outputRedaction: 'no_stored_text',
     scope: 'read', mutating: true, requiredScopes: ['skills_member_self'],
     cliHints: { name: 'leave-brain', positional: [] },

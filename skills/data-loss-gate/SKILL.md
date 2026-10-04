@@ -175,6 +175,14 @@ still wrong because:
 
 **The rule: if it's data and it's bulk, ASK FIRST. Always.**
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- A destructive command exits 3 (`confirmation_required`) or asks for `--confirm-destructive`: that flag confirms the agent is sure, not the user. Show the recoverability card and wait for the user's explicit yes.
+- `gbrain purge-deleted` removes soft-deleted pages for good, so `gbrain restore` cannot bring them back afterwards: say so on the card. Never promise physical erasure or a recovery you cannot verify.
+- A delete or forget returns `write_pending` (exit 10): poll the receipt before writing the deletion log entry.
+
 ## Anti-Patterns
 
 - ❌ "These are just cache files" — cache files can be the source of truth

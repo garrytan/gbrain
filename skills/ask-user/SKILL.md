@@ -215,6 +215,13 @@ This pattern is used by:
 When building a new skill that needs user input at a decision point,
 reference this pattern rather than inventing a new one.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- A gbrain call exited 3 (`confirmation_required`) or its `fix.next` is `ask_user`: this skill is the gate. Relay the `[SHOW USER]` block or `user_message` verbatim as the choice, then stop until the user answers.
+- The user answered "no" or did not answer: report the step as skipped. Never pass `--yes` or `--max-usd` on their behalf to move on.
+
 ## Anti-Patterns
 
 - **Continuing the turn after presenting choices.** "While you decide, I'll start on..."

@@ -16,6 +16,7 @@ import { connectorProviderNames, isConnectorProviderName } from '../../core/conn
 import { loadCredential } from '../../core/connectors/credentials.ts';
 import { sourceIdKey } from '../../core/connectors/config-keys.ts';
 import type { ConnectorProviderName } from '../../core/connectors/types.ts';
+import { intFlagValue } from '../../cli/flag-values.ts';
 
 interface SyncFlags {
   full: boolean;
@@ -40,8 +41,9 @@ function parseFlags(args: string[]): { provider: string; flags: SyncFlags } {
     else if (a === '--embed') flags.embed = true;
     else if (a === '--background') flags.background = true;
     else if (a === '--json') flags.json = true;
-    else if (a === '--limit') flags.limit = Number(args[++i]);
-    else if (a === '--window-days') flags.windowDays = Number(args[++i]);
+    // #5930 (D4): decimals, zero limits and unsafe integers are usage errors (exit 2), not Number() coercions.
+    else if (a === '--limit') flags.limit = intFlagValue(args[++i], '--limit', { min: 1, example: 50 });
+    else if (a === '--window-days') flags.windowDays = intFlagValue(args[++i], '--window-days', { min: 0, example: 30 });
     else if (a === '--source') flags.source = args[++i];
     else if (!a.startsWith('-')) provider = a;
   }

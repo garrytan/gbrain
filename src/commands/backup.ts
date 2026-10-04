@@ -15,6 +15,7 @@
  * back to the cached verdict + age (cache-derived exit code), never a crash;
  */
 
+import { OperationError, opError } from '../core/ops/contract.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { getBackupStatus } from '../core/backup/coverage.ts';
@@ -29,6 +30,19 @@ import {
   type BackupAssetVerdict,
   type BackupStatus,
 } from '../core/backup/status-file.ts';
+
+const BACKUP_USAGE: Record<string, { usage: string; example: string }> = {
+  create: { usage: 'gbrain backup create --output /absolute/private/path/archive.gbrain-backup [--json]',
+    example: 'gbrain backup create --output /srv/private/brain-2026-10-03.gbrain-backup' },
+  restore: { usage: 'gbrain backup restore ARCHIVE --into /absolute/new-root [--mode new-brain|recovery] [--confirm-quiesced] [--confirm-backup-compatible] [--confirm-authority-reviewed] [--json]',
+    example: 'gbrain backup restore /srv/private/brain-2026-10-03.gbrain-backup --into /srv/gbrain-restored' },
+};
+
+/** A3/D4: a malformed `backup create|restore` invocation is a caller mistake (exit 2) with the usage and an example. */
+function backupUsageError(sub: string, message: string): OperationError {
+  const u = BACKUP_USAGE[sub] ?? BACKUP_USAGE.create!;
+  return opError('invalid_params', message, `Usage: ${u.usage}. Example: ${u.example}`);
+}
 
 export interface BackupCliResult {
   exitCode: 0 | 1 | 2;
@@ -128,20 +142,20 @@ export async function runBackupCli(
         const arg = args[i];
         if (arg === '--json') continue;
         if (arg === '--output' || arg === '--into' || arg === '--mode') {
-          if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`Missing value for ${arg}`);
+          if (!args[i + 1] || args[i + 1].startsWith('--')) throw backupUsageError(sub, `Missing value for ${arg}.`);
           values[arg] = args[++i];
         } else if (['--confirm-quiesced', '--confirm-backup-compatible', '--confirm-authority-reviewed'].includes(arg)) confirmations.add(arg);
-        else if (arg.startsWith('-')) throw new Error(`Unknown backup option: ${arg}`);
+        else if (arg.startsWith('-')) throw backupUsageError(sub, `Unknown backup option: ${arg}.`);
         else positional.push(arg);
       }
       const { createPgliteBackup, restorePgliteBackup } = await import('../core/backup/snapshot.ts');
       if (sub === 'create') {
-        if (!values['--output'] || values['--into'] || values['--mode'] || confirmations.size || positional.length) throw new Error('Usage: gbrain backup create --output /absolute/private/path/archive.gbrain-backup');
+        if (!values['--output'] || values['--into'] || values['--mode'] || confirmations.size || positional.length) throw backupUsageError(sub, 'gbrain backup create takes exactly --output <absolute archive path>.');
         const result = await createPgliteBackup({ output: values['--output'] });
         if (json) console.log(JSON.stringify({ ok: true, ...result }));
         else console.log(`Backup created: ${result.archive}\nSensitive full database state; protect any off-VM copy.\nExcluded assets: ${(result.manifest.omitted as string[]).join('; ')}`);
       } else {
-        if (!values['--into'] || values['--output'] || positional.length !== 1) throw new Error('Usage: gbrain backup restore ARCHIVE --into /absolute/new-root');
+        if (!values['--into'] || values['--output'] || positional.length !== 1) throw backupUsageError(sub, 'gbrain backup restore takes one ARCHIVE and --into <absolute new root>.');
         if (values['--mode'] !== undefined && !['new-brain', 'recovery'].includes(values['--mode'])) throw new Error('Restore --mode must be new-brain or recovery.');
         const result = await restorePgliteBackup({ archive: positional[0], into: values['--into'], mode: values['--mode'] === 'recovery' ? 'recovery' : 'new_brain',
           confirmQuiesced: confirmations.has('--confirm-quiesced'), confirmBackupCompatible: confirmations.has('--confirm-backup-compatible'),
@@ -151,6 +165,11 @@ export async function runBackupCli(
       }
       return { exitCode: 0 };
     } catch (error) {
+      if (error instanceof OperationError && error.code === 'invalid_params') {
+        const { writeCliError } = await import('../cli/cli-error.ts');
+        writeCliError(error, 'backup', { json, legacy: { ok: false, reason: 'invalid_params', message: error.message } });
+        return { exitCode: 2 };
+      }
       const detail = error as Error & { code?: string; retryable?: boolean };
       if (json) console.log(JSON.stringify({ ok: false, reason: detail.code ?? 'backup_failed', message: detail.message, ...(detail.retryable ? { retryable: true } : {}) }));
       else console.error(detail.message);

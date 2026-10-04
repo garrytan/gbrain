@@ -50,7 +50,7 @@ describe('upgrade autopilot opt-out propagation', () => {
       writeFileSync(driver, `import { mock } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 mock.module(${JSON.stringify(join(REPO, 'src/commands/apply-migrations.ts'))}, () => ({
-  runApplyMigrations: async (args) => writeFileSync(${JSON.stringify(join(home, 'args.json'))}, JSON.stringify(args)),
+  applyMigrations: async (args) => { writeFileSync(${JSON.stringify(join(home, 'args.json'))}, JSON.stringify(args)); return { exitCode: undefined }; },
 }));
 const { runPostUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});
 await runPostUpgrade(['--no-autopilot-install']);
@@ -68,4 +68,38 @@ await runPostUpgrade(['--no-autopilot-install']);
       rmSync(home, { recursive: true, force: true });
     }
   });
+  test('post-upgrade continues past an up-to-date apply-migrations (exit 0): the schema pass still runs; a failure still ends it', () => {
+    const run = (exitCode: number) => {
+      const home = mkdtempSync(join(tmpdir(), 'gbrain-post-upgrade-uptodate-'));
+      try {
+        mkdirSync(join(home, '.gbrain'), { recursive: true });
+        writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite') }));
+        const driver = join(home, 'driver.ts');
+        writeFileSync(driver, `import { mock } from 'bun:test';
+mock.module(${JSON.stringify(join(REPO, 'src/commands/apply-migrations.ts'))}, () => ({
+  applyMigrations: async () => ({ exitCode: ${exitCode} }),
+}));
+const { runPostUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});
+await runPostUpgrade(['--no-autopilot-install', '--json']);
+`);
+        const result = spawnSync(process.execPath, ['--no-env-file', driver], {
+          cwd: home,
+          env: { HOME: home, GBRAIN_HOME: home, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, GBRAIN_SKIP_REFERENCE_SWEEP: '1', GBRAIN_NO_ONBOARD_NUDGE: '1' },
+          encoding: 'utf8', timeout: 120_000,
+        });
+        const docs = result.stdout.split('\n').filter(l => l.trim().startsWith('{')).map(l => JSON.parse(l));
+        return { status: result.status, docs, out: result.stderr + result.stdout };
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    };
+    const upToDate = run(0);
+    expect(upToDate.status, upToDate.out).toBe(0);
+    expect(upToDate.docs).toHaveLength(1);
+    expect(upToDate.docs[0]).toMatchObject({ status: 'ok', apply_migrations: { exit_code: 0 }, schema: 'up_to_date' });
+    const failed = run(1);
+    expect(failed.status, failed.out).toBe(1);
+    expect(failed.docs.at(-1)).toMatchObject({ status: 'failed', apply_migrations: { exit_code: 1 } });
+    expect(failed.docs.at(-1).schema).toBeUndefined();
+  }, 240_000);
 });

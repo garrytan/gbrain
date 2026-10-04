@@ -3,7 +3,7 @@
  * handleCliOnly before the connectEngine() terminator. Moved verbatim from
  * src/cli.ts (refactor wave 1, W4 cli); the record lives in src/cli/command-table.ts.
  */
-import { finishCliTeardown } from '../../core/cli-force-exit.ts';
+import { finishCliTeardown, setCliExitVerdict } from '../../core/cli-force-exit.ts';
 import { getDbUrlSource, isThinClient, loadConfig } from '../../core/config.ts';
 import {
   classifyPgAccessError as classifyDbAccessError,
@@ -31,20 +31,23 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   // (cheap path D7), NOT the full doctor walk.
   if (args.includes('--remediation-plan')) {
     const { runRemediationPlan } = await import('../../commands/doctor.ts');
-    const eng = await connectEngine();
+    // ENG-6: observational — probe-only connect (no migrations, no maintenance); pending migrations are reported in the plan.
+    const eng = await connectEngine({ probeOnly: true });
     try { await runRemediationPlan(eng, args); } finally { await finishCliTeardown({ engine: eng }); }
     return;
   }
   if (args.includes('--remediate')) {
     const { runRemediate } = await import('../../commands/doctor.ts');
-    const eng = await connectEngine();
-    try { await runRemediate(eng, args); } finally { await finishCliTeardown({ engine: eng }); }
+    // A4/C1: observational startup; migrations run only after consent (ctx.completeStartup).
+    const eng = await connectEngine({ probeOnly: !args.includes('--dry-run') });
+    try { await runRemediate(eng, args, ctx.completeStartup); } finally { await finishCliTeardown({ engine: eng }); }
     return;
   }
 
   // Doctor runs filesystem checks first (no DB needed), then DB checks.
   // --fast skips DB checks entirely.
   const { runDoctor } = await import('../../commands/doctor.ts');
+  if (await runDoctorOnly(args, connectEngine, runDoctor)) return;
   if (args.includes('--fast')) {
     // Pass the DB URL source so doctor can tell "no config at all" from
     // "user chose --fast while config is present".
@@ -88,4 +91,50 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
       if (eng) await finishCliTeardown({ engine: eng });
     }
   }
+}
+
+/**
+ * `gbrain doctor --only <check>[,…] [--json]` — the default `fix.verify`:
+ * read-only, observational startup (probeOnly: no migrations or maintenance),
+ * engine-free when every requested check is a filesystem check. Unknown names
+ * exit 2 with the valid list. Returns false when `--only` is absent.
+ */
+async function runDoctorOnly(
+  args: string[],
+  connectEngine: CliDispatchContext['connectEngine'],
+  runDoctor: typeof import('../../commands/doctor.ts').runDoctor,
+): Promise<boolean> {
+  const { parseOnlyChecks, doctorCheckNames, onlyNeedsEngine } = await import('../../commands/doctor/registry.ts');
+  const only = parseOnlyChecks(args);
+  if (!only) return false;
+  const known = doctorCheckNames();
+  const unknown = [...only].filter((n) => !known.has(n));
+  if (only.size === 0 || unknown.length > 0) {
+    const { opError } = await import('../../core/ops/contract.ts');
+    const { renderCliError } = await import('../../core/agent-output.ts');
+    const { suggestNearest } = await import('../../core/levenshtein.ts');
+    const nearest = unknown[0] ? suggestNearest(unknown[0], [...known]) : null;
+    const err = opError('invalid_params', `Unknown doctor check: ${unknown.join(', ') || '(none given)'}`,
+      `${nearest ? `Did you mean "${nearest}"? ` : ''}Valid names: ${[...known].sort().join(', ')}.`,
+      { fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'The full report lists every check name this brain emits.' } });
+    const out = renderCliError(err, { json: args.includes('--json'), command: 'doctor', tty: !!process.stderr.isTTY });
+    if (out.stdout) process.stdout.write(out.stdout);
+    if (out.stderr) process.stderr.write(out.stderr);
+    setCliExitVerdict(out.exitCode);
+    return true;
+  }
+  if (!onlyNeedsEngine(only)) {
+    await runDoctor(null, args, getDbUrlSource());
+    return true;
+  }
+  let eng: BrainEngine | null = null;
+  try {
+    eng = await connectEngine({ probeOnly: true });
+    await runDoctor(eng, args);
+  } catch (e) {
+    await runDoctor(null, args, getDbUrlSource(), e);
+  } finally {
+    if (eng) await finishCliTeardown({ engine: eng });
+  }
+  return true;
 }

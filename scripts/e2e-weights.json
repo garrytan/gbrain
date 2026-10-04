@@ -1,4 +1,5 @@
 {
+  "test/e2e/agent-journey-postgres.test.ts": 18000,
   "test/e2e/anomalies-pglite.test.ts": 2180,
   "test/e2e/auth-permissions.test.ts": 1810,
   "test/e2e/auth-takes-holders-pglite.test.ts": 1070,
@@ -25,6 +26,7 @@
   "test/e2e/chunker-takes-strip.test.ts": 1260,
   "test/e2e/cjk-roundtrip.test.ts": 1670,
   "test/e2e/claude-plugin-install-real.serial.test.ts": 544,
+  "test/e2e/cli-json-commands-postgres.test.ts": 2900,
   "test/e2e/cli-source-scoping-pglite.test.ts": 1560,
   "test/e2e/client-grants.test.ts": 1850,
   "test/e2e/code-edges-jsonb-postgres.test.ts": 1149,

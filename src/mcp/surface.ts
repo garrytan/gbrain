@@ -34,6 +34,7 @@ import type { Operation } from '../core/operations.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
+import { opError } from '../core/ops/contract.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../core/minions/tools/brain-allowlist.ts';
 
 export type McpSurface = 'verbs' | 'starter' | 'full';
@@ -133,10 +134,11 @@ export function parseSurfaceFlag(args: string[]): McpSurface | null {
   if (idx < 0) return null;
   const raw = args[idx + 1];
   if (raw === undefined || raw.startsWith('--')) {
-    throw new Error(`--surface requires a value: verbs | starter | full`);
+    throw opError('invalid_params', `--surface requires a value: verbs | starter | full`, 'Pass --surface verbs, --surface starter or --surface full (default full).');
   }
   if (!isMcpSurface(raw)) {
-    throw new Error(`Unknown --surface "${raw}". Use: verbs (the 7 memory verbs) | starter (the ~20 daily-driver ops) | full (all operations, default)`);
+    throw opError('invalid_params', `Unknown --surface "${raw}". Use: verbs (the 7 memory verbs) | starter (the ~20 daily-driver ops) | full (all operations, default)`,
+      'Pass --surface verbs (the 7 memory verbs), --surface starter (the ~20 daily-driver ops) or --surface full (all operations, default).');
   }
   return raw;
 }
@@ -157,7 +159,8 @@ export function parseAccessFlag(args: string[]): McpAccess {
   if (idx < 0) return 'full';
   const raw = args[idx + 1];
   if (raw !== 'full' && raw !== 'read-only') {
-    throw new Error('--access takes read-only or full (default full); see docs/mcp/ADMIN.md#read-only-stdio-serve');
+    throw opError('invalid_params', '--access takes read-only or full (default full); see docs/mcp/ADMIN.md#read-only-stdio-serve',
+      'Pass --access read-only or --access full (default full).', { docs: 'docs/mcp/ADMIN.md#read-only-stdio-serve' });
   }
   return raw;
 }

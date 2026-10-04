@@ -21,11 +21,9 @@ src/commands/extract-conversation-facts.ts	runExtractConversationFactsCore	378	s
 src/commands/extract.ts	runExtract	398	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/import.ts	runImport	963	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +4 GBRA-40 F4b: planner-stats refresh every import.analyze_every_pages files (logic in planner-stats.ts)
 src/commands/mcp-expose.ts	runPublish	443	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/commands/migrate-embeddings.ts	runMigrateEmbeddings	325	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/migrate-engine.ts	runMigrateEngine	405	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/serve.ts	installStdioLifecycle	315	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/sources.ts	runAdd	365	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +3 fix wave 4 #5673: connector sources print that autopilot keeps them synced after the first sync
-src/commands/upgrade.ts	runPostUpgrade	319	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/ai/gateway.ts	chat	311	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/bootstrap/harness.ts	applyHarness	1167	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/brainstorm/orchestrator.ts	_runBrainstormInner	413	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +1 #5890 close-set spreads INTERNAL_BREADTH_SEARCH_OPTS
@@ -63,5 +61,4 @@ src/core/sources-ops.ts	addSource	317	seed: W5 baseline, refactor wave 1 (decomp
 src/core/think/index.ts	runThink	450	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/transcripts/ingest.ts	runTranscriptsIngest	317	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/workspace-push.ts	workspacePush	312	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/mcp/dispatch.ts	dispatchToolCall	325	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +3 eval wave N5-1: hot-memory invalidation after mutating ops (success and failure paths)
 src/mcp/http-transport.ts	startHttpTransport	408	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)

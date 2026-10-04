@@ -500,6 +500,14 @@ After completing available phases:
    > - The **daily-task-prep** skill handles day planning
    > - Say 'enrich [person]' to deep-dive any contact"
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- Every import phase is a user choice: when a command exits 3 (`confirmation_required`) or prints an `[AGENT]` ask, relay the `[SHOW USER]` block and wait; do not chain phases with `--yes`.
+- `gbrain google setup` prints `[SHOW USER]` steps: relay them verbatim and wait for the user to finish the consent click. Credential errors carry their own `fix`; follow it.
+- The first `gbrain query` after an import is empty with a degraded notice: embeddings are off or still backfilling, so the import may have worked. Check `gbrain doctor --json` before telling the user the import failed.
+
 ## Anti-Patterns
 
 - **Giving the agent raw OAuth tokens.** This is the #1 anti-pattern. An agent with
@@ -555,3 +563,13 @@ Next: Phase N+1 — [description]. Ready to proceed?
 - `add_link` — cross-reference entities
 - `add_timeline_entry` — record events on entity timelines
 - `sync_brain` — sync changes to the index after each phase
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `sync_brain` → `gbrain sync`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

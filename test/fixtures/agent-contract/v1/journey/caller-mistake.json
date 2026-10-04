@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"error\": \"invalid_params\",\n  \"code\": \"invalid_params\",\n  \"message\": \"Parameter \\\"limit\\\" must be a number\",\n  \"suggestion\": \"Pass `limit` as a number (Per-arm cap: max fact rows AND max search results. Default 50, cap 100). Example: recall {\\\"limit\\\": 10}. Next: recall {\\\"query\\\":\\\"quokka-journey-marker\\\",\\\"limit\\\":10}\",\n  \"docs\": \"{{DOCS_BASE}}/docs/guides/error-codes.md#invalid_params\",\n  \"protocol_version\": 1,\n  \"fix\": {\n    \"mcp\": {\n      \"tool\": \"recall\",\n      \"arguments\": {\n        \"query\": \"quokka-journey-marker\",\n        \"limit\": 10\n      }\n    },\n    \"consent\": [],\n    \"actor\": \"agent\",\n    \"why\": \"The call failed validation before it ran, so nothing changed. This is the same call with your other arguments kept and `limit` set to 10.\",\n    \"requires_exclusive\": false\n  },\n  \"docs_cmd\": [\n    \"gbrain\",\n    \"errors\",\n    \"invalid_params\"\n  ],\n  \"class\": \"caller\",\n  \"retryable\": false,\n  \"contract_version\": 1\n}"
+    }
+  ],
+  "isError": true
+}

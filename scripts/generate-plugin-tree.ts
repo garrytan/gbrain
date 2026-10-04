@@ -39,6 +39,8 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { STARTER_OPS } from '../src/mcp/surface.ts';
+import { operations } from '../src/core/operations.ts';
+import { cliEquivalent } from '../src/core/ops/cli-equivalent.ts';
 import { parseSkillFrontmatter } from '../src/core/skill-frontmatter.ts';
 // Personas: the SINGLE validation implementation (the harness-bridge CLI
 // imports the same module), so CLI errors and CI errors match by construction.
@@ -141,15 +143,51 @@ function frontmatterTools(slug: string): string[] {
   return parseSkillFrontmatter(text)?.tools ?? [];
 }
 
-const computedGaps: Record<string, string[]> = {};
-for (const slug of laneSet) {
+/** The beyond-starter MCP ops a bundled skill declares (sorted). */
+function starterGaps(slug: string): string[] {
   const mcpOps = frontmatterTools(slug)
     .map(t => (t.startsWith('mcp:') ? t.slice(4) : t))
     // Multi-word entries ("gbrain schema add-type …") are CLI command
     // strings, not MCP op names — same class as the bare `gbrain` marker.
     .filter(t => !HARNESS_TOOLS.has(t) && !t.startsWith('gbrain '));
-  const gaps = [...new Set(mcpOps.filter(t => !STARTER_OPS.has(t)))].sort();
+  return [...new Set(mcpOps.filter(t => !STARTER_OPS.has(t)))].sort();
+}
+
+const computedGaps: Record<string, string[]> = {};
+for (const slug of laneSet) {
+  const gaps = starterGaps(slug);
   if (gaps.length > 0) computedGaps[slug] = gaps;
+}
+
+/**
+ * Agent contract v1 (F6): the generated copy of a skill whose steps name
+ * tools outside the plugin's starter surface ends with a note mapping each
+ * one to its gbrain CLI equivalent. Source skills are never edited.
+ */
+const OPS_BY_NAME = new Map(operations.map(op => [op.name, op]));
+function surfaceNote(gaps: readonly string[]): string {
+  const rows = gaps.map(name => {
+    const op = OPS_BY_NAME.get(name);
+    return `- \`${name}\` → \`${op ? cliEquivalent(op).join(' ') : `gbrain call ${name} '<params_json>'`}\``;
+  });
+  return [
+    '', '## Tools outside your MCP surface', '',
+    'This plugin serves the starter tool surface. When a step above names one of these tools and your tool list',
+    'does not have it, run its gbrain CLI equivalent instead:', '',
+    ...rows, '',
+    "Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).", '',
+  ].join('\n');
+}
+
+/** Copy one bundled skill; append the surface note to its SKILL.md when it has gaps. */
+function copySkill(slug: string, destSkillsDir: string): void {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+  cpSync(join(ROOT, 'skills', slug), join(destSkillsDir, slug), { recursive: true });
+  const gaps = starterGaps(slug);
+  if (gaps.length === 0) return;
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- build-time generator; slug comes from this repository's own plugin definition
+  const skillMd = join(destSkillsDir, slug, 'SKILL.md');
+  writeFileSync(skillMd, readFileSync(skillMd, 'utf8').replace(/\n*$/, '\n') + surfaceNote(gaps));
 }
 
 if (writeGaps) {
@@ -197,7 +235,7 @@ function copySharedDeps(destSkillsDir: string): void {
 }
 
 for (const slug of laneSet) {
-  cpSync(join(ROOT, 'skills', slug), join(outDir, 'skills', slug), { recursive: true });
+  copySkill(slug, join(outDir, 'skills'));
 }
 copySharedDeps(join(outDir, 'skills'));
 
@@ -246,10 +284,8 @@ function emitVariant(variantsDir: string, personaName: string, def: PersonaDef, 
   mkdirSync(join(root, 'skills'), { recursive: true });
 
   const slugs = Object.keys(def.skills).sort();
-  for (const slug of slugs) {
-    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
-    cpSync(join(ROOT, 'skills', slug), join(root, 'skills', slug), { recursive: true });
-  }
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- build-time generator over this repository's own plugin definition
+  for (const slug of slugs) copySkill(slug, join(root, 'skills'));
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   copySharedDeps(join(root, 'skills'));
 

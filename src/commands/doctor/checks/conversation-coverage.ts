@@ -12,6 +12,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import { ALLOWED_TYPES, isConversationFactsEligiblePage, requireParseableConversationFlag } from '../../../core/facts/conversation-types.ts';
 import type { Check } from '../../doctor.ts';
+import { checkError } from '../check-fix.ts';
 
 export async function computeConversationFormatCoverageCheck(
   engine: BrainEngine,
@@ -80,10 +81,6 @@ export async function computeConversationFormatCoverageCheck(
       message: `${sample.length} pages: ${breakdown}`,
     };
   } catch (err) {
-    return {
-      name,
-      status: 'warn',
-      message: `Could not check conversation format coverage: ${(err as Error)?.message ?? String(err)}`,
-    };
+    return checkError(name, 'check conversation format coverage', err);
   }
 }

@@ -163,8 +163,10 @@ function parseFlags(args: string[]): ParsedFlags {
   return out;
 }
 
-export function hasRecallBudgetPolicy(args: string[]): boolean {
-  return parseFlags(args).budgetPolicy !== null;
+/** Only `--query`/`--budget-tokens` without --budget-policy runs the recall op in-process; every other form has a thin-client path. */
+export function recallNeedsLocalEngine(args: string[]): boolean {
+  const flags = parseFlags(args);
+  return flags.budgetPolicy === null && (flags.query !== null || flags.budgetTokens !== null);
 }
 
 function parseSinceParam(raw: string): Date | null {

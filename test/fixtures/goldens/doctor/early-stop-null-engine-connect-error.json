@@ -191,12 +191,67 @@
     },
     {
       "details": {
-        "fix_hint": "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair",
-        "reason": "conn_refused",
-        "transient": true
+        "reason": "no_harness_detected"
       },
-      "message": "connect ECONNREFUSED  <REDACTED:ipv4>:1",
+      "fix": {
+        "actor": "user",
+        "consent": [
+          "persistent_install"
+        ],
+        "docs": "docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+        "requires_exclusive": false,
+        "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+        "why": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+      },
+      "message": "No agent harness was detected. Wire one when the user picks an agent app.",
+      "name": "harness_wiring",
+      "readiness_state": "missing",
+      "severity": "info",
+      "status": "ok"
+    },
+    {
+      "details": {
+        "consent_refused": 0,
+        "derived_cap_exhausted": 0,
+        "events": 0,
+        "internal_errors": 0,
+        "json_document_missing": 0,
+        "window_days": 7
+      },
+      "message": "No agent dead ends in the last 7 days (0 non-success event(s) logged).",
+      "name": "agent_contract",
+      "status": "ok"
+    },
+    {
+      "details": {
+        "fix_hint": "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair",
+        "reason": "conn_refused",
+        "transient": true,
+        "url_source": "database_url in <home>/.gbrain/config.json"
+      },
+      "fix": {
+        "actor": "agent",
+        "argv": [
+          "gbrain",
+          "db-repair"
+        ],
+        "consent": [],
+        "docs": "docs/ENGINES.md#engine-detection-and-access-repair",
+        "requires_exclusive": false,
+        "verify": {
+          "argv": [
+            "gbrain",
+            "doctor",
+            "--only",
+            "connection",
+            "--json"
+          ]
+        },
+        "why": "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. `gbrain db-repair` diagnoses the database URL and access without changing anything (it prints the --yes command for a safe fix)."
+      },
+      "message": "connect ECONNREFUSED  <REDACTED:ipv4>:1 (database URL from database_url in <home>/.gbrain/config.json)",
       "name": "connection",
+      "readiness_state": "unknown",
       "status": "fail"
     }
   ],

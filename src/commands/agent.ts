@@ -22,6 +22,7 @@ import type { MinionJobInput, SubagentHandlerData, AggregatorHandlerData } from 
 import { resolveSourceId, isResolverUserError, ALL_SOURCES } from '../core/source-resolver.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { runAgentLogs } from './agent-logs.ts';
+import { TIMEOUT_EXIT_CODE } from '../core/exit-codes.ts';
 
 // ── arg parsing helpers ────────────────────────────────────
 
@@ -480,7 +481,7 @@ async function followJob(engine: BrainEngine, queue: MinionQueue, jobId: number,
     } catch (e) {
       if (e instanceof TimeoutError) {
         process.stderr.write(`[gbrain agent] timeout after ${e.elapsedMs}ms — job is still running. Check with: gbrain jobs get ${jobId}\n`);
-        process.exit(3);
+        process.exit(TIMEOUT_EXIT_CODE);
       }
       throw e;
     }

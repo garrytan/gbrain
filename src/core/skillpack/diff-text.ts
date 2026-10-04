@@ -189,6 +189,9 @@ interface DiffOp {
 
 /**
  * Line-level LCS-driven diff. Classic O(N*M) dynamic programming.
+ * The backward walk takes additions first on ties, so once reversed every
+ * change block lists its removed lines before its added lines, as `diff -u`
+ * and `git diff` do.
  */
 function diffLines(a: string[], b: string[]): DiffOp[] {
   const n = a.length;
@@ -214,12 +217,12 @@ function diffLines(a: string[], b: string[]): DiffOp[] {
       ops.push({ kind: 'equal', line: a[i - 1] });
       i -= 1;
       j -= 1;
-    } else if (lcs[i - 1][j] >= lcs[i][j - 1]) {
-      ops.push({ kind: 'del', line: a[i - 1] });
-      i -= 1;
-    } else {
+    } else if (lcs[i][j - 1] >= lcs[i - 1][j]) {
       ops.push({ kind: 'add', line: b[j - 1] });
       j -= 1;
+    } else {
+      ops.push({ kind: 'del', line: a[i - 1] });
+      i -= 1;
     }
   }
   while (i > 0) {

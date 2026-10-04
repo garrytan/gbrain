@@ -14,10 +14,12 @@
  * orchestrator uses; one source of truth for the backfill logic).
  *
  * Flags mirror `reindex-code`:
- *   --source <id>      Scope to one sources row. Omit = all pages.
+ *   --source <id>      Scope to one sources row (preview, hash and apply). Omit = all pages.
  *   --slug-prefix P    Scope to slugs starting with P (e.g. 'meetings/').
- *   --dry-run          Print what WOULD change, no DB writes.
- *   --yes              Skip the confirmation prompt (required for non-TTY non-JSON).
+ *   --dry-run          Print what WOULD change (and its plan_hash), no DB writes.
+ *   --yes --expect H   Apply the plan the user approved without a prompt. Without
+ *                      it a non-interactive run (--json included) changes nothing
+ *                      and exits 3 with the consent payload.
  *   --json             Machine-readable result envelope.
  *   --force            Re-apply even when computed value matches existing
  *                      (bypasses no-op-on-equal guard).
@@ -25,13 +27,16 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { backfillEffectiveDate } from '../core/backfill-effective-date.ts';
-import { createInterface } from 'readline';
+import { computePlanHash, type PlanSelection } from '../core/consent.ts';
+import { consentGate } from '../core/consent-cli.ts';
 
 export interface ReindexFrontmatterOpts {
   sourceId?: string;
   slugPrefix?: string;
   dryRun?: boolean;
   yes?: boolean;
+  /** `--expect <plan_hash>`: the plan the user approved (from the dry run or the refusal). */
+  expect?: string;
   json?: boolean;
   force?: boolean;
   /**
@@ -48,89 +53,95 @@ export interface ReindexFrontmatterOpts {
 }
 
 export interface ReindexFrontmatterResult {
-  status: 'ok' | 'dry_run' | 'cancelled';
+  /** `confirmation_required`: consent refused; the refusal was printed (exit verdict 3) and nothing changed. */
+  status: 'ok' | 'dry_run' | 'confirmation_required';
   examined: number;
   updated: number;
   fallback: number;
   durationSec: number;
   source_filter?: string;
   slug_prefix?: string;
+  /** Dry run: the hash an approved apply names with `--yes --expect <plan_hash>`. */
+  plan_hash?: string;
 }
 
-async function countAffected(
-  engine: BrainEngine,
-  slugPrefix: string | undefined,
-  sourceId: string | undefined,
-): Promise<number> {
-  const where: string[] = [];
-  const params: unknown[] = [];
-  if (slugPrefix) {
-    params.push(slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%');
-    where.push(`slug LIKE $${params.length} ESCAPE '\\\\'`);
-  }
-  if (sourceId) {
-    params.push(sourceId);
-    where.push(`source_id = $${params.length}`);
-  }
-  const sql = `SELECT COUNT(*)::text AS n FROM pages${where.length ? ' WHERE ' + where.join(' AND ') : ''}`;
-  const rows = await engine.executeRaw<{ n: string }>(sql, params);
-  return Number(rows[0]?.n ?? 0);
-}
-
-async function confirm(prompt: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return false; // No TTY = require --yes
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  return new Promise(resolve => {
-    rl.question(prompt + ' [y/N] ', (ans: string) => {
-      rl.close();
-      resolve(ans.trim().toLowerCase() === 'y');
-    });
+/** The rows one invocation would change: the selection its preview, plan hash and apply share. */
+async function previewSelection(engine: BrainEngine, opts: ReindexFrontmatterOpts) {
+  const changes: Array<{ id: string; revision: string }> = [];
+  const r = await backfillEffectiveDate(engine, {
+    slugPrefix: opts.slugPrefix,
+    sourceId: opts.sourceId,
+    dryRun: true,
+    force: opts.force,
+    onChange: row => changes.push({ id: String(row.id), revision: `${row.effective_date ?? ''}|${row.effective_date_source ?? ''}` }),
   });
+  const selection: PlanSelection = {
+    brain: 'host',
+    source: opts.sourceId ?? null,
+    operation: 'reindex-frontmatter',
+    records: changes,
+    parameters: { slug_prefix: opts.slugPrefix ?? null, force: opts.force === true },
+    effects: ['destructive'],
+  };
+  return { result: r, selection, plan_hash: computePlanHash(selection) };
 }
 
+/** The scope flags an approved or preview command repeats. */
+function scopeArgv(opts: ReindexFrontmatterOpts): string[] {
+  return [
+    ...(opts.sourceId ? ['--source', opts.sourceId] : []),
+    ...(opts.slugPrefix ? ['--slug-prefix', opts.slugPrefix] : []),
+    ...(opts.force ? ['--force'] : []),
+  ];
+}
+
+/**
+ * Preview (dry run) or apply. Apply previews the same selection first, asks
+ * through requireConsent (destructive: it overwrites stored effective_date
+ * values, bound to the plan hash of exactly the rows that would change), and
+ * then writes only those rows. `--json` never implies consent. Returns
+ * `confirmation_required` when consent was refused (the refusal is printed,
+ * exit verdict 3).
+ */
 export async function runReindexFrontmatter(
   engine: BrainEngine,
   opts: ReindexFrontmatterOpts,
+  args: readonly string[] = [...(opts.yes ? ['--yes'] : []), ...(opts.expect ? ['--expect', opts.expect] : [])],
 ): Promise<ReindexFrontmatterResult> {
-  const total = await countAffected(engine, opts.slugPrefix, opts.sourceId);
-
+  const preview = await previewSelection(engine, opts);
+  const scope = { slug_prefix: opts.slugPrefix, source_filter: opts.sourceId };
   if (opts.dryRun) {
-    // Library function with dryRun=true counts would-update without writing.
-    const r = await backfillEffectiveDate(engine, {
-      slugPrefix: opts.slugPrefix,
-      dryRun: true,
-      force: opts.force,
-      // Note: the library doesn't support sourceId filter today; documented
-      // as a v0.30+ enhancement. CLI surfaces the param so the future
-      // refinement is non-breaking.
-      maxRows: total > 0 ? total : undefined,
-    });
-    return {
-      status: 'dry_run',
-      examined: r.examined,
-      updated: r.updated,
-      fallback: r.fallback,
-      durationSec: r.durationSec,
-      slug_prefix: opts.slugPrefix,
-      source_filter: opts.sourceId,
-    };
+    const r = preview.result;
+    return { status: 'dry_run', examined: r.examined, updated: r.updated, fallback: r.fallback, durationSec: r.durationSec, ...scope,
+      plan_hash: preview.plan_hash };
+  }
+  const n = preview.selection.records.length;
+  if (n === 0) {
+    return { status: 'ok', examined: preview.result.examined, updated: 0, fallback: 0, durationSec: preview.result.durationSec, ...scope };
   }
 
-  // Confirm in TTY non-yes flow.
-  if (!opts.yes && !opts.json && total > 100) {
-    const ok = await confirm(`Reindex effective_date on ${total} page(s)? Force=${opts.force ? 'yes' : 'no'}.`);
-    if (!ok) {
-      return {
-        status: 'cancelled',
-        examined: 0, updated: 0, fallback: 0, durationSec: 0,
-        slug_prefix: opts.slugPrefix,
-        source_filter: opts.sourceId,
-      };
-    }
-  }
+  const where = `${opts.sourceId ? ` in source ${opts.sourceId}` : ''}${opts.slugPrefix ? ` under ${opts.slugPrefix}` : ''}`;
+  const auth = await consentGate({
+    command: 'reindex-frontmatter',
+    effects: ['destructive'],
+    actor: 'agent',
+    what: `Rewrite the effective date of ${n} page(s)${where}`,
+    why: 'Re-derives pages.effective_date from each page\'s frontmatter, filename and timestamps with the current precedence rules.',
+    risk: `Overwrites the stored effective_date and effective_date_source of ${n} page(s); the previous values are not kept, `
+      + 'and date-ordered recall and timelines change accordingly. Pages, chunks and frontmatter are not touched.',
+    user_message: `Recompute the effective date of ${n} page(s)${where}? Their current stored dates are replaced.`,
+    argv: ['gbrain', 'reindex-frontmatter', ...scopeArgv(opts), ...(opts.json ? ['--json'] : [])],
+    preview_argv: ['gbrain', 'reindex-frontmatter', ...scopeArgv(opts), '--dry-run', '--json'],
+    plan_hash: preview.plan_hash,
+    selection: preview.selection,
+    args,
+  }, { json: opts.json === true });
+  if (!auth) return { status: 'confirmation_required', examined: preview.result.examined, updated: 0, fallback: 0, durationSec: preview.result.durationSec, ...scope };
 
   const r = await backfillEffectiveDate(engine, {
     slugPrefix: opts.slugPrefix,
+    sourceId: opts.sourceId,
+    onlyIds: new Set(preview.selection.records.map(rec => Number(rec.id))),
     force: opts.force,
     fresh: true, // CLI is explicit; ignore checkpoint from prior orchestrator runs
     onBatch: ({ batch, lastId, rowsTouched, cumulative }) => {
@@ -140,15 +151,7 @@ export async function runReindexFrontmatter(
     },
   });
 
-  return {
-    status: 'ok',
-    examined: r.examined,
-    updated: r.updated,
-    fallback: r.fallback,
-    durationSec: r.durationSec,
-    slug_prefix: opts.slugPrefix,
-    source_filter: opts.sourceId,
-  };
+  return { status: 'ok', examined: r.examined, updated: r.updated, fallback: r.fallback, durationSec: r.durationSec, ...scope };
 }
 
 /**
@@ -169,6 +172,7 @@ export async function reindexFrontmatterCli(engine: BrainEngine, args: string[])
     else if (a === '--slug-prefix') opts.slugPrefix = args[++i];
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--yes' || a === '-y') opts.yes = true;
+    else if (a === '--expect') opts.expect = args[++i];
     else if (a === '--json') opts.json = true;
     else if (a === '--force') opts.force = true;
     else if (a === '--workers' || a === '--concurrency') {
@@ -183,6 +187,7 @@ export async function reindexFrontmatterCli(engine: BrainEngine, args: string[])
   }
 
   const result = await runReindexFrontmatter(engine, opts);
+  if (result.status === 'confirmation_required') return;
   if (opts.json) {
     console.log(JSON.stringify(result, null, 2));
   } else {
@@ -192,5 +197,4 @@ export async function reindexFrontmatterCli(engine: BrainEngine, args: string[])
       `fallback=${result.fallback} dur=${result.durationSec.toFixed(1)}s`,
     );
   }
-  if (result.status === 'cancelled') process.exit(1);
 }

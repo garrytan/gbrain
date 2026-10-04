@@ -482,6 +482,35 @@ describe('reinit-pglite — backup + reinit', () => {
     expect(err).toContain('--embedding-dimensions defaulted from config: 1536');
   });
 
+  test('C2: non-interactive without the bound approval exits 3 with the consent payload and leaves the brain in place', async () => {
+    const brain = join(tmpHome, '.gbrain', 'brain.pglite');
+    const outWrites: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stdout as any).write = (c: string | Uint8Array) => { outWrites.push(String(c)); return true; };
+    const prev = process.env.GBRAIN_NON_INTERACTIVE;
+    process.env.GBRAIN_NON_INTERACTIVE = '1';
+    try {
+      const unauth = await captureRun(['--json']);
+      expect(unauth.exits).toEqual([3]);
+      const payload = JSON.parse(outWrites.join(''));
+      expect(payload).toMatchObject({ code: 'confirmation_required', effects: ['destructive'], actor: 'agent' });
+      expect(payload.risk).toContain(`mv ${brain}.bak ${brain}`);
+      expect(payload.risk).toContain('NOT carried over');
+      expect(payload.fix.argv.slice(-3)).toEqual(['--yes', '--expect', payload.plan_hash]);
+      // A bare --yes retry is not the user's approval of this plan.
+      outWrites.length = 0;
+      const bare = await captureRun(['--yes', '--json']);
+      expect(bare.exits).toEqual([3]);
+      expect(existsSync(join(brain, 'placeholder'))).toBe(true);
+      expect(existsSync(`${brain}.bak`)).toBe(false);
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stdout as any).write = origWrite;
+      if (prev === undefined) delete process.env.GBRAIN_NON_INTERACTIVE; else process.env.GBRAIN_NON_INTERACTIVE = prev;
+    }
+  });
+
   test('no flags + config missing the values: still fails missing_model / missing_dims', async () => {
     const cfgPath = join(tmpHome, '.gbrain', 'config.json');
 

@@ -26,6 +26,7 @@ import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
 import { hasDatabase, setupDB, setupLegacyEmbeddingDB, teardownDB, getEngine } from './helpers.ts';
 import { TRAVERSE_PATH_ROW_CAP } from '../../src/core/engine-constants.ts';
 import { DENSE_HUB_SLUG, DENSE_HUB_SPOKES, seedDenseHub } from '../helpers/dense-hub.ts';
+import { timelinePageScans } from '../helpers/timeline-plan.ts';
 
 const SKIP_PG = !hasDatabase();
 const describeBoth = SKIP_PG ? describe.skip : describe;
@@ -1525,6 +1526,58 @@ describeBoth('Engine parity — federated sourceIds[] secondary reads (#2200)', 
       const pg = (await pgEngine.getTimeline('fed/doc', opts)).map(e => e.summary).sort();
       const pglite = (await pgliteEngine.getTimeline('fed/doc', opts)).map(e => e.summary).sort();
       expect(pg).toEqual(pglite);
+    }
+  });
+});
+
+// Cat7-1: the unscoped getTimeline read probes pages by (source_id, slug) on
+// both engines once statistics exist, and still unions every same-slug page.
+describeBoth('Engine parity — unscoped getTimeline plan (Cat7-1)', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  async function seed(eng: BrainEngine) {
+    await eng.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('beta', 'beta', '/tmp/beta') ON CONFLICT (id) DO NOTHING`);
+    await eng.executeRaw(`INSERT INTO pages (slug, type, title) SELECT 'people/person-' || g, 'person', 'Person ' || g FROM generate_series(0, 1999) g`);
+    await eng.putPage('people/person-7', { type: 'person', title: 'Person 7 (beta)', compiled_truth: 'beta copy' }, { sourceId: 'beta' });
+    await eng.addTimelineEntry('people/person-7', { date: '2026-02-02', source: 'notes', summary: 'default event' });
+    await eng.addTimelineEntry('people/person-7', { date: '2026-03-03', source: 'notes', summary: 'beta event' }, { sourceId: 'beta' });
+    await eng.executeRaw('ANALYZE sources, pages, timeline_entries');
+  }
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    await seed(pgEngine);
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    await seed(pgliteEngine);
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  test('unscoped getTimeline returns the same cross-source entries on both engines', async () => {
+    for (const slug of ['people/person-7', 'people/person-500']) {
+      const pg = (await pgEngine.getTimeline(slug)).map(e => e.summary);
+      expect(pg).toEqual((await pgliteEngine.getTimeline(slug)).map(e => e.summary));
+    }
+    expect((await pgEngine.getTimeline('people/person-7')).map(e => e.summary)).toEqual(['beta event', 'default event']);
+  });
+
+  test('both engines reach pages only through (source_id, slug) index probes', async () => {
+    for (const eng of [pgEngine, pgliteEngine]) {
+      for (const slug of ['people/person-7', 'people/person-500']) {
+        const scans = await timelinePageScans(eng, slug);
+        expect(scans.length).toBeGreaterThan(0);
+        for (const scan of scans) {
+          expect(scan.node).toMatch(/Index/);
+          expect(scan.cond).toContain('source_id');
+          expect(scan.cond).toContain('slug');
+        }
+      }
     }
   });
 });

@@ -63,6 +63,7 @@ op	run_onboard	no_canonical_write	Runs remediation steps; each step keeps its ow
 op	run_skillopt	no_canonical_write	Skill files and proposals outside the brain database.
 op	loops_close	coordinator	open_loops state rows; the commitment fact is retired (expired, fence row struck) through the loop-fact-retirement coordinator mutation (#5869).
 op	loops_mute	no_canonical_write	Loop suppression rows.
+op	mute_notice	no_canonical_write	Notice mute list in <GBRAIN_HOME>/notices/muted.json; no brain table or canonical file.
 op	loops_unmute	no_canonical_write	Loop suppression rows.
 cli	src/commands/enrich.ts	coordinator	gbrain enrich preflights maintenance authority, then publishMaintenancePage per page.
 cli	src/commands/extract-conversation-facts.ts	coordinator	Bulk conversation facts commit through the coordinator capability after a derived-facts preflight.

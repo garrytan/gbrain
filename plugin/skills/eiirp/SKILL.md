@@ -456,6 +456,14 @@ Always machine-readable: stable section headers + bullet-per-item. The
 report doubles as a sync checkpoint for downstream skills (skillpack-check
 reads it; doctor cross-references the pack version).
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- A schema change (`gbrain schema add-type`, `gbrain schema use`) needs the user's confirmation; present it and stop if they decline.
+- `gbrain schema suggest` runs heuristic-only without an API key: say the suggestions are heuristic, not LLM-refined.
+- A filing write returns `revision_conflict` or `write_pending` (exit 10): re-read and merge, or poll `gbrain write-request <request_id>`; the Phase 7 report lists pending writes as pending.
+
 ## Anti-Patterns
 
 - **Hardcoding directory tables in EIIRP's logic.** Every filing decision
@@ -530,3 +538,12 @@ reads it; doctor cross-references the pack version).
   plus undeclared types, the same classification as `schema lint
   --with-db`); over MCP, `run_doctor`'s schema_pack_consistency check
   carries the same verdict.
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

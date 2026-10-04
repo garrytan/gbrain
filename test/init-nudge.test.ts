@@ -16,6 +16,7 @@
  * Both isTTY and stderr.write are restored in finally.
  */
 
+import { withEnv } from './helpers/with-env.ts';
 import { describe, test, expect } from 'bun:test';
 import { runInitNudge } from '../src/core/onboard/init-nudge.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -60,18 +61,21 @@ function stubEngine(counts: ProbeCounts): BrainEngine {
  * captured. Restores both in finally so no other test sees the patch.
  */
 async function runNudgeCaptured(engine: BrainEngine): Promise<string> {
+  // Agent contract v1 (F7): the nudge is a notice on every surface — stderr
+  // lines on a terminal, an [AGENT] block on stdout otherwise — so capture both.
   const origIsTTY = process.stderr.isTTY;
   const origWrite = process.stderr.write;
+  const origOut = process.stdout.write;
   let out = '';
+  const sink = ((chunk: unknown) => { out += String(chunk); return true; }) as typeof process.stderr.write;
   try {
     (process.stderr as unknown as { isTTY: boolean }).isTTY = true;
-    process.stderr.write = ((chunk: unknown) => {
-      out += String(chunk);
-      return true;
-    }) as typeof process.stderr.write;
+    process.stderr.write = sink;
+    process.stdout.write = sink as typeof process.stdout.write;
     await runInitNudge(engine);
   } finally {
     process.stderr.write = origWrite;
+    process.stdout.write = origOut;
     (process.stderr as unknown as { isTTY: boolean | undefined }).isTTY = origIsTTY;
   }
   return out;
@@ -136,5 +140,16 @@ describe('runInitNudge — non-empty brain opportunities', () => {
     expect(out).toContain("Run 'gbrain onboard --check' to see the plan");
     // All 6 probes succeeded — no partial-checks suffix.
     expect(out).not.toContain('checks complete');
+  });
+});
+
+describe('runInitNudge — agents get the nudge too (F7)', () => {
+  test('a non-interactive caller gets an [AGENT] coaching block naming the command', async () => {
+    const out = await withEnv({ GBRAIN_NON_INTERACTIVE: '1', GBRAIN_INTERACTIVE: undefined }, () => runNudgeCaptured(
+      stubEngine({ stale: 0, entities: 0, linked: 0, timeline: 0, takes: 0, pages: 10 }),
+    ));
+    expect(out).toContain('[AGENT]');
+    expect(out).toContain('[onboard_opportunities]');
+    expect(out).toContain('gbrain onboard --check');
   });
 });

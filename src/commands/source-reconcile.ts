@@ -7,7 +7,8 @@ import { flushDirectory } from '../core/fs-durable.ts';
 import { finishCliTeardown, setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { isThinClient, loadConfig, toEngineConfig } from '../core/config.ts';
 import { loadMounts } from '../core/brain-registry.ts';
-import { OperationError } from '../core/ops/contract.ts';
+import { OperationError, opError } from '../core/ops/contract.ts';
+import { readFix, trustedCliRequired } from '../core/ops/op-fix.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { validateSlug } from '../core/utils.ts';
 import { runPersistenceAdministration } from '../core/persistence/administration.ts';
@@ -79,50 +80,74 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
     if (!token.startsWith('-')) { positional.push(token); continue; }
     const equal = token.indexOf('=');
     const flag = equal < 0 ? token : token.slice(0, equal);
-    if (flags.has(flag)) throw new OperationError('invalid_params', `Duplicate option ${flag}.`);
+    if (flags.has(flag)) throw opError('invalid_params', `Duplicate option ${flag}.`, `Pass ${flag} once, then rerun the command.`);
     if (boolean.has(flag)) {
-      if (equal >= 0) throw new OperationError('invalid_params', `${flag} does not accept a value.`);
+      if (equal >= 0) throw opError('invalid_params', `${flag} does not accept a value.`, `Use ${flag} on its own, without =value, then rerun the command.`);
       flags.set(flag, true);
       continue;
     }
-    if (!values.has(flag)) throw new OperationError('invalid_params', `Unknown reconciliation option: ${flag}.`);
+    if (!values.has(flag)) throw opError('invalid_params', `Unknown reconciliation option: ${flag}.`,
+      'Reconciliation accepts --brain, --preview, --out, --from, --decisions, --apply, --request-id, --audit, --backups, --remove-backup, --limit, --after and --json; the help in fix shows which forms combine.',
+      { fix: readFix('Lists every reconciliation form and its options.', { argv: ['gbrain', 'sources', 'reconcile', '--help'] }) });
     const value = equal >= 0 ? token.slice(equal + 1) : args[++i];
-    if (!value || value.startsWith('-') || value.includes('\0')) throw new OperationError('invalid_params', `${flag} requires a value.`);
+    if (!value || value.startsWith('-') || value.includes('\0')) throw opError('invalid_params', `${flag} requires a value.`,
+      `Give ${flag} its value as the next argument or as ${flag}=value; a value cannot start with '-'.`);
     flags.set(flag, value);
   }
   const [source, slug] = positional;
-  if (!isValidSourceId(source)) throw new OperationError('invalid_params', 'Reconciliation requires one explicit source ID.');
+  if (!isValidSourceId(source)) throw opError('invalid_params', 'Reconciliation requires one explicit source ID.',
+    'Pass the source ID as the first argument, before the page slug; the command in fix lists registered source IDs.',
+    { fix: readFix('Lists the registered sources and their IDs.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
   const audit = flags.has('--audit');
   const backups = flags.has('--backups') || flags.has('--remove-backup');
-  if (positional.length !== (audit ? 1 : 2)) throw new OperationError('invalid_params', audit
-    ? 'Audit requires one source and no page slug.' : 'Reconciliation requires one source and one exact page slug.');
+  if (positional.length !== (audit ? 1 : 2)) throw opError('invalid_params', audit
+    ? 'Audit requires one source and no page slug.' : 'Reconciliation requires one source and one exact page slug.',
+    `An audit takes only the source (${source}); preview, apply and backups take the source and exactly one page slug. Rerun with the matching arguments.`);
   if (slug !== undefined) {
-    try { validateSlug(slug); } catch { throw new OperationError('invalid_params', 'Invalid page slug.'); }
-    if (/[?*]/.test(slug)) throw new OperationError('invalid_params', 'Reconciliation does not accept page patterns.');
+    try { validateSlug(slug); } catch {
+      throw opError('invalid_params', 'Invalid page slug.',
+        "Pass the page's exact stored slug: no leading '/', '..' segments, backslashes, URL-encoded separators or control characters.");
+    }
+    if (/[?*]/.test(slug)) throw opError('invalid_params', 'Reconciliation does not accept page patterns.',
+      `Reconcile one page at a time by its exact slug; an --audit run for source ${source} lists the pages that need it.`);
   }
   const applying = flags.has('--apply');
   if (applying && ['--preview', '--from', '--decisions', '--out', '--audit', '--backups', '--remove-backup'].some(flag => flags.has(flag))) {
-    throw new OperationError('invalid_params', 'Apply cannot be combined with preview, decisions, output, or audit options.');
+    throw opError('invalid_params', 'Apply cannot be combined with preview, decisions, output, or audit options.',
+      'Run apply on its own: the resolved preview file after --apply, --request-id and --brain only. Make or resolve previews in a separate command first.');
   }
-  if (!applying && flags.has('--request-id')) throw new OperationError('invalid_params', '--request-id is only valid with --apply.');
-  if (applying && !isWriteRequestId(flags.get('--request-id'))) throw new OperationError('invalid_params', 'Apply requires an explicit UUID --request-id.');
-  if (flags.has('--decisions') && !flags.has('--from')) throw new OperationError('invalid_params', '--decisions requires --from.');
-  if (!audit && !flags.has('--backups') && (flags.has('--limit') || flags.has('--after'))) throw new OperationError('invalid_params', '--limit and --after are only valid with --audit or --backups.');
-  if (audit && ['--preview', '--out', '--from', '--decisions', '--auto-additive', '--accept-suggested'].some(flag => flags.has(flag))) throw new OperationError('invalid_params', 'Audit cannot create or resolve a page preview.');
-  if (flags.has('--classify') && !audit) throw new OperationError('invalid_params', '--classify is only valid with --audit.');
-  if ((applying || backups) && (flags.has('--auto-additive') || flags.has('--accept-suggested'))) throw new OperationError('invalid_params', '--auto-additive and --accept-suggested only shape a preview.');
-  if (flags.has('--accept-suggested') && !flags.has('--auto-additive')) throw new OperationError('invalid_params', '--accept-suggested requires --auto-additive.');
-  if (flags.has('--auto-additive') && flags.has('--decisions')) throw new OperationError('invalid_params', '--auto-additive computes its own decisions; omit --decisions.');
+  if (!applying && flags.has('--request-id')) throw opError('invalid_params', '--request-id is only valid with --apply.',
+    'Drop --request-id: previews, audits and backup listings change nothing and take no request ID.');
+  if (applying && !isWriteRequestId(flags.get('--request-id'))) throw opError('invalid_params', 'Apply requires an explicit UUID --request-id.',
+    'Add --request-id with a new UUID for a first apply. After a lost response or a pending receipt, reuse the same request_id with the same arguments instead of a new one.');
+  if (flags.has('--decisions') && !flags.has('--from')) throw opError('invalid_params', '--decisions requires --from.',
+    'Add --from with the preview file the decisions resolve, and --out with a new file for the resolved preview.');
+  if (!audit && !flags.has('--backups') && (flags.has('--limit') || flags.has('--after'))) throw opError('invalid_params', '--limit and --after are only valid with --audit or --backups.',
+    'Drop --limit and --after, or use them with --audit (source only) or --backups (one page).');
+  if (audit && ['--preview', '--out', '--from', '--decisions', '--auto-additive', '--accept-suggested'].some(flag => flags.has(flag))) throw opError('invalid_params', 'Audit cannot create or resolve a page preview.',
+    'Run the audit without --preview, --out, --from, --decisions, --auto-additive or --accept-suggested, then preview a page it lists in a separate command.');
+  if (flags.has('--classify') && !audit) throw opError('invalid_params', '--classify is only valid with --audit.',
+    'Add --audit (with --source), or drop --classify.');
+  if ((applying || backups) && (flags.has('--auto-additive') || flags.has('--accept-suggested'))) throw opError('invalid_params', '--auto-additive and --accept-suggested only shape a preview.',
+    'Use --auto-additive (and --accept-suggested) with --preview, then apply the written preview with --from.');
+  if (flags.has('--accept-suggested') && !flags.has('--auto-additive')) throw opError('invalid_params', '--accept-suggested requires --auto-additive.',
+    'Add --auto-additive, or drop --accept-suggested.');
+  if (flags.has('--auto-additive') && flags.has('--decisions')) throw opError('invalid_params', '--auto-additive computes its own decisions; omit --decisions.',
+    'Drop --decisions, or drop --auto-additive and resolve the preview with --decisions.');
   if (backups && ['--preview', '--out', '--from', '--decisions', '--apply', '--audit'].some(flag => flags.has(flag)) || flags.has('--backups') && flags.has('--remove-backup')) {
-    throw new OperationError('invalid_params', 'Backup administration cannot be combined with preview, apply, audit, or another backup action.');
+    throw opError('invalid_params', 'Backup administration cannot be combined with preview, apply, audit, or another backup action.',
+      'Run --backups (list) or --remove-backup (delete one reference) on its own, with only --brain, --limit, --after and --json.');
   }
   const brain = flags.get('--brain') as string | undefined;
-  if (brain !== undefined && !isValidSourceId(brain)) throw new OperationError('invalid_params', 'Invalid brain ID.');
+  if (brain !== undefined && !isValidSourceId(brain)) throw opError('invalid_params', 'Invalid brain ID.',
+    'Pass --brain host for the local brain, or the ID of a mounted brain; the command in fix lists mounted brain IDs.',
+    { fix: readFix('Lists the mounted brains and their IDs.', { argv: ['gbrain', 'mounts', 'list', '--json'] }) });
   const params: Record<string, unknown> = { source_id: source, ...(slug ? { slug } : {}) };
   if (backups) {
     params.action = flags.has('--backups') ? 'list' : 'remove';
     if (flags.has('--remove-backup')) params.backup_reference = flags.get('--remove-backup');
-    if (flags.has('--after') && !isWriteRequestId(flags.get('--after'))) throw new OperationError('invalid_params', 'Backup pagination requires a request UUID cursor.');
+    if (flags.has('--after') && !isWriteRequestId(flags.get('--after'))) throw opError('invalid_params', 'Backup pagination requires a request UUID cursor.',
+      'Pass --after exactly as the previous backup listing returned its cursor (a request UUID), or omit it to start from the newest backup.');
   }
   if (applying) params.request_id = flags.get('--request-id');
   if (flags.has('--auto-additive')) params.auto_additive = true;
@@ -130,7 +155,8 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
   if (flags.has('--classify')) params.classify = true;
   if (flags.has('--limit')) {
     const limit = Number(flags.get('--limit'));
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new OperationError('invalid_params', 'Audit limit must be an integer from 1 to 100.');
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw opError('invalid_params', 'Audit limit must be an integer from 1 to 100.',
+      'Pass --limit as a whole number from 1 to 100, or omit it for the default page size.');
     params.limit = limit;
   }
   if (flags.has('--after')) params.after = flags.get('--after');
@@ -144,17 +170,24 @@ export function readReconcileJson(path: string): unknown {
   let fd: number | undefined;
   try {
     const target = resolve(path);
-    if (!lstatSync(target).isFile()) throw new OperationError('invalid_params', 'Reconciliation input must be a regular JSON file, not a symbolic link.');
+    if (!lstatSync(target).isFile()) throw opError('invalid_params', 'Reconciliation input must be a regular JSON file, not a symbolic link.',
+      'Pass the path of the preview or decisions file itself, not a symbolic link to it.');
     fd = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > PERSISTENCE_IPC_MAX_BYTES - 65536) throw new OperationError('invalid_params', 'Reconciliation input must be a bounded regular JSON file.');
+    if (!stat.isFile() || stat.size > PERSISTENCE_IPC_MAX_BYTES - 65536) throw opError('invalid_params', 'Reconciliation input must be a bounded regular JSON file.',
+      `Pass the regular preview file written by --out, or a decisions file under ${PERSISTENCE_IPC_MAX_BYTES - 65536} bytes.`);
     const content = readFileSync(fd);
-    if (content.byteLength > PERSISTENCE_IPC_MAX_BYTES - 65536) throw new OperationError('invalid_params', 'Reconciliation input exceeds the transport limit.');
+    if (content.byteLength > PERSISTENCE_IPC_MAX_BYTES - 65536) throw opError('invalid_params', 'Reconciliation input exceeds the transport limit.',
+      `Keep the input under ${PERSISTENCE_IPC_MAX_BYTES - 65536} bytes: pass the preview file written by --out unchanged, and only the decisions it needs.`);
     try { return JSON.parse(content.toString('utf8')); }
-    catch { throw new OperationError('invalid_params', 'Reconciliation input is not valid JSON.'); }
+    catch {
+      throw opError('invalid_params', 'Reconciliation input is not valid JSON.',
+        'Pass the preview file written by --out unchanged, or a decisions file holding one JSON document; validate it with a JSON parser before rerunning.');
+    }
   } catch (error) {
     if (error instanceof OperationError) throw error;
-    throw new OperationError('invalid_params', 'Cannot read the reconciliation input as a regular JSON file.');
+    throw opError('invalid_params', 'Cannot read the reconciliation input as a regular JSON file.',
+      'Check that the file exists, is a regular file and is readable by this user, then rerun with its path.');
   } finally { if (fd !== undefined) closeSync(fd); }
 }
 
@@ -167,7 +200,8 @@ export function writeReconcilePreview(path: string, preview: unknown): void {
     const target = join(directory, basename(requested));
     assertManagedFilesystemWrite(target);
     const content = JSON.stringify(preview, null, 2) + '\n';
-    if (Buffer.byteLength(content) > PERSISTENCE_IPC_MAX_BYTES - 65536) throw new OperationError('invalid_params', 'The preview exceeds the artifact size limit.');
+    if (Buffer.byteLength(content) > PERSISTENCE_IPC_MAX_BYTES - 65536) throw opError('invalid_params', 'The preview exceeds the artifact size limit.',
+      `Nothing changed. This page's preview is over the ${PERSISTENCE_IPC_MAX_BYTES - 65536}-byte artifact limit, so it cannot be resolved through reconcile; tell the user the page needs a manual edit of its canonical file.`);
     temporary = join(directory, `.${basename(target)}.${randomUUID()}.tmp`);
     fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     writeFileSync(fd, content);
@@ -179,7 +213,8 @@ export function writeReconcilePreview(path: string, preview: unknown): void {
     flushDirectory(directory);
   } catch (error) {
     if (error instanceof OperationError) throw error;
-    throw new OperationError('storage_error', 'Cannot create the private preview file. Use an existing directory outside the canonical worktree and a new filename.');
+    throw opError('storage_error', 'Cannot create the private preview file. Use an existing directory outside the canonical worktree and a new filename.',
+      'Nothing changed in the brain. Pass --out a new filename in an existing writable directory outside the source checkout; it never replaces an existing file.');
   } finally {
     if (fd !== undefined) closeSync(fd);
     if (temporary) {
@@ -194,10 +229,14 @@ export async function runReconcileCli(args: string[], connected?: BrainEngine): 
   try {
     const parsed = parseReconcileArgs(args);
     const brain = parsed.brain ?? getCliOptions().brain;
-    if (!brain) throw new OperationError('invalid_params', 'Select the brain explicitly with --brain <id> (use --brain host for the local brain).');
+    if (!brain) throw opError('invalid_params', 'Select the brain explicitly with --brain <id> (use --brain host for the local brain).',
+      'Add --brain host to reconcile the local brain, or --brain with a mounted brain ID from the command in fix.',
+      { fix: readFix('Lists the mounted brains and their IDs.', { argv: ['gbrain', 'mounts', 'list', '--json'] }) });
     const config = persistenceConfigForBrain(loadConfig(), brain, brain === 'host' ? [] : loadMounts());
-    if (!config) throw new OperationError('invalid_params', 'The selected brain has no configuration.');
-    if (isThinClient(config)) throw new OperationError('permission_denied', 'Reconciliation runs on the canonical host using its existing trusted CLI registration. A remote token cannot repair files.');
+    if (!config) throw opError('invalid_params', 'The selected brain has no configuration.',
+      `Brain '${brain}' is not configured on this machine. Use --brain host for the local brain, or a mounted brain ID from the command in fix.`,
+      { fix: readFix('Lists the mounted brains and their IDs.', { argv: ['gbrain', 'mounts', 'list', '--json'] }) });
+    if (isThinClient(config)) throw trustedCliRequired('Reconciliation runs on the canonical host using its existing trusted CLI registration. A remote token cannot repair files.');
     if (parsed.input) parsed.params[parsed.operation === 'writer_reconcile_apply' ? 'preview' : 'from'] = readReconcileJson(parsed.input);
     if (parsed.decisions) parsed.params.decisions = readReconcileJson(parsed.decisions);
     if (parsed.output) parsed.params.output_path = resolve(parsed.output);
@@ -218,7 +257,13 @@ export async function runReconcileCli(args: string[], connected?: BrainEngine): 
     }
     const { preview, ...summary } = result;
     if (parsed.output) {
-      if (!preview) throw new OperationError('storage_error', 'The owner did not return the requested preview.');
+      if (!preview) {
+        const sourceId = String(parsed.params.source_id);
+        throw opError('storage_error', 'The owner did not return the requested preview.',
+          `Nothing was written; a preview never changes canonical content. Check the owner of source ${sourceId} with the command in fix, then rerun the preview.`,
+          { fix: readFix('Shows the canonical owner and any pending recovery for this source.',
+            { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--brain', brain, '--json'] }) });
+      }
       writeReconcilePreview(parsed.output, preview);
       summary.preview_file = resolve(parsed.output);
     }

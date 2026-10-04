@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 import { resolveSlugForPath } from '../sync.ts';
 
 /** The source's position inside its Git repository and the origin form sync records. */
@@ -48,7 +48,8 @@ export function syncOriginPath(path: string, platform = process.platform): strin
   if (!normalized || normalized.includes('\0') || normalized.startsWith('/') ||
       platform === 'win32' && normalized.split('/').some(part => /[<>:"|?*]|[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)) ||
       normalized.split('/').some(part => !part || part === '.' || part === '..')) {
-    throw new OperationError('page_identity_changed', 'The stored sync origin is not a confined relative path.');
+    throw opError('page_identity_changed', 'The stored sync origin is not a confined relative path.',
+      `The stored source path ${JSON.stringify(path)} is empty, absolute, or escapes the checkout, so sync refused to use it. Inspect the source's writer status and report it to the user; the page origin must be repaired, not overwritten.`);
   }
   return normalized;
 }
@@ -60,7 +61,8 @@ export function assertDistinctSyncOrigins(paths: Iterable<string>, platform = pr
     const normalized = syncOriginPath(path, platform), key = normalized.toLowerCase();
     const prior = seen.get(key);
     if (prior !== undefined && prior !== normalized) {
-      throw new OperationError('page_identity_changed', 'The sync origins contain ambiguous Windows path spellings.');
+      throw opError('page_identity_changed', 'The sync origins contain ambiguous Windows path spellings.',
+        `${JSON.stringify(prior)} and ${JSON.stringify(normalized)} differ only by letter case, which Windows treats as one file, so sync refused to choose. Rename one of them in the repository, commit, then sync again.`);
     }
     seen.set(key, normalized);
   }
@@ -78,6 +80,8 @@ export async function assertSyncPageOrigin(engine: BrainEngine, sourceId: string
   const pages = rows.filter(page => legacy === null || key(page.source_path) !== key(legacy) || sameSyncOrigin(page.source_path, origin, context, page.slug));
   if (pages.length > 1 || requireOrigin && pageId !== null && pages.length !== 1 ||
       pages.some(page => page.id !== pageId || !sameSyncOrigin(page.source_path, origin, context, page.slug))) {
-    throw new OperationError('page_identity_changed', 'The imported origin no longer identifies exactly the accepted page.');
+    throw opError('page_identity_changed', 'The imported origin no longer identifies exactly the accepted page.',
+      `${JSON.stringify(sourcePath)} in source ${sourceId} now maps to a different page or to several pages, so this import was refused. Check the source's writer status before syncing again; do not force the import.`,
+      { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', why: `Shows source ${sourceId}'s writer and pending requests, read-only.`, requires_exclusive: false } });
   }
 }

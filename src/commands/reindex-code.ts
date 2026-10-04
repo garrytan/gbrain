@@ -26,8 +26,8 @@ import { reindexCodeProjection } from '../core/persistence/projection-reindex.ts
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { estimateTokens } from '../core/chunkers/code.ts';
 import { getEmbeddingModelName, estimateEmbeddingCostUsd } from '../core/embedding.ts';
-import { errorFor, serializeError } from '../core/errors.ts';
-import { promptYesNo } from '../core/confirm-prompt.ts';
+import { consentGate, engineConsentEnv, tokenmaxUncappedEnv } from '../core/consent-cli.ts';
+import type { CapSource } from '../core/consent.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
@@ -55,6 +55,8 @@ export interface ReindexCodeOpts {
    * imported, the throw aborts the remaining batch).
    */
   maxCostUsd?: number;
+  /** A4: where `maxCostUsd` came from (default `user`); a derived cap warns-and-runs an unpriced model. */
+  capSource?: CapSource;
   /**
    * v0.41.15.0 (T11, D9): per-batch parallel workers. Default 1.
    * PGLite clamps to 1. Recommended 4-8 for large code corpora.
@@ -328,7 +330,7 @@ export async function runReindexCode(
 
   try {
     if (typeof opts.maxCostUsd === 'number' && opts.maxCostUsd > 0) {
-      const tracker = new BudgetTracker({ maxCostUsd: opts.maxCostUsd, label: 'reindex-code' });
+      const tracker = new BudgetTracker({ maxCostUsd: opts.maxCostUsd, label: 'reindex-code', capSource: opts.capSource });
       await withBudgetTracker(tracker, reindexBody);
     } else {
       await reindexBody();
@@ -376,44 +378,6 @@ export async function runReindexCode(
   };
 }
 
-/**
- * v0.42.11.0 (#1784) — what to print when the cost gate refuses to spend
- * non-interactively without `--yes`. The REFUSAL (exit 2, no spend) is the
- * guardrail and is correct; the FORMAT is a separate axis. Pre-#1784 this path
- * always emitted a JSON envelope even without `--json`, violating the repo's
- * "human by default" convention. Now: JSON only when `--json` is explicit;
- * otherwise a human refusal on stderr. Pure + exported so it's unit-testable
- * without a brain or a real cost preview.
- */
-export interface CostRefusal {
-  stdout?: string;
-  stderr?: string;
-}
-export function buildCostRefusal(opts: {
-  json: boolean;
-  previewMsg: string;
-  preview: unknown;
-  costUsd: number;
-  model: string;
-}): CostRefusal {
-  if (opts.json) {
-    const envelope = serializeError(errorFor({
-      class: 'ConfirmationRequired',
-      code: 'cost_preview_requires_yes',
-      message: opts.previewMsg,
-      hint: 'Pass --yes to proceed, or --dry-run to see the preview and exit 0.',
-    }));
-    return {
-      stdout: JSON.stringify({ error: envelope, preview: opts.preview, costUsd: opts.costUsd, model: opts.model }),
-    };
-  }
-  return {
-    stderr:
-      `${opts.previewMsg}\n` +
-      'Refusing to re-embed non-interactively without confirmation. ' +
-      'Pass --yes to proceed, or --dry-run for the preview (exit 0).',
-  };
-}
 
 /**
  * issue #3970 — recovery hint for the "0 reindexed, N skipped" wall. Without
@@ -436,9 +400,9 @@ export function reindexForceHint(
 }
 
 /**
- * CLI entrypoint. Parses argv, wires cost-preview gate + JSON/TTY branching,
- * delegates to runReindexCode. Exit codes: 0 on success/dry-run, 2 on
- * ConfirmationRequired (matches sync --all), 1 on runtime error.
+ * CLI entrypoint. Parses argv, wires the cost preview + consent gate
+ * (requireConsent, effect paid), delegates to runReindexCode. Exit codes: 0
+ * on success/dry-run, 3 on confirmation_required, 1 on runtime error.
  */
 export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Promise<void> {
   const sourceIdx = args.indexOf('--source');
@@ -468,6 +432,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
   // "cost isn't the constraint" decision that proceeds past the confirmation gate
   // (like --yes). Numeric must be positive; `0`/garbage is rejected.
   let maxCostUsd: number | undefined;
+  let capSource: CapSource | undefined;
   let maxCostOff = false;
   for (const flag of ['--max-cost', '--max-cost-usd']) {
     const idx = args.indexOf(flag);
@@ -522,42 +487,43 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
       return;
     }
 
-    if (!yes) {
-      // v0.42.42.0 (#2139): spend.posture=tokenmax makes the gate informational
-      // — print the estimate and proceed (the operator declared cost isn't the
-      // constraint). The spend is still ledgered by the runtime BudgetTracker.
-      const { resolveSpendPosture } = await import('../core/spend-posture.ts');
-      const posture = await resolveSpendPosture(engine);
-      // An explicit `--max-cost off` is the same "cost isn't the constraint"
-      // signal as spend.posture=tokenmax — proceed past the confirmation gate.
-      if (posture === 'tokenmax' || maxCostOff) {
-        const gate = maxCostOff ? 'max_cost_off' : 'posture_tokenmax';
-        if (json) {
-          console.log(JSON.stringify({ status: 'proceeding', gate, codePages: preview.totalPages, totalTokens: preview.totalTokens, costUsd, model: getEmbeddingModelName() }));
-        } else {
-          console.log(`${previewMsg} ${maxCostOff ? '--max-cost off' : 'spend.posture=tokenmax'}: proceeding (informational). docs: docs/operations/spend-controls.md`);
-        }
+    if (maxCostOff) {
+      // An explicit `--max-cost off` is the user's "cost isn't the constraint" decision: no cap, no ask.
+      if (json) {
+        console.log(JSON.stringify({ status: 'proceeding', gate: 'max_cost_off', codePages: preview.totalPages, totalTokens: preview.totalTokens, costUsd, model: getEmbeddingModelName() }));
       } else {
-        const isTTY = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
-        if (!isTTY || json) {
-          // Guardrail unchanged: refuse + exit 2, no spend. Only the FORMAT splits
-          // on --json now (human refusal on stderr otherwise) — #1784.
-          const refusal = buildCostRefusal({ json, previewMsg, preview, costUsd, model: getEmbeddingModelName() });
-          if (refusal.stdout) console.log(refusal.stdout);
-          if (refusal.stderr) console.error(refusal.stderr);
-          process.exit(2);
-        }
-        console.log(previewMsg);
-        const answer = await promptYesNo('Proceed? [y/N] ');
-        if (!answer) {
-          console.log('Cancelled.');
-          return;
-        }
+        console.log(`${previewMsg} --max-cost off: proceeding (informational). docs: docs/operations/spend-controls.md`);
+      }
+    } else {
+      // A4: paid. --yes, --max-cost <usd>, spend.posture=tokenmax or a per-run
+      // preapproval authorizes it; without a user cap the run is capped at the
+      // estimate x1.5 (printed), except under tokenmax, which keeps its
+      // documented uncapped meaning here. Non-interactive otherwise: exit 3.
+      const auth = await consentGate({
+        command: 'reindex-code',
+        effects: ['paid'],
+        actor: 'agent',
+        what: `Re-embed ${preview.totalPages} code page(s)`,
+        why: `Rebuilds code chunks and their embeddings (~${preview.totalTokens.toLocaleString()} tokens on ${getEmbeddingModelName()}) so code search uses current chunking.`,
+        risk: `Spends about $${costUsd.toFixed(2)} with the embedding provider. Pages are kept; --no-embed rebuilds the text and symbol metadata for free.`,
+        user_message: `Re-embed ${preview.totalPages} code page(s) for about $${costUsd.toFixed(2)}? (--no-embed does the free text-only rebuild instead.)`,
+        argv: ['gbrain', 'reindex-code', ...args.filter(a => a !== '--yes' && a !== '-y')],
+        preview_argv: ['gbrain', 'reindex-code', ...args.filter(a => a !== '--yes' && a !== '-y' && a !== '--json'), '--dry-run', '--json'],
+        est_usd: costUsd,
+        args,
+      }, { json, env: engineConsentEnv(engine, await tokenmaxUncappedEnv(engine, maxCostUsd !== undefined)) });
+      if (!auth) return;
+      if (auth.via === 'tokenmax' && json) {
+        console.log(JSON.stringify({ status: 'proceeding', gate: 'posture_tokenmax', codePages: preview.totalPages, totalTokens: preview.totalTokens, costUsd, model: getEmbeddingModelName() }));
+      }
+      if (maxCostUsd === undefined && auth.cap_usd !== null && Number.isFinite(auth.cap_usd)) {
+        maxCostUsd = auth.cap_usd;
+        capSource = auth.cap_source ?? undefined;
       }
     }
   }
 
-  const result = await runReindexCode(engine, { sourceId, yes, json, force, noEmbed, maxCostUsd, workers });
+  const result = await runReindexCode(engine, { sourceId, yes, json, force, noEmbed, maxCostUsd, capSource, workers });
   if (json) {
     console.log(JSON.stringify(result));
   } else {

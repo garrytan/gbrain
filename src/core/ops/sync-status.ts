@@ -5,15 +5,26 @@
  * ../operations.ts. Never import from '../operations.ts' here (cycle).
  */
 
-import type { Operation } from './contract.ts';
-import { OperationError } from './contract.ts';
+import type { Operation, OperationContext } from './contract.ts';
+import { opError } from './contract.ts';
+import { opTransport, readFix } from './op-fix.ts';
+
+/** `gbrain sync --source <id>` on the CLI, `source_id: "<id>"` over MCP. */
+function sourceRef(ctx: OperationContext, id: string): string {
+  return opTransport(ctx) === 'cli' ? `--source ${id}` : `source_id: "${id}"`;
+}
+
+const LIST_SOURCES = readFix('Lists the registered, active source ids sync can target.', {
+  argv: ['gbrain', 'sources', 'list'], mcp: { tool: 'sources_list', arguments: {} },
+});
 
 // --- Sync ---
 
 const sync_brain: Operation = {
   name: 'sync_brain',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Sync git repo to brain (incremental)',
+  description: 'Pull and import changes from a source\'s git repository (incremental; dry_run previews). Use when files changed on disk or upstream. Needs admin scope and the local stdio server. On a missing local_path: the error names the sources add command.',
   params: {
     repo: { type: 'string', description: 'Path to git repo (optional if configured)' },
     source_id: { type: 'string', description: 'Explicit source to sync (wins over repo-derived and ambient routing)' },
@@ -38,9 +49,11 @@ const sync_brain: Operation = {
     if (explicit) {
       const { resolveSourceId, SourceTargetError, ALL_SOURCES } = await import('../source-resolver.ts');
       if (explicit === ALL_SOURCES) {
-        throw new OperationError(
+        throw opError(
           'invalid_params',
           `sync_brain targets exactly one source; '${ALL_SOURCES}' is not valid here.`,
+          `Pass one registered source id (for example ${sourceRef(ctx, 'default')}); run it once per source to sync several.`,
+          { fix: LIST_SOURCES },
         );
       }
       try {
@@ -49,7 +62,7 @@ const sync_brain: Operation = {
         sourceId = await resolveSourceId(ctx.engine, explicit);
       } catch (e) {
         if (e instanceof SourceTargetError) {
-          throw new OperationError('invalid_params', e.message);
+          throw opError('invalid_params', e.message, 'Pick a registered, active source id (fix lists them) and pass it explicitly.', { fix: LIST_SOURCES });
         }
         throw e;
       }
@@ -60,7 +73,7 @@ const sync_brain: Operation = {
         derived = await resolveSourceForRepoPath(ctx.engine, repo);
       } catch (e) {
         if (e instanceof SourceTargetError) {
-          throw new OperationError('invalid_params', e.message);
+          throw opError('invalid_params', e.message, 'Pick a registered, active source id (fix lists them) and pass it explicitly.', { fix: LIST_SOURCES });
         }
         throw e;
       }
@@ -69,12 +82,12 @@ const sync_brain: Operation = {
         // scope / dotfile context) but `repo` belongs to a different one.
         // Refuse with a structured error instead of silently picking a side.
         if (ctx.sourceId && ctx.sourceId !== 'default' && ctx.sourceId !== derived.source_id) {
-          throw new OperationError(
+          throw opError(
             'invalid_params',
             `repo path resolves to source '${derived.source_id}' (via ${derived.tier}) but the ` +
             `caller is scoped to source '${ctx.sourceId}'. Pass source_id explicitly to pick one.`,
-            `Re-run with source_id: '${derived.source_id}' to sync that repo's source, or ` +
-            `source_id: '${ctx.sourceId}' to force the caller's scope.`,
+            `Re-run with ${sourceRef(ctx, derived.source_id)} to sync that repo's source, or ` +
+            `${sourceRef(ctx, ctx.sourceId)} to force the caller's scope.`,
           );
         }
         sourceId = derived.source_id;

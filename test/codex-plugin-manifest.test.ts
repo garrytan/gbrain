@@ -391,6 +391,21 @@ describe('curated tree membership + scanner guard', () => {
     }
   });
 
+  test('F6: a starter-gap skill ends with its CLI-equivalent surface note; a gap-free skill is byte-identical', () => {
+    const gaps = lanes.starter_gaps as Record<string, string[]>;
+    expect(Object.keys(gaps).length).toBeGreaterThan(0);
+    for (const [slug, ops] of Object.entries(gaps)) {
+      const generated = read(`plugin/skills/${slug}/SKILL.md`);
+      expect(generated.startsWith(read(`skills/${slug}/SKILL.md`).replace(/\n*$/, '\n'))).toBe(true);
+      expect(generated).toContain('## Tools outside your MCP surface');
+      for (const op of ops) expect(generated).toMatch(new RegExp(`- \`${op}\` → \`gbrain [^\`]+\``));
+      expect(generated).toContain('GBRAIN_SURFACE=full');
+    }
+    expect(read('plugin/skills/maintain/SKILL.md')).toContain('- `get_health` → `gbrain doctor --json`');
+    const gapFree = [...laneSet].find(slug => !(slug in gaps))!;
+    expect(read(`plugin/skills/${gapFree}/SKILL.md`)).toBe(read(`skills/${gapFree}/SKILL.md`));
+  });
+
   test('non-skill dirs carry no SKILL.md (the scanner never grows a surprise skill)', () => {
     expect(existsSync(join(ROOT, 'plugin/skills/conventions/SKILL.md'))).toBe(false);
     expect(existsSync(join(ROOT, 'skills/conventions/SKILL.md'))).toBe(false);

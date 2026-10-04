@@ -152,9 +152,30 @@ describe('embeddingMismatchMessage', () => {
     expect(doctorMsg).toContain('Embedding dimension mismatch detected');
   });
 
-  // v0.37 fix wave Lane D.1: PGLite branch uses wipe-and-reinit recipe
-  // because PGLite can't ALTER vector column types.
-  test('PGLite branch uses wipe-and-reinit, not ALTER COLUMN', () => {
+  // PGLite can't ALTER vector column types. A7 (agent operator wave): the
+  // recipe keeps pages and DB-only facts (keep-width init, previewed
+  // migration) and never prints a hand-run wipe of the datastore.
+  test('PGLite branch keeps data: keep-width init and migration, no hand-run wipe, not ALTER COLUMN', () => {
+    const msg = embeddingMismatchMessage({
+      currentDims: 1536,
+      requestedDims: 1024,
+      requestedModel: 'openai:text-embedding-3-small',
+      source: 'init',
+      engineKind: 'pglite',
+      databasePath: '/tmp/test-brain.pglite',
+    });
+    expect(msg).toContain('vector(1536)');
+    expect(msg).toContain('vector(1024)');
+    expect(msg).toContain('gbrain init --force --embedding-model openai:text-embedding-3-small --embedding-dimensions 1536 --path /tmp/test-brain.pglite');
+    expect(msg).toContain('gbrain migrate embeddings --to openai:text-embedding-3-small --dim 1024 --dry-run');
+    expect(msg).toContain('PGLite cannot ALTER vector column types');
+    expect(msg).not.toMatch(/\bmv /);
+    // Must NOT contain the Postgres-only SQL recipe.
+    expect(msg).not.toContain('ALTER TABLE content_chunks ALTER COLUMN');
+    expect(msg).not.toContain('DROP INDEX IF EXISTS idx_chunks_embedding');
+  });
+
+  test('PGLite branch omits the keep-width line when the model cannot produce the existing width', () => {
     const msg = embeddingMismatchMessage({
       currentDims: 1536,
       requestedDims: 1024,
@@ -163,25 +184,20 @@ describe('embeddingMismatchMessage', () => {
       engineKind: 'pglite',
       databasePath: '/tmp/test-brain.pglite',
     });
-    expect(msg).toContain('vector(1536)');
-    expect(msg).toContain('vector(1024)');
-    expect(msg).toContain('mv /tmp/test-brain.pglite /tmp/test-brain.pglite.bak');
-    expect(msg).toContain('gbrain init --pglite --embedding-model voyage:voyage-4 --embedding-dimensions 1024');
-    expect(msg).toContain('PGLite cannot ALTER vector column types');
-    // Must NOT contain the Postgres-only SQL recipe.
-    expect(msg).not.toContain('ALTER TABLE content_chunks ALTER COLUMN');
-    expect(msg).not.toContain('DROP INDEX IF EXISTS idx_chunks_embedding');
+    expect(msg).not.toContain('gbrain init --force');
+    expect(msg).toContain('gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run');
   });
 
   test('PGLite branch falls back to default database path when omitted', () => {
     const msg = embeddingMismatchMessage({
       currentDims: 1536,
       requestedDims: 1280,
+      requestedModel: 'openai:text-embedding-3-small',
       source: 'init',
       engineKind: 'pglite',
     });
     // Default falls back to gbrainPath('brain.pglite').
-    expect(msg).toMatch(/mv .+brain\.pglite .+brain\.pglite\.bak/);
+    expect(msg).toMatch(/--embedding-dimensions 1536 --path \S+brain\.pglite/);
   });
 
   test('PGLite branch must NOT recommend `gbrain config set embedding_model` (no-op after Lane C.2)', () => {

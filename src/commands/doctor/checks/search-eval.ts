@@ -10,6 +10,7 @@ import { loadConfig, type GBrainConfig } from '../../../core/config.ts';
 // Leaf module (no flag surface of its own) — see that file for why this
 // isn't imported from extract-conversation-facts.ts directly (#4135).
 import { ALLOWED_TYPES, conversationFactsEligibleSql, pageTypesForAllowed, isConversationFactsEligiblePage, requireParseableConversationFlag } from '../../../core/facts/conversation-types.ts';
+import { checkError } from '../check-fix.ts';
 
 function hasNonEmptyChatFallbackChain(value: unknown): boolean {
   if (Array.isArray(value)) {
@@ -392,11 +393,7 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
         : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
     };
   } catch (e) {
-    return {
-      name: 'subagent_capability',
-      status: 'warn',
-      message: `Could not check subagent capability: ${e instanceof Error ? e.message : String(e)}`,
-    };
+    return checkError('subagent_capability', 'check subagent capability', e);
   }
 }
 

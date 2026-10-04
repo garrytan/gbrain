@@ -82,6 +82,30 @@ export function statusForVersion(
   return 'pending';
 }
 
+/** A ledger entry `gbrain init` wrote for a `fresh_install_noop` migration (src/commands/migrations/fresh-install.ts). */
+export function isFreshInstallStamp(entry: CompletedMigrationEntry): boolean {
+  return entry.fresh_install === true;
+}
+
+/**
+ * The gbrain version that created this brain, read from init's fresh-install
+ * stamps; null for a brain created before stamping existed. A pending
+ * migration at or below it is `pending_fresh_install`: setup work the new
+ * brain has not run yet, never an interrupted upgrade.
+ */
+export function freshInstallVersion(entries: CompletedMigrationEntry[]): string | null {
+  let latest: string | null = null;
+  for (const entry of entries) {
+    if (!isFreshInstallStamp(entry) || typeof entry.installed_version !== 'string') continue;
+    if (latest === null || compareVersions(entry.installed_version, latest) > 0) latest = entry.installed_version;
+  }
+  return latest;
+}
+
+export function isPendingFreshInstall(version: string, freshVersion: string | null): boolean {
+  return freshVersion !== null && compareVersions(version, freshVersion) <= 0;
+}
+
 export function indexCompletedEntries(
   entries: CompletedMigrationEntry[],
 ): Map<string, CompletedMigrationEntry[]> {
@@ -95,8 +119,13 @@ export function indexCompletedEntries(
 }
 
 export interface MigrationLedgerSummary {
-  /** Registered migrations ≤ installed version with no ledger completion. */
+  /** Registered migrations ≤ installed version with no ledger completion (upgrade work). */
   pending: string[];
+  /**
+   * Not yet run on a brain `gbrain init` created at or after their version:
+   * expected setup work (`gbrain apply-migrations --yes`), not a broken upgrade.
+   */
+  pending_fresh_install: string[];
   /** Started but unfinished (some phases recorded partial). */
   partial: string[];
   /** Hit the consecutive-partial cap — needs an explicit forced retry. */
@@ -118,15 +147,17 @@ export interface MigrationLedgerSummary {
  * migration internals.
  */
 export function migrationLedgerSummary(installedVersion: string): MigrationLedgerSummary {
-  const byVersion = indexCompletedEntries(loadCompletedMigrations());
-  const summary: MigrationLedgerSummary = { pending: [], partial: [], wedged: [], skipped_future: 0 };
+  const entries = loadCompletedMigrations();
+  const byVersion = indexCompletedEntries(entries);
+  const freshVersion = freshInstallVersion(entries);
+  const summary: MigrationLedgerSummary = { pending: [], pending_fresh_install: [], partial: [], wedged: [], skipped_future: 0 };
   for (const version of MIGRATION_VERSIONS) {
     if (compareVersions(version, installedVersion) > 0) {
       summary.skipped_future += 1;
       continue;
     }
     const status = statusForVersion(version, byVersion);
-    if (status === 'pending') summary.pending.push(version);
+    if (status === 'pending') (isPendingFreshInstall(version, freshVersion) ? summary.pending_fresh_install : summary.pending).push(version);
     else if (status === 'partial') summary.partial.push(version);
     else if (status === 'wedged') summary.wedged.push(version);
   }

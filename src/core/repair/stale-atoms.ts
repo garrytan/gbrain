@@ -26,7 +26,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
-import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -195,14 +196,21 @@ async function stampRetirement(tx: BrainEngine, atom: StaleAtom): Promise<void> 
 }
 
 /** Preparer for `managed_maintenance_retire_stale_atoms`: rechecks the atom's class under its and its origin's page locks, then retires it. */
+const staleAtomsPreviewFix = (sourceId: string) => readFix('Previews the stale-atoms repair without changing anything.',
+  { argv: ['gbrain', 'repair', 'stale-atoms', '--source', sourceId, '--json'] });
+
 export async function prepareStaleAtomRetirement(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const atom = row.intent!.atom as StaleAtom;
   if (!atom || atom.slug !== row.slug || atom.source_id !== row.source_id || atom.id !== Number(row.page_id)) {
-    throw new OperationError('invalid_params', 'The stale atom retirement intent does not name its atom.');
+    throw opError('invalid_params', 'The stale atom retirement intent does not name its atom.',
+      `Request ${row.request_id} for ${row.slug} in source ${row.source_id} does not name the atom it retires, so nothing changed. Preview the repair again and apply the new preview after the user approves.`,
+      { fix: staleAtomsPreviewFix(row.source_id) });
   }
   const unchanged = async (db: BrainEngine) => {
     if (!sameAtom((await staleAtoms(db, [row.source_id], atom.id))[0], atom)) {
-      throw new OperationError('revision_conflict', 'The stale atom or its source page changed since the preview.');
+      throw opError('revision_conflict', 'The stale atom or its source page changed since the preview.',
+        `Atom ${row.slug} in source ${row.source_id} or its source page changed after the preview, so request ${row.request_id} retired nothing. Preview the repair again and apply the new preview after the user approves.`,
+        { fix: staleAtomsPreviewFix(row.source_id) });
     }
   };
   await unchanged(engine);

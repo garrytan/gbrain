@@ -389,6 +389,7 @@ function appendRollbackBatch(
 
 export const v0_13_1: Migration = {
   version: '0.13.1',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'BrainWriter integrity + grandfather protection for existing pages.',
     description:

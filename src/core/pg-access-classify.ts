@@ -164,6 +164,8 @@ interface ReasonRow {
   codePrefixes?: string[];
   patterns?: RegExp[];
   remediation: string;
+  /** E10: the same advice without Supabase specifics, used when the configured URL is not a Supabase host. */
+  plainRemediation?: string;
   fix?: PgAccessFix;
 }
 
@@ -260,6 +262,7 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     codes: ['ECONNREFUSED'],
     patterns: [/connection refused/i, /ECONNREFUSED/i],
     remediation: 'Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it.',
+    plainRemediation: 'Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.',
   },
   {
     reason: 'dns_failed',
@@ -267,6 +270,7 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     codes: ['ENOTFOUND', 'EAI_AGAIN'],
     patterns: [/ENOTFOUND/i, /EAI_AGAIN/i, /getaddrinfo/i],
     remediation: 'The hostname did not resolve. Check the URL; a free-tier Supabase project may be paused — restore it from the dashboard.',
+    plainRemediation: 'The hostname did not resolve. Check the host in the database URL and this machine\'s DNS/network.',
   },
   {
     reason: 'network_unreachable',
@@ -276,6 +280,7 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     codes: ['ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT', 'CONNECT_TIMEOUT'],
     patterns: [/ENETUNREACH/i, /EHOSTUNREACH/i, /ETIMEDOUT/i, /CONNECT_TIMEOUT/i],
     remediation: 'The host is unreachable (often an IPv6-only direct host on an IPv4 network). The session pooler is the IPv4 path — gbrain db-repair can switch to it.',
+    plainRemediation: 'The database host is unreachable from this machine (routing, firewall or VPN). Check the network path to the host in the database URL.',
   },
   {
     reason: 'conn_dropped',
@@ -396,7 +401,7 @@ export function classifyPgAccessError(err: unknown, ctx?: PgAccessContext): PgAc
       transient: row.transient,
       sqlstate: looksLikeSqlstate(code),
       message,
-      remediation: row.remediation,
+      remediation: ctx?.url && !looksLikeSupabase(ctx.url) && row.plainRemediation ? row.plainRemediation : row.remediation,
       fix: contextualFix(row.reason, ctx?.url) ?? row.fix,
       supabase: supabaseHints(ctx?.url, row.reason),
       brainId: ctx?.brainId,

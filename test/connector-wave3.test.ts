@@ -281,7 +281,7 @@ test('mixed versions: a v2 receipt refused by an old consumer names the consumer
     const denied = refusal(receipt('permission_denied', kind));
     expect(denied.code).toBe('permission_denied');
     expect(denied.detail).toBeUndefined();
-    expect(denied.suggestion).toBe('Inspect this receipt before submitting a new request_id.');
+    expect(denied.suggestion).toMatch(/^The submit_job write \(request_id [0-9a-f-]{36}\) ended failed with permission_denied; it will not publish\. Read the receipt and the current state before deciding to submit again; a new attempt needs a new request_id\.$/);
   }
   // A binary that predates the v2 namespace falls through to the same code for any kind it does not know.
   await expect(preparePersistedMutation({} as BrainEngine, receipt('', 'connector_v3_import') as WriteRequest & { operation: string }, { engine: 'pglite' }))

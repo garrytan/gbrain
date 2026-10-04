@@ -70,6 +70,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 
 export const v0_60_31: Migration = {
   version: '0.60.31',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'Stored private keys no longer reach search chunks or delivered evidence, and Google connector files are written private.',
     description: 'Pages whose body holds a private key are withheld from search until they are re-chunked with the key replaced by a <REDACTED:private_key_pem> token. This migration re-chunks them with no provider calls; run `gbrain embed --stale` afterwards to embed the new chunks. Stored page bodies are unchanged. '

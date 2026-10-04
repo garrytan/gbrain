@@ -1,20 +1,23 @@
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
 import { resolveSourceId } from '../source-resolver.ts';
 import { currentVerifiedLocalWriter } from './identity.ts';
 import { submissionAuthority } from './authority.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { validateSyncWireParams } from './sync-wire.ts';
 import { explicitSyncProcessing } from './sync-authority.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 
 /** Private CLI transport: wire fields can never manufacture a trust lane. */
 export async function runAuthenticatedSyncSlice(engine: BrainEngine, params: Record<string,unknown>): Promise<Record<string,unknown>> {
   const verified=currentVerifiedLocalWriter();
-  if(!verified||verified.remote||verified.principal.kind!=='local_cli')throw new OperationError('permission_denied','Sync requires a current trusted CLI registration.');
+  if(!verified||verified.remote||verified.principal.kind!=='local_cli')throw trustedCliRequired('Sync requires a current trusted CLI registration.');
   const wire=validateSyncWireParams(params);
   const sourceId=await resolveSourceId(engine,wire.options.sourceId??null,wire.cwd,{skipLocalSignals:true});
   const [source]=await engine.executeRaw<{incarnation:string;archived:boolean}>('SELECT incarnation,archived FROM sources WHERE id=$1',[sourceId]);
-  if(!source||source.archived)throw new OperationError('source_changed','The selected sync source is unavailable.');
+  if(!source||source.archived)throw opError('source_changed','The selected sync source is unavailable.',
+    `Source ${sourceId} is archived or missing, so nothing was synced. Choose an active source with --source, or ask the user to restore ${sourceId}.`,
+    {fix:{argv:['gbrain','sources','list','--json'],consent:[],actor:'agent',why:'Lists sources with their archived state, read-only.',requires_exclusive:false}});
   await submissionAuthority({engine,remote:false,sourceId} as OperationContext,'submit_job',sourceId,source.incarnation,'__managed_sync_checkpoint__');
   const controller=new AbortController();
   const timer=wire.timeoutSeconds>0?setTimeout(()=>controller.abort(),wire.timeoutSeconds*1000):undefined;

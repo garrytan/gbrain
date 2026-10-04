@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { withConnectorSync, type ManagedConnectorSync } from '../persistence/connector-sync.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { GmailClient, GoogleCursorExpiredError, type FetchImpl } from './google-clients.ts';
 import type { GmailThreadAttachmentReceipts, GoogleSourceConfig, GoogleSourceState } from './types.ts';
 import { threadAttachmentReceipts } from './attachment-receipts.ts';
@@ -16,8 +17,16 @@ export async function runGoogleAttachmentBackfill(engine: BrainEngine, sourceId:
   return withConnectorSync(engine, sourceId, 'google', cfg, {
     sourceId, noEmbed: true, noExtract: true, noSchemaPack: true, signal: opts.signal, retryFailed: opts.retryFailed,
   }, async (managed, options) => {
-    if (!managed) throw new OperationError('writer_coordinator_required', 'Historical attachment repair requires managed persistence. No metadata was changed.');
-    if (!cfg.account || !cfg.services.includes('gmail')) throw new OperationError('invalid_params', 'Select a Gmail source for attachment repair.');
+    if (!managed) {
+      throw opError('writer_coordinator_required', 'Historical attachment repair requires managed persistence. No metadata was changed.',
+        `Source ${sourceId} is not managed by the persistence coordinator, and this repair never enables it. Check the source's writer state; turning on managed persistence is the user's decision.`,
+        { fix: readFix(`Shows source ${sourceId}'s writer and persistence state.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] }) });
+    }
+    if (!cfg.account || !cfg.services.includes('gmail')) {
+      throw opError('invalid_params', 'Select a Gmail source for attachment repair.',
+        `Source ${sourceId} is not a connected Gmail source; pass --source with a Google source that syncs Gmail.`,
+        { fix: readFix('Lists the registered sources with their connector kind.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
+    }
     let tokens: GoogleAccessProvider;
     if (cfg.access === 'command') tokens = new CommandAccessProvider(cfg.tokenCommand ?? '');
     else if (cfg.access === 'env') tokens = new EnvAccessProvider(cfg.tokenEnv ?? '');
@@ -32,7 +41,8 @@ export async function runGoogleAttachmentBackfill(engine: BrainEngine, sourceId:
     const gmail = new GmailClient(tokens, fetchImpl);
     const profile = await gmail.getProfile({ signal: options.signal });
     if (profile.emailAddress?.toLowerCase() !== cfg.account) {
-      throw new OperationError('source_changed', 'The Gmail credential belongs to a different account. No metadata was changed.');
+      throw opError('source_changed', 'The Gmail credential belongs to a different account. No metadata was changed.',
+        `The stored Google credential signs in as a different mailbox than ${cfg.account}, the account source ${sourceId} was imported from. Ask the user to reconnect Google as ${cfg.account} before repairing attachments.`);
     }
     await managed.assertAccount({ kind: 'google', email: cfg.account });
     const state = managed.state<GoogleSourceState>({ gmail_history_id: null, gmail_backfill_floor_ms: null,
@@ -44,7 +54,8 @@ export async function runGoogleAttachmentBackfill(engine: BrainEngine, sourceId:
 export async function backfillGmailAttachments(engine: BrainEngine, managed: ManagedConnectorSync, gmail: GmailClient,
   state: GoogleSourceState, account: string, limit = GMAIL_ATTACHMENT_BACKFILL_LIMIT, signal?: AbortSignal) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > GMAIL_ATTACHMENT_BACKFILL_LIMIT) {
-    throw new OperationError('invalid_params', `Attachment backfill limit must be 1-${GMAIL_ATTACHMENT_BACKFILL_LIMIT}.`);
+    throw opError('invalid_params', `Attachment backfill limit must be 1-${GMAIL_ATTACHMENT_BACKFILL_LIMIT}.`,
+      `Pass --limit as a whole number from 1 to ${GMAIL_ATTACHMENT_BACKFILL_LIMIT}, or omit it for ${GMAIL_ATTACHMENT_BACKFILL_LIMIT}.`);
   }
   let cursor = state.gmail_attachment_backfill;
   if (cursor && (cursor.version !== 1 || cursor.account !== account || !Number.isSafeInteger(cursor.afterPageId) ||
@@ -52,7 +63,8 @@ export async function backfillGmailAttachments(engine: BrainEngine, managed: Man
     !Number.isSafeInteger(cursor.unavailable ?? 0) || (cursor.unavailable ?? 0) < 0 ||
     !Number.isSafeInteger(cursor.unavailableMessages ?? 0) || (cursor.unavailableMessages ?? 0) < 0 ||
     cursor.afterPageId < 0 || cursor.throughPageId < cursor.afterPageId)) {
-    throw new OperationError('revision_conflict', 'Attachment backfill checkpoint does not match this account. No metadata was changed.');
+    throw opError('revision_conflict', 'Attachment backfill checkpoint does not match this account. No metadata was changed.',
+      `Source ${managed.sourceId}'s saved attachment-repair cursor belongs to another account than ${account} or is malformed. Show the user the source's sync state and ask how to proceed; gbrain will not reset the cursor itself.`);
   }
   if (!cursor) {
     const [row] = await engine.executeRaw<{ id: number | null }>(
@@ -72,13 +84,17 @@ export async function backfillGmailAttachments(engine: BrainEngine, managed: Man
   for (const row of rows) {
     signal?.throwIfAborted();
     if (row.account !== account || typeof row.thread_id !== 'string' || !/^[A-Za-z0-9]{1,128}$/.test(row.thread_id)) {
-      throw new OperationError('revision_conflict', 'Historical Gmail page ownership is unknown. Content and the current cursor were preserved.');
+      throw opError('revision_conflict', 'Historical Gmail page ownership is unknown. Content and the current cursor were preserved.',
+        `Page ${row.slug} in ${managed.sourceId} has no thread id for ${account}, so its attachments cannot be matched. Inspect the page and tell the user; the repair stops here so the cursor stays on it.`,
+        { fix: readFix(`Reads ${row.slug}'s frontmatter (account, thread_id).`, { argv: ['gbrain', 'get', '--source', managed.sourceId, '--', row.slug] }) });
     }
     let fetched: GmailThreadAttachmentReceipts;
     try {
       const thread = await gmail.getThread(row.thread_id, account, { signal, metadataOnly: true });
       if (thread.threadId !== row.thread_id || !thread.messages.length) {
-        throw new OperationError('revision_conflict', 'Gmail metadata does not match the historical page. Content and the current cursor were preserved.');
+        throw opError('revision_conflict', 'Gmail metadata does not match the historical page. Content and the current cursor were preserved.',
+          `Gmail returned a different or empty thread for page ${row.slug} in ${managed.sourceId}. Inspect the page and tell the user before repeating the repair; nothing was changed.`,
+          { fix: readFix(`Reads ${row.slug}'s stored thread metadata.`, { argv: ['gbrain', 'get', '--source', managed.sourceId, '--', row.slug] }) });
       }
       fetched = threadAttachmentReceipts(thread);
     } catch (error) {

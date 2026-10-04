@@ -15,11 +15,16 @@
 // process.exit. SQL via engine.executeRaw with `sourceScopeOpts(ctx)`
 // when ctx threads — onboard surface threads explicitly per A26.
 
+import { embedBackfillFix } from '../embed-consent.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
+import type { Action } from '../agent-output.ts';
+import { embeddingEnablement, type ReadinessState } from '../readiness.ts';
+import { embeddingsDisabled } from '../embedding-disabled.ts';
+import { loadConfig } from '../config.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -28,6 +33,10 @@ export interface OnboardCheckResult {
     status: 'ok' | 'warn' | 'fail';
     message: string;
     details?: Record<string, unknown>;
+    /** Agent contract v1 (doctor E1/E2): see src/commands/doctor/check-fix.ts. */
+    fix?: Action;
+    severity?: 'info';
+    readiness_state?: ReadinessState;
   };
   remediations: RemediationStep[];
 }
@@ -130,6 +139,17 @@ function coverageWithConfidence(sample: EntityCoverageSample): { coverage: numbe
 export async function checkEmbedStaleness(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
+  if (await embeddingsDisabled(engine)) {
+    const cfg = loadConfig();
+    return {
+      check: {
+        name: 'embed_staleness', status: 'ok', severity: 'info', readiness_state: 'disabled_by_choice',
+        message: 'Not applicable: embeddings are disabled on this brain by choice, so chunks have no vectors by design (keyword search keeps working).',
+        ...(cfg ? { fix: embeddingEnablement(cfg) } : {}),
+      },
+      remediations: [],
+    };
+  }
   let staleCount: number;
   try {
     staleCount = await engine.countStaleChunks();
@@ -183,7 +203,7 @@ export async function checkEmbedStaleness(
     }));
   }
   return {
-    check: { name: 'embed_staleness', status, message },
+    check: { name: 'embed_staleness', status, message, ...(staleCount > 0 ? { fix: embedBackfillFix({ backlog: staleCount, verifyCheck: 'embed_staleness' }) } : {}) },
     remediations,
   };
 }
@@ -443,7 +463,19 @@ export async function checkTakesCount(
         status: 'remediable',
       }));
     } else {
-      message = '0 takes (takes.bootstrap_enabled is false; opt in to enable)';
+      return {
+        check: {
+          name: 'takes_count', status: 'ok', severity: 'info', readiness_state: 'disabled_by_choice',
+          message: '0 takes (takes.bootstrap_enabled is false; opt in to enable)',
+          fix: {
+            argv: ['gbrain', 'config', 'set', 'takes.bootstrap_enabled', 'true'], consent: ['paid'], actor: 'agent', requires_exclusive: false,
+            why: 'Takes (typed claims) are opt-in. Enabling the bootstrap lets maintenance extract them from existing pages with a chat model (about $5 on a typical brain), which feeds calibration.',
+            user_message: 'gbrain can extract typed claims ("takes") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?',
+            verify: { argv: ['gbrain', 'doctor', '--only', 'takes_count', '--json'] },
+          },
+        },
+        remediations,
+      };
     }
   } else {
     message = `${takesCount} takes (calibration usable; >100 ideal)`;

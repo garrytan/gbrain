@@ -3,7 +3,7 @@
  * (every slot off), then asks Jev, in ONE request, for each result's rerank
  * score and evidence probability, and prints them next to today's order.
  * Changes nothing: no config write, no receipt, results untouched. Egress is
- * summarized and confirmed first; private pages stay local unless
+ * summarized and asked through requireConsent first (effect egress); private pages stay local unless
  * decide.egress.private=allow.
  */
 import type { BrainEngine } from '../../core/engine.ts';
@@ -15,7 +15,8 @@ import { refusalLine } from '../../core/ai/decide/outcomes.ts';
 import { RELEVANCE_LEVELS } from '../../core/ai/decide/rerank-adapter.ts';
 import { DecideError, type DecideQuestion, type EvidenceItem } from '../../core/ai/decide/types.ts';
 import { capRerankDoc } from '../../core/search/rerank.ts';
-import { promptYesNo } from '../../core/confirm-prompt.ts';
+import { currentExitCode } from '../../core/cli-force-exit.ts';
+import { consentGate } from '../../core/consent-cli.ts';
 
 export async function runProbeQuery(engine: BrainEngine, cfg: DecideConfig, provider: string, query: string, args: string[]): Promise<number> {
   const json = args.includes('--json');
@@ -32,11 +33,18 @@ export async function runProbeQuery(engine: BrainEngine, cfg: DecideConfig, prov
   const state = { query: { text: query, class: 'query' as const } };
   const verdict = await checkEgress(engine, previewCfg, provider, state, questions);
   const withheld = new Set(Object.keys(verdict.refused).map((id) => id.split(':')[1]));
-  console.error(`This sends your query and ${results.length - withheld.size} result snippet(s) to TypeSafe (${provider}) once; ${withheld.size} private result(s) stay local. Nothing is changed or stored.`);
-  if (!args.includes('--yes')) {
-    if (!process.stdin.isTTY) { console.error('Re-run with --yes to confirm (non-interactive).'); return 1; }
-    if (!(await promptYesNo('Send? [y/N] '))) return 1;
-  }
+  const sent = results.length - withheld.size;
+  console.error(`This sends your query and ${sent} result snippet(s) to TypeSafe (${provider}) once; ${withheld.size} private result(s) stay local. Nothing is changed or stored.`);
+  const auth = await consentGate({
+    command: 'decide probe', effects: ['egress'], actor: 'agent',
+    what: `Send the query and ${sent} result snippet(s) to TypeSafe once`,
+    why: 'Previews how System One would rerank and score today\'s results for this query, next to today\'s order.',
+    risk: `The query text and ${sent} result snippet(s) from your brain leave this machine once (${provider}); ${withheld.size} private result(s) stay local. Nothing is changed or stored.`,
+    user_message: `Send your query and ${sent} snippet(s) from your brain to TypeSafe once to preview System One? Nothing is stored or changed.`,
+    argv: ['gbrain', 'decide', 'probe', '--query', query, ...(json ? ['--json'] : [])],
+    args,
+  }, { json, env: { getConfig: (key: string) => engine.getConfig(key) } });
+  if (!auth) return currentExitCode() || 1;
   try {
     const r = await runDecide({ slot: 'evidence', callSite: 'probe', state, questions, provider, deadlineMs: 15_000, lane: 'background' }, { engine, config: previewCfg });
     const rows = results.map((res, i) => {

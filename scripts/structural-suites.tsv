@@ -73,13 +73,16 @@ test/cli.test.ts	BigInt-safe output normalization (#2450)	5	source-surface-helpe
 test/cli.test.ts	CLI structure	2	source-surface-helper
 test/cli.test.ts	CLI version	2	readFileSync
 test/codex-plugin-manifest.test.ts	codex mcp.json	3	readFileSync
-test/codex-plugin-manifest.test.ts	curated tree membership + scanner guard	5	readFileSync
+test/codex-plugin-manifest.test.ts	curated tree membership + scanner guard	6	readFileSync
 test/codex-plugin-manifest.test.ts	generator negative fixtures (a guard that cannot fail is not coverage)	9	readFileSync
 test/codex-plugin-manifest.test.ts	variant ${def.plugin_name} (persona ${personaName})	5	readFileSync
 test/compile-view.test.ts	compileView — determinism	3	readFileSync
 test/compile-view.test.ts	compileView — source isolation + read errors	3	readFileSync
 test/config.test.ts	config source correctness	1	readFileSync
 test/connection-resilience.test.ts	Eng-review D3 — executeRaw has no per-call retry wrapper	3	readFileSync,source-surface-helper
+test/consent.test.ts	--non-interactive maps explicitly to effects	3	readFileSync
+test/consent.test.ts	memorable's relay-only gate (stays hard)	1	readFileSync
+test/consent.test.ts	preapproval config (trusted local CLI only)	6	readFileSync
 test/context-audit-skill.test.ts	#4988 context-audit skill token estimate	2	readFileSync
 test/contextual-retrieval-service-pure.test.ts	inline import contextual synopsis containment	1	readFileSync
 test/conversation-facts-type-allowlist-drift.test.ts	(file-level)	18	readFileSync
@@ -134,6 +137,7 @@ test/embed-concurrency-pool-clamp.test.ts	#5183 embed concurrency never exceeds 
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
 test/env-trust-protected-keys.test.ts	CWD_DOTENV_PROTECTED_KEYS covers every suspicious GBRAIN_* env read in src/	3	readFileSync
+test/error-catalogue.test.ts	error code registry (agent contract v1)	5	readFileSync
 test/eval-brainbench-e2e.slow.test.ts	--llm availability gate	1	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	privacy guard violation branches (negative path)	1	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	render-brainbench-delta.ts (the CI step-summary block)	2	exec-scan
@@ -143,6 +147,7 @@ test/eval-synthesize-concepts-routing.test.ts	dispatch-layer source pins (routin
 test/eval-synthesize-concepts-routing.test.ts	subprocess smoke — end-to-end routing	1	source-surface-helper
 test/eval-takes-bootstrap.test.ts	corpus integrity	4	readFileSync
 test/exit-classification.test.ts	consumer wire-up — helper used by all 3 sites (no inline filters left)	5	doctor-source-helper,readFileSync,source-surface-helper
+test/exit-codes.test.ts	exit code table	5	readFileSync
 test/export-publication.test.ts	(file-level)	6	readFileSync
 test/extract-atoms-drain-errors.test.ts	runExtractAtomsDrainForSource forwards typed per-item failures (#4730)	1	readFileSync
 test/extract-atoms-drain.test.ts	extract-atoms-drain Minion handler retries on provider_failure (issue #3218)	3	readFileSync,source-surface-helper
@@ -330,7 +335,6 @@ test/think-save-source.test.ts	#5426 think --save persists into the think source
 test/timing-safe.test.ts	extraction contract	1	source-surface-helper
 test/title-fuzzy-index.test.ts	findByTitleFuzzy indexed threshold	2	source-surface-helper
 test/transcription-injection.test.ts	transcription — command injection (#245)	2	readFileSync
-test/upgrade-skill-publish-prompt-race.test.ts	gbrain upgrade — skill-publish prompt wiring (#4318 residual)	3	readFileSync
 test/upgrade.serial.test.ts	detectInstallMethod — package-install classification (in-process)	4	readFileSync
 test/upgrade.serial.test.ts	runUpgrade target verification (#4366)	8	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane A — defaults sweep	8	source-surface-helper
@@ -345,7 +349,7 @@ test/v0_37_gap_fill.serial.test.ts	Lane C.3 — env OPENAI_API_KEY merges into l
 test/v0_37_gap_fill.serial.test.ts	Lane D.2 — embed pre-flight catches dim mismatch before worker pool	2	source-surface-helper
 test/v0_37_gap_fill.serial.test.ts	Lane D.3 — sync surfaces dim-mismatch recipe at incremental AND first-sync catches	2	source-surface-helper
 test/v0_37_gap_fill.serial.test.ts	Lane E.4 — loadRecommendationContext is provider-aware	1	readFileSync,source-surface-helper
-test/v0_37_gap_fill.serial.test.ts	reinit-pglite — backup + reinit	7	source-surface-helper
+test/v0_37_gap_fill.serial.test.ts	reinit-pglite — backup + reinit	8	source-surface-helper
 test/worker-supervised-db-probe.test.ts	issue #1801 fix #2 — supervised DB self-defense	5	readFileSync
 test/write-attribution-legacy.test.ts	write attribution inventory	1	readFileSync
 # unknown (detectors present, no attributable suite):

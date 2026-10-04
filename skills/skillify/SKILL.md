@@ -619,6 +619,14 @@ JSON output (`gbrain skillify check --json`) includes the same fields plus
 the per-item detail string, so agents can route on the structured envelope
 without parsing prose.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain skillify check` reports failing checklist items: fix only those items and re-run; any edit must keep existing tests green (no-regression law).
+- `gbrain eval cross-modal` fails or lacks a provider key: report the eval as not run; do not mark the skill proven.
+- `gbrain check-resolvable` reports the new skill unreachable or overlapping: fix its RESOLVER row and re-run. Scaffolding appends the row under a placeholder `## Uncategorized` heading; move it into a fitting category.
+
 ## Anti-Patterns
 
 - ❌ Writing tests before cross-modal eval (locks in mediocrity)

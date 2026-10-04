@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
-import { OperationError, verbError } from '../ops/contract.ts';
+import { opError, OperationError, verbError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, validatePageSlug } from '../ops/context.ts';
 import { isNullLikeEntity } from '../facts/write-single.ts';
 import { isFactWithdrawn, recordFactWithdrawal, type WithdrawalCommit } from '../facts/withdrawal.ts';
@@ -24,6 +25,12 @@ import { retryWriteAdmission } from './admission-retry.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
+function sourceInactive(sourceId: string): OperationError {
+  return opError('source_changed', 'The write source is not active.',
+    `Source ${sourceId} is archived or missing, so nothing was saved. Write to an active source, or ask the user to restore ${sourceId}.`,
+    { fix: readFix('Lists sources with their archived state, read-only.', { argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} } }) });
+}
+
 export function isSemanticMemoryMutation(row: WriteRequest): boolean {
   return row.operation === 'remember' && row.intent?.expected_revision === undefined;
 }
@@ -35,7 +42,8 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
   const requestId = typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = typeof p.source_id === 'string' ? p.source_id : ctx.sourceId ?? 'default';
   if (ctx.remote !== false && sourceId !== (ctx.auth?.sourceId ?? ctx.sourceId ?? 'default')) {
-    throw new OperationError('permission_denied', 'This source is outside the current write grant.');
+    throw opError('permission_denied', 'This source is outside the current write grant.',
+      `This connection may write only to source ${ctx.auth?.sourceId ?? ctx.sourceId ?? 'default'}. Omit source_id to write there, or ask the brain host's operator to grant source ${sourceId}.`);
   }
   await initializeLocalPersistence(ctx);
   const principal = await requestPrincipalForContext(ctx);
@@ -70,7 +78,8 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
   if (snapshot && (snapshot.page.deleted_at || ctx.remote !== false &&
     !await ctx.engine.readPageSnapshot(slug, { sourceId, excludePrivate: authority.excludePrivate }))) {
-    throw new OperationError('page_not_found', 'The target entity is not writable by this caller.');
+    throw opError('page_not_found', 'The target entity is not writable by this caller.',
+      `Entity page ${slug} in source ${sourceId} is deleted or not visible to this caller, so nothing was saved. Remember the fact against a visible entity, or without an entity (it is then filed under memory/unattributed).`);
   }
   if (inferred && !snapshot) throw new InferredTargetRejected('NO_ENTITY');
   if (inferred && (await isFactWithdrawn(ctx.engine, sourceId, inferred.visibility, inferred.fact, slug)
@@ -138,7 +147,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const { p, sourceId, principal, callerIntent, requestId } = sub;
   const [source] = await ctx.engine.executeRaw<RememberSource>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
-  if (!source || source.archived) throw new OperationError('source_changed', 'The write source is not active.');
+  if (!source || source.archived) throw sourceInactive(sourceId);
   const { parseTtlParam } = await import('../ops/facts.ts');
   const validUntil = parseTtlParam(p.ttl);
   const entity = typeof p.entity === 'string' && !isNullLikeEntity(p.entity) ? p.entity.trim() : null;
@@ -181,7 +190,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     // Do not acquire a shared source lock first and upgrade it after admission.
     const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>(
       'SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
-    if (!source || source.archived) throw new OperationError('source_changed', 'The write source is not active.');
+    if (!source || source.archived) throw sourceInactive(sourceId);
     // Another same-ID caller may have completed while we waited for the source.
     const prior = await getWriteRequest(tx, principal, requestId);
     if (prior) {

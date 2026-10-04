@@ -1,7 +1,8 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { isThinClient } from '../config.ts';
-import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { checkedContentRoot, inventorySkillpack, sameInventory, type PackInventory } from './setup-files.ts';
 import { contentSetupKey, installPackagedSharedSkills, setupSharedBrainContent, type SharedContentReceipt } from './setup.ts';
@@ -49,7 +50,10 @@ export async function legacyPublication(ctx: OperationContext): Promise<Migratio
 }
 
 export async function runSharedSkillsMigration(ctx: OperationContext, options: { dryRun?: boolean } = {}): Promise<SharedMigrationReport> {
-  if (ctx.remote !== false) throw new OperationError('permission_denied', 'Shared-skills migration requires the trusted local host.');
+  if (ctx.remote !== false) {
+    throw opError('permission_denied', 'Shared-skills migration requires the trusted local host.',
+      'The shared-skills migration runs only from gbrain apply-migrations on the brain host; a remote connection cannot run it.');
+  }
   const dryRun = options.dryRun ?? ctx.dryRun;
   const report: SharedMigrationReport = { version: 1, brain_id: null, dry_run: dryRun, status: dryRun ? 'planned' : 'complete', sources: [], pending_actions: [], permission_changes: [] };
   if (isThinClient(ctx.config)) {
@@ -59,7 +63,11 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
   }
   const [brain] = await ctx.engine.executeRaw<{ brain_id: string; enabled: boolean; skill_bundles_enabled: boolean }>(
     'SELECT brain_id,enabled,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
-  if (!brain) throw new OperationError('writer_not_initialized', 'Apply the shared-skills schema before migrating content.');
+  if (!brain) {
+    throw opError('writer_not_initialized', 'Apply the shared-skills schema before migrating content.',
+      'This brain has no persistence identity yet, so the shared-skills schema is not applied. Preview the pending migrations with the command in fix, then apply them.',
+      { fix: readFix('Lists the pending schema migrations without applying them.', { argv: ['gbrain', 'apply-migrations', '--dry-run', '--json'] }) });
+  }
   report.brain_id = brain.brain_id;
   const publication = await legacyPublication(ctx);
   const roots = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>('SELECT id,incarnation,local_path FROM sources WHERE NOT archived ORDER BY id');
@@ -71,7 +79,11 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
     if (contentCheckpoint && !dryRun && sourcePolicy.mode === 'content') {
       let content: SharedContentReceipt;
       try { content = JSON.parse(contentCheckpoint); }
-      catch { throw new OperationError('local_conflict', 'A content setup checkpoint is malformed; preserve it for review.'); }
+      catch {
+        throw opError('local_conflict', 'A content setup checkpoint is malformed; preserve it for review.',
+          `The content setup checkpoint for source ${source.id} is not valid JSON. Show it to the user and ask how to proceed; do not delete it.`,
+          { fix: readFix('Prints the saved content setup checkpoint.', { argv: ['gbrain', 'config', 'get', contentSetupKey(source.id, source.incarnation)] }) });
+      }
       if (content.owned_root && content.stage !== 'complete') {
         const resumed = await setupSharedBrainContent({ ...ctx, sourceId: source.id }, { sourceId: source.id });
         if (resumed.root) source.local_path = resumed.root;
@@ -105,16 +117,23 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
     try {
       if (checkpoint) prior = JSON.parse(checkpoint);
       row.root = checkedContentRoot(row.root);
-      if (!existsSync(row.root)) throw new OperationError('local_conflict', 'The registered canonical root is missing.');
+      if (!existsSync(row.root)) {
+        throw opError('local_conflict', 'The registered canonical root is missing.',
+          `Source ${source.id}'s registered root ${row.root} does not exist. Restore it (from its Git remote or backup), then run the migration again.`);
+      }
       row.inventory = inventorySkillpack(row.root);
-      if (prior && (prior.source_incarnation !== source.incarnation || prior.root !== row.root)) throw new OperationError('local_conflict', 'The source root changed since migration inventory.');
+      if (prior && (prior.source_incarnation !== source.incarnation || prior.root !== row.root)) {
+        throw opError('local_conflict', 'The source root changed since migration inventory.',
+          `Source ${source.id} was recreated or moved since its migration inventory was taken; review the checkpoint with the user before continuing the migration.`);
+      }
       if (prior?.inventory && (!row.inventory || !sameInventory(prior.inventory.hashes, row.inventory.hashes))) {
         const original = { ...prior.inventory.hashes }, current = { ...row.inventory?.hashes };
         delete original['skillpack.json']; delete current['skillpack.json'];
         const [sealed] = await ctx.engine.executeRaw<{ manifest_hash: string }>('SELECT manifest_hash FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [source.id, source.incarnation]);
         if (!row.inventory || !sameInventory(original, current) || sealed?.manifest_hash !== row.inventory.hashes['skillpack.json']) {
           row.inventory = prior.inventory;
-          throw new OperationError('local_conflict', 'Files changed since migration inventory; preserve edits and review the checkpoint before retrying.');
+          throw opError('local_conflict', 'Files changed since migration inventory; preserve edits and review the checkpoint before retrying.',
+            `Skill files under ${row.root} changed since the migration inventory. Keep the edits, review them with the user, then run the migration again.`);
         }
       }
     } catch (error) {
@@ -157,7 +176,10 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         continue;
       }
     }
-    if (!row.inventory) throw new OperationError('catalog_unavailable', 'Committed pack inventory could not be verified.');
+    if (!row.inventory) {
+      throw opError('catalog_unavailable', 'Committed pack inventory could not be verified.',
+        `Source ${source.id}'s pack inventory is missing, so its catalog adoption cannot be checked. Inspect the per-source stages with gbrain apply-migrations --migration 0.53.0 --dry-run --json.`);
+    }
     if (!dryRun) {
       try {
         const [pack] = await ctx.engine.executeRaw<{ manifest_hash: string }>('SELECT manifest_hash FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [source.id, source.incarnation]);
@@ -169,7 +191,11 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         if (!complete) {
           const { adoptSharedSkillpack } = await import('./catalog.ts');
           const result = await adoptSharedSkillpack(ctx, source.id, { expected_hashes: row.inventory.hashes });
-          if (result.receipts.some(receipt => (receipt.write_request as { state?: string } | undefined)?.state !== 'committed')) throw new OperationError('publication_pending', 'The catalog adoption is accepted but not fully committed. Retry the durable requests before marking this stage complete.');
+          const open = result.receipts.map(receipt => receipt.write_request as { state?: string; request_id?: string } | undefined).find(request => request?.state !== 'committed');
+          if (open) {
+            throw opError('publication_pending', 'The catalog adoption is accepted but not fully committed. Retry the durable requests before marking this stage complete.',
+              `Inspect request ${open.request_id ?? 'receipts'} first; rerunning the migration resumes the same durable request (same request_id), never a second adoption.`);
+          }
         }
         row.inventory = inventorySkillpack(row.root);
       } catch (error) {

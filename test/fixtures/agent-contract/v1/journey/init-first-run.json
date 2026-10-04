@@ -1,0 +1,137 @@
+{
+  "status": "success",
+  "engine": "pglite",
+  "path": "{{HOME}}/.gbrain/brain.pglite",
+  "pages": 0,
+  "embedding_check": {
+    "ok": true,
+    "skipped": "no_embedding"
+  },
+  "content": {
+    "version": 1,
+    "brain_id": "{{UUID}}",
+    "source_id": "default",
+    "source_incarnation": "{{UUID}}",
+    "root": "{{HOME}}/.gbrain/content/{{UUID}}/default",
+    "repository_kind": "content_directory",
+    "backup": "not_verified",
+    "status": "ready",
+    "stage": "complete",
+    "pending_actions": [
+      "Optional: initialize Git explicitly; configure an off-host backup separately."
+    ],
+    "owned_root": true,
+    "fresh_root_activation": true,
+    "root_identity": "{{ROOT_IDENTITY}}"
+  },
+  "notices": [
+    {
+      "code": "first_run_decisions",
+      "kind": "ask",
+      "why": "The brain is ready. These settings were applied with defaults or need the user's choice; none blocks using the brain.",
+      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip), or tell me what to change.",
+      "decisions": [
+        {
+          "id": "search_mode",
+          "question": "Which search mode should this brain use? Per-query search payload cost at 10K queries/month (Haiku 4.5 / Sonnet 4.6 / Opus 4.7): conservative $40 / $120 / $200, balanced $100 / $300 / $500, tokenmax $200 / $600 / $1,000 per month.",
+          "options": [
+            {
+              "id": "conservative",
+              "label": "conservative (applied)",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "search.mode",
+                "conservative"
+              ]
+            },
+            {
+              "id": "balanced",
+              "label": "balanced",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "search.mode",
+                "balanced"
+              ]
+            },
+            {
+              "id": "tokenmax",
+              "label": "tokenmax",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "search.mode",
+                "tokenmax"
+              ]
+            }
+          ],
+          "default": "conservative",
+          "default_reason": "No expansion-capable API key (Anthropic/OpenAI/Google) — start with a tight result budget; semantic result caching is temporarily disabled."
+        },
+        {
+          "id": "writeback",
+          "question": "Should agents save important facts the user states (preferences, decisions, commitments) automatically, with provenance? Saved facts are readable by agents connected to this brain; transient facts expire. Off any time with `gbrain config set memory.auto_writeback off`.",
+          "options": [
+            {
+              "id": "salient",
+              "label": "Save durable facts the user states directly (recommended)",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "memory.auto_writeback",
+                "salient"
+              ]
+            },
+            {
+              "id": "all",
+              "label": "Every direct factual statement (more low-value facts, more extraction spend)",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "memory.auto_writeback",
+                "all"
+              ]
+            },
+            {
+              "id": "off",
+              "label": "Save only what the user explicitly asks to remember (records the answer)",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "memory.auto_writeback",
+                "off"
+              ]
+            }
+          ],
+          "default": "salient",
+          "default_reason": "Recommended for a personal brain: the brain learns what the user tells their agents. It is opt-in, so it applies only when the user accepts the defaults or picks it."
+        },
+        {
+          "id": "harness_wiring",
+          "question": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+          "options": [
+            {
+              "id": "wire",
+              "label": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            },
+            {
+              "id": "skip",
+              "label": "Do not register gbrain with an agent harness now."
+            }
+          ],
+          "default": "skip",
+          "default_reason": "No agent harness was detected."
+        }
+      ],
+      "contract_version": 1
+    }
+  ],
+  "contract_version": 1
+}

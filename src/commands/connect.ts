@@ -50,6 +50,7 @@ import {
   writeOpencodeMcpEntry,
 } from '../core/bootstrap/opencode-json.ts';
 import { promptLine } from '../core/cli-util.ts';
+import { consentGateOrExit } from '../core/consent-cli.ts';
 import {
   NAME_RE,
   OAUTH_SECRET_NOTE,
@@ -174,7 +175,8 @@ Flags:
   --install            Run the agent's MCP-add command, then smoke-test the token
                        (claude-code + codex + opencode; opencode installs via a direct
                        config write — no binary needed, token stays out of the file)
-  --yes                Skip the install confirmation prompt
+  --yes                The user's approval for --install (writes a credential-
+                       bearing MCP entry); without it a non-interactive run exits 3
   --force              On --install, replace an existing server of the same name
   --json               Emit machine-readable JSON (secret redacted)
   --show-token         With --json, include the literal token/secret (avoid in logs)
@@ -613,6 +615,39 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
+/**
+ * A4 consent for `--install`: it writes a credential-bearing MCP entry into
+ * the agent's config (persistent_install) and sends the token to the remote
+ * host (credentials). `--yes` or a TTY prompt (deps seams) authorizes it;
+ * otherwise exit 3 with the consent payload. The approved argv never carries
+ * the token value: it names GBRAIN_REMOTE_TOKEN instead.
+ */
+async function installConsent(args: string[], f: ParsedFlags, url: string, destination: string, deps: ConnectDeps): Promise<void> {
+  const argv = ['gbrain', 'connect'];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--yes' || a === '-y') continue;
+    if (a === '--token') { i++; continue; }
+    if (a.startsWith('--token=')) continue;
+    argv.push(a);
+  }
+  await consentGateOrExit({
+    command: 'connect --install',
+    effects: ['credentials', 'persistent_install'],
+    actor: 'agent',
+    what: `Register the MCP server '${f.name}' -> ${url} in ${destination}`,
+    why: 'Wires this agent to the remote brain so its memory tools are available in new sessions.',
+    risk: `Writes a credential-bearing MCP entry into ${destination} and sends the token to ${url} for a smoke test. `
+      + `Undo: remove the '${f.name}' MCP server from that agent. The approved command reads the token from GBRAIN_REMOTE_TOKEN (or the same --token).`,
+    user_message: `Add the brain at ${url} to ${destination} as MCP server '${f.name}' (it stores an access token there)?`,
+    argv,
+    args,
+  }, {
+    json: f.json,
+    env: { interactive: deps.isTTY(), readLine: async ({ prompt }) => ({ kind: 'line', text: (await deps.promptYesNo(prompt.replace(/ \[y\/N\] $/, ''))) ? 'y' : 'n' }) },
+  });
+}
+
 /** Resolve OAuth creds from explicit flags or by registering a client on the host. */
 function resolveOAuthCreds(f: ParsedFlags, url: string, deps: ConnectDeps): OAuthCreds {
   const issuer = issuerFromMcpUrl(url);
@@ -704,13 +739,7 @@ export async function runConnect(args: string[], deps: ConnectDeps = defaultDeps
     // --force maps to the writer's allowReplaceOtherSource so an OURS entry
     // at an old url (a rotated serve) is replaceable, mirroring the exec
     // lanes' documented --force semantics.
-    if (!f.yes) {
-      if (!deps.isTTY()) {
-        fail('--install in a non-interactive shell requires --yes (refusing to register a credential-bearing MCP server without confirmation).');
-      }
-      const ok = await deps.promptYesNo(`Add MCP entry '${f.name}' -> ${url} to the opencode user-global config?`);
-      if (!ok) fail('Aborted.');
-    }
+    await installConsent(args, f, url, 'the opencode user-global config', deps);
     let w: { configPath: string; replacedPrior: boolean };
     try {
       w = await deps.writeOpencodeRemoteEntry(f.name, url, { allowReplaceOtherSource: f.force });
@@ -749,16 +778,7 @@ export async function runConnect(args: string[], deps: ConnectDeps = defaultDeps
     fail(`An MCP server named '${f.name}' already exists in ${spec.label}. Run '${binary} mcp remove ${f.name}' first, pass --name <other>, or --force to replace it.`);
   }
 
-  if (!f.yes) {
-    if (!deps.isTTY()) {
-      // Non-interactive --install registers a credential-bearing MCP server and
-      // fires the token at a remote host — require an explicit --yes rather than
-      // silently proceeding when there's no TTY to confirm at.
-      fail('--install in a non-interactive shell requires --yes (refusing to register a credential-bearing MCP server without confirmation).');
-    }
-    const ok = await deps.promptYesNo(`Add MCP server '${f.name}' -> ${url} to ${spec.label}?`);
-    if (!ok) fail('Aborted.');
-  }
+  await installConsent(args, f, url, spec.label, deps);
 
   let removedExisting = false;
   if (exists && f.force) {

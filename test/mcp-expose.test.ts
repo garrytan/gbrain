@@ -285,6 +285,20 @@ describe('plan + consent', () => {
     const doc = jsonDoc(f);
     expect(doc).toMatchObject({ status: 'pending', reason: 'confirmation_required' });
     expect(doc.next_actions).toContain('gbrain mcp expose --yes');
+    // The consent payload's agent fields ride the legacy document (exit 2 stays under contract v1).
+    expect(doc).toMatchObject({
+      code: 'confirmation_required', effects: ['persistent_install', 'egress'], actor: 'agent', contract_version: 1,
+      fix: { argv: ['gbrain', 'mcp', 'expose', '--yes'], next: 'ask_user' },
+    });
+    expect(doc.user_message).toContain('publish your gbrain MCP server');
+    expect(doc.error).toBeUndefined();
+    const human = fakeTailnet();
+    expect(await runMcpExpose([], human.deps)).toBe(2);
+    const out = human.stdout.join('\n');
+    expect(out).toContain('[AGENT]');
+    expect(out).toContain('next: ask_user');
+    expect(out).toContain('if_yes: gbrain mcp expose --yes');
+    expect(out).not.toMatch(/re-?run[^.\n]{0,40}--yes/i);
     expect(existsSync(f.serveDir)).toBe(false);
     expect(joinedCalls(f).some(c => c.includes('--bg'))).toBe(false);
   });
@@ -294,7 +308,7 @@ describe('plan + consent', () => {
     f.deps.prompt = async () => 'n';
     expect(await runMcpExpose(['--json'], f.deps)).toBe(2);
     const doc = jsonDoc(f);
-    expect(doc).toMatchObject({ status: 'pending', reason: 'declined', message: 'Nothing changed. Re-run with --yes to confirm.' });
+    expect(doc).toMatchObject({ status: 'pending', reason: 'declined', message: 'Nothing changed: the confirmation was declined.', code: 'confirmation_required' });
     expect(checkOf(doc, 'consent')?.status).toBe('pending');
     expect(existsSync(f.serveDir)).toBe(false);
     expect(joinedCalls(f).some(c => c.includes('--bg'))).toBe(false);
@@ -999,7 +1013,7 @@ describe('--remove', () => {
     f.deps.prompt = async () => 'no';
     expect(await runMcpExpose(['--remove', '--json'], f.deps)).toBe(2);
     const doc = jsonDoc(f);
-    expect(doc).toMatchObject({ status: 'pending', reason: 'declined', message: 'Nothing changed. Re-run with --yes to confirm.' });
+    expect(doc).toMatchObject({ status: 'pending', reason: 'declined', message: 'Nothing changed: the confirmation was declined.', code: 'confirmation_required' });
     expect(checkOf(doc, 'consent')?.status).toBe('pending');
     expect(existsSync(receiptPath(f.serveDir))).toBe(true);
     expect(joinedCalls(f).some(c => c.includes('disable') || c.includes('off'))).toBe(false);
@@ -1793,7 +1807,7 @@ describe('tailscale serve status fails closed', () => {
     expect(existsSync(receiptPath(f.serveDir))).toBe(true);
     expect(existsSync(wrapperPath(f.serveDir))).toBe(true);
     expect((await inner([TS, 'serve', 'status', '--json'])).stdout).toContain('127.0.0.1:3131');
-    expect(f.stderr.join('\n')).toContain('re-run `gbrain mcp expose --remove --yes`');
+    expect(f.stderr.join('\n')).toContain('run the removal again (the user already approved it: `gbrain mcp expose --remove --yes`)');
     // Tailscale is back → the same command completes the removal
     broken = false;
     f.calls.length = 0;

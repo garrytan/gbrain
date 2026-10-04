@@ -1,0 +1,2 @@
+# shrink-only baseline for scripts/check-agent-contract.ts rule verify-not-read-only: path<TAB>count
+src/core/budget/no-pricing.ts	1

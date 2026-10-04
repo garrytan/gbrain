@@ -67,3 +67,60 @@ describe('catalogue refusals on the wire', () => {
       hint: 'gbrain jobs authorize-legacy --select "status=waiting"', docs_url: 'docs/guides/repair.md#legacy-job-selection-invalid' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Agent operator contract v1 (A2): the registry is complete and every anchor
+// resolves. The AST walk is the scanner's own collector, so the CI guard and
+// this test cannot disagree about what counts as a thrown code.
+// ---------------------------------------------------------------------------
+
+describe('error code registry (agent contract v1)', () => {
+  test('every literal code thrown in src/ is registered', async () => {
+    const ts = (await import('typescript')).default;
+    const { collectThrownCodes } = await import('../scripts/check-agent-contract.ts');
+    const { CODES } = await import('../src/core/error-catalogue.ts');
+    const { readdirSync, statSync } = await import('node:fs');
+    const walk = (d: string): string[] => readdirSync(d).flatMap(e => {
+      const f = join(d, e);
+      return statSync(f).isDirectory() ? walk(f) : e.endsWith('.ts') && !e.endsWith('.generated.ts') ? [f] : [];
+    });
+    const missing: string[] = [];
+    let seen = 0;
+    for (const file of walk(join(ROOT, 'src'))) {
+      const sf = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+      for (const { code, line } of collectThrownCodes(sf)) {
+        seen++;
+        if (!(code in CODES)) missing.push(`${file.slice(ROOT.length + 1)}:${line} ${code}`);
+      }
+    }
+    expect(seen).toBeGreaterThan(1000);
+    expect(missing).toEqual([]);
+  });
+
+  test('the collector sees conditional and StructuredError literals', async () => {
+    const ts = (await import('typescript')).default;
+    const { collectThrownCodes } = await import('../scripts/check-agent-contract.ts');
+    const sf = ts.createSourceFile('x.ts', `new OperationError(a ? 'one' : 'two', 'm'); errorFor({ class: 'C', code: 'three', message: 'm' }); opError('four', 'm', 's');`, ts.ScriptTarget.Latest, true);
+    expect(collectThrownCodes(sf).map(c => c.code)).toEqual(['one', 'two', 'three', 'four']);
+  });
+
+  test('every registry docs anchor resolves', async () => {
+    const { CODES, codeEntry } = await import('../src/core/error-catalogue.ts');
+    const unresolved: string[] = [];
+    for (const code of Object.keys(CODES)) {
+      const [path, anchor] = codeEntry(code)!.docs.split('#');
+      if (!anchorsOf(path!).has(anchor!)) unresolved.push(`${code} → ${path}#${anchor}`);
+    }
+    expect(unresolved).toEqual([]);
+  });
+
+  test('codes are snake_case with no transport prefix', async () => {
+    const { CODES } = await import('../src/core/error-catalogue.ts');
+    expect(Object.keys(CODES).filter(c => !/^[a-z][a-z0-9_]*$/.test(c) || /^(mcp|http|cli|stdio)_/.test(c))).toEqual([]);
+  });
+
+  test('docs/guides/error-codes.md is fresh (bun run build:error-codes)', async () => {
+    const { renderErrorCodesMarkdown } = await import('../src/core/error-docs.ts');
+    expect(readFileSync(join(ROOT, 'docs/guides/error-codes.md'), 'utf8')).toBe(renderErrorCodesMarkdown());
+  });
+});

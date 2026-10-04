@@ -47,6 +47,7 @@ export const SNAPSHOT_DYNAMIC_IMPORTS_NOT_HASHED: Readonly<Record<string, string
   'think/index.ts': 'verbs.ts request-time verb handlers',
   'embedding.ts': 'verbs.ts request-time verb handlers',
   'model-pricing.ts': 'verbs.ts request-time verb handlers',
+  'interop-notices.ts': 'verbs.ts request-time verb handlers (agent contract notices)',
 };
 
 const STATIC_SPECIFIER =

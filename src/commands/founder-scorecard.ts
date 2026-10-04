@@ -207,6 +207,7 @@ Examples:
 `;
 
 function parseArgs(args: string[]): RunOpts | { help: true } | { error: string } {
+  if (args[0] === '--help' || args[0] === '-h') return { help: true };
   if (args[0] !== 'scorecard') {
     return { error: `Unknown founder subcommand: ${args[0] ?? '(none)'}. Did you mean "founder scorecard"?` };
   }

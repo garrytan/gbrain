@@ -101,7 +101,8 @@ describe('dimsProviderOptions — OpenAI native path', () => {
       expect(msg).toContain('3072');
       // Paste-ready fix appears in the `fix` property of AIConfigError.
       const fix = (err as AIConfigError).fix ?? '';
-      expect(fix).toContain('gbrain config set embedding_dimensions');
+      expect(fix).toContain('gbrain migrate embeddings --to openai:text-embedding-3-large --dim 1024 --dry-run');
+      expect(fix).not.toContain('config set embedding_dimensions');
     }
   });
 

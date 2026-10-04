@@ -8,11 +8,14 @@
     ],
     "exit_code": 0,
     "report": {
-      "brain_checks_score": 85,
+      "brain_checks_score": 100,
+      "capped_by": [
+        "embeddings_disabled"
+      ],
       "category_scores": {
-        "brain": 85,
+        "brain": 100,
         "meta": 100,
-        "ops": 95,
+        "ops": 100,
         "skill": 95
       },
       "checks": [
@@ -141,6 +144,7 @@
               "webhook-transforms"
             ]
           },
+          "fix_unavailable_reason": "unstructured",
           "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
           "name": "skill_currency",
           "status": "warn"
@@ -176,7 +180,7 @@
             "mode": "off",
             "mode_valid": true,
             "near_duplicates_shadow_7d": 0,
-            "nudge_shown": true,
+            "nudge_shown": false,
             "transient_ttl": "3d",
             "ttl_valid": true,
             "visibility_note": "world = readable by agents authorized on THIS brain, not the public internet"
@@ -202,6 +206,47 @@
           },
           "message": "No dream key died 3+ times in 24h",
           "name": "dream_paid_loop",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
+            "pending_fresh_install": [
+              "0.11.0",
+              "0.14.0",
+              "0.22.4",
+              "0.28.0",
+              "0.53.0"
+            ]
+          },
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "apply-migrations",
+              "--yes",
+              "--no-autopilot-install"
+            ],
+            "command": "gbrain apply-migrations --yes --no-autopilot-install",
+            "consent": [],
+            "next": "run",
+            "requires_exclusive": true,
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "minions_migration",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Runs the setup migrations gbrain init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
+          },
+          "message": "5 setup migration(s) not run yet on this new brain (pending_fresh_install: 0.11.0, 0.14.0, 0.22.4, 0.28.0, 0.53.0). Expected after gbrain init, not a failed upgrade.",
+          "name": "minions_migration",
+          "severity": "info",
           "status": "ok"
         },
         {
@@ -313,6 +358,42 @@
           },
           "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
           "name": "embedding_key_source",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "reason": "no_harness_detected"
+          },
+          "fix": {
+            "actor": "user",
+            "consent": [
+              "persistent_install"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+            "next": "report",
+            "requires_exclusive": false,
+            "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+            "why": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+          },
+          "message": "No agent harness was detected. Wire one when the user picks an agent app.",
+          "name": "harness_wiring",
+          "readiness_state": "missing",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
+            "consent_refused": 0,
+            "derived_cap_exhausted": 0,
+            "events": 0,
+            "internal_errors": 0,
+            "json_document_missing": 0,
+            "window_days": 7
+          },
+          "message": "No agent dead ends in the last 7 days (0 non-success event(s) logged).",
+          "name": "agent_contract",
           "status": "ok"
         },
         {
@@ -440,15 +521,97 @@
         },
         {
           "category": "brain",
+          "fix": {
+            "actor": "user",
+            "argv": [
+              "gbrain",
+              "init",
+              "--force",
+              "--embedding-model",
+              "voyage:voyage-4",
+              "--embedding-dimensions",
+              "1024"
+            ],
+            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+            "consent": [
+              "credentials",
+              "paid"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+            "inputs": [
+              {
+                "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                "name": "VOYAGE_API_KEY"
+              }
+            ],
+            "next": "tell_user_to_run",
+            "requires_exclusive": true,
+            "user_message": "Semantic search needs an embedding API key. Voyage AI works with this brain; if you add a key (VOYAGE_API_KEY), I can turn it on. Embedding costs a little per page; your notes and facts stay as they are.",
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "embeddings",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for this Postgres brain. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+          },
           "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
           "name": "embeddings",
+          "readiness_state": "disabled_by_choice",
+          "severity": "info",
           "status": "ok"
         },
         {
           "category": "brain",
-          "message": "Embedding provider probe failed: This brain has no explicit embedding model. Its stored vectors must not be interpreted using a new default. Run gbrain migrate embeddings --status and preview an explicit migration with --dry-run.",
+          "fix": {
+            "actor": "user",
+            "argv": [
+              "gbrain",
+              "init",
+              "--force",
+              "--embedding-model",
+              "voyage:voyage-4",
+              "--embedding-dimensions",
+              "1024"
+            ],
+            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+            "consent": [
+              "credentials",
+              "paid"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+            "inputs": [
+              {
+                "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                "name": "VOYAGE_API_KEY"
+              }
+            ],
+            "next": "tell_user_to_run",
+            "requires_exclusive": true,
+            "user_message": "Semantic search needs an embedding API key. Voyage AI works with this brain; if you add a key (VOYAGE_API_KEY), I can turn it on. Embedding costs a little per page; your notes and facts stay as they are.",
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "embeddings",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for this Postgres brain. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+          },
+          "message": "Not probed: embeddings are disabled on this brain by choice (keyword search keeps working).",
           "name": "embedding_provider",
-          "status": "warn"
+          "readiness_state": "disabled_by_choice",
+          "severity": "info",
+          "status": "ok"
         },
         {
           "category": "brain",
@@ -1047,9 +1210,47 @@
               "unpushed": 0
             }
           },
-          "message": "1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). Current recovery is not verified for all repositories. Run `gbrain backup status` for fix commands (`gbrain bootstrap repo` / `git remote add origin <url>` / `gbrain sources harden <id>`).",
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "export",
+              "--source",
+              "default",
+              "--dir",
+              "<BACKUP_DIR>/default",
+              "--brain",
+              "host"
+            ],
+            "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
+            "consent": [],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
+            "inputs": [
+              {
+                "how": "Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).",
+                "name": "BACKUP_DIR"
+              }
+            ],
+            "next": "run",
+            "requires_exclusive": false,
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "backup_coverage",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
+          },
+          "message": "Not urgent yet: the brain holds 0 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `gbrain backup status` for each asset's fix command.",
           "name": "backup_coverage",
-          "status": "warn"
+          "readiness_state": "degraded",
+          "severity": "info",
+          "status": "ok"
         },
         {
           "category": "ops",
@@ -1065,9 +1266,11 @@
         },
         {
           "category": "brain",
-          "message": "Source 'default' has never completed a full cycle. Run `gbrain dream --source <id>` to cycle a source, or start `gbrain autopilot`.",
+          "message": "No full cycle yet for 'default': it holds no pages or only pages from the last 24h, so there is nothing to consolidate yet.",
           "name": "cycle_freshness",
-          "status": "warn"
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
         },
         {
           "category": "brain",
@@ -1143,6 +1346,8 @@
           },
           "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
           "name": "fact_take_vectors",
+          "readiness_state": "disabled_by_choice",
+          "severity": "info",
           "status": "ok"
         },
         {
@@ -1333,8 +1538,49 @@
         },
         {
           "category": "brain",
-          "message": "No stale chunks",
+          "fix": {
+            "actor": "user",
+            "argv": [
+              "gbrain",
+              "init",
+              "--force",
+              "--embedding-model",
+              "voyage:voyage-4",
+              "--embedding-dimensions",
+              "1024"
+            ],
+            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+            "consent": [
+              "credentials",
+              "paid"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/search-modes.md",
+            "inputs": [
+              {
+                "how": "Ask the user for an API key for Voyage AI; store it with `gbrain config set voyage_api_key <key>` (every gbrain process reads it), or export VOYAGE_API_KEY in the environment of every gbrain process. Then run the command.",
+                "name": "VOYAGE_API_KEY"
+              }
+            ],
+            "next": "tell_user_to_run",
+            "requires_exclusive": true,
+            "user_message": "Semantic search needs an embedding API key. Voyage AI works with this brain; if you add a key (VOYAGE_API_KEY), I can turn it on. Embedding costs a little per page; your notes and facts stay as they are.",
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "embeddings",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for this Postgres brain. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
+          },
+          "message": "Not applicable: embeddings are disabled on this brain by choice, so chunks have no vectors by design (keyword search keeps working).",
           "name": "embed_staleness",
+          "readiness_state": "disabled_by_choice",
+          "severity": "info",
           "status": "ok"
         },
         {
@@ -1351,9 +1597,42 @@
         },
         {
           "category": "brain",
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "config",
+              "set",
+              "takes.bootstrap_enabled",
+              "true",
+              "--brain",
+              "host"
+            ],
+            "command": "gbrain config set takes.bootstrap_enabled true --brain host",
+            "consent": [
+              "paid"
+            ],
+            "next": "ask_user",
+            "requires_exclusive": false,
+            "user_message": "gbrain can extract typed claims (\"takes\") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?",
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "takes_count",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Takes (typed claims) are opt-in. Enabling the bootstrap lets maintenance extract them from existing pages with a chat model (about $5 on a typical brain), which feeds calibration."
+          },
           "message": "0 takes (takes.bootstrap_enabled is false; opt in to enable)",
           "name": "takes_count",
-          "status": "warn"
+          "readiness_state": "disabled_by_choice",
+          "severity": "info",
+          "status": "ok"
         },
         {
           "category": "meta",
@@ -1376,37 +1655,13 @@
       ],
       "db_url_source": null,
       "engine": "postgres",
-      "health_score": 75,
+      "health_score": 95,
       "schema_version": 2,
       "status": "warnings",
       "top_issues": [
         {
-          "fix": "1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). Current recovery is not verified for all repositories. Run `gbrain backup status` for fix commands (`gbrain bootstrap repo` / `git remote add origin <url>` / `gbrain sources harden <id>`).",
-          "name": "backup_coverage",
-          "status": "warn",
-          "tier": "symptom"
-        },
-        {
-          "fix": "Source 'default' has never completed a full cycle. Run `gbrain dream --source <id>` to cycle a source, or start `gbrain autopilot`.",
-          "name": "cycle_freshness",
-          "status": "warn",
-          "tier": "symptom"
-        },
-        {
-          "fix": "Embedding provider probe failed: This brain has no explicit embedding model. Its stored vectors must not be interpreted using a new default. Run gbrain migrate embeddings --status and preview an explicit migration with --dry-run.",
-          "name": "embedding_provider",
-          "status": "warn",
-          "tier": "symptom"
-        },
-        {
           "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
           "name": "skill_currency",
-          "status": "warn",
-          "tier": "symptom"
-        },
-        {
-          "fix": "0 takes (takes.bootstrap_enabled is false; opt in to enable)",
-          "name": "takes_count",
           "status": "warn",
           "tier": "symptom"
         }

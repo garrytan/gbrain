@@ -128,6 +128,7 @@ function finalizeResult(
 
 export const v0_21_0: Migration = {
   version: '0.21.0',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'Code Cathedral II — chunk-grain FTS, qualified symbols, structural edges, 165-language lazy-load',
     description:

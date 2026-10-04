@@ -126,6 +126,12 @@ export interface TableRecordShape {
   name: string;
   /** Literal specifier of `load: () => import('<literal>')`, or null when load is not that shape. */
   loadSpecifier: string | null;
+  /** D3: `help` absent → undefined; `() => import('<literal>')` → the literal; any other shape → null. */
+  helpSpecifier?: string | null;
+  /** The record's `phase` string literal (A1 routing pin: pre-connect commands open no brain through the terminator). */
+  phase?: string;
+  /** A1: `routes_source: true` on the record. */
+  routesSource?: true;
 }
 
 /** Every record of CLI_COMMANDS in table order, read by AST (the EO13 literal-load contract). */
@@ -143,13 +149,14 @@ export function readTableRecords(root: string): TableRecordShape[] {
     const prop = (key: string) => el.properties.find((p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === key);
     const name = prop('name')?.initializer;
     if (!name || !ts.isStringLiteral(name)) throw new Error('cli-pipeline: CLI_COMMANDS record without a string-literal name');
-    const load = prop('load')?.initializer;
-    let loadSpecifier: string | null = null;
-    if (load && ts.isArrowFunction(load) && load.parameters.length === 0 && ts.isCallExpression(load.body)
-      && load.body.expression.kind === ts.SyntaxKind.ImportKeyword && load.body.arguments.length === 1
-      && ts.isStringLiteral(load.body.arguments[0]!)) {
-      loadSpecifier = load.body.arguments[0].text;
-    }
-    return { name: name.text, loadSpecifier };
+    const literalImport = (init: ts.Expression | undefined): string | null =>
+      init && ts.isArrowFunction(init) && init.parameters.length === 0 && ts.isCallExpression(init.body)
+        && init.body.expression.kind === ts.SyntaxKind.ImportKeyword && init.body.arguments.length === 1
+        && ts.isStringLiteral(init.body.arguments[0]!) ? init.body.arguments[0].text : null;
+    const help = prop('help');
+    const phase = prop('phase')?.initializer;
+    const routesSource = prop('routes_source')?.initializer.kind === ts.SyntaxKind.TrueKeyword;
+    return { name: name.text, loadSpecifier: literalImport(prop('load')?.initializer), ...(help ? { helpSpecifier: literalImport(help.initializer) } : {}),
+      ...(phase && ts.isStringLiteral(phase) ? { phase: phase.text } : {}), ...(routesSource ? { routesSource: true as const } : {}) };
   });
 }

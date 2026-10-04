@@ -116,6 +116,14 @@ Three example recipes ship with GBrain (see `~/.gbrain/recipes/`):
 2. **expense-tracker** — extract amounts, recipients, platforms from receipt emails (subscriptions, services, recurring charges)
 3. **company-updates** — extract revenue, users, key metrics from portfolio company update emails
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `file_upload` is refused for a path outside the allowed root (remote callers are confined): ask the user to upload from the brain host or pass the content inline.
+- `put_page` / `add_timeline_entry` returns `revision_conflict` or `write_pending`: re-read and merge for the first; poll `gbrain write-request <request_id>` for the second.
+- An extraction source rate-limits (`rate_limited`): back off for the stated delay and keep the cursor; log the gap instead of guessing the missing rows.
+
 ## Anti-Patterns
 
 - Trusting LLM working memory for amounts after batch processing (use extraction integrity rule)

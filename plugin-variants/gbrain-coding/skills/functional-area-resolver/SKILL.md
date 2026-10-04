@@ -316,6 +316,13 @@ The full behavior contract is documented in the body sections above; this sectio
 
 The compressed routing file follows the area-entry template documented in Step 4 ("Build the area entry format"). Each entry: `- **{Area Name}**: {trigger phrases} -> \`{dispatcher-skill}\` (dispatcher for: {sub-skill list})`. The dispatcher arrow may be either ASCII `->` (default in this template) or Unicode `→` (used in some production deployments); the gbrain harness accepts both.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- Either verification gate fails (structural or LLM A/B): refuse to compress and report the failing gate; never ship a smaller resolver that routes worse.
+- The A/B harness lacks a provider key or hits a cost cap: say the LLM gate did not run and keep the original resolver.
+
 ## Anti-Patterns
 
 - **Resolver-of-resolvers with pipe tables.** Tested and failed (see eval

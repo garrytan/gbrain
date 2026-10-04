@@ -219,6 +219,14 @@ title: "My "Quoted" Title"
 - **Single quotes** are the default safe choice
 - **Double quotes** only when the value itself contains apostrophes
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain frontmatter validate` exits 1: errors were found (that is the result, not a crash). Parse `errors_by_code` and report counts per source.
+- Before a fix pass, state how many files will change and get the user's agreement; the fix writes `.bak` backups, and YAML_PARSE errors are not always auto-repairable.
+- `gbrain sync` afterwards still refuses a page (`invalid_params`, frontmatter slug conflict): fix the `slug:` line the message names, commit, and retry the sync.
+
 ## Anti-Patterns
 
 **Don't auto-fix `MISSING_OPEN` or `EMPTY_FRONTMATTER` without user input.** These usually mean a human author started a page and didn't finish — silently inserting `---` markers around an unfinished draft is wrong.

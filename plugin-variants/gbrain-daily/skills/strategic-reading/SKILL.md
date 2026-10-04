@@ -183,6 +183,13 @@ The full behavior contract is documented in the body sections above; this sectio
 
 The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent). The literal section header here exists for the conformance test (`test/skills-conformance.test.ts`).
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- The source text is unavailable or truncated: say which parts were read; do not extend the playbook beyond what was read.
+- Saving the playbook returns `revision_conflict` or `write_pending` (exit 10): re-read and merge, or poll `gbrain write-request <request_id>`.
+
 ## Anti-Patterns
 
 The full anti-pattern list is in the body sections above; this header exists for the conformance test if the body uses a different casing.

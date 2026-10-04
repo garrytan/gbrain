@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **Starter** marks membership in the ~39-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 137 tools across 23 areas. **Starter** marks membership in the ~39-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -15,6 +15,7 @@ Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **S
 | `get_status_snapshot` | Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. | admin |  |  |
 | `get_usage` | Aggregate chat usage + cost from the chat_usage_log ledger (per-model and per-phase token counts, cache reads/writes, USD estimates) with explicit coverage fields. | admin |  |  |
 | `get_write_attribution` | Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. | admin |  |  |
+| `mute_notice` | Stop a coaching or info notice from appearing for this client (or unmute it with muted: false). | write |  |  |
 | `quarantine_list` | List quarantined (hidden) and optionally content-flagged pages by scanning page frontmatter, newest-updated first. | admin |  |  |
 | `run_doctor` | Run brain health checks and return a structured DoctorReport (thin-client doctor surface). | admin |  |  |
 | `run_onboard` | Probe brain health + optionally submit onboard remediations. | admin |  |  |
@@ -72,8 +73,8 @@ Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `get_ingest_log` | Get recent ingestion log entries | read | yes |  |
-| `log_ingest` | Log an ingestion event | write |  |  |
+| `get_ingest_log` | List recent ingestion events (what was imported, from where, which pages changed). | read | yes |  |
+| `log_ingest` | Record one ingestion event (source type, reference, pages updated, summary) in the brain's ingest log. | write |  |  |
 
 ## insights
 
@@ -82,7 +83,7 @@ Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **S
 | `find_anomalies` | Returns statistical anomalies in recent page activity, grouped by cohort (tag or type). | read | yes |  |
 | `find_contradictions` | Stored contradiction reports are temporarily available only to trusted local callers without a source filter. | read |  |  |
 | `find_experts` | Answers 'who in my brain knows about <topic>'. | read |  |  |
-| `find_trajectory` | v0.35.4 — return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). | read |  |  |
+| `find_trajectory` | Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). | read |  |  |
 | `get_calibration_profile` | Read the active calibration profile for a holder. | read |  |  |
 | `get_recent_salience` | Returns readable pages recently touched and ranked by activity salience and recency. | read | yes |  |
 | `volunteer_context` | Push-based context: volunteer brain pages relevant to a rolling conversation window WITHOUT being asked. | read |  |  |
@@ -96,12 +97,12 @@ Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **S
 | `get_job` | Get job status and details by ID. | admin |  |  |
 | `get_job_progress` | Get structured progress for a running job. | admin |  |  |
 | `get_job_stats` | Job queue statistics. | admin |  |  |
-| `list_jobs` | List jobs with optional filters. | admin |  |  |
-| `pause_job` | Pause a waiting, active, or delayed job | admin |  |  |
+| `list_jobs` | List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. | admin |  |  |
+| `pause_job` | Pause a waiting, active or delayed background job. | admin |  |  |
 | `replay_job` | Replay a completed/failed/dead job, optionally with modified data | admin |  |  |
-| `resume_job` | Resume a paused job back to waiting | admin |  |  |
-| `retry_job` | Re-queue a failed or dead job for retry | admin |  |  |
-| `send_job_message` | Send a sidechannel message to a running job's inbox | admin |  |  |
+| `resume_job` | Resume a paused background job (back to waiting). | admin |  |  |
+| `retry_job` | Re-queue a failed or dead background job. | admin |  |  |
+| `send_job_message` | Send a sidechannel message to a running job's inbox (for jobs that read steering messages). | admin |  |  |
 | `submit_agent` | Submit an LLM agent job that the worker dispatches via the gateway-native tool loop. | agent | yes |  |
 | `submit_job` | Submit a background job. | admin |  |  |
 
@@ -109,12 +110,12 @@ Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `add_link` | Create link between pages | write |  |  |
+| `add_link` | Create a typed link (edge) from one page to another in the same source. | write |  |  |
 | `find_orphans` | Find disconnected pages. | read |  |  |
-| `get_backlinks` | List incoming links to a page | read | yes |  |
-| `get_links` | List outgoing links from a page | read |  |  |
+| `get_backlinks` | List a page's incoming links (who points at it). | read | yes |  |
+| `get_links` | List a page's outgoing links (typed edges to other pages). | read |  |  |
 | `list_link_sources` | List distinct link_source provenances in the brain with edge counts (e.g. | read | yes |  |
-| `remove_link` | Remove link between pages | write |  |  |
+| `remove_link` | Remove a link between two pages (optionally only one link_type or link_source). | write |  |  |
 | `traverse_graph` | Traverse link graph from a page. | read | yes |  |
 
 ## loops
@@ -130,7 +131,7 @@ Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `extract_facts` | v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. | write |  |  |
+| `extract_facts` | Extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. | write |  |  |
 | `forget_fact` | Forget a fact by recording a durable withdrawal in its source and visibility. | write |  |  |
 
 ## memory-verbs
@@ -163,7 +164,7 @@ Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **S
 | `delete_page` | Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). | write |  |  |
 | `edit_page` | Change part of an existing page without resending it: prefer this over put_page for small changes to large pages. | write | yes |  |
 | `fetch` | Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
-| `get_chunks` | Get content chunks for a page | read |  |  |
+| `get_chunks` | Return a page's indexed content chunks (the units search ranks). | read |  |  |
 | `get_page` | Read a page by slug (supports optional fuzzy matching). | read | yes |  |
 | `get_raw_data` | Retrieve raw data for a page. | read |  |  |
 | `get_versions` | Page version history. | read |  |  |
@@ -171,24 +172,24 @@ Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **S
 | `list_pages` | List pages with optional filters. | read | yes |  |
 | `list_write_requests` | List your currently authorized write receipts in one source, newest first. | write | yes |  |
 | `put_page` | Replace a complete canonical Markdown page. | write | yes |  |
-| `put_raw_data` | Store raw API response data for a page | write |  |  |
-| `resolve_slugs` | Fuzzy-resolve a partial slug to matching page slugs | read | yes |  |
-| `restore_page` | v0.26.5 — restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). | write |  |  |
-| `revert_version` | Revert page to a previous version | write |  |  |
+| `put_raw_data` | Store a raw provider payload (API response JSON) alongside a page, keyed by source. | write |  |  |
+| `resolve_slugs` | Fuzzy-match a partial name or slug to existing page slugs. | read | yes |  |
+| `restore_page` | Restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). | write |  |  |
+| `revert_version` | Restore a page to an earlier version from its history (a new revision; history is kept). | write |  |  |
 
 ## schema
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `get_active_schema_pack` | v0.40.6.0: cheap identity packet for the active schema pack. | read |  |  |
-| `list_schema_packs` | v0.40.6.0: list installed schema packs (bundled + user-installed). | read |  |  |
-| `reload_schema_pack` | v0.40.6.0: flush the in-process schema pack cache so the next loadActivePack re-reads from disk. | admin |  |  |
-| `schema_apply_mutations` | v0.40.7.0: batched schema pack mutation. | admin |  |  |
-| `schema_explain_type` | v0.40.6.0: resolved settings for a single page_type in the active pack. | read |  |  |
-| `schema_graph` | v0.40.6.0: schema pack graph as JSON edges. | read |  |  |
-| `schema_lint` | v0.40.6.0: lint the active (or named) schema pack. | read |  |  |
-| `schema_review_orphans` | v0.40.6.0: list pages with no active-pack type match. | read |  |  |
-| `schema_stats` | v0.40.6.0: per-type page counts + typed-coverage from the DB. | read |  |  |
+| `get_active_schema_pack` | Cheap identity packet for the active schema pack. | read |  |  |
+| `list_schema_packs` | List installed schema packs (bundled + user-installed). | read |  |  |
+| `reload_schema_pack` | Flush the in-process schema pack cache so the next loadActivePack re-reads from disk. | admin |  |  |
+| `schema_apply_mutations` | Batched schema pack mutation. | admin |  |  |
+| `schema_explain_type` | Resolved settings for a single page_type in the active pack. | read |  |  |
+| `schema_graph` | Schema pack graph as JSON edges. | read |  |  |
+| `schema_lint` | Lint the active (or named) schema pack. | read |  |  |
+| `schema_review_orphans` | List pages with no active-pack type match. | read |  |  |
+| `schema_stats` | Per-type page counts + typed-coverage from the DB. | read |  |  |
 
 ## search
 
@@ -198,7 +199,7 @@ Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **S
 | `cache_stats` | Semantic query-cache introspection: resolved knobs (enabled, similarity threshold, TTL) plus row counts and total hits. | admin |  |  |
 | `query` | Hybrid search with vector + keyword + multi-query expansion. | read | yes |  |
 | `search` | Cheap hybrid search (vector + keyword + RRF) with no LLM expansion. | read | yes |  |
-| `search_by_image` | v0.36 cross-modal Phase 2: image-as-query retrieval. | read |  |  |
+| `search_by_image` | Image-as-query retrieval. | read |  |  |
 | `search_modes` | Read-only search-mode dashboard: active mode, EVERY mode-bundle knob resolved with attribution (mode default vs config override), the three frozen bundles, and a reranker_readiness verdict (whether the resolved reranker will actually run; remote callers get the verdict without the host key inventory). | read |  |  |
 | `search_stats` | Search observability over a window: cache hit rate, intent/mode mix, budget drops, rank-1 score drift, graph-signals failure counts. | admin |  |  |
 | `search_tune` | Read-only tuning recommendations derived from the last 7 days of search telemetry: what should change, why, and the paste-ready config command per recommendation — relay them to the user. | admin |  |  |
@@ -232,9 +233,9 @@ Every non-localOnly operation on the MCP surface: 136 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `add_tag` | Add tag to page | write |  |  |
-| `get_tags` | List tags for a page | read |  |  |
-| `remove_tag` | Remove tag from page | write |  |  |
+| `add_tag` | Add one tag to a page (idempotent). | write |  |  |
+| `get_tags` | List the tags on one page. | read |  |  |
+| `remove_tag` | Remove one tag from a page. | write |  |  |
 
 ## takes
 

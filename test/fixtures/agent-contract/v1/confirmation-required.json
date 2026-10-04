@@ -1,0 +1,67 @@
+{
+  "status": "confirmation_required",
+  "error": "confirmation_required",
+  "code": "confirmation_required",
+  "message": "doctor --remediate needs the user's approval before it runs; nothing was changed.",
+  "suggestion": "Ask the user: Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed? If they agree, run: gbrain doctor --remediate --max-usd 0.60 --yes --brain host",
+  "effects": [
+    "paid"
+  ],
+  "actor": "agent",
+  "why": "Remediation re-embeds 120 stale pages through the configured provider.",
+  "risk": "Spends up to the cap on embedding calls; no data is deleted.",
+  "est_usd": 0.4,
+  "user_message": "Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed?",
+  "fix": {
+    "argv": [
+      "gbrain",
+      "doctor",
+      "--remediate",
+      "--max-usd",
+      "0.60",
+      "--yes",
+      "--brain",
+      "host"
+    ],
+    "command": "gbrain doctor --remediate --max-usd 0.60 --yes --brain host",
+    "consent": [
+      "paid"
+    ],
+    "actor": "agent",
+    "why": "Remediation re-embeds 120 stale pages through the configured provider.",
+    "user_message": "Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed?",
+    "requires_exclusive": false,
+    "preview_argv": [
+      "gbrain",
+      "doctor",
+      "--remediation-plan",
+      "--json",
+      "--brain",
+      "host"
+    ]
+  },
+  "preview": {
+    "argv": [
+      "gbrain",
+      "doctor",
+      "--remediation-plan",
+      "--json",
+      "--brain",
+      "host"
+    ],
+    "command": "gbrain doctor --remediation-plan --json --brain host"
+  },
+  "preapprove_argv": [
+    "gbrain",
+    "config",
+    "set",
+    "consent.preapprove.paid.max_usd_per_run",
+    "<usd>"
+  ],
+  "docs_cmd": [
+    "gbrain",
+    "errors",
+    "confirmation_required"
+  ],
+  "contract_version": 1
+}

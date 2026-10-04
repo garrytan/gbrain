@@ -88,8 +88,19 @@ describe("skills conformance", () => {
       test("has an Output Format section", () => {
         expect(content).toContain("## Output Format");
       });
+
+      test("has a When it fails section that links the agent operator protocol", () => {
+        const section = content.split(/^## When it fails\s*$/m)[1]?.split(/^## /m)[0];
+        expect(section).toBeDefined();
+        expect(section).toContain("AGENT_OPERATOR_v1.md");
+      });
     });
   }
+
+  test("RESOLVER.md has no generator placeholder Uncategorized section", () => {
+    const resolver = readFileSync(join(SKILLS_DIR, "RESOLVER.md"), "utf-8");
+    expect(resolver).not.toMatch(/^## Uncategorized\s*$/m);
+  });
 
   test("no duplicate skill names in frontmatter", () => {
     const names: string[] = [];

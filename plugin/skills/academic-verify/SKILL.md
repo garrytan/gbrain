@@ -188,6 +188,14 @@ Never claim a problem without evidence. The verification document
 itself is the artifact — if the claim holds up, say so plainly. If it
 doesn't, the trace speaks for itself.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- The brain pass (`gbrain query`) comes back empty with a degraded notice (keyword-only, embeddings off): paraphrased study titles miss on keywords, so retry with the author, journal or year before saying the brain has no prior notes on the claim.
+- The web pass through perplexity-research fails (no `PERPLEXITY_API_KEY`, `rate_limited`): mark the claim UNVERIFIED, never "false", and tell the user which step could not run; on `rate_limited` retry once after the stated delay.
+- Saving the verdict returns `write_pending` (exit 10): the write is accepted; poll `gbrain write-request <request_id>` instead of writing a second verdict page.
+
 ## Anti-Patterns
 
 - ❌ Skipping the brain-first lookup. Re-doing verification we've

@@ -59,7 +59,7 @@
         "Source:  config-file",
         "URL:     postgresql://***@127.0.0.1:1/none",
         "Pooler:  supabase=false prepare=undefined pool=10",
-        "Probe:   FAIL conn_refused — Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it."
+        "Probe:   FAIL conn_refused — Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port."
       ],
       "stdoutFirstLine": "Brain:   host",
       "url": "config"
@@ -98,7 +98,7 @@
         "      \"reason\": \"conn_refused\",",
         "      \"transient\": true,",
         "      \"message\": \"connect ECONNREFUSED  <REDACTED:ipv4>:1\",",
-        "      \"remediation\": \"Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it.\",",
+        "      \"remediation\": \"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",",
         "      \"brainId\": \"host\"",
         "    }",
         "  }",
@@ -131,7 +131,7 @@
         "GBRAIN_DB_ACCESS conn_refused",
         "reason: conn_refused (auto tier)  connect ECONNREFUSED  <REDACTED:ipv4>:1",
         "plan: bounded reconnect; if the server is down, start it and re-run",
-        "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it.",
+        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.",
         "Apply: gbrain db-repair --yes"
       ],
       "stdoutFirstLine": "GBRAIN_DB_ACCESS conn_refused",
@@ -143,34 +143,9 @@
       "stderr": [],
       "stderrFirstLine": null,
       "stdout": [
-        "{",
-        "  \"schema_version\": 1,",
-        "  \"brain_id\": \"host\",",
-        "  \"reason\": \"conn_refused\",",
-        "  \"tier\": \"auto\",",
-        "  \"marker\": \"GBRAIN_DB_ACCESS conn_refused\",",
-        "  \"diagnosis\": {",
-        "    \"reason\": \"conn_refused\",",
-        "    \"transient\": true,",
-        "    \"message\": \"connect ECONNREFUSED  <REDACTED:ipv4>:1\",",
-        "    \"remediation\": \"Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it.\",",
-        "    \"brainId\": \"host\"",
-        "  },",
-        "  \"plan\": [",
-        "    \"bounded reconnect; if the server is down, start it and re-run\"",
-        "  ],",
-        "  \"applied\": [],",
-        "  \"fixed\": false,",
-        "  \"remaining\": {",
-        "    \"reason\": \"conn_refused\",",
-        "    \"transient\": true,",
-        "    \"message\": \"connect ECONNREFUSED  <REDACTED:ipv4>:1\",",
-        "    \"remediation\": \"Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it.\",",
-        "    \"brainId\": \"host\"",
-        "  }",
-        "}"
+        "{\"schema_version\":1,\"brain_id\":\"host\",\"reason\":\"conn_refused\",\"tier\":\"auto\",\"marker\":\"GBRAIN_DB_ACCESS conn_refused\",\"diagnosis\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"plan\":[\"bounded reconnect; if the server is down, start it and re-run\"],\"applied\":[],\"fixed\":false,\"remaining\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"error\":\"database_error\",\"code\":\"database_error\",\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"suggestion\":\"Apply the plan: gbrain db-repair --yes --brain host\",\"docs\":\"https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#database_error\",\"why\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"fix\":{\"argv\":[\"gbrain\",\"db-repair\",\"--yes\",\"--brain\",\"host\"],\"command\":\"gbrain db-repair --yes --brain host\",\"consent\":[],\"actor\":\"agent\",\"next\":\"run\",\"why\":\"Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting gbrain's own docker container).\",\"requires_exclusive\":false},\"docs_cmd\":[\"gbrain\",\"errors\",\"database_error\"],\"class\":\"server\",\"retryable\":false,\"contract_version\":1}"
       ],
-      "stdoutFirstLine": "{",
+      "stdoutFirstLine": "{\"schema_version\":1,\"brain_id\":\"host\",\"reason\":\"conn_refused\",\"tier\":\"auto\",\"marker\":\"GBRAIN_DB_ACCESS conn_refused\",\"diagnosis\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"plan\":[\"bounded reconnect; if the server is down, start it and re-run\"],\"applied\":[],\"fixed\":false,\"remaining\":{\"reason\":\"conn_refused\",\"transient\":true,\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"remediation\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"brainId\":\"host\"},\"error\":\"database_error\",\"code\":\"database_error\",\"message\":\"connect ECONNREFUSED  <REDACTED:ipv4>:1\",\"suggestion\":\"Apply the plan: gbrain db-repair --yes --brain host\",\"docs\":\"https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#database_error\",\"why\":\"Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.\",\"fix\":{\"argv\":[\"gbrain\",\"db-repair\",\"--yes\",\"--brain\",\"host\"],\"command\":\"gbrain db-repair --yes --brain host\",\"consent\":[],\"actor\":\"agent\",\"next\":\"run\",\"why\":\"Applies the auto tier the plan names (bounded retries, pending migrations, CREATE EXTENSION vector, starting gbrain's own docker container).\",\"requires_exclusive\":false},\"docs_cmd\":[\"gbrain\",\"errors\",\"database_error\"],\"class\":\"server\",\"retryable\":false,\"contract_version\":1}",
       "url": "config"
     },
     {
@@ -182,7 +157,7 @@
         "GBRAIN_DB_ACCESS conn_refused",
         "reason: conn_refused (auto tier)  connect ECONNREFUSED  <REDACTED:ipv4>:1",
         "plan: bounded reconnect; if the server is down, start it and re-run",
-        "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it.",
+        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port.",
         "Apply: gbrain db-repair --yes"
       ],
       "stdoutFirstLine": "GBRAIN_DB_ACCESS conn_refused",
@@ -362,8 +337,8 @@
       "exitCode": 1,
       "stderr": [
         "GBRAIN_DB_ACCESS conn_refused",
-        "Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json",
-        "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair"
+        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)",
+        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair"
       ],
       "stderrFirstLine": "GBRAIN_DB_ACCESS conn_refused",
       "stdout": [],
@@ -375,8 +350,8 @@
       "exitCode": 1,
       "stderr": [
         "GBRAIN_DB_ACCESS conn_refused",
-        "Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json",
-        "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair"
+        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)",
+        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair"
       ],
       "stderrFirstLine": "GBRAIN_DB_ACCESS conn_refused",
       "stdout": [],
@@ -388,8 +363,8 @@
       "exitCode": 1,
       "stderr": [
         "GBRAIN_DB_ACCESS conn_refused",
-        "Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json",
-        "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair"
+        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)",
+        "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair"
       ],
       "stderrFirstLine": "GBRAIN_DB_ACCESS conn_refused",
       "stdout": [],

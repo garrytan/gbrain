@@ -46,6 +46,7 @@ function resolveWriteSourceId(ctx: Parameters<Operation['handler']>[0], p: Recor
 
 const entity_identity_link: Operation = {
   name: 'entity_identity_link',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description:
     'Link a page into a cross-source entity identity group (v1 manual-only; no auto-matching). ' +
@@ -81,6 +82,7 @@ const entity_identity_link: Operation = {
 
 const entity_identity_unlink: Operation = {
   name: 'entity_identity_unlink',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description: 'Remove a page from a cross-source entity identity group (v1 manual-only).',
   params: {
@@ -108,6 +110,8 @@ const entity_identity_unlink: Operation = {
 
 const entity_identity_list: Operation = {
   name: 'entity_identity_list',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'List cross-source entity identity groups and their member pages. Filter by entity_id or by a member slug. ' +

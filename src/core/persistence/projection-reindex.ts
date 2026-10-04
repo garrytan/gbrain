@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
+import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
 import { loadConfig } from '../config.ts';
 import { readProjectionSnapshot, preparePageProjection, installPageProjection, installPageEmbeddings } from '../page-state/projections.ts';
 import { embedBatchWithBackoff } from '../embed-retry.ts';
@@ -13,12 +15,19 @@ import { waitForWrite, writeResponse } from './service.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 
+const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows code page ${slug} in source ${sourceId} as stored now, with its revision, read-only.`,
+  { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] });
+const previewFix = (sourceId: string): Action => readFix(`Previews which code pages of source ${sourceId} still need reindexing and the embedding cost, without changing anything.`,
+  { argv: ['gbrain', 'reindex-code', '--source', sourceId, '--dry-run', '--json'] });
+
 export async function prepareCodeReindex(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
-  if (row.authority.remote || row.intent?.kind !== 'code_projection_reindex') throw new OperationError('permission_denied', 'Code reindex requires trusted local authority.');
+  if (row.authority.remote || row.intent?.kind !== 'code_projection_reindex') throw trustedCliRequired('Code reindex requires trusted local authority.');
   const prepared = await readProjectionSnapshot(engine, row.slug, row.source_id, { allowUnsealed: true });
   if (!prepared || prepared.pageKind !== 'code' || prepared.snapshot.revision !== row.intent.expected_revision
     || prepared.snapshot.sourceIncarnation !== row.source_incarnation || prepared.snapshot.page.id !== row.page_id) {
-    throw new OperationError('revision_conflict', 'The code projection changed after reindex admission.');
+    throw opError('revision_conflict', 'The code projection changed after reindex admission.',
+      `Code page ${row.slug} in source ${row.source_id} changed or was replaced after reindex request ${row.request_id} was admitted, so nothing was reindexed. Run gbrain reindex-code --source ${row.source_id} again; it reads the current revision.`,
+      { fix: pageFix(row.source_id, row.slug) });
   }
   const noop = row.intent.force !== true && prepared.snapshot.page.text_projection_revision === prepared.snapshot.revision;
   const projection = noop ? undefined : await preparePageProjection(prepared);
@@ -31,11 +40,13 @@ export async function prepareCodeReindex(engine: BrainEngine, row: WriteRequest)
 export async function reindexCodeProjection(engine: BrainEngine, slug: string, sourceId: string,
   opts: { force?: boolean; noEmbed?: boolean } = {}): Promise<{ status: 'imported' | 'skipped'; chunks: number }> {
   const snapshot = await readProjectionSnapshot(engine, slug, sourceId, { allowUnsealed: true });
-  if (!snapshot || snapshot.pageKind !== 'code') throw new OperationError('source_changed', 'The selected code page is unavailable.');
+  if (!snapshot || snapshot.pageKind !== 'code') throw opError('source_changed', 'The selected code page is unavailable.',
+    `${slug} in source ${sourceId} is no longer a code page (it was deleted, renamed or replaced after it was selected), so it was not reindexed. The preview in fix lists what still needs reindexing.`,
+    { fix: previewFix(sourceId) });
   let result: { status: 'imported' | 'skipped'; chunks: number };
   if (await managedPersistenceEnabled(engine)) {
     const verified = currentVerifiedLocalWriter();
-    if (verified?.remote) throw new OperationError('permission_denied', 'Code reindex requires a local CLI writer.');
+    if (verified?.remote) throw trustedCliRequired('Code reindex requires a local CLI writer.');
     if (!verified) await registerLocalWriter(engine, 'cli');
     const authority = await submissionAuthority({ engine, remote: false, sourceId } as OperationContext,
       'submit_job', sourceId, snapshot.snapshot.sourceIncarnation, slug);
@@ -58,17 +69,23 @@ export async function reindexCodeProjection(engine: BrainEngine, slug: string, s
   }
   if (!opts.noEmbed && result.status === 'imported') {
     const prepared = await readProjectionSnapshot(engine, slug, sourceId);
-    if (!prepared) throw new OperationError('revision_conflict', 'Code changed before embedding preparation.');
+    if (!prepared) throw opError('revision_conflict', 'Code changed before embedding preparation.',
+      `Code page ${slug} in source ${sourceId} changed after its text was reindexed, so no vectors were computed; the reindexed text is committed. Run gbrain reindex-code --source ${sourceId} again to embed the current revision.`,
+      { fix: previewFix(sourceId) });
     const chunks = prepared.chunks.filter(c => c.embedding_is_null);
     if (chunks.length) {
       if (prepared.embeddingColumn.embeddingModel && prepared.embeddingColumn.embeddingModel !== prepared.embeddingModel) {
-        throw new OperationError('embedding_model_mismatch', 'The configured provider does not match the active embedding column. Text recovery is complete; configure the matching model before embedding.');
+        throw opError('embedding_model_mismatch', 'The configured provider does not match the active embedding column. Text recovery is complete; configure the matching model before embedding.',
+          `This brain's active embedding column holds ${prepared.embeddingColumn.embeddingModel} vectors, but the configured model is ${prepared.embeddingModel ?? 'unset'}, so code page ${slug} in source ${sourceId} was reindexed as text only. Check the embedding setup with the command in fix; choosing the model (or migrating the brain's embeddings) is the user's decision.`,
+          { fix: readFix('Reports the brain\'s embedding provider, model, dimensions and active vector column, read-only.', { argv: ['gbrain', 'doctor', '--only', 'embeddings', '--json'] }) });
       }
       const vectors = await embedBatchWithBackoff(chunks.map(c => c.chunk_text));
       const installed = await installPageEmbeddings(engine, prepared, chunks.map((c, i) => ({
         chunk_index: c.chunk_index, chunk_text: c.chunk_text, chunk_source: c.chunk_source,
         model: prepared.embeddingModel ?? undefined, embedding: vectors[i] })));
-      if (!installed) throw new OperationError('revision_conflict', 'Code changed while embedding; text remains queued or searchable without new vectors.');
+      if (!installed) throw opError('revision_conflict', 'Code changed while embedding; text remains queued or searchable without new vectors.',
+        `Code page ${slug} in source ${sourceId} changed while its vectors were computed, so they were discarded. Run gbrain reindex-code --source ${sourceId} again to embed the current revision.`,
+        { fix: previewFix(sourceId) });
     }
   }
   return result;

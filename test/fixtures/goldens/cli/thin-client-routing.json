@@ -4,7 +4,9 @@
       "argv": "takes list",
       "exitCode": 1,
       "stderr": [
-        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -12,8 +14,10 @@
       "argv": "takes extract",
       "exitCode": 1,
       "stderr": [
-        "`gbrain takes` is not routable. takes list/search/scorecard/calibration + add/update/resolve/supersede route to the brain host automatically (takes_* MCP ops). This subcommand (extract/revisit) is host-bound: run it on the host machine.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain takes` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain takes extract",
+        "Why: takes list/search/scorecard/calibration + add/update/resolve/supersede route to the brain host automatically (takes_* MCP ops). This subcommand (extract/revisit) is host-bound: run it on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -29,7 +33,9 @@
       "argv": "cache stats",
       "exitCode": 1,
       "stderr": [
-        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -37,8 +43,10 @@
       "argv": "cache clear",
       "exitCode": 1,
       "stderr": [
-        "`gbrain cache` is not routable. `cache stats` routes to the brain host automatically (cache_stats MCP op). clear/prune mutate the host cache — run those on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain cache` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain cache clear",
+        "Why: `cache stats` routes to the brain host automatically (cache_stats MCP op). clear/prune mutate the host cache — run those on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -46,7 +54,9 @@
       "argv": "quarantine list",
       "exitCode": 1,
       "stderr": [
-        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -54,8 +64,10 @@
       "argv": "quarantine scan",
       "exitCode": 1,
       "stderr": [
-        "`gbrain quarantine` is not routable. `quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain quarantine` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain quarantine scan",
+        "Why: `quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -63,7 +75,9 @@
       "argv": "jobs list",
       "exitCode": 1,
       "stderr": [
-        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -71,7 +85,9 @@
       "argv": "jobs get 1",
       "exitCode": 1,
       "stderr": [
-        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -79,7 +95,9 @@
       "argv": "jobs stats",
       "exitCode": 1,
       "stderr": [
-        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -87,8 +105,10 @@
       "argv": "jobs work",
       "exitCode": 1,
       "stderr": [
-        "`gbrain jobs` is not routable. `jobs list`, `jobs get <id>`, and `jobs stats` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job / get_job_stats MCP tools from your agent, or run on the host with GBRAIN_HOME set.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain jobs` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain jobs work",
+        "Why: `jobs list`, `jobs get <id>`, and `jobs stats` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job / get_job_stats MCP tools from your agent, or run on the host with GBRAIN_HOME set.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -96,7 +116,9 @@
       "argv": "search modes",
       "exitCode": 1,
       "stderr": [
-        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -104,8 +126,10 @@
       "argv": "search diagnose q",
       "exitCode": 1,
       "stderr": [
-        "`gbrain search` is not routable. `search modes|stats|tune` route to the brain host automatically (search_modes / search_stats / search_tune MCP ops). The modes reset form, modes with the source flag (the reset dry-run), and tune apply mutate or preview host config, and `diagnose` runs live retrieval — run those on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain search` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain search diagnose",
+        "Why: `search modes|stats|tune` route to the brain host automatically (search_modes / search_stats / search_tune MCP ops). The modes reset form, modes with the source flag (the reset dry-run), and tune apply mutate or preview host config, and `diagnose` runs live retrieval — run those on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -113,8 +137,10 @@
       "argv": "sources list",
       "exitCode": 1,
       "stderr": [
-        "`gbrain sources` is not routable. sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain sources` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain sources list",
+        "Why: sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -122,8 +148,10 @@
       "argv": "sources add alice-example",
       "exitCode": 1,
       "stderr": [
-        "`gbrain sources` is not routable. sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain sources` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain sources add",
+        "Why: sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -149,8 +177,10 @@
       "argv": "call get_page",
       "exitCode": 1,
       "stderr": [
-        "`gbrain call` is not routable. `call` dispatches against a local engine. Use the named CLI command or an authorized MCP tool through your agent, or run `gbrain call` on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain call` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain call",
+        "Why: `call` dispatches against a local engine. Use the named CLI command or an authorized MCP tool through your agent, or run `gbrain call` on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -166,8 +196,10 @@
       "argv": "eval whoknows",
       "exitCode": 1,
       "stderr": [
-        "`gbrain eval` is not routable. `eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain eval` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain eval whoknows",
+        "Why: `eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -199,7 +231,9 @@
       "argv": "think q",
       "exitCode": 1,
       "stderr": [
-        "OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -207,7 +241,9 @@
       "argv": "recall q",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },

@@ -10,6 +10,7 @@ different credentials.
 | Connect an existing agent | [Hosted harness setup](../guides/hosted-harness-access.md) | Native OAuth/PKCE, or a private machine-client handoff |
 | Run a local MCP pipe | [Local stdio](DEPLOY.md#local-stdio-zero-setup) | A local GBrain installation; no HTTP admin panel is created |
 | Diagnose a failed connection | [Recovery table](ADMIN.md#recover-a-failed-step) | Start with the failed stage and the authority you actually hold |
+| A tool call returned an error | [A tool call returned an error](#a-tool-call-returned-an-error) | None: the error says who acts |
 
 **For agents:** read [the MCP access skill](../../skills/mcp-access/SKILL.md).
 If skill tools are unavailable, the instructions here and in
@@ -35,3 +36,22 @@ Client-specific details: [ChatGPT](CHATGPT.md), [Claude Code](CLAUDE_CODE.md),
 [Claude Desktop](CLAUDE_DESKTOP.md), [Codex](CODEX.md),
 [opencode](OPENCODE.md), [Perplexity](PERPLEXITY.md),
 [OpenClaw](OPENCLAW.md), and the [adapter reference](../guides/harness-adapters.md).
+
+## A tool call returned an error
+
+Every gbrain tool error is one content block holding a JSON envelope. Read
+`code` (an older server sends only `error`), then follow `fix.next`:
+
+- `run`: call `fix.mcp` (or run `fix.argv` where you have a shell) exactly as given.
+- `ask_user`: relay `user_message` and stop; act only after the user agrees.
+- `tell_user_to_run`: the fix needs the user or the brain host's operator
+  (for example a scope grant or a CLI-only repair); give them `fix.command`.
+- `wait`: retry after the stated delay with the same request.
+- `report`: tell the user what happened; the host operator runs `gbrain doctor --json`.
+
+Then run `fix.verify`, which is always read-only. A mutating call with an
+unknown outcome points at its write receipt (`get_write_request`), never at a
+blind retry. Successful results can carry extra `[gbrain notice …]` text blocks
+after `content[0]`; read them too (a `degraded` notice means an empty result is
+not proof the user has no notes). Full contract, including the scope-failure
+`error`/`code` pairs: [AGENT_OPERATOR_v1](../protocol/AGENT_OPERATOR_v1.md).

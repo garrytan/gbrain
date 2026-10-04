@@ -2,7 +2,9 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { assertPhysicalRoot } from './physical-root.ts';
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
+import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
 import { localHostId, persistenceHome, currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter } from './identity.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { containsPath, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -13,14 +15,20 @@ import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
 
 export type TopologyBinding=WorktreeBinding & { unbound?:boolean };
 
+const ownerStatusFix=(sourceId:string):Action=>readFix(
+  `Shows source ${sourceId}'s owner host, worktree state, pending or recovering requests and blocking effects, read-only.`,
+  {argv:['gbrain','sources','writer','status','--source',sourceId,'--json']});
+
 export async function topologyPrincipal(engine: BrainEngine): Promise<string> {
   const writer = currentVerifiedLocalWriter() ?? await verifyLocalWriter(engine, await readLocalWriter(engine, 'cli'));
-  if (writer.remote || writer.principal.kind !== 'local_cli') throw new OperationError('permission_denied', 'Source lifecycle requires a verified local CLI registration.');
+  if (writer.remote || writer.principal.kind !== 'local_cli') throw trustedCliRequired('Source lifecycle requires a verified local CLI registration.');
   return writer.principal.id;
 }
 export async function lockTopologyPrincipal(engine: BrainEngine, id: string): Promise<void> {
   const [writer] = await engine.executeRaw<{ lane: string; revoked_at: unknown }>('SELECT lane,revoked_at FROM persistence_local_writers WHERE id=$1::uuid FOR SHARE', [id]);
-  if (!writer || writer.lane !== 'cli' || writer.revoked_at != null) throw new OperationError('permission_denied', 'The administering CLI registration was revoked.');
+  if (!writer || writer.lane !== 'cli' || writer.revoked_at != null) throw opError('permission_denied', 'The administering CLI registration was revoked.',
+    `CLI writer registration ${id}, which started this source lifecycle change, was revoked, so nothing changed. Replacing it is the user's decision: review the registrations with the command in fix; the user stops any running owner and runs gbrain auth local-writer register cli --replace with the complete intended grant, then starts the lifecycle command again.`,
+    {reason:'trusted_cli_required',fix:readFix('Lists the local writer registrations with their lane, grant and revocation state, read-only.',{argv:['gbrain','auth','local-writer','list','--json']})});
 }
 
 /** Native locks precede every topology/source/grant/receipt transaction. */
@@ -30,7 +38,9 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
   const handles: NativeLockHandle[] = [];
   const take = async (path: string) => {
     const handle = waitMs===0?await tryAcquireNativeLock(path):await acquireNativeLock(path, { timeoutMs: waitMs });
-    if (!handle) throw new OperationError('write_pending', 'A source worktree is busy; retry this lifecycle request with the same request_id.');
+    if (!handle) throw opError('write_pending', 'A source worktree is busy; retry this lifecycle request with the same request_id.',
+      `Another lifecycle change, refresh or publication holds a worktree lock of source ${sourceId}, so this change did not start and nothing changed. Check the source with the command in fix, then run the same lifecycle command again with the same request_id once it is idle.`,
+      {fix:ownerStatusFix(sourceId)});
     handles.push(handle);
   };
   try {
@@ -49,7 +59,9 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
       }
     }
     for (const item of bindings.sort((a,b) => a.worktree_id.localeCompare(b.worktree_id))) {
-      if (item.owner_host_id !== localHostId() || !item.coordination_path) throw new OperationError('owner_unavailable', 'Run source lifecycle on the current registered owner.');
+      if (item.owner_host_id !== localHostId() || !item.coordination_path) throw opError('owner_unavailable', 'Run source lifecycle on the current registered owner.',
+        `The worktree holding source ${item.source_id || sourceId} is owned by host ${item.owner_host_id}, not this host (${localHostId()}), or has no coordination path here, so nothing changed. Run the lifecycle command on the owning host; moving ownership is a separate, deliberate writer transfer.`,
+        {fix:ownerStatusFix(sourceId)});
       await take(item.coordination_path);
       if(item.local_path&&existsSync(item.local_path))assertPhysicalRoot(item.local_path,{worktreeId:item.worktree_id,coordinationPath:item.coordination_path});
     }
@@ -68,7 +80,9 @@ export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindin
   const owners = await tx.executeRaw<{ id: string; owner_host_id: string; state: string; owner_epoch:string;topology_generation:string }>(
     'SELECT id,owner_host_id,state,owner_epoch,topology_generation FROM persistence_worktrees WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
   if (owners.length !== ids.length || owners.some(row => row.owner_host_id !== localHostId() || row.state !== 'active')) {
-    throw new OperationError('recovery_required', 'The affected worktree is draining, recovering, or changed ownership.');
+    throw opError('recovery_required', 'The affected worktree is draining, recovering, or changed ownership.',
+      `A worktree holding source ${sourceId} is draining, recovering, or now owned by another host, so the lifecycle change rolled back and nothing changed. Check its state with the command in fix; once it is active on this host, run the same lifecycle command again with the same request_id.`,
+      {fix:ownerStatusFix(sourceId)});
   }
   const [refresh] = await tx.executeRaw<{ id: string; state: string; source_ids: string[] }>(`SELECT id,state,source_ids FROM persistence_worktree_refreshes
     WHERE worktree_id=ANY($1::uuid[]) AND state IN ${ACTIVE_REFRESH_STATES_SQL} AND ($2::uuid IS NULL OR id<>$2::uuid) LIMIT 1`, [ids, refreshId ?? null]);
@@ -86,14 +100,18 @@ export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindin
       const owner=owners.find(owner=>owner.id===before.worktree_id)!;
       if(member||host?.local_path!==before.local_path||host.coordination_path!==before.coordination_path
         ||String(owner.owner_epoch)!==String(before.owner_epoch)||String(owner.topology_generation)!==String(before.topology_generation))
-        throw new OperationError('source_changed','The retained worktree binding changed during lifecycle preparation.');
+        throw opError('source_changed','The retained worktree binding changed during lifecycle preparation.',
+          `The unbound worktree at ${before.local_path} gained a source, moved or changed owner while the lifecycle change of ${sourceId} was prepared, so it rolled back and nothing changed. Check the current bindings with the command in fix, then run the lifecycle command again.`,
+          {fix:ownerStatusFix(sourceId)});
       continue;
     }
     const current = await getWorktreeBinding(tx, before.source_id);
     if (!current || current.worktree_id !== before.worktree_id || current.source_incarnation !== before.source_incarnation
       || String(current.owner_epoch) !== String(before.owner_epoch) || String(current.topology_generation) !== String(before.topology_generation)
       || current.local_path !== before.local_path || current.coordination_path !== before.coordination_path) {
-      throw new OperationError('source_changed', 'Source membership changed during lifecycle lock acquisition.');
+      throw opError('source_changed', 'Source membership changed during lifecycle lock acquisition.',
+        `The worktree binding of source ${before.source_id} (owner epoch, topology generation or path) changed while the lifecycle change of ${sourceId} waited for its locks, so it rolled back and nothing changed. Check the current bindings with the command in fix, then run the lifecycle command again.`,
+        {fix:ownerStatusFix(sourceId)});
     }
   }
   return sources;
@@ -110,13 +128,21 @@ export async function settleTopologyRequests(tx: BrainEngine, sources: string[],
   const requests = await tx.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests
     WHERE (source_id=ANY($1::text[]) OR worktree_id=ANY($2::uuid[]))
       AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence`, [sources,worktrees]);
-  if (requests.some(row => row.state === 'running' || row.state === 'recovering' || row.recovery != null)) {
-    throw new OperationError('write_pending', 'Publication must finish or recover before source lifecycle can proceed.');
+  const busy = requests.find(row => row.state === 'running' || row.state === 'recovering' || row.recovery != null);
+  if (busy) {
+    throw opError('write_pending', 'Publication must finish or recover before source lifecycle can proceed.',
+      `Write request ${busy.request_id} in source ${busy.source_id} is still publishing or recovering, so the lifecycle change rolled back and nothing changed. The owner finishes or recovers that write on its own; once the command in fix shows no running or recovering request, run the same lifecycle command again with the same request_id.`,
+      {fix:ownerStatusFix(busy.source_id)});
   }
-  const [blocked] = await tx.executeRaw(`SELECT id FROM persistence_effects WHERE
+  const [blocked] = await tx.executeRaw<{ id: string; source_id: string | null }>(`SELECT id,source_id FROM persistence_effects WHERE
     (source_id=ANY($1::text[]) OR worktree_id=ANY($2::uuid[])) AND
     (recovery IS NOT NULL OR state='running' OR (kind='withdrawal-mirror' AND state<>'committed')) LIMIT 1`, [sources,worktrees]);
-  if (blocked) throw new OperationError('recovery_required', 'Finish the pending withdrawal mirror and publication effects before changing source topology.');
+  if (blocked) {
+    const source = blocked.source_id ?? sources[0];
+    throw opError('recovery_required', 'Finish the pending withdrawal mirror and publication effects before changing source topology.',
+      `Effect ${blocked.id} on source ${source} (a withdrawal mirror or publication effect) has not finished, so the lifecycle change rolled back and nothing changed. The owner's effect worker settles it; check it with the command in fix, which lists it with its page and request; gbrain sources writer retry-effects re-authorizes a failed or parked one. Then run the same lifecycle command again with the same request_id.`,
+      {fix:ownerStatusFix(source)});
+  }
   const pending = requests.filter(row => row.state === 'queued');
   // Revocation and publication use the same principal rows. Administrative
   // invalidation may terminate revoked work but still respects guard ordering.

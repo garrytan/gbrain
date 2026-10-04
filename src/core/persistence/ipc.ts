@@ -2,7 +2,9 @@
 import net, { type Server, type Socket } from 'node:net';
 import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
 import { resolveSocketPathForConfig, socketHasLiveListener } from '../context/resolve-ipc.ts';
 import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt } from './types.ts';
 import { isPersistenceAdminOperation, PERSISTENCE_ADMIN_OPERATIONS, type PersistenceAdminOperation } from './admin-contract.ts';
@@ -16,7 +18,7 @@ export const PERSISTENCE_IPC_MAX_CONNECTIONS = 8;
 export const PERSISTENCE_IPC_OPERATIONS = [
   'put_page', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page',
   'remember', 'forget', 'extract_facts', 'get_write_request', 'list_write_requests', 'cancel_write_request',
-  'get_page', 'fetch',
+  'get_page', 'fetch', 'get_recent_transcripts',
   'list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack',
   'put_skill', 'delete_skill', 'join_brain', 'sync_brain_skills', 'leave_brain',
   'get_skill_policy', 'set_skill_policy', 'get_skill_retention', 'prune_skill_revisions',
@@ -144,6 +146,13 @@ function administrationRequest(value: unknown): value is PersistenceIpcAdminRequ
     && isPersistenceIpcRegistration(value.registration) && value.registration.lane === 'cli';
 }
 
+const writerStatusFix = (why: string): Action => readFix(why, { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] });
+const ownerVersionsFix = (): Action => writerStatusFix(
+  'Shows the running owner, this host and the latest admitter and consumer versions per host, read-only, to spot a CLI and owner on different releases.');
+const clientBug = (message: string): OperationError => opError('invalid_params', message,
+  'This gbrain build produced a malformed local persistence request, so nothing was sent to the owner. It is a client fault, not a caller mistake: run gbrain doctor --json on this host and report it to the user with the command that failed.',
+  { fix: readFix('Checks this installation and its persistence owner without changing anything.', { argv: ['gbrain', 'doctor', '--json'] }) });
+
 function publicError(error: unknown): Record<string, unknown> {
   if (error instanceof OperationError) return error.toJSON();
   // Never reflect driver errors, SQL, credentials, or private payloads.
@@ -153,7 +162,8 @@ function publicError(error: unknown): Record<string, unknown> {
 function responseFrame(value: unknown): string {
   const frame = JSON.stringify(value) + '\n';
   if (Buffer.byteLength(frame) > PERSISTENCE_IPC_MAX_BYTES) {
-    throw new OperationError('response_too_large', 'Persistence response exceeds the local transport limit.');
+    throw opError('response_too_large', 'Persistence response exceeds the local transport limit.',
+      `Nothing larger than ${PERSISTENCE_IPC_MAX_BYTES} bytes crosses the local persistence socket, so this frame was not delivered. A write may still have committed on the owner: inspect it by its request_id (get_write_request, or gbrain write-request on the CLI) before resubmitting; for a read, ask for less (a smaller page, limit or selection).`);
   }
   return frame;
 }
@@ -219,20 +229,30 @@ export async function startPersistenceIpcServer(
             return;
           }
           if (record(request) && exactKeys(request, ['version', 'kind']) && request.version === 1 && request.kind === 'projection_status') {
-            if (!provider.projectionStatus) throw new OperationError('unavailable', 'This owner does not report projection status.');
-            if (active >= PERSISTENCE_IPC_MAX_CONNECTIONS) throw new OperationError('queue_capacity', 'The persistence listener is at capacity; retry shortly.');
+            if (!provider.projectionStatus) throw opError('unavailable', 'This owner does not report projection status.',
+              'The running persistence owner predates projection status reporting, so the status could not be read; nothing changed. Restart the owner on this gbrain release, or read the owner state with the command in fix instead.',
+              { fix: ownerVersionsFix() });
+            if (active >= PERSISTENCE_IPC_MAX_CONNECTIONS) throw opError('queue_capacity', 'The persistence listener is at capacity; retry shortly.',
+              `All ${PERSISTENCE_IPC_MAX_CONNECTIONS} local persistence connections are busy. This status read changed nothing, so read it again in a few seconds.`);
             active++;
             admitted = true;
             const status = await provider.projectionStatus();
             if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: true, result: status }));
             return;
           }
-          if (!operationRequest(request) && !administrationRequest(request)) throw new OperationError('invalid_params', 'Invalid persistence request envelope.');
-          if (request.brain_id !== provider.brainId) throw new OperationError('source_changed', 'The persistence listener now serves a different brain.');
-          if (active >= PERSISTENCE_IPC_MAX_CONNECTIONS) throw new OperationError('queue_capacity', 'The persistence listener is at capacity; retry this request ID.');
+          if (!operationRequest(request) && !administrationRequest(request)) throw opError('invalid_params', 'Invalid persistence request envelope.',
+            'The owner rejected the request frame as malformed, so nothing was admitted. This usually means the CLI and the running owner are different gbrain releases: compare them with the command in fix, restart the owner on the CLI\'s release, then submit the request again.',
+            { fix: ownerVersionsFix() });
+          if (request.brain_id !== provider.brainId) throw opError('source_changed', 'The persistence listener now serves a different brain.',
+            `This socket's owner serves brain ${provider.brainId}, not the brain ${request.brain_id} the request was built for, so nothing was admitted. Check which brain the command targets (its brain selection) against the owner in fix, then submit the request again.`,
+            { fix: writerStatusFix('Shows the brain this host\'s owner serves and its sources, read-only.') });
+          if (active >= PERSISTENCE_IPC_MAX_CONNECTIONS) throw opError('queue_capacity', 'The persistence listener is at capacity; retry this request ID.',
+            `All ${PERSISTENCE_IPC_MAX_CONNECTIONS} local persistence connections are busy, so this request was not admitted. Submit it again in a few seconds with the same arguments and the same request_id${typeof request.params.request_id === 'string' ? ` (${request.params.request_id})` : ''}; never allocate a replacement ID.`);
           active++;
           admitted = true;
-          if (request.kind === 'administration' && !provider.administer) throw new OperationError('unavailable', 'This owner does not support local administration.');
+          if (request.kind === 'administration' && !provider.administer) throw opError('unavailable', 'This owner does not support local administration.',
+            'The running persistence owner was started without local administration (an older release or a non-CLI owner), so nothing ran. Restart the owner on this gbrain release, or stop it and run the administration command from the gbrain CLI on this host.',
+            { fix: ownerVersionsFix() });
           const result = request.kind === 'administration' ? await provider.administer!(request) : await provider.dispatch(request);
           if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: true, result }));
         } catch (error) {
@@ -380,13 +400,13 @@ export async function requestPersistenceProjectionStatus(socketPath: string, tim
 }
 
 export async function requestPersistenceOperation(socketPath: string, request: PersistenceIpcRequest, timeoutMs = 30_000): Promise<unknown> {
-  if (!operationRequest(request)) throw new OperationError('invalid_params', 'Invalid persistence request envelope.');
+  if (!operationRequest(request)) throw clientBug('Invalid persistence request envelope.');
   return exchange(socketPath, request, timeoutMs,
     typeof request.params.request_id === 'string' ? request.params.request_id : undefined);
 }
 
 export async function requestPersistenceAdministration(socketPath: string, request: PersistenceIpcAdminRequest, timeoutMs = 30_000): Promise<unknown> {
-  if (!administrationRequest(request)) throw new OperationError('invalid_params', 'Invalid local administration envelope.');
+  if (!administrationRequest(request)) throw clientBug('Invalid local administration envelope.');
   return exchange(socketPath, request, timeoutMs,
     typeof request.params.request_id === 'string' ? request.params.request_id : undefined);
 }

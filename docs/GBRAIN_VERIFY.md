@@ -8,6 +8,13 @@
 > and you need to isolate which layer broke, or when you want to understand
 > what "healthy" looks like check by check.
 
+> **Something feels off, or a gbrain call failed?** Start with the
+> [agent operator protocol](protocol/AGENT_OPERATOR_v1.md): the error's `code`
+> and `fix.next` say what happened, who acts and how to verify; `gbrain errors
+> <code>` explains a code offline, and the
+> [troubleshooting symptom table](guides/troubleshooting.md#symptom-table)
+> covers symptoms that are not a single error. Then use the checks below.
+
 Run these checks after install to confirm every part of GBrain is working.
 Each check includes the command, expected output, and what to do if it fails.
 When `gbrain doctor` reports `timeline_history`, `derived_visibility` or

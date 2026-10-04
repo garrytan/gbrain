@@ -22,6 +22,7 @@
         "                                     (--yes --apply-rewrites for config rewrites)",
         "  migrate --to <supabase|pglite>     Transfer brain between engines",
         "  migrate embeddings --to <p:model>  Re-embed onto another embedding provider",
+        "  embeddings enable --embedding-model <p:model>  Turn on embeddings in place (keeps pages/facts)",
         "  upgrade                            Self-update",
         "  check-update [--json]              Check for new versions",
         "  repair [<kind>] [--apply]          Preview/apply residual repairs (timeline, visibility, safe-chunks)",
@@ -231,6 +232,7 @@
         "                                     (--yes --apply-rewrites for config rewrites)",
         "  migrate --to <supabase|pglite>     Transfer brain between engines",
         "  migrate embeddings --to <p:model>  Re-embed onto another embedding provider",
+        "  embeddings enable --embedding-model <p:model>  Turn on embeddings in place (keeps pages/facts)",
         "  upgrade                            Self-update",
         "  check-update [--json]              Check for new versions",
         "  repair [<kind>] [--apply]          Preview/apply residual repairs (timeline, visibility, safe-chunks)",
@@ -440,6 +442,7 @@
         "                                     (--yes --apply-rewrites for config rewrites)",
         "  migrate --to <supabase|pglite>     Transfer brain between engines",
         "  migrate embeddings --to <p:model>  Re-embed onto another embedding provider",
+        "  embeddings enable --embedding-model <p:model>  Turn on embeddings in place (keeps pages/facts)",
         "  upgrade                            Self-update",
         "  check-update [--json]              Check for new versions",
         "  repair [<kind>] [--apply]          Preview/apply residual repairs (timeline, visibility, safe-chunks)",
@@ -645,19 +648,21 @@
     },
     {
       "argv": "definitely-not-a-command",
-      "exitCode": 1,
+      "exitCode": 2,
       "stderr": [
-        "Unknown command: definitely-not-a-command",
-        "Run gbrain --help for available commands."
+        "Error [unknown_command]: Unknown command: definitely-not-a-command",
+        "Fix: Run `gbrain --help` for available commands.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_command"
       ],
       "stdout": []
     },
     {
       "argv": "definitely-not-a-command --help",
-      "exitCode": 1,
+      "exitCode": 2,
       "stderr": [
-        "Unknown command: definitely-not-a-command",
-        "Run gbrain --help for available commands."
+        "Error [unknown_command]: Unknown command: definitely-not-a-command",
+        "Fix: Run `gbrain --help` for available commands.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_command"
       ],
       "stdout": []
     },
@@ -668,7 +673,7 @@
       "stdout": [
         "Usage: gbrain query <query> [options]",
         "",
-        "Hybrid search with vector + keyword + multi-query expansion. Prefer `query` for concept / synonym / landscape questions ('all the X that do Y', 'the landscape of Z') — expansion recovers synonym- and outcome-phrased matches a single embedding misses. Still top-K, and the default count when `limit` is omitted depends on the configured search mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param description); pass `limit` explicitly for a stable count regardless of mode. When the answer needs the surrounding conversation or section, pass `return_unit` ('page' / 'section' / 'window') to get that evidence in one call instead of get_page per hit; conversation pages already come back whole by default (return_unit 'auto'; 'chunk' opts out). For exhaustive enumeration use list_pages; for exact known tokens `search` is cheaper (no expansion LLM call). For personal/emotional questions ('what's going on with me', 'anything notable', 'how am I feeling'), prefer get_recent_salience, find_anomalies, or get_recent_transcripts. Semantic search returns polished pages and misses recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' mean impressive — they often mean difficult or emotionally charged.",
+        "Hybrid search with vector + keyword + multi-query expansion. Prefer `query` for concept / synonym / landscape questions ('all the X that do Y', 'the landscape of Z') — expansion recovers synonym- and outcome-phrased matches a single embedding misses. Still top-K, and the default count when `limit` is omitted depends on the configured search mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param description); pass `limit` explicitly for a stable count regardless of mode. When the answer needs the surrounding conversation or section, pass `return_unit` ('page' / 'section' / 'window') to get that evidence in one call instead of get_page per hit; conversation pages already come back whole by default (return_unit 'auto'; 'chunk' opts out). For exhaustive enumeration use list_pages; for exact known tokens `search` is cheaper (no expansion LLM call). For personal/emotional questions ('what's going on with me', 'anything notable', 'how am I feeling'), prefer get_recent_salience or find_anomalies (raw transcripts are owner-only: `gbrain transcripts recent` on the brain host). Semantic search returns polished pages and misses recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' mean impressive — they often mean difficult or emotionally charged. Needs an embedding key for semantic recall and a chat-model key for expansion; without them it runs keyword-only and a degraded_recall notice says so (a thin result is then not proof of absence).",
         "",
         "Options:",
         "  <query>                    Question or topic text for hybrid retrieval with expansion (e.g. 'agents that do web research'). This is the search text param — there is no `text` or `q` param. Optional ONLY because `image` is the alternative entry point; a call with neither fails with invalid_params.",
@@ -731,7 +736,7 @@
       "stdout": [
         "Usage: gbrain link-add <from> <to> [options]",
         "",
-        "Create link between pages",
+        "Create a typed link (edge) from one page to another in the same source. Use when recording a relationship (works_at, invested_in, mentions). Needs write scope; an explicit link_type must be declared by the active schema pack. On page_not_found: resolve both slugs with resolve_slugs.",
         "",
         "Options:",
         "  <from>                     Slug of the page the link originates from (the edge renders on this page), e.g. 'people/alice-example'. These are page slugs — there is no `source`/`target` pair. (required)",
@@ -753,18 +758,21 @@
     },
     {
       "argv": "lint --definitely-not-a-flag",
-      "exitCode": 1,
+      "exitCode": 2,
       "stderr": [
-        "gbrain lint: unknown flag --definitely-not-a-flag for 'gbrain lint'",
-        "Run: gbrain lint --help"
+        "Error [unknown_flag]: unknown flag --definitely-not-a-flag for 'gbrain lint'",
+        "Fix: gbrain lint --help",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_flag"
       ],
       "stdout": []
     },
     {
       "argv": "get",
-      "exitCode": 1,
+      "exitCode": 2,
       "stderr": [
-        "Usage: gbrain get <slug>"
+        "Error [invalid_params]: Missing required parameter 'slug' for 'gbrain get'.",
+        "Fix: Usage: gbrain get <slug> (see `gbrain get --help`).",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params"
       ],
       "stdout": []
     }

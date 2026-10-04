@@ -1,0 +1,247 @@
+{
+  "_provenance": "Captured from gbrain v0.60.37.0 (master 109b9921, the release before the agent operator wave) by running each command non-interactively in the hermetic env of test/agent-journey-upgrade.serial.test.ts (keyless PGLite brain: init --pglite --no-embedding, three imported notes). keys: every JSON key path the old document had (\"$\" root, \"[]\" array elements; doctor and dream to depth 2, the rest to depth 3). exit: the old exit code. error: the old top-level error value. Never edit by hand: a script written against v0.60.37.0 reads these; the new release may only add.",
+  "commands": {
+    "doctor --json": {
+      "exit": 0,
+      "keys": [
+        "$.brain_checks_score",
+        "$.category_scores",
+        "$.category_scores.brain",
+        "$.category_scores.meta",
+        "$.category_scores.ops",
+        "$.category_scores.skill",
+        "$.checks",
+        "$.checks[].category",
+        "$.checks[].details",
+        "$.checks[].message",
+        "$.checks[].name",
+        "$.checks[].status",
+        "$.db_url_source",
+        "$.engine",
+        "$.health_score",
+        "$.schema_version",
+        "$.status",
+        "$.top_issues",
+        "$.top_issues[].fix",
+        "$.top_issues[].name",
+        "$.top_issues[].status",
+        "$.top_issues[].tier"
+      ]
+    },
+    "backup status --json": {
+      "exit": 1,
+      "keys": [
+        "$.assets",
+        "$.assets[].detail",
+        "$.assets[].fix_argv",
+        "$.assets[].id",
+        "$.assets[].kind",
+        "$.assets[].state",
+        "$.checked_at",
+        "$.computed_by",
+        "$.gbrain_version",
+        "$.interval_days",
+        "$.overall",
+        "$.recovery",
+        "$.recovery.pages_at_risk",
+        "$.recovery.recoverable_repos",
+        "$.recovery.statement",
+        "$.recovery_scope",
+        "$.remote_check_at",
+        "$.schema_version",
+        "$.totals",
+        "$.totals.assets",
+        "$.totals.configured_repos",
+        "$.totals.failing",
+        "$.totals.no_remote",
+        "$.totals.pages_at_risk",
+        "$.totals.recoverable_repos",
+        "$.totals.unpushed"
+      ]
+    },
+    "jobs stats --json": {
+      "exit": 0,
+      "keys": [
+        "$.by_status",
+        "$.by_type",
+        "$.divergent",
+        "$.queue",
+        "$.queue_health",
+        "$.queue_health.active",
+        "$.queue_health.stalled",
+        "$.queue_health.waiting",
+        "$.ttl_cancelled_24h",
+        "$.wedge",
+        "$.wedge.active_healthy",
+        "$.wedge.last_completed_at",
+        "$.wedge.minutes_since_completion",
+        "$.wedge.queue",
+        "$.wedge.waiting"
+      ]
+    },
+    "sources list --json": {
+      "exit": 0,
+      "keys": [
+        "$.sources",
+        "$.sources[].federated",
+        "$.sources[].id",
+        "$.sources[].last_sync_at",
+        "$.sources[].local_path",
+        "$.sources[].mirror_read_only",
+        "$.sources[].name",
+        "$.sources[].page_count"
+      ]
+    },
+    "search zelkova-upgrade-fixture --json": {
+      "exit": 0,
+      "keys": [
+        "$[].base_score",
+        "$[].chunk_id",
+        "$[].chunk_index",
+        "$[].chunk_source",
+        "$[].chunk_text",
+        "$[].create_safety",
+        "$[].effective_date",
+        "$[].effective_date_source",
+        "$[].evidence",
+        "$[].id",
+        "$[].keyword_hit",
+        "$[].page_id",
+        "$[].score",
+        "$[].slug",
+        "$[].source_id",
+        "$[].stale",
+        "$[].title",
+        "$[].type"
+      ]
+    },
+    "autopilot --status --json": {
+      "exit": 0,
+      "keys": [
+        "$.disabled_reason",
+        "$.heartbeat_age_seconds",
+        "$.install_target",
+        "$.installed",
+        "$.job",
+        "$.job.cron_marker",
+        "$.job.install_id_path",
+        "$.job.installed_definition",
+        "$.job.kind",
+        "$.job.launchd_label",
+        "$.job.log_path",
+        "$.job.needs_reinstall",
+        "$.job.shared_job_of_other_brain",
+        "$.job.start_script",
+        "$.job.suffix",
+        "$.job.systemd_unit",
+        "$.job.wrapper_path",
+        "$.last_log",
+        "$.paused_reason",
+        "$.stale_after_seconds",
+        "$.state"
+      ]
+    },
+    "google status --json": {
+      "exit": 1,
+      "keys": [
+        "$.accounts",
+        "$.client_on_file",
+        "$.linked_sources",
+        "$.ok",
+        "$.status"
+      ]
+    },
+    "features --json": {
+      "exit": 0,
+      "keys": [
+        "$.brain_score",
+        "$.recommendations",
+        "$.recommendations[].auto_fixable",
+        "$.recommendations[].command",
+        "$.recommendations[].id",
+        "$.recommendations[].pitch",
+        "$.recommendations[].priority",
+        "$.recommendations[].title",
+        "$.scan_ts",
+        "$.version"
+      ]
+    },
+    "dream --json": {
+      "exit": 0,
+      "keys": [
+        "$.brain_dir",
+        "$.duration_ms",
+        "$.phases",
+        "$.phases[].details",
+        "$.phases[].duration_ms",
+        "$.phases[].pages_recomputed",
+        "$.phases[].phase",
+        "$.phases[].status",
+        "$.phases[].summary",
+        "$.schema_version",
+        "$.status",
+        "$.timestamp",
+        "$.totals",
+        "$.totals.backlinks_added",
+        "$.totals.consolidate_takes_written",
+        "$.totals.edges_ambiguous",
+        "$.totals.edges_resolved",
+        "$.totals.facts_consolidated",
+        "$.totals.lint_fixes",
+        "$.totals.orphans_found",
+        "$.totals.pages_embedded",
+        "$.totals.pages_emotional_weight_recomputed",
+        "$.totals.pages_extracted",
+        "$.totals.pages_synced",
+        "$.totals.patterns_written",
+        "$.totals.phantoms_ambiguous",
+        "$.totals.phantoms_redirected",
+        "$.totals.phantoms_skipped_drift",
+        "$.totals.purged_pages_count",
+        "$.totals.purged_sources_count",
+        "$.totals.synth_pages_written",
+        "$.totals.transcripts_processed"
+      ]
+    },
+    "call get_page {\"slug\":\"no-such-page\"}": {
+      "exit": 1,
+      "keys": [
+        "$.error",
+        "$.message",
+        "$.suggestion"
+      ],
+      "error": "page_not_found"
+    },
+    "call search {\"query\":\"zelkova-upgrade-fixture\"}": {
+      "exit": 0,
+      "keys": [
+        "$[].base_score",
+        "$[].chunk_id",
+        "$[].chunk_index",
+        "$[].chunk_source",
+        "$[].chunk_text",
+        "$[].create_safety",
+        "$[].effective_date",
+        "$[].effective_date_source",
+        "$[].evidence",
+        "$[].id",
+        "$[].keyword_hit",
+        "$[].page_id",
+        "$[].score",
+        "$[].slug",
+        "$[].source_id",
+        "$[].stale",
+        "$[].title",
+        "$[].type"
+      ]
+    },
+    "sources remove default --json": {
+      "exit": 1,
+      "keys": [
+        "$.error",
+        "$.message"
+      ],
+      "error": "invalid_params"
+    }
+  }
+}

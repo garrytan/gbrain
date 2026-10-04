@@ -109,6 +109,14 @@ Each task carries a stable ID so later actions can target it safely:
 
 After a mutation: one concise line — action, task ID, priority/status, relevant date, saved-or-not. For review: active tasks grouped by priority. Keep replies compact; avoid tables on narrow chat surfaces.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- The tasks page update returns `revision_conflict`: re-read `ops/tasks.md`, re-apply the one task change, and save; never overwrite the whole list from an old read.
+- `write_pending` (exit 10): report `saved: false` with the pending receipt and poll `gbrain write-request <request_id>`; do not tell the user the task is recorded yet.
+- Ambiguous or missing task id: return `ambiguous` / `not_found` and ask which task; never mutate the closest match.
+
 ## Anti-Patterns
 
 Each with its corrective action:

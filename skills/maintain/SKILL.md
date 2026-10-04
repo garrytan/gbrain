@@ -75,8 +75,8 @@ and ask before applying anything:
 ```bash
 gbrain doctor --remediation-plan --json              # preview: job steps + repair steps
 # Show the user the repair steps (each "requires user agreement") and the cost.
-# Only after the user agrees:
-gbrain doctor --remediate --yes --include-repairs --target-score 90 --max-usd 5
+# Only after the user agrees (plan_hash from the preview binds the approval):
+gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --target-score 90 --max-usd 5
 ```
 
 `--remediation-plan` prints a dependency-ordered list of job steps (sync before
@@ -485,6 +485,15 @@ This creates an audit trail for brain health over time.
 - Never delete pages without confirmation
 - Log all changes via timeline entries
 - Check gbrain health before and after to show improvement
+
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain doctor --remediate` steps marked "requires user agreement" (PROTECTED repairs, paid steps): show the plan and cost, and run with `--yes --include-repairs --expect <plan_hash> --max-usd <n>` (the hash from `--remediation-plan --json`) only after the user agrees; `preview_changed` means the plan moved, so preview and ask again. A step that would exceed the cap is not started.
+- A finding classified `operator_required`: follow its instruction or relay it to the brain host's operator. `consent_required`: ask the user.
+- A writer-coordination refusal (`writer_coordinator_required`, `writer_not_quiesced`, `recovery_required`): inspect `gbrain sources writer status` and hand the blocked recovery to the operator; never claim a checkout or delete a lock.
+- `gbrain dream` stops on a budget (exit 11): run the printed `resume_command` within the agreed budget.
 
 ## Anti-Patterns
 

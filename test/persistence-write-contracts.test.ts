@@ -100,7 +100,7 @@ describe('public write receipts', () => {
 
   test('non-write errors retain the existing wire shape', () => {
     expect(JSON.parse(JSON.stringify(new OperationError('invalid_params', 'Bad input.'))))
-      .toEqual({ error: 'invalid_params', message: 'Bad input.' });
+      .toEqual({ error: 'invalid_params', code: 'invalid_params', message: 'Bad input.' });
   });
 
   test('receipt parsing refuses invented completion states and unsafe polling intervals', () => {

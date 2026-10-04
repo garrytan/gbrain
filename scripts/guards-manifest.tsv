@@ -46,7 +46,7 @@ check-key-files-current-state.sh	scanner	todo
 check-exports-count.sh	scanner	todo	was reachable from neither verify nor CI pre-W0 (check:all only)
 check-trailing-newline.sh	scanner	todo	was reachable from neither verify nor CI pre-W0 (check:all only)
 check-test-isolation.sh	scanner	todo	allowlist data file: check-test-isolation.allowlist
-check-compile-autoload.sh	scanner	yes	every `bun build --compile` invocation (CLI one-liners + TS spawn arrays) in package.json/.github/scripts/docs/CLAUDE.md/CONTRIBUTING.md must carry --no-compile-autoload-bunfig (a cwd bunfig.toml preload runs before cli-preflight in a compiled binary)
+check-compile-autoload.sh	scanner	yes	every `bun build --compile` invocation (CLI one-liners + TS spawn arrays) in package.json/.github/scripts/docs/CLAUDE.md/CONTRIBUTING.md must carry --no-compile-autoload-bunfig (a cwd bunfig.toml preload runs before cli-preflight in a compiled binary); also every curated help record in src/cli/command-table.ts loads its src/cli/help/<name>.ts module through a literal () => import() (D3), and every spec module has a record
 check-admin-build.sh	buildfresh	exempt	runs the admin build; the build is the test
 check-admin-embedded.sh	buildfresh	exempt	embed freshness diff; not in verify CHECKS: duplicates check:admin-build's build
 check-admin-scope-drift.sh	buildfresh	exempt	regenerates + diffs
@@ -83,3 +83,4 @@ check-getpage-scoped-write.mjs	scanner	yes	unscoped-getPage + write co-occurrenc
 check-orphan-modules.mjs	scanner	yes	runtime-reachability walk (static+dynamic relative imports) from cli/mcp/plugin/admin entrypoints + package.json exports; hard-fails untested orphans, requires a reasoned PERMITTED_TEST_ONLY entry per test-only module (stale entries fail); fixture root via argv/GBRAIN_GUARD_ROOT; knip v5 evaluated + rejected (crashes on repo layout — see script header)
 check-test-placeholders.mjs	scanner	yes	TypeScript AST (CallExpression) scan of test/**/*.test.ts for no-op expect(true)/expect(1) placeholders; path+test+count allowlist (disabled in fixture mode); fixture root via argv/GBRAIN_GUARD_ROOT; in verify CHECKS
 check-test-discriminates.sh	buildfresh	exempt	manual per-PR discrimination helper (#3665): reverts named source files to their pre-fix state and runs the named test file to prove it fails without the fix — the test run IS the check; not in verify CHECKS or CI
+check-agent-contract.ts	scanner	yes	agent operator contract v1 (B9): syntax-only TS AST; per-rule shrink-only baselines in scripts/agent-contract-baselines/; registry completeness + code naming never baselined; GBRAIN_GUARD_ROOT seam (baselines from <root>/baselines)

@@ -303,6 +303,14 @@ Untrusted directives flagged: N
 Enrichment handoff: N pages -> brain-ingest-gate ({pending|done})
 ```
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain sync` refuses with `sync_in_progress` or `lock_busy`: another sync owns the source. Wait for it and retry the same command; do not start a parallel import of the same archive.
+- A dedup lookup (`search` / `recall`) returns nothing with a degraded notice: keyword-only search can miss an already-ingested post, so check by URL or slug before writing a duplicate page.
+- A batch of page writes returns `write_pending` (exit 10) or `queue_capacity`: poll the receipts (`gbrain write-request <request_id>`) and let outstanding writes finish before submitting more; report pending posts as pending, not ingested.
+
 ## Anti-Patterns
 
 - ❌ **Paywall workarounds.** No alternate endpoints, cookies, or credentials

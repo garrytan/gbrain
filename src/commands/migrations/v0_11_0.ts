@@ -25,6 +25,7 @@ import { join, resolve, dirname } from 'path';
 import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { gbrainChildCommand } from './in-process.ts';
+import { cliChildStdio } from '../../core/cli-force-exit.ts';
 import { savePreferences, loadPreferences } from '../../core/preferences.ts';
 import { loadConfig, configPath, gbrainPath } from '../../core/config.ts';
 // Bug 3 — appendCompletedMigration moved to the runner (apply-migrations.ts).
@@ -85,7 +86,7 @@ async function phaseASchema(opts: OrchestratorOpts): Promise<OrchestratorPhaseRe
 function phaseBSmoke(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'smoke', status: 'skipped', detail: 'dry-run' };
   try {
-    execSync(gbrainChildCommand('gbrain jobs smoke'), { stdio: 'inherit', timeout: 30_000, env: process.env });
+    execSync(gbrainChildCommand('gbrain jobs smoke'), { stdio: cliChildStdio(), timeout: 30_000, env: process.env });
     return { name: 'smoke', status: 'complete' };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -409,7 +410,7 @@ function phaseFInstall(opts: OrchestratorOpts): OrchestratorPhaseResult {
     if (loadConfig()?.engine === 'pglite') {
       return { name: 'install', status: 'skipped', detail: 'PGLite is single-writer; use gbrain serve for background maintenance' };
     }
-    execSync(gbrainChildCommand('gbrain autopilot --install --yes'), { stdio: 'inherit', timeout: 60_000, env: process.env });
+    execSync(gbrainChildCommand('gbrain autopilot --install --yes'), { stdio: cliChildStdio(), timeout: 60_000, env: process.env });
     return { name: 'install', status: 'complete' };
   } catch (e) {
     return { name: 'install', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
@@ -469,8 +470,8 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
     console.log(`  skills/migrations/v0.11.0.md`);
     console.log('');
     console.log('The skill walks the host through each item using GBrain\'s plugin contract.');
-    console.log('Re-run `gbrain apply-migrations --yes` after each batch to auto-rewrite newly-');
-    console.log('registerable crons and mark items done.');
+    console.log('After each batch, `gbrain apply-migrations --yes` (this upgrade\'s own command) rewrites newly-');
+    console.log('registerable crons and marks items done.');
   }
 
   return {
@@ -495,6 +496,7 @@ export const v0_11_0: Migration = {
       'user might ask about later.',
   },
   orchestrator,
+  effects: ['persistent_install'],
 };
 
 /** Exported for unit tests. */

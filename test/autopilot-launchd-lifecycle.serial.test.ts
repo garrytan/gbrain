@@ -193,7 +193,7 @@ describe.skipIf(SKIP_SUBPROCESS)('autopilot launchd lifecycle — shimmed (all p
     expect(refused.stderr).toContain('--force');
     expect(existsSync(plist())).toBe(false);
 
-    const r = runCli(['autopilot', '--install', '--force', '--target', 'macos', '--repo', repoDir], env, 90_000);
+    const r = runCli(['autopilot', '--install', '--force', '--yes', '--target', 'macos', '--repo', repoDir], env, 90_000);
     expect(r.exitCode).toBe(0);
     expect(existsSync(plist())).toBe(true);
     const xml = readFileSync(plist(), 'utf8');
@@ -247,7 +247,7 @@ describe.skipIf(SKIP_SUBPROCESS)('autopilot launchd lifecycle — shimmed (all p
     // marker-clearing while leaving an immediately-doomed install.
     mkdirSync(repoDir, { recursive: true });
     // --force: PGLite daemon guard (#677) — see test 2.
-    const r = runCli(['autopilot', '--install', '--force', '--target', 'macos', '--repo', repoDir], env, 90_000);
+    const r = runCli(['autopilot', '--install', '--force', '--yes', '--target', 'macos', '--repo', repoDir], env, 90_000);
     expect(r.exitCode).toBe(0);
     expect(existsSync(marker())).toBe(false);
   }, 120_000);
@@ -337,7 +337,7 @@ describe.skipIf(SKIP_SUBPROCESS || !LAUNCHD_OK)('autopilot launchd lifecycle —
   test('1. install loads a real job and RunAtLoad runs our wrapper', async () => {
     // --force: PGLite daemon guard (#677) — the shimmed describe pins the
     // refusal; this one exercises the real-launchd arc past it.
-    const r = runCli(['autopilot', '--install', '--force', '--target', 'macos', '--repo', repoDir], env, 90_000);
+    const r = runCli(['autopilot', '--install', '--force', '--yes', '--target', 'macos', '--repo', repoDir], env, 90_000);
     expect(r.exitCode).toBe(0);
     expect(existsSync(plist())).toBe(true);
 

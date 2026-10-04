@@ -10,6 +10,18 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import { publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from '../persistence/types.ts';
+// Type-only: this module sits in the PGLite snapshot-schema import closure
+// (via persistence/digest.ts), so it must not pull agent-output's runtime
+// graph (version.ts, the DB classifier) in. agent-output registers the wire
+// renderer below when it loads.
+import type { Action, Notice } from '../agent-output.ts';
+import type { RegistryCode } from '../error-registry.ts';
+
+/** Agent contract v1: the wire renderer for `fix`/`notices` in toJSON(), registered by agent-output.ts on load. */
+interface OperationErrorWireRenderer { fix(a: Action): unknown; notice(n: Notice): unknown }
+let wireRenderer: OperationErrorWireRenderer | null = null;
+/** @internal agent-output.ts only. Unregistered (agent-output never loaded) → the stored Action is emitted as-is. */
+export function __registerOperationErrorRenderer(r: OperationErrorWireRenderer): void { wireRenderer = r; }
 
 // --- Types ---
 
@@ -60,6 +72,27 @@ export class OperationError extends Error {
   public protocolVersion?: number;
   public writeRequest?: WriteReceipt;
   public writeError?: WriteErrorCode;
+  /** Agent contract v1 (A1): which cause, when one code covers several. */
+  public reason?: string;
+  /** Agent contract v1: why it happened, for the agent to explain and weigh. */
+  public why?: string;
+  /** Agent contract v1: the one next step. Rendered (`next`, `command`) only at serialization. */
+  public fix?: Action;
+  /** Agent contract v1: advice that rides the error (rendered into the envelope's `notices`). */
+  public notices?: Notice[];
+  /** Set to 1 by opError(); toJSON() emits `contract_version` only when set. */
+  public contractVersion?: 1;
+  /**
+   * Canonical registry code when this site keeps a frozen legacy `error`
+   * value (A1 frozen pairs, e.g. `error: invalid_params`, `code: not_found`).
+   */
+  public canonical?: RegistryCode;
+  /**
+   * Agent contract v1 (B4): the journal row's own fields on a write-receipt
+   * error, never serialized. toAgentError fills the registry's fix template
+   * from them and picks the principal-correct receipt channel.
+   */
+  public receiptFields?: { operation: string; source_id: string; slug: string | null; principal_kind: string; principal_id: string };
 
   constructor(
     public code: ErrorCode,
@@ -71,9 +104,31 @@ export class OperationError extends Error {
     this.name = 'OperationError';
   }
 
+  /**
+   * The canonical registry code (`code` on the wire); `this.code` stays the
+   * frozen `error` value. Registry-wide legacy aliases are applied by
+   * toAgentError / the thin client (canonicalCodeFor), not here.
+   */
+  get canonicalCode(): string {
+    return this.canonical ?? this.code;
+  }
+
+  /**
+   * The explicit escape from opError()'s required suggestion: a refusal whose
+   * next step genuinely cannot be named at the throw site. `reason` is
+   * required so the registry default fix can still be selected.
+   */
+  static bare(code: RegistryCode, message: string, reason: string): OperationError {
+    const e = new OperationError(code, message);
+    e.reason = reason;
+    e.contractVersion = 1;
+    return e;
+  }
+
   toJSON() {
     return {
       error: this.code,
+      code: this.canonicalCode,
       message: this.message,
       suggestion: this.suggestion,
       docs: this.docs,
@@ -81,8 +136,43 @@ export class OperationError extends Error {
       protocol_version: this.protocolVersion,
       ...(this.writeRequest ? { write_request: publicWriteReceipt(this.writeRequest) } : {}),
       ...(this.writeError ? { write_error: this.writeError } : {}),
+      ...(this.reason !== undefined ? { reason: this.reason } : {}),
+      ...(this.why !== undefined ? { why: this.why } : {}),
+      ...(this.fix ? { fix: wireRenderer ? wireRenderer.fix(this.fix) : this.fix } : {}),
+      ...(this.notices?.length ? { notices: this.notices.map(n => wireRenderer ? wireRenderer.notice(n) : n) } : {}),
+      ...(this.contractVersion !== undefined ? { contract_version: this.contractVersion } : {}),
     };
   }
+}
+
+export interface OpErrorOpts {
+  reason?: string;
+  why?: string;
+  fix?: Action;
+  docs?: string;
+  detail?: string;
+  /**
+   * The frozen v1 `error` wire value when this site historically threw a
+   * different code (A1 frozen pairs). `error` keeps this value; `code` is the
+   * canonical registry code passed to opError().
+   */
+  legacy_error?: string;
+}
+
+/**
+ * Agent contract v1 error constructor (mirrors verbError): `suggestion` is
+ * positional and required. Use `OperationError.bare()` only when no next step
+ * can be named at the throw site.
+ */
+export function opError(code: RegistryCode, message: string, suggestion: string, opts: OpErrorOpts = {}): OperationError {
+  const e = new OperationError(opts.legacy_error ?? code, message, suggestion, opts.docs);
+  if (opts.legacy_error !== undefined) e.canonical = code;
+  if (opts.reason !== undefined) e.reason = opts.reason;
+  if (opts.why !== undefined) e.why = opts.why;
+  if (opts.fix !== undefined) e.fix = opts.fix;
+  if (opts.detail !== undefined) e.detail = opts.detail;
+  e.contractVersion = 1;
+  return e;
 }
 
 /**
@@ -99,10 +189,14 @@ export async function withRelationGuard<T>(fn: () => Promise<T>, what: string): 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/relation .* does not exist|no such table/i.test(msg)) {
-      throw new OperationError(
+      // The cause is not knowable here (pending migrations, or a dropped table), so the fix is the
+      // registry's diagnostic read (doctor on the brain host); the prose names no other command and the
+      // envelope appends the rendered fix, so suggestion and fix always agree.
+      throw opError(
         'unavailable',
         `${what} is unavailable on this brain: a required table is missing.`,
-        'Run gbrain apply-migrations on the brain host, then retry.',
+        'The brain is missing a table this gbrain expects (usually pending schema migrations). Doctor on the brain host reports what is missing and the command that repairs it.',
+        { reason: 'schema_missing' },
       );
     }
     throw err;
@@ -335,6 +429,13 @@ export interface OperationContext {
    */
   emitResponseMeta?: (key: string, value: unknown) => void;
   /**
+   * Agent contract v1 (A6): model-visible advice. MCP dispatch renders each
+   * notice as a prefixed extra text block plus `_meta.gbrain_notices` on
+   * success, and into the error envelope's `notices` key on failure. Unset
+   * on callers that have no notice channel; producers call it optionally.
+   */
+  emitNotice?: (n: Notice) => void;
+  /**
    * WP4 (D2): the SERVER surface ceiling for this transport (force-clamped),
    * threaded by the MCP dispatch layer. Consumed by `request_tools`: the
    * catalog never names ops above the ceiling, and the persist branch
@@ -543,6 +644,13 @@ export interface Operation {
   outputRedaction: OutputRedactionPolicy;
   mutating?: boolean;
   /**
+   * Agent contract v1 (A2): repeating the call with the same arguments (and,
+   * for journaled writes, the same request identity) has the same effect as
+   * calling it once. Drives `idempotentHint` and whether an unknown-outcome
+   * failure may say `retryable: true`.
+   */
+  idempotent?: boolean;
+  /**
    * Capability scope required to invoke this op over an authenticated
    * transport. v0.28 added `sources_admin` (manage federated sources) and
    * `users_admin` (reserved). The hierarchy lives in src/core/scope.ts —
@@ -557,6 +665,13 @@ export interface Operation {
   scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent';
   requiredScopes?: readonly string[];
   localOnly?: boolean;
+  /**
+   * Agent contract v1 (F5): the handler refuses every agent-facing caller,
+   * stdio included; only the trusted local CLI runs it. `isCallable` never
+   * lists it on MCP, and a call returns `cli_only` whose fix is this exact
+   * command (`<name>` tokens are inputs the agent fills from its call).
+   */
+  cliOnly?: { argv: readonly string[] };
   /**
    * WP1 honest catalog: the op is callable by remote callers only when this
    * config gate resolves true (dual-plane, DB > file > absent=false). Network

@@ -13,6 +13,7 @@ import { AUDIT_ROW_SOURCES } from '../../../core/facts/audit-sources.ts';
 import { eligibleFactEmbedding, staleFactEmbedding } from '../../../core/facts/embedding-identity.ts';
 import { takesAutoEmbedEnabled } from '../../../core/embed-takes.ts';
 import type { Check } from '../../doctor.ts';
+import { agentFix } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 export const VECTOR_COVERAGE_DOCS = 'docs/GBRAIN_VERIFY.md#5a-fact-and-take-vectors';
@@ -25,14 +26,15 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
   ctx.progress.heartbeat('fact_take_vectors');
   if (loadConfig()?.embedding_disabled === true || await engine.getConfig('embedding_disabled') === 'true') {
     checks.push({ name: 'fact_take_vectors', status: 'ok', message: 'Not applicable: embeddings are disabled on this brain (keyword search keeps working).',
-      details: { applicable: false } });
+      details: { applicable: false }, severity: 'info', readiness_state: 'disabled_by_choice' });
     return checks;
   }
   const model = await engine.getConfig('embedding_model');
   const dims = Number(await engine.getConfig('embedding_dimensions'));
   if (!model || !Number.isInteger(dims) || dims <= 0) {
     checks.push({ name: 'fact_take_vectors', status: 'warn', message: 'Fact and take vectors were not verified: the brain records no embedding model and width. Fix: gbrain migrate embeddings --status',
-      details: { code: 'vectors_not_verified', applicable: true, fix: 'gbrain migrate embeddings --status', docs: VECTOR_COVERAGE_DOCS } });
+      details: { code: 'vectors_not_verified', applicable: true, fix: 'gbrain migrate embeddings --status', docs: VECTOR_COVERAGE_DOCS },
+      fix: agentFix(['gbrain', 'migrate', 'embeddings', '--status'], 'Shows which embedding model and width this brain was built with, read-only.', 'fact_take_vectors', { docs: VECTOR_COVERAGE_DOCS }) });
     return checks;
   }
   try {
@@ -74,11 +76,16 @@ async function runFactTakeVectors(ctx: DoctorContext): Promise<Check[]> {
         `Vector dedup, consolidation and semantic take search skip them. Fix: ${fix.join('; ')}`,
       details: { code: 'stale_vectors', applicable: true, model, dims, facts, takes, by_source: bySource,
         cause: 'facts and takes without a current-model vector', fix, docs: VECTOR_COVERAGE_DOCS },
+      fix: factSources.length
+        ? agentFix(['gbrain', 'embed', '--facts', '--stale', '--source', factSources[0], '--dry-run', '--json'],
+          `Previews the fact re-embed for source '${factSources[0]}' (count and cost) without calling the provider; run it without --dry-run once the user approves the spend.`, 'fact_take_vectors', { docs: VECTOR_COVERAGE_DOCS })
+        : agentFix(takesFix.split(' '), 'Embeds the takes that have no current-model vector; this calls the embedding provider.', 'fact_take_vectors', { consent: ['paid'], docs: VECTOR_COVERAGE_DOCS }),
     });
   } catch (err) {
     checks.push({ name: 'fact_take_vectors', status: 'warn',
       message: `Fact and take vectors were not verified: ${err instanceof Error ? err.message : String(err)}. Fix: gbrain migrate embeddings --status`,
-      details: { code: 'vectors_not_verified', applicable: true, fix: 'gbrain migrate embeddings --status', docs: VECTOR_COVERAGE_DOCS } });
+      details: { code: 'vectors_not_verified', applicable: true, fix: 'gbrain migrate embeddings --status', docs: VECTOR_COVERAGE_DOCS },
+      fix: agentFix(['gbrain', 'migrate', 'embeddings', '--status'], 'Shows which embedding model and width this brain was built with, read-only.', 'fact_take_vectors', { docs: VECTOR_COVERAGE_DOCS }) });
   }
   return checks;
 }

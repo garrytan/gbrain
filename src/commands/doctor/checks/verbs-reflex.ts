@@ -10,6 +10,8 @@ import { gbrainPath, loadConfig } from '../../../core/config.ts';
 import { reflexEnabled } from '../../../core/context/reflex.ts';
 import { resolveSocketPath } from '../../../core/context/resolve-ipc.ts';
 import type { Check } from '../../doctor.ts';
+import { configReadiness } from '../../../core/readiness.ts';
+import { checkError } from '../check-fix.ts';
 
 /**
  * Retrieval Reflex health (#1981). Read-only, fail-open. The deterministic
@@ -63,6 +65,16 @@ export async function buildMemoryVerbsCheck(): Promise<Check> {
       message: `verb usage sidecar unreadable (${e instanceof Error ? e.message : String(e)}) — observability degraded; verbs unaffected`,
     };
   }
+}
+
+/**
+ * E2: no `gbrain serve` running is the normal state before an agent harness is
+ * wired, not a fault. Info, with the harness-wiring fix (which is what starts
+ * a serve) when one applies.
+ */
+function noServeInfo(cfg: ReturnType<typeof loadConfig>): Pick<Check, 'severity' | 'readiness_state' | 'fix'> {
+  const wiring = cfg ? configReadiness(cfg, { transport: 'cli' }).entries.find((e) => e.capability === 'harness_wiring') : undefined;
+  return { severity: 'info', readiness_state: 'not_applicable', ...(wiring?.fix ? { fix: wiring.fix } : {}) };
 }
 
 export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
@@ -123,10 +135,12 @@ export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
     const skillHint = skillInstalled
       ? ''
       : ' — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`';
+    const noServe = status === 'warn' && engineKind === 'pglite';
     return {
       name,
-      status,
+      status: noServe ? 'ok' : status,
       message: `${pathDesc}; ${runtimeMsg}${skillHint}`,
+      ...(noServe ? noServeInfo(cfg) : {}),
       details: {
         enabled: true,
         engine: engineKind,
@@ -137,7 +151,7 @@ export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
       },
     };
   } catch (e) {
-    return { name, status: 'warn', message: `could not check: ${(e as Error).message}` };
+    return checkError(name, 'check the retrieval reflex', e);
   }
 }
 

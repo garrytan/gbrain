@@ -37,6 +37,33 @@ gbrain autopilot --install
 `gbrain connectors status` shows credential provenance/expiry and sync state
 (never the secret). `gbrain connectors logout <provider>` removes a credential.
 
+### Headless lane (an agent without a terminal)
+
+The credential is the user's own browser session, so an agent cannot sign in
+for them. When `gbrain connectors auth <provider>` runs with no credential and
+nobody at the terminal (no TTY, `CI`, an agent process, or
+`GBRAIN_NON_INTERACTIVE=1`), it does not wait for a paste:
+
+- It prints an `[AGENT]` block (`actor: user`, `next: tell_user_to_run`) with
+  the provider's cookie checklist fenced in `[SHOW USER]` and the stdin command
+  to run, saves nothing, and exits 1.
+- `--try-oauth` never starts the loopback sign-in headless (it used to wait up
+  to 10 minutes for a browser redirect); it says OAuth needs a person at a
+  browser and hands over the same cookie checklist. With a person at the
+  terminal, `--no-browser` prints the sign-in URL instead of opening a browser.
+
+What the agent does: relay the `[SHOW USER]` text verbatim and ask the user to
+copy the cookie from a browser where they are logged in (never reuse, guess or
+search for one). The user can run `pbpaste | gbrain connectors auth <provider>
+--cookie -` themselves; if they hand the value over, pass it only on stdin
+(`printf '%s' "$COOKIE" | gbrain connectors auth <provider> --cookie -`), never
+in argv. A stdin that stays open without data ends after 30 seconds ("stdin
+was open but silent"; `GBRAIN_STDIN_TIMEOUT_MS` waits longer) and saves
+nothing. If the user would rather not share a session cookie, use the export
+lane (`gbrain transcripts ingest <export-file>`). Verify with
+`gbrain connectors status --json`. The full agent script lives in
+`skills/chat-connectors/SKILL.md`.
+
 ## How it works
 
 ```
@@ -159,12 +186,15 @@ the export-file lane (`conversation-archive`) — it always works.
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `forbidden` | Cloudflare/bot challenge on server-side fetch | Use the official export + `gbrain transcripts ingest` |
-| `auth_required` | cookie expired/invalid | Re-copy a fresh Cookie header, `gbrain connectors auth` |
-| `partial` | some fetches failed | Watermark not advanced; just re-run |
-| receipt shows drift | provider API shape changed | Affected threads skipped (not lost); export lane still works |
+<a id="chat-connectors-troubleshooting"></a>
+
+| Symptom | Cause | Fix | Who acts | Consent | Verify |
+|---|---|---|---|---|---|
+| `forbidden` | Cloudflare/bot challenge on server-side fetch | Use the official export + `gbrain transcripts ingest` | user (downloads the export); agent ingests it | none | `gbrain connectors status --json` |
+| `auth_required` | cookie expired/invalid | Re-copy a fresh Cookie header, `gbrain connectors auth` | user (copies a fresh Cookie header) | `credentials` | `gbrain connectors status --json` |
+| `connectors auth` exits 1 with an `[AGENT]` cookie checklist | no credential and nobody at the terminal ([headless lane](#headless-lane-an-agent-without-a-terminal)) | Relay the `[SHOW USER]` checklist; the user pipes the cookie into `gbrain connectors auth <provider> --cookie -` | user (copies the cookie) | `credentials` | `gbrain connectors status --json` |
+| `partial` | some fetches failed | Watermark not advanced; just re-run | agent | `egress` (fetches from the provider again) | `gbrain connectors status --json` |
+| receipt shows drift | provider API shape changed | Affected threads skipped (not lost); export lane still works | agent (reports it) | none | `gbrain connectors status --json` |
 
 ## v2 roadmap
 

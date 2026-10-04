@@ -63,7 +63,7 @@ describe('gbrain init --migrate-only — error paths', () => {
 
   test('rejects unknown flags before any migrate-only side effects', () => {
     const result = cached('init', '--migrate-only', '--dry-run');
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain('unknown flag --dry-run');
     // Unknown safety flags must not fall through to the migration path.
     expect(result.stderr).not.toContain('No brain configured');
@@ -72,7 +72,7 @@ describe('gbrain init --migrate-only — error paths', () => {
 
   test('unknown flags respect --json output', () => {
     const result = cached('init', '--migrate-only', '--dry-run', '--json');
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(2);
     const lines = result.stdout.split('\n').filter((l: string) => l.trim().startsWith('{'));
     const parsed = JSON.parse(lines[lines.length - 1]);
     expect(parsed.status).toBe('error');

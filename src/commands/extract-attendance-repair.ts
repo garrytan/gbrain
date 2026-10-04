@@ -13,6 +13,7 @@ import { readRepairSidecar } from '../core/pglite-repair.ts';
 import { applyAttendanceRepair, previewAttendanceRepair, attendanceRepairHash, assertAttendanceRepairAuthority,
   validateAttendanceRepairScope, ATTENDANCE_REPAIR_LIMIT, type AttendanceRepairPreview,
   type AttendanceRepairAuthority } from '../core/attendance-repair.ts';
+import { usageError } from '../cli/cli-error.ts';
 
 export const ATTENDANCE_REPAIR_HELP = `  gbrain extract links --source db --repair-attendance --source-id ID
                           [--limit 250] [--after-slug SLUG] [--json]
@@ -154,7 +155,11 @@ export async function runAttendanceRepair(engine: BrainEngine, args: string[], a
 }
 
 export async function runAttendanceRepairCli(args: string[], brainFlag: string | null) {
-  parseAttendanceRepairArgs(args, { remote: false });
+  // D1/D4: an invalid invocation is a usage error (invalid_params, exit 2), not an internal fault.
+  try { parseAttendanceRepairArgs(args, { remote: false }); } catch (e) {
+    throw usageError(e instanceof Error && e.message ? e.message : 'Invalid attendance repair invocation.',
+      'Run `gbrain extract --help` for the attendance repair flags: extract links --source db --repair-attendance --source-id ID [--dry-run].');
+  }
   const config = loadConfig();
   if (isThinClient(config)) throw new Error('Attendance repair is unavailable to remote or thin clients');
   const brainId = resolveBrainId(brainFlag);

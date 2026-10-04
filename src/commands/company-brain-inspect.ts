@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { inspectCompanyBrain } from '../core/company-brain/inspection.ts';
 import { COMPANY_BRAIN_PROFILE, type CompanyBrainPlan } from '../core/company-brain/types.ts';
 import { isThinClient, loadConfig } from '../core/config.ts';
-import { OperationError } from '../core/ops/contract.ts';
+import { opError, OperationError } from '../core/ops/contract.ts';
 import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 
 export const COMPANY_BRAIN_INSPECT_HELP = `Inspect an existing company repository without importing it:
@@ -33,28 +33,37 @@ export function parseCompanyBrainInspectionArgs(args: string[]): CompanyBrainIns
     const arg = args[i];
     if (arg === '--json') { result.json = true; continue; }
     if (!arg.startsWith('-')) {
-      if (result.path) throw new OperationError('invalid_params', 'Inspect accepts exactly one repository path.');
+      if (result.path) {
+        throw opError('invalid_params', 'Inspect accepts exactly one repository path.', 'Pass a single repository path (quote a path that contains spaces); inspect each repository separately.');
+      }
       result.path = arg;
       continue;
     }
     const equal = arg.indexOf('=');
     const flag = equal < 0 ? arg : arg.slice(0, equal);
     if (!['--profile', '--include', '--exclude', '--out'].includes(flag)) {
-      throw new OperationError('invalid_params', `Unknown inspect option ${JSON.stringify(flag)}.`);
+      throw opError('invalid_params', `Unknown inspect option ${JSON.stringify(flag)}.`,
+        'Inspect accepts --profile company-brain, --include, --exclude, --out, and --json; gbrain sources inspect --help lists them.');
     }
     const value = equal < 0 ? args[++i] : arg.slice(equal + 1);
-    if (!value || value.startsWith('--')) throw new OperationError('invalid_params', `${flag} requires a value.`);
+    if (!value || value.startsWith('--')) {
+      throw opError('invalid_params', `${flag} requires a value.`, `Follow ${flag} with its value, or write ${flag}=value; a value cannot start with --.`);
+    }
     if (flag === '--profile') {
-      if (value !== COMPANY_BRAIN_PROFILE || result.profile) throw new OperationError('invalid_params', 'Select --profile company-brain once.');
+      if (value !== COMPANY_BRAIN_PROFILE || result.profile) {
+        throw opError('invalid_params', 'Select --profile company-brain once.', 'Pass --profile company-brain a single time, or omit it to get a profile recommendation without activating one.');
+      }
       result.profile = COMPANY_BRAIN_PROFILE;
     } else if (flag === '--include') result.include.push(value);
     else if (flag === '--exclude') result.exclude.push(value);
     else {
-      if (result.out) throw new OperationError('invalid_params', 'Choose one --out file.');
+      if (result.out) throw opError('invalid_params', 'Choose one --out file.', `Pass --out once; keep ${result.out} or choose a different single path.`);
       result.out = value;
     }
   }
-  if (!result.path) throw new OperationError('invalid_params', 'A local repository path is required.');
+  if (!result.path) {
+    throw opError('invalid_params', 'A local repository path is required.', 'Pass the path of a local Git checkout to inspect, for example: gbrain sources inspect ./company-wiki --profile company-brain --json.');
+  }
   return result;
 }
 
@@ -86,8 +95,10 @@ export async function runCompanyBrainInspection(args: string[]): Promise<void> {
   try {
     const options = parseCompanyBrainInspectionArgs(args);
     json = options.json;
-    if (isThinClient(loadConfig())) throw new OperationError('permission_denied',
-      'Company repository inspection runs locally on the brain host, not through a thin-client installation.');
+    if (isThinClient(loadConfig())) {
+      throw opError('permission_denied', 'Company repository inspection runs locally on the brain host, not through a thin-client installation.',
+        `This installation is a thin client of a remote brain. Ask the user to run gbrain sources inspect on the machine that hosts the company brain, against a checkout of ${options.path} on that machine.`);
+    }
     const plan = await inspectCompanyBrain(options);
     if (options.out) {
       const out = resolve(options.out);
@@ -95,9 +106,13 @@ export async function runCompanyBrainInspection(args: string[]): Promise<void> {
       try {
         writeFileSync(out, `${JSON.stringify(plan, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
       } catch (error) {
-        throw new OperationError('plan_output_failed', (error as NodeJS.ErrnoException).code === 'EEXIST'
+        const exists = (error as NodeJS.ErrnoException).code === 'EEXIST';
+        throw opError('plan_output_failed', exists
           ? 'The plan output already exists. Choose a new --out path; nothing was overwritten.'
-          : 'The private plan output could not be written. Check the output directory and retry.');
+          : 'The private plan output could not be written. Check the output directory and retry.',
+        exists
+          ? `${out} already exists and is never overwritten. Rerun the inspection with --out naming a new file, or read the existing plan if it is the one you want.`
+          : `Writing ${out} failed (${(error as NodeJS.ErrnoException).code ?? 'unknown error'}). Make sure its directory is writable by this user and has free space, then rerun the inspection; it is read-only.`);
       }
     }
     await writeStdoutFinal(json ? `${JSON.stringify({ schema_version: 1, status: plan.ready ? 'ready' : 'blocked',

@@ -1,11 +1,15 @@
 import type { BrainEngine, NewFact } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import type { Action } from '../agent-output.ts';
+import { opError } from '../ops/contract.ts';
+import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { maintenanceAttribution } from './attribution.ts';
 import { currentVerifiedLocalWriter } from './identity.ts';
 import { managedPersistenceEnabled } from './ownership.ts';
 import { assertPersistenceAccepting } from './service.ts';
+
+const sourcesFix = (sourceId: string): Action => readFix(`Lists sources with their archived state, including ${sourceId}.`, { argv: ['gbrain', 'sources', 'list', '--json'] });
 
 /**
  * Database-only fact rows derived from page text (the fence reconcile, the
@@ -19,10 +23,14 @@ export async function managedDerivedFactsPreflight(engine: BrainEngine, sourceId
   assertPersistenceAccepting(engine);
   const job = currentSubmissionAuthority();
   if (job && job.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
-    throw new OperationError('permission_denied', 'Managed fact maintenance requires a local writer; remote maintenance jobs are not supported.');
+    throw trustedCliRequired('Managed fact maintenance requires a local writer; remote maintenance jobs are not supported.');
   }
   const [source] = await engine.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1', [sourceId]);
-  if (!source || source.archived) throw new OperationError('source_changed', 'The fact maintenance source is not active.');
+  if (!source || source.archived) {
+    throw opError('source_changed', 'The fact maintenance source is not active.',
+      `Source ${sourceId} is archived or missing, so its facts were not maintained and no model was called. Restore the source first if it should be maintained.`,
+      { fix: sourcesFix(sourceId) });
+  }
   return true;
 }
 
@@ -36,7 +44,11 @@ export async function withDerivedFactsWrite<T>(engine: BrainEngine, sourceId: st
   const attribution = await maintenanceAttribution(engine);
   return engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {
     const [source] = await tx.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1 FOR SHARE', [sourceId]);
-    if (!source || source.archived) throw new OperationError('source_changed', 'The fact maintenance source changed during extraction; nothing was written.');
+    if (!source || source.archived) {
+      throw opError('source_changed', 'The fact maintenance source changed during extraction; nothing was written.',
+        `Source ${sourceId} was archived or removed while its facts were extracted, so nothing was written. Restore the source before maintaining its facts again.`,
+        { fix: sourcesFix(sourceId) });
+    }
     await tx.lockPageKeys(slugs.map(slug => ({ sourceId, slug })));
     return fn(tx);
   }, attribution));
@@ -52,7 +64,10 @@ export async function writeDerivedFacts<T>(engine: BrainEngine, sourceId: string
   if (!await managedPersistenceEnabled(engine)) return fn(engine);
   return withDerivedFactsWrite(engine, sourceId, [slug], async tx => {
     const [page] = await tx.executeRaw('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
-    if (!page) throw new OperationError('page_not_found', 'The page was deleted during fact extraction; nothing was written.');
+    if (!page) {
+      throw opError('page_not_found', 'The page was deleted during fact extraction; nothing was written.',
+        `Page ${slug} in source ${sourceId} was deleted while its facts were extracted, so nothing was written. No action is needed unless the page should still exist.`);
+    }
     return fn(tx);
   });
 }
@@ -72,7 +87,8 @@ export async function replaceDerivedFactsForPage(engine: BrainEngine, sourceId: 
 }): Promise<{ deleted: number; inserted: number }> {
   return withDerivedFactsWrite(engine, sourceId, [slug], async tx => {
     if (!await input.isCurrent(tx)) {
-      throw new OperationError('revision_conflict', 'The page changed during fact extraction; its prior facts were kept.');
+      throw opError('revision_conflict', 'The page changed during fact extraction; its prior facts were kept.',
+        `Page ${slug} in source ${sourceId} changed while its facts were extracted, so its prior facts were kept. The next fact maintenance pass extracts from the current page.`);
     }
     const [deleted] = await tx.executeRaw<{ count: string }>(
       `WITH del AS (DELETE FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND source LIKE $3 RETURNING 1)

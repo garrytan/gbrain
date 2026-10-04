@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"error\": \"invalid_params\",\n  \"code\": \"invalid_params\",\n  \"message\": \"Unknown sort 'bogus'.\",\n  \"suggestion\": \"Use one of: updated, created, title. Next: list_pages {\\\"sort\\\":\\\"updated\\\"}\",\n  \"docs\": \"{{DOCS_BASE}}/docs/guides/error-codes.md#invalid_params\",\n  \"fix\": {\n    \"argv\": [\n      \"gbrain\",\n      \"list\",\n      \"--sort\",\n      \"updated\",\n      \"--brain\",\n      \"host\",\n      \"--source\",\n      \"default\"\n    ],\n    \"command\": \"gbrain list --sort updated --brain host --source default\",\n    \"mcp\": {\n      \"tool\": \"list_pages\",\n      \"arguments\": {\n        \"sort\": \"updated\"\n      }\n    },\n    \"consent\": [],\n    \"actor\": \"agent\",\n    \"why\": \"updated is the default sort.\",\n    \"verify\": {\n      \"mcp\": {\n        \"tool\": \"list_pages\",\n        \"arguments\": {\n          \"sort\": \"updated\",\n          \"limit\": 1\n        }\n      }\n    },\n    \"requires_exclusive\": false\n  },\n  \"docs_cmd\": [\n    \"gbrain\",\n    \"errors\",\n    \"invalid_params\"\n  ],\n  \"class\": \"caller\",\n  \"retryable\": false,\n  \"contract_version\": 1\n}"
+    }
+  ],
+  "isError": true
+}

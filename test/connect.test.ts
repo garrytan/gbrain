@@ -617,8 +617,8 @@ describe('runConnect --install', () => {
         runBinary: (_b, argv) => { calls.push(argv); return { code: argv[1] === 'get' ? 1 : 0, stdout: '', stderr: '' }; },
       }),
     );
-    expect(r.exitCode).toBe(1);
-    expect(r.err.join('\n')).toMatch(/Aborted/);
+    // A4: a declined prompt is a consent refusal (exit 3), nothing registered.
+    expect(r.exitCode).toBe(3);
     expect(calls.some((a) => a[1] === 'add')).toBe(false);
   });
 
@@ -668,13 +668,26 @@ describe('runConnect --install', () => {
     expect(r.err.join('\n')).not.toMatch(/Add this to your shell profile/);
   });
 
-  test('non-interactive --install without --yes is refused', async () => {
-    const r = await runWithExitCapture(
-      ['https://brain.example.com/mcp', '--token', 'tok', '--install'], // isTTY false (default), no --yes
-      installDeps(),
-    );
-    expect(r.exitCode).toBe(1);
-    expect(r.err.join('\n')).toMatch(/requires --yes/);
+  test('non-interactive --install without --yes is refused: exit 3, consent payload without the token', async () => {
+    const calls: string[][] = [];
+    let stdout = '';
+    const write = process.stdout.write;
+    process.stdout.write = ((c: string | Uint8Array) => { stdout += String(c); return true; }) as typeof process.stdout.write;
+    let r;
+    try {
+      r = await runWithExitCapture(
+        ['https://brain.example.com/mcp', '--token', 'gbrain_secret_tok', '--install', '--json'], // isTTY false (default), no --yes
+        installDeps({ runBinary: (_b, argv) => { calls.push(argv); return { code: argv[1] === 'get' ? 1 : 0, stdout: '', stderr: '' }; } }),
+      );
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(r.exitCode).toBe(3);
+    expect(calls.some((a) => a[1] === 'add')).toBe(false);
+    const payload = JSON.parse(stdout);
+    expect(payload).toMatchObject({ code: 'confirmation_required', effects: ['credentials', 'persistent_install'] });
+    expect(payload.fix.argv).toEqual(['gbrain', 'connect', 'https://brain.example.com/mcp', '--install', '--json', '--yes']);
+    expect(stdout).not.toContain('gbrain_secret_tok');
   });
 
   test('a flag-shaped --token value is rejected (no silent swallow)', async () => {
@@ -1035,7 +1048,7 @@ describe('opencode lane', () => {
     expect(r.err.join('\n')).toMatch(/connector-style agents/);
   });
 
-  test('--install non-TTY without --yes → exit 1, requires --yes, writer NEVER called', async () => {
+  test('--install non-TTY without --yes → exit 3 (confirmation_required), writer NEVER called', async () => {
     let called = false;
     const r = await runWithExitCapture(
       ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--agent', 'opencode', '--install'],
@@ -1047,12 +1060,11 @@ describe('opencode lane', () => {
         },
       }),
     );
-    expect(r.exitCode).toBe(1);
-    expect(r.err.join('\n')).toMatch(/requires --yes/);
+    expect(r.exitCode).toBe(3);
     expect(called).toBe(false);
   });
 
-  test('--install TTY prompt declined → Aborted, writer NEVER called', async () => {
+  test('--install TTY prompt declined → consent refusal (exit 3), writer NEVER called', async () => {
     let called = false;
     const r = await runWithExitCapture(
       ['https://brain.example.com/mcp', '--token', 'gbrain_tok', '--agent', 'opencode', '--install'],
@@ -1065,8 +1077,7 @@ describe('opencode lane', () => {
         },
       }),
     );
-    expect(r.exitCode).toBe(1);
-    expect(r.err.join('\n')).toMatch(/Aborted/);
+    expect(r.exitCode).toBe(3);
     expect(called).toBe(false);
   });
 });

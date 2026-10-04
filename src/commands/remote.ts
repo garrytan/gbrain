@@ -21,6 +21,7 @@
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult, RemoteMcpError } from '../core/mcp-client.ts';
 import type { DoctorReport, Check } from './doctor.ts';
+import { fixLine } from './doctor/check-fix.ts';
 
 interface RemoteFlags {
   json: boolean;
@@ -238,8 +239,10 @@ function renderDoctorReport(report: DoctorReport): void {
   console.log('\nGBrain Health Check (remote host)');
   console.log('=================================');
   for (const c of report.checks) {
-    const icon = c.status === 'ok' ? 'OK' : c.status === 'warn' ? 'WARN' : 'FAIL';
+    const icon = c.status === 'ok' ? (c.severity === 'info' ? 'INFO' : 'OK') : c.status === 'warn' ? 'WARN' : 'FAIL';
     console.log(`  [${icon}] ${c.name}: ${c.message}`);
+    const fix = c.status === 'ok' ? null : fixLine(c.fix);
+    if (fix) console.log(`    Fix: ${fix}`);
   }
   console.log(`\nHealth score: ${report.health_score}/100. Status: ${report.status}.`);
   if (report.status === 'unhealthy') {

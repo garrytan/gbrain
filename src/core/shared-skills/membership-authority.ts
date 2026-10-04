@@ -7,7 +7,10 @@ import { normalizeTokenScopes } from '../legacy-token-scope.ts';
 import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { hasScope } from '../scope.ts';
 
-const deny = (): never => { throw new OperationError('permission_denied', 'An intact, current skills_member_self grant and explicit operation approval are required. Membership grants no other authority.'); };
+const deny = (): never => {
+  throw new OperationError('permission_denied', 'An intact, current skills_member_self grant and explicit operation approval are required. Membership grants no other authority.',
+    'Ask the brain host\'s operator to grant this connection the skills_member_self scope and the membership operation it calls, then reconnect; nothing was enrolled or changed.');
+};
 
 export async function memberAuthority(ctx: OperationContext, operation: string): Promise<{ principal: Principal; digest: string; ctx: OperationContext }> {
   const auth = ctx.auth;

@@ -7,18 +7,20 @@
  */
 
 import type { Operation } from './contract.ts';
-import { OperationError } from './contract.ts';
+import { hostOnlyError } from './op-fix.ts';
 import { GET_RECENT_TRANSCRIPTS_DESCRIPTION } from '../operations-descriptions.ts';
 
 const get_recent_transcripts: Operation = {
   name: 'get_recent_transcripts',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: GET_RECENT_TRANSCRIPTS_DESCRIPTION,
   scope: 'read',
   // Local-only: rejects HTTP-borne MCP traffic at tool-list time
   // (serve-http.ts filters on `localOnly`) AND at runtime via the in-handler
   // ctx.remote check. Defense in depth: hidden + rejected.
-  localOnly: true,
+  localOnly: true, cliOnly: { argv: ['gbrain', 'transcripts', 'recent'] },
   params: {
     days: { type: 'number', description: 'Window in days. Default 7.' },
     summary: {
@@ -34,10 +36,13 @@ const get_recent_transcripts: Operation = {
     // allow-list (subagents always run with remote=true; they would always be
     // rejected, which is a footgun if the op is visible).
     if (ctx.remote === true) {
-      throw new OperationError(
-        'permission_denied',
-        'get_recent_transcripts is local-only — call via the gbrain CLI.',
-      );
+      const n = (v: unknown) => (typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? String(v) : undefined);
+      const days = n(p.days);
+      const limit = n(p.limit);
+      throw hostOnlyError(ctx, 'permission_denied', 'get_recent_transcripts is local-only — call via the gbrain CLI.',
+        ['gbrain', 'transcripts', 'recent', ...(days ? ['--days', days] : []), ...(limit ? ['--limit', limit] : []),
+          ...(p.summary === false ? ['--full'] : []), '--json'],
+        'Raw transcripts are private host files; only the trusted local CLI reads them.');
     }
     const { listRecentTranscripts } = await import('../transcripts.ts');
     return listRecentTranscripts(ctx.engine, {

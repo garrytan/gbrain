@@ -4,7 +4,7 @@ import type { BrainEngine } from '../engine.ts';
 import { loadConfig } from '../config.ts';
 import { contentHash } from '../utils.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from './page-mutations.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
@@ -92,28 +92,40 @@ export async function admitCanonicalGrandfather(engine: BrainEngine, selected: G
 
 export async function prepareGrandfatherMutation(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   if (row.operation !== 'put_page' || row.intent?.kind !== 'managed_grandfather' || row.authority.remote !== false || row.authority.principal.kind !== 'local_cli') {
-    throw new OperationError('permission_denied', 'Grandfathering requires the trusted canonical migration path.');
+    throw opError('permission_denied', 'Grandfathering requires the trusted canonical migration path.',
+      `Request ${row.request_id} is not a trusted local grandfather write, so nothing changed. Grandfathering runs only from gbrain apply-migrations on the brain host.`);
   }
   await authorizeStoredRequest(engine, row);
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
-  if (!snapshot || snapshot.page.id !== row.page_id) throw new OperationError('page_identity_changed', 'The grandfathered page identity changed.');
+  if (!snapshot || snapshot.page.id !== row.page_id) {
+    throw opError('page_identity_changed', 'The grandfathered page identity changed.',
+      `${row.slug} in ${row.source_id} was deleted or replaced after grandfathering was queued, so it was skipped; the next migration run re-plans from current pages.`);
+  }
   assertPageRevision(snapshot, { expectedRevision: row.intent.expected_revision as string });
-  if (Object.hasOwn(snapshot.page.frontmatter ?? {}, 'validate')) throw new OperationError('revision_conflict', 'A validation decision already exists.');
+  if (Object.hasOwn(snapshot.page.frontmatter ?? {}, 'validate')) {
+    throw opError('revision_conflict', 'A validation decision already exists.',
+      `${row.slug} in ${row.source_id} already records a validate decision, so grandfathering left it unchanged; nothing else is needed.`);
+  }
   if (snapshot.page.frontmatter != null && (typeof snapshot.page.frontmatter !== 'object' || Array.isArray(snapshot.page.frontmatter))) {
-    throw new OperationError('invalid_params', 'Grandfathering requires valid object frontmatter.');
+    throw opError('invalid_params', 'Grandfathering requires valid object frontmatter.',
+      `${row.slug} in ${row.source_id} has frontmatter that is not a YAML mapping. Fix the page's frontmatter, then run the migration again.`);
   }
   const frontmatter = { ...snapshot.page.frontmatter, validate: false };
   const hash = contentHash({ ...snapshot.page, frontmatter, tags: snapshot.tags });
   const file = await prepareFileTarget(engine, row, snapshot, serializePageToMarkdown({ ...snapshot.page, frontmatter }, snapshot.tags));
   if (file && !['.md', '.mdx'].includes(extname(file.path).toLowerCase())) {
-    throw new OperationError('invalid_params', 'Non-Markdown artifacts cannot be grandfathered by rewriting their bytes.');
+    throw opError('invalid_params', 'Non-Markdown artifacts cannot be grandfathered by rewriting their bytes.',
+      `${row.slug} in ${row.source_id} is backed by a non-Markdown file, so grandfathering skips it rather than rewrite its bytes; no action is needed.`);
   }
   return { observedRevision: snapshot.revision, file, ...databaseOnlyPublication(row, file), deferEmbedding: true, apply: async tx => {
     await tx.createVersion(row.slug, { sourceId: row.source_id });
     const updated = await tx.executeRaw(`UPDATE pages SET frontmatter=jsonb_set(COALESCE(frontmatter,'{}'::jsonb),'{validate}','false'::jsonb),content_hash=$4
       WHERE id=$1 AND source_id=$2 AND knowledge_revision=$3::uuid AND NOT(COALESCE(frontmatter,'{}'::jsonb)?'validate') RETURNING id`,
     [row.page_id, row.source_id, snapshot.revision, hash]);
-    if (updated.length !== 1) throw new OperationError('revision_conflict', 'The validation decision changed before publication.');
+    if (updated.length !== 1) {
+      throw opError('revision_conflict', 'The validation decision changed before publication.',
+        `${row.slug} in ${row.source_id} changed while it was being grandfathered, so the transaction rolled back; the next migration run re-plans from current pages.`);
+    }
     if (snapshot.page.text_projection_revision === snapshot.revision) {
       await tx.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id=$1 AND source_id=$2', [row.page_id, row.source_id]);
     }

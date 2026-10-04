@@ -322,7 +322,7 @@ describe('gbrain eval replay — happy path', () => {
 });
 
 describe('gbrain eval replay — failure modes', () => {
-  test('missing --against errors and exits 1', async () => {
+  test('missing --against errors and exits 2 (invalid_params, D4)', async () => {
     const origExit = process.exit;
     let code: number | undefined;
     process.exit = (c?: number) => { code = c; throw new Error('exit'); };
@@ -332,7 +332,7 @@ describe('gbrain eval replay — failure modes', () => {
     } catch { /* expected */ }
     cap.restore();
     process.exit = origExit;
-    expect(code).toBe(1);
+    expect(code).toBe(2);
   });
 
   test('--against pointing at missing file errors and exits 1', async () => {

@@ -69,7 +69,29 @@ gbrain connectors auth claude --cookie -       # paste `sessionKey=<value>`, Ctr
 Every auth run ends with a probe + a one-line verdict. Nothing is saved on a
 failed probe unless you pass `--force`. `gbrain connectors auth chatgpt
 --try-oauth` attempts OAuth PKCE first (best-effort/forward-compat; ChatGPT
-tokens are usually codex-scoped, so it falls back to the cookie lane).
+tokens are usually codex-scoped, so it falls back to the cookie lane); add
+`--no-browser` to print the sign-in URL instead of opening a browser. OAuth
+waits for a local browser redirect, so it only runs with a person at the
+terminal.
+
+**When you (the agent) run it without a terminal:** `gbrain connectors auth
+<provider>` with no credential does not wait for a paste. It prints an
+`[AGENT]` block with the cookie checklist fenced in `[SHOW USER]`, saves
+nothing and exits 1. The cookie is the user's credential, so:
+
+1. Relay the `[SHOW USER]` checklist verbatim and ask the user to copy the
+   cookie from a browser where they are logged in. Never reuse, guess or
+   search for a cookie yourself.
+2. Ask the user to hand it over without pasting it into the chat when
+   possible (for example, they run `pbpaste | gbrain connectors auth chatgpt
+   --cookie -` themselves). If they give it to you, pass it only on stdin:
+   `printf '%s' "$COOKIE" | gbrain connectors auth <provider> --cookie -`.
+3. If the user would rather not share a session cookie, use the official
+   export instead (`gbrain transcripts ingest <export-file>`).
+
+A stdin that stays open without data ends after 30 seconds with "stdin was
+open but silent" (set `GBRAIN_STDIN_TIMEOUT_MS` to wait longer); nothing is
+saved.
 
 **If the probe is blocked** by a Cloudflare/bot challenge (`forbidden`): the
 provider is refusing server-side fetch from this machine. Use the official
@@ -164,6 +186,14 @@ This skill guarantees:
 - Health (re-auth-needed / stalled / drift) surfaces in `gbrain doctor`.
 - No real names in examples or reports; the imported transcript is the user's
   private content and stays exact.
+
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `forbidden` (a Cloudflare/bot challenge): the provider refuses server-side fetch from this machine. Tell the user and switch to the export-file lane (`gbrain transcripts ingest`); never loop retries.
+- An auth error (expired cookie or token): ask the user to re-run `gbrain connectors auth` for that provider themselves; the credential belongs to them and stays on their machine.
+- `partial`: some conversations failed and the watermark did not advance. Re-run the sync later; report the count still missing, not "synced".
 
 ## Anti-Patterns
 

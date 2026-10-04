@@ -100,4 +100,16 @@ describe('renderRemediationPlanLines', () => {
     expect(text).toContain('Blocked checks');
     expect(text).not.toContain('Brain is at target');
   });
+
+  test('E3: an unreachable target renders a combined command aimed at the reachable ceiling (it would otherwise refuse)', () => {
+    const plan = planFixture({
+      brain_score_current: 45,
+      target_unreachable: true,
+      max_reachable_score: 70,
+      plan: [{ step: 1, id: 'extract.stale', job: 'extract', params: { stale: true }, severity: 'medium', est_seconds: 30, est_usd_cost: 0,
+        rationale: '3 stale pages', status: 'remediable', depends_on: [], idempotency_key: 'k' } as Plan['plan'][number]],
+    });
+    const text = renderRemediationPlanLines(plan, 90).join('\n');
+    expect(text).toContain('gbrain doctor --remediate --yes --max-usd 0 --target-score 70');
+  });
 });

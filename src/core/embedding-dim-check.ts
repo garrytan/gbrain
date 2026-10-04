@@ -14,6 +14,9 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import type { GBrainConfig } from './config.ts';
+import { shellQuote, type Action } from './agent-output.ts';
+import { embeddingEnablement } from './readiness.ts';
 import { OperationError } from './ops/contract.ts';
 import { PGVECTOR_HNSW_VECTOR_MAX_DIMS, hnswMaxDimsForType } from './vector-index.ts';
 import { gbrainPath } from './config.ts';
@@ -62,22 +65,29 @@ export const PGVECTOR_COLUMN_MAX_DIMS = 16000;
  * handlers) bubble it back as a structured job failure.
  */
 export class EmbeddingDisabledError extends Error {
-  constructor(message: string) {
+  constructor(message: string, public readonly fix?: Action) {
     super(message);
     this.name = 'EmbeddingDisabledError';
   }
 }
 
-export function assertEmbeddingEnabled(cfg: { embedding_disabled?: boolean } | null): void {
-  if (cfg?.embedding_disabled) {
-    throw new EmbeddingDisabledError(
-      'This brain was initialized with `--no-embedding` (deferred setup).\n' +
-      'Configure an embedding provider before running embed / import:\n' +
-      '  gbrain config set embedding_model <provider>:<model>\n' +
-      '  gbrain config set embedding_dimensions <N>\n' +
-      '  gbrain init --force --embedding-model <provider>:<model>   # re-init to size schema\n',
-    );
-  }
+/**
+ * Keyless-by-choice guard. The enable step comes from readiness's one
+ * `embeddingEnablement` (resolved datastore path, a provider whose key is
+ * present, effects credentials + paid), never `gbrain config set
+ * embedding_model`, which the config command refuses.
+ */
+export function assertEmbeddingEnabled(cfg: GBrainConfig | null): void {
+  if (!cfg?.embedding_disabled) return;
+  const fix = embeddingEnablement(cfg);
+  const step = fix.argv ? shellQuote(fix.argv) : undefined;
+  const lines = [
+    'This brain was initialized with `--no-embedding` (deferred setup): embeddings are off by choice, so nothing was embedded.',
+    ...(step ? [`To turn on semantic search (pages and facts are kept): ${step}`] : []),
+    `Why: ${fix.why}`,
+    ...(fix.consent.length ? [`This needs ${fix.consent.join(' + ')} consent: ask the user first.${fix.user_message ? ` ${fix.user_message}` : ''}`] : []),
+  ];
+  throw new EmbeddingDisabledError(lines.join('\n'), fix);
 }
 
 export interface ColumnDimResult {
@@ -152,10 +162,11 @@ export async function readContentChunksEmbeddingDim(engine: BrainEngine): Promis
  * are fundamentally different:
  *
  * - **PGLite** has no native pgvector extension (the WASM build can't
- *   `ALTER COLUMN TYPE vector(N)`), so the only path is wipe-and-reinit
- *   via `gbrain init --pglite --embedding-model X --embedding-dimensions N`.
- *   The recipe derives the active database path so users don't paste a
- *   stale literal that ignores `GBRAIN_HOME` / `--path` / their config.
+ *   `ALTER COLUMN TYPE vector(N)`). The recipe offers, in order: keeping the
+ *   existing width when the model supports it (in-place `init --force` on
+ *   the active database path), a previewed `gbrain migrate embeddings` that
+ *   keeps pages and DB-only facts, and `gbrain reinit-pglite` as the labelled
+ *   last resort. It never prints a hand-run wipe.
  * - **Postgres** keeps the existing four-step SQL recipe.
  *
  * The old recipe pointed at `gbrain config set embedding_model X` which
@@ -193,26 +204,29 @@ export function embeddingMismatchMessage(opts: EmbeddingMismatchOpts): string {
   if (engineKind === 'pglite') {
     const activePath = databasePath ?? gbrainPath('brain.pglite');
     const modelArg = requestedModel ? ` --embedding-model ${requestedModel}` : '';
+    const keepWidth = requestedModel && resolveSchemaEmbeddingDim({ embedding_model: requestedModel, embedding_dimensions: currentDims }).ok;
     const lines = [
       header,
       ``,
       `  Existing column: vector(${currentDims})`,
       `  Requested:       vector(${requestedDims})${requestedModel ? `  (${requestedModel})` : ''}`,
       ``,
-      `Switching dims is destructive: it drops every embedding in your brain.`,
-      `PGLite cannot ALTER vector column types (pgvector ships as embedded WASM,`,
-      `not a native extension). Wipe-and-reinit is the only path.`,
+      `${source === 'doctor' ? '' : 'Nothing was changed. '}Switching dims re-embeds every chunk and fact;`,
+      `PGLite cannot ALTER vector column types in place (pgvector ships as WASM).`,
       ``,
-      `Recommended (one command):`,
+      ...(keepWidth ? [
+        `Keep this brain's width (no rebuild; pages and facts kept):`,
+        ``,
+        `  gbrain init --force${modelArg} --embedding-dimensions ${currentDims} --path ${activePath}`,
+        ``,
+      ] : []),
+      `Change the width (re-embeds; pages and DB-only facts kept; preview first):`,
+      ``,
+      `  gbrain migrate embeddings --to ${requestedModel ?? '<provider:model>'} --dim ${requestedDims} --dry-run`,
+      ``,
+      `Last resort (moves the datastore aside; DB-only pages and facts are NOT carried over):`,
       ``,
       `  gbrain reinit-pglite${modelArg} --embedding-dimensions ${requestedDims}`,
-      ``,
-      `Or by hand:`,
-      ``,
-      `  mv ${activePath} ${activePath}.bak`,
-      `  gbrain init --pglite${modelArg} --embedding-dimensions ${requestedDims}`,
-      `  gbrain sync   # re-imports your brain repo from disk`,
-      `  gbrain embed --stale`,
       ``,
       `Full guide: docs/embedding-migrations.md`,
     ];

@@ -7,6 +7,8 @@ import { inspectLockHolder } from '../core/pglite-lock.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
+import { DEFAULT_PAID_CAP_USD } from '../core/consent.ts';
+import { consentGate } from '../core/consent-cli.ts';
 import type { ReindexCodeOpts, ReindexCodeResult } from './reindex-code.ts';
 
 export function parseReindexCodeDelegateArgs(args: string[]): ReindexCodeOpts {
@@ -37,7 +39,24 @@ export async function maybeDelegateReindexCode(hostConfig: GBrainConfig | null, 
   if (config?.engine !== 'pglite' || !config.database_path || config.database_url || !inspectLockHolder(config.database_path).held) return false;
   try {
     const options = parseReindexCodeDelegateArgs(args);
-    if (!options.noEmbed && !options.dryRun && !options.yes) throw new OperationError('confirmation_required', 'Pass --no-embed for keyless text recovery, --dry-run for a preview, or --yes to authorize embedding costs.');
+    if (!options.noEmbed && !options.dryRun) {
+      // A4: paid. The owner holds the brain, so no estimate is available here: the cap is
+      // --max-cost when given, else the printed default cap. The owner re-checks `yes`.
+      const auth = await consentGate({
+        command: 'reindex-code', effects: ['paid'], actor: 'agent',
+        what: 'Re-embed the code pages through the running gbrain serve',
+        why: 'Rebuilds code chunks and their embeddings so code search uses current chunking; the running serve owns the brain, so it does the work.',
+        risk: `Spends with the embedding provider, capped at ${options.maxCostUsd !== undefined ? `$${options.maxCostUsd.toFixed(2)}` : `the default $${DEFAULT_PAID_CAP_USD.toFixed(2)}`} (no estimate while the serve holds the brain). --no-embed rebuilds text and symbol metadata for free.`,
+        user_message: `Re-embed the brain's code pages (paid embeddings, at most ${options.maxCostUsd !== undefined ? `$${options.maxCostUsd.toFixed(2)}` : `$${DEFAULT_PAID_CAP_USD.toFixed(2)}`})? --no-embed does the free text-only rebuild instead.`,
+        argv: ['gbrain', 'reindex-code', ...args.filter(a => a !== '--yes' && a !== '-y')],
+        preview_argv: ['gbrain', 'reindex-code', ...args.filter(a => a !== '--yes' && a !== '-y' && a !== '--json'), '--dry-run', '--json'],
+        est_usd: null,
+        args,
+      }, { json: options.json === true });
+      if (!auth) return true;
+      options.yes = true;
+      if (options.maxCostUsd === undefined && auth.cap_usd !== null) options.maxCostUsd = auth.cap_usd;
+    }
     const delegated = await maybeDelegateLocalAdministration('writer_reindex_code', { options }, config, { timeoutMs: 86_400_000 });
     if (!delegated.handled) throw new OperationError('owner_unavailable', 'The registered owner stopped before reindex admission. Retry the same command.');
     const result = delegated.result as ReindexCodeResult;

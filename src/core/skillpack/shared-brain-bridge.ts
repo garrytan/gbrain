@@ -15,39 +15,50 @@ import { acquireBootstrapLock } from '../bootstrap/lock.ts';
 import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { readPrivateText } from '../harness/credentials.ts';
 import { harnessAdapter } from '../harness/registry.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 
 async function bindBridgeTarget(engine: BrainEngine, brainId: string, adapter: string, root: string, follow: boolean): Promise<LocalRegistration> {
   const registration = JSON.parse(readPrivateText(confinedPath(configDir(), `persistence/${brainId}.cli.json`), 65536)) as LocalRegistration;
   if (registration.lane !== 'cli' || typeof registration.credential !== 'string' || !/^[a-f0-9-]{36}$/i.test(registration.id)) {
-    throw new OperationError('bridge_ownership_conflict', 'The private local CLI registration is invalid.');
+    throw opError('bridge_ownership_conflict', 'The private local CLI registration is invalid.',
+      `The private CLI registration for brain ${brainId} is malformed, so no bridge was bound. Inspect the local writer registrations; re-registering is the user's decision.`,
+      { fix: { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'], consent: [], actor: 'agent', why: 'Shows the local writer registrations and whether the CLI one is active.', requires_exclusive: false } });
   }
   let verified = false;
   try { await verifyLocalWriter(engine, registration); verified = true; }
   catch (error) { if (follow) throw error; }
   const claimKey = `shared_skills.bridge_owner.v1.${registration.id}.${adapter}`;
   const target = sha256(JSON.stringify([brainId, root]));
-  const refuseIndependent = () => new OperationError('independent_principal_required',
-    'This local CLI principal already owns another source/destination for this harness. Reuse that bridge target; independent installations need separate private-handoff principals. Leaving does not release this binding.');
+  const refuseIndependent = () => opError('independent_principal_required',
+    'This local CLI principal already owns another source/destination for this harness. Reuse that bridge target; independent installations need separate private-handoff principals. Leaving does not release this binding.',
+    `Install the ${adapter} bridge to the destination this CLI principal already owns, or give the second installation its own private-handoff principal; nothing was changed.`);
   const existing = await engine.getConfig(claimKey);
   if (existing !== null && existing !== undefined) {
     if (existing !== target) throw refuseIndependent();
     return registration;
   }
-  if (!verified) throw new OperationError('bridge_ownership_conflict', 'Restore writer access to verify legacy bridge ownership before attempting cleanup.');
+  if (!verified) {
+    throw opError('bridge_ownership_conflict', 'Restore writer access to verify legacy bridge ownership before attempting cleanup.',
+      'The CLI writer registration could not be verified, so legacy bridge ownership cannot be checked; nothing was changed. Inspect the local writer registrations before trying again.',
+      { fix: { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'], consent: [], actor: 'agent', why: 'Shows whether the CLI writer registration is active.', requires_exclusive: false } });
+  }
   const [member] = await engine.executeRaw<{ installation_id: string }>(
     "SELECT installation_id FROM shared_skill_members WHERE principal_kind='local_cli' AND principal_id=$1 AND adapter=$2", [registration.id, adapter]);
   const readReceipt = (path: string) => {
     const receipt = JSON.parse(readPrivateText(path, 4 * 1024 * 1024)) as { format_version: number; adapter: string; brain_id: string; installation_id: string };
     if (receipt.format_version !== 1 || typeof receipt.adapter !== 'string' || typeof receipt.brain_id !== 'string' || typeof receipt.installation_id !== 'string') {
-      throw new OperationError('bridge_ownership_conflict', 'Preserve the invalid legacy enrollment receipt before retrying.');
+      throw opError('bridge_ownership_conflict', 'Preserve the invalid legacy enrollment receipt before retrying.',
+        `${path} is not a valid legacy enrollment receipt. Keep it, show it to the user, and resolve which installation it belongs to before installing again; nothing was changed.`);
     }
     return receipt;
   };
   if (member) {
     const parent = dirname(root);
     const directories = existsSync(parent) ? readdirSync(parent).filter(name => /^[a-f0-9]{32}$/.test(name)) : [];
-    if (directories.length > 4096) throw new OperationError('bridge_ownership_conflict', 'The legacy bridge inventory exceeds the ownership inspection limit.');
+    if (directories.length > 4096) {
+      throw opError('bridge_ownership_conflict', 'The legacy bridge inventory exceeds the ownership inspection limit.',
+        `${parent} holds more than 4096 legacy bridge directories, beyond what gbrain inspects. Ask the user to archive old copies there before installing again; nothing was changed.`);
+    }
     const matching: string[] = [];
     for (const directory of directories) {
       const candidate = confinedPath(parent, `${directory}/shared-skills/receipt.json`);
@@ -55,11 +66,15 @@ async function bindBridgeTarget(engine: BrainEngine, brainId: string, adapter: s
       const receipt = readReceipt(candidate);
       if (receipt.brain_id === brainId && receipt.adapter === adapter && receipt.installation_id === member.installation_id) matching.push(join(parent, directory));
     }
-    if (matching.length !== 1) throw new OperationError('bridge_ownership_conflict',
-      'Existing membership has missing or multiple bridge receipts. No enrollment or native files were changed. Preserve and resolve all old copies before using separate private-handoff principals.');
+    if (matching.length !== 1) {
+      throw opError('bridge_ownership_conflict',
+        'Existing membership has missing or multiple bridge receipts. No enrollment or native files were changed. Preserve and resolve all old copies before using separate private-handoff principals.',
+        `Found ${matching.length} bridge receipts for installation ${member.installation_id} under ${parent}. Show the user the copies and keep exactly one before installing again.`);
+    }
     if (matching[0] !== root) throw refuseIndependent();
   } else if (existsSync(confinedPath(root, 'shared-skills/receipt.json'))) {
-    throw new OperationError('bridge_ownership_conflict', 'The existing bridge receipt does not belong to the current authenticated principal.');
+    throw opError('bridge_ownership_conflict', 'The existing bridge receipt does not belong to the current authenticated principal.',
+      `${root} already holds another principal's bridge receipt. Install to a different destination, or ask the user which installation should own this one; nothing was changed.`);
   }
   await engine.executeRaw('INSERT INTO config(key,value) VALUES($1,$2) ON CONFLICT(key) DO NOTHING', [claimKey, target]);
   if (await engine.getConfig(claimKey) !== target) throw refuseIndependent();

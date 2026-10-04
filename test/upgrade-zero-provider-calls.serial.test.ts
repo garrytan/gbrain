@@ -65,6 +65,8 @@ async function postUpgrade(home: string, tty: boolean): Promise<{ exitCode: numb
     OPENAI_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
     GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_SKIP_REFERENCE_SWEEP: '1', GBRAIN_NO_AUTOPILOT_INSTALL: '1',
     DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined,
+    // The PTY case stands in for a human at the terminal; CI runners set CI, which declines prompts unless GBRAIN_INTERACTIVE=1.
+    GBRAIN_INTERACTIVE: tty ? '1' : undefined,
   });
   const cli = [process.execPath, '--no-env-file', join(REPO, 'src/cli.ts'), 'post-upgrade', '--no-autopilot-install'];
   const cmd = tty ? ['/usr/bin/script', '-qec', cli.map(a => `'${a.replace(/'/g, `'\\''`)}'`).join(' '), '/dev/null'] : cli;

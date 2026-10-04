@@ -82,10 +82,13 @@ export const QUERY_DESCRIPTION =
   "'auto'; 'chunk' opts out). For exhaustive enumeration use list_pages; for exact known tokens " +
   "`search` is cheaper (no expansion LLM call). " +
   "For personal/emotional questions ('what's going on with me', 'anything notable', " +
-  "'how am I feeling'), prefer get_recent_salience, find_anomalies, or " +
-  "get_recent_transcripts. Semantic search returns polished pages and misses " +
+  "'how am I feeling'), prefer get_recent_salience or find_anomalies (raw " +
+  "transcripts are owner-only: `gbrain transcripts recent` on the brain host). Semantic search returns polished pages and misses " +
   "recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' " +
-  "mean impressive — they often mean difficult or emotionally charged.";
+  "mean impressive — they often mean difficult or emotionally charged. " +
+  "Needs an embedding key for semantic recall and a chat-model key for expansion; " +
+  "without them it runs keyword-only and a degraded_recall notice says so (a thin " +
+  "result is then not proof of absence).";
 
 export const SEARCH_DESCRIPTION =
   "Cheap hybrid search (vector + keyword + RRF) with no LLM expansion. " +
@@ -121,7 +124,7 @@ export const FIND_CONTRADICTIONS_DESCRIPTION =
   "`gbrain eval suspected-contradictions` for that.";
 
 export const FIND_TRAJECTORY_DESCRIPTION =
-  "v0.35.4 — return the chronological claim trajectory for an entity (typed " +
+  "Return the chronological claim trajectory for an entity (typed " +
   "metric values over time, plus auto-detected regressions and narrative drift). " +
   "Use this when the user asks 'how has Acme's MRR trended', 'show me what " +
   "alice-example said about runway over time', 'is this founder consistent', " +
@@ -150,7 +153,7 @@ export const FIND_TRAJECTORY_DESCRIPTION =
 export const CODE_CALLERS_DESCRIPTION =
   "BEFORE editing any function, run code_callers with the symbol name to find " +
   "every caller (the people who'd be affected by your change). Returns direct " +
-  "callers from the v0.20+ tree-sitter call graph. Use during plan-mode to size " +
+  "callers from the tree-sitter call graph. Use during plan-mode to size " +
   "the change. Defaults to source-scoped; for multi-source brains pass source_id " +
   "or all_sources=true. " +
   "Returns: `{symbol, count, callers: [{from_symbol_qualified, to_symbol_qualified, edge_type, resolved}]}`. " +

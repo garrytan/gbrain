@@ -3,6 +3,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { runReindexSearchVector } from '../src/commands/reindex-search-vector.ts';
 import { resetFtsLanguageCache } from '../src/core/fts-language.ts';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
+import { currentExitCode, setCliExitVerdict } from '../src/core/cli-force-exit.ts';
 
 const ENV_KEY = 'GBRAIN_FTS_LANGUAGE';
 const originalLang = process.env[ENV_KEY];
@@ -80,6 +81,28 @@ describe('runReindexSearchVector', () => {
     expect(state.calls[0]).toContain('SELECT');
     expect(state.calls[0]).not.toContain('CREATE OR REPLACE');
     expect(state.calls[0]).not.toContain('UPDATE');
+  });
+
+  test('C2: --json without --yes never consents: no DDL, exit 3 with the consent payload', async () => {
+    const state: MockState = { calls: [], rowsToReturn: { pages: 50, chunks: 200 } };
+    const engine = makeMockEngine(state);
+    let stdout = '';
+    const write = process.stdout.write;
+    process.stdout.write = ((c: string | Uint8Array) => { stdout += String(c); return true; }) as typeof process.stdout.write;
+    let result;
+    try {
+      result = await runReindexSearchVector(engine, { json: true, consentEnv: { interactive: false, preapprovals: {} } });
+    } finally {
+      process.stdout.write = write;
+    }
+    expect(result.status).toBe('confirmation_required');
+    expect(currentExitCode()).toBe(3);
+    setCliExitVerdict(0);
+    expect(state.calls.length).toBe(1);
+    expect(state.calls.some(sql => sql.includes('CREATE OR REPLACE'))).toBe(false);
+    const payload = JSON.parse(stdout);
+    expect(payload).toMatchObject({ code: 'confirmation_required', effects: ['destructive'] });
+    expect(payload.fix.argv).toEqual(['gbrain', 'reindex-search-vector', '--json', '--yes']);
   });
 
   test('--yes recreates triggers + backfills with configured language', async () => {

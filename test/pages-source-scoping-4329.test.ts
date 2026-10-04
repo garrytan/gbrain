@@ -265,7 +265,7 @@ describe('delete_page purge — immediate removal for the trusted local CLI only
     // a well-formed request the caller is not allowed to make is
     // permission_denied, not invalid_params (that code is for shape errors).
     await expect(delete_page.handler(ctxOf(), { slug: 'shared/doc', purge: true }))
-      .rejects.toMatchObject({ code: 'permission_denied', suggestion: expect.stringContaining('gbrain delete <slug> --purge') });
+      .rejects.toMatchObject({ code: 'permission_denied', suggestion: expect.stringContaining('gbrain delete shared/doc --purge') });
     await expect(delete_page.handler(ctxOf({ remote: undefined as unknown as boolean }), { slug: 'shared/doc', purge: true }))
       .rejects.toMatchObject({ code: 'permission_denied' });
     const authed = ctxOf({ auth: authOf({ sourceId: 'default', allowedSources: ['default'], scopes: ['read', 'write', 'admin'] }) as any });

@@ -10,19 +10,22 @@ import { readPolicyOpts } from './context.ts';
  */
 
 import type { BrainEngine } from '../engine.ts';
-import type { Operation } from './contract.ts';
+import { opError, type Operation } from './contract.ts';
+import { paramUse } from './op-fix.ts';
 import { resolveRequestedScope } from './context.ts';
 
 // --- v0.36 Phase 2: search_by_image (image-as-query) ---
 
 const search_by_image: Operation = {
   name: 'search_by_image',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description:
-    'v0.36 cross-modal Phase 2: image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL ' +
+    'Image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL ' +
     '(SSRF-defended). Returns visually-similar image chunks plus any OCR text they carry. Optional `query` text ' +
-    'refinement merges via weighted RRF (D13 hybrid intersect). True image→full-text-knowledge requires Phase 3 ' +
-    '(`gbrain reindex --multimodal` + `search.unified_multimodal: true`).',
+    'refinement merges via weighted RRF. Matching images to full-text knowledge needs multimodal ' +
+    'indexing (`gbrain reindex --multimodal` + `search.unified_multimodal: true`).',
   params: {
     image_path: { type: 'string', description: 'Absolute path to image (local CLI callers only — rejected for remote MCP per D18).' },
     image_url: { type: 'string', description: 'http(s):// URL to image. SSRF-defended; max 3 redirect hops; 10MB cap.' },
@@ -48,17 +51,20 @@ const search_by_image: Operation = {
     // entry, before any file I/O fires. validateParams catches it too at the
     // dispatch layer; this is defense-in-depth.
     if (ctx.remote === true && imagePath) {
-      throw new Error(
-        'permission_denied: image_path is not permitted for remote callers (D18). ' +
-        'Use image_url or image_data instead.',
-      );
+      throw opError('permission_denied',
+        'permission_denied: image_path is not permitted for remote callers (D18). Use image_url or image_data instead.',
+        'Pass the image as `image_data` (base64 PNG/JPEG/WebP) or `image_url` (http(s)) instead of `image_path`.');
     }
 
     if (!imagePath && !imageUrl && !imageData) {
-      throw new Error('search_by_image requires one of: image_path, image_url, image_data');
+      throw opError('invalid_params', 'search_by_image requires one of: image_path, image_url, image_data',
+        ctx.remote === false
+          ? `Pass one image input: ${paramUse(ctx, 'image_path', 'photo.png')}, ${paramUse(ctx, 'image_url', 'https://example.com/photo.png')} or ${paramUse(ctx, 'image_data')} with base64 bytes.`
+          : 'Pass one image input: `image_data` (base64 PNG/JPEG/WebP) or `image_url` (http(s) URL).');
     }
     if ([imagePath, imageUrl, imageData].filter(Boolean).length > 1) {
-      throw new Error('search_by_image accepts only one of: image_path, image_url, image_data');
+      throw opError('invalid_params', 'search_by_image accepts only one of: image_path, image_url, image_data',
+        'Pass exactly one image input: drop the others and keep the one that names the image.');
     }
 
     // D23-#6 — remote OAuth clients are charged through the durable

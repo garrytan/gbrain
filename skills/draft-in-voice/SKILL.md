@@ -281,6 +281,14 @@ Self-check: A pass · B pass (trimmed to band) · C pass
 (metadata block + six fingerprint sections + directive block), plus a
 one-line report of corpus size, span, and validation status.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- No consent recorded on the voice profile, or `status: draft`: the skill refuses to draft by design. Ask the user to confirm who authorized the ghostwriting and for what scope.
+- The profile page returns `page_not_found` or the corpus search is empty with a degraded notice: do not draft from general knowledge; tell the user the voice memory is missing or the search was keyword-only.
+- Saving the profile returns `revision_conflict`: re-read and merge; the profile is binding, so never overwrite it from an old read.
+
 ## Anti-Patterns
 
 - **Freehanding a voice from memory.** No validated profile → no draft. Ever.

@@ -17,6 +17,7 @@
 
 import { homedir } from 'node:os';
 import type { BrainEngine } from '../core/engine.ts';
+import type { RecentTranscript } from '../core/transcripts.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import type { TranscriptFormat } from '../core/transcripts/types.ts';
 import { runTranscriptsIngest, type TranscriptsIngestResult } from '../core/transcripts/ingest.ts';
@@ -596,6 +597,11 @@ export async function runTranscripts(engine: BrainEngine, args: string[]): Promi
     return;
   }
   if (sub !== 'recent') {
+    if (sub !== '--help' && sub !== '-h' && args.includes('--json')) {
+      const { exitCliError, usageError } = await import('../cli/cli-error.ts');
+      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status or recent.',
+        'Run `gbrain transcripts recent --json` to list recent transcripts, or `gbrain transcripts --help`.'), 'transcripts', { json: true });
+    }
     console.log(HELP);
     if (sub && sub !== '--help' && sub !== '-h') setCliExitVerdict(2);
     return;
@@ -612,17 +618,33 @@ export async function runTranscripts(engine: BrainEngine, args: string[]): Promi
     summary: !parsed.full,
     limit: parsed.limit,
   });
-  if (parsed.json) {
-    console.log(JSON.stringify(rows, null, 2));
-    return;
-  }
-  if (rows.length === 0) {
-    console.log('(no recent transcripts in the corpus dir)');
-    return;
-  }
-  rows.forEach(r => {
-    const date = r.date ?? r.mtime.slice(0, 10);
-    console.log(`\n--- ${date} | ${r.path} | ${r.length} bytes ---`);
-    console.log(r.summary);
-  });
+  console.log(renderRecentTranscripts(rows, parsed.json === true));
+}
+
+function renderRecentTranscripts(rows: RecentTranscript[], json: boolean): string {
+  if (json) return JSON.stringify(rows, null, 2);
+  if (rows.length === 0) return '(no recent transcripts in the corpus dir)';
+  return rows.map(r => `\n--- ${r.date ?? r.mtime.slice(0, 10)} | ${r.path} | ${r.length} bytes ---\n${r.summary}`).join('\n');
+}
+
+/**
+ * `gbrain transcripts recent` while a live `gbrain serve` owns the PGLite
+ * brain: read through the owner's local socket as the trusted CLI (the
+ * stdio agent's own connection still cannot call get_recent_transcripts).
+ * False when no live owner serves the brain (the caller connects normally).
+ */
+export async function runDelegatedTranscriptsRecent(args: string[]): Promise<boolean> {
+  const parsed = parseRecentArgs(args);
+  if ('help' in parsed) return false;
+  const { loadConfig } = await import('../core/config.ts');
+  const { getCliOptions } = await import('../core/cli-options.ts');
+  const { runDelegatedCliOperation } = await import('./persistence-delegate.ts');
+  const params: Record<string, unknown> = {
+    ...(parsed.days !== undefined ? { days: parsed.days } : {}),
+    ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
+    summary: !parsed.full,
+    ...(parsed.json ? { json: true } : {}),
+  };
+  return runDelegatedCliOperation('get_recent_transcripts', params, loadConfig(), { brain: getCliOptions().brain },
+    (_op, result) => `${renderRecentTranscripts(Array.isArray(result) ? result as RecentTranscript[] : [], parsed.json === true)}\n`);
 }

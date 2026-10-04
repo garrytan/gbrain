@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { assertRecoveryStagingAbsent } from './staging.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
 import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
 import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetentionDays } from './limits.ts';
@@ -40,6 +42,18 @@ interface Counter {
   key: string; outstanding_count: number | string; intent_bytes: number | string;
   lifetime_ids: number | string; terminal_bytes: number | string; recovery_bytes: number | string;
 }
+/** Read-only: the receipt itself for the local CLI writer's own request; another principal's request is inspected on the owner. */
+function requestInspectFix(row: Pick<WriteRequest, 'request_id' | 'source_id' | 'principal_kind'>): Action {
+  return row.principal_kind === 'local_cli'
+    ? readFix(`Reads request ${row.request_id}'s durable receipt: its state, outcome and recorded error, read-only.`, { argv: ['gbrain', 'write-request', '--', row.request_id] })
+    : ownerStatusFix(row.source_id);
+}
+function ownerStatusFix(sourceId: string): Action {
+  return readFix(`Shows source ${sourceId}'s owner and every pending, running or recovering request, read-only.`,
+    { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
+}
+const lifecycleIdConflict = (requestId: string) => opError('idempotency_conflict', 'This request_id belongs to a source lifecycle operation.',
+  `Request ID ${requestId} is already recorded for a source lifecycle change of this CLI writer, so this page write was not admitted and nothing changed. Submit the page write with a new request_id.`);
 export function capacityError(resource: string): OperationError {
   return new OperationError('queue_capacity', `Write capacity exhausted: ${resource}.`,
     'Inspect writer status and configured persistence limits. Existing requests retain their reserved completion space.');
@@ -94,7 +108,7 @@ export async function assertPageRequestIdentity(engine: SqlEngine, principal: Pr
   if (principal.kind !== 'local_cli') return;
   const [topology] = await engine.executeRaw('SELECT id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid',
     [principal.id, requireUuid(requestId)]);
-  if (topology) throw new OperationError('idempotency_conflict', 'This request_id belongs to a source lifecycle operation.');
+  if (topology) throw lifecycleIdConflict(requestId);
 }
 export async function getWriteRequestById(engine: SqlEngine, id: string, signal?: AbortSignal): Promise<WriteRequest | null> {
   const [row] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], { signal });
@@ -137,7 +151,9 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       const binding = await tx.executeRaw(`SELECT source_id FROM persistence_source_bindings WHERE source_id=$1
         AND source_incarnation=$2::uuid AND worktree_id=$3::uuid AND topology_generation=$4`,
       [input.sourceId, input.sourceIncarnation, input.worktreeId, input.topologyGeneration]);
-      if (!binding.length) throw new OperationError('source_changed', 'The source binding changed during admission.');
+      if (!binding.length) throw opError('source_changed', 'The source binding changed during admission.',
+        `Source ${input.sourceId}'s worktree binding changed (a claim, transfer or lifecycle change) while this write was being admitted, so nothing was accepted. Check the owner with the command in fix, then submit the write again; reusing the same request_id is safe because nothing was recorded.`,
+        { fix: ownerStatusFix(input.sourceId) });
     }
     // Source membership is locked before principal/counter/request guards. A
     // deleted/recreated source never receives work accepted for its old identity.
@@ -150,12 +166,14 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     const counters = await lockCounters(tx, ['brain', principalKey(input.principal)]);
     if(input.principal.kind==='local_cli') {
       const topology=await tx.executeRaw('SELECT id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid',[input.principal.id,requestId]);
-      if(topology.length) throw new OperationError('idempotency_conflict','This request_id belongs to a source lifecycle operation.');
+      if(topology.length) throw lifecycleIdConflict(requestId);
     }
     const prior = await getWriteRequest(tx, input.principal, requestId);
     if (prior) {
       if ((prior.target_kind ?? 'page') !== (input.targetKind ?? 'page') || (prior.protocol_version ?? 1) !== (input.protocolVersion ?? 1)) {
-        throw new OperationError('idempotency_conflict', 'This request_id belongs to a different mutation target or protocol.');
+        throw opError('idempotency_conflict', 'This request_id belongs to a different mutation target or protocol.',
+          `Request ID ${requestId} was already accepted for a ${prior.target_kind ?? 'page'} write (protocol ${prior.protocol_version ?? 1}), so this ${input.targetKind ?? 'page'} write was not admitted. Read the original request${prior.principal_kind === 'local_cli' ? ' with the command in fix' : ' with get_write_request'} if you meant to replay it; otherwise submit this write with a new request_id.`,
+          prior.principal_kind === 'local_cli' ? { fix: requestInspectFix(prior) } : {});
       }
       return assertReplayIntent(prior, fingerprint);
     }
@@ -284,9 +302,13 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
     const counters = await lockCounters(tx, ['brain', `worktree:${row.worktree_id}`]);
     const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
-    if (!current || current.execution_token !== row.execution_token || current.state !== 'running') throw new OperationError('write_claim_lost', 'The write execution claim was superseded.');
+    if (!current || current.execution_token !== row.execution_token || current.state !== 'running') throw opError('write_claim_lost', 'The write execution claim was superseded.',
+      `Another owner pass claimed request ${row.request_id} in source ${row.source_id} before this pass recorded its recovery, so this pass stopped without publishing; the current claim finishes or recovers it. Inspect the request with the command in fix instead of resubmitting it.`,
+      { fix: requestInspectFix(row) });
     if (current.recovery) {
-      if (digest(current.recovery) !== digest(recovery)) throw new OperationError('recovery_required', 'An existing publication must be recovered before preparing another.');
+      if (digest(current.recovery) !== digest(recovery)) throw opError('recovery_required', 'An existing publication must be recovered before preparing another.',
+        `Request ${row.request_id} in source ${row.source_id} already holds a different publication recovery record, so nothing new was written. The owner's recovery pass restores or finishes that publication first; inspect it with the command in fix and do not resubmit the request.`,
+        { fix: requestInspectFix(row) });
       return;
     }
     for (const c of counters) if (Number(c.recovery_bytes) + bytes > (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes)) throw capacityError('recovery bytes currently reserved by other requests');
@@ -306,9 +328,13 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   const keys = ['brain', principalKey(requestPrincipal(row)), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])];
   await lockCounters(tx, keys);
   const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
-  if (!current) throw new OperationError('not_found', 'Write request not found.');
+  if (!current) throw opError('not_found', 'Write request not found.',
+    `The journal row of request ${row.request_id} in source ${row.source_id} disappeared before its completion was recorded, so no outcome was saved. Inspect the source's requests with the command in fix before submitting anything again.`,
+    { fix: ownerStatusFix(row.source_id) });
   if (isTerminal(current)) return current;
-  if (row.execution_token !== current.execution_token) throw new OperationError('write_claim_lost', 'Write claim changed before completion.');
+  if (row.execution_token !== current.execution_token) throw opError('write_claim_lost', 'Write claim changed before completion.',
+    `Another owner pass claimed request ${row.request_id} in source ${row.source_id} before this pass recorded its outcome, so this pass's completion was discarded; the current claim records the final outcome. Inspect the request with the command in fix instead of resubmitting it.`,
+    { fix: requestInspectFix(row) });
   const [effects] = await tx.executeRaw<{bytes:string}>(`SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0)::text AS bytes
     FROM persistence_effects WHERE request_id=$1::uuid`,[row.id]);
   if (jsonBytes(outcome) + jsonBytes(current.authority) + 1024 + Buffer.byteLength(error?.message ?? '') + (error?.detail ? jsonBytes(error.detail) : 0) + Number(effects.bytes) > Number(current.terminal_reservation)) throw capacityError('terminal result and effects exceed their reserved bounded encoding');

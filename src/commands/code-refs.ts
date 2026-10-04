@@ -23,6 +23,7 @@ import { errorFor, serializeError } from '../core/errors.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
 import { resolveCliCodeScope, positionalArgs, parseFlag } from './code-scope.ts';
 import { codeReadFilter, type CodeReadScope } from '../core/code-intel/read-scope.ts';
+import { legacyNestedErrorDocument } from '../core/agent-output.ts';
 
 export interface CodeRefResult {
   slug: string;
@@ -99,7 +100,7 @@ export async function runCodeRefs(engine: BrainEngine, args: string[]): Promise<
       hint: 'gbrain code-refs <symbol> [--source S | --all-sources] [--lang <language>] [--json]',
     });
     if (shouldEmitJson(args)) {
-      console.log(JSON.stringify({ error: err.envelope }));
+      console.log(JSON.stringify(legacyNestedErrorDocument(err.envelope, ['gbrain', 'code-refs', '--help'])));
     } else {
       console.error(err.message);
     }

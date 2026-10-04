@@ -1785,7 +1785,7 @@ export interface BrainHealth {
    */
   schema_version?: '1';
   migrations?:
-    | { pending: string[]; partial: string[]; wedged: string[]; skipped_future: number }
+    | { pending: string[]; pending_fresh_install: string[]; partial: string[]; wedged: string[]; skipped_future: number }
     | { error: 'ledger_unreadable' };
 }
 

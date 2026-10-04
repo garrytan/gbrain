@@ -1,4 +1,4 @@
-<!-- gbrain-runbook-stamp: 0.60.41.0 -->
+<!-- gbrain-runbook-stamp: 0.60.42.0 -->
 <!-- This stamp must equal the VERSION file at every release; CI enforces it
      (scripts/check-bootstrap-tag.sh). `gbrain bootstrap status` compares it to
      the installed binary and warns on skew. -->
@@ -234,18 +234,20 @@ placeholder). Trust the CLI's detection over your own guesses.
 
 ## Failure modes, and what they actually mean
 
-| Symptom | Real cause | Fix |
-|---|---|---|
-| `interview --status` exits nonzero forever | A required answer is genuinely missing | Ask the human. Do not default it. |
-| Render refuses with unresolved tokens | Interview incomplete or a template edit broke a token | Finish the interview; `status` names the tokens. |
-| `verify` fails the magic-moment check | The fact never landed (keyless: the Facts fence was not written) | Re-run the write step it names; check `gbrain doctor`. |
-| Secret-scan block on push | A credential-shaped string in a tracked file | Fix or allowlist deliberately (`.gbrain-scan-allow`); never force. |
-| "bootstrap already running (pid N)" | A concurrent bootstrap holds the lock | Wait or investigate that pid; the lock self-clears when stale. |
-| Brain tools fail with a lock error | Another live session's serve owns the database | Close the other session; sequential use is the v1 contract. |
-| Hook reports "brain context unavailable" | serve not running or degraded | `gbrain doctor` names it; hooks fail open by design. |
-| gh answers 403 "not enabled for this session" | Cloud proxy scoping — the repo is not attached to the session | Expected in cloud; the visibility ladder falls back to git protocol. NEVER shim gh. |
-| "crontab: command not found" / cron skipped | Containers and cloud sandboxes ship without a scheduler | Expected; event-driven pushes cover it — the skip message says exactly this. |
-| A turn shows "workspace push is FAILING" | The background push is refusing (visibility, secret-scan, or network reasons) | Run `gbrain doctor`; the banner repeats every 30 min until fixed. |
+<a id="bootstrap-symptoms"></a>
+
+| Symptom | Real cause | Fix | Who acts | Consent | Verify |
+|---|---|---|---|---|---|
+| `interview --status` exits nonzero forever | A required answer is genuinely missing | Ask the human. Do not default it. | user (answers the question) | none | `gbrain bootstrap interview --status` |
+| Render refuses with unresolved tokens | Interview incomplete or a template edit broke a token | Finish the interview; `status` names the tokens. | user | none | `gbrain bootstrap status` |
+| `verify` fails the magic-moment check | The fact never landed (keyless: the Facts fence was not written) | Re-run the write step it names; check `gbrain doctor`. | agent | none | `gbrain doctor --only bootstrap_last_verify --json` |
+| Secret-scan block on push | A credential-shaped string in a tracked file | Fix or allowlist deliberately (`.gbrain-scan-allow`); never force. | user (decides what to allowlist) | none | the next push's scan output |
+| "bootstrap already running (pid N)" | A concurrent bootstrap holds the lock | Wait or investigate that pid; the lock self-clears when stale. | agent | none | `gbrain bootstrap status` |
+| Brain tools fail with a lock error | Another live session's serve owns the database | Close the other session; sequential use is the v1 contract. | user (closes the other session) | none | `gbrain doctor --only bootstrap_serve_lock --json` |
+| Hook reports "brain context unavailable" | serve not running or degraded | `gbrain doctor` names it; hooks fail open by design. | agent | none | `gbrain doctor --only bootstrap_hooks_heartbeat --json` |
+| gh answers 403 "not enabled for this session" | Cloud proxy scoping — the repo is not attached to the session | Expected in cloud; the visibility ladder falls back to git protocol. NEVER shim gh. | agent (nothing to fix) | none | none needed |
+| "crontab: command not found" / cron skipped | Containers and cloud sandboxes ship without a scheduler | Expected; event-driven pushes cover it — the skip message says exactly this. | agent (nothing to fix) | none | none needed |
+| A turn shows "workspace push is FAILING" | The background push is refusing (visibility, secret-scan, or network reasons) | Run `gbrain doctor`; the banner repeats every 30 min until fixed. | agent | none | `gbrain doctor --only bootstrap_push_health --json` |
 
 ## Hand off
 

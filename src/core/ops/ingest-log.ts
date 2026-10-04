@@ -14,8 +14,9 @@ import { linkReadScopeOpts } from './context.ts';
 
 const log_ingest: Operation = {
   name: 'log_ingest',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Log an ingestion event',
+  description: 'Record one ingestion event (source type, reference, pages updated, summary) in the brain\'s ingest log. Use after importing or enriching content. Needs write scope.',
   params: {
     source_type: { type: 'string', required: true, description: "Kind of ingest source, e.g. 'email', 'meeting', 'rss', 'api'." },
     source_ref: { type: 'string', required: true, description: 'Identifier of the ingested item — a URL, message id, or file path.' },
@@ -43,8 +44,10 @@ const log_ingest: Operation = {
 
 const get_ingest_log: Operation = {
   name: 'get_ingest_log',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'Get recent ingestion log entries',
+  description: 'List recent ingestion events (what was imported, from where, which pages changed). Use when checking whether a source was already ingested. Needs read scope.',
   params: {
     limit: { type: 'number', description: 'Max entries (default 20)' },
   },

@@ -8,7 +8,8 @@
  * skipped. `--dry-run` is strictly read-only. The real run:
  *
  *   validate (BEFORE locking — `acquireLock` mkdirs the data dir, and a
- *   typo'd --path must not create directories) → TTY confirm unless --yes →
+ *   typo'd --path must not create directories) → requireConsent (TTY prompt
+ *   or `--yes --expect <plan_hash>`; non-TTY otherwise exits 3) →
  *   acquireLock (refuses a reaped acquisition: a corrupt-lock reap cannot
  *   prove the holder is dead, and WAL surgery under a possibly-live writer is
  *   never correct; a live `gbrain serve` holder fast-fails via
@@ -20,11 +21,17 @@
  * repair does not help — `gbrain reinit-pglite` is the rebuild path.
  */
 
-import { promptYesNo } from '../core/confirm-prompt.ts';
+import { join } from 'node:path';
+import { shellQuote } from '../core/agent-output.ts';
+import { currentExitCode } from '../core/cli-force-exit.ts';
+import { HANDS_OFF_BRAIN_FILES, WAL_REPAIR_BACKUP_SUFFIX, WAL_REPAIR_RISK, walRepairPlan } from '../core/pglite-repair-consent.ts';
+import { consentGate } from '../core/consent-cli.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { acquireLock, releaseLock, LiveServeLockError, msSinceLastReap } from '../core/pglite-lock.ts';
 import {
+  clearRepairFailedMarker,
   inspectPgliteDataDir,
+  readRepairFailedMarker,
   listRepairBackups,
   readRepairSidecar,
   recordRepairAttempt,
@@ -49,6 +56,11 @@ function parseArgs(args: string[]): RepairCmdOpts {
     const a = args[i];
     if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--yes' || a === '-y') opts.yes = true;
+    else if (a === '--expect') {
+      // The plan_hash the user approved; requireConsent reads it from the raw args.
+      const val = args[++i];
+      if (val === undefined || val.startsWith('-')) throw new UnknownFlagError('--expect requires the plan_hash from --dry-run or the refusal');
+    }
     else if (a === '--json') opts.jsonOutput = true;
     else if (a === '--path') {
       const val = args[++i];
@@ -78,11 +90,16 @@ pre-repair pg_wal + pg_control are kept in a sibling backup directory.
 
 Usage:
   gbrain pglite-repair --dry-run [--json] [--path <dir>]   diagnose only
-  gbrain pglite-repair [--yes] [--json] [--path <dir>]     repair (confirm on TTY)
+  gbrain pglite-repair [--yes --expect <plan_hash>] [--json] [--path <dir>]
+                                                           repair (asks first)
 
 Flags:
   --dry-run     Read-only diagnosis of the data dir. Mutates nothing.
-  --yes, -y     Skip the confirmation prompt (required in non-TTY runs).
+  --yes --expect <plan_hash>
+                Repair without a prompt, only after the user agreed to the plan
+                --dry-run printed. Without it a non-interactive run changes
+                nothing and exits 3 with the consent payload (relay its
+                user_message to the user).
   --json        Machine-readable output on stdout.
   --path <dir>  Repair a specific data dir (default: the configured brain).
 
@@ -100,6 +117,20 @@ function emitError(jsonOutput: boolean, code: string, message: string): void {
     console.error(`Error (${code}): ${message}`);
   }
 }
+
+const BACKUP_SUFFIX = WAL_REPAIR_BACKUP_SUFFIX;
+const REPAIR_RISK = WAL_REPAIR_RISK;
+
+/** The exact undo of a WAL reset: the reset pg_wal set aside, the backed-up pg_wal and pg_control put back (run with gbrain stopped). */
+export function restoreCommand(dataDir: string, backupPath: string): string {
+  return [
+    ['mv', join(dataDir, 'pg_wal'), join(backupPath, 'pg_wal.reset-aside')],
+    ['mv', join(backupPath, 'pg_wal'), join(dataDir, 'pg_wal')],
+    ['cp', join(backupPath, 'pg_control'), join(dataDir, 'global', 'pg_control')],
+  ].map(argv => shellQuote(argv)).join(' && ');
+}
+
+const repairPlan = walRepairPlan;
 
 export async function runPgliteRepair(args: string[]): Promise<number> {
   let opts: RepairCmdOpts;
@@ -141,6 +172,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
   const diagnosis = inspectPgliteDataDir(dataDir);
 
   if (opts.dryRun) {
+    const repairFailed = readRepairFailedMarker(dataDir);
     if (opts.jsonOutput) {
       console.log(JSON.stringify({
         status: 'ok',
@@ -148,6 +180,8 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
         data_dir: dataDir,
         validation,
         diagnosis,
+        ...(validation.ok ? { plan_hash: repairPlan(dataDir, diagnosis).plan_hash, risk: REPAIR_RISK } : {}),
+        ...(repairFailed ? { repair_failed: repairFailed, note: HANDS_OFF_BRAIN_FILES } : {}),
       }));
     } else {
       console.log(`PGLite data dir: ${dataDir}`);
@@ -163,12 +197,17 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
       }
       if (!validation.ok) {
         console.log(`  Repairable: NO — ${validation.detail}`);
-      } else if (diagnosis.verdict === 'looks-healthy') {
-        console.log('  Repairable: yes — but no unclean-shutdown markers found; repair is likely');
-        console.log('  unnecessary. Run `gbrain pglite-repair --yes` ONLY if PGLite fails to open');
-        console.log('  with `RuntimeError: Aborted()` (repair discards the un-checkpointed WAL tail).');
       } else {
-        console.log('  Repairable: yes — run `gbrain pglite-repair --yes` to reset the WAL in place.');
+        const approved = shellQuote(['gbrain', 'pglite-repair', ...(opts.customPath ? ['--path', opts.customPath] : []), '--yes', '--expect', repairPlan(dataDir, diagnosis).plan_hash]);
+        console.log(diagnosis.verdict === 'looks-healthy'
+          ? '  Repairable: yes — but no unclean-shutdown markers found; repair is likely unnecessary. Repair ONLY if PGLite fails to open with `RuntimeError: Aborted()`.'
+          : '  Repairable: yes — a WAL reset in place should let it open.');
+        console.log(`  Risk: ${REPAIR_RISK}`);
+        console.log(`  The repair is the user's decision. Once they agree: ${approved}`);
+      }
+      if (repairFailed) {
+        console.log(`  Automatic repair failed${repairFailed.ts ? ` at ${new Date(repairFailed.ts).toISOString()}` : ''}; gbrain refuses to open this brain until a repair completes.`);
+        console.log(`  ${HANDS_OFF_BRAIN_FILES}`);
       }
     }
     return 0;
@@ -199,26 +238,27 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
     return 1;
   }
 
-  if (!opts.yes) {
-    if (!process.stdin.isTTY) {
-      emitError(opts.jsonOutput, 'no_tty_no_yes', 'Non-TTY environment requires --yes to confirm the WAL reset.');
-      return 1;
-    }
-    console.error(`About to reset the WAL of ${dataDir} in place.`);
-    console.error('Data files are preserved; un-checkpointed transactions may be lost.');
-    console.error('The current pg_wal + pg_control are kept in a sibling backup directory.');
-    // Prompt on stderr (not the confirm-prompt default of stdout): stdout
-    // stays clean for --json payloads.
-    const confirmed = await promptYesNo('Repair now? [y/N] ', { output: process.stderr });
-    if (!confirmed) {
-      if (opts.jsonOutput) {
-        console.log(JSON.stringify({ status: 'aborted', reason: 'user_declined' }));
-      } else {
-        console.log('Aborted. Data dir untouched.');
-      }
-      return 0;
-    }
-  }
+  // Consent (A4): destructive, bound to the diagnosed state (data dir + its
+  // WAL segments). The approved command is `--yes --expect <plan_hash>`; a
+  // bare `--yes` re-asks. The risk text names the backup and the undo.
+  process.stderr.write(`About to reset the WAL of ${dataDir} in place.\n${REPAIR_RISK}\n`);
+  const plan = repairPlan(dataDir, diagnosis);
+  const auth = await consentGate({
+    command: 'pglite-repair',
+    effects: ['destructive'],
+    actor: 'agent',
+    what: `Reset the write-ahead log of the PGLite brain at ${dataDir}`,
+    why: `The brain does not open cleanly (${diagnosis.verdict}: ${diagnosis.detail}); a WAL reset (pg_resetwal semantics) lets it open with its data files intact.`,
+    risk: `${REPAIR_RISK} Undo, with gbrain stopped: ${restoreCommand(dataDir, `${dataDir}${BACKUP_SUFFIX}<timestamp>`)} (the run prints the exact backup path and restore command).`,
+    user_message: `Your brain at ${dataDir} cannot open cleanly. Reset its write-ahead log now? Pages and facts on disk are kept, `
+      + 'but changes from just before the crash may be lost; the old log is kept in a backup folder.',
+    argv: ['gbrain', 'pglite-repair', ...(opts.customPath ? ['--path', opts.customPath] : []), ...(opts.jsonOutput ? ['--json'] : [])],
+    preview_argv: ['gbrain', 'pglite-repair', ...(opts.customPath ? ['--path', opts.customPath] : []), '--dry-run', '--json'],
+    plan_hash: plan.plan_hash,
+    selection: plan.selection,
+    args: opts.yes ? [...args, '--yes'] : args,
+  }, { json: opts.jsonOutput });
+  if (!auth) return currentExitCode();
 
   // Short timeout: the diagnosis said the lock is free; if we still can't get
   // it quickly, someone raced us — refuse rather than queue behind them.
@@ -302,6 +342,8 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
     // prunes, and repeated manual runs during one incident reuse the pinned
     // backup instead of deleting the pre-damage forensic copy.
     recordRepairAttempt(dataDir, 'failed', receipt.backupPath);
+    // The user approved and the reset completed: commands may open the brain again (the next open proves it).
+    clearRepairFailedMarker(dataDir);
 
     if (opts.jsonOutput) {
       console.log(JSON.stringify({
@@ -316,6 +358,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
         wal_seg_size: receipt.walSegSize,
         repaired_at: receipt.repairedAt,
         backups_on_disk: listRepairBackups(dataDir),
+        restore_command: restoreCommand(receipt.dataDir, receipt.backupPath),
         next_command: 'gbrain reindex --vectors',
       }));
     } else {
@@ -324,6 +367,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
       console.log(`  Backup:        ${receipt.backupPath}${receipt.reusedEpisodeBackup ? ' (reused this episode’s existing backup)' : ''}`);
       console.log(`  Reset segment: ${receipt.resetSegment} (timeline ${receipt.timelineId}, ${receipt.walSegSize / (1024 * 1024)}MB segments)`);
       console.log('  Un-checkpointed transactions may be lost, and indexes are not rebuilt.');
+      console.log(`  Undo (with gbrain stopped): ${restoreCommand(receipt.dataDir, receipt.backupPath)}`);
       console.log('  Next: rebuild the vector indexes with `gbrain reindex --vectors` (it reopens the brain), then run `gbrain doctor`.');
     }
     return 0;

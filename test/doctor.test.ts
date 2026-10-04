@@ -233,7 +233,9 @@ describe('doctor command', () => {
         } as any);
         expect(check.status).toBe('warn');
         expect(check.message).toContain('budget/pricing');
-        expect(check.message).toContain('embedding-pricing.ts');
+        // E1: the fix registers the rate with `gbrain pricing set`, never an edit to gbrain's source.
+        expect(check.message).not.toContain('embedding-pricing.ts');
+        expect(check.fix).toMatchObject({ argv: expect.arrayContaining(['gbrain', 'pricing', 'set']) });
         expect(check.message).toContain('--max-cost');
       });
     } finally {

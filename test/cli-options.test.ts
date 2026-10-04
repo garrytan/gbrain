@@ -244,7 +244,7 @@ describe('cli.ts global-flag stripping (integration)', () => {
       encoding: 'utf-8',
       env: { ...process.env, NO_COLOR: '1' },
     });
-    expect(res.status).toBe(1);
+    expect(res.status).toBe(2); // usage error (agent contract v1 A3/D1)
     expect(res.stderr).toContain('Unknown command: not-a-real-command-4557');
     expect(res.stderr).not.toContain('Unknown command: --explain');
   });

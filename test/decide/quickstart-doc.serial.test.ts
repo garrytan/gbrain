@@ -9,7 +9,7 @@
  * normalized on both sides; probabilities, ranks, slugs and wording are not.
  * If this fails, the guide and the CLI disagree: fix whichever is wrong.
  *
- * Serial: mock.module (confirmation prompt), GBRAIN_HOME, process.stdin.isTTY
+ * Serial: mock.module (the interaction module's consent prompt), GBRAIN_HOME, process.stdin.isTTY
  * and the process-global gateway.
  */
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
@@ -22,7 +22,9 @@ import { configureGateway, resetGateway, __setDecideTransportForTests } from '..
 import { __resetDecideStoreForTests, flushDecideWrites } from '../../src/core/ai/decide/store.ts';
 import { resetDecideSearchCache } from '../../src/core/search/decide-stage.ts';
 
-mock.module('../../src/core/confirm-prompt.ts', () => ({ promptYesNo: async () => true }));
+// A human at the terminal answers "y" to the consent prompt (requireConsent → interaction.readLine).
+const realInteraction = await import('../../src/core/interaction.ts');
+mock.module('../../src/core/interaction.ts', () => ({ ...realInteraction, isInteractive: () => true, readLine: async () => ({ kind: 'line', text: 'y' }) }));
 
 const GUIDE = join(import.meta.dir, '..', '..', 'docs', 'guides', 'system-one.md');
 

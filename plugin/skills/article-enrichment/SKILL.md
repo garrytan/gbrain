@@ -114,6 +114,14 @@ Opus for that batch.
 All cross-references use standard markdown links: `[Title](relative/path.md)`.
 NEVER use `[[wiki-links]]` — they don't render on GitHub.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `get_page` returns `page_not_found`: the raw dump moved or the slug is wrong; search for the title before reporting the article missing.
+- The rewrite returns `revision_conflict`: someone else edited the page since you read it. Re-read, re-apply the enrichment to the new text, and save with the new revision; never overwrite blind.
+- `write_pending` (exit 10): poll `gbrain write-request <request_id>`; only report the page enriched once the receipt commits.
+
 ## Anti-Patterns
 
 - ❌ Paraphrasing quotes ("the author argues that…"). Quotes are verbatim

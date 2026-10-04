@@ -5,12 +5,19 @@
  * src/cli/command-table.ts.
  */
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
+import { usageError, writeCliError } from '../cli-error.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 
 export async function run(engine: BrainEngine, args: string[]): Promise<void> {
   const reindex = await import('../../commands/reindex.ts'); args = reindex.normalizeReindexArgs(args);
   const scopeError = reindex.validateReindexModeScope(args);
-  if (scopeError) { process.stderr.write(`[reindex] ${scopeError}\n`); setCliExitVerdict(2); return; }
+  // Agent contract v1 D1/D4: a scope/value error is a usage error (exit 2) rendered by renderCliError;
+  // the --limit refusal keeps its legacy `--json` key (`error: "invalid --limit: …"`).
+  if (scopeError) {
+    const legacy = scopeError.startsWith('invalid --limit') ? { legacy: { error: scopeError } } : {};
+    setCliExitVerdict(writeCliError(usageError(`[reindex] ${scopeError}`, 'Run `gbrain reindex --help` for the modes and their flags, e.g. gbrain reindex --multimodal --limit 100.'), 'reindex', legacy));
+    return;
+  }
   if (args.includes('--multimodal')) {
     const { runReindexMultimodal } = await import('../../commands/reindex-multimodal.ts');
     const { parseWorkers } = await import('../../core/sync-concurrency.ts');

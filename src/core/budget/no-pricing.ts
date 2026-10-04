@@ -13,6 +13,7 @@
  * the brain's operator to run it.
  */
 
+import type { Action, Transport } from '../agent-output.ts';
 import { ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import type { BudgetKind } from './reservation-cost.ts';
@@ -40,12 +41,17 @@ function shellArg(value: string): string {
   return /^[\w.:/@+=-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+/** The registration argv for one model; `<name>` slots are the fix's `inputs`. */
+export function pricingSetArgv(modelId: string, kind: BudgetKind): string[] {
+  const rates = kind === 'chat'
+    ? ['--input', '<usd-per-1M-input-tokens>', '--output', '<usd-per-1M-output-tokens>']
+    : ['--rate', '<usd-per-1M-tokens>'];
+  return ['gbrain', 'pricing', 'set', modelId, ...rates, '--source', '<pricing-page-url>'];
+}
+
 /** The registration command for one model, in the units its kind bills. */
 export function pricingSetCommand(modelId: string, kind: BudgetKind): string {
-  const rates = kind === 'chat'
-    ? '--input <usd-per-1M-input-tokens> --output <usd-per-1M-output-tokens>'
-    : '--rate <usd-per-1M-tokens>';
-  return `gbrain pricing set ${shellArg(modelId)} ${rates} --source <pricing-page-url>`;
+  return pricingSetArgv(modelId, kind).map((a, i) => (i === 3 ? shellArg(a) : a)).join(' ');
 }
 
 export function noPricingGuidance(modelId: string, kind: BudgetKind): NoPricingGuidance {
@@ -83,4 +89,26 @@ export function noPricingMessage(g: NoPricingGuidance, opts: { label?: string; c
   const who = g.provider ? ` (provider ${g.provider})` : '';
   const prefix = opts.label ? `${opts.label}: ` : '';
   return `${prefix}gbrain has no pricing for ${KIND_NOUN[g.kind]} model "${g.model}"${who}, so ${cap} can't be enforced. ${noPricingSteps(g)}`;
+}
+
+/**
+ * The agent-contract `fix` for a `no_pricing` refusal under a user cap: the
+ * registration command with an `inputs` entry per rate to look up. Only the
+ * trusted local CLI can register a price, so the actor is `agent` on the CLI
+ * and `host_admin` on a remote transport.
+ */
+export function noPricingFix(g: NoPricingGuidance, transport: Transport = 'cli'): Action {
+  const rateInputs = g.kind === 'chat'
+    ? [{ name: 'usd-per-1M-input-tokens', how: g.lookup }, { name: 'usd-per-1M-output-tokens', how: g.lookup }]
+    : [{ name: 'usd-per-1M-tokens', how: g.lookup }];
+  return {
+    argv: pricingSetArgv(g.model, g.kind),
+    consent: [],
+    actor: transport === 'cli' ? 'agent' : 'host_admin',
+    why: `gbrain has no price for ${g.model}, so the cost cap the user set cannot be enforced; registering the rate lets the run retry under that cap.`,
+    inputs: [...rateInputs, { name: 'pricing-page-url', how: 'The provider pricing page the rates came from.' }],
+    verify: { argv: ['gbrain', 'pricing', 'list'] },
+    docs: g.docs,
+    requires_exclusive: false,
+  };
 }

@@ -49,9 +49,9 @@ export class RateLimiter {
   private readonly clock: Clock;
 
   constructor(opts: RateLimitOpts, clock: Clock = Date.now) {
-    if (opts.limit <= 0) throw new Error('RateLimiter: limit must be > 0');
-    if (opts.windowMs <= 0) throw new Error('RateLimiter: windowMs must be > 0');
-    if (opts.lruCap <= 0) throw new Error('RateLimiter: lruCap must be > 0');
+    if (opts.limit <= 0) throw new RangeError('RateLimiter: limit must be > 0');
+    if (opts.windowMs <= 0) throw new RangeError('RateLimiter: windowMs must be > 0');
+    if (opts.lruCap <= 0) throw new RangeError('RateLimiter: lruCap must be > 0');
     this.opts = opts;
     this.clock = clock;
   }

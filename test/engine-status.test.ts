@@ -175,11 +175,11 @@ describe('gbrain engine status', () => {
     expect(stderr).toContain('Unknown flag for engine status');
   }, 60_000);
 
-  test('unknown --flag: intercepted by the CLI flag registry before dispatch (exit 1)', () => {
+  test('unknown --flag: intercepted by the CLI flag registry before dispatch (exit 2, usage)', () => {
     // Dash-prefixed unknown flags never reach runEngineStatus — the global
     // flag validation in cli.ts rejects them first with its own message.
     const { status, stderr } = run(['engine', 'status', '--bogus']);
-    expect(status).toBe(1);
+    expect(status).toBe(2);
     expect(stderr).toContain('unknown flag --bogus');
   }, 60_000);
 });

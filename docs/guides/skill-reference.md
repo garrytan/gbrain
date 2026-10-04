@@ -28,8 +28,8 @@ via `nag-state.ts`) and over MCP via the source-scoped `list_brain_skillpack` op
 `get_skill --source_id` (gated by `mcp.publish_skills`). The bundled `gbrain-advisor` skill
 + `gbrain advisor` op compute a ranked, read-only list of high-leverage actions from brain
 state (8 collectors in `src/core/advisor/`); `--json`+exit codes for CI/cron, local-only
-`--apply <id>` behind confirm, exposed over MCP behind `mcp.publish_advisor` (default off,
-read-only on remote). Thin-client binary install stays deferred to PR2 `build_skillpack`.
+`--apply <id>` behind confirm, exposed over MCP behind `mcp.publish_advisor` (read-only; on
+by default for the local stdio server, opt-in for remote HTTP; an explicit `false` hides it). Thin-client binary install stays deferred to PR2 `build_skillpack`.
 
 **Routing-table compression (v0.32.3.0):** `skills/functional-area-resolver/` —
 two-layer dispatch pattern for shrinking large AGENTS.md / RESOLVER.md files

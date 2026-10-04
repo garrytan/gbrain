@@ -388,6 +388,8 @@ describe('E5 truthful catalog — legacy bearer transport (real HTTP, PGLite)', 
       const denied = await legacyToolCall(name, args);
       expect(denied.envelope?.error).toBe('permission_denied');
       expect(denied.envelope?.message).toBe('Tool requires agent scope');
+      expect(denied.envelope).toMatchObject({ code: 'insufficient_scope', reason: 'insufficient_scope', fix: { actor: 'host_admin', next: 'tell_user_to_run' } });
+      expect((denied.envelope as { fix?: { argv?: string[] } }).fix?.argv?.slice(0, 2)).toEqual(['gbrain', 'auth']);
     }
   });
 

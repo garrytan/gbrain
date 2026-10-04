@@ -208,18 +208,20 @@ cannot empty is not one they can trust.
 
 ## Troubleshooting
 
-| Symptom | What it means | Fix |
-|---|---|---|
-| `memorable: command not found` | The CLI is not installed | `npm i -g memorable-cli`. Never clone or build from source |
-| Something asks you to choose an embedding model, provider, or dimensions | You are in gbrain's own initialization, not Memorable's setup | Back out; run `memorable init` |
-| `memorable init gbrain` cannot connect | gbrain is not initialized on this machine | Run `memorable init` (standalone). It is a complete, supported backend |
-| `stored WITHOUT an embedding` on stderr | The extraction API could not return a vector | The procedure is stored and recall still works on exact + lexical. `memorable doctor` prints why |
-| `record` says no session receipt found | The gbrain relay is off, or this harness has no capture lane (capture: Claude Code + Codex at session end, OpenClaw per compaction) | Enable it with `gbrain config set integrations.memorable.enabled true` (a HUMAN must accept the disclosure — agents relay the command, or append `--yes` only when the human already consented), or use `memorable ingest -` with your own trace |
-| Relay stays off even after `memorable enable` | `memorable enable` flips gbrain's config flag, but gbrain's own disclosure consent is separate and can only be granted through gbrain | Run `gbrain config set integrations.memorable.enabled true` and accept the disclosure; `gbrain doctor` names this state (`disclosure_missing`) |
-| A consent error on write | The human has not opted in | `memorable enable`. Never work around a consent refusal |
-| OpenClaw relays rejected with `no_decisive_steps` | OpenClaw capture is name-only for now (no tool arguments) and the extraction API refuses traces with nothing replayable | Expected until argument capture lands; `gbrain doctor` reports it as ok-with-note (`expected_openclaw_rejection`) so the ladder stays meaningful for real failures. The note is deferred, never a mask: on a host that also wires codex, a codex hook that never fired still warns first (`codex_hooks_never_fired`) |
-| Codex hook wired but nothing ever recorded | Codex hooks fail SILENTLY when their config.toml trust entry is stale (e.g. the SessionEnd groups were reordered) | Re-run `gbrain bootstrap hooks --harness codex` to re-trust; `gbrain doctor` warns (`codex_hooks_never_fired`) |
-| Commands hang, then time out against the brain | Something else holds gbrain's single-writer PGLite lock — often a long-running process like a viewer or `gbrain serve` | `cat <data-dir>/.gbrain-lock/lock` names the holder's PID and subcommand. Stop that process; the lock releases. A live holder is deliberately never stolen, because stealing a live lock corrupts the data directory |
+<a id="memorable-symptoms"></a>
+
+| Symptom | What it means | Fix | Who acts | Consent | Verify |
+|---|---|---|---|---|---|
+| `memorable: command not found` | The CLI is not installed | `npm i -g memorable-cli`. Never clone or build from source | user | `persistent_install` | `memorable --version` |
+| Something asks you to choose an embedding model, provider, or dimensions | You are in gbrain's own initialization, not Memorable's setup | Back out; run `memorable init` | agent | none | `memorable doctor` |
+| `memorable init gbrain` cannot connect | gbrain is not initialized on this machine | Run `memorable init` (standalone). It is a complete, supported backend | agent, after the user agrees | none | `memorable doctor` |
+| `stored WITHOUT an embedding` on stderr | The extraction API could not return a vector | The procedure is stored and recall still works on exact + lexical. `memorable doctor` prints why | agent | none | `memorable doctor` |
+| `record` says no session receipt found | The gbrain relay is off, or this harness has no capture lane (capture: Claude Code + Codex at session end, OpenClaw per compaction) | Enable it with `gbrain config set integrations.memorable.enabled true` (a HUMAN must accept the disclosure — agents relay the command, or append `--yes` only when the human already consented), or use `memorable ingest -` with your own trace | user (a human must opt in) | `egress` | `gbrain doctor --only memorable_relay_health --json` |
+| Relay stays off even after `memorable enable` | `memorable enable` flips gbrain's config flag, but gbrain's own disclosure consent is separate and can only be granted through gbrain | Run `gbrain config set integrations.memorable.enabled true` and accept the disclosure; `gbrain doctor` names this state (`disclosure_missing`) | user | `egress` | `gbrain doctor --only memorable_relay_health --json` |
+| A consent error on write | The human has not opted in | `memorable enable`. Never work around a consent refusal | user | `egress` | `memorable doctor` |
+| OpenClaw relays rejected with `no_decisive_steps` | OpenClaw capture is name-only for now (no tool arguments) and the extraction API refuses traces with nothing replayable | Expected until argument capture lands; `gbrain doctor` reports it as ok-with-note (`expected_openclaw_rejection`) so the ladder stays meaningful for real failures. The note is deferred, never a mask: on a host that also wires codex, a codex hook that never fired still warns first (`codex_hooks_never_fired`) | agent (nothing to fix) | none | `gbrain doctor --only memorable_relay_health --json` |
+| Codex hook wired but nothing ever recorded | Codex hooks fail SILENTLY when their config.toml trust entry is stale (e.g. the SessionEnd groups were reordered) | Re-run `gbrain bootstrap hooks --harness codex` to re-trust; `gbrain doctor` warns (`codex_hooks_never_fired`) | agent, after the user agrees | `persistent_install` | `gbrain doctor --only memorable_relay_health --json` |
+| Commands hang, then time out against the brain | Something else holds gbrain's single-writer PGLite lock — often a long-running process like a viewer or `gbrain serve` | `cat <data-dir>/.gbrain-lock/lock` names the holder's PID and subcommand. Stop that process; the lock releases. A live holder is deliberately never stolen, because stealing a live lock corrupts the data directory | user | none | `gbrain doctor --only connection --json` |
 
 `memorable doctor` checks every integration point at once and prints a support
 bundle; run it before reporting anything as broken.

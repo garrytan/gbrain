@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isWriteRequestId } from './types.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
 
 /** Intent identity includes caller input before timestamps and other generated defaults. */
 export function stableJson(value: unknown): string {
@@ -23,7 +23,7 @@ export function sha256(value: string | Uint8Array): string { return createHash('
 export function jsonBytes(value: unknown): number { return Buffer.byteLength(stableJson(value), 'utf8'); }
 export function requireUuid(value: string): string {
   if (!isWriteRequestId(value)) {
-    throw new OperationError('invalid_params', 'request_id must be a UUID.');
+    throw opError('invalid_params', 'request_id must be a UUID.', 'Pass request_id as a UUID such as 123e4567-e89b-42d3-a456-426614174000, or omit it to get a new one; reuse an id only to replay the same request (same request_id, same intent).');
   }
   return value.toLowerCase();
 }

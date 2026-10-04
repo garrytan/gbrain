@@ -13,6 +13,7 @@ import { loadConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
 import { lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import type { Recipe } from '../core/ai/types.ts';
+import { FAILED_EXIT_CODE } from '../core/exit-codes.ts';
 
 const SCHEMA_VERSION = 1;
 
@@ -286,8 +287,8 @@ async function runTest(args: string[]): Promise<void> {
       process.exit(2);
     } else if (e instanceof AITransientError) {
       console.error(`  ✗ transient error (${ms}ms): ${e.message}`);
-      console.error(`    Retry after a moment.`);
-      process.exit(3);
+      console.error(`    Retry after a moment (retryable).`);
+      process.exit(FAILED_EXIT_CODE);
     } else {
       console.error(`  ✗ unknown error (${ms}ms): ${e instanceof Error ? e.message : e}`);
       process.exit(4);

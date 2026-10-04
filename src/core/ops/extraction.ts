@@ -9,7 +9,9 @@
  */
 
 import type { Operation } from './contract.ts';
-import { OperationError } from './contract.ts';
+import { opError, type OperationContext } from './contract.ts';
+import type { Action } from '../agent-output.ts';
+import { hostOnlyError, paramUse, readFix } from './op-fix.ts';
 import { sourceScopeOpts } from './context.ts';
 import { unverifiedExtractionFragment, isUnverifiedExtraction, EXTRACTION_STATUS_KEY, STATUS_VERIFIED } from '../extraction-review.ts';
 import { buildVisibilityClause } from '../search/sql-ranking.ts';
@@ -46,8 +48,9 @@ const MAX_EXTRACT_ENTITIES = 200;
 
 const extract_entities: Operation = {
   name: 'extract_entities',
+  idempotent: false,
   outputRedaction: 'retrieval',
-  description: 'Extract entity names (people, companies) from text and create/update their brain stub pages. Stubs from untrusted input land in the quarantine lane (frontmatter `provenance: auto-extracted` + `status: unverified`) — excluded from authoritative retrieval boosts until reviewed. Direct authoritative writes require the trusted local CLI AND --trusted-extraction.',
+  description: 'Extract entity names (people, companies) from text and create/update their brain stub pages. Stubs from untrusted input land in the quarantine lane (frontmatter `provenance: auto-extracted` + `status: unverified`) — excluded from authoritative retrieval boosts until reviewed. Direct authoritative writes require the trusted local CLI with trusted_extraction set.',
   params: {
     text: { type: 'string', required: true, description: 'The text to extract entities from (email, transcript, pasted content, …). Max 200k characters — split larger inputs.' },
     source_slug: { type: 'string', required: true, description: 'Slug of the source page the text came from (used for backlinks + timeline attribution).' },
@@ -66,10 +69,10 @@ const extract_entities: Operation = {
     // of thousands of "entities", each costing several DB round-trips. Cap
     // input size loudly and entity count softly (surfaced as `truncated`).
     if (text.length > MAX_EXTRACT_TEXT_CHARS) {
-      throw new OperationError(
+      throw opError(
         'invalid_params',
         `extract_entities: text is ${text.length} chars (max ${MAX_EXTRACT_TEXT_CHARS}).`,
-        'Split the input and call extract_entities per section.',
+        `Nothing was written. Split the input into pieces of at most ${MAX_EXTRACT_TEXT_CHARS} characters and call extract_entities once per piece.`,
       );
     }
     if (ctx.dryRun) return { dry_run: true, action: 'extract_entities', trusted };
@@ -102,6 +105,8 @@ const extract_entities: Operation = {
 
 const extraction_pending: Operation = {
   name: 'extraction_pending',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: 'List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). Promote or reject them with extraction_review.',
   params: {
@@ -146,8 +151,29 @@ const extraction_pending: Operation = {
   cliHints: { name: 'extraction-pending' },
 };
 
+const REVIEW_SLUG = /^[a-z0-9][a-z0-9/_.-]{0,254}$/i;
+
+function pendingFix(): Action {
+  return readFix('Lists the unverified auto-extracted stubs awaiting review, with their slugs.',
+    { argv: ['gbrain', 'extraction-pending'], mcp: { tool: 'extraction_pending', arguments: {} } });
+}
+
+function reviewOwnerOnly(ctx: OperationContext, p: Record<string, unknown>) {
+  const message = 'extraction_review is owner-only: promote/reject decisions must come from the trusted local CLI.';
+  const action = p.action === 'promote' || p.action === 'reject' ? p.action : undefined;
+  const slugs = Array.isArray(p.slugs) ? p.slugs : [];
+  const exact = action && slugs.length > 0 && slugs.every(s => typeof s === 'string' && REVIEW_SLUG.test(s));
+  return exact
+    ? hostOnlyError(ctx, 'permission_denied', message, ['gbrain', 'extraction-review', action, '--slugs', slugs.join(',')],
+      'The review decision is the quarantine trust gate, so only the brain owner\'s CLI may make it.',
+      { consent: action === 'reject' ? ['destructive'] : [] })
+    : hostOnlyError(ctx, 'permission_denied', message, ['gbrain', 'extraction-pending'],
+      'The review decision is the quarantine trust gate; the owner reviews the pending stubs and decides on the host.');
+}
+
 const extraction_review: Operation = {
   name: 'extraction_review',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description: 'Promote or reject unverified auto-extracted entity stubs (batch). Promote flips `status` to verified (provenance kept for audit); reject soft-deletes the stub. Owner-only: this op is refused for any non-local caller. (The markers are ordinary frontmatter — the boundary against rewriting them wholesale is put_page write authz, same as for any page.)',
   params: {
@@ -156,21 +182,18 @@ const extraction_review: Operation = {
   },
   mutating: true,
   scope: 'write',
-  localOnly: true,
+  localOnly: true, cliOnly: { argv: ['gbrain', 'extraction-review', '<action>', '--slugs', '<slugs>'] },
   handler: async (ctx, p) => {
     // The review decision IS the trust gate — if a remote caller could
     // promote, injected content could self-promote and the quarantine lane
     // would be decorative. Fail-closed: only strictly-local callers pass.
     if (ctx.remote !== false) {
-      throw new OperationError(
-        'permission_denied',
-        'extraction_review is owner-only: promote/reject decisions must come from the trusted local CLI.',
-        'Run `gbrain extraction-review <promote|reject> --slugs ...` on the host machine.',
-      );
+      throw reviewOwnerOnly(ctx, p);
     }
     const action = p.action as string;
     if (action !== 'promote' && action !== 'reject') {
-      throw new OperationError('invalid_params', `extraction_review: action must be 'promote' or 'reject'; got '${action}'.`);
+      throw opError('invalid_params', `extraction_review: action must be 'promote' or 'reject'; got '${action}'.`,
+        "Nothing changed. Pass 'promote' or 'reject' as the action; fix lists the stubs awaiting review.", { fix: pendingFix() });
     }
     // CLI passes `--slugs a,b,c` as one string; MCP passes a real array.
     const slugs = Array.isArray(p.slugs)
@@ -179,7 +202,9 @@ const extraction_review: Operation = {
         ? p.slugs.split(',').map((s) => s.trim()).filter(Boolean)
         : [];
     if (slugs.length === 0) {
-      throw new OperationError('invalid_params', 'extraction_review: slugs must be a non-empty array (CLI: --slugs slug1,slug2).');
+      throw opError('invalid_params', 'extraction_review: slugs must be a non-empty array.',
+        `Nothing changed. Pass the stub slugs to act on, for example ${paramUse(ctx, 'slugs', ctx.remote === false ? 'slug1,slug2' : ['slug1', 'slug2'])}; fix lists the stubs awaiting review.`,
+        { fix: pendingFix() });
     }
     if (ctx.dryRun) return { dry_run: true, action: `extraction_review:${action}`, slugs };
     const results: Array<{ slug: string; status: string }> = [];

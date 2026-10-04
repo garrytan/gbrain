@@ -23,6 +23,7 @@ import { readFileSync, lstatSync, type Stats } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { HOST_BRAIN_ID, loadMounts, validateMountId, type MountEntry } from './brain-registry.ts';
 import { isTrustedDotfile, realpathOrResolve } from './path-confine.ts';
+import { getCliOptions } from './cli-options.ts';
 
 const DOTFILE = '.gbrain-mount';
 /** Same regex as brain-registry. Kept in sync. */
@@ -135,6 +136,20 @@ export function resolveBrainId(
 }
 
 /** Exposed for tests. */
+/**
+ * A1 explicit routing for a recovery command: `--brain <id>` naming the brain
+ * this process resolved, so the fix acts on that brain when it is run later
+ * from another directory or under a different GBRAIN_BRAIN_ID / .gbrain-mount.
+ * Empty when resolution fails (the fix then keeps today's ambient routing).
+ */
+export function brainRoutingArgs(): string[] {
+  try {
+    return ['--brain', resolveBrainId(getCliOptions().brain)];
+  } catch {
+    return [];
+  }
+}
+
 export const __testing = {
   readDotfileWalk,
   longestPathPrefixMount,

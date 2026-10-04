@@ -31,6 +31,7 @@ import type { DbLockHandle } from '../core/db-lock.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { embedMultimodalSafe } from '../core/ai/gateway.ts';
 import { createProgress } from '../core/progress.ts';
+import { isInteractive } from '../core/interaction.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { gbrainPath } from '../core/config.ts';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -188,9 +189,16 @@ export async function runReindexMultimodal(
     };
   }
 
-  // Cost grace window (TTY only; non-TTY auto-proceeds for CI / cron).
-  // Skip if --yes was passed.
-  if (!opts.yes && process.stdout.isTTY && process.stdin.isTTY) {
+  // Cost grace window for a human at a terminal. Unattended runs keep
+  // proceeding (A4 "no silent flip": CI / cron sweeps ran non-interactively
+  // before the consent wave) and say what they spend on stderr.
+  if (!opts.yes && !isInteractive()) {
+    process.stderr.write(
+      `[reindex-multimodal] unattended run: re-embedding ~${pendingBefore} chunks via voyage:voyage-multimodal-3, est. ~$${costUsdEstimate.toFixed(2)}. `
+      + 'Set GBRAIN_NO_REEMBED=1 to skip, or --cost-estimate to preview only.\n',
+    );
+  }
+  if (!opts.yes && isInteractive()) {
     const minutes = Math.ceil((pendingBefore / BATCH_SIZE) * 0.5 / 60); // ~0.5s per batch
     process.stderr.write(
       `Will re-embed ~${pendingBefore} chunks via voyage:voyage-multimodal-3, ` +

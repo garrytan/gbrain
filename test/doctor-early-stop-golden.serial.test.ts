@@ -23,7 +23,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { defineNormalizer, expectGolden, expectNormalizerStable, mapStrings, scrubKeys } from './helpers/golden.ts';
 import { makeDoctorHome, normalizeDoctorText, type DoctorHome } from './helpers/doctor-json-golden.ts';
 
-const ENV_KEYS = ['PATH', 'GBRAIN_HOME', 'HOME', 'GBRAIN_AUDIT_DIR', 'GBRAIN_SYNC_FAILURES_DIR', 'DATABASE_URL', 'GBRAIN_DATABASE_URL'] as const;
+const ENV_KEYS = ['PATH', 'GBRAIN_HOME', 'HOME', 'GBRAIN_AUDIT_DIR', 'GBRAIN_SYNC_FAILURES_DIR', 'DATABASE_URL', 'GBRAIN_DATABASE_URL', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'CODEX_HOME', 'OPENCODE', 'OPENCODE_PID', 'XDG_CONFIG_HOME'] as const;
 let saved: Record<string, string | undefined> = {};
 const homes: DoctorHome[] = [];
 
@@ -60,6 +60,8 @@ function enterHome(config?: Record<string, unknown>): DoctorHome {
   process.env.PATH = [join(h.home, 'bin'), '/usr/bin', '/bin'].join(delimiter);
   delete process.env.DATABASE_URL;
   delete process.env.GBRAIN_DATABASE_URL;
+  // harness_wiring reads agent markers and harness config homes.
+  for (const k of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'CODEX_HOME', 'OPENCODE', 'OPENCODE_PID', 'XDG_CONFIG_HOME']) delete process.env[k];
   if (config) {
     mkdirSync(join(h.home, '.gbrain'), { recursive: true });
     writeFileSync(join(h.home, '.gbrain', 'config.json'), JSON.stringify(config) + '\n');

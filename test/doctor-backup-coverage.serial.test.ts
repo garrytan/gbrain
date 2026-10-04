@@ -365,10 +365,13 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
       now: new Date('not-a-date'),
     });
 
+    // E1: the generic unreadable warn goes through checkError — the error
+    // detail is kept and the check says why it carries no fix.
     expect(check).toEqual({
       name: 'backup_coverage',
       status: 'warn',
-      message: 'backup coverage unreadable',
+      message: 'Could not read backup coverage: Invalid Date',
+      fix_unavailable_reason: 'check_errored',
     });
     // The failed compute never persisted anything (no clobber, no cache).
     expect(existsSync(statusFile)).toBe(false);

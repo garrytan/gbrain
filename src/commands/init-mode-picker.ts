@@ -199,7 +199,7 @@ export function parseModeInput(raw: string): SearchMode | null {
  */
 export async function runModePicker(
   engine: BrainEngine,
-  opts: { jsonOutput?: boolean; force?: boolean } = {},
+  opts: { jsonOutput?: boolean; force?: boolean; onDecision?: (d: { mode: SearchMode; reason: string }) => void } = {},
 ): Promise<SearchMode> {
   // Idempotent: don't re-prompt if already chosen, unless --force.
   if (!opts.force) {
@@ -213,6 +213,7 @@ export async function runModePicker(
 
   const inputs = await resolveInputs(engine);
   const rec = recommendModeFor(inputs);
+  opts.onDecision?.({ mode: rec.mode, reason: rec.reason });
 
   // JSON mode (used by --json init) — apply the recommendation silently
   // and emit a structured event. No interactive prompt.

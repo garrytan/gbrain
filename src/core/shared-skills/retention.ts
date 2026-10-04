@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
-import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
+import { hostOnlyError, readFix } from '../ops/op-fix.ts';
+import { skillHeadFix } from './fixes.ts';
 import { declarePersistenceProtocol } from '../persistence/protocol.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
@@ -118,9 +120,15 @@ export function assertSharedSkillRetentionCapacity(status: SkillRetentionCapacit
 }
 
 async function operatorSource(ctx: OperationContext, sourceId: string): Promise<string> {
-  if (ctx.remote !== false) throw new OperationError('permission_denied', 'Revision retention is controlled by the trusted local brain operator.');
+  if (ctx.remote !== false) {
+    throw hostOnlyError(ctx, 'permission_denied', 'Revision retention is controlled by the trusted local brain operator.',
+      ['gbrain', 'skill-retention', '--source-id', sourceId], `Shows source ${sourceId}'s retained skill revisions, pins and storage capacity on the brain host.`);
+  }
   const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
-  if (!source) throw new OperationError('source_changed', 'The retention source is unavailable.');
+  if (!source) {
+    throw opError('source_changed', 'The retention source is unavailable.', `Source ${sourceId} is not registered; pass a registered source.`,
+      { fix: readFix('Lists the registered sources.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
+  }
   return source.incarnation;
 }
 export async function getSharedSkillRetention(ctx: OperationContext, sourceId = ctx.sourceId) {
@@ -133,7 +141,10 @@ export async function pruneSharedSkillRevisions(ctx: OperationContext, sourceId 
   return ctx.engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
     const [source] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
-    if (source?.incarnation !== incarnation) throw new OperationError('source_changed', 'The retention source changed.');
+    if (source?.incarnation !== incarnation) {
+      throw opError('source_changed', 'The retention source changed.',
+        `Source ${sourceId} was recreated or removed during pruning, so nothing was pruned. Inspect its retention again before pruning.`, { fix: readFix(`Shows source ${sourceId}'s current incarnation and retention state.`, { argv: ['gbrain', 'skill-retention', '--source-id', sourceId] }) });
+    }
     return withCoordinatedWrite(tx, [sourceId], async () => {
       const count = await pruneSharedSkillRevisionsInTransaction(tx, sourceId, incarnation);
       return { ...await sharedSkillRetentionStatus(tx, sourceId, incarnation), pruned_revisions: count };
@@ -143,19 +154,32 @@ export async function pruneSharedSkillRevisions(ctx: OperationContext, sourceId 
 export async function retainSharedSkillRevision(ctx: OperationContext, params: { source_id?: string; source_incarnation: string; pack_id: string; name: string; revision: string; hours?: number }) {
   const sourceId = params.source_id ?? ctx.sourceId;
   const incarnation = await operatorSource(ctx, sourceId);
-  if (params.source_incarnation !== incarnation) throw new OperationError('source_changed', 'The pin source incarnation changed.');
+  if (params.source_incarnation !== incarnation) {
+    throw opError('source_changed', 'The pin source incarnation changed.',
+      `Source ${sourceId} is at a different incarnation than the one supplied, so no pin was taken; revisions of a recreated source cannot be pinned. List the catalog again for the current revision.`, { fix: readFix(`Shows source ${sourceId}'s current incarnation and retention state.`, { argv: ['gbrain', 'skill-retention', '--source-id', sourceId] }) });
+  }
   const pack = skillName(params.pack_id, 'pack_id'); const name = skillName(params.name); const revision = requireUuid(params.revision);
   const hours = params.hours ?? SHARED_SKILL_RETENTION_LIMITS.pinHours;
-  if (!Number.isFinite(hours) || hours <= 0 || hours > SHARED_SKILL_RETENTION_LIMITS.pinHours) throw new OperationError('invalid_params', 'Retention pins last more than zero and at most 24 hours.');
+  if (!Number.isFinite(hours) || hours <= 0 || hours > SHARED_SKILL_RETENTION_LIMITS.pinHours) {
+    throw opError('invalid_params', 'Retention pins last more than zero and at most 24 hours.',
+      `Pass hours as a number greater than 0 and at most ${SHARED_SKILL_RETENTION_LIMITS.pinHours}, or omit it for ${SHARED_SKILL_RETENTION_LIMITS.pinHours}.`);
+  }
   await initializeLocalPersistence(ctx);
   const principal = await requestPrincipalForContext(ctx);
   return ctx.engine.transaction(async tx => {
     await tx.executeRaw('SELECT singleton FROM shared_skill_state WHERE singleton=1 FOR UPDATE');
     const existing = await tx.executeRaw(`SELECT revision FROM shared_skill_revisions
       WHERE source_id=$1 AND source_incarnation=$2::uuid AND pack_id=$3 AND name=$4 AND revision=$5::uuid FOR KEY SHARE`, [sourceId, incarnation, pack, name, revision]);
-    if (!existing.length) throw new OperationError('revision_unavailable', 'The exact revision is no longer retained.');
+    if (!existing.length) {
+      throw opError('revision_unavailable', 'The exact revision is no longer retained.',
+        `Revision ${revision} of ${pack}/${name} was already pruned, so it cannot be pinned. Pin the current head revision instead.`,
+        { fix: skillHeadFix(sourceId, pack, name) });
+    }
     const [source] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1 FOR SHARE', [sourceId]);
-    if (source?.incarnation !== incarnation) throw new OperationError('source_changed', 'The pin source changed.');
+    if (source?.incarnation !== incarnation) {
+      throw opError('source_changed', 'The pin source changed.',
+        `Source ${sourceId} was recreated while the pin was being taken, so no pin was taken. Inspect its retention again before pinning.`, { fix: readFix(`Shows source ${sourceId}'s current incarnation and retention state.`, { argv: ['gbrain', 'skill-retention', '--source-id', sourceId] }) });
+    }
     const [count] = await tx.executeRaw<{ principal: number; source: number; brain: number }>(`SELECT COUNT(*) FILTER(WHERE principal_kind=$3 AND principal_id=$4)::int AS principal,
       COUNT(*) FILTER(WHERE source_id=$1 AND source_incarnation=$2::uuid)::int AS source,COUNT(*)::int AS brain
       FROM shared_skill_revision_leases WHERE lease_kind='pin' AND expires_at>now()`, [sourceId, incarnation, principal.kind, principal.id]);

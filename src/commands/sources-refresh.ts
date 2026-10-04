@@ -11,6 +11,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { OperationError } from '../core/ops/contract.ts';
+import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { refreshWorktree, type RefreshOptions, type WorktreeRefreshResult } from '../core/persistence/worktree-refresh.ts';
 
 const USAGE = 'Usage: gbrain sources refresh <source-id> [--dry-run] [--wait-drain <seconds>] [--fetch-timeout-ms <ms>] [--resume | --abandon] [--json]';
@@ -69,8 +70,12 @@ export async function runSourcesRefresh(engine: BrainEngine, args: string[]): Pr
     if (['sync_blocked', 'syncing'].includes(result.status)) setCliExitVerdict(1);
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
+    // F0's legacy refusal keys stay (its `fix` is the stored command string); the v1 envelope keys ride beside them (D1).
+    const env = toAgentError(error, { transport: 'cli', command: 'sources refresh', render: cliRenderContext() });
     const refusal = { status: 'refused', code: error.code, cause: error.message, fix: error.suggestion ?? null, docs: error.docs ?? null,
-      ...(error.detail ? { detail: error.detail } : {}) };
+      ...(error.detail ? { detail: error.detail } : {}),
+      error: env.error, message: env.message, suggestion: env.suggestion, docs_cmd: env.docs_cmd, class: env.class, retryable: env.retryable,
+      contract_version: env.contract_version };
     console.log(json ? JSON.stringify(refusal) : `Refresh refused (${error.code}): ${error.message}\nFix: ${error.suggestion ?? USAGE}${error.docs ? `\nDocs: ${error.docs}` : ''}`);
     setCliExitVerdict(1);
   }

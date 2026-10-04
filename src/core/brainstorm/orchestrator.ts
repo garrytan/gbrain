@@ -60,6 +60,8 @@ import { ensureWellFormed } from '../text-safe.ts';
 
 import { BudgetExhausted, BudgetTracker } from '../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
+import { isInteractive } from '../interaction.ts';
+import { agentBlock } from '../agent-markers.ts';
 import {
   computeRunId,
   loadCheckpoint,
@@ -293,8 +295,9 @@ function fmtUsd(n: number): string {
 }
 
 /**
- * Print the cost estimate + 10s TTY grace window. Non-TTY (cron, scripted)
- * auto-proceeds. `--yes` short-circuits via `skipCostPreview: true`.
+ * Print the cost estimate + 10s TTY grace window for a human at a terminal.
+ * Unattended runs (no human: isInteractive() false) proceed under the hard
+ * cap and print an [AGENT] note naming it. `--yes` short-circuits via `skipCostPreview: true`.
  *
  * Returns true iff the user pressed Ctrl-C during the grace window.
  */
@@ -305,13 +308,25 @@ export async function previewCostAndWait(opts: {
   stderrWrite: (s: string) => void;
   /** Test seam — override the wait so suites don't hang. */
   graceMs?: number;
+  /** The hard cost ceiling the run proceeds under (printed for unattended runs). */
+  capUsd?: number;
+  /** Test seam — default isInteractive(). */
+  interactive?: boolean;
 }): Promise<{ aborted: boolean; estimate: number }> {
   const estimate = estimateCost(opts.profile, opts.model);
-  const isTTY = typeof process !== 'undefined' && process.stderr?.isTTY === true;
+  const interactive = opts.interactive ?? isInteractive();
   opts.stderrWrite(
     `[${opts.profile.label}] estimated cost: ${fmtUsd(estimate)} (${opts.profile.k_close}×${opts.profile.m_far} = ${opts.profile.k_close * opts.profile.m_far} crosses × ${opts.profile.ideas_per_cross} ideas + judge)\n`
   );
-  if (opts.skip || !isTTY) {
+  if (opts.skip) return { aborted: false, estimate };
+  if (!interactive) {
+    // A4 "no silent flip": unattended runs keep proceeding, under the hard cap, and say so.
+    opts.stderrWrite(agentBlock({
+      why: `${opts.profile.label} runs unattended: about ${fmtUsd(estimate)} of model spend${opts.capUsd !== undefined ? `, hard-capped at ${fmtUsd(opts.capUsd)} (--max-cost)` : ''}.`,
+      consent: 'paid',
+      next: 'run',
+      if_no: 'Tell the user the spend is happening; lower it with --max-cost <usd>.',
+    }));
     return { aborted: false, estimate };
   }
   opts.stderrWrite(`[${opts.profile.label}] Press Ctrl-C within 10s to abort, or wait to proceed...\n`);
@@ -594,7 +609,7 @@ async function _runBrainstormInner(
     profile,
     model: modelStr,
     skip: opts.skipCostPreview === true,
-    stderrWrite: stderr,
+    stderrWrite: stderr, capUsd: opts.maxCostUsd ?? 5,
   });
   if (aborted) {
     throw new Error('brainstorm: aborted before run (Ctrl-C during cost preview window)');

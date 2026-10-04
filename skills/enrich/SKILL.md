@@ -312,6 +312,14 @@ After enrichment sweeps, save a report:
 
 This creates an audit trail for brain enrichment over time.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- External enrichment APIs return `rate_limited` or an auth failure: back off for the stated delay; on auth failure stop and tell the user which key is missing. Never fill the gap with guessed facts.
+- `put_page` returns `revision_conflict`: re-read the entity page, merge, and save with the new revision.
+- `auto_links.errors` is non-empty on a write: the page saved but some links did not; list them in the report and add them with `add_link` after fixing the slugs.
+
 ## Anti-Patterns
 
 - Creating stub pages with no content

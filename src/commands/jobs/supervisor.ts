@@ -3,6 +3,9 @@ import { hasFlag, parseFlag, parseJobIsolationFlag, parseMaxRssFlag, parseNiceFl
 import { applyNiceness, formatNice, getEffectiveNiceness } from '../../core/minions/niceness.ts';
 import { resolveChildCliInvocation } from '../../core/minions/job-isolation.ts';
 import { WORKER_EXIT_CONFIGURATION } from '../../core/minions/worker-exit-codes.ts';
+import { writeStdoutFinal } from '../../core/cli-force-exit.ts';
+import { opError } from '../../core/ops/contract.ts';
+import { usageError, writeCliRefusal } from '../../cli/cli-error.ts';
 
 export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsCommandContext): Promise<void> {
   // Dispatcher for supervisor subcommands:
@@ -34,15 +37,18 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
   }
 
   // ----- start subcommand (default) -----
+  // D2: refusals keep their stderr line; under --json the envelope is the stdout document
+  // (written directly: the `jobs` record has no record-wide json contract, see runJobsSupervisor's detach branch).
   if (!isStartCmd) {
-    console.error(`Unknown supervisor subcommand: ${supCmd}. Expected: start, status, stop.`);
-    process.exit(1);
+    process.exit(writeCliRefusal(usageError(`Unknown supervisor subcommand: ${supCmd}. Expected: start, status, stop.`,
+      'Example: gbrain jobs supervisor start --detach --json'), 'jobs', { json: jsonMode }));
   }
 
   const config = (await import('../../core/config.ts')).loadConfig();
   if (config?.engine === 'pglite') {
-    console.error('Error: Supervisor requires Postgres. PGLite uses an exclusive file lock that blocks other processes.');
-    process.exit(1);
+    process.exit(writeCliRefusal(opError('config_error', 'Supervisor requires Postgres. PGLite uses an exclusive file lock that blocks other processes.',
+      'On PGLite, run background maintenance through `gbrain serve` (or run jobs inline with `gbrain jobs submit --follow`).'),
+    'jobs', { json: jsonMode, human: 'Error: Supervisor requires Postgres. PGLite uses an exclusive file lock that blocks other processes.' }));
   }
 
   const { resolveGbrainCliPath } = await import('../autopilot.ts');
@@ -58,15 +64,14 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
   if (supHealthRaw !== undefined) {
     const parsed = parseInt(supHealthRaw, 10);
     if (!Number.isFinite(parsed) || parsed < 0) {
-      console.error(`Error: --health-interval must be a non-negative integer (ms), got "${supHealthRaw}"`);
-      process.exit(1);
+      process.exit(writeCliRefusal(usageError(`--health-interval must be a non-negative integer (ms), got "${supHealthRaw}"`,
+        'Example: gbrain jobs supervisor start --health-interval 60000'), 'jobs',
+      { json: jsonMode, human: `Error: --health-interval must be a non-negative integer (ms), got "${supHealthRaw}"` }));
     }
     if (parsed > 0 && parsed < 1000) {
-      console.error(
-        `Error: --health-interval ${parsed} is suspiciously low (likely a unit-confusion typo). ` +
-        `The flag takes milliseconds; for 60-second probes pass 60000. Use 0 to disable.`,
-      );
-      process.exit(1);
+      const msg = `--health-interval ${parsed} is suspiciously low (likely a unit-confusion typo). ` +
+        `The flag takes milliseconds; for 60-second probes pass 60000. Use 0 to disable.`;
+      process.exit(writeCliRefusal(usageError(msg, 'Example: gbrain jobs supervisor start --health-interval 60000'), 'jobs', { json: jsonMode, human: `Error: ${msg}` }));
     }
     healthInterval = parsed;
   }
@@ -92,11 +97,16 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
     ? { cmd: explicitCliPath, argsPrefix: [] }
     : resolveChildCliInvocation({}, process.execPath, process.argv[1], resolveGbrainCliPath);
   if (!workerInvocation) {
-    console.error('Could not resolve this worker installation. Repair the CLI or pass --cli-path.');
+    writeCliRefusal(opError('config_error', 'Could not resolve this worker installation. Repair the CLI or pass --cli-path.',
+      'Pass --cli-path <path to the gbrain CLI>, or reinstall gbrain.'), 'jobs', { json: jsonMode });
     process.exit(WORKER_EXIT_CONFIGURATION);
   }
 
   // --detach: fork a background supervisor, print PID payload, exit 0.
+  // D2: the payload is the one stdout document (writeStdoutFinal works without
+  // the guard; the `jobs` record declares no record-wide json because other
+  // jobs subcommands stream). status names the outcome; stderr_log is the
+  // detached child's log.
   // #4418: the child gets a DURABLE stderr sink (audit-dir log, null-device
   // fallback) instead of inheriting the invoker's stderr — an inherited
   // capture pipe closing killed the worker (SIGPIPE 141) and then the
@@ -108,14 +118,20 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
       process.argv[1],
       process.argv.slice(2).filter(a => a !== '--detach'),
     );
+    if (started.pid === undefined) {
+      process.exit(writeCliRefusal(opError('unavailable', 'The detached supervisor process could not be started.',
+        `Run \`gbrain jobs supervisor start\` in the foreground to see the error${started.stderrPath ? `, or read ${started.stderrPath}` : ''}.`),
+      'jobs', { json: true }));
+    }
     const payload = {
       event: 'started',
+      status: 'started',
       supervisor_pid: started.pid,
       pid_file: pidFile,
       detached: true,
       ...(started.stderrPath ? { stderr_log: started.stderrPath } : {}),
     };
-    console.log(JSON.stringify(payload));
+    await writeStdoutFinal(`${JSON.stringify(payload)}\n`);
     process.exit(0);
   }
 

@@ -61,7 +61,7 @@ function run(gbrainHome: string | null, args: string[]): { status: number | null
 }
 
 function install(gbrainHome: string | null, target: string): { status: number | null; out: string } {
-  return run(gbrainHome, ['--install', '--force', '--target', target, '--repo', repoDir]);
+  return run(gbrainHome, ['--install', '--force', '--yes', '--target', target, '--repo', repoDir]);
 }
 
 function status(gbrainHome: string | null): Record<string, any> {

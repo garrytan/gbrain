@@ -1,0 +1,2 @@
+# shrink-only baseline for scripts/check-agent-contract.ts rule flag-in-mcp-text: path<TAB>count
+src/mcp/surface.ts	6

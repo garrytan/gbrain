@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { configDir } from '../config.ts';
 import { flushDirectory } from '../fs-durable.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { sha256 } from './digest.ts';
 import type { Principal, SqlEngine } from './model.ts';
 import { acquireNativeLock } from './native-lock.ts';
@@ -21,6 +22,17 @@ export async function withVerifiedLocalRegistration<T>(engine: SqlEngine, regist
   const writer = await verifyLocalWriter(engine, registration);
   return verifiedLocalWriter.run(writer, () => run(writer));
 }
+const registrationsFix = () => readFix('Lists this brain\'s local writer registrations with lane, grant and revocation state, read-only.',
+  { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'] });
+const doctorFix = (why: string) => readFix(why, { argv: ['gbrain', 'doctor', '--json'] });
+function invalidIdentityFile(message: string, path: string, what: string): OperationError {
+  return opError('writer_identity_invalid', message,
+    `${path} is not a valid ${what} document, so gbrain cannot use it; nothing was changed. Do not delete or regenerate it to force progress: a new identity orphans the ownership and pending writes recorded for the old one. Show the user the path; restoring it from a backup is their decision.`,
+    { fix: doctorFix('Checks this installation\'s persistence identity and owner state without changing anything.') });
+}
+const credentialMismatch = (path: string, id: string, lane: string) => opError('permission_denied', 'Local writer credential does not match this registration.',
+  `The private credential in ${path} does not match registration ${id} in this brain's database (the file was copied from another brain or host, or the database was restored), so nothing was registered. Do not overwrite either side: show the user the path; moving the file aside and running gbrain auth local-writer register ${lane} for a new principal is their decision.`,
+  { fix: registrationsFix() });
 const defaultGrant = (): LocalGrant => ({ sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null });
 export function persistenceHome(): string { return join(configDir(), 'persistence'); }
 
@@ -41,20 +53,23 @@ function privateJson<T>(path: string, create: () => T): T {
   } finally { closeSync(fd); unlinkSync(temporary); }
 }
 export function localHostId(): string {
-  const value = privateJson<{ version: number; id: string }>(join(persistenceHome(), 'host.json'), () => ({ version: 1, id: randomUUID() }));
-  if (value.version !== 1 || typeof value.id !== 'string') throw new OperationError('writer_identity_invalid', 'The local writer identity is invalid.');
+  const path = join(persistenceHome(), 'host.json');
+  const value = privateJson<{ version: number; id: string }>(path, () => ({ version: 1, id: randomUUID() }));
+  if (value.version !== 1 || typeof value.id !== 'string') throw invalidIdentityFile('The local writer identity is invalid.', path, 'host identity');
   return value.id;
 }
 export function existingLocalHostId(): string | null {
   const path = join(persistenceHome(), 'host.json');
   if (!existsSync(path)) return null;
   const value = JSON.parse(readFileSync(path, 'utf8')) as { version: number; id: string };
-  if (value.version !== 1 || typeof value.id !== 'string') throw new OperationError('writer_identity_invalid', 'The local writer identity is invalid.');
+  if (value.version !== 1 || typeof value.id !== 'string') throw invalidIdentityFile('The local writer identity is invalid.', path, 'host identity');
   return value.id;
 }
 async function brainIdentity(engine: SqlEngine): Promise<string> {
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-  if (!brain) throw new OperationError('writer_not_initialized', 'Persistence metadata has not been initialized.');
+  if (!brain) throw opError('writer_not_initialized', 'Persistence metadata has not been initialized.',
+    'This brain\'s database has no persistence metadata row, which the schema migrations create, so no local writer can be registered or verified; nothing changed. Run gbrain doctor --json on the brain host; if it reports pending migrations, bring the schema current with gbrain apply-migrations, then run the command again.',
+    { fix: doctorFix('Reports the schema version and any pending migrations of this brain, read-only.') });
   return brain.brain_id;
 }
 export async function registerLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', grant = defaultGrant(), replace = false): Promise<LocalRegistration> {
@@ -62,7 +77,9 @@ export async function registerLocalWriter(engine: BrainEngine, lane: 'cli' | 'st
   const path = join(persistenceHome(), `${brain}.${lane}.json`);
   if (!replace) return ensureLocalWriter(engine, lane, grant, path);
   const lock = await acquireNativeLock(join(persistenceHome(), 'locks', `${brain}.${lane}.registration.lock`), { timeoutMs: 5000 });
-  if (!lock) throw new OperationError('writer_lock_unavailable', 'Local writer registration is busy.');
+  if (!lock) throw opError('writer_lock_unavailable', 'Local writer registration is busy.',
+    `Another process held the ${lane} writer registration lock of this brain for 5 seconds while registering or replacing it, so nothing changed. Check the registrations with the command in fix, then run the registration again only if it is still needed.`,
+    { fix: registrationsFix() });
   try {
     if (existsSync(path)) return await rotateLocalWriter(engine, lane, grant, path);
     return await ensureLocalWriter(engine, lane, grant, path);
@@ -71,11 +88,11 @@ export async function registerLocalWriter(engine: BrainEngine, lane: 'cli' | 'st
 
 async function ensureLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', grant: LocalGrant, path: string): Promise<LocalRegistration> {
   const local = privateJson<LocalRegistration>(path, () => ({ id: randomUUID(), credential: randomBytes(32).toString('hex'), lane }));
-  if (local.lane !== lane || typeof local.credential !== 'string' || typeof local.id !== 'string') throw new OperationError('writer_identity_invalid', 'Local writer registration is invalid.');
+  if (local.lane !== lane || typeof local.credential !== 'string' || typeof local.id !== 'string') throw invalidIdentityFile('Local writer registration is invalid.', path, `${lane} writer registration`);
   const [existing] = await engine.executeRaw<{ revoked_at: unknown; credential_hash: string; lane: string }>(
     'SELECT revoked_at,credential_hash,lane FROM persistence_local_writers WHERE id=$1::uuid', [local.id]);
   if (existing?.revoked_at != null) throw new OperationError('permission_denied', 'This local writer registration was revoked.', 'Explicitly register a new writer to authorize future work.');
-  if (existing && (existing.lane !== lane || existing.credential_hash !== sha256(local.credential))) throw new OperationError('permission_denied', 'Local writer credential does not match this registration.');
+  if (existing && (existing.lane !== lane || existing.credential_hash !== sha256(local.credential))) throw credentialMismatch(path, local.id, lane);
   await engine.executeRaw(`INSERT INTO persistence_local_writers(id,lane,credential_hash,grant_ceiling)
     VALUES($1::uuid,$2,$3,$4::text::jsonb) ON CONFLICT(id) DO NOTHING`, [local.id, lane, sha256(local.credential), JSON.stringify(grant)]);
   return local;
@@ -85,7 +102,7 @@ async function ensureLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', gra
 async function rotateLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', grant: LocalGrant, path: string): Promise<LocalRegistration> {
   const old = JSON.parse(readFileSync(path, 'utf8')) as LocalRegistration;
   if (old.lane !== lane || typeof old.id !== 'string' || typeof old.credential !== 'string') {
-    throw new OperationError('writer_identity_invalid', 'Local writer registration is invalid.');
+    throw invalidIdentityFile('Local writer registration is invalid.', path, `${lane} writer registration`);
   }
   const next: LocalRegistration = { id: randomUUID(), credential: randomBytes(32).toString('hex'), lane };
   const pending = `${path}.pending.${next.id}`;
@@ -98,7 +115,7 @@ async function rotateLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', gra
       const [prior] = await tx.executeRaw<{ credential_hash: string; lane: string }>(
         'SELECT credential_hash,lane FROM persistence_local_writers WHERE id=$1::uuid FOR UPDATE', [old.id]);
       if (prior && (prior.lane !== lane || prior.credential_hash !== sha256(old.credential))) {
-        throw new OperationError('permission_denied', 'Local writer credential does not match this registration.');
+        throw credentialMismatch(path, old.id, lane);
       }
       await tx.executeRaw(`INSERT INTO persistence_local_writers(id,lane,credential_hash,grant_ceiling)
         VALUES($1::uuid,$2,$3,$4::text::jsonb)`, [next.id, lane, sha256(next.credential), JSON.stringify(grant)]);
@@ -130,7 +147,9 @@ export async function verifyLocalWriter(engine: SqlEngine, local: LocalRegistrat
   const actual = Buffer.from(sha256(local.credential));
   const expected = Buffer.from(row?.credential_hash ?? '');
   if (!row || row.revoked_at != null || row.lane !== local.lane || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-    throw new OperationError('permission_denied', 'Local writer registration is unavailable or revoked.');
+    throw opError('permission_denied', 'Local writer registration is unavailable or revoked.',
+      `Local ${local.lane} writer registration ${local.id} is missing from this brain's database, revoked, or holds a different credential, so this caller is not authorized and nothing ran. Review it with the command in fix; replacing a revoked registration (gbrain auth local-writer register ${local.lane} --replace with the complete intended grant) is the user's decision.`,
+      { fix: registrationsFix() });
   }
   return { principal: { kind: row.lane === 'cli' ? 'local_cli' : 'local_stdio', id: local.id }, grant: row.grant_ceiling, remote: row.lane !== 'cli' };
 }

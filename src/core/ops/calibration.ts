@@ -12,6 +12,8 @@ import type { Operation } from './contract.ts';
 
 const get_calibration_profile: Operation = {
   name: 'get_calibration_profile',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description:
     'Read the active calibration profile for a holder. Returns the latest row from calibration_profiles ' +

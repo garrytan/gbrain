@@ -107,6 +107,14 @@ MCP-every-session and the pull protocol instead. Recommend Postgres when the
 operator has concurrent agents, multiple machines, or a 1000+ page brain;
 otherwise PGLite is genuinely fine.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `effective_engine: "postgres"` but the probe fails: this is an access problem; run `gbrain engine status --probe`, then the db-repair skill.
+- Provisioning steps (Docker, installing Postgres, copying every page to the target) need the user's explicit agreement; the docker rung needs `--allow-docker`.
+- `gbrain config set engine …` is refused by design: switch engines through the migrate path, never by editing config.
+
 ## Anti-Patterns
 
 - NEVER `gbrain config set engine ...` — it is refused by design; an engine

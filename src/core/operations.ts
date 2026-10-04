@@ -13,13 +13,14 @@ export { MEMORY_VERBS_VERSION };
 
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
+import { registerOpRoutes } from './fix-routing.ts';
 
 // Re-exports: the full previously-exported foundation surface of this module.
 // The formerly file-private helpers (enforceSubagentSlugFence, slugUnderSubagentFence,
 // slugOutsideCallerFence, enforceClientSlugFence, BOUND_CLIENT_META_OPS,
 // stampEvidenceSafe, maybeCaptureSearch) are deliberately NOT re-exported —
 // they were never part of this module's surface; import them from ops/context.ts.
-export { OperationError, verbError } from './ops/contract.ts';
+export { OperationError, verbError, opError } from './ops/contract.ts';
 export type {
   ErrorCode,
   ParamDef,
@@ -116,6 +117,7 @@ import { chronicleOperations } from './ops/chronicle.ts';
 import { extractionOperations } from './ops/extraction.ts';
 import { entityIdentityOperations } from './ops/entity-identity.ts';
 import { requestToolsOperations } from './ops/request-tools.ts';
+import { noticesOperations } from './ops/notices.ts';
 import { pageEditOperations } from './ops/page-edit.ts';
 
 // parseTtlParam moved to ops/facts.ts with the facts cluster; the `remember`
@@ -219,7 +221,7 @@ export const operations: Operation[] = [
   // v0.41.18.0 run_onboard + v0.41.20.0 run_skillopt — ops/skillopt.ts
   ...skilloptOperations,
   // v0.47: open-loop engine (who is waiting on you) — ops/loops.ts
-  ...loopsOperations,
+  ...loopsOperations, ...noticesOperations, // + agent contract v1 A6 mute_notice — ops/notices.ts
 ];
 
 // ---------------------------------------------------------------------------
@@ -264,7 +266,7 @@ const OP_AREAS: Record<string, string> = {
   ontology_get: 'ontology', ontology_propose: 'ontology',
   ontology_dimensions: 'ontology', ontology_conflicts: 'ontology',
   // admin + operations
-  get_stats: 'admin', get_health: 'admin', run_doctor: 'admin',
+  get_stats: 'admin', get_health: 'admin', run_doctor: 'admin', mute_notice: 'admin',
   get_status_snapshot: 'admin', run_onboard: 'admin', run_skillopt: 'admin',
   migrate_embeddings: 'admin', code_traversal_cache_clear: 'admin', get_write_attribution: 'admin',
   // identity
@@ -331,3 +333,4 @@ for (const op of operations) {
 export const operationsByName = Object.fromEntries(
   operations.map(op => [op.name, op]),
 ) as Record<string, Operation>;
+registerOpRoutes(operations); // A1 render-time routing pin (src/core/fix-routing.ts)

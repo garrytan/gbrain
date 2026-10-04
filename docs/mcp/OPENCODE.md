@@ -21,7 +21,7 @@ brain contract loads with zero extra configuration.
 ## Register (recommended)
 
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- gbrain serve --surface verbs
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface verbs
 ```
 
 `--surface verbs` exposes the seven-verb memory protocol (`recall`,

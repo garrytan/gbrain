@@ -31,6 +31,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { readStdinPayload } from '../core/stdin-read.ts';
 import { resolve } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
@@ -180,15 +181,6 @@ Examples:
 `;
 
 
-async function readStdinBuffer(): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer));
-  }
-  return Buffer.concat(chunks);
-}
-
-
 /**
  * v0.39.3.0 A2 + CV6 — detect Postgres FK violation on the sources table
  * in an error message and return a friendly hint. Returns null when the
@@ -287,7 +279,14 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
   let rawBuffer: Buffer | null = null;
   let inputLabel = ''; // for error messages
   if (parsed.stdin) {
-    rawBuffer = await readStdinBuffer();
+    // Bounded read (C5): an open-but-silent pipe times out instead of hanging,
+    // and partial input is never captured. Raw bytes reach the binary guards.
+    const read = await readStdinPayload('echo "a thought" | gbrain capture --stdin');
+    if (!read.ok) {
+      console.error(`gbrain capture: ${read.message}`);
+      process.exit(1);
+    }
+    rawBuffer = read.raw;
     inputLabel = 'stdin';
   } else if (parsed.filePath) {
     inputLabel = parsed.filePath;

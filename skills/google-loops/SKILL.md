@@ -166,6 +166,14 @@ The trusted-local `--json` result already carries this as a paste-ready
 relay `[SHOW USER]` blocks verbatim and `error.problem` + `error.fix` on
 failures; never dump raw JSON envelopes at the user.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- Setup prints `[SHOW USER]` blocks: relay them verbatim, one message per block. `gbrain mcp expose` and `gbrain google` still exit 2 when they need the user's confirmation (documented legacy), so read the block, not just the exit code.
+- A Google credential error (`invalid_grant_revoked`, `consent_timeout`, `wrong_account_consented`, …) carries `{ code, problem, cause, fix }`: show the user the problem and fix; most fixes are "run it again" by the user.
+- `gbrain waiting` refuses on stale data or reports partial coverage from held items: run the sync it names, or `gbrain sources status <id>` then, after the user agrees, `gbrain sources retry-held <id>`.
+
 ## Anti-Patterns
 
 - **Paraphrasing a `[SHOW USER]` block.** The checklists carry load-bearing

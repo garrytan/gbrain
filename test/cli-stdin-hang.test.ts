@@ -9,7 +9,7 @@
  *
  * The load-bearing regression test spawns the REAL CLI with a held-open,
  * never-written pipe: on pre-fix code it hangs until our observation window
- * kills it; on fixed code it exits 1 with the usage error well inside the
+ * kills it; on fixed code it exits 2 with the usage error well inside the
  * window. The stdin read + required-param check both run BEFORE engine
  * connect, so no brain/DB is touched.
  */
@@ -75,11 +75,11 @@ describe('#3513 — stdin-capable op with a non-TTY, never-written stdin', () =>
   test('exits fast with the usage error instead of blocking forever', async () => {
     // `put` declares stdin:'content' (required). No inline content, no piped
     // input → the bounded read times out at 500ms, content stays unset, and
-    // the required-param check prints usage and exits 1. Pre-fix: readFileSync(0)
+    // the required-param check prints usage and exits 2 (usage). Pre-fix: readFileSync(0)
     // blocks until the 20s window kills the child.
     const run = await runCliWithStdin(['put', 'stdin-hang-test-slug'], 'hold-open', 20_000);
     expect(run.exited).toBe(true); // pre-#3513 this is false: the read never returns
-    expect(run.exitCode).toBe(1);
+    expect(run.exitCode).toBe(2);
     expect(run.stderr).toContain('Usage: gbrain put');
   }, 30_000);
 
@@ -88,20 +88,20 @@ describe('#3513 — stdin-capable op with a non-TTY, never-written stdin', () =>
     // the required check — proving the stream path read stdin and moved on.
     const run = await runCliWithStdin(['put'], { data: '# hello\n' }, 20_000);
     expect(run.exited).toBe(true);
-    expect(run.exitCode).toBe(1);
+    expect(run.exitCode).toBe(2);
     expect(run.stderr).toContain('Usage: gbrain put');
   }, 30_000);
 
   test('empty-but-real input (`< /dev/null`) does not hang', async () => {
     const run = await runCliWithStdin(['put'], { file: '/dev/null' }, 20_000);
     expect(run.exited).toBe(true);
-    expect(run.exitCode).toBe(1);
+    expect(run.exitCode).toBe(2);
   }, 30_000);
 
   test('an empty pipe that closes immediately does not hang', async () => {
     const run = await runCliWithStdin(['put'], 'closed-empty', 20_000);
     expect(run.exited).toBe(true);
-    expect(run.exitCode).toBe(1);
+    expect(run.exitCode).toBe(2);
   }, 30_000);
 });
 

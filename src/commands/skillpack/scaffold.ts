@@ -28,6 +28,7 @@ import {
 import { SkillpackManifestError } from '../../core/skillpack/manifest-v1.ts';
 import { VERSION } from '../../version.ts';
 import { findGbrainOrDie, resolveWorkspace } from './shared.ts';
+import { consentGate } from '../../core/consent-cli.ts';
 
 export async function cmdScaffold(args: string[]): Promise<void> {
   // Harness lane (cathedral-7): `--harness <h>` installs a persona-curated
@@ -50,7 +51,8 @@ export async function cmdScaffold(args: string[]): Promise<void> {
       '  --workspace PATH    Target workspace (default: auto-detected)\n' +
       '  --all               Scaffold every bundled skill (gbrain only)\n' +
       '  --dry-run           Validate + report; no writes\n' +
-      '  --trust             Skip first-install confirm prompt (CI / unattended agents)\n' +
+      '  --trust             The user\'s approval to trust a new third-party author + pin\n' +
+      '                      (without it a non-interactive run writes nothing and exits 3)\n' +
       '  --no-cache          Force fresh clone/extract for third-party sources\n' +
       '  --json              Stable JSON envelope for agent consumption',
     );
@@ -106,6 +108,7 @@ export async function cmdScaffold(args: string[]): Promise<void> {
             trustFlag,
             noCache,
             json,
+            args,
           });
           return;
         }
@@ -121,6 +124,7 @@ export async function cmdScaffold(args: string[]): Promise<void> {
       trustFlag,
       noCache,
       json,
+      args,
     });
     return;
   }
@@ -172,6 +176,8 @@ interface ThirdPartyScaffoldOptions {
   trustFlag: boolean;
   noCache: boolean;
   json: boolean;
+  /** Raw argv, for the consent request (`--yes`, `--trust`). */
+  args: readonly string[];
 }
 
 async function runThirdPartyScaffold(opts: ThirdPartyScaffoldOptions): Promise<void> {
@@ -209,16 +215,38 @@ async function runThirdPartyScaffold(opts: ThirdPartyScaffoldOptions): Promise<v
   // Step 2: orchestrator handles manifest validation, trust prompt, copy,
   // state.json update, and bootstrap display.
   try {
-    const result = await runScaffoldThirdParty(
+    const scaffold = (trustFlag: boolean) => runScaffoldThirdParty(
       {
         resolved,
         targetWorkspace: opts.targetWorkspace,
-        trustFlag: opts.trustFlag,
+        trustFlag,
         dryRun: opts.dryRun,
         tier: registryTier,
       },
       VERSION,
     );
+    let result = await scaffold(opts.trustFlag);
+    // A4: no human to answer the trust prompt. The user decides whether this
+    // author + pin is trusted: refuse with the consent payload (exit 3), or
+    // proceed when the caller already carries the approval (--yes). A generic
+    // persistent_install preapproval never trusts third-party code.
+    if (result.status === 'aborted_no_trust' && result.trustDecision.reason === 'non_tty_no_trust_flag') {
+      const m = result.manifest;
+      const pin = result.resolved.pinned_commit ? `commit ${result.resolved.pinned_commit.slice(0, 12)}`
+        : result.resolved.tarball_sha256 ? `tarball sha256:${result.resolved.tarball_sha256.slice(0, 12)}` : 'unpinned';
+      const auth = await consentGate({
+        command: 'skillpack scaffold', effects: ['persistent_install'], actor: 'agent',
+        what: `Install the third-party skillpack ${m.name}@${m.version} by ${m.author}`,
+        why: `Adds ${m.name}'s skills to this workspace (${m.description}).`,
+        risk: `Copies third-party skills from ${result.resolved.source} (${pin}) into ${opts.targetWorkspace}; your agent will follow them as instructions, including any scripts they reference. `
+          + 'Trust is recorded for this exact author and pin; a different author or pin asks again.',
+        user_message: `Install the skillpack ${m.name} by ${m.author} from ${result.resolved.source} (${pin})? Its skills become instructions your agent follows.`,
+        argv: ['gbrain', 'skillpack', 'scaffold', opts.spec, ...opts.args.filter(a => a !== opts.spec && a !== '--yes' && a !== '--trust')],
+        args: opts.args,
+      }, { json: opts.json, env: { preapprovals: {} } });
+      if (!auth) return;
+      result = await scaffold(true);
+    }
 
     if (opts.json) {
       console.log(

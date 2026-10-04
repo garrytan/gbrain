@@ -93,7 +93,7 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
     if (disabled !== null && disabled !== 'true' && disabled !== 'false') {
       throw new Error('Selected brain embedding_disabled must be true or false');
     }
-    assertEmbeddingEnabled({ embedding_disabled: disabled === 'true' });
+    assertEmbeddingEnabled({ engine: target.kind, ...selectedConfig, embedding_disabled: disabled === 'true' });
   };
   await assertEnabled(engine);
   const shape = await readFactsEmbeddingDim(engine);

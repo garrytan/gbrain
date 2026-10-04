@@ -23,7 +23,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { formatFenceDate, parseFactsFence, upsertFactRow } from '../facts-fence.ts';
 import { digest } from '../persistence/digest.ts';
@@ -148,11 +148,18 @@ const classKey = (c: Classified[]) => JSON.stringify(c.map(x => x.action === 'li
 
 export async function prepareRelinkMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const intent = row.intent as unknown as RelinkIntent | null;
+  const rerun = `The next gbrain facts relink --source ${row.source_id} run re-plans from current state; preview it with --dry-run (no model calls, no writes).`;
+  const changed = (message: string) => opError('revision_conflict', message,
+    `${row.slug} or one of its facts changed while relink request ${row.request_id} was being prepared, so nothing was written. ${rerun}`);
   if (row.operation !== RELINK_OPERATION || intent?.kind !== 'relink_facts' || !Array.isArray(intent.facts) || row.authority.remote) {
-    throw new OperationError('permission_denied', 'Unsupported relink intent.');
+    throw opError('permission_denied', 'Unsupported relink intent.',
+      `Request ${row.request_id} is not a trusted local relink this gbrain version can publish, so nothing was written. Facts relink runs only from gbrain facts relink on the brain host.`);
   }
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
-  if (!snapshot || snapshot.page.id !== row.page_id) throw new OperationError('page_identity_changed', 'The relink target page changed.');
+  if (!snapshot || snapshot.page.id !== row.page_id) {
+    throw opError('page_identity_changed', 'The relink target page changed.',
+      `${row.slug} in ${row.source_id} was deleted or replaced after relink request ${row.request_id} was accepted, so nothing was written. ${rerun}`);
+  }
   const observedRevision = snapshot.revision;
   const planned = await classify(engine, row, intent, false);
   const byId = new Map(intent.facts.map(f => [f.id, f]));
@@ -162,7 +169,10 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
   const rowNums = new Map<number, number>();
   if (links.length) {
     const parsed = parseFactsFence(body);
-    if (parsed.warnings.length) throw new OperationError('invalid_params', 'fence_malformed: the entity facts fence is malformed; repair it before relinking.');
+    if (parsed.warnings.length) {
+      throw opError('invalid_params', 'fence_malformed: the entity facts fence is malformed; repair it before relinking.',
+        `Fix the ## Facts table on ${row.slug} in ${row.source_id} (one header row, then one row per fact), then run gbrain facts relink --source ${row.source_id} again; nothing was written.`);
+    }
     const [max] = await engine.executeRaw<{ n: number }>(
       'SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
     let next = Math.max(Number(max?.n ?? 0), 0, ...parsed.facts.map(f => f.rowNum)) + 1;
@@ -176,11 +186,11 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
   const page = links.length ? await (await import('../persistence/page-prepare.ts')).preparePageMutation(engine, { ...row, intent: {
     content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), expected_revision: observedRevision, force: false,
   } }, config) : undefined;
-  if (page && page.observedRevision !== observedRevision) throw new OperationError('revision_conflict', 'The relink target page changed during preparation.');
+  if (page && page.observedRevision !== observedRevision) throw changed('The relink target page changed during preparation.');
 
   const validate = async (tx: BrainEngine) => {
     if (classKey(await classify(tx, row, intent, true)) !== classKey(planned)) {
-      throw new OperationError('revision_conflict', 'A relinked fact changed during preparation.');
+      throw changed('A relinked fact changed during preparation.');
     }
     await page?.validate?.(tx);
   };
@@ -195,13 +205,13 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
         const rowNum = rowNums.get(c.id)!;
         const moved = await tx.executeRaw(`UPDATE facts SET entity_slug=$3, source_markdown_slug=$3, row_num=$4::integer, context=$5 ${guard}`,
           [row.source_id, c.id, row.slug, rowNum, appendContextNote(c.value.context as string | null, f.note)]);
-        if (moved.length !== 1) throw new OperationError('revision_conflict', 'A relinked fact was moved by another writer.');
+        if (moved.length !== 1) throw changed('A relinked fact was moved by another writer.');
         outcome.linked.push({ id: c.id, row_num: rowNum });
       } else if (c.action === 'retire') {
         const [current] = await tx.executeRaw<{ context: string | null }>('SELECT context FROM facts WHERE source_id=$1 AND id=$2', [row.source_id, c.id]);
         const retired = await tx.executeRaw(`UPDATE facts SET entity_slug=$3, expired_at=now(), context=$4 ${guard}`,
           [row.source_id, c.id, row.slug, appendContextNote(current?.context ?? null, `${f.note} (duplicate of #${c.duplicateOf})`)]);
-        if (retired.length !== 1) throw new OperationError('revision_conflict', 'A relinked fact was moved by another writer.');
+        if (retired.length !== 1) throw changed('A relinked fact was moved by another writer.');
         outcome.deduped.push({ id: c.id, duplicate_of: c.duplicateOf });
       } else {
         outcome.skipped.push({ id: c.id, reason: c.reason });
@@ -249,7 +259,10 @@ export async function submitRelinkGroup(engine: BrainEngine, config: GBrainConfi
   const principal = await requestPrincipalForContext(ctx);
   const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
     "SELECT incarnation, archived, local_path, config->>'kind' AS kind FROM sources WHERE id = $1", [sourceId]);
-  if (!source || source.archived) throw new OperationError('source_changed', 'The relink source is not active.');
+  if (!source || source.archived) {
+    throw opError('source_changed', 'The relink source is not active.', `Source ${sourceId} is archived or not registered; run gbrain facts relink with --source set to an active source.`,
+      { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', why: 'Lists the registered sources and whether each is archived.', requires_exclusive: false } });
+  }
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot) return { ok: false, reason: 'no_page', message: `${slug} no longer exists` };
   const target = await resolveFactWriteTarget(engine, sourceId, source);

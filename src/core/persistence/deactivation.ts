@@ -27,7 +27,8 @@ import { existsSync, lstatSync, readFileSync, readdirSync, unlinkSync } from 'no
 import { dirname, join, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { configDir } from '../config.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { acquireWorktree, getWorktreeBinding } from './ownership.ts';
 import { existingLocalHostId } from './identity.ts';
 import type { NativeLockHandle } from './native-lock.ts';
@@ -80,7 +81,11 @@ async function readBrain(engine: BrainEngine, lock = false): Promise<BrainRow> {
       (to_jsonb(persistence_brain)->>'skill_bundles_enabled')::boolean AS skill_bundles_enabled,
       (to_jsonb(persistence_brain)->>'writer_protocol_floor')::int AS writer_protocol_floor
     FROM persistence_brain WHERE singleton=1${lock ? ' FOR UPDATE' : ''}`);
-  if (!brain) throw new OperationError('writer_not_initialized', 'Persistence identity is missing.');
+  if (!brain) {
+    throw opError('writer_not_initialized', 'Persistence identity is missing.',
+      'This brain has no persistence identity row, so there is no managed mode to read or deactivate. List the pending migrations that create it and ask the user before applying them.',
+      { fix: { argv: ['gbrain', 'apply-migrations', '--dry-run', '--json'], consent: [], actor: 'agent', why: 'Lists the pending migrations without applying them.', requires_exclusive: false } });
+  }
   return brain;
 }
 
@@ -204,7 +209,11 @@ export async function deactivatePersistence(engine: BrainEngine, opts: { dryRun?
       const current = await readBrain(tx, true);
       await assertWriterAdminState(tx, opts.expectedState);
       await assertWriterAdminUnlocked(tx);
-      if (!current.enabled) throw new OperationError('writer_admin_state_changed', 'The brain was deactivated concurrently.');
+      if (!current.enabled) {
+        throw opError('writer_admin_state_changed', 'The brain was deactivated concurrently.',
+          'Another process already deactivated managed persistence, so this run changed nothing more. Confirm the state in writer status; no further deactivation is needed.',
+          { fix: readFix('Shows whether managed persistence is enabled, read-only.', { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] }) });
+      }
       await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');
       await tx.executeRaw('SELECT id FROM sources ORDER BY id FOR UPDATE');
       await opts.hooks?.afterLocks?.();

@@ -33,6 +33,7 @@ import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 import { _resetWriteThroughCacheForTest } from '../../src/core/write-through.ts';
 import { runConfig } from '../../src/commands/config.ts';
+import { docsUrl } from '../../src/core/agent-output.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
 let engine: PostgresEngine;
@@ -129,7 +130,7 @@ d('#5254 Postgres put_page to an unbound filesystem source', () => {
     expect(refused.response.isError).toBe(true);
     expect(refused.payload.error).toBe('owner_unavailable');
     expect(refused.payload.detail).toBe('unbound_source');
-    expect(refused.payload.docs).toBe(DOCS);
+    expect(refused.payload.docs).toBe(docsUrl(DOCS)); // agent contract v1: absolute, version-pinned wire docs
     const hint = refused.payload.suggestion as string;
     expect(hint).toContain('gbrain sources writer status default --json');
     expect(hint).toContain('gbrain sources writer claim default --path');
@@ -208,7 +209,7 @@ d('#5254 Postgres put_page to an unbound filesystem source', () => {
     expect(result.response.isError).toBe(true);
     expect(result.payload.error).toBe('owner_unavailable');
     expect(result.payload.detail).toBe('unbound_source');
-    expect(result.payload.docs).toBe(DOCS);
+    expect(result.payload.docs).toBe(docsUrl(DOCS));
     expect(result.payload.write_request.state).toBe('failed');
     expect(result.payload.suggestion).toContain('new request_id');
     expect(await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true })).toBeNull();

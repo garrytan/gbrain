@@ -56,6 +56,7 @@ beforeAll(async () => {
     if (req.url === '/token') {
       res.statusCode = tokenStatus;
       res.setHeader('Content-Type', 'application/json');
+      if (tokenStatus === 429) res.setHeader('Retry-After', '900');
       res.end(JSON.stringify(tokenBody ?? {
         access_token: 'test-token-' + Date.now(),
         token_type: 'bearer',
@@ -188,6 +189,17 @@ describe('collectRemoteDoctorReport', () => {
     expect(token.detail?.reason).toBe('auth');
     expect(token.detail?.status).toBe(401);
     expect(report.checks.find(c => c.name === 'mcp_smoke')).toBeUndefined();
+  });
+
+  test('token 429 — fails with reason=rate_limited and the server\'s Retry-After', async () => {
+    reset();
+    tokenStatus = 429;
+    tokenBody = { error: 'too_many_requests' };
+    const report = await collectRemoteDoctorReport(makeConfig(), SKIP_PROBE_OPTS);
+    const token = report.checks.find(c => c.name === 'oauth_token')!;
+    expect(token.status).toBe('fail');
+    expect(token.detail).toEqual({ reason: 'rate_limited', status: 429, retry_after_s: 900 });
+    expect(token.message).toContain('retry in 900s');
   });
 
   test('mcp 401 — bearer rejected; fails with reason=auth', async () => {

@@ -107,6 +107,14 @@ restart requires restarting the connection **in the native client**; a new
 login link does not recreate authorization state. Self-service DCR is opt-in
 and never bypasses owner consent. Do not enable it as a silent repair.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `insufficient_scope` / `invalid_token` on an MCP call: this is a grant problem only the owner can change. Do not try successively broader OAuth scopes; tell the user which scope is missing.
+- A failed transport after a mutation was sent means the outcome is unknown: re-read the client list before retrying, never re-send blind.
+- A list call fails: a failed list is not an empty list; report the error.
+
 ## Anti-Patterns
 
 - Treating MCP `admin` scope or a full tool surface as owner authority.

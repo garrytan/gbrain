@@ -246,6 +246,15 @@ Rules:
 If a search result has `source_id: "gstack"` and `slug: "plans/foo"`,
 the citation is `[gstack:plans/foo]`. That's the whole rule.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `put_page` returns `revision_conflict`: re-read the page, merge your change into the new text, and save with the new revision. `write_pending` (exit 10): poll `get_write_request` (`gbrain write-request <request_id>`) before claiming the write landed.
+- A write is refused by the secret scan or a slug fence (`permission_denied`): do not strip or rename to dodge it; tell the user what was refused and why (see `docs/guides/write-refusals.md`).
+- `recall` / `search` returns nothing with a degraded notice or `search_degraded`: say the brain is searching keywords only right now, not that nothing is saved.
+- `insufficient_scope` / `scope_denied` over MCP: the connection lacks that scope. Tell the user; never ask for a broader token just to make a write pass.
+
 ## Anti-Patterns
 
 - Answering questions about people/companies without checking the brain first

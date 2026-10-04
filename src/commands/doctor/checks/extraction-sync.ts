@@ -31,6 +31,7 @@ import type { Check } from '../../doctor.ts';
 import { ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
 import { connectorAuthorities } from '../../../core/persistence/connector-authority.ts';
 import { parseSourceConfig } from '../../../core/sources-load.ts';
+import { checkError } from '../check-fix.ts';
 
 /** Local aliases; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveEnvNumber = resolveEnvNumber;
@@ -172,7 +173,7 @@ export async function checkLinksExtractionLag(
     if (isUndefinedColumnError(e, 'links_extracted_at')) {
       return { name, status: 'ok', message: 'links_extracted_at not present (pre-v112 brain)' };
     }
-    return { name, status: 'warn', message: `Could not check links_extraction_lag: ${(e as Error).message}` };
+    return checkError(name, 'check links_extraction_lag', e);
   }
 }
 
@@ -218,7 +219,7 @@ export async function checkUnverifiedExtractions(
       details: { count: n, days, source_id: sourceId ?? null },
     };
   } catch (e) {
-    return { name, status: 'warn', message: `Could not check unverified_extractions: ${(e as Error).message}` };
+    return checkError(name, 'check unverified_extractions', e);
   }
 }
 
@@ -302,7 +303,7 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
       },
     };
   } catch (e) {
-    return { name, status: 'warn', message: `Could not check content-hash duplicates: ${(e as Error).message}` };
+    return checkError(name, 'check content-hash duplicates', e);
   }
 }
 
@@ -344,7 +345,7 @@ export async function checkCodeChunkMetadata(engine: BrainEngine): Promise<Check
       details: { chunks_missing_metadata: chunks, pages_affected: pages },
     };
   } catch (e) {
-    return { name, status: 'warn', message: `Could not check code chunk metadata: ${(e as Error).message}` };
+    return checkError(name, 'check code chunk metadata', e);
   }
 }
 
@@ -462,7 +463,7 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
       details: { total, per_source: perSource, sample_slugs: samples },
     };
   } catch (e) {
-    return { name, status: 'warn', message: `Could not check undeclared db-only pages: ${(e as Error).message}` };
+    return checkError(name, 'check undeclared db-only pages', e);
   }
 }
 
@@ -525,7 +526,7 @@ export async function checkDbOnlyCollectorCollision(
       details: { collisions: hits },
     };
   } catch (e) {
-    return { name, status: 'warn', message: `Could not check collector/db_only collisions: ${(e as Error).message}` };
+    return checkError(name, 'check collector/db_only collisions', e);
   }
 }
 
@@ -1482,10 +1483,6 @@ export async function checkSyncFreshness(
       details,
     };
   } catch (e) {
-    return {
-      name: 'sync_freshness',
-      status: 'warn',
-      message: `Could not check sync freshness: ${e instanceof Error ? e.message : String(e)}`,
-    };
+    return checkError('sync_freshness', 'check sync freshness', e);
   }
 }

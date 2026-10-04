@@ -91,6 +91,27 @@ describe('CLI command table', () => {
     expect(outside).toEqual([...shape.thinClientGuard.members, 'jobs'].sort());
   });
 
+  test("D3: every curated help is () => import('./help/<name>.ts') naming an existing module that exports help", async () => {
+    const withHelp = astRecords.filter((r) => r.helpSpecifier !== undefined);
+    expect(withHelp.map((r) => r.name)).toEqual(CLI_COMMANDS.filter((r) => r.help).map((r) => r.name));
+    for (const r of withHelp) {
+      expect(r.helpSpecifier, `${r.name}: help is not an arrow returning import('<literal>')`).toBe(`./help/${r.name}.ts`);
+      expect(existsSync(join(ROOT, 'src/cli', r.helpSpecifier!)), `${r.name}: ${r.helpSpecifier} does not exist`).toBe(true);
+      expect((await findCliCommand(r.name)!.help!()).help.summary.length).toBeGreaterThan(0);
+    }
+  });
+
+  test('D3: every src/cli/help spec module has a record; the renderer and validator import none of them (cold start)', () => {
+    const shared = new Set(['render.ts', 'validate.ts']);
+    const files = readdirSync(join(ROOT, 'src/cli/help')).filter((f) => f.endsWith('.ts') && !shared.has(f)).sort();
+    expect(files).toEqual(astRecords.filter((r) => r.helpSpecifier).map((r) => r.helpSpecifier!.slice('./help/'.length)).sort());
+    for (const f of shared) {
+      const imports = parseSource(ROOT, `src/cli/help/${f}`).statements.filter(ts.isImportDeclaration)
+        .map((st) => (st.moduleSpecifier as ts.StringLiteral).text);
+      expect(imports.filter((spec) => files.some((h) => spec === `./${h}`))).toEqual([]);
+    }
+  });
+
   test('the table module loads no command module at import time (cold start)', () => {
     const sf = parseSource(ROOT, COMMAND_TABLE_PATH);
     const runtimeImports = sf.statements.filter((st) => ts.isImportDeclaration(st) && !st.importClause?.isTypeOnly);

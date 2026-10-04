@@ -83,10 +83,10 @@ Configure the agent you are using:
 
 ```bash
 # Claude Code
-claude mcp add gbrain -- gbrain serve --surface verbs
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs
 
 # Codex
-codex mcp add gbrain -- gbrain serve --surface verbs
+codex mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs
 ```
 
 These launch a local stdio MCP process. Use the same intended brain and source
@@ -245,15 +245,17 @@ connection, repeat `gbrain connect` with its handoff and `--remove`.
 Revoke the client on the host when its authority should end. Removing a client
 configuration does not delete memory or revoke credentials.
 
-| Symptom | Next step |
-| --- | --- |
-| PGLite busy | Close the current owner before opening another process. Never delete a live lock. |
-| Wrong or empty brain | Inspect root, engine, brain, and source routing; do not initialize over existing memory. |
-| Only seven tools visible | Expected for the verbs surface; use `recall` and `remember` rather than classic tool names. |
-| Hosted read works but write fails | Inspect issued/current scopes, operation grants, source access, and write fences. |
-| Credential delivery interrupted | Resume delivery on the host with the existing client ID. |
-| Server checks pass, new conversation fails | Reload the client, confirm native instruction activation, and observe the actual GBrain call. |
-| Optional embeddings unavailable | Continue keyless or explicitly configure the capability; do not silently spend. |
+<a id="connect-coding-agent-symptoms"></a>
+
+| Symptom | Next step | Who acts | Consent | Verify |
+| --- | --- | --- | --- | --- |
+| PGLite busy | Close the current owner before opening another process. Never delete a live lock. | user | none | `gbrain doctor --only connection --json` |
+| Wrong or empty brain | Inspect root, engine, brain, and source routing; do not initialize over existing memory. | agent | none | `gbrain engine status --json` |
+| Only seven tools visible | Expected for the verbs surface; use `recall` and `remember` rather than classic tool names. | agent | none | the harness's tool list |
+| Hosted read works but write fails | Inspect issued/current scopes, operation grants, source access, and write fences. | brain host | none | the token's scopes in the client list |
+| Credential delivery interrupted | Resume delivery on the host with the existing client ID. | brain host | `credentials` | the client list |
+| Server checks pass, new conversation fails | Reload the client, confirm native instruction activation, and observe the actual GBrain call. | user (reloads the client) | none | a `recall` in a new conversation |
+| Optional embeddings unavailable | Continue keyless or explicitly configure the capability; do not silently spend. | agent, after the user agrees | `credentials`, `paid` to enable embeddings | `gbrain doctor --only embeddings --json` |
 
 As of **2026-09-10**, local CLI and HTTP tests establish the server behavior
 described in [validation evidence](../guides/harness-validation.md).

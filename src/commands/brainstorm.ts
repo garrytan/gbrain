@@ -28,6 +28,7 @@ import { serializeMarkdown } from '../core/markdown.ts';
 import { importFromContent } from '../core/import-file.ts';
 import { writePageThrough, type WriteThroughResult } from '../core/write-through.ts';
 import { randomBytes } from 'crypto';
+import { legacyNestedErrorDocument } from '../core/agent-output.ts';
 
 export interface BrainstormCliArgs {
   question?: string;
@@ -293,7 +294,7 @@ async function runBrainstormCli(
       if (parsed.json) {
         // Agents reading --json get the structured envelope (matches
         // serializeError shape from src/core/errors.ts).
-        console.log(JSON.stringify({ error: err.envelope }, null, 2));
+        console.log(JSON.stringify(legacyNestedErrorDocument(err.envelope), null, 2));
       } else {
         console.error(`Error [${err.envelope.code}]: ${err.envelope.message}`);
         if (err.envelope.hint) console.error(`  Hint: ${err.envelope.hint}`);

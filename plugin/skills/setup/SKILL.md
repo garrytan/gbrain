@@ -196,6 +196,14 @@ connectors, and schedules explicitly.
 | Native instructions or routine unavailable | Keep the content and report the remaining activation step. |
 | Optional health check unavailable | Name the missing capability; do not silently expand grants, spend, or connector access. |
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain init` prints `[AGENT]` blocks with the search-mode cost matrix: relay it and get the operator's choice before continuing.
+- An initialization error: never replace existing memory to recover. Run `gbrain doctor --json` and follow its `fix`.
+- `gbrain mcp verify` reports overall `partial` (exit 2): native evidence is missing; say activation is unverified instead of claiming it works.
+
 ## Anti-Patterns
 
 - Replacing an existing agent's identity or creating a private repository during ordinary memory setup.
@@ -212,3 +220,14 @@ cleanup. Name pending steps and the exact repair action. Redact credentials.
 
 Only declare observed stages complete. A CLI test, schedule file, fluent
 answer, HTTP response, or job ID cannot certify the full native experience.
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `get_health` → `gbrain doctor --json`
+- `get_stats` → `gbrain stats`
+- `sync_brain` → `gbrain sync`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

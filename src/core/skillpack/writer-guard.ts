@@ -41,7 +41,8 @@ function resolveExistingAncestor(path: string): string {
 }
 
 export function confinedSkillChildWrite(root: string, child: string, opts: { dryRun?: boolean } = {}): string {
-  const invalid = () => new OperationError('target_escape', 'The skill target must remain within its selected root.');
+  const invalid = () => new OperationError('target_escape', 'The skill target must remain within its selected root.',
+    `Write to a relative path under ${root} with forward slashes and no empty, . or .. segments; absolute and drive-letter paths are refused.`);
   if (typeof root !== 'string' || !root || root.includes('\0') || typeof child !== 'string' || !child ||
     /[\x00-\x1f\x7f]/.test(child) || isAbsolute(child) || win32.isAbsolute(child) || /^[a-z]:/i.test(child) ||
     sep !== '\\' && child.includes('\\')) throw invalid();

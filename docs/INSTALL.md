@@ -126,8 +126,8 @@ gbrain autopilot --install        # background daemon for nightly enrichment
 **Wire this same local brain into your coding agent** — zero server, zero token:
 
 ```bash
-claude mcp add gbrain -- gbrain serve --surface verbs    # Claude Code
-codex  mcp add gbrain -- gbrain serve --surface verbs    # Codex
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs    # Claude Code
+codex  mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs    # Codex
 ```
 
 The agent spawns `gbrain serve` as a stdio subprocess against your local brain. `--surface verbs` gives the agent the seven-verb memory protocol (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` — [MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) instead of the full tool catalog; `--surface starter` adds the daily-driver set on top of the verbs (~27 ops total); drop the flag (default `full`) for every operation. Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.

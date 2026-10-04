@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { atomicStagingPath, validateAtomicStagingPath } from '../atomic-write.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
 import type { BrainEngine } from '../engine.ts';
 import { readJournalLimits } from './limits.ts';
@@ -18,7 +18,9 @@ export function recoveryStagingFile(path: string, bytes: string | Uint8Array): R
   return { path: atomicStagingPath(path), hash: sha256(bytes), bytes: typeof bytes === 'string' ? Buffer.byteLength(bytes) : bytes.byteLength };
 }
 function blocked(): OperationError {
-  return new OperationError('unexpected_staging_bytes', 'Recovery staging has unexpected bytes or identity; the root and its recovery capacity remain reserved.');
+  return opError('unexpected_staging_bytes', 'Recovery staging has unexpected bytes or identity; the root and its recovery capacity remain reserved.',
+    'A recovery staging file changed outside gbrain. Inspect the pending recovery in writer status and tell the user; never delete or edit staging files by hand.',
+    { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'], consent: [], actor: 'agent', why: 'Shows pending recovery records and the capacity they hold, read-only.', requires_exclusive: false } });
 }
 function stages(record: StagedRecovery): RecoveryStagingFile[] {
   const result = Object.values(record.staging ?? {}).filter((stage): stage is RecoveryStagingFile => !!stage);
@@ -97,7 +99,9 @@ export async function upgradeRecoveryStaging(engine: BrainEngine, table: 'persis
     const minimum = Buffer.byteLength(JSON.stringify(updated)) + Object.values(staging).reduce((sum, stage) => sum + stage.bytes, 0) + 4096;
     const extra = Math.max(0, minimum - Number(row.recovery_bytes));
     for (const counter of counters) if (Number(counter.recovery_bytes) + extra > (counter.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes)) {
-      throw new OperationError('queue_capacity', 'Recovery is waiting for capacity to durably record its staging paths.');
+      throw opError('queue_capacity', 'Recovery is waiting for capacity to durably record its staging paths.',
+        `Recovery needs ${extra} more bytes of the ${counter.key === 'brain' ? 'persistence.limits.brain_recovery_bytes' : 'persistence.limits.worktree_recovery_bytes'} budget to record its staging. Let other recovery settle; raising that limit is the user's call, and recovery records are never removed.`,
+        { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'], consent: [], actor: 'agent', why: 'Shows pending recovery records and the capacity they hold, read-only.', requires_exclusive: false } });
     }
     await tx.executeRaw(`UPDATE ${table} SET recovery=$2::text::jsonb,recovery_bytes=recovery_bytes+$3 WHERE id=$1`,
       [id, JSON.stringify(updated), extra]);

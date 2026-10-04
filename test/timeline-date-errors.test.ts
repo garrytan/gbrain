@@ -141,7 +141,9 @@ describe('add_timeline_entry rejects invalid dates as invalid_params', () => {
     }, OPTS);
 
     expect(result.isError).toBe(true);
-    expect(payload(result)).toEqual({ error: 'invalid_params', message });
+    // Agent contract v1: legacy keys keep their values; `code` (and the other
+    // v1 envelope keys) are additive.
+    expect(payload(result)).toMatchObject({ error: 'invalid_params', code: 'invalid_params', message });
     expect(await pageState(REJECTED_SLUG)).toEqual(rejectedBaseline);
   });
 });

@@ -129,7 +129,10 @@ describe('v0.29 E2E — dispatchToolCall for the three new ops', () => {
     const err = JSON.parse(result.content[0].text);
     // OperationError.toJSON() serializes the code as `error:`, not `code:`.
     expect(err.error).toBe('permission_denied');
-    expect(err.message.toLowerCase()).toContain('local-only');
+    // Agent contract v1 (F5): refused at dispatch with the exact CLI command.
+    expect(err.code).toBe('trusted_local_only');
+    expect(err.message.toLowerCase()).toContain('trusted local cli');
+    expect(err.fix.command).toBe('gbrain transcripts recent --brain host --source default');
   });
 
   test('get_recent_transcripts is denied fail-closed (unknown_tool) when the transport marker is unset', async () => {

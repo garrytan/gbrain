@@ -1,7 +1,8 @@
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
+import { pageIdentityError } from './page-identity.ts';
 import { renderTimelineEntry, spliceTimelineBlock } from '../timeline-write-through.ts';
 import { extractTimelineFromContent } from '../timeline-extract.ts';
 import { preparePageMutation } from './page-prepare.ts';
@@ -39,11 +40,13 @@ export function regeneratedByWriter(sourceKind: string | null | undefined, page:
 
 export async function prepareSemanticPageMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
-  if (!snapshot || snapshot.page.id !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page no longer exists.');
+  if (!snapshot || snapshot.page.id !== row.page_id) throw pageIdentityError(snapshot != null, 'The accepted page was replaced by another page.');
   const p = row.intent!;
   if (p.expected_revision !== undefined) assertPageRevision(snapshot,engineMutationPrecondition(parseMutationPrecondition(p)));
   if (row.operation === 'add_tag' || row.operation === 'remove_tag') {
-    if (typeof p.tag !== 'string' || !p.tag.trim()) throw new OperationError('invalid_params', 'A tag must be nonempty.');
+    if (typeof p.tag !== 'string' || !p.tag.trim()) {
+      throw opError('invalid_params', 'A tag must be nonempty.', `Request ${row.request_id} for ${row.slug} in source ${row.source_id} named an empty tag, so nothing changed. Submit the tag change again with a nonempty tag.`);
+    }
     const tag = p.tag.trim();
     const tags = row.operation === 'add_tag' ? [...new Set([...snapshot.tags, tag])].sort() : snapshot.tags.filter(value => value !== tag);
     const prepared = await preparePageMutation(engine, row, config, {
@@ -51,10 +54,16 @@ export async function prepareSemanticPageMutation(engine: BrainEngine, row: Writ
     });
     return { ...prepared, apply: async tx => ({ ...await prepared.apply(tx), status: 'ok', tag }) };
   }
-  if (row.operation !== 'add_timeline_entry') throw new OperationError('writer_coordinator_required', 'This semantic writer has no registered preparation handler.');
+  if (row.operation !== 'add_timeline_entry') {
+    throw opError('writer_coordinator_required', 'This semantic writer has no registered preparation handler.',
+      `Request ${row.request_id} (${row.operation}) in source ${row.source_id} has no preparation handler in this gbrain version, so nothing changed. This is an internal or version-skew fault: report it to the user.`);
+  }
   const entry = { date: String(p.date), summary: String(p.summary), source: String(p.source ?? ''), detail: String(p.detail ?? '') };
   const rendered = renderTimelineEntry(entry, row.slug);
-  if (!rendered) throw new OperationError('invalid_params', 'The timeline entry cannot be represented losslessly in Markdown.');
+  if (!rendered) {
+    throw opError('invalid_params', 'The timeline entry cannot be represented losslessly in Markdown.',
+      `Request ${row.request_id}'s timeline entry for ${row.slug} would not read back as the same entry, so nothing changed. Submit it again with a YYYY-MM-DD date and a nonempty single-line summary that has no Markdown list or heading syntax.`);
+  }
   // #5567: a writer that regenerates the page from its own inputs never holds this entry. The materialized
   // marker makes its preserving render carry the bullet forward instead of deleting it (fix wave 4 audit).
   const [source] = await engine.executeRaw<{ kind: string | null }>("SELECT config->>'kind' AS kind FROM sources WHERE id=$1", [row.source_id]);

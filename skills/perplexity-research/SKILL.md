@@ -158,6 +158,14 @@ the agent doesn't re-narrate already-known facts.
 Pass `recency_filter` to Perplexity: `hour | day | week | month`. Useful
 for news-cycle topics; omit for evergreen research.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `PERPLEXITY_API_KEY` missing or rejected: tell the user the web arm cannot run; answer from the brain only and say so.
+- `rate_limited`: retry after the stated delay; for bulk work drop to the cheaper model rather than looping.
+- The brain-context search is empty with a degraded notice: the "what's new vs what the brain knows" diff is unreliable; say the brain side was keyword-only.
+
 ## Anti-Patterns
 
 - ❌ Sending NO brain context. Then it's just a search — use `web_fetch`

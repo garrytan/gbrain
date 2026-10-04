@@ -178,7 +178,7 @@ Relay every prompt the command surfaces:
 | `service: manual` (no supervisor: cloud sandbox, container) | Relay the printed foreground and `nohup … &` commands; this is a documented outcome, not a failure |
 | `verify.local: warn` (exit 2, `local_health_timeout`) | The handler is published, the service installed and the receipt written — this exit 2 is NOT "nothing published"; `--status` / `--remove` find them. `/health` did not answer within the wait: check `~/.gbrain/serve/serve.err`, then `gbrain mcp expose --status` |
 | `verify.tailnet: pending` (exit 2, `tailnet_health_pending`; `--status` reports it with exit 1) | Same: handler, service and receipt are already in place. First certificate issuance can take a minute; `gbrain mcp expose --status` later |
-| `confirmation_required` (exit 2) | Non-TTY run without `--yes`. Nothing changed; show the printed plan, get the operator's yes, then re-run with `--yes` |
+| `confirmation_required` (exit 2) | Non-TTY run without `--yes`. Nothing changed; show the printed plan, relay the payload's `user_message`, and run its `fix.command` (it adds `--yes`) only after the operator agrees |
 | `tailscale_no_dns_name` (exit 1) — the node has no MagicDNS name | Enable MagicDNS + HTTPS Certificates at `https://login.tailscale.com/admin/dns`, then re-run; nothing was published |
 | `tailscale_missing` (exit 1, `--no-install`) / `tailscale_unsupported_platform` / `tailscale_install_failed` (exit 1) | Tailscale is not installed and was not (or could not be) installed. Relay the printed install command or `https://tailscale.com/download`, have the user sign in, then re-run |
 | `tailscale_publish_unconfirmed` (exit 1) — `serve --bg` exited 0 but the re-read shows no handler (or could not be read) | Run `tailscale serve status`; `gbrain mcp expose --remove --yes` clears a handler for the port without a receipt (`--force` when no wrapper or service of gbrain's exists yet), then re-run |
@@ -343,6 +343,14 @@ instead. `gbrain sync` and `gbrain sweep --once` are the exceptions: they
 delegate into the live serve automatically. Always provision through
 `--admin-token-file`; if the user needs concurrent local commands, route to
 [postgres-adopt](../postgres-adopt/SKILL.md) rather than stopping the server.
+
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain mcp expose --status` reports `not_exposed` (exit 2) or `pending`: wait for the certificate or service as the status says; `leftovers_without_receipt` (exit 1) means an interrupted run, so follow its `fix`.
+- Installing Tailscale or a service needs the user's agreement before `--yes`; `gbrain mcp expose` still exits 2 when it needs confirmation (documented legacy), so read the block, not just the exit code.
+- A client gets `invalid_token` / `insufficient_scope`: issue a scoped grant for that client; never hand out an admin credential to make it connect.
 
 ## Anti-Patterns
 

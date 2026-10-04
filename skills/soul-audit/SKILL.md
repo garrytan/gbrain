@@ -114,6 +114,13 @@ and where the backups landed. Example: "Soul audit: updated VOICE_REGISTER +
 SOUL_WINCE, re-rendered SOUL.md (backup in .gbrain-bootstrap-backups/...).
 Re-run any phase anytime."
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain bootstrap interview --confirm <hash>` fails: the hash must come from a read-back the user actually saw. Re-run `gbrain bootstrap interview --status`, read the answers back, and confirm only with the user's agreement.
+- Rendering refuses because required answers are missing: ask the user for them; never fill identity answers yourself.
+
 ## Anti-Patterns
 
 - Writing identity prose yourself instead of recording the user's words into

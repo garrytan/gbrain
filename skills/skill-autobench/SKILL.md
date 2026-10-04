@@ -225,6 +225,13 @@ failure_mode_to_catch: ...
 - case-03 → DETERMINISTIC-CODIFIABLE (same date-format fallback, 4 windows)
 ```
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- No substrate yields a real invocation of the skill: FAIL-CLOSED. Report it and write no eval; never synthesize cases from imagination.
+- `gbrain eval cross-modal` or the judge run lacks a key or hits `no_pricing`: say the eval was not judged; leave the draft as PENDING-HUMAN-APPROVAL.
+
 ## Anti-Patterns
 
 - ❌ Auto-merging a synthesized eval into SKILL.md. The human gate is the

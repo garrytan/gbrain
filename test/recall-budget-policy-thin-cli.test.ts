@@ -92,14 +92,14 @@ test.each([
 test('a query value spelling the policy flag does not opt a legacy thin call into new routing', async () => {
   const result = await thinCall('postgres', ['--query', '--budget-policy', '--json']);
   expect(result.exitCode).toBe(1);
-  expect(result.stderr).toContain('database_url is missing');
+  expect(result.stderr).toContain('`gbrain recall` is not routable');
   expect(result.calls).toEqual([]);
   expect(result.localStoreCreated).toBe(false);
 });
 
 test('explicit thin brain selection fails before remote or local work', async () => {
   const result = await thinCall('postgres', ['--budget-policy', 'query_first', '--brain', 'unregistered-example', '--json']);
-  expect(result.exitCode).toBe(1);
+  expect(result.exitCode).toBe(2);
   expect(result.stderr).toContain('--brain is not supported on a thin-client install');
   expect(result.calls).toEqual([]);
   expect(result.localStoreCreated).toBe(false);
@@ -112,7 +112,8 @@ test.each(['query_first', 'facts_first'])('thin %s JSON preserves a remote read 
     dispatch: async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify(error) }] }),
   });
   expect(result.exitCode).toBe(1);
-  expect(JSON.parse(result.stdout)).toEqual(error);
+  // Agent contract v1: legacy keys preserved verbatim; the client adds the canonical `code`.
+  expect(JSON.parse(result.stdout)).toEqual({ ...error, code: 'unavailable' });
   expect(validateAgainstSchema(JSON.parse(result.stdout), ERROR_SCHEMA)).toEqual([]);
   expect(result.stderr).toContain('Synthetic service unavailable');
   expect(result.calls).toHaveLength(1);

@@ -8,6 +8,7 @@ import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../
  *   gbrain migrate --to <engine> --force  (overwrite non-empty target)
  */
 
+import { opError } from '../core/ops/contract.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -37,7 +38,8 @@ interface MigrateOpts {
 function parseArgs(args: string[]): MigrateOpts {
   const toIdx = args.indexOf('--to');
   if (toIdx === -1 || !args[toIdx + 1]) {
-    throw new Error('Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force]');
+    throw opError('invalid_params', 'gbrain migrate needs --to <supabase|pglite>.',
+      'Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force]. Example: gbrain migrate --to pglite --path ~/.gbrain/brain.pglite');
   }
 
   const targetRaw = args[toIdx + 1];
@@ -825,9 +827,9 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
 }
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
+  const opts = parseArgs(args);
   await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
   await assertLegacyEngineMigration(sourceEngine);
-  const opts = parseArgs(args);
   const config = loadConfig();
   if (!config) {
     console.error('No brain configured. Run: gbrain init');

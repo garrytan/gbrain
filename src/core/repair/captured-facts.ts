@@ -36,7 +36,8 @@
 import { existsSync, readdirSync, readFileSync, type Dirent } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { parseFactsFence, type ParsedFact } from '../facts-fence.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -322,7 +323,11 @@ async function expireDatabaseRows(engine: BrainEngine, page: CapturedFactsPage, 
 /** Preparer for `managed_maintenance_expire_captured_facts`: expires the named database-only rows of the source. */
 export async function prepareCapturedFactsExpiry(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   const ids = (row.intent as { fact_ids?: unknown } | null)?.fact_ids;
-  if (!Array.isArray(ids) || !ids.every(id => Number.isSafeInteger(id))) throw new OperationError('invalid_params', 'The captured facts expiry intent does not name its facts.');
+  if (!Array.isArray(ids) || !ids.every(id => Number.isSafeInteger(id))) {
+    throw opError('invalid_params', 'The captured facts expiry intent does not name its facts.',
+      `Request ${row.request_id} in source ${row.source_id} does not name the facts to expire, so nothing changed. Preview the repair again and apply the new preview after the user approves.`,
+      { fix: readFix('Previews the captured-facts repair without changing anything.', { argv: ['gbrain', 'repair', 'captured-facts', '--source', row.source_id, '--json'] }) });
+  }
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   await authorizeWrite(engine, row.authority, 'submit_job', row.slug);
   return { observedRevision: snapshot?.revision ?? null, noop: true,

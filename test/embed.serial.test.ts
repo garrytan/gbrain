@@ -1078,7 +1078,8 @@ describe('embed --stale time-budget stop is loud (large-brain ceiling)', () => {
     console.log = (...args: unknown[]) => { lines.push(args.join(' ')); };
     _resetCliExitVerdictForTests();
     try {
-      await run(budgetEngine(), ['--stale', '--batch-size', '1'], { SELECTED_CONFIG_BY_ENGINE: new Map() } as never);
+      // `--yes`: an explicit backfill is paid work and this run is the user's approved one.
+      await run(budgetEngine(), ['--stale', '--batch-size', '1', '--yes'], { SELECTED_CONFIG_BY_ENGINE: new Map() } as never);
       expect(currentExitCode()).toBe(BUDGET_STOP_EXIT_CODE);
       expect(BUDGET_STOP_EXIT_CODE).toBe(11);
     } finally {

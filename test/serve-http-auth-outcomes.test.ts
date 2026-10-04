@@ -309,7 +309,9 @@ describe('/mcp transport provenance', () => {
     const { token } = await mintLegacyToken(engine, { name: lookalike, takesHolders: ['world'], scopes: ['read'] });
 
     const who = toolPayload(await mcpResult(app, token, 'tools/call', { name: 'whoami', arguments: {} }));
-    expect(who).toEqual({ transport: 'legacy', token_name: lookalike, scopes: ['read'], expires_at: null });
+    // Agent contract v1 (F2): additive config-plane `readiness`.
+    expect(who).toMatchObject({ transport: 'legacy', token_name: lookalike, scopes: ['read'], expires_at: null });
+    expect(Array.isArray(who.readiness)).toBe(true);
 
     const caps = await capabilities(app, token);
     expect(caps.transport).toBe('legacy');

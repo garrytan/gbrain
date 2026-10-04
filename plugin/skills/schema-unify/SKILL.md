@@ -226,6 +226,14 @@ Failure modes:
 - Catch-all retype excludes `page_to_link` + `page_to_alias` source types (caught in E2E pre-merge).
 - Phase failures abort the run before `active_pack_flipped`; partial state restorable via op_checkpoint resume.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- A second unify submission is rejected because the `gbrain-unify` lock is held ("already in progress"): wait for the running job (`gbrain jobs get <id>`); do not resubmit.
+- A phase fails before `active_pack_flipped`: the pack did not change; resume from the checkpoint rather than restarting from scratch.
+- The run reports a cost line: retyping can call a model, so confirm the budget with the user before submitting on a large brain.
+
 ## Anti-Patterns
 
 DON'T:
@@ -268,3 +276,12 @@ For structured JSON, `gbrain call get_job '{"id": <id>}'` returns the job row; i
 - Architecture: https://github.com/garrytan/gbrain/blob/master/docs/architecture/type-taxonomy.md
 - Pack-upgrade mechanism: https://github.com/garrytan/gbrain/blob/master/docs/architecture/pack-upgrade-mechanism.md
 - Issue: https://github.com/garrytan/gbrain/issues/1479
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `run_onboard` → `gbrain call run_onboard <params_json>`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

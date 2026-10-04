@@ -120,6 +120,7 @@ function finalize(phases: OrchestratorPhaseResult[], status: 'complete' | 'parti
 
 export const v0_16_0: Migration = {
   version: '0.16.0',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'Durable LLM agents land in the brain — survive crashes, sleeps, and worker restarts.',
     description:

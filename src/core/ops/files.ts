@@ -6,7 +6,8 @@
  */
 
 import type { Operation } from './contract.ts';
-import { OperationError } from './contract.ts';
+import { opError } from './contract.ts';
+import { hostFix, readFix } from './op-fix.ts';
 import { validateFilename, validatePageSlug, validateUploadPath } from './context.ts';
 
 // --- File Operations ---
@@ -18,8 +19,10 @@ const FILE_LIST_LIMIT = 100;
 
 const file_list: Operation = {
   name: 'file_list',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'List stored files',
+  description: 'List files stored in the brain\'s file storage, optionally for one page. Use when finding attachments before file_url. Needs admin scope and the local stdio server.',
   params: {
     slug: { type: 'string', description: 'Filter by page slug' },
   },
@@ -44,8 +47,9 @@ const file_list: Operation = {
 
 const file_upload: Operation = {
   name: 'file_upload',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Upload a file to storage',
+  description: 'Upload a local file into brain storage and attach it to a page. Use when a page needs its source document or image. Needs admin scope and the local stdio server; agent callers may only upload files under the server\'s working directory.',
   params: {
     path: { type: 'string', required: true, description: 'Local file path' },
     page_slug: { type: 'string', description: 'Associate with page' },
@@ -92,10 +96,13 @@ const file_upload: Operation = {
     // Typed error BEFORE any insert; git-tracked small files have their own
     // lane (`gbrain files upload-raw --page <slug>`).
     if (!ctx.config.storage) {
-      throw new OperationError(
+      const slugOk = pageSlug !== null && /^[a-z0-9][a-z0-9._/-]*$/i.test(pageSlug);
+      throw opError(
         'storage_error',
         'No storage backend configured — file_upload would record a files row with no stored bytes.',
-        'Configure `storage` in your gbrain config (supabase | s3 | local), or use `gbrain files upload-raw --page <slug>` for git-tracked small files.',
+        `Configure \`storage\` in your gbrain config (supabase | s3 | local), or use \`gbrain files upload-raw ${filePath} --page ${slugOk ? pageSlug : '<slug>'}\` for git-tracked small files.`,
+        ...(slugOk ? [{ fix: hostFix(ctx, ['gbrain', 'files', 'upload-raw', filePath, '--page', pageSlug!],
+          'With no storage backend, a small file goes into the brain repo next to its page instead (git-tracked, with a .redirect.yaml pointer).') }] : []),
       );
     }
     const { createStorage } = await import('../storage.ts');
@@ -119,7 +126,8 @@ const file_upload: Operation = {
     try {
       await storage.upload(storagePath, content, mimeType || undefined);
     } catch (uploadErr) {
-      throw new OperationError('storage_error', `Upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
+      throw opError('storage_error', `Upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
+        'Nothing was recorded. Check the storage backend (credentials, bucket, disk) with `gbrain doctor --json`, then upload again; the upload is keyed by content hash, so repeating it is safe.');
     }
 
     try {
@@ -153,8 +161,10 @@ const file_upload: Operation = {
 
 const file_url: Operation = {
   name: 'file_url',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Get a URL for a stored file',
+  description: 'Return a URL for a stored file. Use when a user needs to open an attachment listed by file_list. Needs admin scope and the local stdio server. On storage_error: list the files again with file_list.',
   params: {
     storage_path: { type: 'string', required: true },
   },
@@ -165,13 +175,14 @@ const file_url: Operation = {
     const sql = sqlQueryForEngine(ctx.engine);
     const rows = await sql`SELECT storage_path, mime_type, size_bytes FROM files WHERE storage_path = ${p.storage_path as string}`;
     if (rows.length === 0) {
-      throw new OperationError('storage_error', `File not found: ${p.storage_path}`);
+      throw opError('storage_error', `File not found: ${p.storage_path}`, 'No file row has that storage_path. List stored files (fix) and use a storage_path from that list.',
+        { fix: readFix('Lists stored files with their storage_path.', { argv: ['gbrain', 'files', 'list'], mcp: { tool: 'file_list', arguments: {} } }) });
     }
     // #4302: resolve a REAL URL from the backend, after confirming the object
     // is actually there — the old `gbrain:files/<path>` placeholder pointed
     // at nothing and hid rows whose bytes had vanished.
     if (!ctx.config.storage) {
-      throw new OperationError(
+      throw opError(
         'storage_error',
         `No storage backend configured — cannot produce a URL for ${p.storage_path}.`,
         'Configure `storage` in your gbrain config (supabase | s3 | local).',
@@ -181,9 +192,10 @@ const file_url: Operation = {
     const storage = await createStorage(ctx.config.storage as any);
     const present = await storage.exists(rows[0].storage_path as string).catch(() => false);
     if (!present) {
-      throw new OperationError(
+      throw opError(
         'storage_error',
         `File row exists but the storage backend has no object at ${rows[0].storage_path} — re-upload it.`,
+        'The bytes are missing from storage. Re-upload the original file with file_upload (same path); `gbrain files verify` lists every row in this state.',
       );
     }
     return { storage_path: rows[0].storage_path, url: await storage.getUrl(rows[0].storage_path as string) };

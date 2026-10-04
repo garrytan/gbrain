@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 import type { SyncOpts } from '../../commands/sync.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
 
 export const SYNC_BOOLEAN_FLAGS = {
   '--full':'full','--dry-run':'dryRun','--no-pull':'noPull','--no-embed':'noEmbed','--no-extract':'noExtract',
@@ -10,7 +10,8 @@ export const SYNC_BOOLEAN_FLAGS = {
 export const SYNC_VALUE_FLAGS = { '--source':'sourceId','--repo':'repoPath','--src-subpath':'srcSubpath','--strategy':'strategy',
   '--exclude':'exclude','--include-hidden':'includeHidden' } as const;
 export interface SyncWireParams { options: SyncOpts; cwd: string; timeoutSeconds: number; }
-const invalid = () => new OperationError('invalid_params','Invalid or unsupported local sync options.');
+const invalid = () => opError('invalid_params','Invalid or unsupported local sync options.',
+  'Run gbrain sync from the CLI (gbrain sync --help lists its flags); it builds the options this owner lane accepts.');
 export function validateSyncWireParams(value: Record<string,unknown>): SyncWireParams {
   if (Object.keys(value).some(k=>!['options','cwd','timeoutSeconds'].includes(k)) || typeof value.cwd!=='string' ||
       !isAbsolute(value.cwd) || value.cwd.length>32768 || value.cwd.includes('\0') || typeof value.timeoutSeconds!=='number' ||

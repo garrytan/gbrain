@@ -3,7 +3,7 @@ import { isAbsolute, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { UNSUPPORTED_MANAGED_BULK_WRITERS } from './maintenance.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { assertValidSlugPrefixes } from '../grants/encoding.ts';
 import { isWriteRequestId } from './types.ts';
@@ -17,10 +17,12 @@ import { writerOnboardingPreflight } from './onboarding.ts';
 import { assertWriterAdminUnlocked, readWriterAdminLock, setWriterAdminLock } from './admin-lock.ts';
 import { listBlockingEffects } from './blocking-effects.ts';
 import { listWriterVersions } from './writer-versions.ts';
+import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 
-const invalid = (message: string) => new OperationError('invalid_params', message);
+const invalid = (message: string, suggestion = 'Correct that parameter and run the command again; gbrain sources writer --help and gbrain auth local-writer --help list each option and its accepted values.') =>
+  opError('invalid_params', message, suggestion);
 function source(value: unknown): string {
-  if (typeof value !== 'string' || !isValidSourceId(value)) throw invalid('An explicit active source ID is required.');
+  if (typeof value !== 'string' || !isValidSourceId(value)) throw invalid('An explicit active source ID is required.', 'Name the source explicitly with its id; gbrain sources list --json shows the active sources.');
   return value;
 }
 function path(value: unknown): string {
@@ -79,7 +81,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   if (operation === 'writer_reconcile_backups') return (await import('./reconcile.ts')).runReconcileBackups(engine, params);
   if (operation === 'company_brain_preview' || operation === 'company_brain_connect' || operation === 'company_brain_resume') {
     const writer = currentVerifiedLocalWriter();
-    if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw new OperationError('permission_denied', 'Company source administration requires an authenticated local CLI registration.');
+    if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw trustedCliRequired('Company source administration requires an authenticated local CLI registration.');
     keys(params, ['brain_id', 'source_id', 'path', 'plan', 'request_id']);
     if (typeof params.brain_id !== 'string' || !params.brain_id.trim()) throw invalid('An explicit brain_id is required.');
     const destination = { brainId: params.brain_id, sourceId: source(params.source_id), remote: false };
@@ -90,7 +92,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (operation === 'company_brain_preview') return { ...await runtime.previewCompanyBrain(engine, input) };
     return { ...await runtime.connectCompanyBrain(engine, input) };
   }
-  if (currentVerifiedLocalWriter()?.remote) throw new OperationError('permission_denied', 'Writer administration requires a trusted local CLI caller.');
+  if (currentVerifiedLocalWriter()?.remote) throw trustedCliRequired('Writer administration requires a trusted local CLI caller.');
   if (operation === 'writer_lock' || operation === 'writer_unlock') {
     keys(params, []);
     return { ...await setWriterAdminLock(engine, operation === 'writer_lock') };
@@ -101,7 +103,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   if (operation === 'writer_extract_stale') {
     keys(params, ['source_id', 'dry_run']);
     const writer = currentVerifiedLocalWriter();
-    if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw new OperationError('permission_denied', 'Stale extraction requires a trusted CLI registration.');
+    if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw trustedCliRequired('Stale extraction requires a trusted CLI registration.');
     const { managedPersistenceEnabled } = await import('./ownership.ts');
     if (!await managedPersistenceEnabled(engine)) throw new OperationError('writer_coordinator_required', 'Owner-delegated stale extraction requires activated managed persistence.', WRITER_INSPECTION_HINT);
     return { ...await (await import('./links-maintenance.ts')).runManagedStaleExtraction(engine,
@@ -112,7 +114,8 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   if (operation === 'writer_retry_effects') {
     keys(params, ['source_id', 'request_id', 'dry_run']);
     if (params.dry_run !== undefined && typeof params.dry_run !== 'boolean') throw invalid('dry_run must be a boolean.');
-    if (!isWriteRequestId(params.request_id)) throw invalid('A valid original write request UUID is required.');
+    if (!isWriteRequestId(params.request_id)) throw invalid('A valid original write request UUID is required.',
+      'Pass --request-id with the original write\'s request id (a UUID); gbrain sources writer status for that source lists blocked effects with their request ids.');
     return (await import('./effect-retry.ts')).retryRequestEffects(engine, source(params.source_id), params.request_id, params.dry_run === true, config, embeddingRetryPolicy);
   }
   if (operation === 'source_add' || operation === 'source_lifecycle') {
@@ -157,7 +160,10 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       const { nativeLockCapability, tryAcquireNativeLock } = await import('./native-lock.ts');
       const capability = await nativeLockCapability();
       const lock = await tryAcquireNativeLock(join(persistenceHome(), 'locks', 'admin-status-probe.lock'));
-      if (!lock) throw new OperationError('writer_lock_unavailable', 'The native lock probe is busy.');
+      if (!lock) {
+        throw opError('writer_lock_unavailable', 'The native lock probe is busy.',
+          'Another writer status probe or activation holds the native probe lock on this host. Run the status again without --probe, or probe again once the other command finishes; both are read-only.');
+      }
       await lock.release();
       native = { ...capability, acquired: true, released: lock.released };
     }
@@ -232,7 +238,11 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (params.self_transfer !== undefined && typeof params.self_transfer !== 'boolean') throw invalid('self_transfer must be a boolean.');
     if (params.dry_run) {
       const binding = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
-      if (!binding || binding.owner_host_id !== existingLocalHostId() || !binding.local_path) throw new OperationError('permission_denied', 'Only the current owner can prepare a transfer.');
+      if (!binding || binding.owner_host_id !== existingLocalHostId() || !binding.local_path) {
+        throw opError('permission_denied', 'Only the current owner can prepare a transfer.',
+          `This host is not source ${sourceId}'s current owner. Run the transfer prepare on the owner host that writer status names; a transfer is a deliberate topology change the operator reviews.`,
+          { fix: readFix(`Shows which host owns source ${sourceId}, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] }) });
+      }
       const { manifest } = await prepareWriterTransfer(engine, sourceId, existingLocalHostId()!, undefined, { selfTransfer: params.self_transfer === true, dryRun: true });
       return { dry_run: true, action: operation, binding, manifest: { digest: manifest.digest, file_count: manifest.file_count } };
     }

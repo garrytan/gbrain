@@ -3,7 +3,8 @@
  *
  * Ships two phases:
  *
- *   A. Schema: `ALTER TABLE minion_jobs ALTER COLUMN max_stalled SET DEFAULT 3`.
+ *   A. Schema: `ALTER TABLE minion_jobs ALTER COLUMN max_stalled SET DEFAULT 3`
+ *      when the current default is below 3 (never lowers schema v15's 5).
  *      New installs already get the bumped default from schema-embedded.ts +
  *      pglite-schema.ts. This ALTER is for existing brains where the table
  *      was created under v0.13.x (default 1). Idempotent — running twice is
@@ -53,23 +54,19 @@ async function phaseASchema(opts: OrchestratorOpts): Promise<{ result: Orchestra
     }
     const engine = await createEngine(toEngineConfig(config));
     await engine.connect(toEngineConfig(config));
-    try {
-      // Both Postgres and PGLite accept this ALTER. Idempotent at the
-      // table level — setting the default to 3 twice is fine.
-      await engine.executeRaw('ALTER TABLE minion_jobs ALTER COLUMN max_stalled SET DEFAULT 3');
-    } catch (e) {
-      // If minion_jobs doesn't exist yet (brand new install), the schema
-      // file already has the new default, so this is moot. Skip instead of
-      // fail.
-      const msg = e instanceof Error ? e.message : String(e);
-      if (/does not exist|no such table|relation .* does not exist/i.test(msg)) {
-        return {
-          result: { name: 'schema', status: 'skipped', detail: 'minion_jobs not yet created (fresh install)' },
-          engine,
-        };
-      }
-      throw e;
+    // Only a default below 3 is raised: schema migration v15 later set 5,
+    // which a fresh brain already has, and lowering it would undo that fix.
+    const [column] = await engine.executeRaw<{ column_default: string | null }>(
+      `SELECT column_default FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'max_stalled'`);
+    if (!column) {
+      return { result: { name: 'schema', status: 'skipped', detail: 'minion_jobs not yet created (fresh install)' }, engine };
     }
+    const current = parseInt(column.column_default ?? '', 10);
+    if (current >= 3) {
+      return { result: { name: 'schema', status: 'skipped', detail: `max_stalled default already ${current}` }, engine };
+    }
+    await engine.executeRaw('ALTER TABLE minion_jobs ALTER COLUMN max_stalled SET DEFAULT 3');
     return { result: { name: 'schema', status: 'complete' }, engine };
   } catch (e) {
     return {

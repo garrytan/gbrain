@@ -14,7 +14,7 @@
         "brain": 100,
         "meta": 100,
         "ops": 95,
-        "skill": 90
+        "skill": 95
       },
       "checks": [
         {
@@ -33,9 +33,22 @@
             "path": "pglite — serve IPC socket not present",
             "policy_skill_installed": false
           },
+          "fix": {
+            "actor": "user",
+            "consent": [
+              "persistent_install"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+            "next": "report",
+            "requires_exclusive": false,
+            "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+            "why": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+          },
           "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
           "name": "retrieval_reflex_health",
-          "status": "warn"
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
         },
         {
           "category": "skill",
@@ -132,6 +145,7 @@
               "webhook-transforms"
             ]
           },
+          "fix_unavailable_reason": "unstructured",
           "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
           "name": "skill_currency",
           "status": "warn"
@@ -164,6 +178,47 @@
           },
           "message": "ambient writeback off (default; file-plane mirror — database unreachable)",
           "name": "memory_writeback",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
+            "pending_fresh_install": [
+              "0.11.0",
+              "0.14.0",
+              "0.22.4",
+              "0.28.0",
+              "0.53.0"
+            ]
+          },
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "apply-migrations",
+              "--yes",
+              "--no-autopilot-install"
+            ],
+            "command": "gbrain apply-migrations --yes --no-autopilot-install",
+            "consent": [],
+            "next": "run",
+            "requires_exclusive": true,
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "minions_migration",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Runs the setup migrations gbrain init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
+          },
+          "message": "5 setup migration(s) not run yet on this new brain (pending_fresh_install: 0.11.0, 0.14.0, 0.22.4, 0.28.0, 0.53.0). Expected after gbrain init, not a failed upgrade.",
+          "name": "minions_migration",
+          "severity": "info",
           "status": "ok"
         },
         {
@@ -220,27 +275,110 @@
         },
         {
           "category": "ops",
+          "details": {
+            "reason": "no_harness_detected"
+          },
+          "fix": {
+            "actor": "user",
+            "consent": [
+              "persistent_install"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+            "next": "report",
+            "requires_exclusive": false,
+            "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+            "why": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+          },
+          "message": "No agent harness was detected. Wire one when the user picks an agent app.",
+          "name": "harness_wiring",
+          "readiness_state": "missing",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
+            "consent_refused": 0,
+            "derived_cap_exhausted": 0,
+            "events": 0,
+            "internal_errors": 0,
+            "json_document_missing": 0,
+            "window_days": 7
+          },
+          "message": "No agent dead ends in the last 7 days (0 non-success event(s) logged).",
+          "name": "agent_contract",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "doctor",
+              "--json",
+              "--brain",
+              "host"
+            ],
+            "command": "gbrain doctor --json --brain host",
+            "consent": [],
+            "next": "run",
+            "requires_exclusive": false,
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "connection",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Runs the database checks --fast skipped."
+          },
           "message": "Skipping DB checks (--fast mode, URL present from config-file-path)",
           "name": "connection",
+          "readiness_state": "unknown",
           "status": "warn"
         }
       ],
       "db_url_source": "config-file-path",
-      "health_score": 85,
+      "health_score": 90,
       "schema_version": 2,
       "status": "warnings",
       "top_issues": [
         {
+          "action": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "doctor",
+              "--json",
+              "--brain",
+              "host"
+            ],
+            "command": "gbrain doctor --json --brain host",
+            "consent": [],
+            "next": "run",
+            "requires_exclusive": false,
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "connection",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Runs the database checks --fast skipped."
+          },
           "fix": "Skipping DB checks (--fast mode, URL present from config-file-path)",
           "name": "connection",
           "status": "warn",
           "tier": "root"
-        },
-        {
-          "fix": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
-          "name": "retrieval_reflex_health",
-          "status": "warn",
-          "tier": "symptom"
         },
         {
           "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
@@ -248,6 +386,9 @@
           "status": "warn",
           "tier": "symptom"
         }
+      ],
+      "unknown_scores": [
+        "brain"
       ]
     },
     "stderr": [],

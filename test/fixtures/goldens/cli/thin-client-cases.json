@@ -50,7 +50,9 @@
       "argv": "import",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain import` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain import",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -58,7 +60,10 @@
       "argv": "export",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain export` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain export",
+        "Why: export dumps the host brain to disk and has no MCP equivalent. Run `gbrain export` on the host, or read pages with the `get_page` MCP tool.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -66,8 +71,10 @@
       "argv": "files",
       "exitCode": 1,
       "stderr": [
-        "`gbrain files` is not routable. `files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain files` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain files",
+        "Why: `files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -75,8 +82,10 @@
       "argv": "embed",
       "exitCode": 1,
       "stderr": [
-        "`gbrain embed` is not routable. embed runs on the host. Run `gbrain embed` or `gbrain cycle` on the host machine.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain embed` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain embed",
+        "Why: embed runs on the host. Run `gbrain embed` or `gbrain cycle` on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -84,8 +93,10 @@
       "argv": "serve",
       "exitCode": 1,
       "stderr": [
-        "`gbrain serve` is not routable. serve starts a server. Run on the host, not the thin client.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain serve` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain serve",
+        "Why: serve starts a server. Run on the host, not the thin client.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -93,8 +104,10 @@
       "argv": "sweep",
       "exitCode": 1,
       "stderr": [
-        "`gbrain sweep` is not routable. sweep runs the serve-resident maintenance passes against the LOCAL engine. Run it on the host (the serve process also runs it automatically).",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain sweep` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain sweep",
+        "Why: sweep runs the serve-resident maintenance passes against the LOCAL engine. Run it on the host (the serve process also runs it automatically).",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -102,8 +115,10 @@
       "argv": "config",
       "exitCode": 1,
       "stderr": [
-        "`gbrain config` is not routable. config reads/writes the host brain's config plane. Edit the host's .gbrain/config.json (file-plane keys) or run on the host with GBRAIN_HOME set. self_upgrade.* keys are machine-local and work here.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain config` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain config",
+        "Why: config reads/writes the host brain's config plane. Edit the host's .gbrain/config.json (file-plane keys) or run on the host with GBRAIN_HOME set. self_upgrade.* keys are machine-local and work here.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -111,8 +126,10 @@
       "argv": "pricing",
       "exitCode": 1,
       "stderr": [
-        "`gbrain pricing` is not routable. pricing registers model prices in the host brain's config and is trusted-local only (a remote caller could void a cost cap). Ask the brain's operator to run `gbrain pricing set <model> ...` on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain pricing` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain pricing",
+        "Why: pricing registers model prices in the host brain's config and is trusted-local only (a remote caller could void a cost cap). Ask the brain's operator to run `gbrain pricing set <model> ...` on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -120,8 +137,10 @@
       "argv": "migrate",
       "exitCode": 1,
       "stderr": [
-        "`gbrain migrate` is not routable. migrate runs on the host's local engine. Run on the host machine.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain migrate` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain migrate",
+        "Why: migrate runs on the host's local engine. Run on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -129,8 +148,10 @@
       "argv": "retrieval-upgrade",
       "exitCode": 1,
       "stderr": [
-        "`gbrain retrieval-upgrade` is not routable. retrieval-upgrade (embedding migration) rebuilds the host brain's schema + re-embeds. Run on the host machine.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain retrieval-upgrade` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain retrieval-upgrade",
+        "Why: retrieval-upgrade (embedding migration) rebuilds the host brain's schema + re-embeds. Run on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -138,8 +159,10 @@
       "argv": "eval",
       "exitCode": 1,
       "stderr": [
-        "`gbrain eval` is not routable. `eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain eval` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain eval",
+        "Why: `eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -147,8 +170,10 @@
       "argv": "jobs",
       "exitCode": 1,
       "stderr": [
-        "`gbrain jobs` is not routable. `jobs list`, `jobs get <id>`, and `jobs stats` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job / get_job_stats MCP tools from your agent, or run on the host with GBRAIN_HOME set.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain jobs` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain jobs",
+        "Why: `jobs list`, `jobs get <id>`, and `jobs stats` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job / get_job_stats MCP tools from your agent, or run on the host with GBRAIN_HOME set.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -156,7 +181,9 @@
       "argv": "agent",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain agent` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain agent",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -164,7 +191,9 @@
       "argv": "book-mirror",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain book-mirror` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain book-mirror",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -172,8 +201,10 @@
       "argv": "sync",
       "exitCode": 1,
       "stderr": [
-        "`gbrain sync` is not routable. sync runs on the host. Use the dedicated `sync_brain` MCP operation, or run `gbrain sync` on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain sync` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain sync",
+        "Why: sync runs on the host. Use the dedicated `sync_brain` MCP operation, or run `gbrain sync` on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -181,8 +212,10 @@
       "argv": "extract",
       "exitCode": 1,
       "stderr": [
-        "`gbrain extract` is not routable. extract runs on the host. Run `gbrain extract` or `gbrain cycle` on the host machine.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain extract` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain extract",
+        "Why: extract runs on the host. Run `gbrain extract` or `gbrain cycle` on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -190,8 +223,10 @@
       "argv": "extract-conversation-facts",
       "exitCode": 1,
       "stderr": [
-        "`gbrain extract-conversation-facts` is not routable. extract-conversation-facts runs on the host (requires local engine + chat gateway). Run on the host machine.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain extract-conversation-facts` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain extract-conversation-facts",
+        "Why: extract-conversation-facts runs on the host (requires local engine + chat gateway). Run on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -199,8 +234,10 @@
       "argv": "enrich",
       "exitCode": 1,
       "stderr": [
-        "`gbrain enrich` is not routable. enrich runs on the host (requires local engine + chat gateway for grounded synthesis). Run on the host machine.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain enrich` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain enrich",
+        "Why: enrich runs on the host (requires local engine + chat gateway for grounded synthesis). Run on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -208,7 +245,9 @@
       "argv": "features",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain features` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain features",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -216,23 +255,59 @@
       "argv": "autopilot",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain autopilot` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain autopilot",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
     {
       "argv": "graph-query",
       "exitCode": 1,
-      "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
-      ],
-      "stdout": []
+      "stderr": [],
+      "stdout": [
+        "Usage: gbrain graph-query <slug> [options]",
+        "",
+        "Traverse the link graph from a page. Returns an indented tree of edges.",
+        "Per-edge type filter: traversal only follows matching links.",
+        "",
+        "Options:",
+        "  --type <link_type>     Filter to one link type (attended, works_at, invested_in,",
+        "                         founded, advises, mentions, source).",
+        "  --depth <N>            Max traversal depth (default 5).",
+        "  --direction <dir>      'out' (default), 'in', or 'both'.",
+        "  --source <id>          Scope the walk to this source. Defaults to the",
+        "                         resolved source (GBRAIN_SOURCE, .gbrain-source,",
+        "                         path match, brain default); __all__ spans every",
+        "                         source. An unknown source is a hard error. Local",
+        "                         installs only: a thin client rejects it (the server",
+        "                         scopes the walk to your grant).",
+        "  --include-foreign      Include edges to pages in other sources (v0.37.7.0).",
+        "                         Off by default; the walk stays inside the resolved",
+        "                         source, and a footer reports the count of",
+        "                         foreign-source edges hidden so users discover they exist.",
+        "                         Not forwarded on a thin client.",
+        "  -h, --help             Show this message.",
+        "",
+        "Examples:",
+        "  gbrain graph-query people/alice --type attended --depth 2",
+        "    -> who attended meetings with Alice (multi-hop)",
+        "  gbrain graph-query companies/acme --type works_at --direction in",
+        "    -> who works at Acme",
+        "  gbrain graph-query people/bob --depth 1",
+        "    -> Bob's direct connections",
+        "  gbrain graph-query people/bob --include-foreign",
+        "    -> include edges to pages in other sources",
+        ""
+      ]
     },
     {
       "argv": "reconcile-links",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain reconcile-links` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain reconcile-links",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -240,8 +315,10 @@
       "argv": "repair",
       "exitCode": 1,
       "stderr": [
-        "`gbrain repair` is not routable. repair runs on the brain host (it publishes coordinated page writes against the local engine). Run `gbrain repair` on the brain host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain repair` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain repair",
+        "Why: repair runs on the brain host (it publishes coordinated page writes against the local engine). Run `gbrain repair` on the brain host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -249,8 +326,10 @@
       "argv": "orphans",
       "exitCode": 1,
       "stderr": [
-        "`gbrain orphans` is not routable. orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain orphans` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain orphans",
+        "Why: orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -258,7 +337,9 @@
       "argv": "maintain",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain maintain` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain maintain",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -266,7 +347,9 @@
       "argv": "reindex",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain reindex` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain reindex",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -274,7 +357,9 @@
       "argv": "salience",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -282,7 +367,9 @@
       "argv": "anomalies",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -310,7 +397,10 @@
       "argv": "advisor",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain advisor` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain advisor",
+        "Why: advisor ranks next actions from the host brain. Use the `advisor` MCP tool from your agent (when the host publishes it), or run `gbrain advisor` on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -342,15 +432,33 @@
       "argv": "edges-backfill",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain edges-backfill` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain edges-backfill",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
     {
       "argv": "whoknows",
-      "exitCode": 1,
+      "exitCode": 2,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "gbrain whoknows: topic argument required",
+        "Usage: gbrain whoknows <topic> [options]",
+        "",
+        "Ask your brain who knows about a topic. Returns ranked person/company",
+        "pages by expertise depth, relationship recency, and salience.",
+        "",
+        "Options:",
+        "  --limit N           Max results (default 5)",
+        "  --explain           Show the ranking factor breakdown per result",
+        "  --json              JSON output for agents",
+        "  --help, -h          Show this help",
+        "",
+        "Examples:",
+        "  gbrain whoknows \"lab automation\"",
+        "  gbrain whoknows fintech compliance --explain",
+        "  gbrain whoknows \"ai agents\" --limit 10 --json",
+        ""
       ],
       "stdout": []
     },
@@ -358,7 +466,9 @@
       "argv": "brainstorm",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain brainstorm` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain brainstorm",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -366,7 +476,9 @@
       "argv": "lsd",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain lsd` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain lsd",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -374,7 +486,9 @@
       "argv": "skillopt",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain skillopt` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain skillopt",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -382,7 +496,9 @@
       "argv": "calibration",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain calibration` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain calibration",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -390,8 +506,10 @@
       "argv": "transcripts",
       "exitCode": 1,
       "stderr": [
-        "`gbrain transcripts` is not routable. transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain transcripts` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain transcripts",
+        "Why: transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -399,7 +517,9 @@
       "argv": "models",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain models` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain models",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -407,8 +527,10 @@
       "argv": "takes",
       "exitCode": 1,
       "stderr": [
-        "`gbrain takes` is not routable. takes list/search/scorecard/calibration + add/update/resolve/supersede route to the brain host automatically (takes_* MCP ops). This subcommand (extract/revisit) is host-bound: run it on the host machine.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain takes` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain takes",
+        "Why: takes list/search/scorecard/calibration + add/update/resolve/supersede route to the brain host automatically (takes_* MCP ops). This subcommand (extract/revisit) is host-bound: run it on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -416,7 +538,9 @@
       "argv": "onboard",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain onboard` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain onboard",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -424,7 +548,24 @@
       "argv": "founder",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Unknown founder subcommand: (none). Did you mean \"founder scorecard\"?",
+        "",
+        "Usage: gbrain founder scorecard <entity-slug> [options]",
+        "",
+        "Rolls up the entity's typed-claim trajectory + resolved-take outcomes into",
+        "the four founder-evaluation metrics: claim accuracy, consistency, growth",
+        "trajectory, red flags.",
+        "",
+        "Options:",
+        "  --since YYYY-MM-DD  Lower bound on valid_from / take created_at (default: 1 year ago)",
+        "  --until YYYY-MM-DD  Upper bound (default: today)",
+        "  --json              JSON output (stable schema_version: 1)",
+        "  --help, -h          Show this help",
+        "",
+        "Examples:",
+        "  gbrain founder scorecard companies/acme-example",
+        "  gbrain founder scorecard companies/acme-example --since 2025-05-17 --json",
+        ""
       ],
       "stdout": []
     },
@@ -468,7 +609,9 @@
       "argv": "recall",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Fix: gbrain remote doctor",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
       "stdout": []
     },
@@ -476,7 +619,9 @@
       "argv": "notability-eval",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain notability-eval` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain notability-eval",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -484,8 +629,10 @@
       "argv": "sources",
       "exitCode": 1,
       "stderr": [
-        "`gbrain sources` is not routable. sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain sources` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain sources",
+        "Why: sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -493,7 +640,9 @@
       "argv": "waiting",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain waiting` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain waiting",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -501,7 +650,9 @@
       "argv": "loops",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain loops` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain loops",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -509,7 +660,10 @@
       "argv": "connectors",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain connectors` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain connectors",
+        "Why: connectors manage provider session credentials in ~/.gbrain/connectors and sync your chat history on the host. Credentials never cross the wire — run on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -517,8 +671,10 @@
       "argv": "pages",
       "exitCode": 1,
       "stderr": [
-        "`gbrain pages` is not routable. `pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain pages` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain pages",
+        "Why: `pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -526,8 +682,10 @@
       "argv": "quarantine",
       "exitCode": 1,
       "stderr": [
-        "`gbrain quarantine` is not routable. `quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain quarantine` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain quarantine",
+        "Why: `quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -535,8 +693,9 @@
       "argv": "watch",
       "exitCode": 1,
       "stderr": [
-        "`gbrain watch` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
-        "Run `watch` on the remote host, or use the corresponding MCP tool from your agent."
+        "Error [requires_local_engine]: `gbrain watch` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain watch",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -544,8 +703,10 @@
       "argv": "storage",
       "exitCode": 1,
       "stderr": [
-        "`gbrain storage` is not routable. storage operates on the local repo on disk. Run on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain storage` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain storage",
+        "Why: storage operates on the local repo on disk. Run on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -553,8 +714,10 @@
       "argv": "code-def",
       "exitCode": 1,
       "stderr": [
-        "`gbrain code-def` is not routable. `code-def` needs symbol-aware lookup that has no MCP op yet. Run on the host or use `search` from your agent with a symbol-shaped query.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain code-def` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain code-def",
+        "Why: `code-def` needs symbol-aware lookup that has no MCP op yet. Run on the host or use `search` from your agent with a symbol-shaped query.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -562,8 +725,10 @@
       "argv": "code-refs",
       "exitCode": 1,
       "stderr": [
-        "`gbrain code-refs` is not routable. `code-refs` has no MCP op yet. Run on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain code-refs` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain code-refs",
+        "Why: `code-refs` has no MCP op yet. Run on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -571,7 +736,9 @@
       "argv": "reindex-code",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain reindex-code` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain reindex-code",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -579,7 +746,9 @@
       "argv": "reindex-search-vector",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain reindex-search-vector` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain reindex-search-vector",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -587,7 +756,9 @@
       "argv": "reindex-frontmatter",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain reindex-frontmatter` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain reindex-frontmatter",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -595,7 +766,9 @@
       "argv": "backfill",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain backfill` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain backfill",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -603,8 +776,10 @@
       "argv": "code-callers",
       "exitCode": 1,
       "stderr": [
-        "`gbrain code-callers` is not routable. `code-callers` has no MCP op yet. Run on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain code-callers` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain code-callers",
+        "Why: `code-callers` has no MCP op yet. Run on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -612,8 +787,10 @@
       "argv": "code-callees",
       "exitCode": 1,
       "stderr": [
-        "`gbrain code-callees` is not routable. `code-callees` has no MCP op yet. Run on the host.",
-        "(thin-client of http://127.0.0.1:1/mcp)"
+        "Error [requires_local_engine]: `gbrain code-callees` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
+        "Fix: gbrain code-callees",
+        "Why: `code-callees` has no MCP op yet. Run on the host.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     },
@@ -621,7 +798,9 @@
       "argv": "repos",
       "exitCode": 1,
       "stderr": [
-        "No database URL: database_url is missing from config. Fix: Run gbrain init --supabase or gbrain init --url <connection_string>"
+        "Error [requires_local_engine]: `gbrain repos` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain repos",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
     }

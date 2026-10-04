@@ -320,6 +320,10 @@ export async function runWhoknows(
     return;
   }
   if ('error' in parsed) {
+    if (args.includes('--json')) {
+      const { exitCliError, usageError } = await import('../cli/cli-error.ts');
+      exitCliError(usageError(`gbrain whoknows: ${parsed.error}`, 'Pass the topic as the positional argument, e.g. gbrain whoknows "lab automation" --json.'), 'whoknows', { json: true });
+    }
     console.error(`gbrain whoknows: ${parsed.error}`);
     console.error(HELP);
     process.exit(2);

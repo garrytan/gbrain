@@ -2,6 +2,7 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { PostgresEngine } from '../../../core/postgres-engine.ts';
 import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from '../../../core/postgres-engine/cancellation.ts';
 import type { Check } from '../../doctor.ts';
+import { checkError } from '../check-fix.ts';
 
 export async function checkPostgresCancellationDriver(
   engine: BrainEngine,
@@ -28,11 +29,7 @@ export async function checkPostgresCancellationDriver(
       message: 'Postgres driver supports safe query cancellation.',
     };
   } catch {
-    return {
-      name: 'postgres_cancellation_driver',
-      status: 'warn',
-      message: 'Could not inspect a reserved Postgres connection within the readiness budget. Check database connectivity and retry; a timeout does not prove a driver fault.',
-    };
+    return checkError('postgres_cancellation_driver', 'inspect a reserved Postgres connection within the readiness budget. Check database connectivity and retry; a timeout does not prove a driver fault.');
   } finally {
     clearTimeout(timer);
     owner?.release();

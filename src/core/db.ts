@@ -329,7 +329,7 @@ export async function connect(config: EngineConfig, hooks: { onpoisoned?: (statu
     throw new GBrainError(
       'Cannot connect to database',
       msg,
-      'Check your connection URL in ~/.gbrain/config.json',
+      'Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)',
     );
   }
 }

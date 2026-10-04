@@ -545,7 +545,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const bootstrapEnabled = bootstrapEnabledCfg === 'true' || bootstrapEnabledCfg === '1';
   if (!bootstrapEnabled) {
     process.stderr.write(
-      `takes-bootstrap is opt-in. Enable with:\n  gbrain config set takes.bootstrap_enabled true\nThen re-run with --yes.\n`,
+      `takes-bootstrap is opt-in. Enable with:\n  gbrain config set takes.bootstrap_enabled true\nThen run it again with the user's approval (--yes).\n`,
     );
     process.exit(2);
   }

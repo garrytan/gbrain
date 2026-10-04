@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"error\": \"unavailable\",\n  \"code\": \"unavailable\",\n  \"message\": \"Semantic search is unavailable.\",\n  \"suggestion\": \"Keyword search still works. Next: run_doctor {}\",\n  \"docs\": \"{{DOCS_BASE}}/docs/guides/error-codes.md#unavailable\",\n  \"reason\": \"embeddings_disabled\",\n  \"fix\": {\n    \"argv\": [\n      \"gbrain\",\n      \"doctor\",\n      \"--json\",\n      \"--brain\",\n      \"host\"\n    ],\n    \"command\": \"gbrain doctor --json --brain host\",\n    \"mcp\": {\n      \"tool\": \"run_doctor\",\n      \"arguments\": {}\n    },\n    \"consent\": [],\n    \"actor\": \"agent\",\n    \"why\": \"Doctor reports what is missing or failing on the brain host.\",\n    \"requires_exclusive\": false\n  },\n  \"docs_cmd\": [\n    \"gbrain\",\n    \"errors\",\n    \"unavailable\"\n  ],\n  \"class\": \"unavailable\",\n  \"retryable\": false,\n  \"notices\": [\n    {\n      \"code\": \"backup_coverage\",\n      \"kind\": \"safety\",\n      \"why\": \"Two sources have no backup.\",\n      \"fix\": {\n        \"argv\": [\n          \"gbrain\",\n          \"backup\",\n          \"--json\",\n          \"--brain\",\n          \"host\"\n        ],\n        \"command\": \"gbrain backup --json --brain host\",\n        \"consent\": [],\n        \"actor\": \"user\",\n        \"why\": \"Shows which assets are not backed up.\",\n        \"requires_exclusive\": false\n      },\n      \"user_message\": \"Some of your notes are not backed up. Want me to show you which ones?\",\n      \"contract_version\": 1\n    }\n  ],\n  \"contract_version\": 1\n}"
+    }
+  ],
+  "isError": true
+}

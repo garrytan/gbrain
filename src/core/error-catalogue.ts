@@ -19,6 +19,10 @@
  */
 import { OperationError } from './ops/contract.ts';
 import { StructuredAgentError, buildError } from './errors.ts';
+import { CODES, type CodeEntry, type RegistryCode } from './error-registry.ts';
+import type { ErrorClass } from './agent-output.ts';
+
+export { CODES, type CodeEntry, type RegistryCode } from './error-registry.ts';
 
 export interface CatalogueEntry {
   /** Stable machine-readable code on the wire. */
@@ -58,6 +62,82 @@ export const ERROR_CATALOGUE = {
 } as const satisfies Record<string, CatalogueEntry>;
 
 export type CatalogueName = keyof typeof ERROR_CATALOGUE;
+
+/** Wire constants shared by the server and the thin client (A2). */
+export const WIRE_CODES = {
+  insufficient_scope: 'insufficient_scope',
+  unknown_tool: 'unknown_tool',
+  not_found: 'not_found',
+} as const;
+
+/**
+ * A scope denial in any of its historical spellings: the server's
+ * `insufficient_scope`, the thin client's legacy `missing_scope`, or
+ * `permission_denied` whose canonical code or reason says scope.
+ */
+export function isScopeErrorCode(code: string | undefined, canonical?: string, reason?: string): boolean {
+  if (code === 'insufficient_scope' || code === 'missing_scope' || canonical === 'insufficient_scope') return true;
+  return code === 'permission_denied' && (reason === 'insufficient_scope' || reason === 'missing_scope');
+}
+
+/** Named refusals (one code may carry several anchors). Same table as ERROR_CATALOGUE. */
+export const REFUSALS = ERROR_CATALOGUE;
+
+const CLASS_SUGGESTION: Record<ErrorClass, string> = {
+  caller: 'Correct the request using the message above, then retry.',
+  consent: 'Stop and ask the user; re-run only with the authorization the message names.',
+  retryable: 'Wait briefly, then retry the same request (writes: reuse the same request_id).',
+  unavailable: 'A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing.',
+  server: 'Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user.',
+  host_only: 'Only the brain host\'s operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host.',
+};
+
+const REFUSAL_DOCS_BY_CODE: ReadonlyMap<string, string> = new Map(
+  Object.entries(ERROR_CATALOGUE).filter(([name, e]) => name === e.code).map(([, e]) => [e.code, e.docs]),
+);
+
+/** Legacy wire values that are not themselves registered codes map to their canonical code. */
+const CANONICAL_BY_LEGACY: ReadonlyMap<string, string> = new Map(
+  Object.entries(CODES as Record<string, CodeEntry>)
+    .filter(([, e]) => e.legacy_error !== undefined && !(e.legacy_error in CODES))
+    .map(([code, e]) => [e.legacy_error!, code]),
+);
+
+export function isRegistryCode(code: string): code is RegistryCode {
+  return Object.prototype.hasOwnProperty.call(CODES, code);
+}
+
+/** The registry entry with defaults applied (docs anchor, suggestion), or undefined for an unregistered code. */
+export function codeEntry(code: string): (CodeEntry & { docs: string; suggestion: string }) | undefined {
+  if (!isRegistryCode(code)) return undefined;
+  const e = CODES[code] as CodeEntry;
+  return {
+    ...e,
+    docs: e.docs ?? REFUSAL_DOCS_BY_CODE.get(code) ?? `docs/guides/error-codes.md#${code}`,
+    suggestion: e.suggestion ?? CLASS_SUGGESTION[e.class],
+  };
+}
+
+/** Canonical registry code for a wire `error` value (identity unless the value is a frozen legacy alias). */
+export function canonicalCodeFor(wire: string): string {
+  return CANONICAL_BY_LEGACY.get(wire) ?? wire;
+}
+
+/** An unregistered code is a server fault by construction (the AST test keeps that set empty). */
+export function codeClass(code: string): ErrorClass {
+  return isRegistryCode(code) ? (CODES[code] as CodeEntry).class : 'server';
+}
+
+export function codeRetryable(code: string): boolean {
+  if (!isRegistryCode(code)) return false;
+  const e = CODES[code] as CodeEntry;
+  return e.retryable ?? e.class === 'retryable';
+}
+
+/** CLI exit code for an error code (A3 table): entry override, else 1. */
+export function exitCodeForCode(code: string): number {
+  return isRegistryCode(code) ? (CODES[code] as CodeEntry).exit ?? 1 : 1;
+}
 
 /**
  * An `OperationError` for a catalogue entry. `message` is one sentence; `hint`

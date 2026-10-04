@@ -12,7 +12,9 @@
 import type { BrainEngine } from '../engine.ts';
 import type { AttributedPageVersion, PageVersion, WriteAttributionView } from '../types.ts';
 import { hasScope } from '../scope.ts';
-import { OperationError, type Operation, type OperationContext } from './contract.ts';
+import { opError, type Operation, type OperationContext } from './contract.ts';
+import type { McpCall } from '../agent-output.ts';
+import { opTransport, paramUse, readFix } from './op-fix.ts';
 import { readHolders, readPolicyOpts } from './context.ts';
 
 const DOCS = 'docs/mcp/ADMIN.md#write-attribution';
@@ -88,17 +90,35 @@ export async function attributeVersions(engine: BrainEngine, versions: PageVersi
   return versions.map((v, i) => ({ ...v, written_by: views[2 * i], archived_by: views[2 * i + 1] }));
 }
 
-function positiveInt(value: unknown, flag: string): number | undefined {
+const SLUG = /^[a-z0-9][a-z0-9/_.-]{0,254}$/i;
+
+const paramName = (ctx: OperationContext, param: string) => (opTransport(ctx) === 'cli' ? paramUse(ctx, param) : param);
+
+function positiveInt(ctx: OperationContext, value: unknown, param: 'fact' | 'take' | 'timeline'): number | undefined {
   if (value === undefined || value === null) return undefined;
   const n = Number(value);
-  if (!Number.isSafeInteger(n) || n < 1) throw new OperationError('invalid_params', `${flag} must be a positive integer, got '${String(value)}'.`, undefined, DOCS);
+  if (!Number.isSafeInteger(n) || n < 1) {
+    const name = paramName(ctx, param);
+    throw opError('invalid_params', `${name} must be a positive integer, got '${String(value)}'.`,
+      `Pass ${name} as a row id from the page, for example ${paramUse(ctx, param, 1)}.`, { docs: DOCS });
+  }
   return n;
 }
 
-type RowTarget = { kind: 'fact' | 'take' | 'timeline_entry'; label: string; sql: string; params: unknown[]; list: string };
+function attributionCall(slug: string, row: { fact?: number; take?: number; timeline?: number }) {
+  const [key, id] = Object.entries(row).find(([, v]) => v !== undefined) as ['fact' | 'take' | 'timeline', number];
+  return readFix(`Attributes the ${key} you named on its own.`, {
+    argv: ['gbrain', 'attribution', slug, `--${key}`, String(id)],
+    mcp: { tool: 'get_write_attribution', arguments: { slug, [key]: id } },
+  });
+}
+
+type RowTarget = { kind: 'fact' | 'take' | 'timeline_entry'; label: string; sql: string; params: unknown[]; list: McpCall };
 
 const get_write_attribution: Operation = {
   name: 'get_write_attribution',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. '
     + 'Each attribution names the request id, operation, principal (kind, id, current name), time and origin '
@@ -115,18 +135,20 @@ const get_write_attribution: Operation = {
   cliHints: { name: 'attribution', positional: ['slug'] },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
-    const fact = positiveInt(p.fact, '--fact');
-    const take = positiveInt(p.take, '--take');
-    const timeline = positiveInt(p.timeline, '--timeline');
+    const fact = positiveInt(ctx, p.fact, 'fact');
+    const take = positiveInt(ctx, p.take, 'take');
+    const timeline = positiveInt(ctx, p.timeline, 'timeline');
     if ([fact, take, timeline].filter(v => v !== undefined).length > 1) {
-      throw new OperationError('invalid_params', 'Pass at most one of --fact, --take or --timeline.',
-        `Run one call per row, for example: gbrain attribution ${slug} --fact ${fact ?? take ?? timeline}`, DOCS);
+      throw opError('invalid_params', `Pass at most one of ${paramName(ctx, 'fact')}, ${paramName(ctx, 'take')} or ${paramName(ctx, 'timeline')}.`,
+        'Make one call per row; fix attributes the first row you named.',
+        { docs: DOCS, ...(SLUG.test(slug) ? { fix: attributionCall(slug, { fact, take, timeline }) } : {}) });
     }
     const policy = await readPolicyOpts(ctx);
     const page = await ctx.engine.getPage(slug, policy);
     if (!page?.id) {
-      throw new OperationError('page_not_found', `No page '${slug}' is visible to this caller.`,
-        'Find the exact slug with `gbrain search "<words>"` (remote: the search tool), then retry. Pages outside your source grant read as missing.', DOCS);
+      throw opError('page_not_found', `No page '${slug}' is visible to this caller.`,
+        'Find the exact slug by searching (fix), then call again with it. Pages outside your source grant read as missing.',
+        { docs: DOCS, ...(SLUG.test(slug) ? { fix: readFix('Searches for pages near the slug you passed.', { argv: ['gbrain', 'search', slug], mcp: { tool: 'search', arguments: { query: slug } } }) } : {}) });
     }
     const sourceId = page.source_id ?? 'default';
     const [live] = await ctx.engine.executeRaw<{ revision: string; req: string | null; kind: string | null; pid: string | null }>(
@@ -142,8 +164,12 @@ const get_write_attribution: Operation = {
       const [found] = await ctx.engine.executeRaw<{ id: number; w_req: string | null; w_kind: string | null; w_id: string | null; created_at: Date | string | null;
         l_req: string | null; l_kind: string | null; l_id: string | null; last_written_at: Date | string | null }>(row.sql, row.params);
       if (!found) {
-        throw new OperationError(row.kind === 'fact' ? 'fact_not_found' : 'not_found', `No ${row.label} is visible on page '${page.slug}'.`,
-          `List the page's rows with \`${row.list}\`, then retry with an id from that list.`, DOCS);
+        throw opError(row.kind === 'fact' ? 'fact_not_found' : 'not_found', `No ${row.label} is visible on page '${page.slug}'.`,
+          'List the page\'s rows (fix), then call again with an id from that list.', {
+            docs: DOCS,
+            fix: readFix(`Lists the ${row.kind === 'timeline_entry' ? 'timeline entries' : `${row.kind}s`} on page '${page.slug}' with their ids.`,
+              { argv: ['gbrain', 'call', '--source', sourceId, row.list.tool, JSON.stringify(row.list.arguments)], mcp: row.list }),
+          });
       }
       target = { kind: row.kind, id: Number(found.id), ...(row.kind === 'take' ? { row_num: take } : {}), slug: page.slug, source_id: sourceId, page_id: page.id };
       created = { request_id: found.w_req, principal_kind: found.w_kind, principal_id: found.w_id, at: found.created_at };
@@ -173,18 +199,18 @@ function rowTarget(ctx: OperationContext, pageId: number, slug: string, sourceId
   const cols = `write_request_id::text AS w_req, write_principal_kind AS w_kind, write_principal_id AS w_id, created_at,
     last_write_request_id::text AS l_req, last_write_principal_kind AS l_kind, last_write_principal_id AS l_id, last_written_at`;
   if (ids.fact !== undefined) {
-    return { kind: 'fact', label: `fact #${ids.fact}`, list: `gbrain call recall '{"entity":"${slug}"}'`,
+    return { kind: 'fact', label: `fact #${ids.fact}`, list: { tool: 'recall', arguments: { entity: slug } },
       sql: `SELECT id, ${cols} FROM facts WHERE id = $1 AND source_id = $2 AND (entity_slug = $3 OR source_markdown_slug = $3)
         ${ctx.remote === false ? '' : "AND visibility = 'world'"}`, params: [ids.fact, sourceId, slug] };
   }
   if (ids.take !== undefined) {
     const holders = readHolders(ctx);
-    return { kind: 'take', label: `take at row ${ids.take}`, list: `gbrain call takes_list '{"page_slug":"${slug}"}'`,
+    return { kind: 'take', label: `take at row ${ids.take}`, list: { tool: 'takes_list', arguments: { page_slug: slug } },
       sql: `SELECT id, ${cols} FROM takes WHERE page_id = $1 AND row_num = $2 ${holders ? 'AND holder = ANY($3::text[])' : ''}`,
       params: holders ? [pageId, ids.take, holders] : [pageId, ids.take] };
   }
   if (ids.timeline !== undefined) {
-    return { kind: 'timeline_entry', label: `timeline entry #${ids.timeline}`, list: `gbrain call get_timeline '{"slug":"${slug}"}'`,
+    return { kind: 'timeline_entry', label: `timeline entry #${ids.timeline}`, list: { tool: 'get_timeline', arguments: { slug } },
       sql: `SELECT id, ${cols} FROM timeline_entries WHERE id = $1 AND page_id = $2`, params: [ids.timeline, pageId] };
   }
   return undefined;

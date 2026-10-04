@@ -1,62 +1,49 @@
 /**
  * `gbrain upgrade`'s one-time "Enable skill publishing now? (recommended)
- * [Y/n]" prompt (#4318 residual) — same close-before-resolve race the shared
- * `src/core/confirm-prompt.ts` helper was written to fix, but this inline
- * confirm in upgrade.ts predates that helper and was never migrated: it
- * called `rl.close()` inside the answer callback BEFORE resolving, while an
- * unguarded `rl.on('close', () => resolveAns(false))` listener fired
- * synchronously during that close and settled the promise first — so
- * pressing Enter (or typing "y") on this default-YES prompt always resolved
- * `false`, silently leaving skill publishing disabled regardless of what the
- * operator answered.
- *
- * The prompt is inline inside a large, side-effecting `runUpgrade()` flow
- * (DB writes, network) rather than an exported, injectable function, so this
- * pins the fix at the source level: a regression back to the close-before-
- * resolve shape fails here even though `test/confirm-prompt.test.ts` (which
- * only covers the shared helper) cannot see this file at all.
+ * [Y/n]" prompt (#4318 residual). The inline readline confirm used to call
+ * `rl.close()` before resolving while an unguarded close listener settled the
+ * promise `false` first, so pressing Enter on this default-YES prompt always
+ * declined. The prompt now reads through interaction.ts `readLine` (one
+ * settle, EOF/timeout = decline) behind `promptEnableSkillPublishing`, so the
+ * contract is pinned by executing it against a real stream.
  */
 import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
+import { promptEnableSkillPublishing } from '../src/commands/upgrade.ts';
 
-describe('gbrain upgrade — skill-publish prompt wiring (#4318 residual)', () => {
-  // test-reads-source-ok[structural]: the prompt is inline inside a large, side-effecting,
-  // non-exported runUpgrade() with no injectable stdin — resolve/close
-  // ordering is only observable in source text, not an executable boundary.
-  const src = readFileSync(join(import.meta.dir, '../src/commands/upgrade.ts'), 'utf8');
+const TTY = { env: {}, stdinIsTTY: true, stdoutIsTTY: true };
 
-  test('the close listener is guarded by an `answered` flag, not unconditional', () => {
-    // The buggy shape was `rl.on('close', () => resolveAns(false));` with no
-    // guard. The fixed shape checks `answered` before declining on close.
-    const idx = src.indexOf('[gbrain] Enable skill publishing now?');
-    expect(idx).toBeGreaterThan(-1);
-    const promptRegion = src.slice(idx - 100, idx + 700);
-    expect(promptRegion).toContain('let answered = false;');
-    expect(promptRegion).toContain('answered = true;');
-    expect(promptRegion).toMatch(/rl\.on\('close',\s*\(\)\s*=>\s*\{\s*if \(!answered\) resolveAns\(false\);/);
-    // The regression this guards against: an unconditional decline-on-close.
-    expect(promptRegion).not.toMatch(/rl\.on\('close',\s*\(\)\s*=>\s*resolveAns\(false\)\);/);
+async function answer(text: string | null, probe = TTY): Promise<{ enabled: boolean; prompt: string }> {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let prompt = '';
+  output.on('data', (c) => { prompt += String(c); });
+  const pending = promptEnableSkillPublishing({ input, output, probe, timeoutMs: 2_000 });
+  if (text === null) input.end(); else input.write(text);
+  return { enabled: await pending, prompt };
+}
+
+describe('gbrain upgrade — skill-publish prompt (#4318 residual)', () => {
+  test('Enter alone accepts the [Y/n] default (the race used to decline it)', async () => {
+    const r = await answer('\n');
+    expect(r.enabled).toBe(true);
+    expect(r.prompt).toContain('Enable skill publishing now? (recommended) [Y/n]');
   });
 
-  test('resolveAns for the answer is called strictly before rl.close() in the question callback', () => {
-    const idx = src.indexOf('[gbrain] Enable skill publishing now?');
-    const promptRegion = src.slice(idx - 100, idx + 700);
-    const resolveIdx = promptRegion.indexOf('resolveAns(a === ');
-    const closeIdx = promptRegion.indexOf('rl.close();');
-    expect(resolveIdx).toBeGreaterThan(-1);
-    expect(closeIdx).toBeGreaterThan(-1);
-    expect(resolveIdx).toBeLessThan(closeIdx);
+  test('y / yes accept; n and anything else decline', async () => {
+    expect((await answer('y\n')).enabled).toBe(true);
+    expect((await answer('YES\n')).enabled).toBe(true);
+    expect((await answer('n\n')).enabled).toBe(false);
+    expect((await answer('maybe\n')).enabled).toBe(false);
   });
 
-  test('the [Y/n] default-yes contract is preserved: an empty (Enter-only) answer resolves true', () => {
-    // The prompt reads "(recommended) [Y/n]" — pressing Enter with no text
-    // must accept the recommendation. A fix that only reordered
-    // resolve/close without preserving this branch (e.g. narrowing to
-    // `a === 'y' || a === 'yes'`) would still pass the two tests above while
-    // silently flipping this prompt's default from accept to decline.
-    const idx = src.indexOf('[gbrain] Enable skill publishing now?');
-    const promptRegion = src.slice(idx - 100, idx + 700);
-    expect(promptRegion).toContain("resolveAns(a === '' || a === 'y' || a === 'yes');");
+  test('EOF declines instead of hanging', async () => {
+    expect((await answer(null)).enabled).toBe(false);
+  });
+
+  test('a non-interactive caller (agent marker) declines without reading', async () => {
+    const r = await answer('y\n', { env: { CLAUDECODE: '1' }, stdinIsTTY: true, stdoutIsTTY: true });
+    expect(r.enabled).toBe(false);
+    expect(r.prompt).toBe('');
   });
 });

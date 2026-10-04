@@ -39,7 +39,7 @@ describe('recall and degraded serve flag ownership', () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-recall-flags-'));
     try {
       const result = await runCli(['recall', '--query', 'example', flag, '--json'], { home, cwd: home });
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain(`unknown flag ${flag} for 'gbrain recall'`);
       expect(JSON.parse(result.stdout)).toMatchObject({ status: 'error', reason: 'invalid_flag' });
       expect(result.stderr).not.toContain('database_url is missing');

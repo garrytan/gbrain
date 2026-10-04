@@ -141,6 +141,14 @@ brief and verify captured content with an actual readback. Without opt-in,
 perform no capture writes; a skipped-capture diagnostic is not a reason to
 interrupt every response or ask for enablement repeatedly.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- No automatic-capture opt-in on record: do nothing. An API key, silence or a first-fire announcement is not consent.
+- A capture write returns `write_pending` (exit 10) or `revision_conflict`: never block the main reply; poll the receipt or re-read and merge on the next turn.
+- Paid enrichment of a thin page needs its own authorization; on `no_pricing` or a cost-cap refusal, skip enrichment and leave the page thin.
+
 ## Anti-Patterns
 
 - Blocking the main response to wait for signal detection to complete

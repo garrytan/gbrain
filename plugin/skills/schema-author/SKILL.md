@@ -249,6 +249,14 @@ loadActivePack — v0.40.6.0 closed the cross-process invalidation gap).
 - **Trust:** CLI = local trust (no scope check). MCP = OAuth `admin` scope (write ops). Audit log captures `actor: mcp:<clientId8>` per mutation.
 - **Atomicity:** every mutation is wrapped in `withMutation`'s atomic write (`.tmp + fsync + rename`) + per-pack `O_CREAT|O_EXCL` lock. Crash mid-write leaves the original file untouched.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- Mutation codes: `PACK_READONLY` → fork first (`gbrain schema fork gbrain-base mine`); `STILL_REFERENCED` → remove the named references first; `LOCK_BUSY` → wait about 30 seconds and retry.
+- Over MCP, a mutation returns `insufficient_scope`: schema writes need the `admin` scope, which only the brain host's operator grants; tell the user.
+- The pre-write lint gate rejects a change: read the error, fix the named prefix or alias collision, and re-run; never bypass lint.
+
 ## Anti-Patterns
 
 - **Don't mutate `gbrain-base` or `gbrain-recommended`.** Fork first (`gbrain schema fork gbrain-base mine`). These are bundled packs; edits would be lost on upgrade. The mutation primitives refuse with `PACK_READONLY`.
@@ -303,3 +311,20 @@ On failure, the error envelope follows the standard `StructuredAgentError` shape
   pass `--force` if you know the holder is wedged.
 - `permission_denied` (MCP only) → your OAuth client doesn't have `admin`
   scope. Re-register with `gbrain auth register-client --scopes admin`.
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `get_active_schema_pack` → `gbrain schema active`
+- `list_schema_packs` → `gbrain schema list`
+- `reload_schema_pack` → `gbrain call reload_schema_pack <params_json>`
+- `schema_apply_mutations` → `gbrain call schema_apply_mutations <params_json>`
+- `schema_explain_type` → `gbrain schema explain`
+- `schema_graph` → `gbrain schema graph`
+- `schema_lint` → `gbrain schema lint`
+- `schema_review_orphans` → `gbrain schema review-orphans`
+- `schema_stats` → `gbrain schema stats`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

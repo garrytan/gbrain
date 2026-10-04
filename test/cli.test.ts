@@ -239,7 +239,7 @@ describe('CLI dispatch integration', () => {
     expect(stdout.trim()).toMatch(/^gbrain \d+\.\d+\.\d+/);
   });
 
-  test('unknown command prints error and exits 1', async () => {
+  test('unknown command prints error and exits 2 (usage)', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'notacommand'], {
       cwd: new URL('..', import.meta.url).pathname,
       stdout: 'pipe',
@@ -248,7 +248,7 @@ describe('CLI dispatch integration', () => {
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
     expect(stderr).toContain('Unknown command: notacommand');
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(2);
   });
 
   test('per-command --help prints usage without DB connection', async () => {
@@ -383,5 +383,40 @@ describe('CLI dispatch integration', () => {
     expect(tools[0]).toHaveProperty('name');
     expect(tools[0]).toHaveProperty('description');
     expect(tools[0]).toHaveProperty('parameters');
+  });
+
+  test("--tools-json carries each op's access contract after the legacy keys (#5953)", async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-tools-json-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--tools-json'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      const tools = JSON.parse(stdout) as Array<Record<string, unknown>>;
+      const byName = new Map(tools.map(t => [t.name as string, t]));
+
+      expect(Object.keys(byName.get('get_page')!)).toEqual([
+        'name', 'description', 'parameters', 'schema', 'scope', 'required_scopes', 'mutating', 'idempotent', 'local_only',
+      ]);
+      expect(byName.get('get_page')).toMatchObject({ scope: 'read', required_scopes: [], mutating: false, idempotent: true, local_only: false });
+      expect(byName.get('put_page')).toMatchObject({ scope: 'write', mutating: true, local_only: false });
+      expect(byName.get('think')).toMatchObject({ scope: 'read', mutating: true });
+      expect(byName.get('join_brain')).toMatchObject({ scope: 'read', required_scopes: ['skills_member_self'] });
+      expect(byName.get('sync_brain')).toMatchObject({ scope: 'admin', local_only: true });
+
+      const { operations } = await import('../src/core/operations.ts');
+      for (const op of operations) {
+        const t = byName.get(op.name)!;
+        expect([t.scope, t.required_scopes, t.mutating, t.idempotent, t.local_only], op.name).toEqual([
+          op.scope ?? 'read', op.requiredScopes ?? [], op.mutating === true, op.idempotent === true, op.localOnly === true,
+        ]);
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

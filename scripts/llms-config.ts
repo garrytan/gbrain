@@ -28,7 +28,7 @@ export type DocSection = {
 export const PROJECT = {
   name: "GBrain",
   summary:
-    "GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.",
+    "GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, fat-markdown skills, and one agent operator contract for every error and recommendation. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.",
   repoUrl: "https://github.com/garrytan/gbrain",
   rawBaseUrl:
     process.env.LLMS_REPO_BASE ??
@@ -56,7 +56,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "AGENTS.md",
         description:
-          "Start here if you are not Claude Code. Install order, trust boundary, skill resolver, config/debug/migration pointers.",
+          "Start here if you are not Claude Code. Install order, the agent operator quick contract, trust boundary, skill resolver, config/debug/migration pointers.",
         path: "AGENTS.md",
       },
       {
@@ -81,8 +81,14 @@ export const SECTIONS: DocSection[] = [
       },
       {
         title: "INSTALL_FOR_AGENTS.md",
-        description: "9-step agent installation.",
+        description: "Step-by-step agent installation (steps 0-9): install, keyless init, the first-run decision bundle, harness wiring, verification and upgrades.",
         path: "INSTALL_FOR_AGENTS.md",
+      },
+      {
+        title: "docs/protocol/AGENT_OPERATOR_v1.md",
+        description:
+          "The agent operator contract: read `code`, follow `fix.next` (run / ask_user / tell_user_to_run / wait / report), run `fix.verify`. Error envelope, notices and mute, effects/actor/next table, consent and preapproval, exit codes, marker grammar, compatibility policy, first run, and how to make gbrain work better for your user.",
+        path: "docs/protocol/AGENT_OPERATOR_v1.md",
       },
       {
         title: "skills/RESOLVER.md",
@@ -196,7 +202,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/protocol/MEMORY_VERBS_v1.md",
         description:
-          "The frozen five-verb memory protocol (recall/remember/entity/synthesize/forget): response envelopes, error contract, additive-forever versioning, surface modes, conformance certification, per-harness installs.",
+          "The frozen memory-verb protocol (recall/remember/entity/synthesize/forget plus context_pack and delta): response envelopes, error contract, additive-forever versioning, surface modes, conformance certification, per-harness installs.",
         path: "docs/protocol/MEMORY_VERBS_v1.md",
       },
     ],
@@ -226,8 +232,26 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/GBRAIN_VERIFY.md",
         description:
-          "7-check post-setup verification. Start here when something feels off.",
+          "Post-setup verification checks for the capabilities you enabled. When a gbrain call fails or something feels off, start with docs/protocol/AGENT_OPERATOR_v1.md, then run these checks.",
         path: "docs/GBRAIN_VERIFY.md",
+      },
+      {
+        title: "docs/guides/troubleshooting.md",
+        description:
+          "Symptom table with who acts, consent and a read-only verify step per row, then the long-form fixes.",
+        path: "docs/guides/troubleshooting.md",
+      },
+      {
+        title: "docs/guides/error-codes.md",
+        description:
+          "Generated: every error code with meaning, why, next step, who acts and consent, verify, exit code and retryability. Offline: `gbrain errors <code>`.",
+        path: "docs/guides/error-codes.md",
+        includeInFull: false,
+      },
+      {
+        title: "docs/guides/exit-codes.md",
+        description: "Exit statuses (3 = confirmation_required only, 10 pending write, 11 resumable budget stop) and what changed in this release.",
+        path: "docs/guides/exit-codes.md",
       },
       {
         title: "docs/guides/minions-fix.md",
@@ -354,6 +378,7 @@ export const INLINE_TIPS = [
   "`gbrain repair-jsonb [--dry-run]` - repair v0.12.0 double-encoded JSONB rows.",
   "`gbrain repair [<kind>] [--apply]` - preview, then fix timeline, visibility and safe-chunk damage doctor reports.",
   "`gbrain upgrade` runs post-upgrade + apply-migrations.",
+  "`gbrain errors <code> [--json]` - explain any error code offline; follow its `fix.next`.",
 ];
 
 // Target ~800KB so llms-full.txt fits in ~200k-token contexts with room to spare.

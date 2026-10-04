@@ -2,12 +2,25 @@ import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import { resolveSourceWithTier, localFederatedSourceIds } from '../core/source-resolver.ts';
 import { bigintToStringReplacer } from '../core/utils.ts';
-import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { loadConfig } from '../core/config.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
+import { exitCodeForCode } from '../core/error-catalogue.ts';
+import { localCallErrorEnvelope } from '../mcp/dispatch.ts';
+import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
+import { OperationError } from '../core/ops/contract.ts';
+import { isWriteErrorCode } from '../core/persistence/types.ts';
+
+/**
+ * Write-path failures (a receipt, a write_error, a write refusal code, the
+ * persistence transport) keep their frozen receipt document and exit verdict;
+ * every other op failure is the v1 envelope (fix, docs_cmd, class).
+ */
+function writePathFailure(error: unknown): boolean {
+  return !(error instanceof OperationError) || error.writeRequest !== undefined || error.writeError !== undefined || isWriteErrorCode(error.code);
+}
 
 /**
  * `gbrain call <tool> <json>` — trusted local op-dispatch surface.
@@ -72,7 +85,7 @@ export async function runCall(
       return;
     }
   } catch (error) {
-    if (await reportPersistenceCliError(error, true, out)) return;
+    if (await reportPersistenceCliError(error, true, out)) return usageVerdict(error);
     throw error;
   }
   try {
@@ -98,7 +111,26 @@ export async function runCall(
   // its tail to the exit grace under queued stdout writes.
   await out(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
   } catch (error) {
-    if (await reportPersistenceCliError(error, true, out)) return;
-    throw error;
+    if (writePathFailure(error) && await reportPersistenceCliError(error, true, out)) return usageVerdict(error);
+    await failCall(tool, error, out);
   }
+}
+
+/**
+ * A3 on `gbrain call`: a caller mistake refused before any write was admitted
+ * (no receipt) is invalid input, exit 2, even when the write lane rendered it.
+ */
+function usageVerdict(error: unknown): void {
+  if (error instanceof OperationError && error.code === 'invalid_params' && error.writeRequest === undefined) setCliExitVerdict(2);
+}
+
+/**
+ * Agent contract v1 (A1): `gbrain call` is a JSON surface, so a failure is
+ * the same envelope an MCP caller gets, on stdout, with the registry's exit.
+ */
+async function failCall(tool: string, error: unknown, out: (text: string) => Promise<void>): Promise<void> {
+  const envelope = localCallErrorEnvelope(tool, error);
+  await out(JSON.stringify(envelope, null, 2) + '\n');
+  console.error(`Error [${envelope.code}]: ${envelope.message}`);
+  setCliExitVerdict(exitCodeForCode(envelope.code));
 }

@@ -77,7 +77,7 @@ const GRANDFATHERED: Record<string, number> = {
   'cycle-patterns-deadline-budget.test.ts': 4,
   'cycle-phase-deadline-drift.test.ts': 2,
   'cycle/nightly-probe-adapters.test.ts': 5,
-  'cycle/regression-pr-wave-r1-r2-r4.test.ts': 2,
+  'cycle/regression-pr-wave-r1-r2-r4.test.ts': 1,
   'cycle/yield-during-phase-throttle.test.ts': 1,
   'destructive-guard.test.ts': 1,
   'doctor-categories.test.ts': 1,

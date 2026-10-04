@@ -29,6 +29,8 @@ const n = (v: number | string | null | undefined): number => Number(v ?? 0);
 
 const get_usage: Operation = {
   name: 'get_usage',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Aggregate chat usage + cost from the chat_usage_log ledger (per-model and per-phase token counts, cache reads/writes, USD estimates) with explicit coverage fields.',

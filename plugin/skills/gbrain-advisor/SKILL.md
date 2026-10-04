@@ -104,6 +104,13 @@ WARN      gbrain 0.44 is available (you're on 0.43).
 - If nothing is pressing, say so in one line ("brain looks healthy") — don't
   manufacture work.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- A `critical` finding (pending migrations) carries a fix such as `gbrain apply-migrations --yes`: ask the user before running it; findings without a `dispatch_id` are not auto-runnable.
+- `gbrain advisor` cannot reach the brain (`GBRAIN_DB_ACCESS` marker): route to the db-repair skill instead of reporting "no findings".
+
 ## Anti-Patterns
 
 - **Running a fix without asking.** The advisor is read-only by contract. Never
@@ -117,3 +124,12 @@ WARN      gbrain 0.44 is available (you're on 0.43).
 - **Calling the MCP `advisor` op for workspace install state.** Over MCP the
   advisor returns brain-state signals only; uninstalled-skill findings are a
   local-CLI concern.
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `advisor` → `gbrain advisor`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

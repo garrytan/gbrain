@@ -47,6 +47,8 @@ export interface DoctorContext {
   schemaVersion: number;
   /** Written by the connection entry when `getStats` fails; the next entry stops the run. */
   connectionFailed: boolean;
+  /** `--only <check>[,…]`: run only the entries that emit these checks (plus the connection lane). */
+  only?: ReadonlySet<string> | null;
 }
 
 /**

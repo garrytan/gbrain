@@ -396,3 +396,35 @@ describe('`gbrain takes --help` reaches the detailed subcommand block', () => {
     expect(stdout).toContain('--dir <path>');
   });
 });
+
+describe('D3: shadowed handler help and curated help are reachable', () => {
+  // Each printed its own usage but was hidden behind the generic one-line
+  // stub (record lacked selfHelp). One distinctive line per handler.
+  const SELF_HELP_MARKERS: Record<string, string> = {
+    advisor: 'gbrain advisor [--json] [--apply <finding-id>]',
+    backfill: 'gbrain backfill',
+    'book-mirror': 'gbrain book-mirror',
+    'claw-test': 'gbrain claw-test',
+    founder: 'Usage: gbrain founder scorecard <entity-slug>',
+    'graph-query': 'Usage: gbrain graph-query <slug>',
+    mounts: 'gbrain mounts',
+    think: 'Usage: gbrain think',
+  };
+  for (const [command, marker] of Object.entries(SELF_HELP_MARKERS)) {
+    test(`\`${command} --help\` prints the handler's own usage, not the stub`, async () => {
+      const { stdout, exitCode } = await help([command, '--help']);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain(marker);
+      expect(stdout).not.toContain('run gbrain --help for the full command list');
+    });
+  }
+
+  test('`doctor --help` lists the remediation flags with their consent effects', async () => {
+    const { stdout, exitCode } = await help(['doctor', '--help']);
+    expect(exitCode).toBe(0);
+    for (const flag of ['--remediation-plan', '--remediate', '--include-repairs', '--max-usd', '--target-score', '--yes']) {
+      expect(stdout).toContain(flag);
+    }
+    expect(stdout).toContain('[consent: destructive]');
+  });
+});

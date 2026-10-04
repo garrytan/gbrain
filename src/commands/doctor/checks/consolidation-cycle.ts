@@ -7,6 +7,8 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import { resolveHoursEnv } from '../../../core/env-number.ts';
 import type { Check } from '../../doctor.ts';
+import type { Action } from '../../../core/agent-output.ts';
+import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveSyncFreshnessHours = resolveHoursEnv;
@@ -58,11 +60,7 @@ export async function checkSyncConsolidation(engine: BrainEngine): Promise<Check
         'future sources auto-pick-up without a crontab edit.',
     };
   } catch (err) {
-    return {
-      name: 'sync_consolidation',
-      status: 'warn',
-      message: `Could not check sync consolidation: ${err instanceof Error ? err.message : String(err)}`,
-    };
+    return checkError('sync_consolidation', 'check sync consolidation', err);
   }
 }
 
@@ -164,12 +162,19 @@ export async function checkCycleFreshness(
     const issues: string[] = [];
     let hasWarnings = false;
     let hasFailures = false;
+    const young = await youngOrEmptySources(engine, sources.map((s) => s.id), now);
+    const waiting: string[] = [];
+    let firstStale: string | null = null;
 
     for (const source of sources) {
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
       const raw = source.config?.last_full_cycle_at;
+      if (typeof raw !== 'string' && young.has(source.id)) {
+        waiting.push(display);
+        continue;
+      }
       if (typeof raw !== 'string') {
         // #2540: WARN, not FAIL. This check iterates EVERY local_path source,
         // so on a multi-source install where only some vaults are cycled
@@ -182,6 +187,7 @@ export async function checkCycleFreshness(
         // through the warn/fail age thresholds below — that is the
         // regression signal this check exists for.
         issues.push(`Source ${display} has never completed a full cycle`);
+        firstStale ??= source.id;
         hasWarnings = true;
         continue;
       }
@@ -200,18 +206,22 @@ export async function checkCycleFreshness(
       const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
       if (ageMs > failMs) {
         issues.push(`Source ${display} last cycled ${ageHours}h ago`);
+        firstStale ??= source.id;
         hasFailures = true;
       } else if (ageMs > warnMs) {
         issues.push(`Source ${display} last cycled ${ageHours}h ago`);
+        firstStale ??= source.id;
         hasWarnings = true;
       }
     }
 
+    const fix = firstStale ? cycleFix(firstStale) : undefined;
     if (hasFailures) {
       return {
         name: 'cycle_freshness',
         status: 'fail',
         message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` for each stale source, or start \`gbrain autopilot\`.`,
+        ...(fix ? { fix } : {}),
       };
     }
     if (hasWarnings) {
@@ -219,7 +229,13 @@ export async function checkCycleFreshness(
         name: 'cycle_freshness',
         status: 'warn',
         message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` to cycle a source, or start \`gbrain autopilot\`.`,
+        ...(fix ? { fix } : {}),
       };
+    }
+    if (waiting.length === sources.length) {
+      return infoCheck('cycle_freshness',
+        `No full cycle yet for ${waiting.join(', ')}: ${waiting.length > 1 ? 'they hold' : 'it holds'} no pages or only pages from the last 24h, so there is nothing to consolidate yet.`,
+        'not_applicable');
     }
     return {
       name: 'cycle_freshness',
@@ -227,11 +243,29 @@ export async function checkCycleFreshness(
       message: `All ${sources.length} federated source(s) cycled recently`,
     };
   } catch (e) {
-    return {
-      name: 'cycle_freshness',
-      status: 'warn',
-      message: `Could not check cycle freshness: ${e instanceof Error ? e.message : String(e)}`,
-    };
+    return checkError('cycle_freshness', 'check cycle freshness', e);
   }
+}
+
+/**
+ * E2: sources that have never cycled but hold no live pages, or only pages
+ * created in the last 24h. Nothing is stale there yet, so doctor reports
+ * them as information instead of a warning.
+ */
+async function youngOrEmptySources(engine: BrainEngine, ids: string[], now: number): Promise<Set<string>> {
+  const out = new Set(ids);
+  const rows = await engine.executeRaw<{ source_id: string; oldest: string | Date | null }>(
+    `SELECT source_id, MIN(created_at) AS oldest FROM pages WHERE deleted_at IS NULL GROUP BY source_id`,
+  );
+  for (const r of rows) {
+    const oldest = r.oldest ? new Date(r.oldest).getTime() : NaN;
+    if (!Number.isFinite(oldest) || now - oldest >= 24 * 60 * 60 * 1000) out.delete(r.source_id);
+  }
+  return out;
+}
+
+function cycleFix(sourceId: string): Action {
+  return agentFix(['gbrain', 'dream', '--source', sourceId], `Runs one full maintenance cycle for source '${sourceId}' (sync, extract, consolidate). Phases that call a chat model spend provider credits when keys are configured; \`gbrain autopilot --install\` keeps every source cycled.`, 'cycle_freshness',
+    { consent: ['paid'], requires_exclusive: true });
 }
 

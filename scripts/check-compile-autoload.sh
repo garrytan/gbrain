@@ -24,8 +24,11 @@
 # Self-test seam: GBRAIN_GUARD_ROOT (fixture tree root) — guard-self-test.sh
 # runs this against test/fixtures/guards/check-compile-autoload.sh/{bad,good}.
 #
+# Also (agent contract D3): every curated help record in src/cli/command-table.ts
+# loads its module through a literal `() => import('./help/<name>.ts')`.
+#
 # Usage: scripts/check-compile-autoload.sh
-# Exit:  0 when every invocation carries the flag, 1 otherwise.
+# Exit:  0 when every invocation carries the flag (and help loads are literal), 1 otherwise.
 
 set -uo pipefail
 
@@ -61,4 +64,28 @@ if [ -n "$hits" ]; then
   exit 1
 fi
 
-echo "OK: every bun build --compile invocation carries $FLAG"
+# Lazy CLI help modules (agent contract D3): each `help:` record in the
+# command table must be `() => import('./help/<name>.ts')` naming an existing
+# file, and every spec module under src/cli/help/ must have a record. A
+# computed specifier would drop the module from the compiled binary; an
+# eager import would load it on `gbrain --version`.
+TABLE="src/cli/command-table.ts"
+if [ -f "$TABLE" ]; then
+  help_hits="$(grep -nE "name: '.*[[:space:],]help:" "$TABLE" | grep -vE "help: \(\) => import\('\./help/[a-z0-9-]+\.ts'\)" || true)"
+  for spec in $(grep -oE "help: \(\) => import\('\./help/[a-z0-9-]+\.ts'\)" "$TABLE" | sed -E "s/.*'\.\/(help\/[a-z0-9-]+\.ts)'.*/\1/"); do
+    [ -f "src/cli/$spec" ] || help_hits="$help_hits"$'\n'"$TABLE: help module src/cli/$spec does not exist"
+  done
+  for f in src/cli/help/*.ts; do
+    [ -f "$f" ] || continue
+    case "$(basename "$f")" in render.ts|validate.ts) continue ;; esac
+    grep -qF "import('./help/$(basename "$f")')" "$TABLE" || help_hits="$help_hits"$'\n'"$f: no command-table record loads it lazily"
+  done
+  help_hits="$(printf '%s' "$help_hits" | sed '/^$/d')"
+  if [ -n "$help_hits" ]; then
+    echo "ERROR: lazy CLI help module(s) not loaded through a literal () => import('./help/<name>.ts'):" >&2
+    echo "$help_hits" >&2
+    exit 1
+  fi
+fi
+
+echo "OK: every bun build --compile invocation carries $FLAG; lazy help modules are literal imports"

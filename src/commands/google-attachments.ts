@@ -6,7 +6,8 @@ import { resolveBrainId } from '../core/brain-resolver.ts';
 import { loadMounts } from '../core/brain-registry.ts';
 import { persistenceConfigForBrain } from '../core/persistence/local-client.ts';
 import { readLocalWriter, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
-import { OperationError } from '../core/ops/contract.ts';
+import { opError, OperationError } from '../core/ops/contract.ts';
+import { readFix } from '../core/ops/op-fix.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { parseGoogleSourceConfig, runGoogleAttachmentBackfill } from '../core/google/google-source.ts';
 import type { FetchImpl } from '../core/google/google-clients.ts';
@@ -30,27 +31,51 @@ Run on the canonical host with the selected PGLite brain idle; remote delegation
 See docs/guides/google-connect.md#attachment-receipts-and-historical-repair`;
 
 export function parseGoogleAttachmentsArgs(args: string[]) {
-  if (args[0] !== 'backfill') throw new OperationError('invalid_params', 'Select the attachment backfill subcommand.');
+  if (args[0] !== 'backfill') {
+    throw opError('invalid_params', 'Select the attachment backfill subcommand.',
+      'Use gbrain google attachments backfill with --source naming the Google source; it previews without --yes.');
+  }
   const flags = new Map<string, string | true>();
   for (let i = 1; i < args.length; i++) {
     const [flag, inline] = args[i].split(/=(.*)/s);
-    if (!['--source', '--brain', '--limit', '--yes', '--json', '--retry-failed'].includes(flag) || flags.has(flag)) throw new OperationError('invalid_params', 'Unknown or duplicate attachment repair option.');
+    if (!['--source', '--brain', '--limit', '--yes', '--json', '--retry-failed'].includes(flag) || flags.has(flag)) {
+      throw opError('invalid_params', 'Unknown or duplicate attachment repair option.',
+        'Backfill accepts --source, --brain, --limit, --yes, --json, and --retry-failed, each at most once.');
+    }
     if (['--yes', '--json', '--retry-failed'].includes(flag)) {
-      if (inline !== undefined) throw new OperationError('invalid_params', 'Boolean attachment repair options do not accept values.');
+      if (inline !== undefined) {
+        throw opError('invalid_params', 'Boolean attachment repair options do not accept values.', 'Write --yes, --json, and --retry-failed without =value.');
+      }
       flags.set(flag, true);
     } else {
       const value = inline ?? args[++i];
-      if (!value || value.startsWith('-') || value.includes('\0')) throw new OperationError('invalid_params', 'An attachment repair option needs a value.');
+      if (!value || value.startsWith('-') || value.includes('\0')) {
+        throw opError('invalid_params', 'An attachment repair option needs a value.',
+          `Follow ${flag} with its value, or write ${flag}=value; a value cannot start with '-'.`);
+      }
       flags.set(flag, value);
     }
   }
   const sourceId = flags.get('--source');
-  if (!isValidSourceId(sourceId)) throw new OperationError('invalid_params', 'Select one explicit valid Google source ID.');
+  if (!isValidSourceId(sourceId)) {
+    throw opError('invalid_params', 'Select one explicit valid Google source ID.',
+      'Pass --source with the id of the Google source to repair; source list shows the ids.',
+      { fix: readFix('Lists registered sources and their ids.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
+  }
   const limit = flags.has('--limit') ? Number(flags.get('--limit')) : 25;
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 25) throw new OperationError('invalid_params', 'Attachment repair limit must be 1-25.');
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 25) {
+    throw opError('invalid_params', 'Attachment repair limit must be 1-25.', 'Pass --limit as a whole number from 1 to 25, or omit it to use 25.');
+  }
   const brain = flags.get('--brain') as string | undefined;
-  if (brain && !isValidSourceId(brain)) throw new OperationError('invalid_params', 'Select a valid brain ID.');
-  if (flags.has('--retry-failed') && !flags.has('--yes')) throw new OperationError('invalid_params', '--retry-failed requires --yes.');
+  if (brain && !isValidSourceId(brain)) {
+    throw opError('invalid_params', 'Select a valid brain ID.', 'Pass --brain with host or a mounted brain id (lowercase letters, digits, hyphens).',
+      { fix: readFix('Lists the mounted brains and their ids.', { argv: ['gbrain', 'mounts', 'list', '--json'] }) });
+  }
+  if (flags.has('--retry-failed') && !flags.has('--yes')) {
+    throw opError('invalid_params', '--retry-failed requires --yes.',
+      `Preview source ${sourceId} without --retry-failed first. --retry-failed applies a batch that re-attempts terminal failed receipts, so pair it with --yes only after the user approves that batch.`,
+      { fix: readFix(`Previews source ${sourceId}'s attachment repair without contacting Google or writing.`, { argv: ['gbrain', 'google', 'attachments', 'backfill', '--source', sourceId, ...(brain ? ['--brain', brain] : []), '--json'] }) });
+  }
   return { sourceId, limit, brain, yes: flags.has('--yes'), json: flags.has('--json'), retryFailed: flags.has('--retry-failed') };
 }
 
@@ -62,7 +87,13 @@ export async function runGoogleAttachments(args: string[], connected?: BrainEngi
     const parsed = parseGoogleAttachmentsArgs(args);
     const brain = resolveBrainId(parsed.brain ?? getCliOptions().brain);
     const config = persistenceConfigForBrain(loadConfig(), brain, brain === 'host' ? [] : loadMounts());
-    if (!connected && (!config || isThinClient(config))) throw new OperationError('permission_denied', 'Attachment repair requires the configured canonical host, not a remote token.');
+    if (!connected && (!config || isThinClient(config))) {
+      throw opError('permission_denied', 'Attachment repair requires the configured canonical host, not a remote token.',
+        `Brain ${brain} is not a local brain on this machine. Ask the user to run the repair on the machine that hosts it; a remote token cannot repair attachments.`,
+        { fix: { argv: ['gbrain', 'google', 'attachments', 'backfill', '--source', parsed.sourceId, '--brain', brain, '--json'], consent: [], actor: 'user', requires_exclusive: false,
+          why: 'Previews the repair on the canonical host without contacting Google or writing.',
+          user_message: `Attachment repair for source ${parsed.sourceId} has to run on the machine that hosts brain ${brain}. Please run the command shown there.` } });
+    }
     if (!connected) {
       const { createEngine } = await import('../core/engine-factory.ts');
       owned = await createEngine(toEngineConfig(config!));
@@ -72,9 +103,17 @@ export async function runGoogleAttachments(args: string[], connected?: BrainEngi
     const registration = await readLocalWriter(engine, 'cli');
     const result = await withVerifiedLocalRegistration(engine, registration, async () => {
       const [source] = await engine.executeRaw<{ config: Record<string, unknown>; incarnation: string; local_path: string | null; archived: boolean }>('SELECT config,incarnation,local_path,archived FROM sources WHERE id=$1', [parsed.sourceId]);
-      if (!source || source.archived || source.config.kind !== 'google') throw new OperationError('invalid_params', 'Select an active Google source.');
+      if (!source || source.archived || source.config.kind !== 'google') {
+        throw opError('invalid_params', 'Select an active Google source.',
+          `Source ${parsed.sourceId} is missing, archived, or not a Google source in brain ${brain}. List the sources and pass the active Google one with --source.`,
+          { fix: readFix(`Lists brain ${brain}'s sources with their kinds.`, { argv: ['gbrain', 'sources', 'list', '--brain', brain, '--json'] }) });
+      }
       const [mode] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-      if (!mode?.enabled) throw new OperationError('writer_coordinator_required', 'Attachment repair requires already-enabled managed persistence.');
+      if (!mode?.enabled) {
+        throw opError('writer_coordinator_required', 'Attachment repair requires already-enabled managed persistence.',
+          `Brain ${brain} does not run managed persistence, and this repair never enables it. Ordinary ingestion of source ${parsed.sourceId} keeps working; enabling managed persistence is a separate decision for the user.`,
+          { fix: readFix(`Shows brain ${brain}'s persistence and writer state.`, { argv: ['gbrain', 'doctor', '--brain', brain, '--json'] }) });
+      }
       await managedSyncAuthority(engine, parsed.sourceId, source.incarnation, source.local_path ?? '');
       const cfg = parseGoogleSourceConfig(source.config, source.local_path ?? '');
       if (!parsed.yes) {

@@ -26,6 +26,9 @@ import { dirname, join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { SEARCH_MODES, type SearchMode } from '../core/search/mode.ts';
 import { redactSecrets } from '../eval/longmemeval/run-config.ts';
+import { OperationError } from '../core/ops/contract.ts';
+import { usageError } from '../cli/cli-error.ts';
+import { intFlagValue, numberFlagValue } from '../cli/flag-values.ts';
 
 export interface RunAllOpts {
   help: boolean;
@@ -88,16 +91,17 @@ export function parseRunAllArgs(args: string[]): RunAllOpts {
       opts.suites = list;
       continue;
     }
-    if (a === '--limit') { opts.limit = Number(args[++i]); continue; }
-    if (a === '--seed') { opts.seed = Number(args[++i]); continue; }
+    // #5933 (D4): NaN/out-of-range values would bypass the cost guard; reject them (usage error, exit 2).
+    if (a === '--limit') { opts.limit = intFlagValue(args[++i], '--limit', { min: 1, example: 50 }); continue; }
+    if (a === '--seed') { opts.seed = intFlagValue(args[++i], '--seed', { example: 42 }); continue; }
     if (a === '--parallel') {
       const n = Number(args[++i]);
       if (!Number.isFinite(n) || n < 1) throw new Error('--parallel must be >= 1');
       opts.parallel = Math.min(n, SEARCH_MODES.length);
       continue;
     }
-    if (a === '--budget-usd-retrieval') { opts.budgetUsdRetrieval = Number(args[++i]); continue; }
-    if (a === '--budget-usd-answer') { opts.budgetUsdAnswer = Number(args[++i]); continue; }
+    if (a === '--budget-usd-retrieval') { opts.budgetUsdRetrieval = numberFlagValue(args[++i], a, { min: 0, example: 5 }); continue; }
+    if (a === '--budget-usd-answer') { opts.budgetUsdAnswer = numberFlagValue(args[++i], a, { min: 0, example: 5 }); continue; }
     if (a === '--yes' || a === '-y') { opts.yes = true; continue; }
     if (a === '--output' || a === '--output-dir') { opts.outputDir = args[++i]; continue; }
     if (a === '--json') { opts.jsonOutput = true; continue; }
@@ -286,8 +290,7 @@ export async function runEvalRunAll(_engine: BrainEngine | null, args: string[])
   try {
     opts = parseRunAllArgs(args);
   } catch (e) {
-    process.stderr.write(`Error: ${(e as Error).message}\n`);
-    process.exit(1);
+    throw e instanceof OperationError ? e : usageError((e as Error).message, 'Run `gbrain eval run-all --help` for the accepted flags and examples.');
   }
   if (opts.help) {
     printHelp();

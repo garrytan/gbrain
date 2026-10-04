@@ -31,7 +31,9 @@ export async function listLegacySharedSkills(ctx: OperationContext, section?: st
     instructions: { summary: SKILL_CATALOG_INSTRUCTIONS.summary, how_to_use: [...SKILL_CATALOG_INSTRUCTIONS.how_to_use], available_brain_tools: access, fetch_op: 'get_skill' } };
 }
 export async function getLegacySharedSkill(ctx: OperationContext, name: unknown, sourceId?: string): Promise<GetSkillResult | ResidentSkillDetail> {
-  if (typeof name !== 'string' || !name) throw new OperationError('invalid_params', 'A legacy skill request requires name.');
+  if (typeof name !== 'string' || !name) {
+    throw new OperationError('invalid_params', 'A legacy skill request requires name.', 'Pass name exactly as list_skills returned it.');
+  }
   const skill = await getSharedSkill(ctx, { name, source_id: sourceId });
   if (sourceId) return { source_id: skill.source_id, pack_name: skill.pack_id, slug: skill.name, description: skill.description, body: skill.body };
   const fm = parseSkillFrontmatter(skill.body);
@@ -51,7 +53,10 @@ export async function listLegacySharedPacks(ctx: OperationContext): Promise<Resi
     if (!pack) {
       const [stored] = await ctx.engine.executeRaw<{ manifest: Record<string, unknown> }>(`SELECT manifest FROM shared_skill_packs
         WHERE source_id=$1 AND source_incarnation=$2::uuid AND pack_id=$3`, [skill.source_id, skill.source_incarnation, skill.pack_id]);
-      if (!stored) throw new OperationError('catalog_unavailable', 'A canonical pack changed during enumeration.');
+      if (!stored) {
+        throw new OperationError('catalog_unavailable', 'A canonical pack changed during enumeration.',
+          `Pack ${skill.pack_id} on source ${skill.source_id} was republished while the list was being built; list the packs again.`);
+      }
       pack = { source_id: skill.source_id, name: skill.pack_id, version: typeof stored.manifest.version === 'string' ? stored.manifest.version : '0.0.0',
         schema_pack: typeof stored.manifest.schema_pack === 'string' ? stored.manifest.schema_pack : null,
         active_schema_pack: null, schema_pack_match: null, skills: [], scaffold_spec: null, installed: false };

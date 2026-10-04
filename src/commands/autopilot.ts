@@ -82,6 +82,7 @@ import {
   systemdUnitPath,
   unitWrapperPath,
 } from './autopilot/jobs.ts';
+import { autopilotInstallConsent, renderInstallDryRun } from './autopilot/install-consent.ts';
 export { cronLineBelongsToBrain, crontabIndicatesAutopilotInstall, plistWrapperPath, scriptWrapperPath, unitWrapperPath };
 export { autopilotLockPath, autopilotDisabledMarkerPath, autopilotPausedMarkerPath, autopilotLaunchdLabel };
 export { relativeSourceLocalPathSkipWarning as relativeLocalPathSkipWarning };
@@ -931,6 +932,8 @@ async function installDaemon(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
+  if (args.includes('--dry-run')) { console.log(renderInstallDryRun({ target, repoPath, job })); return; }
+  if (!await autopilotInstallConsent(engine, args, { target, repoPath, job })) return;
   const wrapperPath = writeWrapperScript(repoPath, target, job);
   // #2608: tell the operator about the deterministic key channel — launchd/
   // systemd don't inherit the login shell env, and rc-file interactive guards

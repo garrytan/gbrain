@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"error\": \"write_pending\",\n  \"code\": \"write_pending\",\n  \"message\": \"The write was accepted and is still pending.\",\n  \"suggestion\": \"Inspect the receipt before resubmitting. Next: get_write_request {\\\"request_id\\\":\\\"11111111-2222-4333-8444-555555555555\\\"}\",\n  \"docs\": \"{{DOCS_BASE}}/docs/guides/error-codes.md#write_pending\",\n  \"write_request\": {\n    \"request_id\": \"11111111-2222-4333-8444-555555555555\",\n    \"state\": \"queued\",\n    \"retry_after_ms\": 2000\n  },\n  \"write_error\": \"write_pending\",\n  \"fix\": {\n    \"mcp\": {\n      \"tool\": \"get_write_request\",\n      \"arguments\": {\n        \"request_id\": \"11111111-2222-4333-8444-555555555555\"\n      }\n    },\n    \"consent\": [],\n    \"actor\": \"agent\",\n    \"why\": \"The receipt says whether the write committed.\",\n    \"requires_exclusive\": false\n  },\n  \"docs_cmd\": [\n    \"gbrain\",\n    \"errors\",\n    \"write_pending\"\n  ],\n  \"class\": \"retryable\",\n  \"retryable\": false,\n  \"contract_version\": 1\n}"
+    }
+  ],
+  "isError": true
+}

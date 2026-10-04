@@ -5,7 +5,9 @@ import type { FactsBackstopCtx } from '../facts/backstop.ts';
 import { ENTITY_HINTS_CAP, type ExtractedFact, type FactEmbeddingSignature } from '../facts/extract.ts';
 import { readFactsEmbeddingDim } from '../embedding-dim-check.ts';
 import type { OperationContext } from '../ops/contract.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { hostFix, opTransport, readFix } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
 import { inferenceNote } from '../facts/subject-infer-write.ts';
@@ -51,6 +53,15 @@ export interface ManagedFactsSession {
   embedding?: FactEmbeddingSignature | null;
 }
 
+const receiptFix = (requestId: string): Action => readFix('Reads the fact request\'s durable receipt: its operation, state and outcome, read-only.',
+  { argv: ['gbrain', 'write-request', '--', requestId], mcp: { tool: 'get_write_request', arguments: { request_id: requestId } } });
+const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as it is now, with its revision.`,
+  { argv: ['gbrain', 'get', '--source', sourceId, '--', slug], mcp: { tool: 'get_page', arguments: { slug, source_id: sourceId } } });
+const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner, its state and any write in flight, read-only.`,
+  { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
+const embeddingsFix = (): Action => readFix('Reports the brain\'s embedding model, dimensions and vector columns, read-only.',
+  { argv: ['gbrain', 'doctor', '--only', 'embeddings', '--json'] });
+
 function managedFactRequestId(batchKey: string, slug: string): string {
   const hex = digest([batchKey, slug]);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
@@ -62,7 +73,9 @@ async function validateManagedFactsCompletion(engine: BrainEngine, session: Mana
   if (prior.operation !== 'extract_facts' || prior.slug !== '__managed_facts_complete__'
     || prior.source_id !== session.authority.sourceId || prior.source_incarnation !== session.authority.sourceIncarnation
     || inputDigest !== undefined && inputDigest !== session.inputDigest) {
-    throw new OperationError('idempotency_conflict', 'This request ID already belongs to another operation or extraction input.');
+    throw opError('idempotency_conflict', 'This request ID already belongs to another operation or extraction input.',
+      `Request ${prior.request_id} was already accepted for a different operation or extraction input, so nothing was admitted. Give this extraction a new request_id; read the receipt to see what the original request did.`,
+      { fix: receiptFix(prior.request_id) });
   }
   if (prior.compacted && !prior.intent && isTerminal(prior) && prior.state !== 'committed') {
     const error = new OperationError('facts_payload_expired', 'The accepted fact extraction failed and its retained payload has expired.',
@@ -70,7 +83,9 @@ async function validateManagedFactsCompletion(engine: BrainEngine, session: Mana
     error.writeRequest = receiptFor(prior);
     throw error;
   }
-  if (inputDigest !== session.inputDigest) throw new OperationError('idempotency_conflict', 'The retained fact request cannot verify this extraction input.');
+  if (inputDigest !== session.inputDigest) throw opError('idempotency_conflict', 'The retained fact request cannot verify this extraction input.',
+    `Request ${prior.request_id} no longer retains the input digest needed to prove it matches this extraction, so nothing was admitted. Read its receipt; a new extraction needs a new request_id.`,
+    { fix: receiptFix(prior.request_id) });
 }
 
 export async function resolveManagedFactsEmbedding(engine: BrainEngine, config: GBrainConfig,
@@ -79,18 +94,24 @@ export async function resolveManagedFactsEmbedding(engine: BrainEngine, config: 
     WHERE key IN ('embedding_model','embedding_dimensions','embedding_disabled') ORDER BY key${lock ? ' FOR SHARE' : ''}`);
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
   if (values.embedding_disabled !== undefined && values.embedding_disabled !== 'true' && values.embedding_disabled !== 'false') {
-    throw new OperationError('embedding_configuration', 'Selected brain embedding_disabled must be true or false.');
+    throw opError('embedding_configuration', 'Selected brain embedding_disabled must be true or false.',
+      'The brain\'s embedding_disabled setting is neither true nor false, so fact extraction stopped before admission. Read it, then have the user set it to true or false with gbrain config set embedding_disabled.',
+      { fix: readFix('Shows the stored embedding_disabled value and the plane it comes from, read-only.', { argv: ['gbrain', 'config', 'get', 'embedding_disabled'] }) });
   }
   if (config.embedding_disabled || values.embedding_disabled === 'true') return null;
   const model = values.embedding_model;
   if (!model) return null;
   const dimensions = /^[1-9]\d*$/.test(values.embedding_dimensions ?? '') ? Number(values.embedding_dimensions) : null;
   if (!/^[^\s:]+:[^\s]+$/.test(model) || !dimensions || !Number.isSafeInteger(dimensions)) {
-    throw new OperationError('embedding_configuration', 'The selected brain has no verifiable facts embedding model and dimensions.');
+    throw opError('embedding_configuration', 'The selected brain has no verifiable facts embedding model and dimensions.',
+      `The brain's embedding_model (${JSON.stringify(model)}) is not provider:model or embedding_dimensions is not a positive integer, so fact extraction stopped before admission. Check embedding readiness; correcting the configuration is the user's decision.`,
+      { fix: embeddingsFix() });
   }
   const shape = await readFactsEmbeddingDim(engine);
   if (!shape.exists || !shape.columnType || shape.dims !== dimensions) {
-    throw new OperationError('embedding_configuration', 'The selected brain facts embedding provenance does not match its vector column.');
+    throw opError('embedding_configuration', 'The selected brain facts embedding provenance does not match its vector column.',
+      `The facts vector column ${shape.exists ? `holds ${shape.dims ?? 'unknown'}-dimension vectors` : 'is missing'}, but ${model} is configured for ${dimensions}, so fact extraction stopped before admission. Check embedding readiness and show the user the mismatch.`,
+      { fix: embeddingsFix() });
   }
   return { model, dimensions };
 }
@@ -99,7 +120,9 @@ export async function assertManagedFactsEmbedding(engine: BrainEngine, config: G
   expected: FactEmbeddingSignature | null | undefined, lock = false): Promise<void> {
   const current = await resolveManagedFactsEmbedding(engine, config, lock);
   if (!expected || !current || expected.model !== current.model || expected.dimensions !== current.dimensions) {
-    throw new OperationError('embedding_configuration', 'The selected brain facts embedding policy or model changed; retained vectors cannot be installed.');
+    throw opError('embedding_configuration', 'The selected brain facts embedding policy or model changed; retained vectors cannot be installed.',
+      `The facts embedding changed from ${expected ? `${expected.model} (${expected.dimensions})` : 'none'} to ${current ? `${current.model} (${current.dimensions})` : 'none'} after the facts were embedded, so nothing was admitted. Run the extraction again (the same request_id is safe: nothing was accepted) to embed under the current model.`,
+      { fix: embeddingsFix() });
   }
 }
 
@@ -110,13 +133,17 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
   assertPersistenceAccepting(engine);
   const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [ctx.sourceId]);
-  if (!source || source.archived) throw new OperationError('source_changed', 'The fact extraction source is unavailable.');
+  if (!source || source.archived) throw opError('source_changed', 'The fact extraction source is unavailable.',
+    `Source ${ctx.sourceId} is missing or archived, so no facts were extracted. Extract into an active source, or restore ${ctx.sourceId} first (the user's decision).`,
+    { fix: readFix('Lists the registered sources with their archived state, read-only.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
   let authority: WriteAuthority;
   let origin: ManagedFactOrigin | null = null;
   if (ctx.persistenceRequestId) {
     const original = await getWriteRequestById(engine, requireUuid(ctx.persistenceRequestId));
     if (!original || original.state !== 'committed' || original.source_id !== ctx.sourceId || original.source_incarnation !== source.incarnation || original.slug !== input.pageSlug) {
-      throw new OperationError('permission_denied', 'Fact extraction requires its original committed page authority.');
+      throw opError('permission_denied', 'Fact extraction requires its original committed page authority.',
+        `The page write that triggered fact extraction for ${input.pageSlug ?? 'this turn'} in source ${ctx.sourceId} is not a committed write of that page, so nothing was extracted. Read the write's receipt; facts are extracted only after it commits.`,
+        original ? { fix: receiptFix(original.request_id) } : {});
     }
     await authorizeFactsBackstop(engine, original);
     authority = structuredClone(original.authority);
@@ -126,16 +153,23 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
       const verified = currentVerifiedLocalWriter();
       const job = currentSubmissionAuthority();
       if (job && job.kind !== 'application' || ctx.remote !== false && !verified && job?.kind !== 'application') {
-        throw new OperationError('writer_coordinator_required', 'Managed facts require the original operation or durable job authority before extraction.');
+        throw opError('writer_coordinator_required', 'Managed facts require the original operation or durable job authority before extraction.',
+          `Fact extraction for source ${ctx.sourceId} ran outside an operation or durable job, so it has no authority to publish; nothing was extracted. Submit it as the extract_facts operation (an MCP tool call, or gbrain call extract_facts on the brain host).`);
       }
       operation = { engine, remote: verified?.remote ?? false, sourceId: ctx.sourceId, config: { engine: engine.kind } } as OperationContext;
     }
-    if (operation.engine !== engine || operation.sourceId && operation.sourceId !== ctx.sourceId) throw new OperationError('permission_denied', 'The extraction context does not match its source.');
+    if (operation.engine !== engine || operation.sourceId && operation.sourceId !== ctx.sourceId) throw opError('permission_denied', 'The extraction context does not match its source.',
+      `The calling operation targets ${operation.sourceId ? `source ${operation.sourceId}` : 'another brain'}, but extraction was asked to write into source ${ctx.sourceId}; nothing was extracted. Run the extraction with the same source as its operation.`);
     await initializeLocalPersistence(operation);
     authority = await submissionAuthority(operation, 'extract_facts', ctx.sourceId, source.incarnation, input.pageSlug ?? 'memory/unattributed');
   }
   if (authority.slugPrefixes !== null || authority.restrictedNamespace || authority.delegated) {
-    throw new OperationError('permission_denied', 'Multi-entity fact extraction requires an unconfined source grant.');
+    throw opError('permission_denied', 'Multi-entity fact extraction requires an unconfined source grant.',
+      `This writer's grant on source ${ctx.sourceId} is limited to slug prefixes, a restricted namespace or a delegation, so it cannot write facts across entities; nothing was extracted. Save a single fact inside the grant with remember, or ask the brain host's operator for a source-wide grant.`,
+      { fix: ctx.operationContext
+        ? hostFix(ctx.operationContext, opTransport(ctx.operationContext) === 'http' ? ['gbrain', 'auth', 'clients', '--json'] : ['gbrain', 'auth', 'local-writer', 'list', '--json'],
+          'Shows the connection\'s current grant so the operator can decide whether to widen it to the whole source.')
+        : readFix('Shows the CLI writer registrations and their grants, read-only.', { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'] }) });
   }
   await authorizeWrite(engine, authority, 'extract_facts', input.pageSlug ?? 'memory/unattributed');
   for (const hint of ctx.entityHints?.slice(0, ENTITY_HINTS_CAP) ?? []) {
@@ -149,12 +183,16 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
     await authorizePageVisibility(engine, authority, input.pageSlug);
     const snapshot = await engine.readPageSnapshot(input.pageSlug, { sourceId: ctx.sourceId });
     if (!snapshot || snapshot.sourceIncarnation !== source.incarnation || snapshot.page.compiled_truth !== input.turnText) {
-      throw new OperationError('revision_conflict', 'The source page changed before fact extraction.');
+      throw opError('revision_conflict', 'The source page changed before fact extraction.',
+        `Page ${input.pageSlug} in source ${ctx.sourceId} no longer holds the text being extracted, so nothing was extracted. Read the current page and extract from its current text.`,
+        { fix: pageFix(ctx.sourceId, input.pageSlug) });
     }
     origin = { slug: input.pageSlug, pageId: snapshot.page.id, revision: snapshot.revision };
     if (ctx.persistenceRequestId) {
       const original = (await getWriteRequestById(engine, ctx.persistenceRequestId))!;
-      if (original.outcome?.revision !== snapshot.revision) throw new OperationError('revision_conflict', 'The original page write has been superseded.');
+      if (original.outcome?.revision !== snapshot.revision) throw opError('revision_conflict', 'The original page write has been superseded.',
+        `A newer write replaced page ${input.pageSlug} in source ${ctx.sourceId} after request ${original.request_id} committed, so facts are not extracted from the superseded revision. Nothing needs resubmitting: the newer revision's write runs its own extraction.`,
+        { fix: pageFix(ctx.sourceId, input.pageSlug) });
     }
   }
   const binding = await getWorktreeBinding(engine, ctx.sourceId);
@@ -162,11 +200,17 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
   const writeThrough = !/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true');
   // An unbound connector source is database-only by design (connector_database), like its connector sync.
   const connectorDatabase = writeThrough && !binding && isConnectorSourceKind(source.kind);
-  if (writeThrough && root && !binding && !connectorDatabase) throw new OperationError('owner_unavailable', 'The fact source has no canonical owner; extraction has not started.');
+  if (writeThrough && root && !binding && !connectorDatabase) throw opError('owner_unavailable', 'The fact source has no canonical owner; extraction has not started.',
+    `Source ${ctx.sourceId} has a checkout but no canonical owner, so facts cannot be written through to it. Check writer status; claiming the checkout is the user's decision on the brain host.`,
+    { fix: ownerStatusFix(ctx.sourceId) });
   if (writeThrough && binding) {
-    if (binding.state !== 'active' || !binding.owner_host_id) throw new OperationError('owner_unavailable', 'The canonical fact writer is unavailable; extraction has not started.');
+    if (binding.state !== 'active' || !binding.owner_host_id) throw opError('owner_unavailable', 'The canonical fact writer is unavailable; extraction has not started.',
+      `Source ${ctx.sourceId}'s canonical worktree is ${binding.state}, not active, so facts cannot be published yet. Check writer status and extract again once the owner is active.`,
+      { fix: ownerStatusFix(ctx.sourceId) });
     if (binding.owner_host_id === localHostId()) {
-      if (!await probeWorktreeWriter(binding, engine)) throw new OperationError('writer_lock_unavailable', 'The canonical fact writer is busy; extraction has not started.');
+      if (!await probeWorktreeWriter(binding, engine)) throw opError('writer_lock_unavailable', 'The canonical fact writer is busy; extraction has not started.',
+        `Another write holds source ${ctx.sourceId}'s canonical writer. Nothing was admitted, so run the extraction again once the writer is idle (the same request_id is safe).`,
+        { fix: ownerStatusFix(ctx.sourceId) });
     }
   }
   if (!writeThrough) authority.databaseOnlyReason = 'disabled_by_config';
@@ -188,7 +232,9 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
 async function collectManagedFacts(engine: BrainEngine, session: ManagedFactsSession, rows: WriteRequest[]): Promise<ManagedFactsResult> {
   const result: ManagedFactsResult = { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], entity_slugs: [], write_requests: [] };
   for (const row of rows) {
-    if ((row.intent?.inputDigest ?? row.outcome?.input_digest) !== session.inputDigest) throw new OperationError('idempotency_conflict', 'The fact request ID was already used with different extraction input.');
+    if ((row.intent?.inputDigest ?? row.outcome?.input_digest) !== session.inputDigest) throw opError('idempotency_conflict', 'The fact request ID was already used with different extraction input.',
+      `Request ${row.request_id} in source ${row.source_id} was accepted for different extraction input, so this extraction was not merged into it. Give this extraction a new request_id; read the receipt to see the original.`,
+      { fix: receiptFix(row.request_id) });
     await authorizeStoredRequest(engine, row);
     const finished = await waitForWrite(engine, row, session.config);
     writeResponse(finished);
@@ -212,7 +258,9 @@ export async function resumeManagedFacts(engine: BrainEngine, session: ManagedFa
     session.authority.principal.kind, session.authority.principal.id, session.batchKey, session.completionRequestId]);
   if (!rows.length) return null;
   const completion = rows.find(row => row.request_id === session.completionRequestId);
-  if (!completion) throw new OperationError('storage_error', 'The accepted facts batch has no completion receipt.');
+  if (!completion) throw opError('storage_error', 'The accepted facts batch has no completion receipt.',
+    `Facts batch requests were accepted in source ${session.authority.sourceId} but their completion request ${session.completionRequestId} was never journaled, so the outcome is unconfirmed. Inspect accepted request ${rows[0].request_id} before resubmitting anything.`,
+    { fix: receiptFix(rows[0].request_id) });
   await validateManagedFactsCompletion(engine, session, completion);
   return collectManagedFacts(engine, session, rows);
 }
@@ -244,7 +292,9 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
   const inputs: Array<{ slug: string; pageId: number | null; intent: ManagedFactIntent }> = [];
   for (const [slug, group] of groups) {
     const snapshot = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
-    if (snapshot?.page.deleted_at || group.some(fact => fact.entity_slug === slug) && !snapshot) throw new OperationError('page_identity_changed', 'The resolved fact entity was removed.');
+    if (snapshot?.page.deleted_at || group.some(fact => fact.entity_slug === slug) && !snapshot) throw opError('page_identity_changed', 'The resolved fact entity was removed.',
+      `Entity page ${slug} in source ${sourceId} was deleted after the facts were resolved to it, so nothing was admitted. Run the extraction again (the same request_id is safe: nothing was accepted); it resolves entities against the current pages.`,
+      { fix: pageFix(sourceId, slug) });
     inputs.push({ slug, pageId: snapshot?.page.id ?? null, intent: { kind: 'managed_facts_entity', batchKey: session.batchKey,
       inputDigest: session.inputDigest, origin: session.origin, originalRequestId: session.originalRequestId,
       embedding: session.embedding ?? null, ...(options.supersede ? { supersede: true as const } : {}),

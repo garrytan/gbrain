@@ -7,7 +7,11 @@ import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
 import { importFromContent, type ParsedPage } from '../import-file.ts';
 import { parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParseOpts } from '../markdown.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
+import type { RegistryCode } from '../error-registry.ts';
+import { pageIdentityError, yamlLocator } from './page-identity.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
@@ -38,6 +42,24 @@ import { readSlugRootMode } from '../sync-anchor.ts';
 import { applyPageEdits, editDiff, parsePageEdits } from './page-edit.ts';
 
 const PURGE_RESIDUALS = 'Brain-repo git history, synced working-tree copies, exports, compiled context files and slug-keyed derived rows (takes, open loops, file records) may still hold the content — rotate the credential and rewrite or regenerate those copies.';
+
+const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its pending, failed and recovering requests, read-only.`,
+  { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
+const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as it is now, with its revision.`,
+  { argv: ['gbrain', 'get', '--source', sourceId, '--', slug], mcp: { tool: 'get_page', arguments: { slug, source_id: sourceId } } });
+
+/**
+ * A refused page request. The journal keeps only code and message, so the
+ * suggestion stands alone: the cause and next step, then the request to
+ * inspect before anything is resubmitted.
+ */
+function pageRefusal(code: RegistryCode, message: string, row: WriteRequest, cause: string, fix?: Action): OperationError {
+  return opError(code, message,
+    `${cause} Request ${row.request_id} in source ${row.source_id} was refused; inspect it before resubmitting, and use a new request_id for any corrected write.`,
+    { fix: fix ?? (row.principal_kind === 'local_cli'
+      ? readFix(`Reads request ${row.request_id}'s durable receipt: its state and recorded error, read-only.`, { argv: ['gbrain', 'write-request', '--', row.request_id] })
+      : ownerStatusFix(row.source_id)) });
+}
 
 /** The parser trims titles, so a stored title differing only in surrounding whitespace is not drift (#5635). */
 function canonical(page: Pick<Page, 'type' | 'title' | 'compiled_truth' | 'timeline' | 'frontmatter'>, tags: string[]) {
@@ -93,7 +115,9 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   // its derived path is not its canonical file and is neither written nor removed.
   if (snapshot && !snapshot.page.source_path && await isUnboundSourcePage(engine, row.source_id, row.slug)) return undefined;
   const binding = await getWorktreeBinding(engine, row.source_id, hostId);
-  if (!binding?.local_path) throw new OperationError('owner_unavailable', 'The canonical worktree is unavailable on this host.');
+  if (!binding?.local_path) throw opError('owner_unavailable', 'The canonical worktree is unavailable on this host.',
+    `This host does not hold source ${row.source_id}'s canonical worktree (or it has no local path), so the file of ${row.slug} was not written. Inspect the owner before resubmitting; the write publishes on the host that owns the source.`,
+    { fix: ownerStatusFix(row.source_id) });
   const root = join(binding.local_path, binding.relative_path);
   // #5622: a new page captured from a file inside the source is published to that file.
   const capturedPath = !snapshot && options.capture ? options.capture.path : recordedPathFromFileUri(snapshot?.page.source_uri, root);
@@ -105,7 +129,9 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     throw colonSlugWindowsRefusal(row.slug, row.source_id);
   }
   const path = nativeFileTarget(root, candidate);
-  if (!isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The canonical file target is outside its registered source.');
+  if (!isWriteTargetContained(path, root)) throw opError('source_changed', 'The canonical file target is outside its registered source.',
+    `The file of ${row.slug} resolves outside source ${row.source_id}'s registered root (a symlinked directory or a moved checkout), so nothing was written. Inspect the owner before resubmitting; how to repair the checkout is the user's decision.`,
+    { fix: ownerStatusFix(row.source_id) });
   const before = existsSync(path) ? readFileSync(path) : null;
   if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing) {
     // A declared db_only page has no canonical file by design and publishes to
@@ -166,14 +192,15 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   preparedIntent?: { content: string; expectedRevision: string; tags?: string[] }, signal?: AbortSignal,
   options: { allowMissingFile?: boolean } = {}): Promise<PreparedMutation> {
   signal?.throwIfAborted();
-  if (!row.intent) throw new OperationError('storage_error', 'A pending write lost its normalized intent.');
+  if (!row.intent) throw pageRefusal('storage_error', 'A pending write lost its normalized intent.', row,
+    `The request has no stored intent for ${row.slug} (its payload was compacted or never recorded), so it cannot be published and wrote nothing.`);
   await assertKnowledgePublicationAllowed(engine, row);
   const p = row.intent;
   const source = { sourceId: row.source_id };
   const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
   signal?.throwIfAborted();
   assertPageRevision(snapshot, preparedIntent ? { expectedRevision: preparedIntent.expectedRevision } : engineMutationPrecondition(parseMutationPrecondition(p)));
-  if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page identity changed.');
+  if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
   const activePack = (await loadActivePackForEngine(engine, { remote: row.authority.remote, sourceId: row.source_id }).catch(() => null))?.manifest;
   if (row.operation === 'put_page' && p.allow_empty !== true && snapshot && !snapshot.page.deleted_at
@@ -186,7 +213,8 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   }
   if (row.operation === 'delete_page') {
     assertPurgeParams(p, row.authority.remote);
-    if (!snapshot) throw new OperationError('page_not_found', 'Page not found.');
+    if (!snapshot) throw pageRefusal('page_not_found', 'Page not found.', row,
+      `Page ${row.slug} does not exist in source ${row.source_id}, so nothing was deleted. Check the slug and the source.`, pageFix(row.source_id, row.slug));
     const purge = p.purge === true;
     const noop = !purge && snapshot.page.deleted_at != null;
     // Tombstones still own their recorded artifact. Purge always attempts its
@@ -211,13 +239,16 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   // explicitly restore a tombstone; legacy versions leave this state unchanged.
   let targetDeleted = false;
   if (row.operation === 'restore_page' || row.operation === 'revert_version') {
-    if (!snapshot) throw new OperationError('page_not_found', 'Page not found.');
+    if (!snapshot) throw pageRefusal('page_not_found', 'Page not found.', row,
+      `Page ${row.slug} does not exist in source ${row.source_id} (it was purged or never written), so nothing was ${row.operation === 'restore_page' ? 'restored' : 'reverted'}. Check the slug and the source.`,
+      pageFix(row.source_id, row.slug));
     let page = snapshot.page;
     let tags = snapshot.tags;
     if (row.operation === 'revert_version') {
       const [version] = await engine.executeRaw<PageVersion>(
         'SELECT * FROM page_versions WHERE id=$1 AND page_id=$2', [p.version_id, page.id]);
-      if (!version) throw new OperationError('not_found', 'Version not found for this page.');
+      if (!version) throw pageRefusal('not_found', 'Version not found for this page.', row,
+        `Version ${String(p.version_id)} is not in the history of page ${row.slug}, so nothing was reverted. List the page's versions (get_versions; CLI: gbrain history) and revert to one of them.`);
       targetDeleted = version.is_deleted ?? (snapshot.page.deleted_at != null);
       page = { ...page, compiled_truth: version.compiled_truth, frontmatter: version.frontmatter,
         ...(version.timeline !== null && version.timeline !== undefined ? { timeline: version.timeline } : {}),
@@ -273,20 +304,29 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   signal?.throwIfAborted();
   if (!prepared) {
     const oversized = result.error?.startsWith('Content too large') === true;
-    throw new OperationError(oversized ? 'request_too_large' : 'invalid_params', oversized ? result.error!
-      : /yaml/i.test(result.error ?? '') ? 'Invalid YAML frontmatter. Quote scalar values or fix the frontmatter block.'
-      : 'The content was rejected before publication.');
+    const yaml = !oversized && /yaml/i.test(result.error ?? '');
+    throw opError(oversized ? 'request_too_large' : 'invalid_params', oversized ? result.error!
+      : yaml ? `Invalid YAML frontmatter${yamlLocator(result.error)}. Quote scalar values or fix the frontmatter block.`
+      : 'The content was rejected before publication.',
+      oversized ? 'Split the content into smaller pages, then submit each with its own request_id.'
+      : yaml ? 'Quote frontmatter values that contain ": " or start with a special character, then submit the corrected content with a new request_id.'
+      : 'Check the content and frontmatter, then submit the corrected content with a new request_id.');
   }
   const ready = prepared;
-  if (ready.observedRevision !== observedRevision) throw new OperationError('revision_conflict', 'The page changed during import preparation.');
+  if (ready.observedRevision !== observedRevision) throw pageRefusal('revision_conflict', 'The page changed during import preparation.', row,
+    `Page ${row.slug} was written by another request while this one was being prepared, so it published nothing. Read the current page and revision, then submit the intended change against it.`,
+    pageFix(row.source_id, row.slug));
   if (ready.slug !== row.slug) {
     await authorizeWrite(engine, row.authority, row.operation, ready.slug);
     const duplicate = await engine.readPageSnapshot(ready.slug, { ...source, excludePrivate: row.authority.remote });
-    if (!duplicate) throw new OperationError('permission_denied', 'The duplicate is not readable by this writer.');
+    if (!duplicate) throw pageRefusal('permission_denied', 'The duplicate is not readable by this writer.', row,
+      `The content duplicates another page in source ${row.source_id} that this writer cannot read, so nothing was published. Write it under a different slug, or ask the user to make the write from a writer that can read the existing page.`);
     return { observedRevision, noop: true, additionalPageKeys:[{sourceId:row.source_id,slug:ready.slug}],validate: async tx => {
       await authorizeWrite(tx,row.authority,row.operation,ready.slug,true);
       const current=await tx.readPageSnapshot(ready.slug,{...source,excludePrivate:row.authority.remote});
-      if (!current || current.page.id!==duplicate.page.id || current.revision!==duplicate.revision) throw new OperationError('revision_conflict','The read-only duplicate changed during preparation.');
+      if (!current || current.page.id!==duplicate.page.id || current.revision!==duplicate.revision) throw pageRefusal('revision_conflict','The read-only duplicate changed during preparation.', row,
+        `Page ${ready.slug}, which this content duplicates, changed while the write was being prepared, so nothing was published. Read it, then submit the write again if it is still needed.`,
+        pageFix(row.source_id, ready.slug));
     },
       apply: async () => ({ status: 'duplicate', slug: duplicate.page.slug, duplicate_revision: duplicate.revision }) };
   }
@@ -321,7 +361,8 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
         const [pinned] = await tx.executeRaw<{ mode: string | null }>(`UPDATE sources SET config=CASE WHEN config->>'slug_root_mode' IS NULL
           THEN jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($2::text)) ELSE config END WHERE id=$1 RETURNING config->>'slug_root_mode' AS mode`,
         [row.source_id, pinMode]);
-        if (pinned?.mode !== pinMode) throw new OperationError('revision_conflict', 'The source slug-root mode changed during preparation.');
+        if (pinned?.mode !== pinMode) throw pageRefusal('revision_conflict', 'The source slug-root mode changed during preparation.', row,
+          `Another write pinned source ${row.source_id}'s slug-root mode while ${row.slug} was being prepared, so this publication rolled back. Once the request is final, submit the write again; it is prepared under the pinned mode.`);
       }
       if (provenance) await tx.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=$5::timestamptz
         WHERE source_id=$1 AND slug=$2`, [row.source_id, row.slug, provenance.source_kind, provenance.ingested_via, provenance.ingested_at]);
@@ -347,6 +388,8 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
 }
 
 function editLockedPage(row: WriteRequest, snapshot: PageSnapshot | null) {
-  if (!snapshot || snapshot.page.deleted_at) throw new OperationError('page_not_found', 'Page not found.');
+  if (!snapshot || snapshot.page.deleted_at) throw pageRefusal('page_not_found', 'Page not found.', row,
+    `Page ${row.slug} does not exist in source ${row.source_id} or is deleted, so the edit changed nothing. If it is soft-deleted, restore it with restore_page; otherwise write it whole with put_page.`,
+    pageFix(row.source_id, row.slug));
   return applyPageEdits(snapshot.page, snapshot.tags, row.authority.remote, parsePageEdits(row.intent?.edits));
 }

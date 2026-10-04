@@ -53,7 +53,8 @@ import {
 import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/manifest-v1.ts';
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
 import { bundledPackPath } from '../core/schema-pack/bundled-assets.ts';
-import { gbrainPath, loadConfig, configPath, toEngineConfig, type GBrainConfig } from '../core/config.ts';
+import { gbrainPath, loadConfig, configPath, toEngineConfig, isThinClient, type GBrainConfig } from '../core/config.ts';
+import { opError } from '../core/ops/contract.ts';
 import { readDbSchemaPack } from '../core/schema-pack/best-effort.ts';
 import { sanitizeTypeForDisplay } from '../core/schema-pack/type-usage.ts';
 
@@ -467,7 +468,14 @@ function parseFlags(args: string[]): ParsedFlags {
 
 async function withConnectedEngine<T>(fn: (engine: import('../core/engine.ts').BrainEngine) => Promise<T>): Promise<T> {
   const { createEngine } = await import('../core/engine-factory.ts');
-  const cfg = loadConfig() ?? { engine: 'pglite' as const };
+  const cfg: GBrainConfig = loadConfig() ?? { engine: 'pglite' };
+  // A thin client has no local database: refuse rather than die with "No
+  // database URL" or read an empty in-memory PGLite (#5102).
+  if (isThinClient(cfg) && !cfg.database_url) {
+    throw opError('requires_local_engine',
+      'This `gbrain schema` subcommand reads the brain database, which lives on the brain host; it is not routable from a thin client.',
+      'Use the matching schema_* MCP tool (e.g. `schema_stats`) from your agent, or run it on the brain host.');
+  }
   // PR #1321 (closed) defensive fix retained: build the EngineConfig once and
   // pass it to BOTH createEngine and engine.connect. The factory captures
   // config at construction; explicit re-pass at connect() is defense in depth

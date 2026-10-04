@@ -13,9 +13,14 @@
  * Contracts (locked by /plan-eng-review):
  *   - TX1: `record()` THROWS BudgetExhausted(reason:'cost') when cumulative
  *     spend > maxCostUsd. The cap is a real ceiling, not a suggestion.
- *   - TX2: When `maxCostUsd` is set AND the model is not in the pricing
- *     maps, `reserve()` HARD-FAILS with BudgetExhausted(reason:'no_pricing').
- *     When `maxCostUsd` is unset, legacy warn-once behavior is preserved.
+ *   - TX2: When a USER cap is set (`capSource: 'user'`, the default for an
+ *     explicit `maxCostUsd`) AND the model is not in the pricing maps,
+ *     `reserve()` HARD-FAILS with BudgetExhausted(reason:'no_pricing') whose
+ *     `fix` registers the rate. A `derived` or `default` cap (A4) warns once
+ *     and runs the model unmetered; so does an unset cap (legacy warn-once).
+ *   - A4: exhausting a `derived` cap logs `derived_cap_exhausted` to the
+ *     agent-contract log; callers report it with consent.ts's
+ *     derivedCapExhaustedError (checkpoint + resume command, exit 1).
  *   - A3 amended: `record()` is best called from try/finally on every
  *     gateway site. When the call threw without usage, callers feed
  *     `extractUsageFromError(err, fallback)` — fallback is the pessimistic
@@ -42,7 +47,10 @@ import {
   type PricingOverrides,
 } from './reservation-cost.ts';
 import { ModelLedger, type ModelUsageRow } from './models-used.ts';
-import { noPricingGuidance, noPricingMessage, pricingSetCommand, type NoPricingGuidance } from './no-pricing.ts';
+import { noPricingFix, noPricingGuidance, noPricingMessage, pricingSetCommand, type NoPricingGuidance } from './no-pricing.ts';
+import { recordAgentContractEvent } from '../agent-contract-log.ts';
+import type { Action, Transport } from '../agent-output.ts';
+import type { CapSource } from '../consent.ts';
 
 export { isModelPriceable } from './reservation-cost.ts';
 export type { BudgetKind, PricingOverrides, NoPricingGuidance };
@@ -107,6 +115,14 @@ export interface BudgetTrackerOpts {
    * Models with neither a table row nor an override stay fail-closed.
    */
   pricingOverrides?: PricingOverrides;
+  /**
+   * A4: where `maxCostUsd` came from. `user` (an explicit flag or configured
+   * cap; the default whenever `maxCostUsd` is set) hard-fails an unpriced
+   * model; `derived` (estimate x1.5 under `--yes`) and `default` warn and run.
+   */
+  capSource?: CapSource;
+  /** Caller's transport, for the no_pricing fix's actor (default `cli`). */
+  transport?: Transport;
 }
 
 /**
@@ -172,9 +188,13 @@ export class BudgetExhausted extends Error {
   modelId?: string;
   /** Set when reason is 'no_pricing': the lookup-and-register guidance (no-pricing.ts). */
   pricing?: NoPricingGuidance;
+  /** A4: the exhausted cap's source (cost and no_pricing reasons). */
+  capSource?: CapSource;
+  /** Agent contract v1: the next step (no_pricing: register the rate). */
+  fix?: Action;
   constructor(
     message: string,
-    opts: { reason: BudgetReason; spent: number; cap: number; modelId?: string; pricing?: NoPricingGuidance },
+    opts: { reason: BudgetReason; spent: number; cap: number; modelId?: string; pricing?: NoPricingGuidance; capSource?: CapSource; fix?: Action },
   ) {
     super(message);
     this.name = 'BudgetExhausted';
@@ -183,6 +203,8 @@ export class BudgetExhausted extends Error {
     this.cap = opts.cap;
     this.modelId = opts.modelId;
     if (opts.pricing) this.pricing = opts.pricing;
+    if (opts.capSource) this.capSource = opts.capSource;
+    if (opts.fix) this.fix = opts.fix;
   }
 }
 
@@ -250,6 +272,12 @@ export class BudgetTracker {
     return this.opts.maxCostUsd;
   }
 
+  /** A4: the cap's source; an explicit cap with no declared source is a user cap (pre-A4 behaviour). */
+  get capSource(): CapSource | undefined {
+    if (this.opts.maxCostUsd === undefined) return undefined;
+    return this.opts.capSource ?? 'user';
+  }
+
   /**
    * Register a synchronous callback to fire the first time the tracker
    * throws BudgetExhausted (from reserve OR record). Fires once. Useful for
@@ -283,7 +311,7 @@ export class BudgetTracker {
     );
 
     if (projected === null) {
-      if (this.opts.maxCostUsd !== undefined) {
+      if (this.opts.maxCostUsd !== undefined && this.capSource === 'user') {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
         // void the contract. The refusal tells the agent to look the rate up
@@ -313,15 +341,20 @@ export class BudgetTracker {
           cap: this.opts.maxCostUsd,
           modelId: estimate.modelId,
           pricing,
+          capSource: 'user',
+          fix: noPricingFix(pricing, this.opts.transport),
         });
       }
-      // Legacy warn-once path — cap unset.
+      // Warn-once path — cap unset, or a derived/default cap (A4: new models must run).
       const memoKey = `${estimate.modelId}:${estimate.kind}`;
       if (!_unpricedWarnings.has(memoKey)) {
         _unpricedWarnings.add(memoKey);
+        const gate = this.opts.maxCostUsd === undefined
+          ? 'Running it without a cost gate'
+          : `The ${this.capSource} $${this.opts.maxCostUsd.toFixed(2)} cap can't meter it, so it runs unmetered`;
         process.stderr.write(
           `[budget] BUDGET_TRACKER_NO_PRICING: model "${estimate.modelId}" (kind=${estimate.kind}) not in pricing maps. ` +
-            `Running it without a cost gate; to meter it, register its rate: ${pricingSetCommand(estimate.modelId, estimate.kind)}\n`,
+            `${gate}; to meter it, register its rate: ${pricingSetCommand(estimate.modelId, estimate.kind)}\n`,
         );
       }
       appendAuditLine(this.auditPath, {
@@ -354,11 +387,10 @@ export class BudgetTracker {
           outstanding_usd: this.outstandingUsd,
           max_cost_usd: this.opts.maxCostUsd,
         });
-        this.fireExhausted();
-        throw new BudgetExhausted(
+        throw this.costExhausted(
           `${this.opts.label}: projected cost $${after.toFixed(4)} exceeds --max-cost $${this.opts.maxCostUsd.toFixed(2)} ` +
             `(cumulative $${this.cumulativeUsd.toFixed(4)} + outstanding $${this.outstandingUsd.toFixed(4)} + this call $${projected.toFixed(4)})`,
-          { reason: 'cost', spent: this.cumulativeUsd, cap: this.opts.maxCostUsd, modelId: estimate.modelId },
+          this.opts.maxCostUsd, estimate.modelId,
         );
       }
       // Admission passed — hold the projection until record() settles it so
@@ -458,10 +490,9 @@ export class BudgetTracker {
 
     if (this.opts.maxCostUsd !== undefined && this.cumulativeUsd > this.opts.maxCostUsd) {
       // TX1: hard-throw — a single under-estimated call exceeded the cap.
-      this.fireExhausted();
-      throw new BudgetExhausted(
+      throw this.costExhausted(
         `${this.opts.label}: cumulative cost $${this.cumulativeUsd.toFixed(4)} exceeded --max-cost $${this.opts.maxCostUsd.toFixed(2)} after recording ${kind} call to ${actual.modelId}`,
-        { reason: 'cost', spent: this.cumulativeUsd, cap: this.opts.maxCostUsd, modelId: actual.modelId },
+        this.opts.maxCostUsd, actual.modelId,
       );
     }
   }
@@ -526,6 +557,15 @@ export class BudgetTracker {
         { reason: 'runtime', spent: elapsed, cap: this.opts.maxRuntimeMs, modelId },
       );
     }
+  }
+
+  /** The cost-cap BudgetExhausted; a derived cap's exhaustion is logged to E11 (A4). */
+  private costExhausted(message: string, cap: number, modelId: string): BudgetExhausted {
+    this.fireExhausted();
+    if (this.capSource === 'derived') {
+      recordAgentContractEvent({ command: this.opts.label, transport: this.opts.transport ?? 'cli', code: 'derived_cap_exhausted', effects: ['paid'], outcome: 'stopped' });
+    }
+    return new BudgetExhausted(message, { reason: 'cost', spent: this.cumulativeUsd, cap, modelId, capSource: this.capSource });
   }
 
   private fireExhausted(): void {

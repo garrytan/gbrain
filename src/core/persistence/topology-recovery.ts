@@ -2,7 +2,9 @@ import { topologyTransaction } from './topology-transaction.ts';
 import { existsSync, lstatSync, renameSync, rmSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots, withFilesystemPublication } from './filesystem-guard.ts';
@@ -19,9 +21,20 @@ import { assertPhysicalRoot } from './physical-root.ts';
 import { assertPhysicalRootStamp, readPhysicalRootReservation } from './physical-root-record.ts';
 import { resumeWorktreeRefreshes } from './worktree-refresh.ts';
 
+const cloneStatusFix=(sourceId:string):Action=>readFix(
+  `Shows source ${sourceId}'s owner, worktree state (recovering while a clone is unresolved) and blocking effects, read-only.`,
+  {argv:['gbrain','sources','writer','status','--source',sourceId,'--json']});
+/** A clone recovery that found bytes it cannot account for: it stops, keeps everything, and the owner re-checks on each pass. */
+function retainedClone(message:string,record:TopologyCloneRecovery,detail:string):OperationError{
+  return opError('recovery_required',message,
+    `${detail} Recovery of source ${record.sourceId}'s ${record.operation} stopped without moving or deleting anything, and the owner re-checks it on every recovery pass. Show the user the writer status and these paths; never delete them to force progress (docs/architecture/topologies.md, "Supported managed work and explicit repair").`,
+    {why:`Checkout ${record.target}, staging ${record.stage}, retained original ${record.aside}.`,fix:cloneStatusFix(record.sourceId)});
+}
 async function readChange(engine:BrainEngine,id:string):Promise<TopologyChange>{
   const [row]=await engine.executeRaw<TopologyChange>('SELECT * FROM persistence_topology_changes WHERE id=$1::uuid',[id]);
-  if(!row)throw new OperationError('not_found','Source lifecycle request not found.');
+  if(!row)throw opError('not_found','Source lifecycle request not found.',
+    `No source lifecycle request ${id} is recorded on this brain, so there is nothing to recover. Check writer status for the source's current state instead.`,
+    {fix:readFix('Shows every source binding, worktree state and blocking effect on this brain, read-only.',{argv:['gbrain','sources','writer','status','--json']})});
   return row;
 }
 function matchesCloneStage(target:string,stage:string):boolean{
@@ -34,25 +47,30 @@ function validateRecord(record:TopologyCloneRecovery):void{
     ||!matchesCloneStage(record.target,record.stage)
     ||!record.aside.startsWith(`${record.target}.gbrain-old-`)||!/[a-f0-9-]{36}$/.test(record.aside)
     ||canonicalFilesystemPath(record.target)!==record.target||canonicalFilesystemPath(record.stage)!==record.stage||canonicalFilesystemPath(record.aside)!==record.aside)
-    throw new OperationError('recovery_required','The recorded clone paths no longer belong to this owner.');
+    throw retainedClone('The recorded clone paths no longer belong to this owner.',record,
+      `The recovery record names paths or an owner host that this host (${localHostId()}) cannot vouch for.`);
 }
 function treeHash(path:string):string|null{
   if(!existsSync(path))return null;
-  if(lstatSync(path).isSymbolicLink())throw new OperationError('recovery_required','Recovery refuses a substituted symbolic link.');
+  if(lstatSync(path).isSymbolicLink())throw opError('recovery_required','Recovery refuses a substituted symbolic link.',
+    `${path} was replaced by a symbolic link, so clone recovery stopped without following or removing it. Show the user the path; the owner re-checks it on every recovery pass and stays blocked until the link is replaced by the recorded directory (docs/architecture/topologies.md).`);
   return worktreeManifest(path).digest;
 }
 function assertRetainedRoot(record:TopologyCloneRecovery,path:string):void{
   const reservation=readPhysicalRootReservation(record.target);
-  if(!reservation||reservation.worktreeId!==record.worktreeId)throw new OperationError('recovery_required','The retained checkout identity cannot be verified.');
+  if(!reservation||reservation.worktreeId!==record.worktreeId)throw retainedClone('The retained checkout identity cannot be verified.',record,
+    `${path} carries no physical-root reservation for worktree ${record.worktreeId}.`);
   assertPhysicalRootStamp(path,reservation);
 }
 function assertStagingOwned(record:TopologyCloneRecovery):void{
   if(!existsSync(record.stage))return;
   const current=topologyDirectoryIdentity(record.stage),expected=record.stageIdentity;
   if(!expected||current.device!==expected.device||current.inode!==expected.inode||current.birthNs!==expected.birthNs)
-    throw new OperationError('recovery_required','Unexpected staging directory identity; recovery retained its bytes.');
+    throw retainedClone('Unexpected staging directory identity; recovery retained its bytes.',record,
+      `The staging directory ${record.stage} is not the one this clone created (device/inode differ).`);
   if(record.afterHash!==null){
-    if(treeHash(record.stage)!==record.afterHash)throw new OperationError('recovery_required','Unexpected staged clone bytes; recovery retained them.');
+    if(treeHash(record.stage)!==record.afterHash)throw retainedClone('Unexpected staged clone bytes; recovery retained them.',record,
+      `The staged clone at ${record.stage} no longer matches the bytes this clone wrote.`);
     assertRetainedRoot(record,record.stage);
   }
 }
@@ -65,7 +83,8 @@ async function guard(tx:BrainEngine,row:TopologyChange,record:TopologyCloneRecov
   const [owner]=await tx.executeRaw<{owner_host_id:string;owner_epoch:string;state:string}>('SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE',[record.worktreeId]);
   const [host]=await tx.executeRaw<{local_path:string}>('SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[record.worktreeId,localHostId()]);
   if(!owner||owner.owner_host_id!==record.ownerHostId||String(owner.owner_epoch)!==record.ownerEpoch||owner.state!=='recovering'||host?.local_path!==record.target)
-    throw new OperationError('recovery_required','Ownership changed while the clone needed recovery.');
+    throw retainedClone('Ownership changed while the clone needed recovery.',record,
+      `Worktree ${record.worktreeId} no longer has owner epoch ${record.ownerEpoch} on this host in the recovering state.`);
   const members=await tx.executeRaw<{source_id:string}>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id',[record.worktreeId]);
   const sources=[...new Set([record.sourceId,...members.map(value=>value.source_id)])].sort();
   await tx.executeRaw('SELECT id FROM sources WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE',[sources]);
@@ -95,14 +114,17 @@ async function abortClone(engine:BrainEngine,row:TopologyChange,record:TopologyC
     if(target!==null)assertPhysicalRoot(record.target,{worktreeId:record.worktreeId});
     if(aside!==null){
       assertRetainedRoot(record,record.aside);
-      if(aside!==record.beforeHash||target!==null&&target!==record.afterHash)throw new OperationError('recovery_required','Unexpected clone recovery bytes; nothing was overwritten.');
+      if(aside!==record.beforeHash||target!==null&&target!==record.afterHash)throw retainedClone('Unexpected clone recovery bytes; nothing was overwritten.',record,
+        'The retained original or the checkout holds bytes this clone did not record, so restoring the original was not attempted.');
       removeOwnedStage(record);
       if(target!==null){renameSync(record.target,record.stage);flushTopologyDirectory(dirname(record.target));}
       renameSync(record.aside,record.target);flushTopologyDirectory(dirname(record.target));
     }else if(record.beforeHash===null){
-      if(target!==null&&target!==record.afterHash)throw new OperationError('recovery_required','Unexpected bytes occupy the interrupted clone destination.');
+      if(target!==null&&target!==record.afterHash)throw retainedClone('Unexpected bytes occupy the interrupted clone destination.',record,
+        `${record.target} holds content this clone did not write.`);
       if(target!==null){removeOwnedStage(record);renameSync(record.target,record.stage);flushTopologyDirectory(dirname(record.target));}
-    }else if(target!==record.beforeHash)throw new OperationError('recovery_required','The original checkout cannot be proven intact.');
+    }else if(target!==record.beforeHash)throw retainedClone('The original checkout cannot be proven intact.',record,
+      `${record.target} no longer matches the original checkout recorded before the clone.`);
     removeOwnedStage(record);
     if(record.beforeHash!==null)assertPhysicalRoot(record.target,{worktreeId:record.worktreeId});
     if(existsSync(dirname(record.target)))flushTopologyDirectory(dirname(record.target));
@@ -125,9 +147,13 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
           const [source]=await tx.executeRaw<{incarnation:string;last_commit:string|null;config:unknown}>('SELECT incarnation,last_commit,config FROM sources WHERE id=$1',[record.sourceId]);
           if(record.operation==='add'?!!source:!source||source.incarnation!==record.incarnation||source.last_commit!==record.checkpoint
             ||record.operation==='reclone'&&(parseSourceConfig(source?.config).remote_url??null)!==record.sourceRemoteUrl)
-            throw new OperationError('source_changed','The source identity/checkpoint changed while cloning.');
+            throw opError('source_changed','The source identity/checkpoint changed while cloning.',
+              `Source ${record.sourceId} was added, replaced, synced or repointed while its ${record.operation} cloned, so the clone is rolled back and the original checkout kept. Check writer status, then run the ${record.operation} again under a new request id if it is still wanted.`,
+              {fix:cloneStatusFix(record.sourceId)});
           if(record.operation==='reclone'&&await topologyCanonicalStamp(tx,record.worktreeId)!==record.canonicalStamp)
-            throw new OperationError('source_changed','The logical source changed while cloning; retry after its mirrors finish.');
+            throw opError('source_changed','The logical source changed while cloning; retry after its mirrors finish.',
+              `Pages in source ${record.sourceId} changed while it recloned, so the clone is rolled back and the original checkout kept. Wait until writer status shows no blocking effects for ${record.sourceId}, then run gbrain sources reclone ${record.sourceId} again under a new request id.`,
+              {fix:cloneStatusFix(record.sourceId)});
           await settleTopologyRequests(tx,sources,[record.worktreeId],row.principal_id);
           assertStagingOwned(record);
           const stage=treeHash(record.stage),target=treeHash(record.target),aside=treeHash(record.aside);
@@ -135,13 +161,17 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
             assertRetainedRoot(record,record.stage);
             if(aside!==null)assertRetainedRoot(record,record.aside);
             if(target!==null)assertPhysicalRoot(record.target,{worktreeId:record.worktreeId});
-            if(stage!==record.afterHash||aside!==null&&aside!==record.beforeHash)throw new OperationError('recovery_required','Staged clone bytes changed.');
+            if(stage!==record.afterHash||aside!==null&&aside!==record.beforeHash)throw retainedClone('Staged clone bytes changed.',record,
+              'The staged clone or the retained original changed after the clone verified them.');
             if(target!==null){
-              if(target!==record.beforeHash||aside!==null)throw new OperationError('recovery_required','The active checkout changed during clone preparation.');
+              if(target!==record.beforeHash||aside!==null)throw retainedClone('The active checkout changed during clone preparation.',record,
+                `${record.target} was edited after the clone recorded it, so it was not swapped out.`);
               renameSync(record.target,record.aside);flushTopologyDirectory(dirname(record.target));await hooks.boundary?.('old_moved');
-            }else if(record.beforeHash!==null&&aside!==record.beforeHash)throw new OperationError('recovery_required','The old checkout is missing from both recorded paths.');
+            }else if(record.beforeHash!==null&&aside!==record.beforeHash)throw retainedClone('The old checkout is missing from both recorded paths.',record,
+              'The original checkout is at neither the checkout path nor the retained path.');
             renameSync(record.stage,record.target);flushTopologyDirectory(dirname(record.target));await hooks.boundary?.('new_moved');
-          }else if(target!==record.afterHash)throw new OperationError('recovery_required','Neither a verified stage nor the published clone is present.');
+          }else if(target!==record.afterHash)throw retainedClone('Neither a verified stage nor the published clone is present.',record,
+            'Neither the staging directory nor the checkout holds the verified clone.');
           assertPhysicalRoot(record.target,{worktreeId:record.worktreeId});
           await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
           await withCoordinatedWrite(tx,sources,async()=>{
@@ -168,10 +198,13 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
       }
     }
     assertPhysicalRoot(record.target,{worktreeId:record.worktreeId});
-    if(treeHash(record.target)!==record.afterHash)throw new OperationError('recovery_required','The committed clone changed before recovery cleanup.');
+    if(treeHash(record.target)!==record.afterHash)throw retainedClone('The committed clone changed before recovery cleanup.',record,
+      `The clone is committed, but ${record.target} changed before its cleanup ran.`);
     const aside=treeHash(record.aside);
-    if(aside!==null&&aside!==record.beforeHash)throw new OperationError('recovery_required','The retained old checkout changed; cleanup requires inspection.');
-    if(existsSync(record.stage))throw new OperationError('recovery_required','Unexpected staging bytes remain after clone commitment.');
+    if(aside!==null&&aside!==record.beforeHash)throw retainedClone('The retained old checkout changed; cleanup requires inspection.',record,
+      `The clone is committed, but the retained original at ${record.aside} changed, so it was not removed.`);
+    if(existsSync(record.stage))throw retainedClone('Unexpected staging bytes remain after clone commitment.',record,
+      `The clone is committed, but ${record.stage} still exists.`);
     if(aside!==null){assertRetainedRoot(record,record.aside);rmSync(record.aside,{recursive:true,force:true});}
     flushTopologyDirectory(dirname(record.target));
     await topologyTransaction(engine,async tx=>{await guard(tx,row,record);await releaseReservation(tx,row,record,'committed');});

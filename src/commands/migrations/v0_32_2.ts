@@ -600,6 +600,7 @@ function finalizeResult(
 
 export const v0_32_2: Migration = {
   version: '0.32.2',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'Facts join the system-of-record — your hot memory now lives in markdown, indexed by the DB',
     description:

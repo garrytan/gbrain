@@ -12,8 +12,10 @@
 
 import { lstatSync, realpathSync } from 'fs';
 import { resolve, relative, sep } from 'path';
-import { OperationError } from './contract.ts';
+import { OperationError, opError } from './contract.ts';
 import type { AuthInfo, Operation, OperationContext } from './contract.ts';
+import type { Action } from '../agent-output.ts';
+import { hostFix, invalidParam, paramUse, readFix } from './op-fix.ts';
 import { CJK_SLUG_CHARS, SLUG_WORD_CHARS } from '../cjk.ts';
 import { ALL_SOURCES, NO_SOURCES, isValidSourceId } from '../source-id.ts';
 import { encodeDeepResearchId } from '../deep-research-id.ts';
@@ -22,6 +24,105 @@ import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
 import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
+
+// --- Agent-contract fixes shared by the op error sites ---
+
+/**
+ * A slug that can sit in a fix's argv as a bare positional: it cannot read as
+ * a flag and needs no shell quoting. Any other printable slug goes after `--`
+ * (the op parser honours it since D6); see getPageFix.
+ */
+export function cliSafeSlug(slug: unknown): slug is string {
+  return typeof slug === 'string' && /^[a-z0-9][a-z0-9._/:-]{0,254}$/i.test(slug);
+}
+
+/** Read-only: the sources this caller can read (MCP sources_list is grant-confined). */
+export function sourcesListFix(why: string): Action {
+  return readFix(why, { argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} } });
+}
+
+/** Read-only: one page by slug, scoped to a source when known. */
+export function getPageFix(slug: string, why: string, opts: { sourceId?: string; includeDeleted?: boolean; fuzzy?: boolean } = {}): Action | undefined {
+  if (typeof slug !== 'string' || !slug || slug.length > 512 || /[\u0000-\u001f\u007f\u2028\u2029]/.test(slug)) return undefined;
+  const source = opts.sourceId !== undefined && isValidSourceId(opts.sourceId) ? opts.sourceId : undefined;
+  const flags = [...(opts.includeDeleted ? ['--include-deleted'] : []), ...(opts.fuzzy ? ['--fuzzy'] : []), ...(source ? ['--source', source] : [])];
+  return readFix(why, {
+    // A slug like `--yes` or one with shell metacharacters lands after `--`; shellQuote quotes it in `command`.
+    argv: cliSafeSlug(slug) ? ['gbrain', 'get', slug, ...flags] : ['gbrain', 'get', ...flags, '--', slug],
+    mcp: { tool: 'get_page', arguments: { slug, ...(opts.includeDeleted ? { include_deleted: true } : {}), ...(opts.fuzzy ? { fuzzy: true } : {}), ...(source ? { source_id: source } : {}) } },
+  });
+}
+
+/** opError options carrying a fix only when one could be built. */
+export function withFix(fix: Action | undefined): { fix?: Action } {
+  return fix ? { fix } : {};
+}
+
+/**
+ * get_page's miss (#4516): where the slug lives when a trusted local probe
+ * found it in another source, otherwise the soft-delete / fuzzy check, as
+ * surface-correct prose plus the matching read.
+ */
+export function pageNotFoundError(
+  ctx: Pick<OperationContext, 'remote' | 'transport'>,
+  slug: string,
+  opts: { includeDeleted: boolean; sourceIdParam?: string; elsewhereSource?: string },
+): OperationError {
+  const retry = opts.includeDeleted ? `Check the slug or use ${paramUse(ctx, 'fuzzy')}` : `Page may be soft-deleted; pass ${paramUse(ctx, 'include_deleted')} to verify`;
+  const where = opts.elsewhereSource;
+  const explicit = opts.sourceIdParam !== ALL_SOURCES ? opts.sourceIdParam : undefined;
+  return opError('page_not_found', `Page not found: ${slug}`,
+    where !== undefined ? `Page exists in source '${where}' — pass ${paramUse(ctx, 'source', where)}. ${retry}` : retry,
+    withFix(where !== undefined
+      ? getPageFix(slug, `Reads the page from source ${where}, where it exists.`, { sourceId: where })
+      : getPageFix(slug, opts.includeDeleted ? 'Fuzzy-matches the slug.' : 'Shows the page if it is soft-deleted (deleted_at set).',
+        { sourceId: explicit, ...(opts.includeDeleted ? { fuzzy: true } : { includeDeleted: true }) })));
+}
+
+const HTTP_HOST = { remote: true, transport: 'http' } as const;
+const TOKEN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CLIENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+
+/** The OAuth client id when it is safe to name in a command. */
+function safeClientId(auth: Pick<AuthInfo, 'clientId' | 'principal'> | undefined): string | undefined {
+  return auth?.principal?.kind === 'oauth_client' && CLIENT_ID_RE.test(auth.clientId) ? auth.clientId : undefined;
+}
+
+/**
+ * B5/B6: the brain host operator's grant change for this connection (token
+ * flags or client flags), or the grant listing when the principal cannot be
+ * named. Credential-bearing callers reach the server over HTTP.
+ */
+function grantFix(
+  auth: Pick<AuthInfo, 'clientId' | 'principal'> | undefined,
+  change: { token: string[]; client: string[] },
+  why: string,
+  inputs?: Action['inputs'],
+): Action {
+  const principal = auth?.principal;
+  const clientId = safeClientId(auth);
+  const target = principal?.kind === 'legacy_token' && TOKEN_ID_RE.test(principal.id)
+    ? ['rescope-token', '--id', principal.id, ...change.token]
+    : clientId ? ['rescope-client', clientId, ...change.client] : null;
+  if (!target) {
+    return hostFix(HTTP_HOST, principal?.kind === 'oauth_client' ? ['gbrain', 'auth', 'clients', '--json'] : ['gbrain', 'auth', 'list'],
+      'Lists the grants so the operator can find and widen this connection.');
+  }
+  return { ...hostFix(HTTP_HOST, ['gbrain', 'auth', ...target], why, { consent: ['credentials'] }), ...(inputs ? { inputs } : {}) };
+}
+
+/** Grant at least one readable source to this connection (value supplied by the user). */
+function sourceGrantFix(auth: Pick<AuthInfo, 'clientId' | 'principal'> | undefined): Action {
+  return grantFix(auth, { token: ['--sources', '<sources>'], client: ['--federated-read', '<sources>'] },
+    'Grants this connection the sources it may read; only the brain host operator can change grants.',
+    [{ name: 'sources', how: 'Ask the user which source ids this connection should read (comma-separated; `gbrain sources list` on the brain host shows them).' }]);
+}
+
+/** Pending schema migrations on the brain host restore a degraded grant/fence projection. */
+function migrationsFix(ctx: Pick<OperationContext, 'remote' | 'transport'>): Action {
+  return hostFix(ctx, ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'],
+    'The oauth_clients projection predates the grant columns; applying the pending migrations lets the fence be evaluated again.');
+}
 
 // --- Upload validators (Fix 1 / B5 / H5 / M4) ---
 
@@ -48,14 +149,17 @@ export function validateUploadPath(filePath: string, root: string, strict = true
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('ENOENT')) {
-      throw new OperationError('invalid_params', `File not found: ${filePath}`);
+      throw opError('invalid_params', `File not found: ${filePath}`,
+        'Pass the path of an existing file; a relative path resolves against the working directory of the process running gbrain.');
     }
-    throw new OperationError('invalid_params', `Cannot resolve path: ${filePath}`);
+    throw opError('invalid_params', `Cannot resolve path: ${filePath}`,
+      'Pass a readable regular file: the path or one of its parent directories could not be resolved (permissions or a broken link).');
   }
   // Always reject final-component symlinks (basic safety for both modes).
   try {
     if (lstatSync(resolve(filePath)).isSymbolicLink()) {
-      throw new OperationError('invalid_params', `Symlinks are not allowed for upload: ${filePath}`);
+      throw opError('invalid_params', `Symlinks are not allowed for upload: ${filePath}`,
+        "Pass the link's real target path instead of the symlink (`realpath` prints it).");
     }
   } catch (e) {
     if (e instanceof OperationError) throw e;
@@ -69,11 +173,13 @@ export function validateUploadPath(filePath: string, root: string, strict = true
   try {
     realRoot = realpathSync(root);
   } catch {
-    throw new OperationError('invalid_params', `Confinement root not accessible: ${root}`);
+    throw opError('invalid_params', `Confinement root not accessible: ${root}`,
+      "The upload root (the server's working directory) is unreadable on the brain host; tell the user so its operator can fix that directory.");
   }
   const rel = relative(realRoot, real);
   if (rel === '' || rel.startsWith('..') || rel.startsWith(`..${sep}`) || resolve(realRoot, rel) !== real) {
-    throw new OperationError('invalid_params', `Upload path must be within the working directory: ${filePath}`);
+    throw opError('invalid_params', `Upload path must be within the working directory: ${filePath}`,
+      "Copy the file under the server's working directory and pass that path; a symlinked parent that resolves outside it is refused too.");
   }
   return real;
 }
@@ -109,16 +215,17 @@ const OP_PAGE_SLUG_SEG = `${OP_PAGE_SLUG_PART}(?::${OP_PAGE_SLUG_PART})*`;
  */
 export function validatePageSlug(slug: string): void {
   if (typeof slug !== 'string' || slug.length === 0) {
-    throw new OperationError('invalid_params', 'page_slug must be a non-empty string');
+    throw opError('invalid_params', 'page_slug must be a non-empty string', 'Pass a slug such as people/alice-example.');
   }
   if (slug.length > 255) {
-    throw new OperationError('invalid_params', 'page_slug exceeds 255 characters');
+    throw opError('invalid_params', 'page_slug exceeds 255 characters', 'Shorten the slug to 255 characters or fewer.');
   }
   // #3417: letters/numbers from any script allowed in segments (u flag required
   // for the \p{...} classes in OP_PAGE_SLUG_SEG). Shape rules (word-char lead,
   // dot/underscore/hyphen continuation) preserved.
   if (!new RegExp(`^${OP_PAGE_SLUG_SEG}(\\/${OP_PAGE_SLUG_SEG})*$`, 'iu').test(slug)) {
-    throw new OperationError('invalid_params', `Invalid page_slug: ${slug} (allowed: letters/numbers in any script, with '.', '_', '-' after the first character of a part, optional colon-separated namespace parts, and forward-slash separated segments)`);
+    throw opError('invalid_params', `Invalid page_slug: ${slug} (allowed: letters/numbers in any script, with '.', '_', '-' after the first character of a part, optional colon-separated namespace parts, and forward-slash separated segments)`,
+      'Use a slug shaped like people/alice-example or notes/v1.0.0: no spaces, backslashes, percent-encoding or dot-led segments.');
   }
 }
 
@@ -162,15 +269,20 @@ export function matchesSlugAllowList(slug: string, prefixes: readonly string[]):
 export function enforceSubagentSlugFence(ctx: OperationContext, slug: string, opName: string): void {
   if (ctx.viaSubagent !== true) return;
   if (typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) {
-    throw new OperationError('permission_denied', `${opName} via subagent requires ctx.subagentId`);
+    throw opError('permission_denied', `${opName} via subagent requires ctx.subagentId`,
+      'This is a gbrain dispatch fault, not a caller mistake: report it to the user instead of resubmitting the write.');
   }
   if (slugUnderSubagentFence(ctx, slug)) return;
   const allowList = ctx.allowedSlugPrefixes;
-  throw new OperationError(
+  const fenced = allowList && allowList.length > 0;
+  throw opError(
     'permission_denied',
-    allowList && allowList.length > 0
+    fenced
       ? `${opName} slug '${slug}' is not within the trusted-workspace allow-list (${allowList.join(', ')})`
       : `${opName} via subagent must write under 'wiki/agents/${ctx.subagentId}/...'`,
+    fenced
+      ? `Write to a slug matching one of: ${allowList.join(', ')}.`
+      : `Write under wiki/agents/${ctx.subagentId}/ (for example wiki/agents/${ctx.subagentId}/notes).`,
   );
 }
 
@@ -230,18 +342,20 @@ export function slugOutsideCallerFence(ctx: OperationContext, slug: string): boo
  */
 export function enforceClientSlugFence(ctx: OperationContext, slug: string, opName: string): void {
   if (ctx.auth?.fenceProjectionDegraded) {
-    throw new OperationError(
+    throw opError(
       'permission_denied',
       `${opName}: this brain's oauth_clients projection is missing bound_slug_prefixes, so the write fence cannot be evaluated. Refusing the write rather than running unfenced.`,
-      'Run `gbrain apply-migrations --yes` on the brain host.',
+      "The brain host's operator applies the pending migrations (command in fix); then repeat the write.",
+      { fix: migrationsFix(ctx) },
     );
   }
   const prefixes = ctx.auth?.boundSlugPrefixes;
   if (!prefixes) return;
   if (!slugUnderBoundPrefixes(prefixes, slug)) {
-    throw new OperationError(
+    throw opError(
       'permission_denied',
       `${opName}: slug '${slug}' is not under any of client ${ctx.auth?.clientId ?? '(unknown)'}'s bound_slug_prefixes (${prefixes.join(', ')})`,
+      `Write to a slug under ${prefixes.join(', ') || 'a granted prefix'}; only the brain host's operator can change this client's binding.`,
     );
   }
 }
@@ -381,11 +495,14 @@ export function opAllowedForBoundClient(
  * `gbrain auth rescope-token <name> --sources none`) refuses every operation:
  * it never falls back to the `default` floor for reads or writes.
  */
-export function noSourceGrantError(operation?: string): OperationError {
-  const err = new OperationError('permission_denied',
+export function noSourceGrantError(operation?: string, auth?: Pick<AuthInfo, 'clientId' | 'principal'>): OperationError {
+  const fix = sourceGrantFix(auth);
+  const err = opError('permission_denied',
     `${operation ? `${operation}: ` : ''}this token is granted no sources (its source grant is an explicit empty list).`,
-    'On the brain host, grant sources with: gbrain auth rescope-token <name> --sources <id,...>',
-    'docs/mcp/ADMIN.md#legacy-token-grants');
+    fix.inputs
+      ? "Ask the brain host's operator to grant this token at least one source (command in fix), then reconnect."
+      : "Ask the brain host's operator to find this token in the token list (command in fix) and grant it at least one source, then reconnect.",
+    { docs: 'docs/mcp/ADMIN.md#legacy-token-grants', fix });
   err.detail = 'fence=no_source_grant';
   return err;
 }
@@ -401,20 +518,25 @@ export function enforceBoundClientOpAllowList(
   auth: AuthInfo | undefined,
   op: Pick<Operation, 'name' | 'scope' | 'mutating'>,
 ): void {
-  if (auth?.sourceId === NO_SOURCES) throw noSourceGrantError(op.name);
+  if (auth?.sourceId === NO_SOURCES) throw noSourceGrantError(op.name, auth);
   if (opAllowedForBoundClient(auth, op)) return;
   if (auth?.grantProjectionDegraded || (Array.isArray(auth?.allowedOperations) && !auth.allowedOperations.includes(op.name))) {
-    const err = new OperationError('permission_denied', `${op.name} is outside this client's approved operation snapshot.`,
-      'Ask the operator to explicitly regrant the required operation; upgrading the server does not expand client grants.');
+    const err = opError('permission_denied', `${op.name} is outside this client's approved operation snapshot.`,
+      "Ask the brain host's operator to explicitly regrant the required operation (command in fix); upgrading the server does not expand client grants.",
+      { fix: auth?.grantProjectionDegraded ? migrationsFix(HTTP_HOST) : grantFix(auth, {
+        token: ['--refresh-operations', '--add', op.name],
+        client: ['--allowed-operations', [...new Set([...(auth?.allowedOperations ?? []), op.name])].join(',')],
+      }, `Adds ${op.name} to this connection's approved operations; only the brain host operator can change grants.`) });
     err.detail = 'fence=operation_grant';
     throw err;
   }
   const degraded = auth?.fenceProjectionDegraded === true;
   if (degraded) {
-    const err = new OperationError(
+    const err = opError(
       'permission_denied',
       `${op.name}: this brain's oauth_clients projection is missing bound_slug_prefixes, so client write bindings cannot be evaluated. Refusing every non-read operation rather than running unfenced.`,
-      'Run `gbrain apply-migrations --yes` on the brain host.',
+      "The brain host's operator applies the pending migrations (command in fix); then repeat the call.",
+      { fix: migrationsFix(HTTP_HOST) },
     );
     // Amendment 33 / D10: OP-level fence denial — the tools/list filter
     // (opAllowedForBoundClient, the same predicate) should have hidden this
@@ -423,10 +545,11 @@ export function enforceBoundClientOpAllowList(
     err.detail = 'fence=op';
     throw err;
   }
-  const err = new OperationError(
+  const clientId = safeClientId(auth);
+  const err = opError(
     'permission_denied',
     `${op.name} is not available to slug-bound clients: it can write outside client ${auth?.clientId ?? '(unknown)'}'s bound_slug_prefixes (${(auth?.boundSlugPrefixes ?? []).join(', ')}).`,
-    'Use put_page / add_timeline_entry / add_link under your own prefixes, or ask an operator to clear the binding with `gbrain auth rescope-client <id> --bound-slug-prefixes none`.',
+    `Use put_page / add_timeline_entry / add_link under your own prefixes, or ask the brain host's operator to clear the binding${clientId ? ` (gbrain auth rescope-client ${clientId} --bound-slug-prefixes none)` : ''}.`,
   );
   // Amendment 33 / D10: op-level, not argument-level — see above. The
   // slug-prefix ARGUMENT denials (enforceClientSlugFence) deliberately do
@@ -443,16 +566,17 @@ export function enforceBoundClientOpAllowList(
  */
 export function validateFilename(name: string): void {
   if (typeof name !== 'string' || name.length === 0) {
-    throw new OperationError('invalid_params', 'Filename must be a non-empty string');
+    throw opError('invalid_params', 'Filename must be a non-empty string', 'Pass a file name such as report-2026.pdf.');
   }
   if (name.length > 255) {
-    throw new OperationError('invalid_params', 'Filename exceeds 255 characters');
+    throw opError('invalid_params', 'Filename exceeds 255 characters', 'Shorten the file name to 255 characters or fewer.');
   }
   // v0.32.7: CJK ranges (Han / Hiragana / Katakana / Hangul) allowed in filenames.
   // Leading-dot / leading-dash rejection preserved.
   const FILENAME_RE = new RegExp(`^[a-zA-Z0-9${CJK_SLUG_CHARS}][a-zA-Z0-9${CJK_SLUG_CHARS}._\\-]*$`);
   if (!FILENAME_RE.test(name)) {
-    throw new OperationError('invalid_params', `Invalid filename: ${name} (allowed: alphanumeric, CJK, dot, underscore, hyphen — no leading dot/dash, no control chars or backslash)`);
+    throw opError('invalid_params', `Invalid filename: ${name} (allowed: alphanumeric, CJK, dot, underscore, hyphen — no leading dot/dash, no control chars or backslash)`,
+      'Rename the file to letters, digits, CJK, dots, underscores and hyphens, starting with a letter or digit (e.g. report-2026.pdf).');
   }
 }
 
@@ -478,7 +602,7 @@ export function validateFilename(name: string): void {
  * same precedence ladder — drift between sites is the bug class.
  */
 export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
-  if (ctx.sourceId === NO_SOURCES || ctx.auth?.sourceId === NO_SOURCES) throw noSourceGrantError();
+  if (ctx.sourceId === NO_SOURCES || ctx.auth?.sourceId === NO_SOURCES) throw noSourceGrantError(undefined, ctx.auth);
   const allowed = ctx.auth?.allowedSources;
   // Treat an empty `allowedSources: []` as "no federated read scope" — the
   // op-handler defers to scalar `ctx.sourceId` below. An attacker-controlled
@@ -495,7 +619,9 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
   }
   if (ctx.sourceId) return { sourceId: ctx.sourceId };
   if (ctx.remote !== false && allowed !== undefined) {
-    throw new OperationError('permission_denied', 'No readable source is granted for this request.');
+    throw opError('permission_denied', 'No readable source is granted for this request.',
+      "This connection's grant names no readable source; ask the brain host's operator to grant one (command in fix).",
+      { fix: sourceGrantFix(ctx.auth) });
   }
   return {};
 }
@@ -515,7 +641,8 @@ export function assertSourceInCallerScope(ctx: OperationContext, id: string): vo
   const scope = sourceScopeOpts(ctx);
   const allowed = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
   if (allowed && !allowed.includes(id)) {
-    throw new OperationError('not_found', `Unknown source: ${id}`);
+    throw opError('not_found', `Unknown source: ${id}`, 'Pass a source id from sources_list, which lists the sources this connection can read.',
+      { fix: sourcesListFix('Lists the sources this connection can read.') });
   }
 }
 
@@ -546,7 +673,8 @@ export function assertSourceInCallerWriteScope(ctx: OperationContext, id: string
   const bound = writeSource !== undefined || ctx.auth?.allowedSources !== undefined;
   if (!bound) return;
   if (writeSource === undefined || writeSource === ALL_SOURCES || id !== writeSource) {
-    throw new OperationError('not_found', `Unknown source: ${id}`);
+    throw opError('not_found', `Unknown source: ${id}`, "Name this connection's own write source; sources_list shows the sources it can read.",
+      { fix: sourcesListFix('Lists the sources this connection can read.') });
   }
 }
 
@@ -652,13 +780,15 @@ export function resolveRequestedScope(
       ? scope.sourceIds.includes(sourceIdParam)
       : scope.sourceId === sourceIdParam;
     if (ctx.remote !== false && !granted && !explicitReads?.includes(sourceIdParam)) {
-      throw new OperationError(
+      throw opError(
         'permission_denied',
         'Requested source is outside your granted sources',
         explicitReads === undefined
           ? 'Request access to this source, or omit source_id to search within your grant.'
           : explicitReadDeniedHint(ctx, sourceIdParam),
-        explicitReads === undefined ? undefined : EXPLICIT_READ_DOCS,
+        explicitReads === undefined
+          ? { fix: sourcesListFix('Lists the sources this connection can read; pass one of them as source_id, or omit it.') }
+          : { docs: EXPLICIT_READ_DOCS, fix: explicitReadDeniedFix(ctx, sourceIdParam) },
       );
     }
     return { sourceId: sourceIdParam };
@@ -702,6 +832,25 @@ function explicitReadDeniedHint(ctx: OperationContext, id: string): string {
 }
 
 /**
+ * The command behind explicitReadDeniedHint: widen the token's grant, or
+ * federate the source this connection's reads stop at (host-only either way).
+ */
+function explicitReadDeniedFix(ctx: OperationContext, id: string): Action | undefined {
+  const auth = ctx.auth;
+  if (auth !== undefined && (auth.allowedSources !== undefined || auth.hasSourceGrant !== false)) {
+    const granted = auth.allowedSources ?? (auth.sourceId !== undefined ? [auth.sourceId] : []);
+    const wanted = [...new Set([...granted, id])].join(',');
+    return grantFix(auth, { token: ['--sources', wanted], client: ['--federated-read', wanted] },
+      `Adds ${id} to this connection's readable sources; only the brain host operator can change grants.`);
+  }
+  const binding = ctx.explicitReadBinding;
+  const target = binding?.optedOut.includes(binding.sourceId) ? binding.sourceId : id;
+  if (!isValidSourceId(target)) return undefined;
+  return hostFix(ctx, ['gbrain', 'sources', 'federate', target],
+    `Lets unqualified and explicit reads from other connections include ${target}; only the trusted CLI on the brain host changes federation.`);
+}
+
+/**
  * #5081: the sources an explicit `source_id` read may name beyond the scope.
  * A grant (`ctx.auth.allowedSources`) governs alone. Otherwise a bound stdio
  * connection uses its binding's set, and an unbound connection uses the set
@@ -732,18 +881,20 @@ export function parseSourceIdParam(
   if (typeof raw === 'string') {
     if (raw === ALL_SOURCES) {
       if (opts?.allowAll === true) return raw;
-      throw new OperationError(
+      throw opError(
         'invalid_params',
         `${opName}: source_id '${ALL_SOURCES}' is not a valid target — this op acts on exactly one source.`,
         'Pass the single source_id of the row to target, or omit source_id to use the ambient source scope.',
+        { fix: sourcesListFix('Lists the source ids this caller can name.') },
       );
     }
     if (isValidSourceId(raw)) return raw;
   }
-  throw new OperationError(
+  throw opError(
     'invalid_params',
     `${opName}: invalid source_id ${JSON.stringify(raw)} — must be 1-32 lowercase alnum chars with optional interior hyphens.`,
-    'Pass a registered source id (see list_sources), or omit source_id to use the ambient source scope.',
+    'Pass a registered source id (sources_list shows them), or omit source_id to use the ambient source scope.',
+    { fix: sourcesListFix('Lists the source ids this caller can name.') },
   );
 }
 
@@ -821,12 +972,14 @@ export async function assertExplicitSourceLive(
     [sourceIdParam],
   );
   if (live.length > 0) return;
-  throw new OperationError(
+  const clientId = safeClientId(ctx.auth);
+  throw opError(
     'unknown_source',
     `source '${sourceIdParam}' does not exist (removed or archived)`,
     'Omit source_id to read within your grant, or pick an id from sources_list. ' +
       'If a .gbrain-source dotfile or a federated_read grant still names it, update them ' +
-      '(gbrain auth rescope-client <client_id>; gbrain doctor lists dangling grants).',
+      `(the brain host operator rescopes ${clientId ? `client ${clientId}'s` : 'the'} federated_read grant; gbrain doctor lists dangling grants).`,
+    { fix: sourcesListFix('Lists the live sources this caller can read.') },
   );
 }
 
@@ -866,7 +1019,8 @@ export async function requireWritablePage(
   if (writable) {
     if (ctx.viaSubagent === true && ctx.auth && isPrivatePage(writable)
       && await resolveExcludePrivatePages(ctx.engine, ctx.remote)) {
-      throw new OperationError('permission_denied', `${operation}: this page is outside your write visibility.`);
+      throw opError('permission_denied', `${operation}: this page is outside your write visibility.`,
+        'The page is private and this delegated write cannot see it; choose a different slug, or report the refusal to the user.');
     }
     return;
   }
@@ -879,17 +1033,20 @@ export async function requireWritablePage(
   if (spansAnotherSource) {
     const visible = await ctx.engine.getPage(slug, visibleScope);
     if (visible && visible.source_id !== writeSource) {
-      throw new OperationError(
+      throw opError(
         'permission_denied',
         `${operation}${endpoint === 'page' ? '' : ` ${endpoint}`} page "${slug}" is readable from source "${visible.source_id}" but this client writes to source "${writeSource}".`,
         'Graph mutations are same-source by design. Use a client whose write source owns the page, or import the page into your write source first.',
+        { why: `The page lives in source "${visible.source_id}"; this connection writes only to "${writeSource}".` },
       );
     }
   }
 
-  throw new OperationError(
+  throw opError(
     'page_not_found',
     `${operation}${endpoint === 'page' ? '' : ` ${endpoint}`} page "${slug}" was not found in writable source "${writeSource}".`,
+    `Check the slug (fuzzy lookup in fix), or create the page in source "${writeSource}" with put_page first.`,
+    withFix(getPageFix(slug, `Looks the slug up in source ${writeSource} with fuzzy matching.`, { sourceId: writeSource, fuzzy: true })),
   );
 }
 
@@ -909,9 +1066,12 @@ export async function reclassifyMutationTimePageMiss(
   endpoint: 'from' | 'to' | 'page',
 ): Promise<never> {
   await requireWritablePage(ctx, slug, operation, endpoint);
-  throw new OperationError(
+  const writeSource = ctx.sourceId || 'default';
+  throw opError(
     'page_not_found',
-    `${operation}${endpoint === 'page' ? '' : ` ${endpoint}`} page "${slug}" was unavailable in writable source "${ctx.sourceId || 'default'}" during the mutation.`,
+    `${operation}${endpoint === 'page' ? '' : ` ${endpoint}`} page "${slug}" was unavailable in writable source "${writeSource}" during the mutation.`,
+    'The page was deleted or restored while the write ran; read its current state (fix) before deciding whether to repeat the write.',
+    withFix(getPageFix(slug, 'Shows whether the page exists now, including a soft-deleted row.', { sourceId: writeSource, includeDeleted: true })),
   );
 }
 
@@ -932,6 +1092,7 @@ export function resolveCodeIntelScope(
   ctx: OperationContext,
   sourceIdParam: string | undefined,
   allSourcesParam = false,
+  opName = 'code_callers',
 ): { allSources: boolean; sourceId?: string } {
   const scope = resolveRequestedScope(ctx, sourceIdParam, allSourcesParam);
   if (scope.sourceId) return { allSources: false, sourceId: scope.sourceId };
@@ -939,19 +1100,18 @@ export function resolveCodeIntelScope(
     return { allSources: false, sourceId: scope.sourceIds[0] };
   }
   if (scope.sourceIds && scope.sourceIds.length > 1) {
-    throw new OperationError(
-      'invalid_params',
+    throw invalidParam(ctx, opName, 'source_id',
       'Code traversal runs against a single source. Specify source_id (one of your granted sources).',
-      'Pass source_id=<one of your sources>.',
-    );
+      { choices: scope.sourceIds });
   }
   // Empty scope: span everything only for trusted local callers; a remote caller
   // that reached here has no source in scope and must NOT get cross-source results.
   if (ctx.remote === false) return { allSources: true, sourceId: undefined };
-  throw new OperationError(
+  throw opError(
     'permission_denied',
     'No source in scope for this request.',
-    'Specify source_id, or check your granted sources.',
+    'Pass source_id naming one of your granted sources (sources_list shows them).',
+    { fix: sourcesListFix('Lists the sources this connection can read.') },
   );
 }
 
@@ -979,8 +1139,9 @@ export async function routeCodeIntelScope(
   ctx: OperationContext,
   sourceIdParam: string | undefined,
   allSourcesParam = false,
+  opName = 'code_callers',
 ): Promise<{ allSources: boolean; sourceId?: string }> {
-  const scope = resolveCodeIntelScope(ctx, sourceIdParam, allSourcesParam);
+  const scope = resolveCodeIntelScope(ctx, sourceIdParam, allSourcesParam, opName);
   if (
     sourceIdParam !== undefined || allSourcesParam ||
     scope.allSources || scope.sourceId === undefined ||
@@ -1009,15 +1170,12 @@ export async function routeCodeIntelScope(
  * mode → silently ignored (server-configured mode wins). Returns undefined to
  * mean "use the configured mode".
  */
-export function resolvePerCallMode(ctx: OperationContext, raw: unknown): string | undefined {
+export function resolvePerCallMode(ctx: OperationContext, raw: unknown, opName = 'query'): string | undefined {
   if (typeof raw !== 'string' || raw.length === 0) return undefined;
   if (ctx.remote !== false) return undefined; // remote can't select mode
   if (!isSearchMode(raw)) {
-    throw new OperationError(
-      'invalid_params',
-      `Unknown search mode '${raw}'. Valid: conservative, balanced, tokenmax.`,
-      `gbrain search "<query>" --mode balanced`,
-    );
+    throw invalidParam(ctx, opName, 'mode', `Unknown search mode '${raw}'. Valid: conservative, balanced, tokenmax.`,
+      { choices: ['conservative', 'balanced', 'tokenmax'], example: 'balanced' });
   }
   return raw;
 }

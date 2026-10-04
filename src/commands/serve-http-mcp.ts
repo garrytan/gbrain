@@ -14,13 +14,17 @@ import { opAllowedForBoundClient } from '../core/operations.ts';
 import { authTransport } from '../core/ops/contract.ts';
 import type { AuthInfo, Operation } from '../core/operations.ts';
 import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
-import { resolveMcpInstructions } from '../mcp/instructions.ts';
+import { installInstructionsResolver, resolveMcpInstructions } from '../mcp/instructions.ts';
+import { httpInstructionTools } from '../mcp/initialize-context.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from '../mcp/capabilities.ts';
 import { createSkillResources } from '../mcp/skill-resources.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
-import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, acceptedPendingReceipt, type ToolResult } from '../mcp/dispatch.ts';
+import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, type ToolResult } from '../mcp/dispatch.ts';
+import { toAgentError } from '../core/agent-output.ts';
+import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
+import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
 import { buildToolDefs } from '../mcp/tool-defs.ts';
 import {
@@ -182,6 +186,11 @@ function createMcpRequestServer(
       instructions: resolveMcpInstructions(config, process.env, { writeback: writebackOpts }),
     },
   );
+  // F1: the contract for THIS token's callable set + readiness tail, resolved at initialize.
+  installInstructionsResolver(server, async () => resolveMcpInstructions(config, process.env, {
+    writeback: writebackOpts,
+    tools: await httpInstructionTools(engine, config, { ops: mcpOperations, surface, auth: authInfo, allowedOps: surfaceAllowedOps, cache: ctx.readinessCache }),
+  }));
   installCapabilitiesResource(server, async () => {
     return { transport: authTransport(authInfo), client_id: authInfo.clientId,
       ...await resolveAuthCapabilities(authInfo, engine, config), administration: mcpAdministrationGuidance(mcpResourceUrl.toString()) };
@@ -199,7 +208,7 @@ function createMcpRequestServer(
 
 async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
   const { engine, config, broadcastEvent } = ctx;
-  const { authInfo, agentName, startTime, mcpOperations } = state;
+  const { authInfo, agentName, startTime, mcpOperations, surface, surfaceAllowedOps } = state;
   // WP1 honest catalog: the advertised list is exactly what THIS token
   // can call. Three per-request filters, cheapest first:
   //   1. token scope — a read-only token never sees admin/write tools;
@@ -221,10 +230,12 @@ async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
   // agent-only tokens with ZERO discovery — ops flagged `agentCallable`
   // (request_tools) are visible to (and callable by, below) agent scope
   // in addition to their declared scope.
+  // Agent contract v1 (A2): the one callability predicate (isCallable) plus
+  // the bound-client op fence.
+  const publishGates = publishGatesFromDisabled(mcpOperations, gateDisabled);
   const visibleOps = mcpOperations.filter(op =>
-    operationScopesAllowed(authInfo.scopes, op)
-    && opAllowedForBoundClient(authInfo, op)
-    && !gateDisabled.has(op.name),
+    isCallable(op, { transport: 'http', surface, scopes: authInfo.scopes, publishGates, allowedOps: surfaceAllowedOps })
+    && opAllowedForBoundClient(authInfo, op),
   );
   // WP3 (amendment 14): ONE schema mapper — the inline map this handler
   // carried is unified onto buildToolDefs so the byte-pin test covers the
@@ -359,6 +370,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       sourceId: tokenSourceId,
       ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
       metaHook: getBrainHotMemoryMeta,
+      ...(ctx.noticeLedger ? { noticeLedger: ctx.noticeLedger } : {}),
       // MEMORY_VERBS v1: fail-closed surface enforcement + usage attribution.
       ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}),
       surface,
@@ -403,7 +415,8 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       error: errorPayload,
       timestamp: new Date().toISOString(),
     });
-    return { content: [{ type: 'text', text: JSON.stringify({ error: errorPayload }) }], isError: true };
+    // Agent contract v1 (A1): the one envelope, not the nested legacy StructuredError.
+    return errorResult(e, { remote: true, transport: 'http', auth: authInfo, surface, ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}) }, { op: name });
   }
 
   return recordMcpToolResult(ctx, state, name, toolResult, logParamsObj, broadcastParams);
@@ -434,7 +447,9 @@ async function rejectUnknownMcpOperation(ctx: ServeHttpContext, state: McpReques
     error: { code: 'unknown_operation', message: `Unknown: ${name}` },
     timestamp: new Date().toISOString(),
   });
-  return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }], isError: true };
+  // Frozen v1 pair: `error: unknown_operation` stays; `code: unknown_tool`.
+  return unknownToolEnvelope(name, { remote: true, transport: 'http', auth: authInfo, surface: state.surface,
+    ...(state.surfaceAllowedOps ? { allowedOps: state.surfaceAllowedOps } : {}) }, 'unknown_operation');
 }
 
 async function rejectInsufficientMcpScope(
@@ -472,17 +487,9 @@ async function rejectInsufficientMcpScope(
     error: { code: 'insufficient_scope', message: `requires '${requiredScope}'` },
     timestamp: new Date().toISOString(),
   });
-  return {
-    content: [{
-      type: 'text',
-      text: JSON.stringify({
-        error: 'insufficient_scope',
-        message: `Operation ${name} requires '${requiredScope}' scope`,
-        your_scopes: authInfo.scopes,
-      }),
-    }],
-    isError: true,
-  };
+  const denial = scopeDeniedError({ op: name, required: [requiredScope], auth: authInfo, transport: 'http' });
+  const envelope = toAgentError(denial, { transport: 'http', op: name, render: dispatchRenderContext({ remote: true, transport: 'http', auth: authInfo }) });
+  return { content: [{ type: 'text', text: JSON.stringify({ ...envelope, your_scopes: authInfo.scopes }) }], isError: true };
 }
 
 async function recordMcpToolResult(
@@ -578,10 +585,7 @@ async function serveMcpRequest(server: Server, req: Request, res: Response): Pro
   } catch (e) {
     console.error('MCP request handler error:', e instanceof Error ? e.message : e);
     if (!res.headersSent) {
-      res.status(500).json({
-        error: 'internal_error',
-        message: e instanceof Error ? e.message : 'Unknown error',
-      });
+      res.status(500).json(toAgentError(e, { transport: 'http', render: dispatchRenderContext({ remote: true, transport: 'http' }) }));
     }
   }
 }

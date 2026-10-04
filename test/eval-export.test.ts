@@ -136,7 +136,7 @@ describe('gbrain eval export — NDJSON shape', () => {
     expect(lines.length).toBeLessThanOrEqual(1);
   });
 
-  test('invalid --tool value exits 1 (via process.exit mock check)', async () => {
+  test('invalid --tool value exits 2 (invalid_params, D4; via process.exit mock check)', async () => {
     // Replace process.exit so we can see the exit code without killing bun.
     const originalExit = process.exit;
     let exitCode: number | undefined;
@@ -149,10 +149,10 @@ describe('gbrain eval export — NDJSON shape', () => {
       await captureExport(['--tool', 'dance']);
     } catch { /* expected */ }
     process.exit = originalExit;
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(2);
   });
 
-  test('invalid --since format exits 1', async () => {
+  test('invalid --since format exits 2 (invalid_params, D4)', async () => {
     const originalExit = process.exit;
     let exitCode: number | undefined;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -164,7 +164,7 @@ describe('gbrain eval export — NDJSON shape', () => {
       await captureExport(['--since', 'yesterday']);
     } catch { /* expected */ }
     process.exit = originalExit;
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(2);
   });
 
   test('output is stream-friendly: each row on its own \\n-terminated line', async () => {

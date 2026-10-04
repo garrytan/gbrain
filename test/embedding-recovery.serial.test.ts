@@ -1464,7 +1464,8 @@ test('explicit archived admission: actual CLI refuses all three routes without l
         const dryRun = await run([...args, '--dry-run']);
         expect(dryRun.code).toBe(0);
         expect(readFileSync(calls, 'utf8')).toBe('');
-        const result = await run(args);
+        // An explicit backfill is paid work: authorized here so the archived-source refusal is what the run hits.
+        const result = await run([...args, '--yes']);
         expect({ code: result.code, diagnostic: result.code === 1 ? '' : result.stderr }).toEqual({ code: 1, diagnostic: '' });
         expect(result.stderr).toContain('gbrain sources restore');
         expect(result.stdout + result.stderr).not.toContain(privateBody);
@@ -1476,7 +1477,7 @@ test('explicit archived admission: actual CLI refuses all three routes without l
         expect(await snapshot()).toEqual(before);
         await engine.disconnect();
       }
-      expect((await run(['active-target'])).code).toBe(0);
+      expect((await run(['active-target', '--yes'])).code).toBe(0);
     });
   } finally {
     await engine.disconnect();

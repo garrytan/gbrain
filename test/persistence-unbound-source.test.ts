@@ -49,6 +49,7 @@ describe('receipt-delivered unbound_source failure', () => {
   test('leaves other owner_unavailable receipts unchanged', () => {
     const error = delivered('The accepted worktree ownership or source topology changed.');
     expect(error.detail).toBeUndefined();
-    expect(error.suggestion).toBe('Inspect this receipt before submitting a new request_id.');
+    expect(error.suggestion).toContain('ended failed with owner_unavailable; it will not publish. Read the receipt and the current state before deciding to submit again; a new attempt needs a new request_id.');
+    expect(error.suggestion).not.toContain('unbound');
   });
 });

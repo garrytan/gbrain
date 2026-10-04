@@ -245,9 +245,11 @@ describe('doctor mode matrix (registry runner, EO11)', () => {
     expect(run.ran.map((r) => r.entry)).toEqual(upTo(DB_GATE));
     expect(run.ran.at(-1)?.result).toBe('stop');
     expect(run.ran.find((r) => r.entry === indexOf(OFFLINE))?.result).toBeGreaterThanOrEqual(1);
-    expect(run.checks.filter((c) => c.name === 'connection')).toEqual([
-      { name: 'connection', status: 'warn', message: 'No database configured (filesystem checks only). Set GBRAIN_DATABASE_URL or run `gbrain init`.' },
-    ]);
+    const conn = run.checks.filter((c) => c.name === 'connection');
+    expect(conn).toHaveLength(1);
+    // E10: the message names the config path it looked in; the check carries a fix and an unknown readiness.
+    expect(conn[0]).toMatchObject({ name: 'connection', status: 'warn', readiness_state: 'unknown', fix: { argv: ['gbrain', 'init', '--pglite'] } });
+    expect(conn[0].message).toMatch(/^No database configured \(filesystem checks only; no URL in the environment or in .*config\.json\)\. Set GBRAIN_DATABASE_URL or run `gbrain init`\.$/);
     expect(run.ctx?.connectionFailed).toBe(false);
   }, 180_000);
 

@@ -38,6 +38,8 @@ const RETRACTED: Claim[] = [
   { claim: 'Verify via the `auto_links` field in the put_page response (`{ created', why: '#4679: same retracted inline auto_links promise' },
   { claim: 'No manual `add_link` calls needed for ordinary page writes', why: '#4679: HTTP writers need a host sweep or explicit add_link' },
   { claim: 'nobody else ships together', why: 'exclusivity claim retracted from the primary docs' },
+  { claim: 'post-upgrade [--execute', why: '`gbrain post-upgrade` has no --execute flag; `gbrain upgrade` runs it, `gbrain apply-migrations --yes` runs migrations by hand' },
+  { claim: '`gbrain upgrade` is the whole fix', why: 'an upgrade can need follow-up steps (migrations, repair previews); docs name the verify step instead (agent operator wave G3)' },
   { claim: 'keychain and survives', why: '#4741: the empty-dir hermetic config does not keep the macOS keychain login across logout' },
 ];
 

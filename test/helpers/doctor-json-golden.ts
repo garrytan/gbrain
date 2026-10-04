@@ -81,6 +81,8 @@ export async function runGbrain(h: DoctorHome, args: string[], env: Record<strin
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) childEnv[k] = v;
   for (const k of PROVIDER_ENV_KEYS) delete childEnv[k];
   for (const k of ['DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_REMOTE_CLIENT_SECRET', 'GBRAIN_PGLITE_SNAPSHOT', 'GBRAIN_SKILLS_DIR', 'OPENCLAW_WORKSPACE']) delete childEnv[k];
+  // harness_wiring reads agent markers and harness config homes: keep the golden independent of the host's harness.
+  for (const k of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'CODEX_HOME', 'OPENCODE', 'OPENCODE_PID', 'XDG_CONFIG_HOME']) delete childEnv[k];
   Object.assign(childEnv, {
     HOME: h.home,
     GBRAIN_HOME: h.home,

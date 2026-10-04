@@ -23,6 +23,7 @@ import { ALL_PHASES } from '../src/core/cycle.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runDream } from '../src/commands/dream.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { makeGitFixture } from './helpers/git-fixture.ts';
 
 let engine: PGLiteEngine;
 let dirA: string;
@@ -147,6 +148,8 @@ describe('gbrain dream honors GBRAIN_SOURCE like --source (#4778)', () => {
   }, 60_000);
 
   test('GBRAIN_SOURCE naming the sole non-default source keeps the full implicit cycle (#4700 no-regression)', async () => {
+    // A real checkout: the full cycle's sync phase must not fail (dream exits 1 on any failed phase).
+    await makeGitFixture(dirA);
     await seedSource('source-a', dirA);
     await withEnv({ GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: 'source-a' }, async () => {
       const report = await runDream(engine, ['--dry-run', '--json']);

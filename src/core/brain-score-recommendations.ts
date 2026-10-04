@@ -154,6 +154,12 @@ export interface RecommendationContext {
    * needed. Compute via `embeddingProviderConfigured()`.
    */
   embeddingProviderConfigured?: boolean;
+  /**
+   * E2: embeddings are off by choice (`init --no-embedding`). No embed step is
+   * planned and `missing_embeddings` classifies as `human_only` with the
+   * enable reason, never as a remediable or blocked gap.
+   */
+  embeddingsDisabled?: boolean;
   /** Configured chat / synthesis model id. */
   chatModel?: string;
   /** Whether the chat provider has a usable API key. */
@@ -224,7 +230,7 @@ export function computeRecommendations(
   // wrong in) vector search.
   // ---------------------------------------------------------------------
   const nullSigCohort = ctx.nullSignatureCohort ?? 0;
-  if ((health.missing_embeddings > 0 || nullSigCohort > 0) && ctx.embeddingProviderConfigured !== false) {
+  if ((health.missing_embeddings > 0 || nullSigCohort > 0) && ctx.embeddingProviderConfigured !== false && !ctx.embeddingsDisabled) {
     const params = {
       stale: true,
       sourceId: ctx.sourceId,
@@ -355,6 +361,9 @@ function classifyOne(check: Check, ctx: RecommendationContext): CheckClassificat
       }
       return { check: check.name, status: 'remediable' };
     case 'missing_embeddings':
+      if (ctx.embeddingsDisabled) {
+        return { check: check.name, status: 'human_only', reason: 'embeddings disabled by choice (keyless brain); enabling them is the user\'s decision' };
+      }
       if (ctx.embeddingProviderConfigured === false) {
         return { check: check.name, status: 'blocked', reason: 'embedding provider not configured' };
       }

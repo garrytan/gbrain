@@ -20,6 +20,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { dispatchToolCall, type DispatchOpts } from '../src/mcp/dispatch.ts';
 import { resolveMcpStdioSourceScope } from '../src/mcp/server.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { docsUrl } from '../src/core/agent-output.ts';
 
 const NATIVE_WINDOWS = process.platform === 'win32';
 const home = mkdtempSync(join(tmpdir(), 'gbrain-5081-5032-'));
@@ -83,7 +84,8 @@ describe('ENG-O14 #5081 + #5032', () => {
     const { isError, body } = await asWindows(() => call('put_page', { slug: 'calendar:planning', content: PAGE('Planning') }));
     expect(isError).toBe(true);
     expect(body.error).toBe('colon_slug_windows_write_through');
-    expect(body.docs).toBe('docs/guides/write-refusals.md#colon_slug_windows_write_through');
+    // Agent contract v1: the wire docs value is the absolute, version-pinned URL of the registry anchor.
+    expect(body.docs).toBe(docsUrl('docs/guides/write-refusals.md#colon_slug_windows_write_through'));
     expect(await engine.getPage('calendar:planning', { sourceId: 'work' })).toBeNull();
   }));
 

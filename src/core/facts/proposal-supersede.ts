@@ -26,7 +26,8 @@ import { contentHash } from '../utils.ts';
 import { withPageLock } from '../page-lock.ts';
 import { assertSourceFilesystemActive, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { resolvePageWriteTarget } from '../write-through.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { getProposal, transitionProposal, type ProposalRow } from '../ai/decide/proposals-store.ts';
 import { strikeFenceRow, supersededFact } from './forget.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
@@ -274,12 +275,16 @@ async function undoUnmanaged(engine: BrainEngine, proposal: ProposalRow): Promis
 // Managed path: coordinator mutation `decide_proposal`
 // ---------------------------------------------------------------------------
 
+const proposalsFix = (why: string) => readFix(why, { argv: ['gbrain', 'decide', 'proposals', 'list', '--status', 'all', '--json'] });
+
 /** Coordinator preparer: the same plan as the unmanaged path, published by the coordinator as one unit. */
 export async function prepareProposalMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const p = row.intent as { proposal_id?: number; action?: ProposalAction } | null;
   const id = Number(p?.proposal_id);
   if (row.operation !== DECIDE_PROPOSAL_OPERATION || !Number.isSafeInteger(id) || (p?.action !== 'accept' && p?.action !== 'undo') || row.authority.remote) {
-    throw new OperationError('permission_denied', 'Unsupported decide proposal intent.');
+    throw opError('permission_denied', 'Unsupported decide proposal intent.',
+      `Request ${row.request_id} in source ${row.source_id} is not a local accept or undo of a proposal, so the coordinator refused it and nothing changed. Decide proposals from the brain host's CLI with gbrain decide proposals accept or undo.`,
+      { fix: proposalsFix('Lists proposals with their ids and status, read-only.') });
   }
   const action = p.action;
   const proposal = await getProposal(engine, id);
@@ -293,13 +298,19 @@ export async function prepareProposalMutation(engine: BrainEngine, row: WriteReq
     const current = await getProposal(tx, id, true);
     const [o, n] = await Promise.all([loadPairFact(tx, proposal.old_fact_id, true), loadPairFact(tx, proposal.new_fact_id, true)]);
     if (current?.status !== proposal.status || !o || !n || !oldF || !newF || !sameFields(factFields(o), factFields(oldF)) || !sameFields(factFields(n), factFields(newF))) {
-      throw new OperationError('revision_conflict', 'The proposal or its facts changed during preparation.');
+      throw opError('revision_conflict', 'The proposal or its facts changed during preparation.',
+        `Proposal ${id} or its facts changed while request ${row.request_id} was prepared, so nothing was applied. Review its current status, then decide it again if it still applies.`,
+        { fix: proposalsFix(`Shows proposal ${id}'s current status, read-only.`) });
     }
   };
   const pageFor = async (body: string): Promise<PreparedMutation | undefined> => {
     if (!snapshot) return undefined;
     const page = await preparePage(engine, { ...row, intent: { ...row.intent, content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), expected_revision: observedRevision, force: false } }, config);
-    if (page.observedRevision !== observedRevision) throw new OperationError('revision_conflict', 'The fact page changed during preparation.');
+    if (page.observedRevision !== observedRevision) {
+      throw opError('revision_conflict', 'The fact page changed during preparation.',
+        `Fact page ${row.slug} in source ${row.source_id} changed while proposal ${id} (request ${row.request_id}) was prepared, so nothing was applied. Review the page and the proposal, then decide it again if it still applies.`,
+        { fix: readFix(`Shows page ${row.slug} as it is now, read-only.`, { argv: ['gbrain', 'get', '--source', row.source_id, '--', row.slug] }) });
+    }
     return page;
   };
   if (action === 'accept') {
@@ -356,7 +367,11 @@ async function submitManaged(engine: BrainEngine, proposal: ProposalRow, action:
   await initializeLocalPersistence(ctx as never);
   const principal = await requestPrincipalForContext(ctx as never);
   const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation, archived FROM sources WHERE id = $1', [sourceId]);
-  if (!source || source.archived) throw new OperationError('source_changed', 'The proposal source is not active.');
+  if (!source || source.archived) {
+    throw opError('source_changed', 'The proposal source is not active.',
+      `Proposal ${proposal.id} belongs to source ${sourceId}, which is archived or missing, so nothing changed. Restore the source to decide it (the user's call), or reject the proposal.`,
+      { fix: readFix('Lists sources with their archived state, read-only.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
+  }
   const oldF = await loadPairFact(engine, proposal.old_fact_id);
   const slug = oldF?.source_markdown_slug ?? oldF?.entity_slug ?? 'memory/unattributed';
   const authority = await submissionAuthority(ctx as never, DECIDE_PROPOSAL_OPERATION, sourceId, source.incarnation, slug);

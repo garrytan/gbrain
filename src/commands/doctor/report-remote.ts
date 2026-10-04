@@ -13,6 +13,8 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { LATEST_VERSION } from '../../core/migrate.ts';
 import { loadConfig } from '../../core/config.ts';
 import { loadCompletedMigrations } from '../../core/preferences.ts';
+import { isFreshInstallStamp } from '../../core/migration-ledger.ts';
+import { pendingFreshInstallCheck } from './checks/pending-fresh-install.ts';
 import { compareVersions } from '../migrations/index.ts';
 import { resolveHoursEnv } from '../../core/env-number.ts';
 import { schemaVersionHealth } from '../../core/schema-version-health.ts';
@@ -62,6 +64,8 @@ import {
   multiSourceDriftCheck,
   multiSourceDriftNotVerified,
 } from './schema-pack-checks.ts';
+import { brainScorePlanFix, checkError } from './check-fix.ts';
+import type { RenderContext } from '../../core/agent-output.ts';
 
 // Same alias the local doctor keeps for its own freshness checks; the alias
 // is a private one-liner in doctor.ts's check-fn library, so this module
@@ -70,7 +74,7 @@ const _resolveSyncFreshnessHours = resolveHoursEnv;
 
 export async function doctorReportRemote(
   engine: BrainEngine,
-  opts: { sourceIds?: string[]; remote?: boolean } = {},
+  opts: { sourceIds?: string[]; remote?: boolean; render?: RenderContext } = {},
 ): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -110,7 +114,7 @@ export async function doctorReportRemote(
       checks.push(await checkPgliteScratchProbe({ realInitFailed: true, storeDamageEvidence, realStorePath }));
     }
     // Without a connection, every other check is meaningless — short-circuit.
-    return computeDoctorReport(checks);
+    return computeDoctorReport(checks, { render: opts.render });
   }
 
   // 2. Schema version. Uses engine.getConfig('version') — the same engine-
@@ -123,7 +127,7 @@ export async function doctorReportRemote(
       ...schemaVersionHealth(version, LATEST_VERSION, { remote: true }),
     });
   } catch {
-    checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
+    checks.push(checkError('schema_version', 'check schema version'));
   }
 
   // 2b. #2038: idx_timeline_dedup shape. A renumbered-during-merge migration
@@ -152,7 +156,7 @@ export async function doctorReportRemote(
       });
     }
   } catch {
-    checks.push({ name: 'timeline_dedup_index', status: 'warn', message: 'Could not check idx_timeline_dedup shape' });
+    checks.push(checkError('timeline_dedup_index', 'check idx_timeline_dedup shape'));
   }
 
   // 2c. #550: pages(source_id, slug) upsert arbiter — same drift class as 2b.
@@ -203,13 +207,10 @@ export async function doctorReportRemote(
       name: 'brain_score',
       status: score >= 70 ? 'ok' : score >= 50 ? 'warn' : 'fail',
       message: `Brain score ${score}/100`,
+      ...(score >= 70 ? {} : { fix: brainScorePlanFix() }),
     });
   } catch (e) {
-    checks.push({
-      name: 'brain_score',
-      status: 'warn',
-      message: `Could not compute: ${e instanceof Error ? e.message : String(e)}`,
-    });
+    checks.push(checkError('brain_score', 'compute', e));
   }
 
   // 3b. Migration wedge hint (v0.31.8 — D14 + D19). The brain server's
@@ -218,14 +219,16 @@ export async function doctorReportRemote(
   // --yes. Same shape as the local doctor at line ~336.
   try {
     const completed = loadCompletedMigrations();
-    const byVersion = new Map<string, { complete: boolean; partial: boolean }>();
+    const byVersion = new Map<string, { complete: boolean; partial: boolean; ran: boolean }>();
     for (const entry of completed) {
-      const seen = byVersion.get(entry.version) ?? { complete: false, partial: false };
+      const seen = byVersion.get(entry.version) ?? { complete: false, partial: false, ran: false };
       if (entry.status === 'complete') seen.complete = true;
+      if (entry.status === 'complete' && !isFreshInstallStamp(entry)) seen.ran = true;
       if (entry.status === 'partial') seen.partial = true;
       byVersion.set(entry.version, seen);
     }
-    const completedVersions = Array.from(byVersion.entries()).filter(([, s]) => s.complete).map(([v]) => v);
+    // Fresh-install stamps are not forward progress (same rule as the local doctor).
+    const completedVersions = Array.from(byVersion.entries()).filter(([, s]) => s.ran).map(([v]) => v);
     const stuck = Array.from(byVersion.entries())
       .filter(([v, s]) => {
         if (!s.partial || s.complete) return false;
@@ -251,6 +254,9 @@ export async function doctorReportRemote(
         status: 'fail',
         message: `MINIONS HALF-INSTALLED on brain host: ${stuck.join(', ')}. Run on the host: gbrain apply-migrations --yes`,
       });
+    } else {
+      const setup = pendingFreshInstallCheck();
+      if (setup) checks.push(setup);
     }
   } catch {
     // Best-effort. A broken JSONL on the brain server should not stop the
@@ -445,5 +451,5 @@ export async function doctorReportRemote(
   const { remoteWaveHandoff } = await import('./wave-checks.ts');
   checks.push(...await remoteWaveHandoff(engine, opts.sourceIds));
 
-  return computeDoctorReport(checks);
+  return computeDoctorReport(checks, { render: opts.render });
 }

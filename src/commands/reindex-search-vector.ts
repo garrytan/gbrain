@@ -17,8 +17,10 @@
  *
  * Flags:
  *   --dry-run    Show what would happen, exit 0 without touching DB.
- *   --yes        Skip interactive [y/N]. Required for non-TTY (including --json).
- *   --json       Machine-readable result envelope. Does NOT imply --yes.
+ *   --yes        The user's approval (requireConsent, effect destructive). Without
+ *                it a non-interactive run (including --json) changes nothing and
+ *                exits 3 with the consent payload.
+ *   --json       Machine-readable result envelope. Does NOT imply consent.
  *
  * Backfill runs in id-keyset batches (BACKFILL_BATCH_SIZE rows per UPDATE)
  * so a large brain never holds one giant row lock, and streams progress
@@ -46,7 +48,8 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { getFtsLanguage, FTS_REINDEX_MARKER_KEY } from '../core/fts-language.ts';
 import { checkpointKey } from '../core/backfill-base.ts';
-import { createInterface } from 'readline';
+import { consentGate } from '../core/consent-cli.ts';
+import type { ConsentEnv } from '../core/consent.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
@@ -54,10 +57,15 @@ export interface ReindexSearchVectorOpts {
   dryRun?: boolean;
   yes?: boolean;
   json?: boolean;
+  /** Raw CLI argv for requireConsent (`--yes`, preapproval flags); default derived from `yes`. */
+  args?: readonly string[];
+  /** Consent seams (interactive probe, prompt reader). */
+  consentEnv?: ConsentEnv;
 }
 
 export interface ReindexSearchVectorResult {
-  status: 'ok' | 'dry_run' | 'cancelled';
+  /** `confirmation_required`: consent refused; the refusal was printed (exit verdict 3) and nothing changed. */
+  status: 'ok' | 'dry_run' | 'confirmation_required';
   language: string;
   pagesUpdated: number;
   chunksUpdated: number;
@@ -146,58 +154,32 @@ export async function runReindexSearchVector(
     } else {
       console.log(`[dry-run] Would recreate 2 trigger functions with language='${lang}'`);
       console.log(`[dry-run] Would backfill ${pagesCount} pages + ${chunksCount} chunks`);
-      console.log(`[dry-run] Skipping all DB writes. Pass --yes to apply.`);
+      console.log(`[dry-run] Skipping all DB writes. Applying needs the user's approval (gbrain reindex-search-vector asks).`);
     }
     return result;
   }
 
-  // Confirm unless --yes. --json does NOT bypass the gate — a machine
-  // caller must pass --yes explicitly (mirrors reindex-code, #1784).
-  if (!opts.yes) {
-    if (!process.stdin.isTTY) {
-      if (opts.json) {
-        console.log(JSON.stringify({
-          error: {
-            class: 'ConfirmationRequired',
-            code: 'reindex_requires_yes',
-            message: `Refusing to recreate FTS triggers + backfill ${pagesCount} pages + ${chunksCount} chunks without --yes in a non-TTY environment.`,
-            hint: 'Pass --yes to proceed, or --dry-run to preview.',
-          },
-          language: lang,
-          pages: pagesCount,
-          chunks: chunksCount,
-        }));
-      } else {
-        console.error('Refusing to run without --yes in non-TTY environment.');
-      }
-      process.exit(2);
-    }
-
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await new Promise<string>(resolve => {
-      rl.question(
-        `Recreate FTS triggers with language='${lang}' and backfill ${pagesCount} pages + ${chunksCount} chunks? [y/N]: `,
-        resolve
-      );
-    });
-    rl.close();
-
-    if (!/^y(es)?$/i.test(answer.trim())) {
-      const result: ReindexSearchVectorResult = {
-        status: 'cancelled',
-        language: lang,
-        pagesUpdated: 0,
-        chunksUpdated: 0,
-        triggersRecreated: 0,
-        durationMs: Date.now() - startedAt,
-      };
-      if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
-      } else {
-        console.log('Cancelled.');
-      }
-      return result;
-    }
+  // Consent (A4). --json does NOT imply it. Effect destructive: every page's
+  // and chunk's stored keyword index is rewritten in the new language. Not
+  // bound to a plan hash: the rows are derived data and the target is fully
+  // named by GBRAIN_FTS_LANGUAGE, so re-running under the previous language
+  // is the undo.
+  const auth = await consentGate({
+    command: 'reindex-search-vector',
+    effects: ['destructive'],
+    actor: 'agent',
+    what: `Rebuild the keyword search index in language '${lang}'`,
+    why: `Recreates the full-text trigger functions with language '${lang}' (from GBRAIN_FTS_LANGUAGE) and re-tokenizes ${pagesCount} page(s) and ${chunksCount} chunk(s), so keyword search matches that language.`,
+    risk: `Rewrites the stored keyword index of every page and chunk; keyword search uses '${lang}' rules afterwards and is split until the run finishes `
+      + '(an interrupted run resumes with the same command; gbrain doctor reports fts_reindex_incomplete meanwhile). Page text is not touched. '
+      + 'Undo: run this command again with GBRAIN_FTS_LANGUAGE set to the previous language.',
+    user_message: `Rebuild the keyword search index of ${pagesCount} page(s) in '${lang}'? It can take minutes on a large brain; page text is not changed.`,
+    argv: ['gbrain', 'reindex-search-vector', ...(opts.json ? ['--json'] : [])],
+    preview_argv: ['gbrain', 'reindex-search-vector', '--dry-run', '--json'],
+    args: opts.args ?? (opts.yes ? ['--yes'] : []),
+  }, { json: opts.json === true, env: opts.consentEnv });
+  if (!auth) {
+    return { status: 'confirmation_required', language: lang, pagesUpdated: 0, chunksUpdated: 0, triggersRecreated: 0, durationMs: Date.now() - startedAt };
   }
 
   // Recreate trigger functions. The strings are intentionally identical to
@@ -320,7 +302,7 @@ export async function runReindexSearchVector(
  * CLI entrypoint. Parses argv flags and dispatches to runReindexSearchVector.
  * Matches the style of `reindex-code`: --dry-run, --yes/-y, --json.
  *
- * Exit codes: 0 success/dry-run/cancelled, 2 if non-TTY without --yes.
+ * Exit codes: 0 success/dry-run, 3 when consent is required (refusal printed).
  */
 export async function runReindexSearchVectorCli(
   engine: BrainEngine,
@@ -330,5 +312,5 @@ export async function runReindexSearchVectorCli(
   const yes = args.includes('--yes') || args.includes('-y');
   const json = args.includes('--json');
 
-  await runReindexSearchVector(engine, { dryRun, yes, json });
+  await runReindexSearchVector(engine, { dryRun, yes, json, args: yes && !args.includes('--yes') ? [...args, '--yes'] : args });
 }

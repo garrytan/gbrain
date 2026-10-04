@@ -12,6 +12,7 @@ import { startHeartbeat } from '../../../core/progress.ts';
 import { checkUnverifiedExtractions } from './extraction-sync.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { checkError } from '../check-fix.ts';
 
 async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
   const { args, progress } = ctx;
@@ -409,11 +410,7 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
     // OOM, disk full, etc.). Pre-v0.38.2.0 (PR #1287) had an unreachable
     // abort-classifier branch here; removed because timer-based aborts
     // in a sync walker can't surface as a thrown error anyway.
-    checks.push({
-      name: 'frontmatter_integrity',
-      status: 'warn',
-      message: `Could not scan frontmatter: ${e instanceof Error ? e.message : String(e)}`,
-    });
+    checks.push(checkError('frontmatter_integrity', 'scan frontmatter', e));
   } finally {
     fmHb();
   }

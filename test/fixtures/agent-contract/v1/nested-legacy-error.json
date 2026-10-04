@@ -1,0 +1,31 @@
+{
+  "error": {
+    "class": "UsageError",
+    "code": "code_def_requires_symbol",
+    "message": "code-def requires a symbol name",
+    "hint": "gbrain code-def <symbol> [--json]"
+  },
+  "code": "code_def_requires_symbol",
+  "fix": {
+    "argv": [
+      "gbrain",
+      "code-def",
+      "--help",
+      "--brain",
+      "host",
+      "--source",
+      "default"
+    ],
+    "command": "gbrain code-def --help --brain host --source default",
+    "consent": [],
+    "actor": "agent",
+    "why": "Shows the required symbol argument.",
+    "requires_exclusive": false
+  },
+  "docs_cmd": [
+    "gbrain",
+    "errors",
+    "code_def_requires_symbol"
+  ],
+  "contract_version": 1
+}

@@ -83,7 +83,7 @@ describe('company connect public CLI', () => {
     expect(inspected.code).toBe(0);
     const command = ['sources', 'connect', '--plan', out, '--brain', 'host', '--source', 'wiki', '--json'];
     const preview = run(f.home, command);
-    expect(preview.code).toBe(2);
+    expect(preview.code).toBe(3); // exit 3 is confirmation_required's only meaning (contract v1)
     expect(JSON.parse(preview.out)).toMatchObject({ schema_version: 1, code: 'confirmation_required', preview: { sourceId: 'wiki', managed: false } });
     expect(await sources(f)).toEqual([{ id: 'default' }]);
     expect(readFileSync(f.configFile)).toEqual(config);

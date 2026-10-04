@@ -8,6 +8,8 @@
  */
 
 import { loadCompletedMigrations } from '../../../core/preferences.ts';
+import { isFreshInstallStamp } from '../../../core/migration-ledger.ts';
+import { pendingFreshInstallCheck } from './pending-fresh-install.ts';
 import { compareVersions } from '../../migrations/index.ts';
 import { bootstrapDoctorChecks } from '../bootstrap-checks.ts';
 import { buildMemorableRelayCheck } from './integrations-memorable.ts';
@@ -15,6 +17,7 @@ import { buildMemoryWritebackCheck } from './memory-writeback.ts';
 import { checkBunRuntime, checkSelfUpgradeHealth, checkUpgradeErrors } from './upgrade-health.ts';
 import type { Check } from '../../doctor.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
+import { checkError } from '../check-fix.ts';
 
 async function runBootstrapChecks(ctx: DoctorContext): Promise<Check[]> {
   const { engine } = ctx;
@@ -91,7 +94,7 @@ async function runConnectors(ctx: DoctorContext): Promise<Check[]> {
       const { dreamPaidLoopCheck } = await import('./dream-breaker.ts');
       checks.push(await dreamPaidLoopCheck(engine));
     } catch (e) {
-      checks.push({ name: 'dream_paid_loop', status: 'warn', message: `Could not count dead dream submissions: ${e instanceof Error ? e.message : String(e)}` });
+      checks.push(checkError('dream_paid_loop', 'count dead dream submissions', e));
     }
   }
   return checks;
@@ -124,15 +127,18 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
   // flag forever, even on installs that have been at v0.22+ for months.
   try {
     const completed = loadCompletedMigrations();
-    const byVersion = new Map<string, { complete: boolean; partial: boolean }>();
+    const byVersion = new Map<string, { complete: boolean; partial: boolean; ran: boolean }>();
     for (const entry of completed) {
-      const seen = byVersion.get(entry.version) ?? { complete: false, partial: false };
+      const seen = byVersion.get(entry.version) ?? { complete: false, partial: false, ran: false };
       if (entry.status === 'complete') seen.complete = true;
+      if (entry.status === 'complete' && !isFreshInstallStamp(entry)) seen.ran = true;
       if (entry.status === 'partial') seen.partial = true;
       byVersion.set(entry.version, seen);
     }
+    // Init's fresh-install stamps are not forward progress: a newer stamped
+    // no-op must never hide a real partial on a new brain.
     const completedVersions = Array.from(byVersion.entries())
-      .filter(([, s]) => s.complete)
+      .filter(([, s]) => s.ran)
       .map(([v]) => v);
     const stuck = Array.from(byVersion.entries())
       .filter(([v, s]) => {
@@ -178,6 +184,9 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
         status: 'fail',
         message: `MINIONS HALF-INSTALLED (partial migration: ${stuck.join(', ')}). Run: gbrain apply-migrations --yes`,
       });
+    } else {
+      const setup = pendingFreshInstallCheck();
+      if (setup) checks.push(setup);
     }
     // Note: the "no preferences.json but schema is v7+" case is detected
     // in the DB section below (needs schema version).

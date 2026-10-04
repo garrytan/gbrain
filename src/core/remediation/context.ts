@@ -8,6 +8,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { RecommendationContext } from '../brain-score-recommendations.ts';
+import { embeddingsDisabled } from '../embedding-disabled.ts';
 
 // Re-export so consumers can `import { RecommendationContext } from '../remediation'`
 // — the canonical RecommendationContext type still lives in
@@ -33,6 +34,23 @@ export async function staleExtractionBlocked(engine: BrainEngine, sourceId?: str
 }
 
 /**
+ * E3: the repo the plan can act on when `sync.repo_path` is unset — the
+ * `default` source's local path, else the first non-archived source with one
+ * (multi-source brains record paths per source, not in `sync.repo_path`).
+ */
+export async function firstSourceLocalPath(engine: BrainEngine): Promise<string | null> {
+  try {
+    const rows = await engine.executeRaw<{ local_path: string }>(
+      `SELECT local_path FROM sources WHERE NOT archived AND local_path IS NOT NULL AND local_path <> ''
+        ORDER BY (id = 'default') DESC, id LIMIT 1`,
+    );
+    return rows[0]?.local_path ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Build RecommendationContext from engine + config. Pure read; no
  * side effects. Used by computeRemediationPlan, runRemediation, and
  * the doctor CLI surface.
@@ -40,7 +58,7 @@ export async function staleExtractionBlocked(engine: BrainEngine, sourceId?: str
 export async function loadRecommendationContext(
   engine: BrainEngine,
 ): Promise<RecommendationContext> {
-  const repoPath = await engine.getConfig('sync.repo_path');
+  const repoPath = (await engine.getConfig('sync.repo_path')) ?? await firstSourceLocalPath(engine);
   let embeddingModel: string | undefined;
   let embeddingDimensions: number | undefined;
   try {
@@ -87,6 +105,7 @@ export async function loadRecommendationContext(
     embeddingModel,
     embeddingDimensions,
     embeddingProviderConfigured: embeddingConfigured,
+    embeddingsDisabled: await embeddingsDisabled(engine),
     // #3944: shared env+file-plane probe (same helper as autopilot's
     // dispatch loop, so the two planners can never disagree on this).
     hasChatApiKey: chatApiKeyConfigured(fileCfg),

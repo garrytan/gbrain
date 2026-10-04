@@ -59,7 +59,10 @@ describe('attendance repair CLI authority and private receipts', () => {
   ].map(args => [args]))('invalid command refuses before creating a brain: %j', async args => {
     const before = readdirSync(home);
     const result = await runCli(['extract', ...args], { home, cwd: home, env, timeoutMs: 20_000 });
-    expect(result.exitCode).toBe(1);
+    // Agent contract v1 A3/D1: an invocation the parser rejects is a usage error (exit 2); later refusals exit 1.
+    let parseRejects = false;
+    try { parseAttendanceRepairArgs(args, { remote: false }); } catch { parseRejects = true; }
+    expect(result.exitCode).toBe(parseRejects ? 2 : 1);
     expect(result.stderr).not.toContain('Setting up brain schema');
     expect(readdirSync(home)).toEqual(before);
   }, 30_000);

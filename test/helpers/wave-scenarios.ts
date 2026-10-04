@@ -9,6 +9,7 @@ import { expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { doctorReportRemote } from '../../src/commands/doctor.ts';
 import { remediationExitStatus, runRemediate, runRemediationPlan } from '../../src/commands/doctor/remediate.ts';
+import { approvedRemediateArgs } from './remediate-approval.ts';
 import { REMOTE_HOST_ACTION, remoteWaveHandoff } from '../../src/commands/doctor/wave-checks.ts';
 import { currentExitCode, setCliExitVerdict } from '../../src/core/cli-force-exit.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
@@ -31,7 +32,8 @@ export async function capture(run: () => Promise<void>): Promise<{ out: string; 
 }
 
 const json = async (engine: BrainEngine, args: string[], fn = runRemediate) => {
-  const result = await capture(() => fn(engine, args));
+  const approved = fn === runRemediate ? await approvedRemediateArgs(engine, args) : args;
+  const result = await capture(() => fn(engine, approved));
   return { ...result, body: JSON.parse(result.out) };
 };
 

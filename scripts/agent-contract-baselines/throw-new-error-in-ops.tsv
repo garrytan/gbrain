@@ -1,0 +1,3 @@
+# shrink-only baseline for scripts/check-agent-contract.ts rule throw-new-error-in-ops: path<TAB>count
+src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	2
+src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	1

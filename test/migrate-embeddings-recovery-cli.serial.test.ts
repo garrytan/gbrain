@@ -195,8 +195,8 @@ test('both actual migration CLI routes reject unsupported or malformed controls 
             cwd: home, env, stdout: 'pipe', stderr: 'pipe',
           });
           const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-          expect(code).toBe(1);
-          expect(JSON.parse(stdout)).toMatchObject({ status: 'error', reason: 'invalid_flag' });
+          expect(code).toBe(2); // usage error (agent contract v1 A3); legacy keys kept, v1 envelope added
+          expect(JSON.parse(stdout)).toMatchObject({ status: 'error', reason: 'invalid_flag', code: 'unknown_flag' });
           if (['--source', '--slugs'].includes(flag)) expect(stderr).toContain(`unknown flag ${flag}`);
           else expect(stderr).toContain(flag);
           expect(stderr).not.toContain('PGLite');

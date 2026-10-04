@@ -1,0 +1,5 @@
+# shrink-only baseline for scripts/check-agent-contract.ts rule yes-rerun-string: path<TAB>count
+src/commands/db-repair.ts	1
+src/core/page-state/credential-reseal.ts	1
+src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	2
+src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	1

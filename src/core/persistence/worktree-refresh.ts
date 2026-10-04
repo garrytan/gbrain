@@ -24,7 +24,9 @@ import type { SyncResult } from '../../commands/sync.ts';
 import { execFileBounded } from '../brain-repo-durability.ts';
 import { loadConfig } from '../config.ts';
 import { catalogueError, type CatalogueName } from '../error-catalogue.ts';
-import { OperationError } from '../ops/contract.ts';
+import type { Action } from '../agent-output.ts';
+import { opError, OperationError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { recordUpstreamObservation } from '../sync-upstream.ts';
 import { checkpointRetryCommand } from './checkpoint-validation.ts';
 import { localHostId, persistenceHome } from './identity.ts';
@@ -68,6 +70,8 @@ function refusal(name: CatalogueName, cause: string, fix: string, refreshId?: st
   if (refreshId) error.detail = `refresh_id=${refreshId}`;
   return error;
 }
+const writerStatusFix = (why: string, sourceId?: string): Action => readFix(why,
+  { argv: ['gbrain', 'sources', 'writer', 'status', ...(sourceId ? ['--source', sourceId] : []), '--json'] });
 const q = (value: string) => /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 
 /** Hardened git: no prompts, no user hooks, untranslated output, bounded. */
@@ -97,7 +101,11 @@ async function isAncestor(git: Git, root: string, ancestor: string, descendant: 
 /** Uncommitted paths (ignored files excluded) split into those the incoming diff touches and the rest. */
 async function dirtyOverlap(git: Git, root: string, from: string, to: string): Promise<{ overlap: string[]; preserved: string[]; incoming: number }> {
   const status = await git(['-C', root, 'status', '--porcelain=v1', '-z', '--untracked-files=normal']);
-  if (status.code !== 0) throw new OperationError('storage_error', `git status failed in ${root}: ${status.stderr.trim().split('\n')[0]}`);
+  if (status.code !== 0) {
+    throw opError('storage_error', `git status failed in ${root}: ${status.stderr.trim().split('\n')[0]}`,
+      `Git could not read the checkout at ${root}, so the refresh stopped before merging and the checkout was not changed. Fix what git status reports there, check the refresh state, then rerun gbrain sources refresh for that source with --resume or --abandon.`,
+      { fix: writerStatusFix('Shows any refresh holding these sources in draining or fenced state, read-only.') });
+  }
   const dirty: string[] = [];
   const fields = status.stdout.split('\0');
   for (let i = 0; i < fields.length; i++) {
@@ -107,7 +115,11 @@ async function dirtyOverlap(git: Git, root: string, from: string, to: string): P
     if (entry[0] === 'R' || entry[0] === 'C') dirty.push(fields[++i]);
   }
   const diff = await git(['-C', root, 'diff', '--name-only', '-z', '--no-renames', from, to]);
-  if (diff.code !== 0) throw new OperationError('storage_error', `git diff failed in ${root}: ${diff.stderr.trim().split('\n')[0]}`);
+  if (diff.code !== 0) {
+    throw opError('storage_error', `git diff failed in ${root}: ${diff.stderr.trim().split('\n')[0]}`,
+      `Git could not compare ${from} with ${to} in ${root}, so the refresh stopped before merging and the checkout was not changed. Make sure both commits exist locally (fetch again if needed), check the refresh state, then rerun gbrain sources refresh for that source with --resume or --abandon.`,
+      { fix: writerStatusFix('Shows any refresh holding these sources in draining or fenced state, read-only.') });
+  }
   const incoming = diff.stdout.split('\0').filter(Boolean);
   const touches = (path: string) => incoming.some(file => file === path || (path.endsWith('/') && file.startsWith(path)) || path.startsWith(`${file}/`));
   const ours = (path: string) => isPhysicalRootMetadata(path.replace(/\/$/, '')) || path === '.gbrain-managed' || path.startsWith('.gbrain-managed/');
@@ -132,7 +144,11 @@ async function readActiveRefresh(engine: BrainEngine, worktreeId: string): Promi
 }
 async function readRefresh(engine: BrainEngine, id: string): Promise<WorktreeRefreshRow> {
   const [row] = await engine.executeRaw<WorktreeRefreshRow>('SELECT * FROM persistence_worktree_refreshes WHERE id=$1::uuid', [id]);
-  if (!row) throw new OperationError('not_found', 'The worktree refresh record disappeared.');
+  if (!row) {
+    throw opError('not_found', 'The worktree refresh record disappeared.',
+      `Refresh ${id}'s record is gone, so another process finished or removed it. Check the writer status before refreshing again.`,
+      { fix: writerStatusFix('Shows the current refresh and drain state of every managed source, read-only.') });
+  }
   return row;
 }
 /** Conditional transition: returns false when another process already moved the row. */
@@ -181,7 +197,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
   const active = await readActiveRefresh(engine, binding.worktree_id);
   if (active) throw refusal('refresh_in_progress', `Refresh ${active.id} of this worktree is ${active.state}; only one refresh per worktree runs at a time.`,
     `gbrain sources refresh ${sourceId} --resume`, active.id);
-  if (binding.state !== 'active' || await worktreeRecoveryPending(engine, binding.worktree_id)) throw refusal('refresh_recovery_required',
+  if (binding.state !== 'active' || await worktreeRecoveryPending(engine, binding)) throw refusal('refresh_recovery_required',
     'Publication or topology recovery is pending on this worktree; the checkout must not move until it is recovered.',
     `gbrain sources writer status ${sourceId}, let the owner finish recovery, then gbrain sources refresh ${sourceId}`);
   const members = (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id',
@@ -221,16 +237,30 @@ function dirtyRefusal(sourceId: string, overlap: string[], refreshId?: string): 
     `Commit or discard those paths (check gbrain sources writer status ${sourceId} --json for pending git effects first), then retry gbrain sources refresh ${sourceId}.`, refreshId);
 }
 /**
- * Recovery no live execution will finish. A recovery record under an unexpired
- * running claim is an in-flight publication; the drain step waits for it.
+ * Recovery no live execution will finish. A publisher holds the worktree native
+ * lock from its claim until it clears its recovery record, and that clear runs
+ * after the receipt commits (coordinator `completeWrite`, then
+ * `clearResolvedRecovery`). So a request or effect record is in flight, and left
+ * to the drain step, while it is under an unexpired running claim or while the
+ * worktree lock is held; only a record still present while this probe holds
+ * that lock (no live process can finish it) refuses.
+ * Topology recovery always refuses.
  */
-async function worktreeRecoveryPending(engine: BrainEngine, worktreeId: string): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ pending: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
+async function worktreeRecoveryPending(engine: BrainEngine, binding: WorktreeBinding): Promise<boolean> {
+  const probe = async () => (await engine.executeRaw<{ publication: boolean; topology: boolean }>(`SELECT
+    EXISTS (SELECT 1 FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
       AND NOT (state='running' AND claim_expires_at > now()))
     OR EXISTS (SELECT 1 FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
-      AND NOT (state='running' AND claim_expires_at > now()))
-    OR EXISTS (SELECT 1 FROM persistence_topology_changes WHERE recovery IS NOT NULL AND recovery->>'worktreeId'=$1::text) AS pending`, [worktreeId]);
-  return row?.pending === true;
+      AND NOT (state='running' AND claim_expires_at > now())) AS publication,
+    EXISTS (SELECT 1 FROM persistence_topology_changes WHERE recovery IS NOT NULL AND recovery->>'worktreeId'=$1::text) AS topology`, [binding.worktree_id]))[0];
+  const first = await probe();
+  if (first?.topology === true) return true;
+  if (first?.publication !== true || !binding.coordination_path) return first?.publication === true;
+  const lock = await tryAcquireNativeLock(binding.coordination_path);
+  if (!lock) return false;
+  // Holding the lock, no publisher is mid-flight: a record that is still here has no live owner.
+  try { const held = await probe(); return held?.publication === true || held?.topology === true; }
+  finally { await lock.release(); }
 }
 /** Never wait on a sync: an unexhausted cursor names its own resume command. */
 async function assertNoUnfinishedSync(engine: BrainEngine, members: string[]): Promise<void> {
@@ -260,7 +290,11 @@ async function headOf(git: Git, root: string): Promise<string | null> { return r
 async function bookkeeping(engine: BrainEngine, row: WorktreeRefreshRow): Promise<void> {
   await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-    if (!await transition(tx, row, ['fenced', 'merged', 'recovery_required'], 'merged')) throw new OperationError('source_changed', 'The refresh record changed under its own lock.');
+    if (!await transition(tx, row, ['fenced', 'merged', 'recovery_required'], 'merged')) {
+      throw opError('source_changed', 'The refresh record changed under its own lock.',
+        `Another process moved refresh ${row.id} for ${row.source_ids.join(', ')} while this one held its lock, so this run stopped after the merge without recording it. Check the writer status, then converge with gbrain sources refresh ${row.source_ids[0]} --resume, which adopts only a HEAD it can verify.`,
+        { fix: writerStatusFix(`Shows refresh ${row.id}'s state and the member sources' heads, read-only.`, row.source_ids[0]) });
+    }
     await tx.executeRaw(`UPDATE sources SET upstream_checked_at=now(),upstream_commit=$2,upstream_behind=0 WHERE id=ANY($1::text[])`, [row.source_ids, row.target_head]);
     await transition(tx, row, ['merged'], 'syncing');
   });
@@ -278,7 +312,8 @@ async function syncMembers(engine: BrainEngine, git: Git, row: WorktreeRefreshRo
       let result: SyncResult;
       try { result = await performManagedSync(engine, { sourceId, noPull: true }); }
       catch (error) {
-        const failure = error instanceof OperationError ? error : new OperationError('storage_error', error instanceof Error ? error.message : String(error));
+        const failure = error instanceof OperationError ? error : opError('storage_error', error instanceof Error ? error.message : String(error),
+          `The managed sync of source ${sourceId} failed during refresh ${row.id}. Check its writer status, fix the cause, then resume with gbrain sync --source ${sourceId} --no-pull --retry-failed.`);
         blocked.push({ source_id: sourceId, code: failure.code, message: failure.message, resume: `gbrain sync --source ${sourceId} --no-pull --retry-failed` });
         status = 'blocked';
         break;

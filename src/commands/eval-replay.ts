@@ -28,6 +28,9 @@
 
 import { readFileSync, existsSync } from 'fs';
 import type { BrainEngine } from '../core/engine.ts';
+import { jsonRequested, writeJsonLine } from '../core/cli-force-exit.ts';
+import { opError } from '../core/ops/contract.ts';
+import { usageError, writeCliRefusal } from '../cli/cli-error.ts';
 import type { SearchResult } from '../core/types.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 
@@ -150,7 +153,11 @@ OUTPUT (human mode):
 
 EXIT CODE:
   0 — replay completed (regardless of regression magnitude).
-  1 — invalid args, --against not found, or NDJSON parse failure.
+  1 — --against not found, or NDJSON parse failure.
+  2 — invalid args (missing --against, bad --mode).
+
+  --json: one NDJSON result line; a failure ends with a
+  {"status":"error", code, suggestion, ...} line.
 
 NOTES:
   Replay is best-effort. Your brain has more pages than when the snapshot
@@ -440,15 +447,21 @@ export async function replayCore(
 }
 
 export async function runEvalReplay(engine: BrainEngine, args: string[]): Promise<void> {
-  const opts = parseArgs(args);
+  const json = jsonRequested(args);
+  let opts: ReplayOpts;
+  try {
+    opts = parseArgs(args);
+  } catch (e) {
+    process.exit(writeCliRefusal(usageError(`Error: ${(e as Error).message}`, 'Example: gbrain eval replay --against captured.ndjson --mode balanced'), 'eval', { json }));
+  }
   if (opts.help) {
     printHelp();
     return;
   }
   if (!opts.against) {
-    console.error('Error: --against FILE.ndjson is required\n');
     printHelp();
-    process.exit(1);
+    process.exit(writeCliRefusal(usageError('Error: --against FILE.ndjson is required',
+      'Example: gbrain eval replay --against captured.ndjson --json'), 'eval', { json }));
   }
 
   if (!opts.json) {
@@ -471,16 +484,15 @@ export async function runEvalReplay(engine: BrainEngine, args: string[]): Promis
     summary = out.summary;
     results = out.results;
   } catch (err) {
-    console.error(`Error: ${(err as Error).message}`);
-    process.exit(1);
+    const msg = (err as Error).message;
+    process.exit(writeCliRefusal(opError(msg.startsWith('File not found') ? 'not_found' : 'parse_error', `Error: ${msg}`,
+      'Pass an NDJSON file written by `gbrain eval export` (one captured row per line).'), 'eval', { json }));
   }
 
   if (opts.json) {
-    console.log(JSON.stringify({
-      schema_version: 1,
-      summary,
-      results: opts.verbose ? results : undefined,
-    }, null, 2));
+    // D2: one NDJSON line under the --json guard; the legacy pretty document otherwise.
+    const doc = { schema_version: 1, summary, results: opts.verbose ? results : undefined };
+    await writeJsonLine(doc, () => console.log(JSON.stringify(doc, null, 2)));
     return;
   }
 

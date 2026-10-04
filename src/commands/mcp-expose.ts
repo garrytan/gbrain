@@ -19,6 +19,9 @@ import { existsSync, unlinkSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { homedir, userInfo } from 'node:os';
 import { promptLineStderr } from '../core/cli-util.ts';
+import { isInteractive } from '../core/interaction.ts';
+import { isConsentRefusal, renderConsentRefusal, requireConsent } from '../core/consent.ts';
+import type { Effect } from '../core/agent-output.ts';
 import { gbrainPath, isThinClient, loadConfig, type GBrainConfig } from '../core/config.ts';
 import { detectExecutionEnvironment, type ExecutionEnvironment } from '../core/execution-env.ts';
 import { validateHarnessArguments } from '../core/harness/arguments.ts';
@@ -221,7 +224,7 @@ function resolveDeps(deps: McpExposeDeps): Resolved {
     fetch: deps.fetch ?? ((url, init) => fetch(url, init as RequestInit)),
     tcpProbe: deps.tcpProbe ?? defaultTcpProbe,
     lookup: deps.lookup ?? defaultLookup,
-    isTTY: deps.isTTY ?? (process.stdin.isTTY === true && process.stderr.isTTY === true),
+    isTTY: deps.isTTY ?? isInteractive({ stdoutIsTTY: process.stderr.isTTY === true }),
     prompt: deps.prompt ?? ((q: string) => promptLineStderr(q)),
     out: deps.stdout ?? ((line: string) => { process.stdout.write(`${line}\n`); }),
     err: deps.stderr ?? ((line: string) => { process.stderr.write(`${line}\n`); }),
@@ -307,12 +310,13 @@ class Session {
     this.checks.push(c);
     return c;
   }
-  finish(status: ExposeStatus, code: number, extra: { receipt?: ExposeReceipt | null; reason?: string; message?: string; plan?: string[] } = {}): number {
+  finish(status: ExposeStatus, code: number, extra: { receipt?: ExposeReceipt | null; reason?: string; message?: string; plan?: string[]; consent?: Record<string, unknown> } = {}): number {
     if (extra.message) this.say(`${status}: ${extra.message}`);
     if (this.json) {
       this.d.out(JSON.stringify({
         status, receipt: extra.receipt ?? null, checks: this.checks, next_actions: this.nextActions,
         ...(extra.reason ? { reason: extra.reason } : {}), ...(extra.message ? { message: extra.message } : {}), ...(extra.plan ? { plan: extra.plan } : {}),
+        ...(extra.consent ?? {}),
       }));
     }
     return code;
@@ -440,29 +444,64 @@ interface ConsentExtra {
   confirmationMessage: string;
   /** Pushed to `next_actions` on a non-TTY run without `--yes`. */
   nextAction?: string;
+  /** The command that runs once approved, without `--yes` (consentFix adds it). */
+  argv: string[];
+  effects: Effect[];
+  what: string;
+  why: string;
+  risk: string;
+  user_message: string;
+}
+
+/** The publish run's consent request: effects, the approved command and the words to relay. */
+function publishConsent(opts: ExposeOptions): ConsentExtra {
+  const where = opts.noTailscale ? 'on this machine' : opts.funnel ? 'on the public internet through Tailscale Funnel' : 'on your Tailscale network';
+  return {
+    yes: opts.yes, nextAction: rerunCommand(opts),
+    confirmationMessage: 'These are system-state changes (Tailscale, serve config, a user service). Pass --yes to confirm.',
+    argv: ['gbrain', 'mcp', 'expose', ...publishFlags(opts)],
+    effects: opts.noTailscale ? ['persistent_install'] : ['persistent_install', 'egress'],
+    what: 'mcp expose',
+    why: `Publishes this brain's MCP server ${where}${opts.noService ? '' : ' and installs a user service that keeps it running'}, so authorized agents on other machines can reach it.`,
+    risk: 'Changes system state (Tailscale serve config, a user service, files under the serve directory); `gbrain mcp expose --remove` undoes it.',
+    user_message: `I'd like to publish your gbrain MCP server ${where}${opts.noService ? '' : ' and install a background service for it'}. OK?`,
+  };
 }
 
 /**
- * The `consent` check. Returns the exit code to hand back when the run must
- * stop (non-TTY without `--yes` → `pending` / 2 / `confirmation_required`;
- * declined at the prompt → `pending` / 2 / `declined`), or null to proceed.
+ * The `consent` check, through the consent primitive (requireConsent). Returns
+ * the exit code to hand back when the run must stop, or null to proceed.
+ * Under contract v1 `mcp expose` keeps its documented exit 2 for a refusal
+ * (non-TTY without `--yes` → `pending` / `confirmation_required`; declined at
+ * the prompt → `pending` / `declined`); the document gains the consent
+ * payload's agent fields (`code`, `effects`, `user_message`, `fix`, …) and
+ * human output prints its `[AGENT]` block.
  */
 async function confirmOrFinish(d: Resolved, s: Session, question: string, extra: ConsentExtra): Promise<number | null> {
-  if (extra.yes) {
-    s.check('consent', 'ok', '--yes');
-    return null;
+  try {
+    await requireConsent({
+      command: 'mcp expose', effects: extra.effects, actor: 'agent', what: extra.what, why: extra.why, risk: extra.risk,
+      user_message: extra.user_message, argv: extra.argv, args: extra.yes ? ['--yes'] : [],
+    }, {
+      interactive: d.isTTY,
+      readLine: async () => {
+        const answer = await d.prompt(question);
+        return answer === null ? { kind: 'eof' } : { kind: 'line', text: answer.trim() };
+      },
+    });
+  } catch (e) {
+    if (!isConsentRefusal(e)) throw e;
+    const declined = d.isTTY && !extra.yes;
+    s.check('consent', 'pending', declined ? 'declined' : 'not a TTY and --yes not passed');
+    if (!declined && extra.nextAction) s.nextActions.push(extra.nextAction);
+    const { status: _status, error: _error, message: _message, suggestion: _suggestion, ...payload } = e.consent;
+    if (!declined && !s.json) s.say(renderConsentRefusal(e.consent, { json: false }).stdout?.trimEnd() ?? '');
+    return s.finish('pending', 2, {
+      receipt: extra.receipt, reason: declined ? 'declined' : 'confirmation_required',
+      message: declined ? 'Nothing changed: the confirmation was declined.' : extra.confirmationMessage, consent: payload,
+    });
   }
-  if (!d.isTTY) {
-    s.check('consent', 'pending', 'not a TTY and --yes not passed');
-    if (extra.nextAction) s.nextActions.push(extra.nextAction);
-    return s.finish('pending', 2, { receipt: extra.receipt, reason: 'confirmation_required', message: extra.confirmationMessage });
-  }
-  const answer = await d.prompt(question);
-  if (!answer || !/^y(es)?$/i.test(answer.trim())) {
-    s.check('consent', 'pending', 'declined');
-    return s.finish('pending', 2, { receipt: extra.receipt, reason: 'declined', message: 'Nothing changed. Re-run with --yes to confirm.' });
-  }
-  s.check('consent', 'ok', 'confirmed interactively');
+  s.check('consent', 'ok', extra.yes ? '--yes' : 'confirmed interactively');
   return null;
 }
 
@@ -615,7 +654,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   for (const line of plan) s.say(`  ${line}`);
   if (opts.dryRun) {
     s.say('');
-    s.say('Dry run: nothing changed. Re-run without --dry-run (add --yes to skip the prompt).');
+    s.say('Dry run: nothing changed. To apply, run the same command without --dry-run; it asks for confirmation first.');
     return s.finish('planned', 0, { receipt: existing, plan });
   }
   if (noBrain) {
@@ -642,10 +681,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   }
 
   // 2. consent -------------------------------------------------------------
-  const consent = await confirmOrFinish(d, s, 'Proceed with the plan above? [y/N] ', {
-    yes: opts.yes, nextAction: rerunCommand(opts),
-    confirmationMessage: 'These are system-state changes (Tailscale, serve config, a user service). Pass --yes to confirm.',
-  });
+  const consent = await confirmOrFinish(d, s, 'Proceed with the plan above? [y/N] ', publishConsent(opts));
   if (consent !== null) return consent;
 
   // 3-6. tailscale ---------------------------------------------------------
@@ -1000,16 +1036,21 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   return s.finish(pending ? 'pending' : 'exposed', pending ? 2 : 0, { receipt, ...(pending ? { reason: tailnetHealth === 'pending' ? 'tailnet_health_pending' : 'local_health_timeout' } : {}) });
 }
 
-/** Re-render the user's publish flags for a re-run hint (never --yes/--json/--dry-run). */
-function args2(opts: ExposeOptions): string {
+/** The user's publish flags, for a re-run hint or the approved command (never --yes/--json/--dry-run). */
+function publishFlags(opts: ExposeOptions): string[] {
   const parts: string[] = [];
-  if (opts.port !== DEFAULT_EXPOSE_PORT) parts.push(`--port ${opts.port}`);
+  if (opts.port !== DEFAULT_EXPOSE_PORT) parts.push('--port', String(opts.port));
   if (opts.funnel) parts.push('--funnel');
-  if (opts.surface !== 'full') parts.push(`--surface ${opts.surface}`);
+  if (opts.surface !== 'full') parts.push('--surface', opts.surface);
   if (opts.enableDcr) parts.push('--enable-dcr');
   if (opts.noTailscale) parts.push('--no-tailscale');
   if (opts.noService) parts.push('--no-service');
   if (opts.noInstall) parts.push('--no-install');
+  return parts;
+}
+
+function args2(opts: ExposeOptions): string {
+  const parts = publishFlags(opts);
   return parts.length ? ` ${parts.join(' ')}` : '';
 }
 
@@ -1275,7 +1316,14 @@ async function runRemove(d: Resolved, s: Session, opts: ExposeOptions): Promise<
   s.check('plan', 'ok', plan.join(' | '));
   s.say('Remove plan');
   for (const line of plan) s.say(`  ${line}`);
-  const consent = await confirmOrFinish(d, s, 'Remove the published server? [y/N] ', { yes: opts.yes, receipt, confirmationMessage: 'Pass --yes to confirm the removal.' });
+  const consent = await confirmOrFinish(d, s, 'Remove the published server? [y/N] ', {
+    yes: opts.yes, receipt, confirmationMessage: 'Pass --yes to confirm the removal.',
+    argv: ['gbrain', 'mcp', 'expose', '--remove', ...(opts.force ? ['--force'] : [])],
+    effects: ['persistent_install'], what: 'mcp expose --remove',
+    why: 'Stops and removes the published server: the user service, the Tailscale handler and the files listed in the remove plan.',
+    risk: 'Agents connected through the published URL lose access until it is published again.',
+    user_message: 'I\'d like to unpublish your gbrain MCP server (stop its service and remove its Tailscale handler). OK?',
+  });
   if (consent !== null) return consent;
   const left: string[] = [];
   // service — the receipt may say `skipped` (a `--no-service` run) while a
@@ -1320,7 +1368,7 @@ async function runRemove(d: Resolved, s: Session, opts: ExposeOptions): Promise<
         s.check('receipt', 'skipped', 'kept (the tailscale serve status could not be read; re-run --remove once it can)');
         s.nextActions.push('tailscale serve status --json', 'gbrain mcp expose --remove --yes');
         s.say('');
-        s.say('Stopped here: could not read `tailscale serve status`, so the handler, the wrapper and the receipt were left in place. Fix Tailscale, then re-run `gbrain mcp expose --remove --yes`.');
+        s.say('Stopped here: could not read `tailscale serve status`, so the handler, the wrapper and the receipt were left in place. Fix Tailscale, then run the removal again (the user already approved it: `gbrain mcp expose --remove --yes`).');
         return s.finish('error', 1, { receipt, reason: 'tailscale_serve_status_unreadable', message: 'could not read tailscale serve status; handler left as is' });
       }
       const ours = findProxiedHandler(read.view, receipt.port);
@@ -1398,7 +1446,14 @@ async function runRemoveWithoutReceipt(d: Resolved, s: Session, opts: ExposeOpti
   s.say(`Recovering without a receipt (an interrupted \`gbrain mcp expose\` left these behind; port ${opts.port}):`);
   for (const line of plan) s.say(`  ${line}`);
   const rerun = recoveryCommand(opts.port, opts.force);
-  const consent = await confirmOrFinish(d, s, 'Remove these leftovers? [y/N] ', { yes: opts.yes, receipt: null, confirmationMessage: 'Pass --yes to confirm the removal.', nextAction: rerun });
+  const consent = await confirmOrFinish(d, s, 'Remove these leftovers? [y/N] ', {
+    yes: opts.yes, receipt: null, confirmationMessage: 'Pass --yes to confirm the removal.', nextAction: rerun,
+    argv: ['gbrain', 'mcp', 'expose', '--remove', ...(opts.force ? ['--force'] : []), ...(opts.port !== DEFAULT_EXPOSE_PORT ? ['--port', String(opts.port)] : [])],
+    effects: ['persistent_install'], what: 'mcp expose --remove',
+    why: `Removes what an interrupted \`gbrain mcp expose\` left behind on port ${opts.port} (the service, a Tailscale handler, the wrapper), as listed in the plan.`,
+    risk: 'Anything still using that server loses it.',
+    user_message: 'An interrupted gbrain publish left a server behind. I\'d like to remove those leftovers. OK?',
+  });
   if (consent !== null) return consent;
   const left: string[] = [];
   let serviceNote = 'no service was found';

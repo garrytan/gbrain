@@ -15,8 +15,10 @@ server restart unless it says so.
 
 Gated ops (`Operation.publishGateKey`): `list_skills` / `get_skill` /
 `list_brain_skillpack` (`mcp.publish_skills`) and `advisor`
-(`mcp.publish_advisor`). Both gates default OFF: the ops are hidden from
-remote tools/list AND denied at call time.
+(`mcp.publish_advisor`). Both gates default OFF for remote HTTP callers: the
+ops are hidden from remote tools/list AND denied at call time. The read-only
+advisor defaults ON for the owner's local stdio server (an explicit `false`
+hides it there too).
 
 ```bash
 gbrain config set mcp.publish_skills true      # or mcp.publish_advisor

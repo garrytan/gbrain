@@ -58,6 +58,8 @@ export interface DegradedEngineOptions {
    *  tools/list handshake, for the full driver connect_timeout). */
   callerWaitMs?: number;
   now?: () => number;
+  /** `kind` reported while dead (default postgres); status-only serve passes the configured engine. */
+  kind?: 'postgres' | 'pglite';
 }
 
 /**
@@ -135,6 +137,7 @@ export function createDegradedEngine(opts: DegradedEngineOptions): BrainEngine {
         .reconnect()
         .then((engine) => {
           live = engine;
+          alignMethodsWith(engine);
           for (const cb of recoveryCallbacks.splice(0)) {
             try { cb(); } catch { /* recovery callbacks are best-effort */ }
           }
@@ -165,6 +168,26 @@ export function createDegradedEngine(opts: DegradedEngineOptions): BrainEngine {
   }
 
   const target: Record<string | symbol, unknown> = {};
+  /**
+   * The method set was enumerated from PostgresEngine; a live engine of
+   * another kind (status-only serve over PGLite) gets exactly its own
+   * methods, so `typeof engine.x === 'function'` capability probes stay true.
+   */
+  const alignMethodsWith = (engine: BrainEngine) => {
+    const own = engine as unknown as Record<string, unknown>;
+    for (const name of Object.keys(target)) {
+      if (typeof target[name] === 'function' && name !== 'disconnect' && typeof own[name] !== 'function') delete target[name];
+    }
+    let proto: object | null = Object.getPrototypeOf(engine);
+    while (proto && proto !== Object.prototype) {
+      for (const name of Object.getOwnPropertyNames(proto)) {
+        if (name === 'constructor' || name in target) continue;
+        const desc = Object.getOwnPropertyDescriptor(proto, name);
+        if (desc && typeof desc.value === 'function') target[name] = (...args: unknown[]) => (own[name] as (...a: unknown[]) => unknown).apply(engine, args);
+      }
+      proto = Object.getPrototypeOf(proto);
+    }
+  };
   for (const name of enginePrototypeMethodNames()) {
     if (name === 'disconnect') continue; // special-cased below
     target[name] = async (...args: unknown[]) => {
@@ -191,7 +214,7 @@ export function createDegradedEngine(opts: DegradedEngineOptions): BrainEngine {
     });
   }
   Object.defineProperty(target, 'kind', {
-    get: () => (live ? live.kind : 'postgres'),
+    get: () => (live ? live.kind : opts.kind ?? 'postgres'),
     enumerable: true,
   });
   target[DEGRADED_STATE] = () => live === null;

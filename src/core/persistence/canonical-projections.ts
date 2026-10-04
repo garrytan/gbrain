@@ -10,7 +10,8 @@ import { extractTimelineFromContent, type ExtractedTimelineEntry } from '../time
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
 import { materializedMarker, materializedMarkerHash, timelineKey, timelineKeyHash } from '../timeline-marker.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 
 type CanonicalBody = Pick<ParsedPage, 'compiled_truth' | 'timeline'>;
 
@@ -217,16 +218,21 @@ function canonicalTakeRows(body: CanonicalBody): Set<number> {
 }
 
 /** Validate a canonical body and compile its provider-free projections. */
+function fenceError(message: string, slug: string, sourceId: string, what: string) {
+  return opError('invalid_params', message, `${what} on page ${slug} in source ${sourceId}, so it was not written. Fix the fence in the page body, then write the page again.`,
+    { fix: readFix(`Shows page ${slug} with its fences, read-only.`, { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] }) });
+}
+
 export function compileCanonicalProjections(page: ParsedPage, slug: string, sourceId: string) {
   const fields=[page.compiled_truth,page.timeline ?? ''];
   for(const field of fields) for(const marker of [FACTS_FENCE_BEGIN,FACTS_FENCE_END,TAKES_FENCE_BEGIN,TAKES_FENCE_END]) {
-    if(field.split(marker).length>2) throw new OperationError('invalid_params','Each canonical body section must contain at most one facts fence and one takes fence.');
+    if(field.split(marker).length>2) throw fenceError('Each canonical body section must contain at most one facts fence and one takes fence.', slug, sourceId, 'A body section repeats a facts or takes fence marker');
   }
   const factSets=fields.map(parseFactsFence),takeSets=fields.map(parseTakesFence);
-  if ([...factSets,...takeSets].some(set=>set.warnings.length)) throw new OperationError('invalid_params','A canonical facts or takes fence cannot be parsed losslessly.');
+  if ([...factSets,...takeSets].some(set=>set.warnings.length)) throw fenceError('A canonical facts or takes fence cannot be parsed losslessly.', slug, sourceId, 'A facts or takes table does not parse cleanly');
   const facts=factSets.flatMap(set=>set.facts),takes=takeSets.flatMap(set=>set.takes);
   for(const rows of [facts,takes]) if(new Set(rows.map(row=>row.rowNum)).size!==rows.length) {
-    throw new OperationError('invalid_params','Canonical row numbers must be unique across the entire page.');
+    throw fenceError('Canonical row numbers must be unique across the entire page.', slug, sourceId, 'Two facts or takes rows share a row number');
   }
   return { factRows: extractFactsFromFenceText(facts,slug,sourceId), takes };
 }

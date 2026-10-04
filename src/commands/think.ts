@@ -11,6 +11,8 @@ import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { canonicalLookup } from '../core/model-pricing.ts';
 import { embedQuery } from '../core/embedding.ts';
+import { keylessThinkNotice } from '../core/interop-notices.ts';
+import { applyCliOpNotices, captureOpNotice } from '../cli/op-notices.ts';
 
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -250,16 +252,20 @@ prints what would have been the input (exit 0).
     result.modelUsed,
   );
 
+  // F8: keyless-by-design output carries its explanation as an info notice.
+  if (result.synthesis_status === 'no_llm') captureOpNotice(keylessThinkNotice());
+  const { result: jsonDoc, stderr: noticeText } = applyCliOpNotices({
+    ...result,
+    cost_usd: costUsd ?? null,
+    saved_slug: savedSlug ?? null,
+    evidence_inserted: evidenceInserted,
+    take_row: takeRow,
+  }, json);
   if (json) {
-    console.log(JSON.stringify({
-      ...result,
-      cost_usd: costUsd ?? null,
-      saved_slug: savedSlug ?? null,
-      evidence_inserted: evidenceInserted,
-      take_row: takeRow,
-    }, null, 2));
+    console.log(JSON.stringify(jsonDoc, null, 2));
     return;
   }
+  if (noticeText) process.stderr.write(noticeText);
 
   // Human-readable output
   console.log(`# ${question}\n`);

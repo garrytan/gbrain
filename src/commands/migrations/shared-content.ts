@@ -5,8 +5,12 @@ import type { Migration } from './types.ts';
 import type { OrchestratorOpts } from './types.ts';
 import { exportDatabaseContent } from '../../core/shared-skills/migration-export.ts';
 import { PgliteBusyError } from '../../core/pglite-lock.ts';
+import { shellQuote } from '../../core/agent-output.ts';
 
 export const SHARED_CONTENT_MIGRATION_VERSION = '0.53.0';
+
+/** Read-only: prints every source's remaining stage, its reason and the command for it (`pending_actions`). */
+export const SHARED_CONTENT_INSPECT_ARGV = ['gbrain', 'apply-migrations', '--migration', SHARED_CONTENT_MIGRATION_VERSION, '--dry-run', '--json'];
 
 export async function inspectSharedContentMigration(dryRun: boolean, exportOptions?: OrchestratorOpts['dbOnlyExport']): Promise<SharedMigrationReport | null> {
   const config = loadConfig();
@@ -44,13 +48,16 @@ export const sharedContentMigration: Migration = {
       const report = await inspectSharedContentMigration(options.dryRun, options.dbOnlyExport);
       if (!report) return { version: SHARED_CONTENT_MIGRATION_VERSION, status: 'complete', phases: [{ name: 'inventory', status: 'skipped', detail: 'No brain configured.' }] };
       const pending = report.status === 'action_required' || report.status === 'conflict';
-      console.error(`[shared-skills] ${report.status}. ${report.sources.filter(source => source.status !== 'complete').length} source(s) need host action; no grants or bundle consent changed.`);
+      console.error(`[shared-skills] ${report.status}. ${report.sources.filter(source => source.status !== 'complete').length} source(s) need host action; no grants or bundle consent changed.`
+        + (pending ? ` Inspect each source's next step: ${shellQuote(SHARED_CONTENT_INSPECT_ARGV)}` : ''));
       for (const source of report.sources) for (const phase of source.stages) {
         if (phase.status === 'action_required' || phase.status === 'conflict') console.error(`[shared-skills] ${source.source_id}: ${phase.reason}`);
       }
       for (const action of report.pending_actions) console.error(`[shared-skills] ${action}`);
       return { version: SHARED_CONTENT_MIGRATION_VERSION, status: report.status === 'conflict' ? 'partial' : 'complete',
-        phases: [{ name: 'content-checkpoints', status: 'complete', detail: pending ? 'Mechanical inventory is durable; publication and enrollment are NOT complete. Per-source actions remain in shared_skills.migration.v1.' : 'Source checkpoints verified.' }],
+        phases: [{ name: 'content-checkpoints', status: 'complete', ...(pending
+          ? { detail: 'Mechanical inventory is durable; publication and enrollment are NOT complete. Per-source actions remain in shared_skills.migration.v1.', argv: SHARED_CONTENT_INSPECT_ARGV }
+          : { detail: 'Source checkpoints verified.' }) }],
         pending_host_work: pending ? 1 : 0 };
     } catch (error) {
       if (error instanceof PgliteBusyError) throw error;

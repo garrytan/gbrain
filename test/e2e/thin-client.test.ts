@@ -415,18 +415,17 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     // GBRAIN_REMOTE_CLIENT_SECRET overrides the config-file secret
     // (mcp-client resolveSecret), so this exercises the exact wire path a
     // revoked/rotated credential takes: the host's /token endpoint answers
-    // 400 invalid_grant (RFC 6749 §5.2) for bad AND revoked clients alike.
+    // 401 invalid_client (RFC 6749 §5.2) for bad AND revoked clients alike.
     const r = await spawn(['search', G3_MARKER, '--json'], clientHome, {
       GBRAIN_REMOTE_CLIENT_SECRET: 'gbrain_cs_definitely_not_the_real_secret',
     });
     expect(r.exitCode, cliDiagnostic("thin-client CLI", r)).toBe(1);
-    // No fabricated results — stdout stays empty on the error path.
-    expect(r.stdout.trim()).toBe('');
-    // Canonical RemoteMcpError surface. mcp-client maps the non-401 /token
-    // HTTP failure to reason 'discovery' today ("OAuth discovery failed at
-    // <issuer>."); allow the 'auth' spelling too so a future 401
-    // reclassification on the host doesn't false-fail the guard.
-    expect(r.stderr).toMatch(/OAuth (discovery|auth) failed/);
+    // No fabricated results: under --json stdout carries only the v1 error envelope (agent contract D1).
+    expect(JSON.parse(r.stdout)).toMatchObject({ code: expect.any(String), suggestion: expect.any(String), contract_version: 1 });
+    // Canonical RemoteMcpError surface: reason 'auth' ("OAuth auth failed.");
+    // any other /token status renders as reason 'token' ("OAuth /token
+    // failed: ..."), never as a discovery failure.
+    expect(r.stderr).toMatch(/OAuth (auth|\/token) failed/);
   });
 
   test('stopped host: routed verbs fail fast with the canonical unreachable error, not a hang', async () => {
@@ -448,10 +447,10 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     // the hang this test exists to forbid.
     expect(Date.now() - t0).toBeLessThan(60_000);
     expect(search.exitCode, cliDiagnostic("thin-client CLI", search)).toBe(1);
-    expect(search.stdout.trim()).toBe('');
+    expect(JSON.parse(search.stdout)).toMatchObject({ code: expect.any(String), contract_version: 1 }); // D1: the error envelope, no results
     expect(search.stderr).toContain(`Cannot reach http://127.0.0.1:${serverPort}/mcp`);
     expect(recall.exitCode, cliDiagnostic("thin-client CLI", recall)).toBe(1);
-    expect(recall.stdout.trim()).toBe('');
+    expect(JSON.parse(recall.stdout)).toMatchObject({ code: expect.any(String), contract_version: 1 }); // D1: the error envelope, no results
     expect(recall.stderr).toMatch(/OAuth discovery failed/);
   });
 });

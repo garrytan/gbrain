@@ -148,7 +148,7 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
   const args = parseArgs(argv);
   if (args.showHelp || !args.slug) {
     printHelp();
-    if (!args.slug) process.exit(1);
+    if (!args.slug && !args.showHelp) process.exit(1);
     return;
   }
 

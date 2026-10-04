@@ -162,7 +162,9 @@ describe('whoami op contract', () => {
       expiresAt: 999999999,
     };
     const result = (await whoami.handler(ctxWith({ remote: true, auth }), {})) as any;
-    expect(result).toEqual({ transport: 'legacy', token_name: 'gbrain_cl_lookalike', scopes: ['read'], expires_at: null });
+    // Agent contract v1 (F2): additive config-plane `readiness`.
+    expect(result).toMatchObject({ transport: 'legacy', token_name: 'gbrain_cl_lookalike', scopes: ['read'], expires_at: null });
+    expect(Array.isArray(result.readiness)).toBe(true);
   });
 
   test('legacy transport (token name as clientId, no gbrain_cl_ prefix)', async () => {

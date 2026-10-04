@@ -14,9 +14,11 @@
  *     that checks truthiness instead of `=== null` conflates "user pressed
  *     Enter" (empty string) with "stdin closed / timed out" (null). Both sides
  *     of that boundary are pinned below.
- *   - `promptLine` (the stdout variant) has NO EOF handling: on a closed stdin
- *     it never resolves. Callers must TTY-gate before using it; the EOF-safe
- *     contract belongs to `promptLineStderr` alone.
+ *   - `promptLine` (the stdout variant) resolves '' on a closed stdin. It
+ *     used to have no EOF handling and hung forever; agent operator wave A5
+ *     (docs/designs/AGENT_OPERATOR_WAVE.md) moved both helpers into
+ *     src/core/interaction.ts, where EOF is a decline. cli-util.ts re-exports
+ *     them for one release.
  *   - Neither helper checks `isTTY` — piped (non-TTY) stdin is read normally.
  *     The TTY gate lives at call sites, not in the util.
  *   - `promptLineStderr` writes its prompt to stderr (stdout stays clean for
@@ -136,23 +138,25 @@ process.exit(0);
     expect(r.stdout).toContain('NAME> ');
   }, 15_000);
 
-  test('EOF reality pin: promptLine NEVER resolves on closed stdin (no end handler — callers must TTY-gate)', () => {
-    // Race promptLine against a 1.5s timer on an immediately-EOF stdin. The
-    // timer winning pins that promptLine has no EOF path: it would hang a
-    // non-interactive caller forever. If this test ever flips to 'resolved',
-    // promptLine grew EOF handling — update the contract docs and call sites.
+  test('EOF resolves the empty string instead of hanging (A5 contract change; was a never-resolves pin)', () => {
+    // Race promptLine against a 5s timer on an immediately-EOF stdin, twice
+    // in a row: the second call sees an already-ended stream and must not
+    // hang either.
     const script = `
 const { promptLine } = await import(${JSON.stringify(UTIL_PATH)});
-const winner = await Promise.race([
+const race = () => Promise.race([
   promptLine('Q> ').then((v) => ({ kind: 'resolved', v })),
-  new Promise((r) => setTimeout(() => r({ kind: 'hang' }), 1500)),
+  new Promise((r) => setTimeout(() => r({ kind: 'hang' }), 5000)),
 ]);
-console.log('__RESULT__' + JSON.stringify(winner));
+const first = await race();
+const second = await race();
+console.log('__RESULT__' + JSON.stringify({ first, second }));
 process.exit(0);
 `;
     const r = runChild(script, '');
     expect(r.status).toBe(0);
     const res = parseResult(r.stdout);
-    expect(res.kind).toBe('hang');
+    expect(res.first).toEqual({ kind: 'resolved', v: '' });
+    expect(res.second).toEqual({ kind: 'resolved', v: '' });
   }, 15_000);
 });

@@ -65,8 +65,10 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     expect(out.isError).toBeUndefined();
     // Body block 0 stays the bare array (deployed thin-clients parse only this).
     expect(JSON.parse(out.content[0].text)).toEqual([]);
-    // D8: the model-visible diagnosis block.
-    expect(out.content.length).toBe(2);
+    // D8: the model-visible diagnosis block, then F3's degraded_recall notice
+    // (agent contract v1: a recall-affecting stage always rides a notice).
+    expect(out.content.length).toBe(3);
+    expect(out.content[2].text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
     expect(out.content[1].text).toContain('0 results');
     expect(out.content[1].text).toContain('retrieved 3');
     expect(out.content[1].text).toContain('degraded: embed_unavailable');
@@ -87,11 +89,13 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
     expect(retrieval.vector_enabled).toBe(true);
   });
 
-  test('non-empty results → single block, _meta.retrieval still present (D3: on ALL responses)', async () => {
+  test('non-empty results → body + degraded_recall notice only, _meta.retrieval still present (D3: on ALL responses)', async () => {
     nextResults = [{ page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
     nextMeta = DEGRADED_META;
     const out = await callSearch();
-    expect(out.content.length).toBe(1);
+    // No empty-retrieval block; F3's degraded notice rides every affected HTTP call.
+    expect(out.content.length).toBe(2);
+    expect(out.content[1].text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
     const retrieval = (out._meta as Record<string, any>).retrieval;
     expect(retrieval.returned_count).toBe(1);
   });

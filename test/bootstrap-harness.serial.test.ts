@@ -23,6 +23,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+import { setCliExitVerdict } from '../src/core/cli-force-exit.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -228,11 +229,40 @@ describe('parseHarnessArgs', () => {
 describe('consent gate', () => {
   test('non-TTY without --yes refuses BEFORE any mutation (no mint, no files)', async () => {
     const f = makeFake();
-    const code = await applyHarness(parseHarnessArgs([]), f.deps);
-    expect(code).toBe(2);
-    expect(f.err.join('\n')).toMatch(/pass --yes/);
+    let stdout = '';
+    const write = process.stdout.write;
+    process.stdout.write = ((c: string | Uint8Array) => { stdout += String(c); return true; }) as typeof process.stdout.write;
+    let code: number;
+    try {
+      code = await applyHarness(parseHarnessArgs(['--json']), f.deps);
+    } finally {
+      process.stdout.write = write;
+      setCliExitVerdict(0);
+    }
+    // C6: exit 3 with the consent payload (was exit 2 with a 'pass --yes' line).
+    expect(code).toBe(3);
+    const payload = JSON.parse(stdout);
+    expect(payload).toMatchObject({ code: 'confirmation_required', effects: ['persistent_install', 'credentials'] });
+    expect(payload.fix.argv).toEqual(['gbrain', 'bootstrap', 'harness', '--json', '--yes']);
+    expect(payload.user_message).toContain('bootstrap harness --remove');
     expect(existsSync(f.userSettings)).toBe(false);
     expect(existsSync(f.codexConfig)).toBe(false);
+    expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
+  });
+
+  test('C6: a declined or EOF prompt (TTY) is a refusal, exit 3, nothing written', async () => {
+    const f = makeFake();
+    const write = process.stdout.write;
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+    let code: number;
+    try {
+      code = await applyHarness(parseHarnessArgs([]), { ...f.deps, isTTY: true, prompt: async () => '' });
+    } finally {
+      process.stdout.write = write;
+      setCliExitVerdict(0);
+    }
+    expect(code).toBe(3);
+    expect(existsSync(f.userSettings)).toBe(false);
     expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
   });
 

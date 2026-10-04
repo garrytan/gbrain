@@ -1,0 +1,37 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "[]"
+    },
+    {
+      "type": "text",
+      "text": "[gbrain notice empty_retrieval kind=info]\nwhy: No pages matched. Search ran keyword-only because embeddings are not configured.\nfix: gbrain doctor --json --brain host\nnext: {{next}}\nuser_message: I found no notes on that topic. Your brain searches keywords only right now."
+    }
+  ],
+  "_meta": {
+    "gbrain_notices": [
+      {
+        "code": "empty_retrieval",
+        "kind": "info",
+        "why": "No pages matched. Search ran keyword-only because embeddings are not configured.",
+        "fix": {
+          "argv": [
+            "gbrain",
+            "doctor",
+            "--json",
+            "--brain",
+            "host"
+          ],
+          "command": "gbrain doctor --json --brain host",
+          "consent": [],
+          "actor": "user",
+          "why": "Doctor reports which capability is missing and how to enable it.",
+          "requires_exclusive": false
+        },
+        "user_message": "I found no notes on that topic. Your brain searches keywords only right now.",
+        "contract_version": 1
+      }
+    ]
+  }
+}

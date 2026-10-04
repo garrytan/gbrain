@@ -6,9 +6,10 @@ import { configDir, type GBrainConfig } from '../config.ts';
 import { resolveBrainId } from '../brain-resolver.ts';
 import { getCliOptions } from '../cli-options.ts';
 import { loadMounts, type MountEntry } from '../brain-registry.ts';
-import { inspectLockHolder } from '../pglite-lock.ts';
+import { inspectLockHolder, type LockHolderInfo } from '../pglite-lock.ts';
 import { resolveSourceIdEngineFree } from '../source-resolver.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
+import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { parseWriteRequestId } from './preconditions.ts';
 import {
   isPersistenceIpcMutation, isPersistenceIpcOperation, isPersistenceIpcRegistration,
@@ -19,6 +20,13 @@ import {
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { currentCliWriteWait, replayWhilePending, writeExchangeBudget } from './write-wait.ts';
 
+function noDiscoveryPath(message: string, holder: LockHolderInfo, brainId?: string): OperationError {
+  const who = holder.pid ? `process ${holder.pid}${holder.subcommand ? ` (gbrain ${holder.subcommand})` : ''}` : 'another process';
+  return opError('owner_unavailable', message,
+    `${who} holds ${brainId ? `brain ${brainId}'s` : 'this brain\'s'} PGLite lock but publishes no persistence socket, usually an older gbrain serve. Ask the user to stop or upgrade that process, then run the command again; nothing was sent to it.`,
+    { fix: readFix('Shows the brain\'s lock holder and persistence state, read-only.', { argv: ['gbrain', 'doctor', ...(brainId ? ['--brain', brainId] : []), '--json'] }) });
+}
+
 /** The brain axis must be resolved before inspecting any host lock/socket. */
 export function persistenceConfigForBrain(
   hostConfig: GBrainConfig | null,
@@ -27,7 +35,11 @@ export function persistenceConfigForBrain(
 ): GBrainConfig | null {
   if (brainId === 'host') return hostConfig;
   const mount = mounts.find(candidate => candidate.id === brainId || candidate.alias === brainId);
-  if (!mount || mount.enabled === false) throw new OperationError('invalid_params', `Brain '${brainId}' is not an enabled mount.`);
+  if (!mount || mount.enabled === false) {
+    throw opError('invalid_params', `Brain '${brainId}' is not an enabled mount.`,
+      'Pass --brain host or the id or alias of an enabled mount (`gbrain mounts list --json` shows them); re-enabling a disabled mount is the user\'s call.',
+      { fix: readFix('Lists mounted brains with their ids, aliases and enabled state.', { argv: ['gbrain', 'mounts', 'list', '--json'] }) });
+  }
   return { engine: mount.engine, database_path: mount.database_path, database_url: mount.database_url } as GBrainConfig;
 }
 
@@ -48,13 +60,17 @@ export function residentPersistenceConfig(hostConfig: GBrainConfig | null, cwd =
 export function readPersistenceCliRegistration(brainId: string): PersistenceIpcRegistration {
   // Capability validation has already constrained this filename component to a UUID.
   const id = parseWriteRequestId(brainId);
-  if (!id) throw new OperationError('permission_denied', 'Missing durable brain identity.');
+  if (!id) {
+    throw opError('permission_denied', 'Missing durable brain identity.',
+      'The resident owner reported no durable brain identity, so this CLI cannot select its writer registration. Check the brain\'s persistence state; if an older owner is running, the user restarts it after upgrading.',
+      { fix: readFix('Shows the brain\'s persistence identity and lock holder, read-only.', { argv: ['gbrain', 'doctor', '--json'] }) });
+  }
   let value: unknown;
   try { value = JSON.parse(readFileSync(join(configDir(), 'persistence', `${id}.cli.json`), 'utf8')); }
   catch { throw new OperationError('permission_denied', 'This CLI has no readable durable writer registration for the selected brain.',
     'Register or explicitly regrant the CLI writer on this brain, then retry the same request ID.'); }
   if (!isPersistenceIpcRegistration(value) || value.lane !== 'cli') {
-    throw new OperationError('permission_denied', 'The local CLI writer registration is invalid.');
+    throw trustedCliRequired('The local CLI writer registration is invalid.');
   }
   return value;
 }
@@ -70,7 +86,7 @@ export async function maybeDelegateLocalAdministration(
   const holder = inspectLockHolder(config.database_path);
   if (!holder.held) return { handled: false };
   const socketPath = persistenceSocketPathForConfig(config);
-  if (!socketPath) throw new OperationError('owner_unavailable', 'The PGLite owner has no persistence discovery path.');
+  if (!socketPath) throw noDiscoveryPath('The PGLite owner has no persistence discovery path.', holder);
   const capability = await requestPersistenceCapabilities(socketPath);
   if (!capability.administration?.includes(operation)) throw new OperationError('owner_unavailable',
     'The running owner does not support this local administration command.', 'Upgrade and restart the owner before administering this brain.');
@@ -105,7 +121,7 @@ export async function maybeDelegateLocalOperation(
   const holder = inspectLockHolder(config.database_path);
   if (!holder.held) return { handled: false };
   const socketPath = persistenceSocketPathForConfig(config);
-  if (!socketPath) throw new OperationError('owner_unavailable', 'The selected PGLite owner has no persistence discovery path.');
+  if (!socketPath) throw noDiscoveryPath('The selected PGLite owner has no persistence discovery path.', holder, brainId);
 
   // Takes' source is claim provenance, independent of the CLI source routing axis.
   const sourceInParams = options.source === undefined && !operation.startsWith('takes_');

@@ -58,6 +58,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Fix wave 5 shared commit: preview-bound approved sets in op_checkpoints.
   "src/core/persistence/preview-approval.ts": ["test/e2e/preview-approval-postgres.test.ts", "test/e2e/minions-legacy-journey-postgres.test.ts"],
   // #5157: the legacy recovery commands and doctor check.
+  // Agent operator wave D2: the Postgres-only --json successes (db-repair healthy, supervisor --detach).
+  "src/commands/db-repair.ts": ["test/e2e/cli-json-commands-postgres.test.ts"],
+  "src/commands/jobs/supervisor.ts": ["test/e2e/cli-json-commands-postgres.test.ts"],
   "src/commands/jobs/authorize-legacy.ts": ["test/e2e/minions-legacy-journey-postgres.test.ts"],
   "src/commands/jobs/cancel.ts": ["test/e2e/minions-legacy-journey-postgres.test.ts"],
   "src/commands/doctor/checks/legacy-job-authority.ts": ["test/e2e/minions-legacy-journey-postgres.test.ts"],
@@ -288,7 +291,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/lease-schema.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
   // O-CEO-13 wave-8 write contract gate: receipts, replay, edit_page, publication reauthorization.
   "src/core/persistence/page-edit.ts": ["test/e2e/write-contract-conformance.test.ts"],
-  "src/core/persistence/write-wait.ts": ["test/e2e/write-contract-conformance.test.ts"],
+  "src/core/persistence/write-wait.ts": ["test/e2e/write-contract-conformance.test.ts", "test/e2e/agent-journey-postgres.test.ts"],
   "src/core/ops/page-edit.ts": ["test/e2e/write-contract-conformance.test.ts"],
   // Foundations 1 write attribution: actor settings and BEFORE ROW triggers, direct and through PgBouncer.
   "src/core/persistence/attribution.ts": ["test/e2e/write-attribution-postgres.test.ts"],
@@ -509,13 +512,27 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/persistence/writer-guard-schema.ts": ["test/e2e/managed-writer-guard-null-source-5983-postgres.test.ts", "test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
   "src/core/schema-migrations/v197-managed-guard-null-source-fallback.ts": ["test/e2e/managed-writer-guard-null-source-5983-postgres.test.ts", "test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
   "src/core/facts/meta-hook.ts": ["test/e2e/capture-dedup-postgres.test.ts", "test/e2e/hot-memory-invalidation-postgres.test.ts", "test/e2e/facts-context-injection-postgres.test.ts", "test/e2e/serve-http-meta.test.ts"],
-  "src/mcp/dispatch.ts": ["test/e2e/hot-memory-invalidation-postgres.test.ts", "test/e2e/write-contract-conformance.test.ts"],
+  "src/mcp/dispatch.ts": ["test/e2e/hot-memory-invalidation-postgres.test.ts", "test/e2e/write-contract-conformance.test.ts", "test/e2e/agent-journey-postgres.test.ts"],
   // Foundations 1 F4b: PGLite-only planner-stats accounting; Postgres must gain no object, doctor/repair read pg_stat_user_tables.
   "src/core/planner-stats.ts": ["test/e2e/planner-stats-postgres.test.ts"],
   "src/core/planner-stats-schema.ts": ["test/e2e/planner-stats-postgres.test.ts", "test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
   "src/core/schema-migrations/v193-f4-planner-stats.ts": ["test/e2e/planner-stats-postgres.test.ts", "test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
   "src/commands/doctor/checks/planner-stats.ts": ["test/e2e/planner-stats-postgres.test.ts"],
   "src/core/repair/planner-stats.ts": ["test/e2e/planner-stats-postgres.test.ts"],
+  // Agent operator wave H4: Postgres parity of the keyless agent journey (init --json, day-zero doctor,
+  // doctor --remediate consent on a pending-migration brain, stdio MCP notices/errors/readiness, degraded serve).
+  "src/core/agent-output.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/core/readiness.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/core/consent.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/core/consent-cli.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/core/interop-notices.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/core/degraded-engine.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/core/agent-contract-log.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/mcp/server.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/mcp/capabilities.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/mcp/validate-params.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/commands/init.ts": ["test/e2e/agent-journey-postgres.test.ts"],
+  "src/commands/serve-status.ts": ["test/e2e/agent-journey-postgres.test.ts"],
   // Schema source of truth: any change must pass the cross-engine drift gate.
   "src/schema.sql": ["test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
   "src/core/pglite-schema.ts": ["test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
@@ -578,7 +595,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/autopilot-probes.ts": ["test/e2e/autopilot-linux-lifecycle.serial.test.ts", "test/e2e/worker-readiness-cli.test.ts"],
   "src/commands/doctor.ts": ["test/e2e/doctor-progress.test.ts", "test/e2e/doctor-json-golden.test.ts"],
   // Doctor check modules peeled from doctor.ts feed the same e2e surface.
-  "src/commands/doctor/**": ["test/e2e/doctor-progress.test.ts", "test/e2e/recovery-layer.test.ts", "test/e2e/fix-wave-3-integration.test.ts", "test/e2e/doctor-json-golden.test.ts"],
+  "src/commands/doctor/**": ["test/e2e/doctor-progress.test.ts", "test/e2e/recovery-layer.test.ts", "test/e2e/fix-wave-3-integration.test.ts", "test/e2e/doctor-json-golden.test.ts", "test/e2e/agent-journey-postgres.test.ts"],
   // Knowledge graph layer feeds graph-quality.
   "src/core/link-extraction.ts": ["test/e2e/graph-quality.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts"],
   "src/core/attendance-repair.ts": ["test/e2e/attendance-repair-postgres.test.ts"],

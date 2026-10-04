@@ -1,7 +1,9 @@
 import type { BrainEngine } from '../engine.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { OperationError } from '../ops/contract.ts';
+import type { Action } from '../agent-output.ts';
+import { opError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { authorizeStoredRequest } from '../persistence/authority.ts';
 import { digest } from '../persistence/digest.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
@@ -15,6 +17,8 @@ import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPri
 
 interface OutputRef { slug: string; source_id: string; raw_source?: string; seat?: string; first_write_at?: Date; }
 interface RetainedOutput { job_id: number | bigint; job_key: string; request: WriteRequest; }
+
+const writerStatusFix = (sourceId: string, why: string): Action => readFix(why, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
 
 export async function postprocessManagedSynthesis(
   engine: BrainEngine,
@@ -43,13 +47,19 @@ export async function postprocessManagedSynthesis(
   let grounded: GroundedSource | undefined;
   for (const ref of [...refs].sort((a, b) => (a.raw_source ?? '').localeCompare(b.raw_source ?? ''))) {
     throwIfAborted(opts.signal, '[dream] synthesis postprocessing');
-    if (ref.source_id !== authority.writer.sourceId) throw new OperationError('source_changed', 'The synthesis output source changed.');
+    if (ref.source_id !== authority.writer.sourceId) {
+      throw opError('source_changed', 'The synthesis output source changed.',
+        `Synthesis output ${ref.slug} belongs to source ${ref.source_id}, not ${authority.writer.sourceId} that this dream cycle writes, so it was not postprocessed. Check source ${authority.writer.sourceId}'s writer status, then run gbrain dream --phase synthesize --source ${authority.writer.sourceId} again.`,
+        { fix: writerStatusFix(authority.writer.sourceId, `Shows source ${authority.writer.sourceId}'s maintenance writer and requests in flight, read-only.`) });
+    }
     const output = outputs.find(o => o.request.slug === ref.slug);
     const path = output && jobRawSource.get(Number(output.job_id));
     const transcript = path ? byPath.get(path) : undefined;
     const revision = output?.request.outcome?.revision;
     if (!output || !transcript || typeof revision !== 'string') {
-      throw new OperationError('recovery_required', 'The synthesis output has no retained transcript and committed revision.');
+      throw opError('recovery_required', 'The synthesis output has no retained transcript and committed revision.',
+        `Synthesis output ${ref.slug} in source ${ref.source_id} has no retained transcript or committed put_page revision${output ? ` (child request ${output.request.request_id})` : ''}, so it cannot be verified. Inspect the writer status before running synthesis again; do not republish the page by hand.`,
+        { fix: writerStatusFix(ref.source_id, `Shows source ${ref.source_id}'s committed and pending maintenance requests, read-only.`) });
     }
     const finalizedRef = { ...ref, raw_source: path };
     const key = digest({ kind: 'synthesis-postprocess-v1', source: authority.writer.sourceIncarnation,
@@ -65,13 +75,17 @@ export async function postprocessManagedSynthesis(
     let content: string;
     if (prior) {
       if (prior.intent?.kind !== 'managed_maintenance_page' || prior.intent.expected_revision !== revision || typeof prior.intent.content !== 'string') {
-        throw new OperationError('recovery_required', 'The retained synthesis postprocessing intent is unavailable.');
+        throw opError('recovery_required', 'The retained synthesis postprocessing intent is unavailable.',
+          `Postprocess request ${prior.request_id} for ${ref.slug} in source ${ref.source_id} exists, but its retained intent does not match revision ${revision}. Inspect it in writer status; do not resubmit under a new request.`,
+          { fix: writerStatusFix(ref.source_id, `Shows request ${prior.request_id} and any recovery it holds, read-only.`) });
       }
       content = prior.intent.content;
     } else {
       const snapshot = await engine.readPageSnapshot(ref.slug, { sourceId: ref.source_id });
       if (!snapshot || snapshot.revision !== revision) {
-        throw new OperationError('revision_conflict', 'The synthesis output changed after the child committed.');
+        throw opError('revision_conflict', 'The synthesis output changed after the child committed.',
+          `Page ${ref.slug} in source ${ref.source_id} changed after the synthesis child committed revision ${revision}, so postprocessing left it alone. Review the page; the next synthesis run processes fresh output.`,
+          { fix: readFix(`Shows page ${ref.slug} as it is now, read-only.`, { argv: ['gbrain', 'get', '--source', ref.source_id, '--', ref.slug] }) });
       }
       const firstDate = snapshot.page.frontmatter.dream_created_cycle_date || snapshot.page.frontmatter.dream_cycle_date || opts.cycleDate;
       const since = ref.first_write_at ?? opts.sinceByTranscript.get(transcript.filePath);

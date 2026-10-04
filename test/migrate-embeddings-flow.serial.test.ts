@@ -21,7 +21,7 @@
  * afterAll), which withEnv() cannot wrap. GBRAIN_HOME is pointed at a temp dir so the file-plane config write
  * (persistEmbeddingFileConfig) never touches the developer's ~/.gbrain.
  */
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -173,9 +173,19 @@ describe('migrate embeddings — full flow on PGLite', () => {
     expect(cfg.embedding_model).toBe('voyage:voyage-4');
   });
 
-  test('non-TTY without --yes refuses with exit 2 (cost gate)', async () => {
+  test('non-TTY without --yes refuses with exit 3 (consent gate)', async () => {
     const code = await runMigrate(['--to', 'openai:text-embedding-3-small']);
-    expect(code).toBe(2);
+    expect(code).toBe(3);
+    // --json never implies consent; the refusal is the consent payload.
+    let stdout = '';
+    const write = spyOn(process.stdout, 'write').mockImplementation(((c: string | Uint8Array) => { stdout += String(c); return true; }) as never);
+    let jsonCode: number;
+    try { jsonCode = await runMigrate(['--to', 'openai:text-embedding-3-small', '--max-cost-usd', '1', '--json']); } finally { write.mockRestore(); }
+    expect(jsonCode).toBe(3);
+    const payload = JSON.parse(stdout.slice(stdout.lastIndexOf('{\n  "status": "confirmation_required"')));
+    expect(payload).toMatchObject({ code: 'confirmation_required', effects: ['paid', 'destructive'] });
+    expect(payload.fix.argv).toEqual(['gbrain', 'migrate', 'embeddings', '--to', 'openai:text-embedding-3-small', '--max-cost-usd', '1', '--json', '--yes']);
+    expect(payload.risk).toContain('existing vectors are dropped');
     expect(await columnDims()).toBe(FROM_DIMS);
   });
 
@@ -183,7 +193,7 @@ describe('migrate embeddings — full flow on PGLite', () => {
     await engine.setConfig('spend.posture', 'tokenmax');
     try {
       const code = await runMigrate(['--to', 'openai:text-embedding-3-small']);
-      expect(code).toBe(2); // posture waives the spend ceiling, not the consent
+      expect(code).toBe(3); // posture covers the paid effect, not the destructive rebuild
       expect(await columnDims()).toBe(FROM_DIMS);
     } finally {
       await engine.unsetConfig('spend.posture');

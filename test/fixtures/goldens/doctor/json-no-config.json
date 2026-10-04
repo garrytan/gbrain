@@ -7,12 +7,41 @@
       "<home>/skills"
     ],
     "exit_code": 1,
-    "report": null,
+    "report": {
+      "class": "caller",
+      "code": "no_brain",
+      "contract_version": 1,
+      "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#no_brain",
+      "docs_cmd": [
+        "gbrain",
+        "errors",
+        "no_brain"
+      ],
+      "error": "no_brain",
+      "fix": {
+        "actor": "agent",
+        "argv": [
+          "gbrain",
+          "init",
+          "--pglite",
+          "--no-embedding"
+        ],
+        "command": "gbrain init --pglite --no-embedding",
+        "consent": [],
+        "next": "run",
+        "requires_exclusive": false,
+        "why": "Creates a local PGLite brain with no API keys; nothing leaves this machine."
+      },
+      "message": "No brain configured. Run: gbrain init",
+      "retryable": false,
+      "suggestion": "Run `gbrain init --pglite --no-embedding` for a local keyless brain, or `gbrain init --help` for hosted and Postgres options."
+    },
     "stderr": [
       "GBRAIN_DB_ACCESS no_url",
-      "No brain configured. Run: gbrain init"
+      "Error [no_brain]: No brain configured. Run: gbrain init",
+      "Fix: gbrain init --pglite --no-embedding"
     ],
-    "stdout": []
+    "stdout": "<json>"
   },
   "normalizer": "doctor-json-v1"
 }

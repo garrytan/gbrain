@@ -147,6 +147,7 @@ function finalizeResult(phases: OrchestratorPhaseResult[], status: 'complete' | 
 
 export const v0_13_0: Migration = {
   version: '0.13.0',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'Frontmatter becomes a graph — company, investors, attendees now create typed edges automatically',
     description:

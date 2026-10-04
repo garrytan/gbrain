@@ -26,7 +26,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { OperationError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 import { EmbeddingDisabledError } from '../embedding-dim-check.ts';
 import { MAX_RATE_LIMIT_RETRIES } from '../embed-retry.ts';
 import { digest } from './digest.ts';
@@ -158,7 +158,10 @@ async function queueRetry(tx: BrainEngine, effect: PersistenceEffect, opts: { dr
   const grantId = paid && opts.runId ? embeddingGrantId(opts.runId, effect.id) : null;
   if (grantId && grants.includes(grantId)) return { ...base, reason: 'grant_replayed' };
   if (opts.dryRun) return { ...base, paid, ...(exhausted ? { reason: 'grant_new_retry_cycle' } : {}) };
-  if (paid && !grantId) throw new OperationError('invalid_params', 'An embedding retry grant needs a repair run id.');
+  if (paid && !grantId) {
+    throw opError('invalid_params', 'An embedding retry grant needs a repair run id.',
+      'Paid embedding retries run only through gbrain repair embedding-effects, which supplies the run id. Preview it with gbrain repair embedding-effects --json and apply it after the user approves the cost.');
+  }
   const now = new Date().toISOString();
   const data = { ...effect.data, repair_requeued_at: now,
     ...(effect.state === 'failed' ? { embedding_attempt_base: effect.attempts, embedding_retry_base: effect.attempts } : {}),

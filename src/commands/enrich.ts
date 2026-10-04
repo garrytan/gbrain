@@ -53,6 +53,7 @@ import {
   type OpCheckpointKey,
 } from '../core/op-checkpoint.ts';
 import { createProgress } from '../core/progress.ts';
+import { consentGateOrExit, engineConsentEnv, tokenmaxUncappedEnv } from '../core/consent-cli.ts';
 import { getCliOptions, cliOptsToProgressOptions, maybeBackground } from '../core/cli-options.ts';
 import { loadConfig } from '../core/config.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
@@ -1003,37 +1004,37 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
     process.exit(1);
   }
 
-  // v0.42.42.0 (#2139, D15A): enrich runs UNCAPPED when the operator says cost
-  // isn't the constraint — either explicit `--max-usd off` (parsed to Infinity)
-  // or `spend.posture=tokenmax` with no per-call cap. Uncapped → the missing-cap
-  // refusals lift AND runEnrichCore passes no ceiling to the BudgetTracker (spend
-  // still ledgered; posture removes the ceiling, not the accounting). An explicit
-  // finite --max-usd always wins (precedence: per-call > posture).
-  const explicitOff = parsed.maxCostUsd === Infinity;
-  const { resolveSpendPosture } = await import('../core/spend-posture.ts');
-  const posture = parsed.dryRun ? 'gated' : await resolveSpendPosture(engine);
-  const uncapped =
-    !parsed.dryRun && (explicitOff || (parsed.maxCostUsd === undefined && posture === 'tokenmax'));
-  if (uncapped) {
-    console.error(`${explicitOff ? '--max-usd off' : 'spend.posture=tokenmax'}: running uncapped, spend ledgered. docs: docs/operations/spend-controls.md`);
-  }
-
-  // Non-TTY execute without --max-usd or --yes is refused (cost guardrail).
-  if (!parsed.dryRun && parsed.maxCostUsd === undefined && !parsed.yes && !process.stdout.isTTY && !uncapped) {
-    console.error('Refusing to spend without a cap in a non-interactive context. Pass --max-usd <FLOAT> (or `off`), --yes, or set spend.posture=tokenmax.');
-    process.exit(1);
-  }
-
   const sourceIds: string[] = parsed.sourceId
     ? [parsed.sourceId]
     : (await listSources(engine)).map((s) => s.id);
 
-  // Dry-run cost preview (TTY) before spending.
-  if (!parsed.dryRun && process.stdout.isTTY && !parsed.yes && parsed.maxCostUsd === undefined && !uncapped) {
+  // A4 consent before spending. `--max-usd <usd>`, `--yes` (derived cap: the
+  // estimate x1.5), a per-run preapproval or spend.posture=tokenmax authorize
+  // it; `--max-usd off` is the explicit uncapped choice. tokenmax keeps its
+  // documented meaning here (D15A: the ceiling is removed, spend is still
+  // ledgered), so unattended tokenmax runs do not flip to a derived-cap stop.
+  // Without authorization: a TTY prompt, else exit 3 with the consent payload.
+  const explicitOff = parsed.maxCostUsd === Infinity;
+  let maxCostUsd = parsed.maxCostUsd;
+  if (!parsed.dryRun && !explicitOff) {
     const limit = parsed.limit ?? DEFAULT_LIMIT;
-    const est = (limit * sourceIds.length * COST_ESTIMATE_PER_PAGE_USD).toFixed(2);
-    console.error(`About to enrich up to ${limit} page(s) per source across ${sourceIds.length} source(s), est. ~$${est}. Re-run with --max-usd or --yes to confirm.`);
-    process.exit(2);
+    const estUsd = Math.ceil(limit * sourceIds.length * COST_ESTIMATE_PER_PAGE_USD * 100) / 100;
+    const auth = await consentGateOrExit({
+      command: 'enrich', effects: ['paid'], actor: 'agent',
+      what: `Enrich up to ${limit} page(s) per source across ${sourceIds.length} source(s)`,
+      why: 'Fills thin person and company pages with model-written summaries from the brain\'s own evidence.',
+      risk: `Spends about $${estUsd.toFixed(2)} with the chat model provider; pages gain model-written text (each write is attributed and can be reviewed).`,
+      user_message: `Enrich up to ${limit} thin page(s) per source across ${sourceIds.length} source(s) for about $${estUsd.toFixed(2)}?`,
+      argv: ['gbrain', 'enrich', ...args.filter(a => a !== '--yes')],
+      preview_argv: ['gbrain', 'enrich', ...args.filter(a => a !== '--yes' && a !== '--json'), '--dry-run'],
+      est_usd: estUsd,
+      args,
+    }, { json: parsed.json === true, env: engineConsentEnv(engine, await tokenmaxUncappedEnv(engine, parsed.maxCostUsd !== undefined)) });
+    if (maxCostUsd === undefined && auth.cap_usd !== null) maxCostUsd = auth.cap_usd;
+  }
+  const uncapped = !parsed.dryRun && maxCostUsd === Infinity;
+  if (uncapped) {
+    console.error(`${explicitOff ? '--max-usd off' : 'spend.posture=tokenmax'}: running uncapped, spend ledgered. docs: docs/operations/spend-controls.md`);
   }
 
   const aggregate = emptyAgg();
@@ -1053,7 +1054,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
         model: parsed.model,
         // uncapped (off / tokenmax) → Infinity sentinel; runEnrichCore maps it
         // to "no BudgetTracker ceiling".
-        maxCostUsd: uncapped ? Infinity : parsed.maxCostUsd,
+        maxCostUsd,
         minContextChars: parsed.minContextChars,
         thinThreshold: parsed.thinThreshold,
         reenrichAfterMs: parsed.reenrichAfterMs,

@@ -207,6 +207,14 @@
       },
       {
         "category": "ops",
+        "name": "harness_wiring"
+      },
+      {
+        "category": "meta",
+        "name": "agent_contract"
+      },
+      {
+        "category": "ops",
         "name": "pglite_data_dir"
       },
       {

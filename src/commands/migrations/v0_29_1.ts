@@ -147,6 +147,7 @@ function finalize(phases: OrchestratorPhaseResult[], status: 'complete' | 'parti
 
 export const v0_29_1: Migration = {
   version: '0.29.1',
+  fresh_install_noop: true,
   featurePitch: {
     headline: 'Recency + salience as two opt-in axes — agent in charge of when to use each',
     description:

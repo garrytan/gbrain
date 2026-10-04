@@ -113,8 +113,12 @@ for (const backend of backends) {
 
   test(`${backend}: an explicit managed sync without --no-pull keeps refusing (O-ENG-15)`, async () => {
     await managedRemoteSource(engine(), async ({ sourceId, root }) => {
-      await expect(performSync(engine(), { repoPath: root, sourceId, noPull: false, noEmbed: true }))
-        .rejects.toMatchObject({ code: 'writer_coordinator_required', suggestion: `Fast-forward and sync the checkout with gbrain sources refresh ${sourceId}` });
+      const refusal = await performSync(engine(), { repoPath: root, sourceId, noPull: false, noEmbed: true }).then(() => null, (e: unknown) => e);
+      expect(refusal).toMatchObject({ code: 'writer_coordinator_required',
+        fix: { argv: ['gbrain', 'sync', '--no-pull', '--source', sourceId], actor: 'agent' } });
+      expect((refusal as { suggestion: string }).suggestion).toContain(`gbrain sync --no-pull --source ${sourceId}`);
+      expect((refusal as { suggestion: string }).suggestion).toContain(`gbrain sources refresh ${sourceId}`);
+      expect((refusal as { suggestion: string }).suggestion).toContain(`fast-forward and sync the checkout with gbrain sources refresh ${sourceId}`);
     });
   }, 120_000);
 

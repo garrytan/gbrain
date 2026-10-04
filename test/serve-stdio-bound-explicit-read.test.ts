@@ -32,7 +32,8 @@ function execFixture(args: string[], env: Record<string, string>): void {
 
 function textOf(result: unknown): string {
   const content = (result as { content?: Array<{ text?: string }> })?.content;
-  return Array.isArray(content) ? content.map((c) => c?.text ?? '').join('\n') : '';
+  // The result body is content[0]; agent contract v1 notices ride extra blocks.
+  return Array.isArray(content) ? content[0]?.text ?? '' : '';
 }
 
 function sourcesOf(text: string): string[] {
@@ -97,7 +98,7 @@ describe('#5081 — GBRAIN_SOURCE-bound stdio serve, explicit source_id reads', 
     const body = JSON.parse(textOf(res));
     expect(body.error).toBe('permission_denied');
     expect(body.suggestion).toStartWith('This connection is bound to source work (GBRAIN_SOURCE). private ');
-    expect(body.suggestion).toContain('`gbrain sources federate private` on the brain host, or start this connection without GBRAIN_SOURCE.');
+    expect(body.suggestion).toContain('`gbrain sources federate private --brain host` on the brain host, or start this connection without GBRAIN_SOURCE.');
   }, 60_000);
 
   test('unqualified reads stay on the bound source', async () => {

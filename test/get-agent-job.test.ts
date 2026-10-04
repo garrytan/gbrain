@@ -91,7 +91,8 @@ async function seedJob(opts: {
 describe('get_agent_job op surface', () => {
   it('declares scope=agent and a required numeric id param', () => {
     expect(get_agent_job.scope).toBe('agent');
-    expect(get_agent_job.mutating).toBeUndefined();
+    // Agent contract v1 (A2): every op declares its effect; this read is non-mutating.
+    expect(get_agent_job.mutating).toBe(false);
     expect((get_agent_job.params.id as any).required).toBe(true);
     expect((get_agent_job.params.id as any).type).toBe('number');
     expect(typeof (get_agent_job.params.id as any).description).toBe('string');

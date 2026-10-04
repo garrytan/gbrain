@@ -34,7 +34,8 @@ import {
 import { DECIDE_SLOTS, DecideError, EVIDENCE_CLASSES, type DecideQuestion, type DecideSlot } from '../core/ai/decide/types.ts';
 import { usageCostUsd } from '../core/budget/reservation-cost.ts';
 import { evidenceCoPackedSlots, resetDecideSearchCache } from '../core/search/decide-stage.ts';
-import { promptYesNo } from '../core/confirm-prompt.ts';
+import { currentExitCode } from '../core/cli-force-exit.ts';
+import { consentGate, engineConsentEnv } from '../core/consent-cli.ts';
 
 export const DECIDE_HELP = `Usage: gbrain decide <subcommand> [options]
 
@@ -334,11 +335,31 @@ async function resolvePinned(provider: string): Promise<string> {
   return `typesafe:${r.model_resolved}`;
 }
 
-async function confirmed(args: string[], summary: string[]): Promise<boolean> {
-  for (const line of summary) console.log(line);
-  if (has(args, '--yes')) return true;
-  if (!process.stdin.isTTY) { console.error('Re-run with --yes to confirm (non-interactive).'); return false; }
-  return promptYesNo('Proceed? [y/N] ');
+/**
+ * A4 consent for turning a slot on: text leaves the machine (`egress`) and the
+ * provider bills per call (`paid`, bounded by decide.budget.daily_usd). `--yes`
+ * authorizes; `--json` never does. Resolves false after printing the refusal
+ * (exit verdict 3) or a declined prompt.
+ */
+async function enableConsent(engine: BrainEngine, args: string[], req: { slots: DecideSlot[]; summary: string[]; dailyUsd: number; argv: string[] }): Promise<boolean> {
+  const json = has(args, '--json');
+  for (const line of req.summary) (json ? console.error : console.log)(line);
+  const what = req.slots.length === 1 ? `Turn on the decide slot ${req.slots[0]}` : `Turn on the decide slots ${req.slots.join(', ')}`;
+  const auth = await consentGate({
+    command: 'decide enable',
+    effects: ['egress', 'paid'],
+    actor: 'agent',
+    what,
+    why: 'System One answers these routing and ranking questions with a hosted model instead of local heuristics; each slot is a measured win on the eval sets.',
+    risk: `From now on, brain text named in the summary leaves this machine on every affected call, and the provider bills per call up to decide.budget.daily_usd ($${req.dailyUsd.toFixed(2)}/day). `
+      + 'Undo any time: gbrain decide disable --all.',
+    user_message: `${what}? Some of your brain's text (${req.summary.find(l => l.startsWith('Data that leaves')) ?? 'see the summary'}) will be sent to the provider on each call, capped at $${req.dailyUsd.toFixed(2)} a day; gbrain decide disable --all turns it off.`,
+    argv: req.argv,
+    preview_argv: ['gbrain', 'decide', 'status', '--json'],
+    est_usd: null,
+    args,
+  }, { json, env: engineConsentEnv(engine, { configuredCapUsd: req.dailyUsd }) });
+  return auth !== null;
 }
 
 async function writeConfig(engine: BrainEngine, writes: Array<[string, string]>): Promise<void> {
@@ -418,8 +439,8 @@ async function cmdEnable(engine: BrainEngine, args: string[]): Promise<number> {
     ...(cost.usd !== null ? [`Estimated cost: ~$${cost.usd.toFixed(4)} per 1,000 ${COST_UNITS[slot]?.unit ?? 'units'}; daily cap $${nextCfg.dailyUsd.toFixed(2)} (decide.budget.daily_usd${slot === 'rerank' ? '; S1 on uses reranker spend controls' : ''}).`] : []),
     `Writes: ${[...writes, ...(slot === 'rerank' ? [['search.reranker.model', provider], ['search.reranker.enabled', 'true']] : [])].map(([k, v]) => `${k}=${v}`).join(', ')}`,
   ];
-  if (!json && !(await confirmed(args, summary))) return 1;
-  if (json && !has(args, '--yes')) { console.error('--json enable needs --yes'); return 1; }
+  if (!(await enableConsent(engine, args, { slots: [slot], summary, dailyUsd: nextCfg.dailyUsd,
+    argv: ['gbrain', 'decide', 'enable', slot, '--provider', provider, ...(mode === 'shadow' ? ['--shadow'] : []), ...(json ? ['--json'] : [])] }))) return currentExitCode() || 1;
   if (slot === 'rerank') writes.push(...await enableRerank(engine, state, provider, args));
   await writeConfig(engine, writes);
   const after = policyFor(nextState, slot);
@@ -439,9 +460,16 @@ async function enableRecommended(engine: BrainEngine, state: DecideState, args: 
     console.error(`no slot has a recorded win for ${model}; see docs/eval/system-one/`);
     return 1;
   }
+  // One ask covers every winner; the per-slot runs then carry the approval.
+  if (!has(args, '--yes')) {
+    const summary = [`Enable ${winners.join(', ')} with ${provider} (the slots with a recorded win; docs/eval/system-one/).`,
+      `Data that leaves this machine: the query, candidate and fact text each slot scores, to ${provider.startsWith('typesafe:') ? 'TypeSafe' : 'your configured chat provider'}; private pages stay local unless decide.egress.private=allow.`];
+    if (!(await enableConsent(engine, args, { slots: winners, summary, dailyUsd: state.cfg.dailyUsd,
+      argv: ['gbrain', 'decide', 'enable', '--recommended', ...(flagValue(args, '--provider') ? ['--provider', flagValue(args, '--provider')!] : []), ...(has(args, '--json') ? ['--json'] : [])] }))) return currentExitCode() || 1;
+  }
   let code = 0;
   const pin = state.cfg.provider === 'none' && !flagValue(args, '--provider') ? ['--provider', provider] : [];
-  for (const slot of winners) code = Math.max(code, await cmdEnable(engine, ['enable', slot, ...pin, ...args.filter((a) => a !== '--recommended')]));
+  for (const slot of winners) code = Math.max(code, await cmdEnable(engine, ['enable', slot, ...pin, ...args.filter((a) => a !== '--recommended' && a !== '--yes'), '--yes']));
   return code;
 }
 

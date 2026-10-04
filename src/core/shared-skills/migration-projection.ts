@@ -63,7 +63,10 @@ export async function assertExportProjectionRoundtrip(engine: BrainEngine, page:
     if (!take || !base) { conflicts.push(`takes row ${stored.row_num}: missing canonical row`); continue; }
     let resolution: ReturnType<typeof deriveResolutionTuple> | null = null;
     if (take.resolvedQuality !== undefined) {
-      if (!take.resolvedBy) throw new OperationError('unsupported_export_data', `Canonical takes row ${take.rowNum} has a resolution without resolved_by. Restore the recorded resolver in the fence before export; no identity was inferred.`);
+      if (!take.resolvedBy) {
+        throw new OperationError('unsupported_export_data', `Canonical takes row ${take.rowNum} has a resolution without resolved_by. Restore the recorded resolver in the fence before export; no identity was inferred.`,
+          `Add the resolver to takes row ${take.rowNum}'s resolved_by column, then preview the export again; gbrain never guesses who resolved a take.`);
+      }
       resolution = deriveResolutionTuple({ quality: take.resolvedQuality, resolvedBy: take.resolvedBy });
     }
     const expected: Row = { ...base, resolved_at: take.resolvedAt ?? null, resolved_quality: resolution?.quality ?? null,
@@ -74,5 +77,8 @@ export async function assertExportProjectionRoundtrip(engine: BrainEngine, page:
     if (changed.length) conflicts.push(`takes row ${take.rowNum}: ${changed.join(', ')}`);
   }
   for (const take of takes) if (!storedTakes.some(row => row.row_num === take.rowNum)) conflicts.push(`takes row ${take.rowNum}: would insert a missing database row`);
-  if (conflicts.length) throw new OperationError('unsupported_export_data', `Canonical projection would change database fields (${conflicts.slice(0, 20).join('; ')}${conflicts.length > 20 ? '; additional rows differ' : ''}). Reconcile the source fences before export; no rows or files were changed.`);
+  if (conflicts.length) {
+    throw new OperationError('unsupported_export_data', `Canonical projection would change database fields (${conflicts.slice(0, 20).join('; ')}${conflicts.length > 20 ? '; additional rows differ' : ''}). Reconcile the source fences before export; no rows or files were changed.`,
+      'Make the page\'s Facts and Takes fences match the stored rows listed in the message (or leave the page database-only), then preview the export again.');
+  }
 }

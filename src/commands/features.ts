@@ -10,6 +10,9 @@ import { join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { heartbeatPath } from './integrations.ts';
 import { VERSION } from '../version.ts';
+import { cliRenderContext, renderNotice, type Notice } from '../core/agent-output.ts';
+import { writeCliNotices } from '../core/interop-notices.ts';
+import { embeddingsDisabled } from '../core/embedding-disabled.ts';
 
 // --- Types ---
 
@@ -116,9 +119,10 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
   const stats = await engine.getStats();
   const health = await engine.getHealth();
   const recommendations: FeatureRecommendation[] = [];
+  const keyless = await embeddingsDisabled(engine);
 
-  // P1: Missing embeddings
-  if (health.missing_embeddings > 0) {
+  // P1: Missing embeddings (never on a keyless-by-choice brain: E2)
+  if (health.missing_embeddings > 0 && !keyless) {
     recommendations.push({
       id: 'missing-embeddings', priority: 1,
       title: 'Fix Missing Embeddings',
@@ -164,7 +168,7 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
     }
 
     // Low embed coverage
-    if (health.embed_coverage < 0.9 && health.embed_coverage > 0) {
+    if (health.embed_coverage < 0.9 && health.embed_coverage > 0 && !keyless) {
       const pct = (health.embed_coverage * 100).toFixed(0);
       recommendations.push({
         id: 'low-coverage', priority: 2,
@@ -264,7 +268,7 @@ async function executeAutoFix(rec: FeatureRecommendation, engine: BrainEngine): 
 
 export async function runFeatures(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain features [--json] [--auto-fix]\n\nScan brain usage and recommend unused features.\n\n  --json       Output as JSON (for agents)\n  --auto-fix   Automatically fix all auto-fixable issues');
+    console.log('Usage: gbrain features [--json] [--auto-fix [--yes]]\n\nScan brain usage and recommend unused features.\n\n  --json       Output as JSON (for agents)\n  --auto-fix   Automatically fix all auto-fixable issues\n  --yes        Authorize the paid embedding auto-fix (non-interactive runs need it)');
     return;
   }
 
@@ -284,6 +288,21 @@ export async function runFeatures(engine: BrainEngine, args: string[]) {
     return;
   }
 
+  // F7: the auto-fix suggestion is a coaching notice on every surface (it was
+  // printed only on a terminal); --json carries it under `notices`.
+  const autoFixNotice = autoFix ? null : featuresAutoFixNotice(pitchable);
+  if (autoFix && pitchable.some(r => r.auto_fixable && PAID_AUTO_FIX_IDS.has(r.id))) {
+    const { requireEmbedBackfillConsent } = await import('../core/embed-consent.ts');
+    const { isConsentRefusal, printConsentRefusal } = await import('../core/consent.ts');
+    const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
+    try {
+      await requireEmbedBackfillConsent(engine, { command: 'features', argv: ['gbrain', 'features', ...args.filter(a => a !== '--yes')], args, scope: {} });
+    } catch (e) {
+      if (!isConsentRefusal(e)) throw e;
+      setCliExitVerdict(printConsentRefusal(e, { json: jsonMode }));
+      return;
+    }
+  }
   if (jsonMode) {
     const fixResults: Record<string, { success: boolean; output: string }> = {};
     if (autoFix) {
@@ -292,7 +311,8 @@ export async function runFeatures(engine: BrainEngine, args: string[]) {
         offers.accepted[rec.id] = { at: new Date().toISOString().slice(0, 10), version: scan.version };
       }
     }
-    console.log(JSON.stringify({ ...scan, recommendations: pitchable, auto_fix_results: autoFix ? fixResults : undefined }, null, 2));
+    console.log(JSON.stringify({ ...scan, recommendations: pitchable, auto_fix_results: autoFix ? fixResults : undefined,
+      ...(autoFixNotice ? { notices: [renderNotice(autoFixNotice, cliRenderContext())] } : {}) }, null, 2));
     offers.lastVersion = scan.version;
     offers.lastScan = scan.scan_ts;
     saveOffers(offers);
@@ -330,8 +350,8 @@ export async function runFeatures(engine: BrainEngine, args: string[]) {
       console.log(`  ${result.success ? 'OK' : 'FAIL'}: ${rec.title} — ${result.output}`);
       offers.accepted[rec.id] = { at: new Date().toISOString().slice(0, 10), version: scan.version };
     }
-  } else if (process.stdin.isTTY) {
-    console.log(`Run 'gbrain features --auto-fix' to fix all auto-fixable issues.`);
+  } else if (autoFixNotice) {
+    writeCliNotices([autoFixNotice]);
   }
 
   offers.lastVersion = scan.version;
@@ -339,12 +359,31 @@ export async function runFeatures(engine: BrainEngine, args: string[]) {
   saveOffers(offers);
 }
 
+/** Auto-fixes that embed (paid): they need the user's approval (--yes, --max-usd, --max-cost, tokenmax or a preapproval). */
+const PAID_AUTO_FIX_IDS: ReadonlySet<string> = new Set(['missing-embeddings', 'low-coverage']);
+
+/** F7: the `features_auto_fix` coaching notice; null when nothing is auto-fixable. */
+function featuresAutoFixNotice(pitchable: readonly FeatureRecommendation[]): Notice | null {
+  const fixable = pitchable.filter(r => r.auto_fixable);
+  if (fixable.length === 0) return null;
+  const paid = fixable.some(r => PAID_AUTO_FIX_IDS.has(r.id));
+  return {
+    code: 'features_auto_fix', kind: 'coaching',
+    why: `${fixable.length} recommendation(s) can be fixed automatically: ${fixable.map(r => r.title).join(', ')}.`,
+    fix: {
+      argv: ['gbrain', 'features', '--auto-fix', ...(paid ? ['--yes'] : [])], consent: paid ? ['paid'] : [], actor: 'agent', requires_exclusive: false,
+      why: paid ? 'Runs the fixes; refreshing embeddings calls the configured embedding provider (a small paid cost).' : 'Runs the fixes (link and timeline extraction; no paid calls).',
+      ...(paid ? { user_message: 'gbrain can fill in missing embeddings for your notes; it costs a little in embedding API calls. OK to run it?' } : {}),
+    },
+  };
+}
+
 /** Lightweight features teaser for doctor output */
 export async function featuresTeaserForDoctor(engine: BrainEngine): Promise<string | null> {
   try {
     const health = await engine.getHealth();
     const parts: string[] = [];
-    if (health.missing_embeddings > 0) parts.push(`${health.missing_embeddings} missing embeddings`);
+    if (health.missing_embeddings > 0 && !await embeddingsDisabled(engine)) parts.push(`${health.missing_embeddings} missing embeddings`);
     if (health.dead_links > 0) parts.push(`${health.dead_links} dead links`);
     if (parts.length === 0) return null;
     return `Tip: ${parts.join(', ')}. Run 'gbrain features' to fix.`;

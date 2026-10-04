@@ -10,7 +10,10 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
-import { loadConfig, gbrainPath } from '../../../core/config.ts';
+import { loadConfig, gbrainPath, configPath, getDbUrlSource, type DbUrlSource } from '../../../core/config.ts';
+import type { Action } from '../../../core/agent-output.ts';
+import { agentFix, doctorVerify } from '../check-fix.ts';
+import { exclusiveFix, liveServeOwner } from '../../../core/exclusive-fix.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
 import { checkPgliteScratchProbe } from './core-health.ts';
 import { computePgliteDataDirCheck } from './pglite-worker.ts';
@@ -134,14 +137,46 @@ async function pgbouncerPrepareCheck(): Promise<Check | null> {
  * makeRemediationStep: that lane feeds `--remediate`, whose Minion jobs need
  * the very DB that's down (db-repair is the engine-free applier here).
  */
-function classifiedConnectionCheck(e: unknown): Check {
+function classifiedConnectionCheck(e: unknown, dbSource?: DbUrlSource): Check {
+  // A7: a live `gbrain serve` owns this PGLite brain (usually an agent session's stdio serve).
+  // The brain is not broken; doctor needs it to itself: stop that serve, then re-run doctor.
+  const owner = liveServeOwner(e);
+  if (owner) {
+    return {
+      name: 'connection', status: 'warn', readiness_state: 'unknown',
+      message: `${e instanceof Error ? e.message : String(e)} The database checks did not run.`,
+      details: { reason: 'live_serve', lock_owner_pid: owner.pid, lock_owner_transport: owner.transport },
+      fix: exclusiveFix(agentFix(['gbrain', 'doctor', '--json'], 'Runs the database checks once doctor has the brain to itself.', 'connection',
+        { requires_exclusive: true }), owner),
+    };
+  }
   const d = classifyPgAccessError(e, { url: loadConfig()?.database_url ?? null });
+  const source = describeUrlSource(dbSource ?? getDbUrlSource());
   return {
     name: 'connection',
     status: 'fail',
-    message: d.message,
-    details: { reason: d.reason, transient: d.transient, fix_hint: `${d.remediation} Run: gbrain db-repair` },
+    message: source ? `${d.message} (database URL from ${source})` : d.message,
+    details: { reason: d.reason, transient: d.transient, fix_hint: `${d.remediation} Run: gbrain db-repair`, ...(source ? { url_source: source } : {}) },
+    readiness_state: 'unknown',
+    fix: dbRepairFix(d.remediation),
   };
+}
+
+/**
+ * E10: where the database URL came from, in words an agent can act on: the
+ * environment variable, or the key in the config file under GBRAIN_HOME.
+ */
+export function describeUrlSource(source: DbUrlSource | undefined): string | null {
+  if (source === 'env:GBRAIN_DATABASE_URL') return 'the GBRAIN_DATABASE_URL environment variable';
+  if (source === 'env:DATABASE_URL') return 'the DATABASE_URL environment variable';
+  if (source === 'config-file') return `database_url in ${configPath()}`;
+  if (source === 'config-file-path') return `database_path in ${configPath()}`;
+  return null;
+}
+
+function dbRepairFix(why: string): Action {
+  return agentFix(['gbrain', 'db-repair'], `${why} \`gbrain db-repair\` diagnoses the database URL and access without changing anything (it prints the --yes command for a safe fix).`, 'connection',
+    { docs: 'docs/ENGINES.md#engine-detection-and-access-repair' });
 }
 
 async function runOfflineConnection(ctx: DoctorContext): Promise<Check[]> {
@@ -157,17 +192,26 @@ async function runOfflineConnection(ctx: DoctorContext): Promise<Check[]> {
     if (!fastMode && dbSource && connectError !== undefined) {
       // 2c-bis: a REAL connect failure — synthesize the classified check so
       // `checks[name=="connection"]` exists in every failure shape.
-      checks.push(classifiedConnectionCheck(connectError));
+      checks.push(classifiedConnectionCheck(connectError, dbSource));
     } else {
       let msg: string;
       if (fastMode && dbSource) {
         msg = `Skipping DB checks (--fast mode, URL present from ${dbSource})`;
       } else if (!fastMode && dbSource) {
-        msg = `Could not connect to configured DB (URL from ${dbSource}); filesystem checks only`;
+        msg = `Could not connect to configured DB (URL from ${dbSource}: ${describeUrlSource(dbSource)}); filesystem checks only`;
       } else {
-        msg = 'No database configured (filesystem checks only). Set GBRAIN_DATABASE_URL or run `gbrain init`.';
+        msg = `No database configured (filesystem checks only; no URL in the environment or in ${configPath()}). Set GBRAIN_DATABASE_URL or run \`gbrain init\`.`;
       }
-      checks.push({ name: 'connection', status: 'warn', message: msg });
+      checks.push({
+        name: 'connection', status: 'warn', message: msg, readiness_state: 'unknown',
+        ...(fastMode && dbSource
+          ? { fix: agentFix(['gbrain', 'doctor', '--json'], 'Runs the database checks --fast skipped.', 'connection') }
+          : dbSource
+            ? { fix: dbRepairFix('The configured database did not accept the connection.') }
+            : { fix: { argv: ['gbrain', 'init', '--pglite'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify('connection'),
+              why: 'No brain is configured on this machine; init creates a local PGLite brain (keyless unless the user adds a provider key).',
+              user_message: 'There is no gbrain brain on this machine yet. Shall I create a local one?' } as Action }),
+      });
     }
     // URL-only + engine-free checks still run on a dead DB — that is the
     // point of them.

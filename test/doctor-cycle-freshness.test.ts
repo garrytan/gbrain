@@ -29,7 +29,12 @@ beforeEach(async () => {
 const NOW = Date.parse('2026-05-22T12:00:00.000Z');
 const agoH = (h: number) => new Date(NOW - h * 3600_000).toISOString();
 
-async function seed(id: string, lastFullCycleAt?: string, opts: { local_path?: string | null; syncEnabled?: boolean } = {}): Promise<void> {
+/**
+ * A source row. Never-cycled sources get one page created 30 days before NOW
+ * (content that should have been cycled) unless `pageAgeH` says otherwise
+ * (`null` = no pages: an empty source, which E2 reports as information).
+ */
+async function seed(id: string, lastFullCycleAt?: string, opts: { local_path?: string | null; syncEnabled?: boolean; pageAgeH?: number | null } = {}): Promise<void> {
   const config = JSON.stringify({ last_full_cycle_at: lastFullCycleAt, syncEnabled: opts.syncEnabled });
   const localPath = opts.local_path === undefined ? `/tmp/${id}` : opts.local_path;
   await engine.executeRaw(
@@ -38,6 +43,13 @@ async function seed(id: string, lastFullCycleAt?: string, opts: { local_path?: s
      ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path, config = EXCLUDED.config`,
     [id, id, localPath, config],
   );
+  const pageAgeH = opts.pageAgeH === undefined ? (lastFullCycleAt === undefined ? 24 * 30 : null) : opts.pageAgeH;
+  if (pageAgeH !== null) {
+    await engine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, title, created_at) VALUES ($1, $2, 'note', $2, $3::timestamptz)`,
+      [id, `${id}-page`, agoH(pageAgeH)],
+    );
+  }
 }
 
 describe('doctor checkCycleFreshness', () => {
@@ -89,6 +101,32 @@ describe('doctor checkCycleFreshness', () => {
     expect(result.status).toBe('warn');
     expect(result.message).toMatch(/never completed a full cycle/);
     expect(result.message).toMatch(/gbrain dream --source/);
+  });
+
+  test('E2: a never-cycled source with no pages is information, not a warning', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('empty-vault', undefined, { pageAgeH: null });
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('ok');
+    expect(result.severity).toBe('info');
+    expect(result.readiness_state).toBe('not_applicable');
+    expect(result.message).toMatch(/empty-vault/);
+  });
+
+  test('E2: a never-cycled source whose pages are all under 24h old is information', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('new-vault', undefined, { pageAgeH: 2 });
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('ok');
+    expect(result.severity).toBe('info');
+  });
+
+  test('E2: a never-cycled source with old pages still warns, with a dream fix that asks first', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    await seed('old-vault');
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('warn');
+    expect(result.fix).toMatchObject({ argv: ['gbrain', 'dream', '--source', 'old-vault'], consent: ['paid'], actor: 'agent' });
   });
 
   test('reporter case (#2540): one cycled vault + never-cycled siblings is warn, not permanent fail', async () => {

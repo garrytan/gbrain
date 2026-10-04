@@ -459,6 +459,14 @@ The whole setup is exactly two user interactions: (1) the GCP checklist +
 client JSON hand-back, (2) one consent click. Never pass secrets via argv —
 use `--client-json <path>`, stdin, or env.
 
+**Exit codes (contract v1 legacy).** `gbrain google` exits 0 when done, 1 when
+it failed, and 2 both for usage errors and when it is waiting on the user (for
+example `status: "awaiting_consent"` after printing the consent URL, or
+`status: "no_brain"`). Other gbrain commands use exit 3 for "the user must agree
+first"; `google` keeps 2 under contract v1 and moves to 3 in a future contract
+version. Branch on the JSON `status`, not on exit 2 alone. `next_action` is the
+legacy name for `fix` ([legacy advice names](../protocol/AGENT_OPERATOR_v1.md#legacy-advice-names)).
+
 ## Attachment receipts and historical repair
 
 Gmail attachment receipts record filenames, MIME types, byte sizes when supplied,
