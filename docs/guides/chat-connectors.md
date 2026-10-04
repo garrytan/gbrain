@@ -51,7 +51,7 @@ gbrain autopilot --install
         │                              ▼
         │                    runTranscriptsIngest  (redact → slug → split → import)
         ▼                              │
-  watermark (config scalar) ◀──────────┘  advance ONLY on a fully clean run
+  watermark (config scalar) ◀──────────┘  advance only when watermark gates pass
   connectors.<p>.watermark_iso           receipt → ingest_log; stamp last_sync_at
 ```
 
@@ -67,10 +67,15 @@ imported. Later runs list newest-first and stop at `watermark − windowDays`
 - a conversation edited just behind the watermark (within the trailing window)
   is re-listed and re-imported in place — no silent gap.
 
-The watermark advances **only on a fully clean run** (no fetch errors, no
-`--limit` cap, clean ingest). A `partial` run leaves it untouched so the next run
-heals. Re-imports are free (content-hash idempotency), so re-running is always
-safe.
+For watermark purposes, a run is eligible to advance when listing completed,
+there is no non-quarantined conversation failure, no `--limit` cap was hit, and
+the run was not aborted. After three fetch or ingest failures for the same
+conversation update, that conversation is quarantined and stops blocking the
+watermark; a run can therefore remain `partial` while the watermark advances.
+A quarantined conversation is skipped on normal sync until its update time
+changes; `--full` also retries it. Re-imports are free (content-hash
+idempotency), so re-running is safe for conversations that are eligible to
+retry.
 
 The watermark is deliberately a config scalar, **not** `op_checkpoint`:
 `op_checkpoint` stores a completed-key set (no scalar timestamp) and GCs rows
@@ -163,7 +168,7 @@ the export-file lane (`conversation-archive`) — it always works.
 |---|---|---|
 | `forbidden` | Cloudflare/bot challenge on server-side fetch | Use the official export + `gbrain transcripts ingest` |
 | `auth_required` | cookie expired/invalid | Re-copy a fresh Cookie header, `gbrain connectors auth` |
-| `partial` | some fetches failed | Watermark not advanced; just re-run |
+| `partial` | some fetches failed | Unquarantined failures hold the watermark and are retried on re-run. After three failures at the same conversation update, it is quarantined, skipped on normal sync, and no longer holds the watermark; an update or `--full` retries it. |
 | receipt shows drift | provider API shape changed | Affected threads skipped (not lost); export lane still works |
 
 ## v2 roadmap
