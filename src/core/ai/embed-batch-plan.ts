@@ -136,3 +136,126 @@ export function embedRequestCeilings(texts: ReadonlyArray<string>, modelStr: str
 export function rerankRequestMaxInputTokens(query: string, documents: ReadonlyArray<string>): number {
   return documents.reduce((sum, document) => sum + Buffer.byteLength(query, 'utf8') + Buffer.byteLength(document, 'utf8'), 0);
 }
+
+/**
+ * Split inputs that exceed a per-item provider token cap into adjacent
+ * character windows. Content-preserving: windows have NO overlap and NO
+ * dropped tail, so concatenating an item's windows reproduces the item
+ * exactly. Items at or under the window size pass through as a single
+ * window. Windows of one item are adjacent and in order, so `owners` is
+ * monotonic non-decreasing and the gateway's ordered batch concatenation
+ * lets meanPoolByOwner regroup by owner afterwards.
+ *
+ * The caller applies the global EMBED_MAX_CHARS ceiling BEFORE calling this,
+ * which bounds the window count per item (EMBED_MAX_CHARS / windowChars) —
+ * no separate windows-per-item cap exists and no content is silently
+ * dropped.
+ *
+ * @param texts - Inputs, already ceiled at EMBED_MAX_CHARS.
+ * @param windowChars - Conservative per-window character budget (sized at a
+ *   worst-case 1 token/char CJK density by the caller).
+ * @returns flat — the flattened window list; owners — original input index
+ *   per window; splitAny — false when every input fit in one window (the
+ *   caller skips pooling entirely in that case).
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function windowOversizedItems(
+  texts: string[],
+  windowChars: number,
+): { flat: string[]; owners: number[]; splitAny: boolean } {
+  // Defensive: a misconfigured recipe (windowChars <= 0) must not loop.
+  if (windowChars <= 0) {
+    return { flat: texts, owners: texts.map((_, i) => i), splitAny: false };
+  }
+  const flat: string[] = [];
+  const owners: number[] = [];
+  let splitAny = false;
+  for (let i = 0; i < texts.length; i++) {
+    const text = texts[i];
+    if (text.length <= windowChars) {
+      flat.push(text);
+      owners.push(i);
+      continue;
+    }
+    splitAny = true;
+    for (let start = 0; start < text.length; start += windowChars) {
+      flat.push(text.slice(start, start + windowChars));
+      owners.push(i);
+    }
+  }
+  return { flat, owners, splitAny };
+}
+
+/**
+ * Regroup per-window embeddings back to exactly one vector per original
+ * input, in input order. Singleton groups pass through VERBATIM (ordinary
+ * inputs stay byte-identical to the provider's output — no renormalization
+ * of unsplit vectors). Multi-window groups are arithmetic-mean pooled and
+ * then L2-normalized so pooled vectors sit at the same magnitude scale as
+ * singleton pass-through vectors. Zero-norm guard: an all-zero mean (e.g.
+ * the provider returned zero vectors for every window) is returned as-is
+ * rather than producing a NaN vector.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function meanPoolByOwner(
+  embeddings: Float32Array[],
+  owners: number[],
+  inputCount: number,
+): Float32Array[] {
+  const groups: number[][] = Array.from({ length: inputCount }, () => []);
+  for (let i = 0; i < embeddings.length; i++) groups[owners[i]].push(i);
+  return groups.map(indices => {
+    if (indices.length === 1) return embeddings[indices[0]];
+    const dims = embeddings[indices[0]].length;
+    const mean = new Float32Array(dims);
+    for (const idx of indices) {
+      const v = embeddings[idx];
+      for (let d = 0; d < dims; d++) mean[d] += v[d];
+    }
+    let norm = 0;
+    for (let d = 0; d < dims; d++) {
+      mean[d] /= indices.length;
+      norm += mean[d] * mean[d];
+    }
+    norm = Math.sqrt(norm);
+    if (norm < 1e-12) return mean; // all-zero input: never emit NaN
+    for (let d = 0; d < dims; d++) mean[d] /= norm;
+    return mean;
+  });
+}
+
+/** Worst-case token density assumption for per-item windows: CJK and emoji
+ * can run ~1 token/char, denser than any recipe's optimistic chars_per_token. */
+export const ITEM_WINDOW_CHARS_PER_TOKEN = 1;
+/** Headroom on per-item windows for tokenizer variance and scripts denser
+ * than CJK (emoji, some Indic scripts can exceed 1 token/char). */
+export const ITEM_WINDOW_SAFETY = 0.8;
+
+/**
+ * Per-item window plan for recipes declaring a provider per-ITEM token cap
+ * (`touchpoints.embedding.max_item_tokens`, e.g. DashScope v1/v2: 2048):
+ * any item over the conservative window size is split into adjacent,
+ * non-overlapping character windows; the caller embeds the flat list under
+ * the ordinary batch caps and mean-pools each item's windows back to one
+ * vector (see meanPoolByOwner). Recipes without the cap take the identity
+ * path: flat === truncated, owners identity, splitAny false, no pooling.
+ *
+ * The caller applies the global EMBED_MAX_CHARS ceiling BEFORE calling this
+ * (windowOversizedItems requires it), which bounds the window count per item
+ * — no separate windows-per-item cap is needed.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export function planItemWindows(
+  truncated: string[],
+  maxItemTokens: number | undefined,
+): { flat: string[]; owners: number[]; splitAny: boolean } {
+  const windowChars = maxItemTokens
+    ? Math.floor(maxItemTokens * ITEM_WINDOW_CHARS_PER_TOKEN * ITEM_WINDOW_SAFETY)
+    : 0;
+  return windowChars
+    ? windowOversizedItems(truncated, windowChars)
+    : { flat: truncated, owners: truncated.map((_, i) => i), splitAny: false };
+}

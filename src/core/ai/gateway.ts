@@ -32,8 +32,8 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 
-import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTokens, planEmbedRequests, rerankRequestMaxInputTokens, truncateEmbedInputs } from './embed-batch-plan.ts';
-export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from './embed-batch-plan.ts';
+import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTokens, meanPoolByOwner, planEmbedRequests, planItemWindows, rerankRequestMaxInputTokens, truncateEmbedInputs, windowOversizedItems } from './embed-batch-plan.ts';
+export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS, windowOversizedItems, meanPoolByOwner } from './embed-batch-plan.ts';
 import { BudgetTracker, type BudgetKind } from '../budget/budget-tracker.ts';
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
 import type {
@@ -1553,14 +1553,28 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
+  const embedding = recipe.touchpoints?.embedding;
+  const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
+
+  // Per-item provider caps (DashScope v1/v2: 2048 tokens/item) are enforced
+  // by CONTENT-PRESERVING WINDOWING, not truncation. The global
+  // EMBED_MAX_CHARS ceiling applies FIRST and unchanged (markdown chunks are
+  // <= 6000 chars, so their full content is preserved); it also bounds the
+  // window count per item (EMBED_MAX_CHARS / windowChars), so no separate
+  // windows-per-item cap is needed. Any item over the conservative window
+  // size is split into adjacent character windows that flow through the
+  // existing token/item batch caps as ordinary inputs, then mean-pool back to
+  // exactly one vector per original input at the return below. Recipes
+  // without max_item_tokens take the identity path: flat === truncated,
+  // owners identity, no pooling.
   const truncated = truncateEmbedInputs(texts);
+  const { flat, owners, splitAny } = planItemWindows(truncated, embedding?.max_item_tokens);
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
   // actual total reported by the SDK across all sub-batches.
   if (tracker) {
-    const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
-    const totalChars = truncated.reduce((s, t) => s + t.length, 0);
+    const totalChars = flat.reduce((s, t) => s + t.length, 0);
     const estimatedInputTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
     tracker.reserve({
       modelId: `${recipe.id}:${modelId}`,
@@ -1588,9 +1602,12 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   // C3), never process.env at call time; invalid values are ignored.
   const envCapRaw = parseInt(cfg.env?.GBRAIN_EMBED_MAX_BATCH_TOKENS ?? '', 10);
   const envCap = Number.isFinite(envCapRaw) && envCapRaw > 0 ? envCapRaw : undefined;
-  // #4616: empty inputs never reach the provider; screenEmbeddings refuses them per item.
-  const sent = sendableEmbeddingInputs(truncated);
-  const batches = sent.length ? planEmbedRequests(sent.map(i => truncated[i]!), recipe, effectiveSafetyFactor(recipe), envCap) : [];
+  // #4616: empty inputs never reach the provider; screenEmbeddings refuses
+  // them per item. Windows of one item are adjacent and in order, so the
+  // per-window `sent` indices align with `flat` and the screenEmbeddings
+  // regroup at the return below.
+  const sent = sendableEmbeddingInputs(flat);
+  const batches = sent.length ? planEmbedRequests(sent.map(i => flat[i]!), recipe, effectiveSafetyFactor(recipe), envCap) : [];
 
   const allEmbeddings: Float32Array[] = [];
   let _embedThrew = false;
@@ -1606,7 +1623,13 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
         ? reportedTokens + result.reportedTokens
         : null;
     }
-    return screenEmbeddings(truncated, sent, allEmbeddings, `${recipe.id}:${modelId}`);
+    // Screen refuses empty windows and degenerate (zero-norm) vectors,
+    // aligned to `flat`; pooling then regroups per-window vectors to exactly
+    // one vector per original input. Skipped entirely when nothing was split:
+    // singleton groups pass through VERBATIM, so ordinary inputs stay
+    // byte-identical to the provider's output.
+    const screened = screenEmbeddings(flat, sent, allEmbeddings, `${recipe.id}:${modelId}`);
+    return splitAny ? meanPoolByOwner(screened, owners, texts.length) : screened;
   } catch (err) {
     _embedThrew = true;
     throw err;
@@ -1614,14 +1637,16 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
     if (tracker) {
       // Charge what the provider reported (embedMany surfaces usage.tokens)
       // when every sub-batch reported it; otherwise fall back to the
-      // chars-per-token estimate over the truncated input. On failure, A3
-      // amended says charge the pessimistic estimate — embed has no output
-      // side, so the input estimate IS the worst case.
+      // chars-per-token estimate over the windowed input. Windows partition
+      // the (already EMBED_MAX_CHARS-ceiled) text with no overlap, so `flat`
+      // totals the same characters as the original inputs — no
+      // double-counting. On failure, A3 amended says charge the pessimistic
+      // estimate — embed has no output side, so the input estimate IS the
+      // worst case.
       const measured = !_embedThrew && reportedTokens !== null && reportedTokens > 0
         ? reportedTokens
         : null;
-      const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
-      const totalChars = truncated.reduce((s, t) => s + t.length, 0);
+      const totalChars = flat.reduce((s, t) => s + t.length, 0);
       recordOnTracker(tracker, {
         modelId: `${recipe.id}:${modelId}`,
         requestedModelId: resolveTarget,
@@ -1649,7 +1674,11 @@ export function isTokenLimitError(err: unknown): boolean {
     /token.*limit.*exceeded/i.test(msg) ||
     // OpenAI embeddings: "Invalid 'input': maximum request size is 300000 tokens per request."
     /maximum request size.*tokens/i.test(msg) ||
-    /max.*tokens.*per.*request/i.test(msg)
+    /max.*tokens.*per.*request/i.test(msg) ||
+    // DashScope per-item cap: "Range of input length should be [1, 2048]."
+    // Lets recursive halving engage instead of hard-failing an import when
+    // the conservative char window still under-covers the real tokenizer.
+    /input length should be/i.test(msg)
   );
 }
 

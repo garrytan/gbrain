@@ -40,6 +40,12 @@ export const dashscope: Recipe = {
       // closer to Voyage density than OpenAI tiktoken for CJK-dominant
       // content. Conservative chars_per_token=2 leaves headroom.
       chars_per_token: 2,
+      // Official per-ITEM cap for text-embedding-v1/v2 is 2048 tokens (v3/v4
+      // allow 8192). Keep the strictest recipe-wide cap for v2 compatibility.
+      // Enforced by the gateway via content-preserving windowing
+      // + L2 mean pooling (see EmbeddingTouchpoint.max_item_tokens), NOT by
+      // truncation, so full chunk text is always represented in the vector.
+      max_item_tokens: 2048,
     },
   },
   setup_hint:
