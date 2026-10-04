@@ -49,6 +49,12 @@ function parseFlags(args: string[]): { provider: string; flags: SyncFlags } {
 }
 
 export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): Promise<void> {
+  if (args.some((arg, i) => arg === '--source' && (!args[i + 1] || args[i + 1].startsWith('-')))) {
+    console.error('Usage: gbrain connectors sync <chatgpt|claude>|--all [--full] [--dry-run] [--limit N] [--source id]');
+    setCliExitVerdict(1);
+    return;
+  }
+
   const { provider, flags } = parseFlags(args);
 
   // Resolve the target provider set.
