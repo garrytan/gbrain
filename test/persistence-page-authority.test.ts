@@ -97,3 +97,62 @@ test('sandboxed subagents keep intentional database-only writes despite a config
     expect(bindings).toHaveLength(0);
   }
 });
+
+test('OAuth job namespaces survive publication and replay without authorizing another job', async () => {
+  for (const engine of engines) {
+    const clientId = `job-writer-${randomUUID()}`;
+    await engine.executeRaw(`INSERT INTO oauth_clients
+      (client_id,client_name,client_secret_hash,scope,source_id,bound_source_id,federated_read,bound_tools,delegated_namespace)
+      VALUES($1,'Job writer','test-only','read agent',$2,$2,ARRAY[$2]::text[],ARRAY['put_page'],'job')`, [clientId, sourceId]);
+    const ctx: OperationContext = { ...context(engine), viaSubagent: true, subagentId: 382,
+      auth: { token: 'test-only', clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['read', 'agent'], sourceId } };
+    const request_id = randomUUID(), slug = 'wiki/agents/382/result';
+    const params = { slug, content: 'Owned job output', request_id };
+    const result = await submitPageMutation(ctx, { operation: 'put_page', params });
+    expect(result.state).toBe('committed');
+    expect((await engine.getPage(slug, { sourceId }))!.compiled_truth).toContain('Owned job output');
+    const row = (await getWriteRequest(engine, ctx.auth!.principal!, request_id))!;
+    expect(row.authority.subagentId).toBe(382);
+    await authorizeStoredRequest(engine, row);
+    expect((await submitPageMutation(ctx, { operation: 'put_page', params })).state).toBe('committed');
+    for (const foreign of ['wiki/agents/383/result', 'wiki/agents/382evil/result', 'wiki/agents/382']) {
+      await expect(submitPageMutation(ctx, { operation: 'put_page', params: {
+        slug: foreign, content: 'Outside namespace', request_id: randomUUID(),
+      } })).rejects.toMatchObject({ code: 'permission_denied' });
+      expect(await engine.getPage(foreign, { sourceId })).toBeNull();
+    }
+    // Legacy or malformed retained receipts cannot infer a job ID from their target.
+    for (const subagentId of [undefined, 0, -1, 1.5, Number.NaN]) {
+      await expect(authorizeStoredRequest(engine, { ...row, authority: { ...row.authority, subagentId } }))
+        .rejects.toMatchObject({ code: 'permission_denied' });
+    }
+    await engine.executeRaw("UPDATE oauth_clients SET bound_tools=ARRAY['get_page'] WHERE client_id=$1", [clientId]);
+    await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'permission_denied' });
+    await engine.executeRaw("UPDATE oauth_clients SET bound_tools=ARRAY['put_page'] WHERE client_id=$1", [clientId]);
+    await engine.executeRaw("UPDATE oauth_clients SET delegated_namespace='prefixes', delegated_slug_prefixes=ARRAY['notes/*'] WHERE client_id=$1", [clientId]);
+    await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'permission_denied' });
+    await engine.executeRaw("UPDATE oauth_clients SET delegated_namespace='job', delegated_slug_prefixes=NULL, scope='read' WHERE client_id=$1", [clientId]);
+    await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'permission_denied' });
+  }
+});
+
+test('explicit delegated prefixes still intersect the retained and current grants', async () => {
+  for (const engine of engines) {
+    const clientId = `prefix-writer-${randomUUID()}`;
+    await engine.executeRaw(`INSERT INTO oauth_clients
+      (client_id,client_name,client_secret_hash,scope,source_id,bound_source_id,federated_read,bound_tools,delegated_namespace,delegated_slug_prefixes)
+      VALUES($1,'Prefix writer','test-only','read agent',$2,$2,ARRAY[$2]::text[],ARRAY['put_page'],'prefixes',ARRAY['notes/delegated/*'])`, [clientId, sourceId]);
+    const ctx: OperationContext = { ...context(engine), viaSubagent: true, subagentId: 383, allowedSlugPrefixes: ['notes/delegated/*'],
+      auth: { token: 'test-only', clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['read', 'agent'], sourceId } };
+    const request_id = randomUUID();
+    expect((await submitPageMutation(ctx, { operation: 'put_page', params: {
+      slug: 'notes/delegated/result', content: 'Explicitly delegated output', request_id,
+    } })).state).toBe('committed');
+    const row = (await getWriteRequest(engine, ctx.auth!.principal!, request_id))!;
+    await authorizeStoredRequest(engine, row);
+    await engine.executeRaw("UPDATE oauth_clients SET delegated_slug_prefixes=ARRAY['notes/*'] WHERE client_id=$1", [clientId]);
+    await expect(authorizeStoredRequest(engine, { ...row, slug: 'notes/other/result' })).rejects.toMatchObject({ code: 'permission_denied' });
+    await engine.executeRaw("UPDATE oauth_clients SET delegated_slug_prefixes=ARRAY['notes/narrower/*'] WHERE client_id=$1", [clientId]);
+    await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'permission_denied' });
+  }
+});

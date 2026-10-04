@@ -35,7 +35,8 @@ function derivedPageSql(pageAlias: string): string {
 }
 
 /**
- * Raw SQL predicate hiding `visibility: private` pages (absent visibility
+ * Raw SQL predicate hiding `visibility: private` or legacy `sensitivity: private`
+ * pages (absent visibility
  * defaults to 'world', except on derived atoms and concepts where it defaults
  * to 'private'). Single source of truth for the fragment — consumed by
  * buildVisibilityClause (search paths), both engines' listPages, the
@@ -73,7 +74,8 @@ function declaredLineagePrivateSql(p: string): string {
  * pair it with privatePagesFilterFragment on the live page.
  */
 export function privateSnapshotFilterFragment(alias: string): string {
-  return `COALESCE(${alias}.frontmatter->>'visibility', CASE WHEN ${derivedPageSql(alias)} THEN 'private' ELSE 'world' END) <> 'private'`;
+  return `(COALESCE(${alias}.frontmatter->>'sensitivity', '') <> 'private'
+    AND COALESCE(${alias}.frontmatter->>'visibility', CASE WHEN ${derivedPageSql(alias)} THEN 'private' ELSE 'world' END) <> 'private')`;
 }
 
 /**
@@ -85,13 +87,15 @@ export function privateSnapshotFilterFragment(alias: string): string {
  */
 function derivedOriginPrivateSql(p: string): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
-      AND ${alias}.slug = ${atom}.frontmatter->>'source_slug' AND ${alias}.frontmatter->>'visibility' = 'private')`;
+      AND ${alias}.slug = ${atom}.frontmatter->>'source_slug'
+      AND (${alias}.frontmatter->>'visibility' = 'private' OR ${alias}.frontmatter->>'sensitivity' = 'private'))`;
   return `(CASE WHEN ${p}.type = 'atom' THEN ${privateOrigin(p, 'derived_origin')}
     WHEN ${derivedPageSql(p)} THEN EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
       WHERE derived_input_link.from_page_id = ${p}.id AND derived_input_link.link_source = 'concept-provenance'
         AND derived_input_link.link_type = 'synthesized_from'
         AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private'
+          OR derived_input.frontmatter->>'sensitivity' = 'private'
           OR ${privateOrigin('derived_input', 'derived_input_origin')}))
     ELSE false END)`;
 }
@@ -150,13 +154,15 @@ export function privateProvenanceFilterFragment(factAlias: string): string {
  * Row-side twin of privatePagesFilterFragment for pages already fetched
  * (get_page / fetch read one row by slug; re-querying just to filter would
  * be a second round-trip). Same semantics: an explicit 'private' hides a
- * page, and an absent value hides only derived atoms and concepts.
+ * page, either on visibility or legacy sensitivity; an absent value hides only
+ * derived atoms and concepts. A legacy private marker cannot be loosened by a
+ * conflicting visibility: world field.
  */
 export function isPrivatePage(page: { type?: string | null; frontmatter?: unknown }): boolean {
   const frontmatter = typeof page.frontmatter === 'object' && page.frontmatter !== null
     ? page.frontmatter as Record<string, unknown> : {};
   const derived = page.type === 'atom' || (page.type === 'concept' && frontmatter.synthesized_by != null);
-  return (frontmatter.visibility ?? (derived ? 'private' : 'world')) === 'private';
+  return frontmatter.sensitivity === 'private' || (frontmatter.visibility ?? (derived ? 'private' : 'world')) === 'private';
 }
 
 /**

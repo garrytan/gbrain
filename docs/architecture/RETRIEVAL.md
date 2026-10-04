@@ -255,11 +255,16 @@ the final slice.
 Two cross-cutting seams sit around the pipeline rather than inside it:
 
 - **Private-page visibility.** For untrusted (remote/MCP) callers, every
-  recall arm filters `visibility: private` pages via the shared predicate in
+  recall arm filters pages marked `visibility: private` or the legacy
+  `sensitivity: private` via the shared predicate in
   `src/core/search/private-visibility.ts` (fail-closed default; operator
-  opt-outs documented in `docs/operations/mcp-surface-runbook.md`). The
-  same policy also authorizes contributing pages, link origins, dates and
-  annotations before enrichment. Semantic result caching is temporarily
+  opt-outs documented in `docs/operations/mcp-surface-runbook.md`). The legacy
+  marker remains private even when `visibility: world` is also present. The
+  same policy governs reads, publication and derived-origin privacy checks;
+  it authorizes contributing pages, link origins, dates and annotations before
+  enrichment. Ordinary unmarked pages remain world, while derived pages without
+  a privacy stamp remain private. Trusted-local access and documented operator opt-outs
+  retain their existing behavior. Semantic result caching is temporarily
   disabled regardless of configuration; each request performs fresh retrieval.
   Query embeddings can still be reused within that request. Repeated searches
   may have higher latency and provider usage until caching can verify every
