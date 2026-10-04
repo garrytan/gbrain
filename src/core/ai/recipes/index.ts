@@ -29,6 +29,7 @@ import { nan } from './nan.ts';
 import { moonshot } from './moonshot.ts';
 import { mistral } from './mistral.ts';
 import { nvidia } from './nvidia.ts';
+import { omlx } from './omlx.ts';
 import { perplexity } from './perplexity.ts';
 import { typesafe } from './typesafe.ts';
 
@@ -56,6 +57,7 @@ const ALL: Recipe[] = [
   moonshot,
   mistral,
   nvidia,
+  omlx,
   perplexity,
   typesafe,
 ];

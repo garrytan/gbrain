@@ -2079,9 +2079,15 @@ async function embedMultimodalOpenAICompat(
       input_type: inputType,
     };
 
+    // Recipes whose wire shape deviates from OpenAI's content-array convention
+    // (oMLX's `items` form) ship a compat fetch via resolveOpenAICompatConfig /
+    // compat.fetch; honor it here the same way the text-embedding and chat
+    // paths do, so multimodal requests reach the provider's translator.
+    const compatFetch = applyOpenAICompatConfig(recipe, cfg).fetch ?? fetch;
+
     let res: Response;
     try {
-      res = await invokeAI({ operation: 'gateway.multimodal', kind: 'multimodal', model: `${recipe.id}:${modelId}` }, () => fetch(`${baseUrl}/embeddings`, {
+      res = await invokeAI({ operation: 'gateway.multimodal', kind: 'multimodal', model: `${recipe.id}:${modelId}` }, () => compatFetch(`${baseUrl}/embeddings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
