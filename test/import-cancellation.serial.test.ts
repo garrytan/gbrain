@@ -123,11 +123,15 @@ for (const mode of ['caller', 'job', 'log-ingest', 'lease', 'caller-and-lease'] 
     const originalLog = engine.logIngest.bind(engine);
     const originalLock = locks.withRefreshingLock;
     let calls = 0;
+    let leaseLost!: () => void;
+    const lostLease = new Promise<void>(resolve => { leaseLost = resolve; });
     const importSpy = spyOn(importFiles, 'importFile').mockImplementation(async (...args) => {
       const result = await originalImport(...args); calls++;
       if (mode === 'lease' || mode === 'caller-and-lease') {
         if (mode === 'caller-and-lease') controller.abort();
-        await new Promise(resolve => setTimeout(resolve, 80));
+        // The file walk yields, so a lease shorter than the run up to the
+        // first import could expire before it; hold this file until it does.
+        await lostLease;
       } else if (mode !== 'log-ingest') controller.abort();
       return result;
     });
@@ -137,7 +141,10 @@ for (const mode of ['caller', 'job', 'log-ingest', 'lease', 'caller-and-lease'] 
       return result;
     });
     const lockSpy = spyOn(locks, 'withRefreshingLock').mockImplementation((eng, key, fn, opts) =>
-      originalLock(eng, key, fn, key.startsWith('gbrain-fs:') && mode.includes('lease') ? { ...opts, ttlMinutes: 0.0005 } : opts));
+      originalLock(eng, key, fn, key.startsWith('gbrain-fs:') && mode.includes('lease') ? {
+        ...opts, ttlMinutes: 0.02,
+        onLockLost: (reason) => { opts?.onLockLost?.(reason); leaseLost(); },
+      } : opts));
     const sync = () => performSync(engine, { repoPath: root, sourceId: 'default', noPull: true, noEmbed: true, noExtract: true, concurrency: 1, signal: controller.signal });
     try {
       if (mode === 'job') {

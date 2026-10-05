@@ -2,7 +2,9 @@ import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { opError } from '../core/ops/contract.ts';
 import { hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal } from '../core/minions/source-filesystem.ts';
 import { readdirSync, lstatSync, existsSync, mkdirSync } from 'fs';
-import { execFileSync } from 'child_process';
+import { lstat } from 'fs/promises';
+import { execFile, execFileSync } from 'child_process';
+import { promisify } from 'util';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
@@ -40,6 +42,7 @@ import { importManagedFile } from '../core/persistence/import-mutations.ts';
 import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
+import { runWithLimit } from '../core/worker-pool.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -244,6 +247,8 @@ export async function runImport(
      * so markdown/code files matched by .gitignore can still be imported.
      */
     includeGitignored?: boolean;
+    /** Gets the walk (import-root-relative, before `exclude`) so performFullSync need not walk the tree again. */
+    onCollected?: (relPaths: string[]) => void;
     /**
      * #753/#774 monorepo subdir-source support: when set, slugs and
      * `source_path` are computed relative to this root (the git repo root)
@@ -529,11 +534,11 @@ export async function runImport(
   const malformedExcluded: string[] = [];
   const company = currentCompanyBrainSync(sourceId);
   let allFiles = company ? company.plan.manifest.filter(entry => entry.disposition === 'included').map(entry => join(dir, entry.path))
-    : singleFile ? [dir] : collectSyncableFiles(dir, {
+    : singleFile ? [dir] : await walkImportRoot(dir, {
     strategy, includeGitignored,
     includeHidden: opts.includeHidden,
     onExcluded: (rel) => { malformedExcluded.push(rel); },
-  });
+  }, opts.onCollected);
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
@@ -1277,14 +1282,47 @@ function isCollectibleForWalker(
   }
 }
 
+const GIT_LS_FILES_ARGS = ['ls-files', '--cached', '--others', '--exclude-standard', '-z'];
+const GIT_CHECK_IGNORE_ARGS = ['check-ignore', '-q', '.'];
+const GIT_LS_FILES_MAX_BUFFER = 512 * 1024 * 1024;
+const execFileAsync = promisify(execFile);
+/**
+ * lstat calls in flight per async walk. Enough to overlap per-file latency on
+ * a network filesystem; the runtime's I/O pool bounds real parallelism.
+ */
+const WALK_LSTAT_CONCURRENCY = 32;
+
 /** Whether the git work tree around `dir` ignores `dir` itself (`git check-ignore` exits 0). */
 function gitIgnoresDir(dir: string): boolean {
   try {
-    execFileSync('git', ['-C', dir, 'check-ignore', '-q', '.'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', dir, ...GIT_CHECK_IGNORE_ARGS], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
   }
+}
+
+/** The `git ls-files -z` entries that pass the walker filters, as absolute paths in listing order. */
+function gitListCandidates(
+  dir: string,
+  stdout: string,
+  strategy: SyncStrategy,
+  multimodalOn: boolean,
+  onExcluded?: (relPath: string) => void,
+  includeHidden?: string[],
+): string[] {
+  const candidates: string[] = [];
+  for (const rel of stdout.split('\0')) {
+    if (!rel) continue;
+    // Malformed check FIRST (separately from the collectible gate) so the
+    // exclusion is reportable — other filters (strategy, prune, metafile)
+    // are silent by design; this one hides renameable content.
+    if (hasMalformedPathSegment(rel)) { onExcluded?.(rel); continue; }
+    if (!isCollectibleForWalker(rel, strategy, multimodalOn, includeHidden)) continue;
+    const full = join(dir, rel);
+    candidates.push(full);
+  }
+  return candidates;
 }
 
 /**
@@ -1311,8 +1349,8 @@ function gitListSyncableFiles(
   try {
     stdout = execFileSync(
       'git',
-      ['-C', dir, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-      { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] },
+      ['-C', dir, ...GIT_LS_FILES_ARGS],
+      { encoding: 'utf8', maxBuffer: GIT_LS_FILES_MAX_BUFFER, stdio: ['ignore', 'pipe', 'ignore'] },
     );
   } catch {
     return null; // not a git work tree, or git not on PATH → FS-walk fallback
@@ -1321,14 +1359,7 @@ function gitListSyncableFiles(
   // nothing here, so an explicit import of it would succeed with zero files. Walk it directly instead.
   if (stdout === '' && gitIgnoresDir(dir)) return null;
   const files: string[] = [];
-  for (const rel of stdout.split('\0')) {
-    if (!rel) continue;
-    // Malformed check FIRST (separately from the collectible gate) so the
-    // exclusion is reportable — other filters (strategy, prune, metafile)
-    // are silent by design; this one hides renameable content.
-    if (hasMalformedPathSegment(rel)) { onExcluded?.(rel); continue; }
-    if (!isCollectibleForWalker(rel, strategy, multimodalOn, includeHidden)) continue;
-    const full = join(dir, rel);
+  for (const full of gitListCandidates(dir, stdout, strategy, multimodalOn, onExcluded, includeHidden)) {
     let st;
     try {
       st = lstatSync(full);
@@ -1339,6 +1370,46 @@ function gitListSyncableFiles(
     files.push(full);
   }
   return files.sort();
+}
+
+/**
+ * `gitListSyncableFiles` without blocking the event loop: `git ls-files` (and
+ * the ignored-directory probe) run as awaited children and the per-file lstat
+ * runs WALK_LSTAT_CONCURRENCY at a time. Same filters, same no-symlink rule,
+ * same sorted output, same `null` fallback signal. On a large tree over a
+ * network filesystem the synchronous lstat loop held the thread for most of a
+ * minute, starving every other source's database handshakes in the same
+ * `sync --all` process.
+ */
+async function gitListSyncableFilesAsync(
+  dir: string,
+  strategy: SyncStrategy,
+  multimodalOn: boolean,
+  onExcluded?: (relPath: string) => void,
+  includeHidden?: string[],
+): Promise<string[] | null> {
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync('git', ['-C', dir, ...GIT_LS_FILES_ARGS], {
+      encoding: 'utf8', maxBuffer: GIT_LS_FILES_MAX_BUFFER,
+    }));
+  } catch {
+    return null; // not a git work tree, or git not on PATH → FS-walk fallback
+  }
+  // A git-ignored directory lists nothing: the same FS-walk fallback as the synchronous path.
+  if (stdout === '' && await execFileAsync('git', ['-C', dir, ...GIT_CHECK_IGNORE_ARGS]).then(() => true, () => false)) return null;
+  const candidates = gitListCandidates(dir, stdout, strategy, multimodalOn, onExcluded, includeHidden);
+  // A rejected lstat (ls-files raced a deletion, or unreadable) settles as
+  // not-ok and drops the file, like the synchronous loop's `continue`.
+  const regular = await runWithLimit({
+    items: candidates,
+    limit: WALK_LSTAT_CONCURRENCY,
+    fn: async (full) => {
+      const st = await lstat(full);
+      return !st.isSymbolicLink() && st.isFile();
+    },
+  });
+  return candidates.filter((_, i) => regular[i].ok && regular[i].value).sort();
 }
 
 /**
@@ -1442,6 +1513,33 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
 
   walk(dir, 0);
   return files.sort();
+}
+
+/**
+ * `collectSyncableFiles` for long-running async callers (import, full sync):
+ * the git fast path yields the event loop instead of holding it, so in-flight
+ * database handshakes, lock heartbeats and timers keep running during the
+ * walk. Output is identical. The FS walk (`--include-gitignored`, non-git and
+ * git-ignored dirs) is still the synchronous one.
+ */
+export async function collectSyncableFilesAsync(dir: string, opts: CollectOpts = {}): Promise<string[]> {
+  if (!opts.includeGitignored) {
+    const multimodalOn = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+    const gitFiles = await gitListSyncableFilesAsync(
+      dir, opts.strategy ?? 'markdown', multimodalOn, opts.onExcluded, opts.includeHidden,
+    );
+    if (gitFiles) return gitFiles;
+  }
+  // includeGitignored: true skips only the git fast path, which already
+  // failed (or was opted out of) above — straight to the FS walk.
+  return collectSyncableFiles(dir, { ...opts, includeGitignored: true });
+}
+
+/** runImport's walk of `dir`; `onCollected` gets it import-root-relative, before `exclude`. */
+async function walkImportRoot(dir: string, walkOpts: CollectOpts, onCollected?: (relPaths: string[]) => void): Promise<string[]> {
+  const files = await collectSyncableFilesAsync(dir, walkOpts);
+  onCollected?.(files.map(abs => relative(dir, abs)));
+  return files;
 }
 
 /**
