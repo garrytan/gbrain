@@ -17,6 +17,8 @@ import { mockEmbedProjectionEngine as mockEngine, embeddingUpdates } from './hel
  *   2. Cost bounding: a 429 (rate limit) does NOT fan out into N
  *      single-chunk calls, and neither does an AITransientError (outage) —
  *      isolation only fires for permanent request-shaped failures.
+ *   3. --all: a page whose snapshot read throws is counted on
+ *      result.failures instead of vanishing into the worker pool.
  *
  * Serial: uses mock.module (leaks across files sharing a bun process).
  * The CLI exit-code half of #3037 is pinned by
@@ -130,6 +132,31 @@ describe('#3037 — one bad chunk no longer darkens its page', () => {
     expect(result.failures).toBe(1);
     const stamps = (engine as any)._calls.filter((c: any) => c.method === 'setPageEmbeddingSignature');
     expect(stamps).toHaveLength(0);
+  });
+
+  test('--all: a page whose snapshot read throws is counted; the other pages still embed', async () => {
+    // The guarded snapshot read runs before embedOnePage's try, so its throw
+    // (here a lock wait cancelled by statement_timeout) reaches the worker
+    // pool, which swallowed it: failures 0, exit 0, page left unembedded.
+    const engine = mockEngine({
+      listPages: async () => [
+        { slug: 'locked-page', source_id: 'default' },
+        { slug: 'healthy-page', source_id: 'default' },
+      ],
+      getPage: async (slug: string) => {
+        if (slug === 'locked-page') throw new Error('canceling statement due to statement timeout');
+        return { slug, compiled_truth: 'Fixture body', timeline: '' };
+      },
+      getChunks: async () => THREE_CHUNKS,
+      upsertChunks: async () => { throw new Error("Embedding must not replace canonical chunks"); },
+    });
+
+    const result = await runEmbedCore(engine, { all: true });
+
+    expect(embeddingUpdates(engine).map((call: any) => call.args[1][5])).toEqual(['good-a', 'BAD', 'good-b']);
+    expect(result.embedded).toBe(3);
+    expect(result.failures).toBe(1);
+    expect(result.failure_samples).toEqual(['locked-page: canceling statement due to statement timeout']);
   });
 
   test('--stale x #3507: fan-out retries the WRAPPED texts and a partially-failed page is not restamped', async () => {
