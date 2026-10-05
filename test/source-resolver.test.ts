@@ -271,6 +271,16 @@ describe('getDefaultSourcePath', () => {
     const path = await getDefaultSourcePath(engine, '/custom/path/sub');
     expect(path).toBe('/custom/path');
   });
+
+  test('an explicit source outranks the cwd match (archive-crawler check --source)', async () => {
+    const engine = makeStubWithPaths(
+      ['default', 'wiki', 'notes'],
+      { default: '/default/path', wiki: '/custom/path', notes: '/notes/path' },
+      'default',
+    );
+    expect(await getDefaultSourcePath(engine, '/custom/path/sub', 'notes')).toBe('/notes/path');
+    await expect(getDefaultSourcePath(engine, '/custom/path/sub', 'missing')).rejects.toThrow(/missing/);
+  });
 });
 
 // ── Regex validation ───────────────────────────────────────

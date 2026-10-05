@@ -76,7 +76,9 @@ This skill guarantees:
 For a SINGLE item, use `skills/ingest/SKILL.md` and its type-specific
 delegates instead. For discovering what is worth ingesting inside a messy
 personal archive, run `skills/archive-crawler/SKILL.md` first and hand its
-keep-list to this skill.
+keep-list to this skill. Before a keep-list item enters the manifest, run
+`gbrain archive-crawler check <path>... --json` over the list and drop every
+path it refuses; the archive-crawler allow-list still applies here.
 
 ## The Lifecycle
 

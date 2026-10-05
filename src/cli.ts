@@ -2976,6 +2976,7 @@ SEARCH
 
 IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
+  archive-crawler check [<path>...]  Archive allow-list fence: exit 1 when a path is refused
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
   sync --watch [--interval N]        Continuous sync (loops until stopped)
                                      See also: autopilot --install (continuous daemon).

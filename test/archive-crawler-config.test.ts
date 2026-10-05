@@ -13,6 +13,8 @@
  *   - ~ expansion
  *   - deny_paths optional
  *   - isPathAllowed: prefix match + deny override + prefix boundary
+ *   - isPathAllowed on a real tree: judged by where a read lands
+ *     (symlinks followed, on-disk case), not by how the path is spelled
  *
  * PLATFORM NOTE: these tests must run on both POSIX (gbrain CI is
  * 100% ubuntu-latest) and Windows. POSIX path literals cannot be
@@ -28,7 +30,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { join, sep } from 'path';
 import { homedir, tmpdir } from 'os';
 import {
@@ -39,6 +41,17 @@ import {
 } from '../src/core/archive-crawler-config.ts';
 
 const WIN = process.platform === 'win32';
+
+/** The temp filesystem folds case (APFS, NTFS defaults), probed once. */
+const CASE_INSENSITIVE_FS = (() => {
+  const probe = mkdtempSync(join(tmpdir(), 'archive-crawler-case-'));
+  try {
+    mkdirSync(join(probe, 'Probe'));
+    return existsSync(join(probe, 'probe'));
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
 
 /** Absolute-path fixture root for the current platform. */
 const ROOT = WIN ? 'C:\\gbtest' : '/home/user';
@@ -324,5 +337,56 @@ describe('isPathAllowed — platform-specific comparison semantics', () => {
     });
     expect(isPathAllowed('/home/user/a\\b/file.md', config)).toBe(true);
     expect(isPathAllowed('/home/user/a/b/file.md', config)).toBe(false);
+  });
+});
+
+describe('isPathAllowed — judged by where a read lands, not by spelling', () => {
+  // A real tree, because only existing links and directories can be
+  // resolved: <workdir>/real/{writing/{letters,private},finances}.
+  let real: string;
+  let writing: string;
+
+  beforeEach(() => {
+    real = join(workdir, 'real');
+    writing = join(real, 'writing');
+    mkdirSync(join(writing, 'letters'), { recursive: true });
+    mkdirSync(join(writing, 'private'), { recursive: true });
+    mkdirSync(join(real, 'finances'), { recursive: true });
+    writeFileSync(join(writing, 'letters', 'letter.txt'), 'a letter');
+    writeFileSync(join(writing, 'private', 'journal.txt'), 'a journal');
+    writeFileSync(join(real, 'finances', 'tax.txt'), 'a tax return');
+  });
+
+  const fence = (root: string) => normalizeAndValidateArchiveCrawlerConfig({
+    scan_paths: [join(root, 'writing')],
+    deny_paths: [join(root, 'writing', 'private')],
+  });
+
+  it.if(!WIN)('refuses a symlink inside a scan_path that points outside every scan_path', () => {
+    symlinkSync(join(real, 'finances'), join(writing, 'old-stuff'));
+    expect(isPathAllowed(join(writing, 'letters', 'letter.txt'), fence(real))).toBe(true);
+    expect(isPathAllowed(join(writing, 'old-stuff', 'tax.txt'), fence(real))).toBe(false);
+  });
+
+  it.if(!WIN)('refuses a symlink inside a scan_path that leads into a deny_path', () => {
+    symlinkSync(join(writing, 'private'), join(writing, 'letters', 'shortcut'));
+    expect(isPathAllowed(join(writing, 'letters', 'shortcut', 'journal.txt'), fence(real))).toBe(false);
+  });
+
+  it.if(!WIN)('matches a path and an allow-list spelled through different aliases of one directory', () => {
+    // The macOS /tmp -> /private/tmp shape: one directory, two spellings.
+    const alias = join(workdir, 'alias');
+    symlinkSync(real, alias);
+    expect(isPathAllowed(join(real, 'writing', 'letters', 'letter.txt'), fence(alias))).toBe(true);
+    expect(isPathAllowed(join(alias, 'writing', 'letters', 'letter.txt'), fence(real))).toBe(true);
+    expect(isPathAllowed(join(real, 'writing', 'private', 'journal.txt'), fence(alias))).toBe(false);
+    expect(isPathAllowed(join(alias, 'writing', 'private', 'journal.txt'), fence(real))).toBe(false);
+  });
+
+  it.if(CASE_INSENSITIVE_FS)('refuses any case spelling of a deny_path on a case-insensitive filesystem', () => {
+    // `PRIVATE` and `private` are one directory here, so a case-sensitive
+    // compare would read the denied journal.
+    expect(isPathAllowed(join(writing, 'PRIVATE', 'journal.txt'), fence(real))).toBe(false);
+    expect(isPathAllowed(join(writing, 'Private', 'journal.txt'), fence(real))).toBe(false);
   });
 });

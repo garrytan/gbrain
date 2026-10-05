@@ -46,7 +46,27 @@ archive-crawler:
   #   - ~/Documents/medical/
 ```
 
-If `scan_paths` is empty or missing, the skill exits with:
+The fence is enforced by `gbrain archive-crawler check`. Run it before you
+read, extract or file anything from an archive, and obey its exit code:
+
+```bash
+gbrain archive-crawler check                         # allow-list configured? prints it
+gbrain archive-crawler check <path> [<path>...]      # may these paths be read?
+gbrain archive-crawler check <path>... --json        # per-path verdicts for a manifest
+```
+
+- Exit 0: every path is allowed. For an allowed directory the output names
+  the `deny_paths` inside it (`excluded` in `--json`); skip those subtrees.
+- Exit 1: the allow-list is missing or invalid, or a path is refused
+  (`outside_scan_paths` or `denied`). Do not read, extract or ingest a
+  refused path.
+- Paths are judged by where a read lands: a symlink inside `scan_paths` that
+  points elsewhere is refused, and `deny_paths` match regardless of how the
+  path is spelled.
+
+The command reads `gbrain.yml` from the current source's brain repo; pass
+`--repo <dir>` (or `--source <id>`) when the brain repo is elsewhere. If
+`scan_paths` is empty or missing, it refuses with:
 
 ```
 archive-crawler: refusing to run. No `archive-crawler.scan_paths:` allow-list
@@ -54,8 +74,7 @@ in gbrain.yml. Add explicit paths the agent is permitted to scan, then re-run.
 This is a safety fence — the agent will not infer what's safe to read.
 ```
 
-This contract is enforced by `src/core/storage-config.ts` (mirrors the
-`db_tracked` / `db_only` allow-list pattern from v0.22.11 storage tiering).
+The allow-list is parsed by `src/core/archive-crawler-config.ts`.
 
 ## What this is
 
@@ -109,8 +128,10 @@ Before showing anything to the user, apply the gold filter:
 
 When pointed at a new source:
 
-1. **Confirm scan_paths is set** (safety gate). Exit if not.
-2. **Map the tree** — list folders + files + sizes + date ranges.
+1. **Confirm scan_paths is set** (safety gate): `gbrain archive-crawler
+   check`, then `gbrain archive-crawler check <source root>`. Stop on exit 1.
+2. **Map the tree** — list folders + files + sizes + date ranges. Skip the
+   `excluded` deny_paths the root check named.
 3. **Classify folders** — group by likely content type (writing, email,
    code, photos, docs, system).
 4. **Create manifest** — write `projects/<archive-slug>/STATUS.md` with
@@ -123,8 +144,9 @@ When pointed at a new source:
 
 Work through folders in priority order:
 
-1. **Read before showing** — open each candidate file, apply the gold
-   filter, skip noise.
+1. **Check, then read** — run `gbrain archive-crawler check` on each
+   candidate file before you open it (batch a folder's files in one call),
+   never open a refused one, then apply the gold filter and skip noise.
 2. **Show one at a time** — present gold items individually for review.
 3. **Capture exact reaction** — track the user's response in the
    manifest using their exact words (per conventions/quality.md).
@@ -134,8 +156,9 @@ Work through folders in priority order:
 
 ### Phase 3: Ingest
 
-When an item is worth keeping, file it by **primary subject** per
-`_brain-filing-rules.md`:
+When an item is worth keeping, run `gbrain archive-crawler check
+<source_path>` once more right before filing it; file only on exit 0. Then
+file it by **primary subject** per `_brain-filing-rules.md`:
 
 - User's own writing / ideas / origin-story content → `originals/<slug>.md`
 - Reflections / personal-life content → `personal/<slug>.md`
@@ -228,7 +251,10 @@ readpst -o /tmp/pst-output /path/to/file.pst
 
 ### `.zip` / `.tar` / `.tar.gz`
 
-Extract to a temp dir, then recurse through the extracted tree.
+Check the archive file itself first; extract only on exit 0. Then extract to
+a temp dir and recurse through the extracted tree (its entries inherit the
+archive file's verdict, so record the archive file's path as `source_path`).
+The same applies to `.pst` and `.mbox` files before `readpst` or `mailbox`.
 
 ### Images
 
@@ -286,14 +312,15 @@ scan_paths: ["paths from gbrain.yml"]
 
 Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- No `archive-crawler.scan_paths:` allow-list: this is the skill's own hard refusal. Ask the user which directories may be scanned; never widen the list yourself to get past it.
+- `gbrain archive-crawler check` exits 1: the allow-list is missing or a path is refused. This is the skill's own hard refusal. Report the refused path and its reason, ask the user which directories may be scanned, and never edit `gbrain.yml` yourself to get past it.
 - An archive mount, takeout or bucket is unreadable (permission, expired token): report the exact path that failed and stop that source; do not fall back to scanning a parent directory.
 - Filing a find returns `write_pending` (exit 10) or `revision_conflict`: poll `gbrain write-request <request_id>` for the first; re-read the page and merge for the second. Never re-file under a new slug.
 
 ## Anti-Patterns
 
-- ❌ Running without `archive-crawler.scan_paths:` set. Hard refusal.
-  This is the safety contract — never bypass.
+- ❌ Running without `archive-crawler.scan_paths:` set, or reading a path
+  `gbrain archive-crawler check` has not allowed. Hard refusal. This is the
+  safety contract — never bypass.
 - ❌ Hardcoding era-specific filing paths (e.g., `originals/archive/`,
   `originals/yc-era/`). Read filing rules at runtime instead.
 - ❌ Re-showing items already marked in the manifest. The user's time

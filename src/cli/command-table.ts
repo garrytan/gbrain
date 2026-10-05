@@ -241,6 +241,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // #5401: projections drain refuses a resident-held PGLite brain before any engine opens, so the
   // module opens its own engine. Trusted local CLI only (not an operation).
   { name: 'projections', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/projections.ts') },
+  // archive-crawler check: the archive-crawler skill's scan_paths fence. `--help` and `check --repo` read
+  // only gbrain.yml (so a thin client can pass --repo); without --repo the module opens its own engine.
+  { name: 'archive-crawler', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/archive-crawler.ts') },
 
   // Dispatched by handleCliOnly's explicit deferred-persistence step (never by the table step).
   // selfHelp: v0.39.3.0 WARN-5: capture's detailed HELP constant (src/commands/capture.ts:90+) was

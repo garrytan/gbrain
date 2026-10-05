@@ -64,6 +64,25 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "archive-crawler": {
+        "hasSwitchCase": false,
+        "phase": "pre-connect-own-engine",
+        "preConnectRules": [
+          {
+            "condition": "command === 'archive-crawler'",
+            "connectsEngine": true,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "archive-crawler"
+            ]
+          }
+        ],
+        "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
       "auth": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

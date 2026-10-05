@@ -704,8 +704,10 @@ export async function resolveSourceForRepoPath(
  * Get the local_path of the resolved source (per the resolveSourceId chain).
  *
  * Returns the on-disk brain repo path for the source the user is currently
- * operating against. Used by `gbrain storage status` and `gbrain export
- * --restore-only` to find the brain repo without raw SQL or bare try/catch.
+ * operating against (or `explicitSource`, an already-parsed `--source`).
+ * Used by `gbrain storage status`, `gbrain export --restore-only` and
+ * `gbrain archive-crawler check` to find the brain repo without raw SQL or
+ * bare try/catch.
  *
  * Resolution order:
  *   1. `sources.local_path` for the resolved source id (multi-source v0.18+ path)
@@ -720,8 +722,9 @@ export async function resolveSourceForRepoPath(
 export async function getDefaultSourcePath(
   engine: BrainEngine,
   cwd: string = process.cwd(),
+  explicitSource: string | null = null,
 ): Promise<string | null> {
-  const sourceId = await resolveSourceId(engine, null, cwd);
+  const sourceId = await resolveSourceId(engine, explicitSource, cwd);
   const rows = await engine.executeRaw<{ local_path: string | null }>(
     `SELECT local_path FROM sources WHERE id = $1`,
     [sourceId],

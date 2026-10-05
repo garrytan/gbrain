@@ -5,7 +5,9 @@
  * `archive-crawler.scan_paths:` is set explicitly in the brain repo's
  * gbrain.yml. This is a deliberate safety fence against the agent
  * over-scoping a scan and ingesting sensitive content (tax PDFs,
- * medical records, credentials).
+ * medical records, credentials). `gbrain archive-crawler check`
+ * (src/commands/archive-crawler.ts) is the enforcement point: the skill
+ * runs it before it reads, extracts or files anything from an archive.
  *
  * The shape mirrors storage-config.ts: same parsing pattern, same
  * normalize+validate split, same ~/ expansion and path-traversal
@@ -27,9 +29,9 @@
  *     #   - ~/Documents/writing/.private/
  */
 
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync } from 'fs';
 import { homedir } from 'os';
-import { isAbsolute, join, sep, resolve as resolvePath } from 'path';
+import { basename, dirname, isAbsolute, join, sep, resolve as resolvePath } from 'path';
 
 export interface ArchiveCrawlerConfig {
   /** Absolute paths the agent is permitted to scan. ~ expanded; paths
@@ -313,38 +315,109 @@ export function loadArchiveCrawlerConfig(
 }
 
 /**
- * isPathAllowed — true when the candidate path falls within scan_paths
- * AND is NOT inside any deny_paths. Used by the archive-crawler skill
- * (when it grows a runtime check) to gate per-file decisions.
+ * canonicalPath — the location a read of `p` actually opens: resolved to
+ * an absolute path, then the deepest EXISTING ancestor run through
+ * realpath, with any not-yet-existing tail appended unchanged.
  *
- * Both inputs are normalized via `resolvePath` and compared as absolute
- * directory prefixes (with trailing separator) so `media/x/` does not
- * match `media/xerox/foo`.
+ * realpath follows symlinks, so a link inside a scan_path that points at
+ * a denied or unlisted directory is judged by its target, not by its
+ * spelling. It also returns the on-disk spelling of each component, so
+ * on a case-insensitive filesystem (APFS, NTFS) `.../Private/` and
+ * `.../private/` canonicalize to the same string. Paths with no local
+ * existence (a Dropbox or B2 prefix) keep their lexical form.
+ */
+function canonicalPath(p: string): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- canonicalizes a path for the fence's comparison; only realpath touches it, nothing is read
+  const abs = resolvePath(p);
+  const tail: string[] = [];
+  let head = abs;
+  for (;;) {
+    try {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same canonicalization: realpath of an existing ancestor plus the literal tail, nothing is read
+      return join(realpathSync(head), ...tail);
+    } catch {
+      const parent = dirname(head);
+      if (parent === head) return abs;
+      tail.unshift(basename(head));
+      head = parent;
+    }
+  }
+}
+
+export type ArchivePathRefusal = 'relative_path' | 'outside_scan_paths' | 'denied';
+
+export interface ArchivePathVerdict {
+  /** The candidate as given. */
+  path: string;
+  /** Where a read would land: ~ expanded, `..` collapsed, symlinks followed. */
+  resolved: string;
+  allowed: boolean;
+  reason?: ArchivePathRefusal;
+  /** The scan_paths entry that admits the path (allowed only). */
+  scan_path?: string;
+  /** The deny_paths entry that refuses it (reason `denied` only). */
+  deny_path?: string;
+  /** deny_paths entries inside an allowed directory: a walk of it must skip them. */
+  excluded: string[];
+}
+
+/**
+ * checkArchivePath — the runtime gate behind `gbrain archive-crawler
+ * check`. A path is allowed when its canonical location is inside a
+ * scan_paths entry and neither its spelled nor its canonical location is
+ * inside a deny_paths entry; deny always wins.
  *
  * Every side of the comparison — candidate, scan_paths and deny_paths —
  * is funnelled through toComparablePrefix() so the three agree on
- * separator and case. The config entries are folded here rather than
- * trusted as-is because isPathAllowed is part of the public surface and
- * a caller may hand-build an ArchiveCrawlerConfig without going through
+ * separator and case, and compared as directory prefixes so `media/x/`
+ * does not match `media/xerox/foo`. The config entries are canonicalized
+ * and folded here rather than trusted as-is because a caller may
+ * hand-build an ArchiveCrawlerConfig without going through
  * normalizeAndValidateArchiveCrawlerConfig().
+ */
+export function checkArchivePath(
+  candidate: string,
+  config: ArchiveCrawlerConfig,
+): ArchivePathVerdict {
+  const expanded = expandHome(candidate);
+  if (!isAbsolute(expanded)) {
+    return { path: candidate, resolved: candidate, allowed: false, reason: 'relative_path', excluded: [] };
+  }
+  const resolved = canonicalPath(expanded);
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- comparison only: the spelled form of the candidate for the deny_paths match
+  const spelled = toComparablePrefix(resolvePath(expanded));
+  const real = toComparablePrefix(resolved);
+  const deny = config.deny_paths.map((dp) => ({
+    entry: dp,
+    spelled: toComparablePrefix(dp),
+    real: toComparablePrefix(canonicalPath(dp)),
+  }));
+
+  const denied = deny.find((d) => spelled.startsWith(d.spelled) || real.startsWith(d.real));
+  if (denied) {
+    return { path: candidate, resolved, allowed: false, reason: 'denied', deny_path: denied.entry, excluded: [] };
+  }
+
+  const scan_path = config.scan_paths.find((sp) =>
+    real.startsWith(toComparablePrefix(canonicalPath(sp))),
+  );
+  if (!scan_path) {
+    return { path: candidate, resolved, allowed: false, reason: 'outside_scan_paths', excluded: [] };
+  }
+
+  const excluded = deny
+    .filter((d) => d.spelled.startsWith(spelled) || d.real.startsWith(real))
+    .map((d) => d.entry);
+  return { path: candidate, resolved, allowed: true, scan_path, excluded };
+}
+
+/**
+ * isPathAllowed — true when the candidate path falls within scan_paths
+ * AND is NOT inside any deny_paths. Boolean view of checkArchivePath().
  */
 export function isPathAllowed(
   candidate: string,
   config: ArchiveCrawlerConfig,
 ): boolean {
-  const expanded = expandHome(candidate);
-  if (!isAbsolute(expanded)) return false;
-  const prefix = toComparablePrefix(resolvePath(expanded));
-
-  // Must be inside at least one scan_path.
-  const allowed = config.scan_paths.some((sp) =>
-    prefix.startsWith(toComparablePrefix(sp)),
-  );
-  if (!allowed) return false;
-
-  // Must NOT be inside any deny_path.
-  const denied = config.deny_paths.some((dp) =>
-    prefix.startsWith(toComparablePrefix(dp)),
-  );
-  return !denied;
+  return checkArchivePath(candidate, config).allowed;
 }

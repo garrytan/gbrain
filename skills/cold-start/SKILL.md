@@ -433,10 +433,12 @@ Delegate to the `archive-crawler` skill. It handles:
 - Entity extraction and brain page creation
 
 > **Safety gate:** Archive crawling can be slow and create many pages.
-> archive-crawler is a skill, not a CLI command — it refuses to run without an
-> explicit `archive-crawler.scan_paths:` allow-list in `gbrain.yml`. Add the
-> archive path to the allow-list, run the skill's scan pass first, and show the
-> user the manifest before proceeding with full ingestion.
+> archive-crawler refuses to run without an explicit
+> `archive-crawler.scan_paths:` allow-list in `gbrain.yml`, and
+> `gbrain archive-crawler check <path>` refuses any path outside it (or inside
+> `deny_paths`). Ask the user to add the archive path to the allow-list, run
+> the skill's scan pass first, and show the user the manifest before proceeding
+> with full ingestion.
 
 **Supported sources:**
 - Local directories (Dropbox sync folder, Google Drive, old hard drives)
