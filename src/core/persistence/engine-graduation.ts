@@ -19,7 +19,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../spawn.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { EngineConfig } from '../types.ts';
 import { configDir, loadConfigFileOnly, saveConfig, type GBrainConfig } from '../config.ts';

@@ -37,7 +37,7 @@
  * step. An apply refuses while an unfinished managed sync cursor still names
  * a selected file.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { join } from 'node:path';

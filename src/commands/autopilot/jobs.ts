@@ -7,7 +7,7 @@
  */
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join, resolve as resolvePath } from 'path';
-import { execSync } from 'child_process';
+import { execSync } from '../../core/spawn.ts';
 import {
   autopilotLaunchdLabel,
   autopilotWrapperOwner,

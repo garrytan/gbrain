@@ -31,7 +31,7 @@
  * fix manually.
  */
 
-import { execSync } from 'child_process';
+import { execSync } from '../../core/spawn.ts';
 import { gbrainChildCommand, runGbrainSubprocess } from './in-process.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { childGlobalFlags } from '../../core/cli-options.ts';

@@ -54,7 +54,7 @@
  */
 
 import { writeSync } from 'node:fs';
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { spawn, type ChildProcess, type SpawnOptions } from './spawn.ts';
 import { formatWithOptions } from 'node:util';
 import {
   drainAllBackgroundWorkForCliExit,

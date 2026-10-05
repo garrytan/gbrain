@@ -24,7 +24,7 @@
  *   `gstack-learnings-prune` (Lane D / T17).
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import { GBrainError } from '../types.ts';
 
 export interface IncorrectResolutionEvent {

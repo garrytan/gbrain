@@ -16,7 +16,7 @@
  * for the full design rationale (D1–D23 decisions).
  */
 
-import { spawn } from 'child_process';
+import { spawn } from '../core/spawn.ts';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, appendFileSync, chmodSync, cpSync, lstatSync } from 'fs';
 import { join, resolve, basename, dirname } from 'path';
 import { fileURLToPath } from 'url';

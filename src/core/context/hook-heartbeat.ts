@@ -11,7 +11,7 @@
  * allowlist is enforced by construction, not by trust. Never throws.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn } from '../spawn.ts';
 import { createHash } from 'node:crypto';
 import { accessSync, appendFileSync, chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';

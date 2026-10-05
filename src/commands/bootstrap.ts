@@ -109,6 +109,7 @@ import {
 } from '../core/bootstrap/status.ts';
 import { verifyWorkspace, resolveVerifySourceId, deriveWorkspaceSourceId } from '../core/bootstrap/verify.ts';
 import { auditWritebackContract, repairWritebackContract } from '../core/bootstrap/contract.ts';
+import { bunSpawn, execFileSync } from '../core/spawn.ts';
 
 export const BOOTSTRAP_HELP = `gbrain bootstrap — paste-in agent install (Claude Code / Codex / opencode)
 
@@ -452,7 +453,7 @@ function defaultOpencodeProbeSpawn(
   argv: string[],
   opts: { cwd: string; env: Record<string, string | undefined> },
 ): OpencodeProbeHandle {
-  const proc = Bun.spawn(argv, {
+  const proc = bunSpawn(argv, {
     cwd: opts.cwd,
     env: opts.env as Record<string, string>,
     stdin: 'ignore',
@@ -1931,7 +1932,6 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
     // by a re-push once the workspace is gone).
     try {
       const { pushStatusPathForRoot, workspaceRootHash } = await import('../core/workspace-push.ts');
-      const { execFileSync } = await import('node:child_process');
       let root = ws;
       try {
         root = execFileSync('git', ['-C', ws, 'rev-parse', '--show-toplevel'], {

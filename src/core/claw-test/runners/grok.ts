@@ -40,7 +40,7 @@
  * the transcript so a mis-bound binary is diagnosable from the transcript.
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../../spawn.ts';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import {

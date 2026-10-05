@@ -213,6 +213,7 @@ import {
 } from './env-trust.ts';
 import { loadGbrainEnvFile } from './gbrain-env-file.ts';
 import { configDir } from './config.ts';
+import { bunSpawn } from './spawn.ts';
 
 /**
  * Set on the sanitized re-run to `JSON {cwd, neutral}` (see "Loop guard").
@@ -525,7 +526,7 @@ async function reexecSanitized(originalCwd: string, dropped: readonly string[]):
   // none: nothing else will deliver it — forward.
   process.on('SIGINT', hasControllingTerminal() ? () => {} : forward('SIGINT'));
   try {
-    child = Bun.spawn([process.execPath, ...argv], {
+    child = bunSpawn([process.execPath, ...argv], {
       cwd: neutral,
       env,
       stdio: ['inherit', 'inherit', 'inherit'],

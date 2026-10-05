@@ -47,6 +47,7 @@
 
 import { existsSync, realpathSync } from 'node:fs';
 import { shellQuote } from './mcp-registration.ts';
+import { bunSpawn } from './spawn.ts';
 
 export const TAILSCALE_ADMIN_DNS_URL = 'https://login.tailscale.com/admin/dns';
 export const TAILSCALE_ADMIN_ACL_URL = 'https://login.tailscale.com/admin/acls';
@@ -91,7 +92,7 @@ export const defaultCommandRunner: CommandRunner = async (argv, opts = {}) => {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let killTimer: ReturnType<typeof setTimeout> | null = null;
   try {
-    const proc = Bun.spawn(argv, {
+    const proc = bunSpawn(argv, {
       stdin: opts.inherit ? 'inherit' : 'ignore',
       stdout: opts.inherit ? (opts.stdoutToStderr ? 2 : 'inherit') : 'pipe',
       stderr: opts.inherit ? 'inherit' : 'pipe',

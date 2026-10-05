@@ -21,7 +21,7 @@
 
 import { existsSync, readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync, statSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
-import { execSync, execFileSync } from 'child_process';
+import { execSync, execFileSync } from './spawn.ts';
 import { compareVersions } from '../commands/migrations/index.ts';
 import { gbrainPath } from './config.ts';
 import type { GBrainConfig } from './config.ts';

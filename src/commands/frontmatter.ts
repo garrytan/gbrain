@@ -21,7 +21,7 @@ import { assertManagedFilesystemWrite, managedFilesystemRootFor } from '../core/
  */
 
 import { readFileSync, writeFileSync, existsSync, lstatSync, readdirSync } from 'fs';
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../core/spawn.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join, relative, resolve, basename, dirname, isAbsolute, posix } from 'path';
 import type { BrainEngine } from '../core/engine.ts';

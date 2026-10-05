@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../spawn.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { hostOnlyError, readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';

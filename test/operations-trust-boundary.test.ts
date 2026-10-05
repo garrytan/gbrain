@@ -480,8 +480,10 @@ describe('ops-module system-access containment — top-level fs/child_process im
   // GRANULARITY (the closest enforceable version of the file→ops mapping):
   //   - DETECTION is per-FILE and text-based: a static top-level ESM
   //     import/re-export of 'fs' / 'fs/promises' / 'child_process' (with or
-  //     without the node: prefix). Static import statements are top-level by
-  //     ESM grammar, so matching the `from '<specifier>'` clause is exact.
+  //     without the node: prefix), or of src/core/spawn.ts, the seam every
+  //     src/ subprocess launch goes through. Static import statements are
+  //     top-level by ESM grammar, so matching the `from '<specifier>'`
+  //     clause is exact.
   //     Lazy dynamic `await import('node:fs')` INSIDE a handler is
   //     deliberately out of scope (schema-packs.ts and skillopt.ts use that
   //     form today) — it is runtime-gated per call site, the same doctrine
@@ -517,7 +519,7 @@ describe('ops-module system-access containment — top-level fs/child_process im
   // import keyword at a line start) or commented-out imports (`//` and `*`
   // are not whitespace, so the line-start anchor excludes them).
   const SYSTEM_IMPORT_RE =
-    /(?:^|\n)\s*(?:import|export)\s+(?:[^;]*?\bfrom\s+)?['"](?:node:)?(?:fs|fs\/promises|child_process)['"]/;
+    /(?:^|\n)\s*(?:import|export)\s+(?:[^;]*?\bfrom\s+)?['"](?:(?:node:)?(?:fs|fs\/promises|child_process)|\.\.\/spawn\.ts)['"]/;
 
   /**
    * Canonical ops contributed by one ops module: import it, walk every
@@ -554,6 +556,8 @@ describe('ops-module system-access containment — top-level fs/child_process im
     expect(SYSTEM_IMPORT_RE.test(`import {\n  readFileSync,\n  writeFileSync,\n} from 'fs/promises';`)).toBe(true);
     expect(SYSTEM_IMPORT_RE.test(`import 'node:fs';`)).toBe(true);
     expect(SYSTEM_IMPORT_RE.test(`export { execSync } from 'node:child_process';`)).toBe(true);
+    expect(SYSTEM_IMPORT_RE.test(`import { execFileSync } from '../spawn.ts';`)).toBe(true);
+    expect(SYSTEM_IMPORT_RE.test(`import { buildSpawnInvocation } from '../minions/spawn-helpers.ts';`)).toBe(false);
     expect(SYSTEM_IMPORT_RE.test(`const nodeFs = await import('node:fs');`)).toBe(false);
     expect(SYSTEM_IMPORT_RE.test(`import { resolve } from 'node:path';`)).toBe(false);
     expect(SYSTEM_IMPORT_RE.test(`code();\n// import { x } from 'node:fs'`)).toBe(false);

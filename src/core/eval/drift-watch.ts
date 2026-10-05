@@ -11,7 +11,7 @@
  * so coverage grows deliberately.
  */
 
-import { execSync } from 'child_process';
+import { execSync } from '../spawn.ts';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';

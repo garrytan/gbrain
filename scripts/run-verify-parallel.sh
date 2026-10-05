@@ -161,6 +161,9 @@ CHECKS=(
   # #5595/#5475: no fsync of a read-only descriptor outside src/core/fs-durable.ts
   # (Windows refuses it with EPERM).
   "check:durable-flush"
+  # #4992: no subprocess launch in src/ outside src/core/spawn.ts, which
+  # defaults windowsHide: true (a detached Windows child has no console).
+  "check:windows-hide"
   # Goal (a) (refactor wave 1): engine SQL only shrinks; baseline
   # scripts/engine-sql-baseline.tsv.
   "check:engine-sql-ratchet"

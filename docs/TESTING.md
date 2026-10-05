@@ -876,6 +876,18 @@ regressions run natively on the `windows-latest` row of the test.yml
 `security-regressions` job; `test/helpers/win32-flush-semantics.ts` makes them
 discriminate on POSIX hosts too.
 
+#### Windows hidden-console guard
+
+`scripts/check-windows-hide.ts` (`bun run check:windows-hide`, in `bun run
+verify`) fails on a runtime `child_process` import (static, dynamic or
+`require`) or a `Bun.spawn`/`Bun.spawnSync` reference anywhere in `src/`
+outside `src/core/spawn.ts`, and on `windowsHide: false` outside its
+`ALLOWLIST`. A detached Windows child has no console, so each console program
+it launches without `windowsHide` opens a visible window (#4992); the seam
+defaults it. Fix: import the launcher from `src/core/spawn.ts`. Fixtures:
+`test/fixtures/guards/check-windows-hide.ts/`. `test/windows-hidden-console.test.ts`
+observes the windows natively on the `security-regressions` Windows row.
+
 #### Engine-sql ratchet
 
 `scripts/check-engine-sql-ratchet.ts` (`bun run check:engine-sql-ratchet`, in

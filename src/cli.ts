@@ -8,7 +8,7 @@ import { installCleanupSignalHandlers } from './core/serve-invocation.ts';
 
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { readStdinBounded as readStdinPayload } from './core/interaction.ts';
-import { spawn } from 'child_process';
+import { spawn } from './core/spawn.ts';
 import {
   readUpdateCache,
   isCacheFresh,

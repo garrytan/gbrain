@@ -2,7 +2,7 @@ import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { opError } from '../core/ops/contract.ts';
 import { hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal } from '../core/minions/source-filesystem.ts';
 import { readdirSync, lstatSync, existsSync, mkdirSync } from 'fs';
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../core/spawn.ts';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';

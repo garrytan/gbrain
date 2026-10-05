@@ -26,7 +26,7 @@
  * `shutdownSignal` so deploy restarts don't interrupt them mid-flight.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from '../../spawn.ts';
 import { StringDecoder } from 'node:string_decoder';
 import type { MinionJobContext } from '../types.ts';
 import { UnrecoverableError } from '../types.ts';
