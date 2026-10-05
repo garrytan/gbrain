@@ -31,6 +31,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // The onboarding state is process-wide: the last test's warm cache (a brain with no takes) would otherwise reach
+  // every later file in this bun process as onboard_* notices on its stdio dispatches.
+  newProcess();
   await engine.disconnect();
 });
 
