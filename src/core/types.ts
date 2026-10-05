@@ -316,6 +316,8 @@ export interface PageFilters {
   offset?: number;
   /** ISO date string (YYYY-MM-DD or full ISO timestamp). Filter to pages updated_at > value. */
   updated_after?: string;
+  /** ISO date string or timestamp. Filter to pages updated_at < value (strict, the mirror of updated_after). */
+  updated_before?: string;
   /**
    * v0.45.7 — keyset cursor for deterministic pagination through pages sharing
    * one `updated_at`. `WHERE p.updated_at > ts OR (p.updated_at = ts AND

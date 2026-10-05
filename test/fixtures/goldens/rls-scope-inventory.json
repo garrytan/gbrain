@@ -2052,6 +2052,19 @@
           "*"
         ]
       },
+      "listPages#updated_before": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "*"
+        ]
+      },
       "listPrefixSampledPages#default": {
         "flagOffLanes": [
           "pool"

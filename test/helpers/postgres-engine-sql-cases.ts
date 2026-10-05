@@ -309,6 +309,7 @@ export const SQL_CASES: SqlCase[] = [
     ['type', (e) => e.listPages({ type: 'person' })],
     ['tag', (e) => e.listPages({ tag: 'founder' })],
     ['updated_after', (e) => e.listPages({ updated_after: '2026-01-01T00:00:00Z' })],
+    ['updated_before', (e) => e.listPages({ updated_before: '2026-01-01T00:00:00Z' })],
     ['updatedAfterKeyset', (e) => e.listPages({ updatedAfterKeyset: { updatedAt: '2026-01-01T00:00:00.000000Z', slug: SLUG } })],
     ['slugPrefix', (e) => e.listPages({ slugPrefix: 'people/' })],
     ['sourceId', (e) => e.listPages({ sourceId: SRC })],

@@ -351,6 +351,10 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       : updatedAfter
         ? sqlFragment`AND p.updated_at > ${updatedAfter}::text::timestamptz`
         : sqlFragment``;
+    // Upper bound composes with either lower bound above (window or keyset page).
+    const updatedBeforeCondition = filters?.updated_before
+      ? sqlFragment`AND p.updated_at < ${filters.updated_before}::text::timestamptz`
+      : sqlFragment``;
     // slugPrefix uses the (source_id, slug) UNIQUE btree index for range scans.
     // Escape LIKE metacharacters so the user prefix is treated as a literal.
     const slugPrefix = filters?.slugPrefix;
@@ -391,7 +395,7 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       const { rows } = await exec.run(sqlFragment`
         SELECT ${columns}, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p
         ${tagJoin}
-        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
+        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${updatedBeforeCondition} ${slugCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
         ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
       `);
       return rows.map(rowToPage);

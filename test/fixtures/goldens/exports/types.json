@@ -914,7 +914,8 @@
           "tag?: string | undefined",
           "type?: string | undefined",
           "updatedAfterKeyset?: { updatedAt: string; slug: string; } | undefined",
-          "updated_after?: string | undefined"
+          "updated_after?: string | undefined",
+          "updated_before?: string | undefined"
         ],
         "name": "PageFilters"
       },
@@ -8122,7 +8123,8 @@
           "tag?: string | undefined",
           "type?: string | undefined",
           "updatedAfterKeyset?: { updatedAt: string; slug: string; } | undefined",
-          "updated_after?: string | undefined"
+          "updated_after?: string | undefined",
+          "updated_before?: string | undefined"
         ],
         "name": "PageFilters"
       },

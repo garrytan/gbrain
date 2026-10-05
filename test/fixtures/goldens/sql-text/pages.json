@@ -410,7 +410,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $1 OFFSET $2",
-            "textSha256": "b53eedb61eb045a5e22ea5a53328ab5e14d8af00e052458389fa75c7f09b92c1"
+            "textSha256": "8deade1fa05d691610723824c26dc62b32623972a9c38576d66b61a49a5404c3"
           }
         ],
         "effective_after": [
@@ -422,7 +422,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.deleted_at IS NULL AND p.effective_date >= $1::timestamptz ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
-            "textSha256": "e300dc2ea65cbb6ec63120ab02e17948c47ce081dca436bc2dcfd72fd347d6a8"
+            "textSha256": "e86e2e451ab4c638df6c4f536287cb8533fc2093f6cb84d5d0b955c5f5b8768c"
           }
         ],
         "effective_before": [
@@ -434,7 +434,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.deleted_at IS NULL AND p.effective_date <= $1::timestamptz ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
-            "textSha256": "4b3c992ab60c2c856fbf45771893902242c5acdba7cbca9a54f05536acf7dda8"
+            "textSha256": "e75b6bb4ce41104343626b601d254fda11f669ce817af612575c58c77ad247ba"
           }
         ],
         "excludePrivate": [
@@ -445,7 +445,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN NOT EXISTS (SELECT 1 FROM pages chronicle_origin WHERE chronicle_origin.source_id = p.source_id AND chronicle_origin.slug = p.frontmatter->'event'->>'depth' AND COALESCE(chronicle_origin.frontmatter->>'visibility', CASE WHEN (chronicle_origin.type = 'atom' OR (chronicle_origin.type = 'concept' AND chronicle_origin.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN jsonb_typeof(chronicle_origin.frontmatter->'derived_from') IN ('array', 'string') THEN EXISTS ( SELECT 1 FROM pages declared_origin WHERE declared_origin.source_id = chronicle_origin.source_id AND declared_origin.frontmatter->>'visibility' = 'private' AND declared_origin.slug IN ( SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(chronicle_origin.frontmatter->'derived_from') = 'array' THEN chronicle_origin.frontmatter->'derived_from' ELSE jsonb_build_array(chronicle_origin.frontmatter->'derived_from') END) AS declared(slug))) ELSE false END)) ELSE false END) AND NOT (CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') IN ('array', 'string') THEN EXISTS ( SELECT 1 FROM pages declared_origin WHERE declared_origin.source_id = p.source_id AND declared_origin.frontmatter->>'visibility' = 'private' AND declared_origin.slug IN ( SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') = 'array' THEN p.frontmatter->'derived_from' ELSE jsonb_build_array(p.frontmatter->'derived_from') END) AS declared(slug))) ELSE false END)) ORDER BY p.updated_at DESC LIMIT $1 OFFSET $2",
-            "textSha256": "3964e3fe1c6d286cf5244844a321835cb1e9fbc5d94da1c329fb3a769875004f"
+            "textSha256": "b4ce108cd1e4592f90bde3d456f46fc1433c0a9f825b5f859fef6e1c5c7cbca0"
           }
         ],
         "includeDeleted": [
@@ -456,7 +456,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 ORDER BY p.updated_at DESC LIMIT $1 OFFSET $2",
-            "textSha256": "88a25ae800a30123e92501a9c7fd7d569c5649352cd7b9fbb67acb2609d14c78"
+            "textSha256": "c27de525e38cd7d06900a0296d4bfcd4a8fb4d65206481e3ecd3afe04ab47552"
           }
         ],
         "slugPrefix": [
@@ -468,7 +468,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.slug LIKE $1 ESCAPE '\\' AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
-            "textSha256": "c3d77b145e83c4b5d27b3c2c4be1ab39dfa2de02ec0a5f6e80d89807e8b314d9"
+            "textSha256": "f05875dcbd3e078a337e1a60cc1bb787cc45ebfec229cea980fcd0504f7659bd"
           }
         ],
         "sort": [
@@ -479,7 +479,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.deleted_at IS NULL ORDER BY p.slug ASC, p.source_id ASC, p.id ASC LIMIT $1 OFFSET $2",
-            "textSha256": "f2142b0f2a082558ad2c58ec5b9ed6ad074c3b2566d31b7cbe580372c533d765"
+            "textSha256": "9528be19bc9bdfc8cd83599978a248425c6d756ec6fc2b1d40b6ba0bae361fce"
           }
         ],
         "sourceId": [
@@ -491,7 +491,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.source_id = $1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
-            "textSha256": "af95db9a73f91d9b0e61ad64b5e86e8dd96f9002dc570d21f0768312fce390b7"
+            "textSha256": "29e1f6823dfcf41eb082a6b7ecffd621f1aa67afc651cd67134346d1d8a3957b"
           }
         ],
         "sourceIds": [
@@ -503,7 +503,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.source_id = ANY($1::text[]) AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
-            "textSha256": "11551be34c7fbe0730ac398ee6cd5adc3f3e584208fdda55910b1a977c00c638"
+            "textSha256": "be3de10bdb8f56dd1faca6071e9d1659e8601a657430207388a9d7c031b0c570"
           }
         ],
         "tag": [
@@ -515,7 +515,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p JOIN tags t ON t.page_id = p.id WHERE 1=1 AND t.tag = $1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
-            "textSha256": "4c16627334aff5a4ae92e92e075f56a3bab769967cc0160ae82af805be9a1683"
+            "textSha256": "8bc2b951bb1000e0de1b57ba14d28e9feac052f915b301b44bd99ccb12daedc5"
           }
         ],
         "type": [
@@ -527,7 +527,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.type = $1 AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
-            "textSha256": "142cd63350c7d54827843daeca3261efbd6589ef71e31b06fafc7ff5ac25f83f"
+            "textSha256": "aaf8c4aa8cd368c8fbfc0b2986c4d512d51ed4d545b7b58b39954ce7ff73ce18"
           }
         ],
         "updatedAfterKeyset": [
@@ -541,7 +541,7 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND (p.updated_at > $1::text::timestamptz OR (p.updated_at = $2::text::timestamptz AND p.slug > $3)) AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $4 OFFSET $5",
-            "textSha256": "e8c035bd6109b92df5e6f89080db721da06e12d57e58d3d7d7c98346d70a30af"
+            "textSha256": "5a93a8b752280d602f300fa035d650d5c50a23e76a9dec798cca18f3212d9af1"
           }
         ],
         "updated_after": [
@@ -553,7 +553,19 @@
               "number"
             ],
             "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.updated_at > $1::text::timestamptz AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
-            "textSha256": "98825ce723c789c3a2796f00c1fa36e988d6630803577600aed5a85adb258624"
+            "textSha256": "21d89101b93452c7f510f1143359c1373ad87c52d749cf4d0d5be33908d93d10"
+          }
+        ],
+        "updated_before": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.updated_at < $1::text::timestamptz AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "e7a0bccbfb97d5503540ca9b8265ba11b4be6fa1fa528a6c5b6d1a30a70607a6"
           }
         ]
       },

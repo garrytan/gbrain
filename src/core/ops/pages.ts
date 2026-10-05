@@ -24,6 +24,7 @@ import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
+import { LIST_PAGES_FILTER_PARAMS, listPagesFilters, rethrowUnparsedTimestamp } from './list-pages-filters.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
 import { invalidParam } from './op-fix.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
@@ -465,6 +466,7 @@ const list_pages: Operation = {
       type: 'string',
       description: "Last row's slug (with updated_after).",
     },
+    ...LIST_PAGES_FILTER_PARAMS,
     sort: {
       type: 'string', description: 'Default updated_desc.',
       enum: [...LIST_PAGES_SORT_VALUES],
@@ -499,6 +501,7 @@ const list_pages: Operation = {
       ? { updatedAt: updatedAfter, slug: updatedAfterSlug }
       : undefined;
     if (updatedAfterKeyset) sort = 'updated_asc';
+    const filters = listPagesFilters(ctx, p);
     // v0.34.1 (#861 — P0 leak seal): thread the auth'd client's source scope
     // into the listPages filter so an OAuth client scoped to src-A cannot
     // enumerate src-B pages. Pre-fix, ctx.sourceId / ctx.auth?.allowedSources
@@ -560,11 +563,12 @@ const list_pages: Operation = {
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: updatedAfterKeyset ? undefined : updatedAfter,
       updatedAfterKeyset,
+      ...filters,
       sort,
       excludePrivate,
       listColumnsOnly: true,
       ...scope,
-    });
+    }).catch(e => rethrowUnparsedTimestamp(ctx, p, e));
     const truncated = rows.length > limit;
     const pages = truncated ? rows.slice(0, limit) : rows;
     // Warn only when the caller's limit was NOT honored (unset → default 50):
@@ -580,7 +584,7 @@ const list_pages: Operation = {
         `[list_pages] output truncated at ${limit} rows (default 50). ` +
         `Pass an explicit limit, page through with ` +
         `updated_after=<last row's updated_at_iso> + ` +
-        `updated_after_slug=<last row's slug>, or narrow with type/tag.`,
+        `updated_after_slug=<last row's slug>, or narrow with type/tag/slug_prefix.`,
       );
     }
     // MCP callers see neither that notice nor the clamp warning (server log):

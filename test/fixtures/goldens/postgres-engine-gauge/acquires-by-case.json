@@ -216,6 +216,7 @@
     "listPages#type": {},
     "listPages#updatedAfterKeyset": {},
     "listPages#updated_after": {},
+    "listPages#updated_before": {},
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
     "listStaleChunks#default": {

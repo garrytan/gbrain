@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 203079,
-    "stdoutSha256": "3f2a347db6f4a41890023a83565e4a811e9fb1127b881fad419a24f3365f3d21",
+    "stdoutBytes": 203409,
+    "stdoutSha256": "8bef2b84edd5704b50fd2f6175abf091a00c5cc513765214777123315f95b1b9",
     "toolNames": [
       "remember",
       "entity",
@@ -531,12 +531,14 @@
           "include_deleted": "boolean?",
           "limit": "number?",
           "offset": "number?",
+          "slug_prefix": "string?",
           "sort": "string?",
           "source_id": "string?",
           "tag": "string?",
           "type": "string?",
           "updated_after": "string?",
-          "updated_after_slug": "string?"
+          "updated_after_slug": "string?",
+          "updated_before": "string?"
         },
         "required_scopes": [],
         "schema": {
@@ -552,6 +554,10 @@
             "offset": {
               "description": "Rows to skip.",
               "type": "number"
+            },
+            "slug_prefix": {
+              "description": "Literal slug prefix, e.g. 'people/'.",
+              "type": "string"
             },
             "sort": {
               "description": "Default updated_desc.",
@@ -581,6 +587,10 @@
             },
             "updated_after_slug": {
               "description": "Last row's slug (with updated_after).",
+              "type": "string"
+            },
+            "updated_before": {
+              "description": "Only pages updated before this ISO time.",
               "type": "string"
             }
           },
