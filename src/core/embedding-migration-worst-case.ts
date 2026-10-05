@@ -21,6 +21,7 @@
  */
 import type { BrainEngine } from './engine.ts';
 import { embedRequestCeilings, rerankRequestMaxInputTokens } from './ai/embed-batch-plan.ts';
+import { formatEmbeddingInput } from './ai/model-resolver.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import type { ChunkInput, CRMode } from './types.ts';
 import { readContentChunksEmbeddingDim } from './embedding-dim-check.ts';
@@ -65,7 +66,7 @@ const REPROJECTED_PAGE = `(p.text_projection_revision IS DISTINCT FROM p.knowled
 const healAtTarget = (chunks: ReadonlyArray<Pick<ChunkInput, 'chunk_index' | 'chunk_text'> & { chunk_source?: string | null }>, sizes: ChunkSizes) =>
   healOversizedChunks(chunks as unknown as Parameters<typeof healOversizedChunks>[0], sizes.target);
 
-async function eachReprojectedPage(engine: BrainEngine, sizes: ChunkSizes, weigh: (texts: string[]) => number, visit: (texts: string[]) => void): Promise<void> {
+async function eachReprojectedPage(engine: BrainEngine, sizes: ChunkSizes, weigh: (texts: string[], title?: string) => number, visit: (texts: string[], title?: string) => void): Promise<void> {
   let after = 0;
   for (;;) {
     const rows = await engine.executeRaw<{ id: number; slug: string; source_id: string }>(`SELECT p.id, p.slug, p.source_id
@@ -75,20 +76,22 @@ async function eachReprojectedPage(engine: BrainEngine, sizes: ChunkSizes, weigh
       ORDER BY p.id LIMIT ${SCAN_PAGE}`, [after]);
     for (const row of rows) {
       const candidates: string[][] = [];
+      let title: string | undefined;
       for (const limit of new Set([sizes.current, sizes.target])) {
         const prepared = await readProjectionSnapshot(engine, row.slug, row.source_id, { allowUnsealed: true, maxChunkTokens: limit });
         if (!prepared) continue;
+        title = prepared.snapshot.page.title;
         try { candidates.push(wrapChunkTextsForStoredMode(prepared.snapshot.page, healAtTarget((await preparePageProjection(prepared)).chunks, sizes).chunks)); }
         catch { continue; }
       }
-      if (candidates.length) visit(candidates.reduce((a, b) => weigh(b) > weigh(a) ? b : a));
+      if (candidates.length) visit(candidates.reduce((a, b) => weigh(b, title) > weigh(a, title) ? b : a), title);
     }
     if (rows.length < SCAN_PAGE) break;
     after = rows[rows.length - 1].id;
   }
 }
 
-async function eachStalePage(engine: BrainEngine, plan: EmbeddingMigrationPlan, sizes: ChunkSizes, visit: (texts: string[]) => void): Promise<void> {
+async function eachStalePage(engine: BrainEngine, plan: EmbeddingMigrationPlan, sizes: ChunkSizes, visit: (texts: string[], title?: string) => void): Promise<void> {
   const column = (await readContentChunksEmbeddingDim(engine)).exists
     ? quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name)
     : null;
@@ -100,7 +103,7 @@ async function eachStalePage(engine: BrainEngine, plan: EmbeddingMigrationPlan, 
   const flush = () => {
     if (!page.length) return;
     const healed = healAtTarget(page, sizes);
-    visit(wrapChunkTextsForStoredMode(page[0], healed.changed ? healed.chunks : page.filter(row => row.stale)));
+    visit(wrapChunkTextsForStoredMode(page[0], healed.changed ? healed.chunks : page.filter(row => row.stale)), page[0].title ?? undefined);
     page = [];
   };
   let after = { page: 0, chunk: -1 };
@@ -146,16 +149,17 @@ async function eachStaleFactBatch(engine: BrainEngine, plan: EmbeddingMigrationP
 export async function planMigrationWorstCase(engine: BrainEngine, plan: EmbeddingMigrationPlan, opts: { rerankerModel?: string } = {}): Promise<MigrationWorstCase> {
   const envCap = Number.parseInt(process.env.GBRAIN_EMBED_MAX_BATCH_TOKENS ?? '', 10);
   const ceilings: number[] = [];
-  const ceilingsOf = (texts: string[]) => texts.length
-    ? embedRequestCeilings(texts, plan.to_model, Number.isFinite(envCap) && envCap > 0 ? envCap : undefined) : [];
-  const add = (texts: string[]) => { ceilings.push(...ceilingsOf(texts)); };
+  const ceilingsOf = (texts: string[], documentTitle?: string) => texts.length
+    ? embedRequestCeilings(texts, plan.to_model, Number.isFinite(envCap) && envCap > 0 ? envCap : undefined, { documentTitle }) : [];
+  const add = (texts: string[], title?: string) => { ceilings.push(...ceilingsOf(texts, title)); };
   add([MIGRATION_PROBE_TEXT]);
   for (let i = 0; i < DRAIN_PROBES; i++) add([EMBED_PROBE_TEXT]);
-  for (let i = 0; i < SMOKE_QUERIES; i++) ceilings.push(SMOKE_QUERY_MAX_TOKENS);
+  const queryPromptBytes = Buffer.byteLength(formatEmbeddingInput('x', plan.to_model, { inputType: 'query' }), 'utf8') - 1;
+  for (let i = 0; i < SMOKE_QUERIES; i++) ceilings.push(SMOKE_QUERY_MAX_TOKENS + queryPromptBytes);
   const target = resolveMaxChunkTokens(process.env, plan.to_model);
   const sizes = { current: resolveMaxChunkTokens(), target };
   await eachStalePage(engine, plan, sizes, add);
-  await eachReprojectedPage(engine, sizes, texts => ceilingsOf(texts).reduce((sum, n) => sum + n, 0), add);
+  await eachReprojectedPage(engine, sizes, (texts, title) => ceilingsOf(texts, title).reduce((sum, n) => sum + n, 0), add);
   await eachStaleFactBatch(engine, plan, add);
   const embedTokens = ceilings.reduce((sum, n) => sum + n, 0);
   const rerankTokens = opts.rerankerModel ? rerankRequestMaxInputTokens(RERANKER_PROBE.query, RERANKER_PROBE.documents) : 0;

@@ -1658,6 +1658,7 @@
         "members": [
           "abortSignal?: AbortSignal | undefined",
           "dimensions?: number | undefined",
+          "documentTitle?: string | undefined",
           "embeddingModel?: string | undefined",
           "inputType?: \"query\" | \"document\" | undefined",
           "maxRetries?: number | undefined"
@@ -2944,6 +2945,7 @@
         "kind": "interface",
         "members": [
           "abortSignal?: AbortSignal | undefined",
+          "documentTitle?: string | undefined",
           "maxRetries?: number | undefined",
           "onBatchComplete?: ((done: number, total: number) => void) | undefined"
         ],

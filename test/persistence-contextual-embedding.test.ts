@@ -80,7 +80,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
         await engine.executeRaw('ALTER TABLE persistence_effects ALTER COLUMN next_attempt_at SET DEFAULT now()');
       }
     }
-    async function runEmbedding(requestId: string, embed: (texts: string[]) => Promise<Float32Array[]>) {
+    async function runEmbedding(requestId: string, embed: typeof import('../src/core/embedding.ts').embedBatch) {
       await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour'");
       await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE request_id=$1::uuid AND kind='embedding'", [requestId]);
       await runPersistenceEffects(engine, { engine: kind }, { hostId: localHostId(), limit: 1,
@@ -102,8 +102,10 @@ for (const kind of ['pglite', 'postgres'] as const) {
       expect(stamp.embedding_signature).toBeNull();
       expect(unexpectedProviderCalls).toBe(0);
       let calls = 0;
-      await runEmbedding(requestId, async texts => {
+      await runEmbedding(requestId, async (texts, opts) => {
         calls++;
+        // #5215: the durable embedding outbox must transport metadata even in mode none.
+        expect(opts?.documentTitle).toBe('Context Fixture');
         if (option.expected === 'title') expect(texts[0]).toContain('<context>Context Fixture');
         else expect(texts[0]).not.toContain('<context>');
         // A second engine transaction completes during provider execution:

@@ -508,7 +508,7 @@ async function tryBuildPhase1(opts: {
     );
 
     try {
-      const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal });
+      const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal, documentTitle: title });
       return {
         kind: 'success',
         embeddedChunks: chunks.map((c, i) => ({
@@ -565,7 +565,7 @@ async function tryBuildPhase1(opts: {
 
   // All chunks synthesized successfully. Single batch embed (D27 P2-2).
   try {
-    const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal });
+    const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal, documentTitle: title });
     return {
       kind: 'success',
       embeddedChunks: chunks.map((c, i) => ({

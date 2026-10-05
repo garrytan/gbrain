@@ -68,6 +68,8 @@ export interface EmbedBatchOptions {
    * and amplify rate-limit pressure.
    */
   maxRetries?: number;
+  /** Real title of the page these texts belong to. */
+  documentTitle?: string;
 }
 
 /**
@@ -87,6 +89,7 @@ export async function embedBatch(
   const gwOpts = {
     ...(options.abortSignal !== undefined && { abortSignal: options.abortSignal }),
     ...(options.maxRetries !== undefined && { maxRetries: options.maxRetries }),
+    ...(options.documentTitle !== undefined && { documentTitle: options.documentTitle }),
   };
   // Fast path: small batch, no progress callback — single gateway call.
   if (texts.length <= BATCH_SIZE && !options.onBatchComplete) {

@@ -16,7 +16,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
-import { acceptedEmbeddingInputHashes, isContextualMode } from '../embedding-input-hash.ts';
+import { acceptedEmbeddingInputHashes, hasRawEmbeddingInput, isContextualMode } from '../embedding-input-hash.ts';
 import { embeddingInputContext, embeddingWriteTarget } from '../page-state/projections.ts';
 import { resolveImportContextualMode } from '../import-contextual-mode.ts';
 import { embedStalePages } from '../embed-stale.ts';
@@ -53,7 +53,7 @@ export const contextualModeRepair: RepairHandler = {
         'SELECT id,embedding_input_hash FROM content_chunks WHERE page_id=$1', [snapshot.page.id])).map(r => [Number(r.id), r.embedding_input_hash]));
       const stale = chunks.filter(chunk => !chunk.embedding_is_null).filter(chunk => {
         const hash = recorded.get(Number(chunk.id)) ?? null;
-        return hash === null ? isContextualMode(mode) : !acceptedEmbeddingInputHashes(provenance, mode, chunk).includes(hash);
+        return hash === null ? isContextualMode(mode) || !hasRawEmbeddingInput(provenance, chunk) : !acceptedEmbeddingInputHashes(provenance, mode, chunk).includes(hash);
       }).map(chunk => Number(chunk.id));
       if (stale.length) await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(target.column.name)}=NULL,
         embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL WHERE page_id=$1 AND id=ANY($2::int[])`, [snapshot.page.id, stale]);

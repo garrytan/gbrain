@@ -140,6 +140,7 @@ test/embedding-recovery.serial.test.ts	global-state	global-state: R3: constructs
 test/embedding-rejection-refund.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway
 test/embedding-truth-predicates.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/embedding-zero-norm-4616.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway
+test/embeddinggemma.serial.test.ts	global-state	global-state: configureGateway and embedding/chat transport seams change process-wide AI state; binds a local HTTP server
 test/eval-brainbench-decide.serial.test.ts	R1	R1: mutates process.env (GBRAIN_DECIDE_SLOTS)
 test/eval-longmemeval-decide.serial.test.ts	R1	R1: mutates process.env (GBRAIN_DECIDE_SLOTS)
 test/eval-retrieval-quality-decide.serial.test.ts	R1	R1: mutates process.env (GBRAIN_DECIDE_SLOTS)

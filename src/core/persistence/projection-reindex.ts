@@ -80,7 +80,7 @@ export async function reindexCodeProjection(engine: BrainEngine, slug: string, s
           `This brain's active embedding column holds ${prepared.embeddingColumn.embeddingModel} vectors, but the configured model is ${prepared.embeddingModel ?? 'unset'}, so code page ${slug} in source ${sourceId} was reindexed as text only. Check the embedding setup with the command in fix; choosing the model (or migrating the brain's embeddings) is the user's decision.`,
           { fix: readFix('Reports the brain\'s embedding provider, model, dimensions and active vector column, read-only.', { argv: ['gbrain', 'doctor', '--only', 'embeddings', '--json'] }) });
       }
-      const vectors = await embedBatchWithBackoff(chunks.map(c => c.chunk_text));
+      const vectors = await embedBatchWithBackoff(chunks.map(c => c.chunk_text), { documentTitle: prepared.snapshot.page.title });
       const installed = await installPageEmbeddings(engine, prepared, chunks.map((c, i) => ({
         chunk_index: c.chunk_index, chunk_text: c.chunk_text, chunk_source: c.chunk_source,
         model: prepared.embeddingModel ?? undefined, embedding: vectors[i] })));

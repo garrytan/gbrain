@@ -1127,7 +1127,7 @@ async function embedPage(
   try {
     ({ embeddings, failed, firstError } = await embedPageTexts(
       wrapChunkTextsForStoredMode(prepared.snapshot.page, toEmbed),
-      signal ? { abortSignal: signal } : {},
+      { abortSignal: signal, documentTitle: prepared.snapshot.page.title },
     ));
   } catch (e: unknown) {
     if (isAborted(signal)) throw e;
@@ -1315,7 +1315,7 @@ async function embedAll(
       // too, so an isolation retry never strips the contextual prefixes.
       const { embeddings, failed, firstError } = await embedPageTexts(
         wrapChunkTextsForStoredMode(page, toEmbed),
-        signal ? { abortSignal: signal } : {},
+        { abortSignal: signal, documentTitle: page.title },
       );
       // Build a map of new embeddings by chunk_index
       const embeddingMap = new Map<number, Float32Array>();
@@ -2028,7 +2028,7 @@ async function embedAllStale(
           if (!stale.length) return;
           const pageRow = prepared.snapshot.page;
           const { embeddings, failed, firstError } = await embedPageTexts(
-            wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: effectiveSignal });
+            wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: effectiveSignal, documentTitle: pageRow.title });
           const staleIdxToEmbedding = new Map<number, Float32Array>();
           for (let j = 0; j < stale.length; j++) {
             const emb = embeddings[j];

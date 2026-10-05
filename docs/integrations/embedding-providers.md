@@ -162,6 +162,8 @@ Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1
 
 The recipe default is `nomic-embed-text`'s 768 dims. If you run one of the larger models, declare its native dimension with `--embedding-dimensions <N>` at init — gbrain trusts the value you declare for local recipes instead of rejecting a non-768 width.
 
+For `ollama:embeddinggemma` (including tagged variants), GBrain applies the [model's required search prompts](https://ai.google.dev/gemma/docs/embeddinggemma/model_card): `task: search result | query: {text}` for queries and `title: {title} | text: {text}` for documents. The title comes from page/import metadata; anonymous documents use `none`. Formatting happens before truncation and batching. Other Ollama models retain their existing input text. Existing plain-text EmbeddingGemma vectors require an explicit `gbrain embed --all` refresh after upgrading; they are not automatically replaced.
+
 Ollama also exposes an OpenAI-compatible `/v1/chat/completions` endpoint, so gbrain can use local chat models for query expansion, `think`, facts extraction, and dream synthesis. A minimal local setup:
 
 ```bash

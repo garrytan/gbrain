@@ -10,6 +10,23 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.66.0] - 2026-10-05
+
+**EmbeddingGemma now receives the search prompts and document titles it expects.**
+
+When using EmbeddingGemma through Ollama, GBrain previously sent plain text even though the model expects different query and document prompts. It now formats queries for search and sends each page's actual title alongside its chunks. Markdown and code imports, background embedding, manual embedding, contextual reindex and deferred writes all carry that title. Other embedding models keep their existing inputs.
+
+## To take advantage of v0.60.66.0
+
+Upgrade GBrain. New EmbeddingGemma embeddings use the corrected format immediately. If your brain already contains EmbeddingGemma vectors created from plain text, explicitly run `gbrain embed --all` to refresh them before comparing retrieval results. Upgrading alone does not replace existing vectors.
+
+### Itemized changes
+
+- Ollama's optional embedding formatter supplies `task: search result | query: {text}` and `title: {title} | text: {text}` for EmbeddingGemma, before truncation and batching.
+- Page embedding paths pass explicit title metadata. Anonymous documents use the model's documented `none` title.
+- Input provenance and spend ceilings include the formatted input. Rebuilds cannot reuse unformatted legacy vectors as formatted ones, and title changes invalidate matching EmbeddingGemma vectors.
+- No schema or search-ranking changes.
+
 ## [0.60.64.0] - 2026-10-05
 
 **An agent connected to a remote brain can now save a stack of long pages in under a minute, and gbrain tells it how.**
