@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 203387,
-    "stdoutSha256": "9654d925f98bdce11961a2fafcd5178cfcd6f1ac1d7cabba933a26fa4a1f9727",
+    "stdoutBytes": 203316,
+    "stdoutSha256": "8eed547a3bff9f39978279362566c56ad40224dc0a72727a07f92a17f212180a",
     "toolNames": [
       "remember",
       "entity",
@@ -383,7 +383,7 @@
               "type": "boolean"
             },
             "omit_facts": {
-              "description": "Replace the facts table with `<!--- gbrain:facts:omitted -->`; put_page keeps the stored table where it stands.",
+              "description": "Replace the facts table with a placeholder that put_page restores.",
               "type": "boolean"
             },
             "slug": {
@@ -403,7 +403,7 @@
         "scope": "read"
       },
       {
-        "description": "Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). A get_page omit_facts placeholder is replaced by the stored facts fence. Small changes: edit_page. Over 3 pages: put_pages.",
+        "description": "Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). A get_page omit_facts placeholder is restored. Small changes: edit_page. Over 3 pages: put_pages.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
