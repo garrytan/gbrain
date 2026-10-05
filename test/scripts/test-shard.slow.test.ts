@@ -229,3 +229,58 @@ describe('test-shard.sh — LPT balance contract', () => {
     expect(fresh).toEqual(cached);
   });
 });
+
+describe('test-shard.sh — execution order contract', () => {
+  // Bun treats a bare `test/x.test.ts` argument as a name filter and runs
+  // the matches in directory-scan order, so the planned LPT order never
+  // reached the shard process and cross-file pollution depended on the
+  // runner's filesystem. Drive the real script with a fake partitioner
+  // that reverses the sorted list, and the real Bun on tiny fixture files.
+  it('runs the shard files in the planned order', () => {
+    const { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('fs');
+    const { tmpdir } = require('os');
+    const { join } = require('path');
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-test-shard-order-'));
+    try {
+      for (const dir of ['scripts/lib', 'test', 'evals', 'bin']) mkdirSync(join(root, dir), { recursive: true });
+      copyFileSync(SHARD_SH, join(root, 'scripts/test-shard.sh'));
+      copyFileSync(resolve(REPO_ROOT, 'scripts/lib/test-env.sh'), join(root, 'scripts/lib/test-env.sh'));
+      const names = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot'];
+      for (const name of names) {
+        writeFileSync(join(root, `test/${name}.test.ts`),
+          `import { test } from 'bun:test';\nimport { appendFileSync } from 'fs';\n` +
+          `test('${name}', () => { appendFileSync(process.env.ORDER_LOG!, '${name}\\n'); });\n`);
+      }
+      writeFileSync(join(root, 'bin/bun'), `#!/usr/bin/env bash
+set -eu
+if [ "$1" = run ] && [ "$2" = scripts/sharding.ts ]; then
+  awk '{ lines[NR] = $0 } END { for (i = NR; i > 0; i--) print lines[i] }'
+  exit 0
+fi
+[ "$1" = test ] || exit 1
+printf '%s\\n' "$@" > "$ARGV_LOG"
+exec "$REAL_BUN" "$@"
+`);
+      chmodSync(join(root, 'bin/bun'), 0o755);
+      const env = {
+        ...process.env,
+        PATH: `${join(root, 'bin')}:${process.env.PATH}`,
+        REAL_BUN: process.execPath,
+        ORDER_LOG: join(root, 'order.log'),
+        ARGV_LOG: join(root, 'argv.log'),
+        GBRAIN_NO_SNAPSHOT: '1',
+        GBRAIN_TEST_RECEIPT_DIR: '',
+        COVERAGE_DIR: '',
+      };
+      const planned = execFileSync('bash', [join(root, 'scripts/test-shard.sh'), '--dry-run-list', '1', '1'], { cwd: root, encoding: 'utf-8', env })
+        .split('\n').filter(Boolean);
+      expect(planned).toEqual([...names].reverse().map(n => `test/${n}.test.ts`));
+      execFileSync('bash', [join(root, 'scripts/test-shard.sh'), '1', '1'], { cwd: root, encoding: 'utf-8', env, stdio: 'pipe' });
+      const argv = readFileSync(join(root, 'argv.log'), 'utf-8').split('\n').filter((a: string) => a.endsWith('.test.ts'));
+      expect(argv).toEqual(planned.map(f => `./${f}`));
+      expect(readFileSync(join(root, 'order.log'), 'utf-8').split('\n').filter(Boolean)).toEqual([...names].reverse());
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
