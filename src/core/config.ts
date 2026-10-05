@@ -1682,7 +1682,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
  * Levenshtein suggestion in `gbrain config set`.
  */
 export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
-  'search.',           // search.* (mode, cache.*, etc.)
+  'search.',           // search.* (mode, cache.*, etc.); config set refuses leaves outside KNOWN_CONFIG_KEYS (ENUMERATED_CONFIG_KEY_PREFIXES)
   'graph.',            // graph.edge_validity (temporal typed-edge read policy, src/core/link-validity.ts)
   'models.',           // models.* (tier, aliases, per-task)
   'dream.',            // dream.synthesize.*, dream.patterns.*
@@ -1690,7 +1690,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'embedding_columns.', // per-column overrides
   'provider_base_urls.', // per-provider base URL overrides
   'provider_chat_options.', // per-provider / per-model chat providerOptions
-  'content_sanity.',    // v0.41 content-sanity tunables
+  'content_sanity.',    // v0.41 content-sanity tunables; enumerated like search.
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
   'chronicle.',         // Life Chronicle knobs; config set refuses leaves outside CHRONICLE_CONFIG_KEYS (#5876)
@@ -1705,6 +1705,13 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'decide.',            // System One decide.* (validated by src/core/ai/decide/config.ts DECIDE_CONFIG_KEYS)
   'connectors.',        // chat-connectors: source_id, sync_floor_min, embed_kickoff_min_pages, doctor_stale_hours, <provider>.{auto_sync,last_sync_at,auth_error_at,watermark_iso} (no secrets — creds are file-plane)
 ];
+
+/** Prefixes above whose every read key is in KNOWN_CONFIG_KEYS, so `config set`
+ *  refuses any other leaf under them unless --force: search.* (pinned key by key
+ *  in test/config-search-registry.test.ts) and content_sanity.* (one reader, the
+ *  DB-plane merge in loadConfigWithEngine). chronicle.* has its own list
+ *  (CHRONICLE_CONFIG_KEYS); the rest hold per-phase, per-provider or per-name sub-keys. */
+export const ENUMERATED_CONFIG_KEY_PREFIXES: readonly string[] = ['search.', 'content_sanity.'];
 
 /**
  * Canonical truthiness for DB-plane boolean config values (#2753).

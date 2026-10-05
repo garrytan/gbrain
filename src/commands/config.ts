@@ -290,7 +290,8 @@ export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
  * decide.slots.* write prints the requested-versus-effective mode line after it
  * persists (best-effort). #5876: auto_chronicle and chronicle.* gate paid
  * extraction, so they validate here too, and an explicit auto_chronicle set
- * records the operator's answer to the default-on change.
+ * records the operator's answer to the default-on change. An unregistered
+ * search.* or content_sanity.* leaf is refused the same way (#4605 follow-up).
  */
 async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value: string, force = false): Promise<void> {
   if (key.startsWith('decide.')) {
@@ -299,6 +300,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
   if (key === 'auto_chronicle' || key.startsWith('chronicle.')) await refuseInvalidChronicleValue(key, value, force);
+  await refuseUnregisteredEnumeratedKey(key, force);
   if (key.startsWith('facts.drain_')) {
     const { validateFactsDrainConfigValue } = await import('../core/facts/drain-config.ts');
     const err = validateFactsDrainConfigValue(key, value);
@@ -328,6 +330,36 @@ async function refuseInvalidChronicleValue(key: string, value: string, force: bo
   }
   const err = validateChronicleConfigValue(key, value);
   if (err) { console.error(`[config] ${err}`); process.exit(1); }
+}
+
+/**
+ * #4605 follow-up: a prefix admits any sub-key, so `config set
+ * search.token_budget` (the reader is `search.tokenBudget`) was written without
+ * a word and then never read. Under an enumerated prefix an unregistered leaf
+ * is refused like an unknown chronicle.* leaf, naming the nearest registered
+ * spelling; nothing is written. --force writes it (a key a newer gbrain reads)
+ * with a warning.
+ */
+async function refuseUnregisteredEnumeratedKey(key: string, force: boolean): Promise<void> {
+  const { KNOWN_CONFIG_KEYS, ENUMERATED_CONFIG_KEY_PREFIXES } = await import('../core/config.ts');
+  const prefix = ENUMERATED_CONFIG_KEY_PREFIXES.find((p) => key.startsWith(p));
+  if (!prefix || KNOWN_CONFIG_KEYS.includes(key)) return;
+  // Compared case- and underscore-blind: the #4605 class is a camelCase
+  // reader under a snake_case write (or the reverse), not a typo.
+  const { suggestNearest } = await import('../core/levenshtein.ts');
+  const fold = (k: string) => k.toLowerCase().replaceAll('_', '');
+  const registered = KNOWN_CONFIG_KEYS.filter((k) => k.startsWith(prefix));
+  const nearest = suggestNearest(fold(key), registered.map(fold), 3);
+  const suggestion = registered.find((k) => fold(k) === nearest);
+  const didYouMean = suggestion ? ` Did you mean "${suggestion}"?` : '';
+  if (force) {
+    console.error(`[config] WARN: writing unregistered ${prefix}* key "${key}" with --force. Nothing in gbrain reads it.${didYouMean}`);
+    return;
+  }
+  console.error(`[config] Unknown config key "${key}".${didYouMean}`);
+  console.error(`[config] Every ${prefix}* key gbrain reads is registered, so nothing would read this one. Nothing was written.`);
+  console.error(`[config] To write it anyway (a key a newer version reads), re-run with --force.`);
+  process.exit(1);
 }
 
 /**
