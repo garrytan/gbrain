@@ -3,18 +3,25 @@
 // DATABASE_URL needed. Exercises the key contracts end-to-end:
 //   - computeRemediationPlan with extras returns the expected shape
 //   - buildOnboardReport produces a stable JSON envelope
-//   - captureMetric returns numeric values for each of 5 metrics
+//   - captureMetric returns numeric values for each of 5 metrics, read
+//     with the predicates the onboard checks and get_health report
+//   - A remediation job step writes its before/after impact row, which
+//     `gbrain onboard --history` shows
 //   - The runRemediation library refuses --auto without --max-usd
 //   - The onboard CLI gates work as documented
 //
-// Full DATABASE_URL-gated end-to-end (real Postgres, actual extractions
-// firing through Minion handlers) is deferred to a v0.42.1 follow-up
-// once the Minion worker test harness lands the per-handler stub seam.
+// The impact-history block also runs on real Postgres when DATABASE_URL is
+// set (a real extract job, run inline through the Minion worker). Other
+// handlers firing on Postgres still wait on the per-handler stub seam.
 
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { computeRemediationPlan } from '../../src/core/remediation/index.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { computeRemediationPlan, runRemediation } from '../../src/core/remediation/index.ts';
 import { captureMetric } from '../../src/core/onboard/impact-capture.ts';
+import { runOnboard } from '../../src/commands/onboard.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
+import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import { buildOnboardReport, toOnboardRecommendation } from '../../src/core/onboard/render.ts';
 import { runAllOnboardChecks } from '../../src/core/onboard/checks.ts';
 import { makeRemediationStep } from '../../src/core/remediation-step.ts';
@@ -52,6 +59,79 @@ describe('onboard E2E — captureMetric', () => {
     expect(v).toBe(0);
   });
 });
+
+// The impact row's JSONB details only prove out on real Postgres (PGLite hides
+// double-encoding), so this block also runs there when DATABASE_URL is set.
+for (const backend of ['pglite', 'postgres'] as const) {
+  (backend === 'postgres' && !hasDatabase() ? describe.skip : describe)(`onboard E2E — impact history (${backend})`, () => {
+    let brain: BrainEngine;
+
+    beforeAll(async () => {
+      if (backend === 'postgres') {
+        brain = await setupDB();
+        return;
+      }
+      const pglite = new PGLiteEngine();
+      await pglite.connect({});
+      await pglite.initSchema();
+      brain = pglite;
+    }, 60_000);
+
+    afterAll(async () => {
+      if (backend === 'postgres') await teardownDB();
+      else await brain.disconnect();
+    });
+
+    test('a remediation job step records its metric before and after; onboard --history shows it', async () => {
+      // Two unextracted pages, one linking the other: the planner adds
+      // extract.stale, whose link leaves get_health with no orphan pages.
+      await brain.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Alice works at [[companies/acme-example]].' });
+      await brain.putPage('companies/acme-example', { type: 'company', title: 'Acme Example', compiled_truth: 'A widget company.' });
+      expect((await brain.getHealth()).orphan_pages).toBe(2);
+
+      const result = await runRemediation(brain, { targetScore: 0, inlineJobs: true });
+      const step = result.submitted.find((s) => s.id === 'extract.stale');
+      expect(step?.status).toBe('completed');
+
+      const onboardOutput = async (args: string[]) => {
+        let out = '';
+        const write = process.stdout.write;
+        process.stdout.write = ((chunk: string | Uint8Array) => { out += String(chunk); return true; }) as typeof process.stdout.write;
+        try {
+          await runOnboard(brain, args);
+        } finally {
+          process.stdout.write = write;
+        }
+        return out;
+      };
+      const { history } = JSON.parse(await onboardOutput(['--history', '--json'])) as { history: Array<Record<string, unknown>> };
+      expect(history).toHaveLength(1);
+      expect(history[0]).toMatchObject({ remediation_id: 'extract.stale', metric_name: 'orphan_count', metric_before: 2, metric_after: 0, delta: -2 });
+      expect(await onboardOutput(['--history'])).toMatch(
+        /^Onboard history \(last 1\):\n {2}\d{4}-\d\d-\d\dT[\d:.]+Z {2}extract\.stale {2}orphan_count: 2 → 0 \(-2\)\n$/);
+
+      const [row] = await brain.executeRaw<{ job_id: string | number; details: Record<string, unknown> }>(
+        'SELECT job_id, details FROM migration_impact_log');
+      expect(Number(row.job_id)).toBe(step!.job_id!);
+      expect(row.details).toMatchObject({ job: 'extract', status: 'completed', doctor_run_id: result.doctor_run_id });
+    });
+
+    test('stale and coverage metrics leave out the pages the onboard checks leave out', async () => {
+      // An embed_skip page's unembedded chunk is not stale work, and a
+      // quarantined entity page is outside the coverage population.
+      await brain.putPage('notes/plain-example', { type: 'note', title: 'Plain', compiled_truth: 'Waiting for a vector.' });
+      await installFixtureChunks(brain, 'notes/plain-example', [{ chunk_index: 0, chunk_text: 'Waiting for a vector.', chunk_source: 'compiled_truth' }]);
+      await brain.putPage('notes/skipped-example', { type: 'note', title: 'Skipped', compiled_truth: 'Never embedded.', frontmatter: { embed_skip: true } });
+      await installFixtureChunks(brain, 'notes/skipped-example', [{ chunk_index: 0, chunk_text: 'Never embedded.', chunk_source: 'compiled_truth' }]);
+      await brain.putPage('people/hidden-example', { type: 'person', title: 'Hidden', compiled_truth: 'Quarantined.', frontmatter: { quarantine: { reason: 'junk_pattern', detail: 'fixture' } } });
+
+      expect(await captureMetric(brain, 'stale_count')).toBe(1);
+      expect(await brain.countStaleChunks()).toBe(1);
+      // acme-example has an inbound link, alice-example has none.
+      expect(await captureMetric(brain, 'entity_link_coverage')).toBe(0.5);
+    });
+  });
+}
 
 describe('onboard E2E — runAllOnboardChecks', () => {
   test('returns all 7 check shapes', async () => {

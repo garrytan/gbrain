@@ -57,7 +57,8 @@ async function safeCount(engine: BrainEngine, sql: string, params: unknown[] = [
   }
 }
 
-const VISIBLE_ENTITY_PREDICATE = `p.type IN ('person', 'company', 'organization', 'entity')
+/** The coverage checks' entity population (`p` = pages); impact capture counts the same pages. */
+export const VISIBLE_ENTITY_PREDICATE = `p.type IN ('person', 'company', 'organization', 'entity')
   AND p.deleted_at IS NULL
   AND ${QUARANTINE_FILTER_FRAGMENT}`;
 

@@ -3,20 +3,28 @@
 // aggregates (orphan_count, stale_count, coverage fractions) by design.
 // Per A26 lint opt-out.
 //
-// v0.41.18.0 (A6 + A25 + A17, T11). Capture before/after stats per onboard
-// remediation step so `gbrain onboard --history` can show "you reduced
-// orphans 47% (88% → 41%)".
+// v0.41.18.0 (A6 + A25 + A17, T11). Capture before/after stats per
+// remediation job step so `gbrain onboard --history` can show "you reduced
+// orphans 47% (88% → 41%)". runRemediation (doctor --remediate, onboard
+// --auto, MCP run_onboard) calls startStepImpact before it submits a step's
+// job and finishes it once the job is terminal.
 //
-// Best-effort per A17: a stat-query throw must NOT block the extraction
-// itself. The wrapper logs failures to stderr and records
-// metric_before/after = null when the capture failed.
+// Each metric reads the predicate the brain already reports it with (the
+// embed worker's stale count, get_health's orphan count, the onboard
+// coverage checks' entity population), so a history row agrees with
+// `gbrain onboard --check` and `gbrain doctor`.
+//
+// Best-effort per A17: a stat-query throw must NOT block the remediation.
+// Failures log to stderr and record metric_before/after = null.
 //
 // Attribution columns per A25 + codex finding #10: every row carries
-// job_id (FK to minion_jobs), source_id, brain_id, started_at,
-// idempotency_key so concurrent onboard/autopilot/manual runs can't
-// misattribute deltas to the wrong remediation.
+// job_id (FK to minion_jobs), source_id, started_at, idempotency_key so
+// concurrent onboard/autopilot/manual runs can't misattribute deltas to the
+// wrong remediation.
 
 import type { BrainEngine } from './../engine.ts';
+import type { RemediationStep } from '../remediation-step.ts';
+import { VISIBLE_ENTITY_PREDICATE } from './checks.ts';
 
 export type MetricName =
   | 'orphan_count'
@@ -35,6 +43,16 @@ export interface ImpactAttribution {
   applied_by?: string;
 }
 
+/** The metric each remediation job moves. A step whose job is not listed writes no row. */
+const JOB_METRICS: Readonly<Record<string, MetricName>> = {
+  embed: 'stale_count',
+  'embed-catch-up': 'stale_count',
+  extract: 'orphan_count',
+  'extract-ner': 'entity_link_coverage',
+  'extract-timeline-from-meetings': 'timeline_coverage',
+  'extract-takes-from-pages': 'takes_count',
+};
+
 /**
  * Pure-ish: returns the current numeric value for `metric`. Returns null
  * on any throw (best-effort capture per A17).
@@ -45,47 +63,24 @@ export async function captureMetric(
 ): Promise<number | null> {
   try {
     switch (metric) {
-      case 'stale_count': {
-        const rows = await engine.executeRaw<{ count: string | number }>(
-          `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL`,
-        );
-        return rows.length > 0 ? Number(rows[0].count) : 0;
-      }
-      case 'orphan_count': {
-        const rows = await engine.executeRaw<{ count: string | number }>(
-          `SELECT COUNT(*) AS count
-             FROM pages p
-            WHERE p.deleted_at IS NULL
-              AND NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)`,
-        );
-        return rows.length > 0 ? Number(rows[0].count) : 0;
-      }
+      case 'stale_count':
+        return await engine.countStaleChunks();
+      case 'orphan_count':
+        return (await engine.getHealth()).orphan_pages;
       case 'entity_link_coverage':
       case 'timeline_coverage': {
-        // Compute as a fraction of entity pages with the relevant feature.
-        const total = await engine.executeRaw<{ count: string | number }>(
-          `SELECT COUNT(*) AS count FROM pages
-             WHERE type IN ('person', 'company', 'organization', 'entity')
-               AND deleted_at IS NULL`,
+        // Exact (unsampled) fraction of visible entity pages with the feature.
+        const feature = metric === 'entity_link_coverage'
+          ? 'SELECT 1 FROM links l WHERE l.to_page_id = p.id'
+          : 'SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id';
+        const [row] = await engine.executeRaw<{ total: number; matched: number }>(
+          `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE EXISTS (${feature}))::int AS matched
+             FROM pages p
+            WHERE ${VISIBLE_ENTITY_PREDICATE}`,
         );
-        const totalN = total.length > 0 ? Number(total[0].count) : 0;
-        if (totalN === 0) return 1; // vacuous truth — empty brain has full coverage
-        if (metric === 'entity_link_coverage') {
-          const withLinks = await engine.executeRaw<{ count: string | number }>(
-            `SELECT COUNT(*) AS count FROM pages p
-               WHERE p.type IN ('person', 'company', 'organization', 'entity')
-                 AND p.deleted_at IS NULL
-                 AND EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)`,
-          );
-          return withLinks.length > 0 ? Number(withLinks[0].count) / totalN : 0;
-        }
-        const withTimeline = await engine.executeRaw<{ count: string | number }>(
-          `SELECT COUNT(*) AS count FROM pages p
-             WHERE p.type IN ('person', 'company', 'organization', 'entity')
-               AND p.deleted_at IS NULL
-               AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id)`,
-        );
-        return withTimeline.length > 0 ? Number(withTimeline[0].count) / totalN : 0;
+        const total = Number(row?.total ?? 0);
+        if (total === 0) return 1; // vacuous truth — empty brain has full coverage
+        return Number(row?.matched ?? 0) / total;
       }
       case 'takes_count': {
         const rows = await engine.executeRaw<{ count: string | number }>(
@@ -143,46 +138,38 @@ export async function writeImpactLogRow(
 }
 
 /**
- * Convenience wrapper: capture-before → run → capture-after → write log.
- * The runner itself does the extraction; this fn handles the bookkeeping.
+ * Capture a remediation step's metric before its job is submitted. Returns
+ * the finisher that captures it again once the job is terminal and writes
+ * the row, or null when the step's job moves no tracked metric.
  *
- * Per A17: capture failures DO NOT block the runner. A null before/after
- * is recorded; the row still lands so downstream consumers see a
- * "ran but impact unknown" entry.
+ * Per A17: capture failures DO NOT block the step. A null before/after is
+ * recorded; the row still lands so downstream consumers see a "ran but
+ * impact unknown" entry.
  */
-export async function withImpactCapture<T>(
+export async function startStepImpact(
   engine: BrainEngine,
-  attribution: ImpactAttribution,
-  metric: MetricName,
-  runner: () => Promise<T>,
-  details?: Record<string, unknown>,
-): Promise<T> {
+  step: Pick<RemediationStep, 'id' | 'job' | 'idempotency_key' | 'params'>,
+): Promise<((jobId: number, details: Record<string, unknown>) => Promise<void>) | null> {
+  const metric = JOB_METRICS[step.job];
+  if (!metric) return null;
   const startedAt = new Date().toISOString();
   const before = await captureMetric(engine, metric);
-  let result: T;
-  try {
-    result = await runner();
-  } catch (err) {
-    // Capture "after" even on failure so the log row reflects the attempt.
-    const afterOnFail = await captureMetric(engine, metric);
+  return async (jobId, details) => {
+    const after = await captureMetric(engine, metric);
+    const sourceId = step.params.sourceId;
     await writeImpactLogRow(
       engine,
-      { ...attribution, started_at: startedAt },
+      {
+        remediation_id: step.id,
+        job_id: jobId,
+        started_at: startedAt,
+        idempotency_key: step.idempotency_key,
+        ...(typeof sourceId === 'string' ? { source_id: sourceId } : {}),
+      },
       metric,
       before,
-      afterOnFail,
-      { ...(details ?? {}), error: err instanceof Error ? err.message : String(err) },
+      after,
+      { job: step.job, ...details },
     );
-    throw err;
-  }
-  const after = await captureMetric(engine, metric);
-  await writeImpactLogRow(
-    engine,
-    { ...attribution, started_at: startedAt },
-    metric,
-    before,
-    after,
-    details,
-  );
-  return result;
+  };
 }

@@ -60,7 +60,6 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/mcp/http-transport.ts', reason: 'script-reachable' },
   { path: 'src/mcp/tool-catalog.ts', reason: 'script-reachable' },
   { path: 'src/core/archive-crawler-config.ts', reason: "held: skills/archive-crawler/SKILL.md describes the scan_paths safety fence as code-enforced; wire-or-retract is a product decision" },
-  { path: 'src/core/onboard/impact-capture.ts', reason: 'held: sole writer of migration_impact_log, which the shipped `gbrain onboard --history` reads; wire-or-retract is a product decision' },
   { path: 'src/core/progressive-batch/orchestrator.ts', reason: 'held: TODOS.md keeps an open item to re-compose progressive-batch with --workers on the 3 reindex sites (callers dropped in the v0.41.17.0 merge)' },
   { path: 'src/core/progressive-batch/retrofit-wrap.ts', reason: 'held: progressive-batch re-compose item still open in TODOS.md' },
   { path: 'src/core/progressive-batch/stage-report.ts', reason: 'held: progressive-batch re-compose item still open in TODOS.md' },

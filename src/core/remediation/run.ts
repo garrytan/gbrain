@@ -250,6 +250,7 @@ export async function runRemediation(
   const repairResults: RepairStepResult[] = [];
 
   const { MinionQueue } = await import('../minions/queue.ts');
+  const { startStepImpact } = await import('../onboard/impact-capture.ts');
   const isPGLite = engine.kind === 'pglite';
   const queue = new MinionQueue(engine);
   const waitStep = stepWaiter(engine, queue, opts.inlineJobs === true);
@@ -377,6 +378,7 @@ export async function runRemediation(
 
       hooks.onStepStart?.(stepCount, totalSteps, step);
       try {
+        const finishImpact = await startStepImpact(engine, step); // `onboard --history`: metric before submit
         const isProtected = !!step.protected;
         const submitWith = (key: string) =>
           queue.add(
@@ -414,6 +416,7 @@ export async function runRemediation(
 
         const terminal = await waitStep(job.id, { pollMs: isPGLite ? 250 : 1000, timeoutMs: (step.est_seconds + 60) * 1000 });
         submittedResult.status = terminal.status;
+        await finishImpact?.(job.id, { status: terminal.status, doctor_run_id: doctorRunId });
         if (terminal.status !== 'completed') {
           abortedIds.add(step.id);
         }
