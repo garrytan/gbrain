@@ -23,6 +23,7 @@ import type { TranscriptFormat } from './types.ts';
 import { harnessRoots, type HarnessRoot } from './detect.ts';
 import { isOpenclawCheckpointFile } from './openclaw.ts';
 import { isGrokChatHistoryFile } from './grok.ts';
+import { isCursorConversationFile } from './cursor.ts';
 import { isClaudeCodeSubagentFile, isClaudeCodeWorkflowArtifactFile } from './claude-code.ts';
 import { isClaudeCliSelfTranscriptPath } from '../ai/providers/claude-cli-scratch.ts';
 
@@ -93,6 +94,10 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpt
       // bare-UUID directory segment in another harness's tree must never
       // hide that harness's legitimate sessions.
       if (format === 'grok' && !isGrokChatHistoryFile(p)) continue;
+      // Cursor: only agent-transcripts/ holds conversations; sub-agent runs
+      // and the rest of the project store (tool output, MCP descriptors,
+      // canvases) are not sessions.
+      if (format === 'cursor' && !isCursorConversationFile(p)) continue;
       // #4796: Claude Code subagent logs (<session>/subagents/agent-*.jsonl)
       // are all-isSidechain — they parse to zero turns and carry the PARENT
       // session id, so they can never import. Left in, each one is a

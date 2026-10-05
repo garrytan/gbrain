@@ -2,9 +2,9 @@
  * types.ts — the transcript-adapter seam (cathedral-4).
  *
  * One contract for every dead-log format gbrain can import: coding-harness
- * session logs (Claude Code, Codex, OpenClaw, Hermes, Grok) and consumer chat
- * exports (ChatGPT, Claude.ai). Each adapter is a leaf module in this
- * directory; the registry in detect.ts is the only place formats are
+ * session logs (Claude Code, Codex, OpenClaw, Hermes, Grok, Cursor) and
+ * consumer chat exports (ChatGPT, Claude.ai). Each adapter is a leaf module
+ * in this directory; the registry in detect.ts is the only place formats are
  * enumerated. Every adapter carries a DATED SPEC_TARGET (the
  * bootstrap/host-specs.ts discipline) because these are host formats gbrain
  * does not control.
@@ -30,6 +30,7 @@ export type TranscriptFormat =
   | 'openclaw'
   | 'hermes'
   | 'grok'
+  | 'cursor'
   | 'chatgpt'
   | 'claude-export';
 
@@ -119,6 +120,7 @@ const SLUG_DIRS: Record<TranscriptFormat, string> = {
   openclaw: 'conversations/sessions',
   hermes: 'conversations/sessions',
   grok: 'conversations/sessions',
+  cursor: 'conversations/sessions',
   chatgpt: 'conversations/chatgpt',
   'claude-export': 'conversations/claude',
 };
@@ -129,6 +131,7 @@ const HARNESS_FORMATS: ReadonlySet<TranscriptFormat> = new Set([
   'openclaw',
   'hermes',
   'grok',
+  'cursor',
 ]);
 
 /**

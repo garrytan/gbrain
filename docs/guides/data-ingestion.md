@@ -59,7 +59,7 @@ Setup + troubleshooting: [`docs/guides/google-connect.md`](google-connect.md).
 How the open-loop engine decides who's waiting: [`docs/guides/open-loops.md`](open-loops.md).
 
 Your other agents' histories import in one command. `gbrain transcripts ingest`
-parses agent session logs (Claude Code, Codex, OpenClaw, Hermes, Grok Build) and extracted
+parses agent session logs (Claude Code, Codex, OpenClaw, Hermes, Grok Build, Cursor) and extracted
 consumer chat exports (ChatGPT / Claude.ai `conversations.json`) into readable
 conversation pages with provenance back to the exact session file. Pattern-based redaction runs over message bodies, titles, speakers, and session
 metadata before anything is written — vendor key prefixes, JWTs, cloud/API key

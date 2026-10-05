@@ -23,6 +23,7 @@ import { codexAdapter } from './codex.ts';
 import { openclawAdapter } from './openclaw.ts';
 import { hermesAdapter } from './hermes.ts';
 import { grokAdapter } from './grok.ts';
+import { cursorAdapter } from './cursor.ts';
 import { chatgptExportAdapter } from './chatgpt-export.ts';
 import { claudeExportAdapter } from './claude-export.ts';
 
@@ -58,6 +59,9 @@ export function harnessRoots(overrides?: HarnessRoot[]): HarnessRoot[] {
       root: join(process.env.GROK_HOME ?? join(home, '.grok'), 'sessions'),
       extension: '.jsonl',
     },
+    // Cursor keeps one agent transcript per conversation under
+    // <cwd-slug>/agent-transcripts/<id>/<id>.jsonl.
+    { format: 'cursor', root: join(home, '.cursor', 'projects'), extension: '.jsonl' },
   ];
 }
 
@@ -70,8 +74,11 @@ export function harnessRoots(overrides?: HarnessRoot[]): HarnessRoot[] {
  * distinguishing keys. claude-code detects BEFORE grok: a claude session can
  * lead with a `type:'system'` row (string content), which is grok's head
  * shape — grok's sniff also rejects claude-family keys, so the ordering is
- * belt-and-braces, not the only defence. Every adapter registers here
- * unconditionally; any format-level scoping belongs to callers.
+ * belt-and-braces, not the only defence. cursor detects after every keyed
+ * JSONL shape: its rows carry no `type`, and its path rule (any `.jsonl`
+ * under an `agent-transcripts` directory) must never outrank a content
+ * match. Every adapter registers here unconditionally; any format-level
+ * scoping belongs to callers.
  */
 export function transcriptAdapters(): TranscriptAdapter[] {
   return [
@@ -80,6 +87,7 @@ export function transcriptAdapters(): TranscriptAdapter[] {
     codexAdapter,
     claudeCodeAdapter,
     grokAdapter,
+    cursorAdapter,
     claudeExportAdapter,
     chatgptExportAdapter,
   ];
