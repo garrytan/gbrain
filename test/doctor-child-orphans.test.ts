@@ -76,10 +76,10 @@ describe('childTableOrphansCheck (#1063)', () => {
     // (NULL is a valid SET NULL outcome, not an orphan).
     const filesSql = capturedSql.find((s) => s.includes('FROM files WHERE'));
     expect(filesSql).toBeDefined();
-    expect(filesSql!).toContain('page_id IS NOT NULL AND page_id NOT IN');
+    expect(filesSql!).toContain('files.page_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = files.page_id)');
     const linksOrigSql = capturedSql.find((s) => s.includes('FROM links WHERE') && s.includes('origin_page_id'));
     expect(linksOrigSql).toBeDefined();
-    expect(linksOrigSql!).toContain('origin_page_id IS NOT NULL AND origin_page_id NOT IN');
+    expect(linksOrigSql!).toContain('links.origin_page_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = links.origin_page_id)');
     // NOT-NULL FK tables MUST NOT have the IS NOT NULL filter (it'd be redundant)
     const ccSql = capturedSql.find((s) => s.includes('FROM content_chunks WHERE'));
     expect(ccSql).toBeDefined();

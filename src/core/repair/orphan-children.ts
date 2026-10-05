@@ -29,8 +29,13 @@ export const PAGE_CHILD_FK_TARGETS: ReadonlyArray<{ table: string; col: string; 
   { table: 'files', col: 'page_id', allowNull: true },
 ];
 
-export function orphanPredicate(target: { col: string; allowNull: boolean }): string {
-  return `${target.allowNull ? `${target.col} IS NOT NULL AND ` : ''}${target.col} NOT IN (SELECT id FROM pages)`;
+// NOT EXISTS (not `NOT IN (SELECT id FROM pages)`) so the planner can use a
+// hash anti-join: once the page-id list outgrows work_mem, NOT IN degrades to a
+// per-row rescan of pages and never finishes on a ~500K-page brain. pages.id is
+// the primary key (never NULL), so the semantics match NOT IN exactly.
+export function orphanPredicate(target: { table: string; col: string; allowNull: boolean }): string {
+  const col = `${target.table}.${target.col}`;
+  return `${target.allowNull ? `${col} IS NOT NULL AND ` : ''}NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = ${col})`;
 }
 
 const PROBE_BATCH = 500;
