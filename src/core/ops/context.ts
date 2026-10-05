@@ -928,7 +928,7 @@ export function parseSourceIdParam(
  *
  * Deliberately NOT inside `sourceScopeOpts`: code-intel ops collapse a
  * multi-element scope to an error (`resolveCodeIntelScope`), and the remaining
- * scalar reads (get_links, get_chunks, …) keep their long-standing behavior.
+ * scalar reads (get_tags, get_raw_data, …) keep their long-standing behavior.
  */
 export function federatedSearchScope(
   ctx: OperationContext,

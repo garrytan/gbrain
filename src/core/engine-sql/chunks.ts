@@ -333,7 +333,7 @@ export async function getChunks(
                cc.model, cc.token_count, cc.embedded_at, cc.language,
                cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
                cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality,
-               (cc.${colId} IS NULL) AS embedding_is_null
+               (cc.${colId} IS NULL) AS embedding_is_null, p.source_id
                ${embedCol}
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id

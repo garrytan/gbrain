@@ -684,6 +684,12 @@ export interface Chunk {
    * (getChunks).
    */
   embedding_is_null?: boolean;
+  /**
+   * Source of the page the chunk belongs to. One slug can live in several
+   * sources, so a multi-source read needs it per row. Present only on paths
+   * that select it (getChunks).
+   */
+  source_id?: string;
 }
 
 /**
