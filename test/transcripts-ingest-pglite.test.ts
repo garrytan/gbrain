@@ -65,6 +65,7 @@ const GROK_FIXTURE = join(
   'grok-session',
   'chat_history.jsonl',
 );
+const CURSOR_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'cursor-agent-transcript.jsonl');
 
 let engine: PGLiteEngine;
 let tmp: string;
@@ -413,7 +414,7 @@ describe('error taxonomy', () => {
   });
 });
 
-describe('all seven formats travel the FULL pipeline (parse → redact → render → import)', () => {
+describe('all eight formats travel the FULL pipeline (parse → redact → render → import)', () => {
   test('claude-code: the shipped fixture imports as a page with placeholders and real timestamps', async () => {
     const r = await runTranscriptsIngest(engine, baseOpts([CLAUDE_CODE_FIXTURE]));
     expect(r.sessionsImported).toBe(1);
@@ -490,6 +491,30 @@ describe('all seven formats travel the FULL pipeline (parse → redact → rende
     expect(page!.compiled_truth).not.toContain('TOOL-OUTPUT-ONLY-TEXT');
     expect(page!.compiled_truth).not.toContain('SYNTHETIC-ONLY-TEXT');
     const raw = await engine.getRawData(slug, 'transcript:grok', { sourceId: 'default' });
+    expect(raw.length).toBe(1);
+  });
+
+  test('cursor: agent transcript imports typed prompts + replies, searchable by keyword; tools/injected rows never land', async () => {
+    const r = await runTranscriptsIngest(engine, baseOpts([CURSOR_FIXTURE]));
+    expect(r.sessionsImported).toBe(1);
+    expect(r.pages.imported).toBe(1);
+    const slug = buildTranscriptSlug('cursor', '2026-08-08T10:00:00.000Z', {
+      sessionId: 'cursor-agent-transcript',
+    });
+    expect(slug).toMatch(/^conversations\/sessions\/2026-08-08-cursor-[0-9a-f]{12}$/);
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page).not.toBeNull();
+    const fm = page!.frontmatter as Record<string, any>;
+    expect(fm.transcript_import.harness).toBe('cursor');
+    expect(fm.transcript_import.session_id).toBe('cursor-agent-transcript');
+    expect(page!.compiled_truth).toContain('**User** (2026-08-08 10:00 AM): Which fund led the widget-co seed round?');
+    expect(page!.compiled_truth).toContain('fund-a led the widget-co seed');
+    expect(page!.compiled_truth).not.toContain('TOOL-INPUT-ONLY-TEXT');
+    expect(page!.compiled_truth).not.toContain('INJECTED-ONLY-TEXT');
+    expect(page!.compiled_truth).not.toContain('<user_query>');
+    const hits = await engine.searchKeyword('bridge check-in Thursday');
+    expect(hits.map((h) => h.slug)).toContain(slug);
+    const raw = await engine.getRawData(slug, 'transcript:cursor', { sourceId: 'default' });
     expect(raw.length).toBe(1);
   });
 

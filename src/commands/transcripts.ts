@@ -4,12 +4,12 @@
  *
  *   gbrain transcripts recent   — dream-corpus .txt reader (v0.29 surface).
  *   gbrain transcripts ingest   — import dead session logs (Claude Code,
- *                                 Codex, OpenClaw, Hermes, Grok) and consumer
- *                                 chat exports (ChatGPT, Claude.ai) into
- *                                 conversation pages. Local-only, explicit
- *                                 paths are trusted CLI input; embedding is
- *                                 OFF by default (bulk imports defer to the
- *                                 embed backfill lane).
+ *                                 Codex, OpenClaw, Hermes, Grok, Cursor) and
+ *                                 consumer chat exports (ChatGPT, Claude.ai)
+ *                                 into conversation pages. Local-only,
+ *                                 explicit paths are trusted CLI input;
+ *                                 embedding is OFF by default (bulk imports
+ *                                 defer to the embed backfill lane).
  *
  * PGLite note: like every engine-opening command, ingest cannot run while
  * `gbrain serve` holds the single-writer lock — the lock error names the PID.
@@ -23,6 +23,7 @@ import type { TranscriptFormat } from '../core/transcripts/types.ts';
 import { runTranscriptsIngest, type TranscriptsIngestResult } from '../core/transcripts/ingest.ts';
 import { isOpenclawCheckpointFile } from '../core/transcripts/openclaw.ts';
 import { isGrokSessionSidecarStrict } from '../core/transcripts/grok.ts';
+import { isCursorNonConversationFile } from '../core/transcripts/cursor.ts';
 import {
   isClaudeCodeSubagentFile,
   isClaudeCodeWorkflowArtifactFile,
@@ -63,6 +64,7 @@ const FORMATS: readonly TranscriptFormat[] = [
   'openclaw',
   'hermes',
   'grok',
+  'cursor',
   'chatgpt',
   'claude-export',
 ];
@@ -201,12 +203,13 @@ long sessions split into searchable parts). Re-runs are free (content-hash
 skip). Embedding is OFF by default; run the embed backfill later or opt in.
 
   --all             Import every session log discovered under the harness
-                    roots (claude/codex/openclaw/grok projects + the hermes store)
+                    roots (claude/codex/openclaw/grok/cursor projects + the
+                    hermes store)
   --include-self    Also discover gbrain's OWN claude-cli subprocess sessions
                     (recorded by Claude Code for the provider's scratch cwds;
                     excluded by default to avoid a self-ingestion loop)
   --format F        claude-code | codex | openclaw | hermes | grok |
-                    chatgpt | claude-export (auto-detected when omitted)
+                    cursor | chatgpt | claude-export (auto-detected when omitted)
   --dry-run         Parse + redact + report; writes nothing
   --limit N         Max sessions this run
   --since T         Only sessions newer than ISO time T; the word "last"
@@ -221,8 +224,8 @@ skip). Embedding is OFF by default; run the embed backfill later or opt in.
                     fresh --since last scope (caps are part of the
                     checkpoint fingerprint). Adapters differ over budget:
                     codex degrades to a bounded head+tail read, while
-                    claude-code, openclaw, hermes and grok reject the file
-                    outright — so LOWERING this can drop those formats
+                    claude-code, openclaw, hermes, grok and cursor reject
+                    the file outright — so LOWERING this can drop those formats
   --json            Machine-readable result
   --quiet           Suppress the human summary
 
@@ -253,7 +256,11 @@ const IMPORTABLE_EXTENSIONS = ['.jsonl', '.db', '.json'];
  * Claude Code Remote Control state files (`<uuid>.ccr-tip.json`,
  * `bridge-pointer.json`) are excluded the same way (#5597): they match the
  * `.json` importable extension, are not transcripts, and would otherwise
- * fail every run with `unknown format`. Exported for tests.
+ * fail every run with `unknown format`. The same holds for everything in
+ * Cursor's project store outside `agent-transcripts/` (MCP tool descriptors,
+ * canvases, tool output); Cursor sub-agent transcripts are skipped because
+ * they are the agent's own delegated runs, not conversations. Exported for
+ * tests.
  */
 /**
  * Shell-style tilde expansion for a user path spec: a bare `~` or a leading
@@ -304,7 +311,8 @@ export async function expandPaths(specs: string[]): Promise<string[]> {
       !isGrokSessionSidecarStrict(p) &&
       !isClaudeCodeSubagentFile(p) &&
       !isClaudeCodeWorkflowArtifactFile(p) &&
-      !isClaudeCodeRemoteControlStateFile(p),
+      !isClaudeCodeRemoteControlStateFile(p) &&
+      !isCursorNonConversationFile(p),
   );
 }
 

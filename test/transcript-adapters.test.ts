@@ -231,9 +231,9 @@ describe('detectAdapter', () => {
 });
 
 describe('harnessRoots', () => {
-  test('covers the five harnesses and is override-injectable for tests', () => {
+  test('covers the six harnesses and is override-injectable for tests', () => {
     const formats = harnessRoots().map((r) => r.format);
-    expect(formats).toEqual(['claude-code', 'codex', 'openclaw', 'hermes', 'grok']);
+    expect(formats).toEqual(['claude-code', 'codex', 'openclaw', 'hermes', 'grok', 'cursor']);
     const injected = harnessRoots([{ format: 'codex', root: '/tmp/x', extension: '.jsonl' }]);
     expect(injected).toHaveLength(1);
     expect(injected[0].root).toBe('/tmp/x');

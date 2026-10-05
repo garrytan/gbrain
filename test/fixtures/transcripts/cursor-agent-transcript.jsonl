@@ -1,0 +1,8 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Saturday, Aug 8, 2026, 11:00 AM (UTC+1)</timestamp>\n<user_query>\nWhich fund led the widget-co seed round?\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"I'll check the brain for the widget-co seed."},{"type":"tool_use","name":"CallDynamicTool","input":{"namespace":"gbrain","toolName":"search","arguments":{"query":"TOOL-INPUT-ONLY-TEXT widget-co seed"}}}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Shell","input":{"command":"echo TOOL-INPUT-ONLY-TEXT"}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"[REDACTED]"},{"type":"tool_use","name":"Read","input":{"path":"/home/alice-example/notes/TOOL-INPUT-ONLY-TEXT.md"}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"fund-a led the widget-co seed; fund-b participated."}]}}
+{"role":"user","message":{"content":[{"type":"text","text":"<dynamic_tools>\n<id>INJECTED-ONLY-TEXT</id>\n<dynamic_tool_namespaces>\n<namespace name=\"gbrain\" tools=\"search, query\"/>\n</dynamic_tool_namespaces>\n</dynamic_tools>"}]}}
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Saturday, Aug 8, 2026, 11:04 AM (UTC+1)</timestamp>\n<user_query>\nGreat. Note that the bridge check-in is every Thursday.\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Noted: bridge check-in every Thursday."}]}}
