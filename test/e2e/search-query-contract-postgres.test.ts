@@ -114,4 +114,19 @@ import { withEnv } from '../helpers/with-env.ts';
       });
     });
   });
+
+  test('vector candidates plan with Materialize off and restore the caller setting (#6039)', async () => {
+    // A vector attempt that leaves Materialize on sees no pages.
+    await asSettingProbeReader(`current_setting('enable_material') = 'off'`, async reader => {
+      await reader.executeRaw('SET enable_material = on');
+      const opts = { limit: 10, sourceId: 'query-dates' };
+      expect((await reader.searchVector(vector, opts)).length).toBe(7);
+      await reader.transaction(async tx => {
+        expect((await tx.searchVector(vector, opts)).length).toBe(7);
+        expect(await tx.executeRaw(`SELECT current_setting('enable_material') AS enable_material`)).toEqual([{ enable_material: 'on' }]);
+      });
+      // Only the vector candidate statement plans without Materialize.
+      expect(await reader.searchKeyword('precisiontoken', opts)).toEqual([]);
+    });
+  });
 });

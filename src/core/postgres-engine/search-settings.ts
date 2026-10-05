@@ -17,7 +17,8 @@
  * the setting, so the caller's value is restored afterwards; a failed search
  * rolls the savepoint back, which reverts it too.
  *
- * Postgres only: PGLite has no JIT provider, so its engine never calls this.
+ * Postgres only: PGLite has no JIT provider, and its engine uses neither
+ * setting.
  */
 import type postgres from '#postgres';
 
@@ -29,3 +30,21 @@ export async function withSearchJitOff<T>(tx: ReturnType<typeof postgres>, neste
   if (nested) await tx`SELECT set_config('jit', ${previous[0]!.jit}, true)`;
   return result;
 }
+
+/**
+ * Planner settings for the vector candidate statement (`withVectorSettings`
+ * sets and restores them with the hnsw settings).
+ *
+ * The visibility filter's selectivity is a product of defaults (1/3 for
+ * `COALESCE(chunker_version, 0) >= n`, 1/2 for each correlated
+ * private-lineage CASE), so on a remote scope the planner expects about a
+ * twelfth of the pages it really gets. It then joins the HNSW candidates
+ * against a Materialize of every visible page under `Join Filter: p.id =
+ * cc.page_id`, comparing each candidate with every page: on a 20k-page brain,
+ * 250 candidates removed 5M rows and took ~0.5 s. With Materialize off it
+ * looks each candidate's page up through a Memoize over `pages_pkey` in
+ * under 10 ms. The local (unscoped) plan already looks pages up that way;
+ * there only a two-row `sources` Materialize becomes a `sources_pkey` lookup,
+ * at the same latency.
+ */
+export const VECTOR_CANDIDATE_PLANNER_SETTINGS: Record<string, string> = { enable_material: 'off' };

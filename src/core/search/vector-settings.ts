@@ -8,8 +8,10 @@ export async function withVectorSettings<T>(
   maxScanTuples: number,
   run: () => Promise<T>,
   deadline?: number,
+  /** Engine-specific planner settings for the statement, restored like the rest (Postgres: VECTOR_CANDIDATE_PLANNER_SETTINGS). */
+  planner: Record<string, string> = {},
 ): Promise<T> {
-  const settings: Record<string, string> = { 'hnsw.ef_search': String(hnswEfSearchFor(candidateLimit)) };
+  const settings: Record<string, string> = { 'hnsw.ef_search': String(hnswEfSearchFor(candidateLimit)), ...planner };
   const defaults: Record<string, string> = { 'hnsw.ef_search': String(HNSW_EF_SEARCH_DEFAULT), 'hnsw.iterative_scan': 'off', 'hnsw.max_scan_tuples': '20000' };
   if (iterative) {
     settings['hnsw.iterative_scan'] = 'strict_order';

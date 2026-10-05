@@ -111,7 +111,7 @@ import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from 
 import { PageMissingError } from './engine-errors.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { acquireInitSchemaAdvisoryLock } from './postgres-engine/init-schema-lock.ts';
-import { withSearchJitOff } from './postgres-engine/search-settings.ts';
+import { VECTOR_CANDIDATE_PLANNER_SETTINGS, withSearchJitOff } from './postgres-engine/search-settings.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
 import * as takesImpl from './engine-sql/takes.ts';
@@ -1359,7 +1359,7 @@ export class PostgresEngine implements BrainEngine {
         bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
         await tx.unsafe(SET_STATEMENT_TIMEOUT_SQL, [String(remainingVectorBudget(deadline))]);
         return run(tx, exact ? stmt.exactSql : stmt.sql, bound as Parameters<typeof tx.unsafe>[1]);
-      }, deadline);
+      }, deadline, VECTOR_CANDIDATE_PLANNER_SETTINGS);
     }, { alwaysTransaction: true, jitOff: true });
   }
 
