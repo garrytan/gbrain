@@ -15,17 +15,20 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configureGateway } from '../src/core/ai/gateway.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, FACTS_FENCE_OMITTED } from '../src/core/facts-fence.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 let engine: PGLiteEngine;
 const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
 const getPage = operations.find((o) => o.name === 'get_page')!;
 const putPage = operations.find((o) => o.name === 'put_page')!;
+const putPages = operations.find((o) => o.name === 'put_pages')!;
 
 function localCtx(): OperationContext {
   return {
@@ -38,6 +41,11 @@ function localCtx(): OperationContext {
   } as OperationContext;
 }
 
+/** The batch write path is remote-only and takes the pglite engine from config. */
+function remoteCtx(): OperationContext {
+  return { ...localCtx(), remote: true, config: { engine: 'pglite', embedding_disabled: true } as unknown as GBrainConfig } as OperationContext;
+}
+
 beforeAll(async () => {
   configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
   engine = new PGLiteEngine();
@@ -46,6 +54,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  await disposePersistenceConsumer(engine);
   await engine.disconnect();
 }, 30_000);
 
@@ -106,6 +115,23 @@ describe('get_page omit_facts', () => {
     expect(storedFence(after)).toBe(before);
     expect(after).toContain('Series A closed');
   }, 30_000);
+
+  test('put_pages restores the placeholder on a page of a batch, like put_page', async () => {
+    await putPage.handler(localCtx(), { slug: 'people/alice-batch', content: PAGE });
+    const before = storedFence((await read('people/alice-batch')).content as string);
+    const lean = await read('people/alice-batch', { omit_facts: true });
+    const edited = (lean.content as string).replace('Alice runs Acme.', 'Alice runs Acme from Berlin.');
+    const result = (await putPages.handler(remoteCtx(), { request_id: randomUUID(), pages: [
+      { slug: 'people/alice-batch', content: edited, expected_revision: lean.revision },
+      { slug: 'notes/batch-sibling', content: '---\ntype: note\ntitle: Sibling\n---\n\nUnrelated page in the same batch.\n' },
+    ] })) as Record<string, unknown>;
+    expect(result.state).toBe('committed');
+    expect(result.counts).toMatchObject({ total: 2, committed: 2, failed: 0 });
+    const after = (await read('people/alice-batch')).content as string;
+    expect(after).toContain('Alice runs Acme from Berlin.');
+    expect(after).not.toContain(FACTS_FENCE_OMITTED);
+    expect(storedFence(after)).toBe(before);
+  }, 60_000);
 
   test('a placeholder next to a facts fence is refused', async () => {
     await putPage.handler(localCtx(), { slug: 'people/alice-both', content: PAGE });
