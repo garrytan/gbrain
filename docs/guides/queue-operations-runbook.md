@@ -199,7 +199,7 @@ deadline math.
 Per-job lease: `gbrain jobs submit --lock-duration-ms N` (clamped
 [5 s, 1 h] — enforced at submit, re-applied to the resolved lease at
 claim, and backed by a database range constraint; `--dry-run` echoes the
-clamped value that will actually be stored); long LLM handlers default to 300 s via
+clamped value that will actually be stored); long LLM handlers and `sync` default to 300 s via
 `HANDLER_DEFAULT_LOCK_DURATION_MS` in `src/core/minions/handler-timeouts.ts`.
 Renewal cadence is `min(lease/2, 60 s)`. Trade-off: a genuinely dead
 worker's long-lease job requeues after lease + grace + one sweep interval.

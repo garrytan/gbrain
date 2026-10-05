@@ -104,7 +104,7 @@ test('durable root records fence new processes, symlink aliases and separate use
       expect(() => assertManagedFilesystemWrite(target)).toThrow('managed canonical worktree');
     }
     expect(() => cloneRepo('https://example.com/brain.git', root)).toThrow('managed canonical worktree');
-    expect(() => pullRepo(root)).toThrow('managed canonical worktree');
+    await expect(pullRepo(root)).rejects.toThrow('managed canonical worktree');
     await expect(hardenBrainRepo({ repoPath: root, sourceId })).rejects.toMatchObject({ code: 'writer_coordinator_required' });
     let inherited: (() => void) | undefined;
     await withFilesystemPublication([root], async () => {

@@ -19,6 +19,7 @@ import { execFileSync } from 'child_process';
 import { lstatSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { isInternalUrl } from './url-safety.ts';
+import { execFileBounded } from './bounded-child-exec.ts';
 
 /**
  * Git CLI accepts two flag positions:
@@ -266,21 +267,25 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
  * GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1 escape hatch reaches sync's pull —
  * self-hosted local-filesystem remotes could clone but never pull. Default
  * stays `never`; the origin was already validated at clone time.
+ *
+ * The pull runs off the event loop and stops at `timeoutMs` or when `signal`
+ * aborts (sync passes its --timeout / job signal), so a remote that never
+ * answers cannot wedge the caller. A stopped pull rejects with a
+ * GitOperationError whose `.cause.code` is ETIMEDOUT or ABORT_ERR.
  */
-export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
+export async function pullRepo(repoPath: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
   assertManagedFilesystemWrite(repoPath);
   const args: string[] = ['-C', repoPath, ...durableSsrfFlags(), 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
-  try {
-    execFileSync('git', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: opts.timeoutMs ?? 300_000,
-      env: { ...process.env, ...GIT_ENV },
-    });
-  } catch (e) {
+  const { error, stderr } = await execFileBounded('git', args, {
+    timeout: opts.timeoutMs ?? 300_000,
+    signal: opts.signal,
+    env: { ...process.env, ...GIT_ENV },
+  });
+  if (error) {
     throw new GitOperationError(
       'pull',
-      `git pull failed in ${repoPath}: ${gitErrorDetail(e)}`,
-      e,
+      `git pull failed in ${repoPath}: ${gitErrorDetail(Object.assign(error, { stderr }))}`,
+      error,
     );
   }
 }

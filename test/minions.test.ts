@@ -729,8 +729,9 @@ describe('MinionWorker', () => {
 
 describe('MinionQueue: Lock Management', () => {
   test('lock renewed during execution', async () => {
-    await queue.add('sync', {});
-    const claimed = await queue.claim('tok1', 30000, 'default', ['sync']);
+    // An unmapped name, so the claim takes the worker's 30s lease.
+    await queue.add('noop', {});
+    const claimed = await queue.claim('tok1', 30000, 'default', ['noop']);
     const originalLockUntil = claimed!.lock_until!.getTime();
 
     const renewed = await queue.renewLock(claimed!.id, 'tok1', 60000);
@@ -3429,6 +3430,14 @@ describe('MinionQueue: per-job lock lease (#4145)', () => {
     // lock_until derives from the 300s lease, NOT the worker's 30s default.
     expect(horizon).toBeGreaterThan(250_000);
     expect(horizon).toBeLessThan(360_000);
+  });
+
+  test('sync claims the 300s lease, so a slow pull or parse stretch cannot lapse a 30s one', async () => {
+    await queue.add('sync', {});
+    const before = Date.now();
+    const claimed = await queue.claim('tok-sync-lease', 30_000, 'default', ['sync']);
+    expect(claimed!.lock_duration_ms).toBe(300_000);
+    expect(claimed!.lock_until!.getTime() - before).toBeGreaterThan(250_000);
   });
 
   test('an unmapped handler keeps NULL lease → worker default horizon (legacy behavior)', async () => {
