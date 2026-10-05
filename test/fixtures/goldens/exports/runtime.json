@@ -495,6 +495,7 @@
       "./config": [
         "CWD_DOTENV_FILES",
         "DB_MERGED_PROVIDER_KEY_FIELDS",
+        "ENUMERATED_CONFIG_KEY_PREFIXES",
         "KNOWN_CONFIG_KEYS",
         "KNOWN_CONFIG_KEY_PREFIXES",
         "configDir",
