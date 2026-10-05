@@ -12,6 +12,7 @@ import { hostFix, hostOnlyError, paramUse } from './op-fix.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { assertSourceInCallerScope, assertSourceInCallerWriteScope, sourceScopeOpts } from './context.ts';
 import { resolveAuthCapabilities } from '../harness/capabilities.ts';
+import type { SyncStrategy } from '../sync.ts';
 
 // --- v0.28: whoami + sources management ---
 
@@ -122,6 +123,13 @@ const sources_add: Operation = {
       type: 'boolean',
       description: 'true → cross-source default search. false → isolated.',
     },
+    strategy: {
+      type: 'string',
+      enum: ['markdown', 'code', 'auto'],
+      description:
+        'Files every sync of this source imports when the sync names no strategy ' +
+        '(persisted as config.strategy). Default: markdown.',
+    },
     clone_dir: {
       type: 'string',
       description:
@@ -172,6 +180,7 @@ const sources_add: Operation = {
       remoteUrl: p.url as string | undefined,
       federated:
         p.federated === undefined ? null : (p.federated as boolean),
+      strategy: p.strategy as SyncStrategy | undefined,
       cloneDir: remoteCloneDir,
     });
     const { redactSourceConfig } = await import('../source-config-redact.ts');

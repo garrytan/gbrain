@@ -33,6 +33,11 @@ export interface RawManifestEntry {
 }
 
 export type SyncStrategy = 'markdown' | 'code' | 'auto';
+/** Every SyncStrategy; the only values `sources.config.strategy` may hold. */
+export const SYNC_STRATEGIES: readonly SyncStrategy[] = ['markdown', 'code', 'auto'];
+export function isSyncStrategy(value: unknown): value is SyncStrategy {
+  return typeof value === 'string' && (SYNC_STRATEGIES as readonly string[]).includes(value);
+}
 
 interface SyncableOptions {
   strategy?: SyncStrategy;

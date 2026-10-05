@@ -15,7 +15,7 @@ import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { adminHostConfig } from './persistence-admin.ts';
 
 export const SOURCE_LIFECYCLE_HELP = `Managed source administration:
-  gbrain sources add <id> [--path <directory> | --url <https-url> | --kind github|google]
+  gbrain sources add <id> [--path <directory> | --url <https-url> | --kind github|google] [--strategy markdown|code|auto]
   gbrain sources archive <id>
   gbrain sources restore <id> [--no-federate]
   gbrain sources remove <id> --confirm-destructive

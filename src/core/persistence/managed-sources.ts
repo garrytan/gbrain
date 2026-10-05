@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { msysToNativePath } from '../path-confine.ts';
-import { defaultCloneDir, type AddSourceOpts, type SourceRow } from '../sources-ops.ts';
+import { defaultCloneDir, sourceStrategyError, type AddSourceOpts, type SourceRow } from '../sources-ops.ts';
+import { SYNC_STRATEGIES } from '../sync.ts';
 import { DEFAULT_CALENDAR_ID } from '../google/types.ts';
 import { runManagedSourceLifecycle, type SourceLifecycleInput } from './source-lifecycle.ts';
 import { isValidSourceId } from '../source-id.ts';
@@ -28,9 +29,13 @@ export function managedSourceAddInput(opts:AddSourceOpts):SourceLifecycleInput{
     `Drop the clone directory for source ${opts.id}, or pass it together with the Git remote URL it should clone.`);
   if(opts.force!==undefined&&typeof opts.force!=='boolean'||opts.federated!=null&&typeof opts.federated!=='boolean')
     throw new OperationError('invalid_params','force and federated must be boolean values.','Pass force and federated as true or false, or omit them.');
+  const strategyError=sourceStrategyError(opts);
+  if(strategyError)throw new OperationError('invalid_params',strategyError,
+    `Pass strategy as one of ${SYNC_STRATEGIES.join(', ')} for a path or Git remote source, or omit it (sync then defaults to markdown).`);
   let path=opts.localPath?resolve(msysToNativePath(opts.localPath)):undefined;
   let config:Record<string,unknown>=opts.federated==null?{}:{federated:opts.federated};
   if(opts.remoteUrl){path=resolve(opts.cloneDir??defaultCloneDir(opts.id));config={...config,remote_url:opts.remoteUrl,managed_clone:true};}
+  if(opts.strategy)config={...config,strategy:opts.strategy};
   if(opts.github){
     const gh=opts.github;path=resolve(msysToNativePath(gh.dir));
     config={kind:'github',gh_token_env:gh.tokenEnv,gh_handle:gh.handle,gh_scope:gh.scope,gh_repos:gh.repos.join(','),gh_involvement:gh.involvement,

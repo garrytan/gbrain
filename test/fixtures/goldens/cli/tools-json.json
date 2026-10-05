@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 203079,
-    "stdoutSha256": "3f2a347db6f4a41890023a83565e4a811e9fb1127b881fad419a24f3365f3d21",
+    "stdoutBytes": 203415,
+    "stdoutSha256": "a2f37cbf0dd7a11b1dbc27181d942e47695f1d79d58c16dc2adb414751a4ee62",
     "toolNames": [
       "remember",
       "entity",
@@ -4229,6 +4229,7 @@
           "id": "string",
           "name": "string?",
           "path": "string?",
+          "strategy": "string?",
           "url": "string?"
         },
         "required_scopes": [],
@@ -4252,6 +4253,15 @@
             },
             "path": {
               "description": "Local path. Mutually optional with url.",
+              "type": "string"
+            },
+            "strategy": {
+              "description": "Files every sync of this source imports when the sync names no strategy (persisted as config.strategy). Default: markdown.",
+              "enum": [
+                "markdown",
+                "code",
+                "auto"
+              ],
               "type": "string"
             },
             "url": {
