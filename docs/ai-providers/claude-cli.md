@@ -2,7 +2,9 @@
 
 This page documents the `claude-cli` recipe as it ships. The implementation
 lives at `src/core/ai/recipes/claude-cli.ts` and
-`src/core/ai/providers/claude-cli-language-model.ts`.
+`src/core/ai/providers/claude-cli-language-model.ts`; the in-band tool
+protocol it shares with [`codex-cli`](codex-cli.md) is
+`src/core/ai/providers/cli-tool-protocol.ts`.
 
 `claude-cli` routes `gateway.chat()` and `gateway.toolLoop()` through the
 `claude` CLI binary as a subprocess (`claude --print ...`) instead of through
@@ -112,10 +114,11 @@ cached tokens on every call.
 
 The adapter does not use `claude`'s own agentic tool-calling — it injects a
 fenced instruction block into the system prompt teaching the model a
-`<use_tools>[{id,name,input}, ...]</use_tools>` JSON emission format
-(`buildToolUseInstructions`), then parses that block back out of the plain
-text response into ai-sdk tool-call parts (`extractToolCalls`). Tool-call
-ids are minted locally (`toolu_claude_cli_<counter>_<random>`), never
+`<use_tools>[{name,input}, ...]</use_tools>` JSON emission format
+(`buildToolUseInstructions` in `cli-tool-protocol.ts`), then parses that
+block back out of the plain text response into ai-sdk tool-call parts
+(`extractToolCalls`, same module). Tool-call ids are minted locally
+(`toolu_claude_cli_<uuidv7>`), never
 trusted from the model: each `--print` turn is a fresh subprocess with no
 memory of prior ids, so model-chosen ids repeat across turns and would
 collide with the per-job tool-id uniqueness constraint; nothing ever echoes
