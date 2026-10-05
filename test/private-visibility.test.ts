@@ -271,10 +271,11 @@ describe('sibling read ops (#4352 remediation — no bypass around get_page)', (
     expect(((await op.handler(mkCtx(false), { slug: 'notes/private-page' })) as unknown[]).length).toBeGreaterThan(0);
   });
 
-  test('get_timeline: private page timeline reads as missing ([]) remotely; local sees it', async () => {
+  test('get_timeline: private page reads as missing (page_not_found) remotely; local sees it', async () => {
     __resetPrivateVisibilityCacheForTests();
     const op = operationsByName['get_timeline'];
-    expect((await op.handler(mkCtx(true), { slug: 'notes/private-page' })) as unknown[]).toEqual([]);
+    await expect(op.handler(mkCtx(true), { slug: 'notes/private-page' }))
+      .rejects.toMatchObject({ code: 'page_not_found', message: 'Page not found: notes/private-page' });
     const local = (await op.handler(mkCtx(false), { slug: 'notes/private-page' })) as Array<{ summary: string }>;
     expect(local.map((e) => e.summary)).toContain('secret meeting happened');
   });

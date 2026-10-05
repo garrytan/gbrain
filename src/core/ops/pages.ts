@@ -36,7 +36,7 @@ import {
   normalizeSlugPrefix,
   parseSourceIdParam,
   readPolicyOpts,
-  validatePageSlug, pageNotFoundError,
+  validatePageSlug, scopedPageNotFoundError,
 } from './context.ts';
 
 // --- Page CRUD ---
@@ -144,25 +144,9 @@ const get_page: Operation = {
     }
 
     if (!page) {
-      let elsewhereSource: string | undefined;
       // #4516: source scoping is by-design isolation, but the miss diagnostic
-      // should say WHERE the slug actually lives. Trusted local callers only
-      // (`ctx.remote === false`) — for a remote caller the probe would be a
-      // cross-source existence oracle outside its grant. Only when the lookup
-      // was actually scoped (an unscoped read already spanned every source).
-      if (ctx.remote === false && (sourceOpts.sourceId !== undefined || sourceOpts.sourceIds !== undefined)) {
-        try {
-          // gbrain-allow-unscoped-getpage: read-only diagnostic existence probe —
-          // deliberately spans all sources to name where the slug lives.
-          const elsewhere = await ctx.engine.getPage(slug, { includeDeleted });
-          if (elsewhere && !(excludePrivate && isPrivatePage(elsewhere))) {
-            elsewhereSource = elsewhere.source_id;
-          }
-        } catch {
-          // Diagnostic only — a probe failure must never mask the real error.
-        }
-      }
-      throw pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam, elsewhereSource });
+      // says WHERE the slug actually lives (trusted local scoped reads only).
+      throw await scopedPageNotFoundError(ctx, slug, { ...sourceOpts, excludePrivate }, { includeDeleted, sourceIdParam });
     }
 
     // v0.37.0 (D11): op-layer write-back for the `last_retrieved_at` stale

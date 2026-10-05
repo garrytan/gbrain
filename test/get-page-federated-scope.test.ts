@@ -430,9 +430,9 @@ describe('#2200 get_timeline honors the federated grant', () => {
     expect(tl.map(e => e.summary)).toContain('beta event');
   });
 
-  test('[alpha] only → empty (isolation)', async () => {
-    const tl = (await get_timeline.handler(remoteCtx(['alpha']), { slug: 'secret/beta-doc' })) as any[];
-    expect(tl).toEqual([]);
+  test('[alpha] only → page_not_found, as for a missing slug (isolation)', async () => {
+    await expect(get_timeline.handler(remoteCtx(['alpha']), { slug: 'secret/beta-doc' }))
+      .rejects.toMatchObject({ code: 'page_not_found', message: 'Page not found: secret/beta-doc' });
   });
 });
 

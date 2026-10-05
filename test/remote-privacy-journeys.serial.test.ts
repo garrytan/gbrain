@@ -242,10 +242,20 @@ for (const kind of ['stdio', 'http'] as const) {
           expect(body[0].compiled_truth).toContain(`${PUBLIC} repeated`);
         }
       }
-      for (const name of ['get_chunks', 'get_raw_data', 'get_timeline', 'get_versions']) {
+      for (const name of ['get_chunks', 'get_raw_data', 'get_versions']) {
         const { body } = await call(name, { slug: 'notes/private-only' });
         expect(body).toEqual([]);
       }
+      // get_timeline tells a missing page from an empty timeline, so a private
+      // page throws exactly the page_not_found a missing slug does.
+      const timelineMiss = async (slug: string) => {
+        const result = await client!.callTool({ name: 'get_timeline', arguments: { slug } }, undefined, { timeout: 30_000 });
+        expect(result.isError, toolDiagnostic('get_timeline', result)).toBe(true);
+        return (result.content as Array<{ text: string }>)[0].text.replaceAll(slug, '<slug>');
+      };
+      const privateMiss = await timelineMiss('notes/private-only');
+      expect(privateMiss).toContain('page_not_found');
+      expect(privateMiss).toBe(await timelineMiss('notes/no-such-page'));
     }, 45_000);
 
     test('fresh query metadata and stored-report containment survive the transport', async () => {

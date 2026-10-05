@@ -10,7 +10,7 @@ import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 
 import { opError, type Operation } from './contract.ts';
 import { opTransport } from './op-fix.ts';
-import { readPolicyOpts } from './context.ts';
+import { readPolicyOpts, scopedPageNotFoundError } from './context.ts';
 import {
   enforceSubagentSlugFence,
   enforceClientSlugFence,
@@ -79,21 +79,34 @@ const get_timeline: Operation = {
     limit: { type: 'number', description: 'Maximum number of timeline entries to return' },
   },
   handler: async (ctx, p) => {
+    const slug = p.slug as string;
     // #2200: route through sourceScopeOpts so a federated grant reaches the
     // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
     const scope = await readPolicyOpts(ctx);
-    // #4352 remediation: a `visibility: private` page's timeline reads
-    // exactly like a missing page's ([]) for untrusted callers — no
-    // existence oracle.
     const after = typeof p.after === 'string' ? p.after : typeof p.since === 'string' ? p.since : undefined;
     const before = typeof p.before === 'string' ? p.before : typeof p.until === 'string' ? p.until : undefined;
     const limit = typeof p.limit === 'number' ? p.limit : undefined;
-    return ctx.engine.getTimeline(p.slug as string, {
+    const entries = await ctx.engine.getTimeline(slug, {
       ...scope,
       ...(after ? { after } : {}),
       ...(before ? { before } : {}),
       ...(limit !== undefined ? { limit } : {}),
     });
+    if (entries.length > 0) return entries;
+    // An empty read must still tell "no events" from "no such page". The
+    // check reuses the read's scope and #4352 private-page gate, so a page
+    // outside the grant or a `visibility: private` page (untrusted callers)
+    // throws the same page_not_found as a missing slug — no existence oracle.
+    // Soft-deleted pages count as existing: the read above still returns
+    // their rows.
+    const page = await ctx.engine.getPage(slug, {
+      sourceId: scope.sourceId,
+      sourceIds: scope.sourceIds,
+      excludePrivate: scope.excludePrivate,
+      includeDeleted: true,
+    });
+    if (!page) throw await scopedPageNotFoundError(ctx, slug, scope, { includeDeleted: true });
+    return entries;
   },
   scope: 'read',
   cliHints: { name: 'timeline', positional: ['slug'] },

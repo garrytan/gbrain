@@ -79,6 +79,35 @@ export function pageNotFoundError(
         { sourceId: explicit, ...(opts.includeDeleted ? { fuzzy: true } : { includeDeleted: true }) })));
 }
 
+/**
+ * The miss of a by-slug page read that ran under `scope` (get_page,
+ * get_timeline). #4516: a trusted local caller (`ctx.remote === false`)
+ * whose read was scoped learns which source holds the slug; for a remote
+ * caller that probe would be a cross-source existence oracle outside its
+ * grant, so it never runs.
+ */
+export async function scopedPageNotFoundError(
+  ctx: OperationContext,
+  slug: string,
+  scope: PageReadScope,
+  opts: { includeDeleted: boolean; sourceIdParam?: string },
+): Promise<OperationError> {
+  let elsewhereSource: string | undefined;
+  if (ctx.remote === false && (scope.sourceId !== undefined || scope.sourceIds !== undefined)) {
+    try {
+      // gbrain-allow-unscoped-getpage: read-only diagnostic existence probe —
+      // deliberately spans all sources to name where the slug lives.
+      const elsewhere = await ctx.engine.getPage(slug, { includeDeleted: opts.includeDeleted });
+      if (elsewhere && !(scope.excludePrivate && isPrivatePage(elsewhere))) {
+        elsewhereSource = elsewhere.source_id;
+      }
+    } catch {
+      // Diagnostic only — a probe failure must never mask the real error.
+    }
+  }
+  return pageNotFoundError(ctx, slug, { ...opts, elsewhereSource });
+}
+
 const HTTP_HOST = { remote: true, transport: 'http' } as const;
 const TOKEN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLIENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;

@@ -44,6 +44,8 @@ function stubEngine(strictMode: 'warn' | 'reject' | null): BrainEngine {
     resolveSlugs: async () => [],
     getStats: async () => ({ pages: 0 }),
     getTimeline: async () => [],
+    // An empty get_timeline read checks the page exists; it does here.
+    getPage: async (slug: string) => ({ slug, source_id: 'default' }),
     // #4352 gate surface: remote get_timeline probes for private-only slugs.
     executeRaw: async () => [],
   } as unknown as BrainEngine;
