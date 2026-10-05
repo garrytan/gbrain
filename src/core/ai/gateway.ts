@@ -46,7 +46,7 @@ import type {
   Recipe,
   TouchpointKind,
 } from './types.ts';
-import { resolveRecipe, assertTouchpoint, parseModelId, embeddingDimsForModel } from './model-resolver.ts';
+import { resolveRecipe, assertTouchpoint, parseModelId, embeddingDimsForModel, formatEmbeddingInput, type EmbeddingInputOptions } from './model-resolver.ts';
 import { recordChatUsage } from './chat-usage.ts';
 import {
   OPENROUTER_CACHE_HEADER,
@@ -1507,7 +1507,7 @@ const MIN_SUB_BATCH = 1;
  * throughput.
  */
 
-export interface EmbedOpts {
+export interface EmbedOpts extends EmbeddingInputOptions {
   /**
    * v0.33.4: propagated to Vercel AI SDK's `embedMany({abortSignal})`.
    * When the caller's wall-clock budget fires, an in-flight HTTP request
@@ -1523,7 +1523,6 @@ export interface EmbedOpts {
    * rate-limit pressure (3 × N wrapper attempts).
    */
   maxRetries?: number;
-  inputType?: 'query' | 'document';
   /**
    * v0.36 (D10): explicit model override. When set, routes through this
    * provider:model instead of the globally configured embedding_model.
@@ -1555,7 +1554,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = truncateEmbedInputs(texts);
+  const truncated = truncateEmbedInputs(texts.map(text => formatEmbeddingInput(text, `${recipe.id}:${modelId}`, opts)));
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the

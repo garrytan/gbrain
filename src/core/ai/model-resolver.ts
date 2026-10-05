@@ -6,6 +6,27 @@ import type { ParsedModelId, Recipe, TouchpointKind, ChatTouchpoint, EmbeddingTo
 import { getRecipe, RECIPES } from './recipes/index.ts';
 import { AIConfigError } from './errors.ts';
 import { renderCanonicalMigrationCommands } from './defaults.ts';
+import { splitProviderModelId } from '../model-id.ts';
+
+export interface EmbeddingInputOptions {
+  inputType?: 'query' | 'document';
+  /** Real page/import metadata; never inferred from chunk text. One title per batch. */
+  documentTitle?: string;
+}
+
+/** Shared by submission and input provenance; unknown historical models stay raw. */
+export function formatEmbeddingInput(text: string, modelId: string | null, opts: EmbeddingInputOptions = {}): string {
+  // Preserve the gateway's empty-input refusal instead of embedding prompt-only text.
+  if (!text?.trim()) return text;
+  const { provider, model } = splitProviderModelId(modelId);
+  const recipe = getRecipe(provider?.trim().toLowerCase() ?? '');
+  const canonicalModel = model.trim();
+  return recipe?.touchpoints.embedding?.format_input?.(text, {
+    model: recipe.aliases?.[canonicalModel] ?? canonicalModel,
+    input_type: opts.inputType ?? 'document',
+    document_title: opts.documentTitle,
+  }) ?? text;
+}
 
 /**
  * Split "openai:text-embedding-3-large" or "openai/text-embedding-3-large"

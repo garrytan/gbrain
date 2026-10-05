@@ -14,6 +14,7 @@
  */
 import { digest, sha256 } from './persistence/digest.ts';
 import { buildContextualPrefix, wrapChunkForEmbedding } from './embedding-context.ts';
+import { formatEmbeddingInput } from './ai/model-resolver.ts';
 
 export type EmbeddingTier = 'none' | 'title' | 'per_chunk_synopsis';
 
@@ -29,6 +30,11 @@ export interface EmbeddingInputContext {
 }
 
 type HashedChunk = { chunk_text: string; chunk_source?: string | null };
+
+/** Legacy vectors without provenance are reusable only if no model prompt was required. */
+export function hasRawEmbeddingInput(ctx: EmbeddingInputContext, chunk: HashedChunk): boolean {
+  return formatEmbeddingInput(chunk.chunk_text, ctx.model, { documentTitle: ctx.title }) === chunk.chunk_text;
+}
 
 /** The document a synopsis is generated from: every non-image chunk, in order. */
 export function synopsisBodyHash(chunks: ReadonlyArray<HashedChunk>): string {
@@ -51,7 +57,8 @@ export function embeddingInputHash(ctx: EmbeddingInputContext, tier: EmbeddingTi
     : tier === 'title' ? wrapChunkForEmbedding(chunk.chunk_text, buildContextualPrefix(ctx.title, null), chunk.chunk_source)
     : digest([ctx.title, ctx.bodyHash, chunk.chunk_text]);
   return digest(['embedding-input-v1', ctx.column, ctx.model, ctx.dimensions, tier,
-    tier === 'per_chunk_synopsis' ? ctx.corpusGeneration : null, sha256(input)]);
+    tier === 'per_chunk_synopsis' ? ctx.corpusGeneration : null,
+    sha256(formatEmbeddingInput(input, ctx.model, { documentTitle: ctx.title }))]);
 }
 
 /**

@@ -22,7 +22,7 @@ import { readContentChunksEmbeddingDim } from './embedding-dim-check.ts';
 
 import type { BrainEngine } from './engine.ts';
 import type { Chunk, ChunkInput } from './types.ts';
-import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from './embed-retry.ts';
+import { embedBatchWithBackoff, restampIfDemotedToTitleTier, type EmbedBatchWithBackoffOpts } from './embed-retry.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from './embed-oversize-heal.ts';
 import { invalidateStaleSignatureEmbeddingsGuarded, splitEmbeddingSignature, currentSpaceChunkPredicate } from './embedding-invalidation.ts';
@@ -97,7 +97,7 @@ export interface EmbedStaleOpts {
    * Test seam: lets unit tests inject a deterministic fake without mocking
    * the gateway. Production callers leave it unset.
    */
-  embedFn?: (texts: string[], opts: { abortSignal?: AbortSignal }) => Promise<Float32Array[]>;
+  embedFn?: (texts: string[], opts: EmbedBatchWithBackoffOpts) => Promise<Float32Array[]>;
   /**
    * v0.41.31: current embedding provenance signature (`<provider:model>:<dims>`).
    * When set, embeddings stamped under a DIFFERENT signature are invalidated
@@ -270,12 +270,11 @@ export async function embedStalePages(
   sourceId: string,
   opts: {
     signal?: AbortSignal;
-    embedFn?: (texts: string[], o: { abortSignal?: AbortSignal }) => Promise<Float32Array[]>;
+    embedFn?: (texts: string[], o: EmbedBatchWithBackoffOpts) => Promise<Float32Array[]>;
     embeddingSignature?: string;
   } = {},
 ): Promise<{ embedded: number; pagesProcessed: number; aborted: boolean }> {
-  const embedFn = opts.embedFn ?? (async (texts: string[], fnOpts: { abortSignal?: AbortSignal }) =>
-    embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
+  const embedFn = opts.embedFn ?? embedBatchWithBackoff;
   const result = { embedded: 0, pagesProcessed: 0, aborted: false };
   // S2: stale = NULL in the registry-ACTIVE column (the one upsertChunks
   // writes) — the literal legacy `embedding` stays NULL forever on a
@@ -311,7 +310,7 @@ export async function embedStalePages(
       const pageRow = prepared.snapshot.page;
       const embeddings = await embedFn(
         wrapChunkTextsForStoredMode(pageRow, stale),
-        { abortSignal: opts.signal },
+        { abortSignal: opts.signal, documentTitle: pageRow.title },
       );
       const staleIdxToEmbedding = new Map<number, Float32Array>();
       for (let j = 0; j < stale.length; j++) {
@@ -351,8 +350,7 @@ export async function embedStaleForSource(
   const batchSize = opts.batchSize ?? 2000;
   const concurrency = opts.concurrency ?? resolveStaleEmbedConcurrency(engine);
   const signal = opts.signal;
-  const embedFn = opts.embedFn ?? ((texts, fnOpts) =>
-    embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
+  const embedFn = opts.embedFn ?? embedBatchWithBackoff;
   // Defaulted no-op when pacing is off, so the observe()/pace() call sites
   // below are unconditional and cost ~nothing on the unpaced path.
   const pacer = opts.pacer ?? createNoopPacer();
@@ -552,7 +550,7 @@ export async function embedStaleForSource(
         const pageRow = prepared.snapshot.page;
         await opts.assertOwned?.();
         if (stopped()) return;
-        const embeddings = await embedFn(wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: signal });
+        const embeddings = await embedFn(wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: signal, documentTitle: pageRow.title });
         if (stopped()) return;
         const dimensions = signature ? splitEmbeddingSignature(signature).dims
           : prepared.embeddingColumn.name === 'embedding' ? (await readContentChunksEmbeddingDim(engine)).dims : prepared.embeddingColumn.dimensions;

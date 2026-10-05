@@ -28,6 +28,12 @@ export type Implementation =
 export interface EmbeddingTouchpoint {
   models: string[];
   default_dims: number;
+  /** Model-owned text prompts, applied once before truncation and batching. */
+  format_input?: (text: string, context: {
+    model: string;
+    input_type: 'query' | 'document';
+    document_title?: string;
+  }) => string;
   /**
    * v0.46.3: canonical model for this recipe's embedding touchpoint. Every
    * "pick a model for the user" surface resolves `default_model ?? models[0]`:

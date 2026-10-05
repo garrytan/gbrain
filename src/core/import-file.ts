@@ -17,11 +17,11 @@ import { detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { installPageEmbeddings, installPageProjection, preparePageProjection, projectionBelowSafeFence, queuePageProjection, readProjectionSnapshot, resealSafeChunks,
   sealPageTextProjection, stampEmbeddingInputs, embeddingWriteTarget, embeddingInputContext, type ProjectionSnapshot } from './page-state/projections.ts';
-import { embeddingInputHash } from './embedding-input-hash.ts';
+import { embeddingInputHash, hasRawEmbeddingInput } from './embedding-input-hash.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { hasProtectedBody, safeChunksFilter } from './search/safe-chunks.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
-import { planEmbeddingReuse } from './embed-reuse.ts';
+import { planEmbeddingReuse, type ReusableChunk } from './embed-reuse.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 // #3374 — import-path embeds ride the shared retry loop (429 retry-after +
@@ -767,7 +767,7 @@ export async function importFromContent(
     const stored = (await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true, requireSafeChunks: true }))
       .filter(chunk => {
         const hash = recorded.get(chunk.chunk_index);
-        return hash == null ? tier === 'none' && chunk.model === target.provenanceModel : hash === embeddingInputHash(provenance, tier, chunk);
+        return hash == null ? tier === 'none' && hasRawEmbeddingInput(provenance, chunk) && chunk.model === target.provenanceModel : hash === embeddingInputHash(provenance, tier, chunk);
       });
     for (const [i, matched] of planEmbeddingReuse(stored, chunks, c => `${c.chunk_source}\0${c.chunk_text}`).reuse) {
       chunks[i].embedding = matched.embedding as Float32Array;
@@ -787,7 +787,7 @@ export async function importFromContent(
         : null;
     const wrappedTexts = pending.map(i => prefix ? wrapChunkForEmbedding(chunks[i].chunk_text, prefix, chunks[i].chunk_source) : chunks[i].chunk_text);
     // #4616: store the usable vectors; refused chunks stay NULL for embed --stale.
-    const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts);
+    const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts, { documentTitle: parsed.title });
     embeddingPartial = refused;
     pending.forEach((i, j) => {
       if (!embeddings[j]) return;
@@ -1403,9 +1403,21 @@ export async function importCodeFile(
   // byte-identical bodies.
   // `includeEmbedding` is load-bearing: #2544 dropped the vector from the
   // default column list, which silently made this whole cache a no-op.
-  const existingChunks = existing && !opts.noEmbed
+  let existingChunks = existing && !opts.noEmbed
     ? await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true, requireSafeChunks: true })
     : [];
+  let reusedInputHashes = new Map<number, string | null>();
+  if (existingChunks.length) {
+    const target = await embeddingWriteTarget(engine);
+    const provenance = embeddingInputContext(target, title, null, chunks);
+    if (!hasRawEmbeddingInput(provenance, existingChunks[0])) {
+      reusedInputHashes = new Map((await engine.executeRaw<{ chunk_index: number; embedding_input_hash: string | null }>(
+        'SELECT chunk_index,embedding_input_hash FROM content_chunks WHERE page_id=$1', [existing!.id]))
+        .map(row => [Number(row.chunk_index), row.embedding_input_hash]));
+      existingChunks = existingChunks.filter(c => reusedInputHashes.get(c.chunk_index) === embeddingInputHash(provenance, 'none', c));
+    }
+  }
+  const validatedInputHashes = new Map<ReusableChunk, string | null | undefined>(existingChunks.map(c => [c, reusedInputHashes.get(c.chunk_index)]));
   const { reuse, needsEmbedIndexes } = planEmbeddingReuse(existingChunks, chunks);
   for (const [i, matched] of reuse) {
     // Reuse the existing embedding verbatim. No API call, no cost. Carry the
@@ -1413,6 +1425,8 @@ export async function importCodeFile(
     chunks[i]!.embedding = matched.embedding as Float32Array;
     chunks[i]!.token_count = matched.token_count ?? undefined;
     if (matched.model) chunks[i]!.model = matched.model;
+    const inputHash = validatedInputHashes.get(matched);
+    if (inputHash) chunks[i]!.embedding_input_hash = inputHash;
   }
 
   // Embed only the new/changed chunks.
@@ -1420,7 +1434,7 @@ export async function importCodeFile(
   if (!opts.noEmbed && needsEmbedIndexes.length > 0) {
     try {
       const textsToEmbed = needsEmbedIndexes.map((i) => chunks[i]!.chunk_text);
-      const embeddings = await embedBatchWithBackoff(textsToEmbed);
+      const embeddings = await embedBatchWithBackoff(textsToEmbed, { documentTitle: title });
       for (let j = 0; j < needsEmbedIndexes.length; j++) {
         const i = needsEmbedIndexes[j]!;
         chunks[i]!.embedding = embeddings[j]!;
