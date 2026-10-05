@@ -246,7 +246,7 @@ const OP_AREAS: Record<string, string> = {
   context_pack: 'memory-verbs', delta: 'memory-verbs',
   // pages (CRUD, versions, raw payloads, resolution)
   get_page: 'pages', put_page: 'pages', delete_page: 'pages', list_pages: 'pages',
-  restore_page: 'pages', purge_deleted_pages: 'pages',
+  restore_page: 'pages', rename_page: 'pages', purge_deleted_pages: 'pages',
   get_versions: 'pages', revert_version: 'pages',
   resolve_slugs: 'pages', get_chunks: 'pages',
   put_raw_data: 'pages', get_raw_data: 'pages',

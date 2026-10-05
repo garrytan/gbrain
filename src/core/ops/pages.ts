@@ -1,6 +1,7 @@
 import { pageMutationSource, submitPageMutation } from '../persistence/page-mutations.ts';
 import { PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, WRITE_WAIT_PARAM } from '../persistence/params.ts';
 import { assertPurgeParams } from '../persistence/purge-params.ts';
+import { rename_page } from './page-rename.ts';
 /**
  * Page CRUD operation cluster — pure move from operations.ts (v0.46.x
  * tranche 1). Op consts stay module-private; `pagesOperations` below lists
@@ -654,6 +655,6 @@ const capture: Operation = {
 // page-level soft-delete recovery + admin purge, then capture.)
 export const pagesOperations: Operation[] = [
   get_page, put_page, delete_page, list_pages,
-  restore_page, purge_deleted_pages, capture,
+  restore_page, rename_page, purge_deleted_pages, capture,
   fetch_page,
 ];

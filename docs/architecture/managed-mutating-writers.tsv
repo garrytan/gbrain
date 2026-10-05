@@ -9,6 +9,7 @@ op	put_page	coordinator	submitPageMutation; unbound Postgres sources refuse unle
 op	put_pages	coordinator	Every page is admitted as its own coordinated put_page write request, together in one journal transaction (#6007)
 op	delete_page	coordinator	submitPageMutation soft delete or trusted-local purge.
 op	restore_page	coordinator	submitPageMutation restores a recorded version.
+op	rename_page	coordinator	submitPageMutation admits a journaled rename; prepareRenameMutation moves the row with updateSlug inside publication under both page keys.
 op	purge_deleted_pages	coordinator	purgeDeletedPagesCoordinated purges each expired tombstone through delete_page purge.
 op	capture	coordinator	submitPageMutation admits a journaled page mutation.
 op	cancel_write_request	no_canonical_write	Cancels a queued journal request; no canonical row changes.

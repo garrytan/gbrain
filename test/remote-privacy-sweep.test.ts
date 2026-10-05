@@ -205,6 +205,9 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   takes_add: { slug: WORLD_PAGE_SLUG, claim: 'fresh sweep take', kind: 'take', holder: 'world' },
   delete_page: { slug: 'notes/sweep-fresh-write' },
   restore_page: { slug: 'notes/sweep-fresh-write' },
+  // The sweep's default source has a working tree, so rename is refused
+  // (source_writeback_required); the envelope is still sentinel-checked.
+  rename_page: { slug: 'notes/sweep-fresh-rename', new_slug: 'notes/sweep-fresh-renamed' },
 };
 
 // Per-(op × shape) overrides for ops whose behavior legitimately differs
@@ -212,7 +215,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
 // carries ctx.auth; the scalar shape — like the stdio transport — doesn't).
 // These operations enforce durable write authority inside the shared dispatcher.
 // Other scope checks remain transport-owned and outside this privacy harness.
-const COORDINATED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page',
+const COORDINATED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'rename_page', 'revert_version', 'edit_page',
   'remember', 'forget', 'add_tag', 'remove_tag', 'add_timeline_entry',
   'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
   'get_write_request', 'list_write_requests', 'cancel_write_request']);
@@ -342,6 +345,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   put_pages: 'ok',
   delete_page: 'ok',
   restore_page: 'ok',
+  rename_page: 'error',
   capture: 'ok',
   add_tag: 'ok',
   remove_tag: 'ok',

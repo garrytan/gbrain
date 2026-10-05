@@ -17,6 +17,7 @@ export const WRITE_ERROR_CODES = [
   'skill_bundle_required', 'take_row_collision', 'invalid_source_uri', 'writer_admin_locked',
   'connector_account_changed', 'connector_intent_outdated', 'checkpoint_validation_timeout',
   'invalid_connector_text', 'connector_holds_exhausted', 'connector_fence_below_timeline',
+  'slug_conflict',
 ] as const;
 
 export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];

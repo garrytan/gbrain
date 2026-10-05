@@ -267,6 +267,7 @@ jobs:
                 test/persistence-sync-cursor-options.test.ts
                 test/persistence-sync-holds.test.ts
                 test/persistence-writer-fences.test.ts
+                test/rename-page-op.test.ts
                 test/repair-embedding-effects.test.ts
                 test/repair-frontmatter.test.ts
                 test/shared-skills-catalog.test.ts

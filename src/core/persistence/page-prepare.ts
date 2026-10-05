@@ -50,7 +50,7 @@ const PURGE_RESIDUALS = 'Brain-repo git history, synced working-tree copies, exp
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its pending, failed and recovering requests, read-only.`,
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
-const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as it is now, with its revision.`,
+export const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as it is now, with its revision.`,
   { argv: ['gbrain', 'get', '--source', sourceId, '--', slug], mcp: { tool: 'get_page', arguments: { slug, source_id: sourceId } } });
 
 /**
@@ -58,7 +58,7 @@ const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page 
  * suggestion stands alone: the cause and next step, then the request to
  * inspect before anything is resubmitted.
  */
-function pageRefusal(code: RegistryCode, message: string, row: WriteRequest, cause: string, fix?: Action): OperationError {
+export function pageRefusal(code: RegistryCode, message: string, row: WriteRequest, cause: string, fix?: Action): OperationError {
   return opError(code, message,
     `${cause} Request ${row.request_id} in source ${row.source_id} was refused; inspect it before resubmitting, and use a new request_id for any corrected write.`,
     { fix: fix ?? (row.principal_kind === 'local_cli'

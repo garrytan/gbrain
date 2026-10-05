@@ -127,6 +127,16 @@ export async function authorizeStoredRequest(engine: SqlEngine, row: WriteReques
     }
   }
   if (!skillWrite(row.operation) && opts.pageVisibility !== false) await authorizePageVisibility(engine, row.authority, row.slug);
+  if (row.operation === 'rename_page') {
+    // The target slug is a second write target: the grant must still cover it,
+    // for publication and for receipt replay after the intent is compacted.
+    const target = typeof row.intent?.new_slug === 'string' ? row.intent.new_slug
+      : row.outcome?.status === 'renamed' && typeof row.outcome.slug === 'string' ? row.outcome.slug : null;
+    if (target !== null) {
+      await authorizeWrite(engine, row.authority, row.operation, target, lock);
+      await authorizePageVisibility(engine, row.authority, target);
+    } else if (row.state === 'committed') deny('The rename receipt has no verifiable target slug.');
+  }
   if (row.authority.remote && ['takes_add', 'takes_update', 'takes_resolve', 'takes_supersede'].includes(row.operation)) {
     await authorizeStoredTakeHolders(engine, row);
   }

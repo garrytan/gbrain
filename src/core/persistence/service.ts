@@ -74,6 +74,7 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (['takes_add','takes_update','takes_supersede','takes_resolve'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
   if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal);
+  if (row.operation === 'rename_page') return (await import('./rename-prepare.ts')).prepareRenameMutation(e, row, cfg, signal);
   throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
 }
 export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConfig): PersistenceConsumer {

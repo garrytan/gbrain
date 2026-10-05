@@ -28,8 +28,8 @@ const BATCH = 1000;
 const FACT_ID = "CASE WHEN r.outcome->>'id' ~ '^[0-9]{1,18}$' THEN (r.outcome->>'id')::bigint END";
 
 /** A committed request that changed the page to the revision it reports. */
-const MUTATED_PAGE = `(r.operation IN ('put_page','capture','edit_page','delete_page','restore_page','revert_version')
-    AND r.outcome->>'status' IN ('created_or_updated','restored','reverted','soft_deleted')
+const MUTATED_PAGE = `(r.operation IN ('put_page','capture','edit_page','delete_page','restore_page','rename_page','revert_version')
+    AND r.outcome->>'status' IN ('created_or_updated','restored','renamed','reverted','soft_deleted')
     AND COALESCE(r.outcome->>'noop', 'false') <> 'true'
   OR r.operation = 'remember' AND r.outcome->>'status' IN ('inserted','superseded') AND EXISTS (
     SELECT 1 FROM facts f WHERE f.id = ${FACT_ID} AND f.source_id = r.source_id

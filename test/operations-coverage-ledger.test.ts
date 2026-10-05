@@ -39,6 +39,7 @@ const LEDGER: Record<string, string> = {
   delete_page: 'test/pages-source-scoping-4329.test.ts',
   list_pages: 'test/list-pages-truncation.test.ts',
   restore_page: 'test/pages-source-scoping-4329.test.ts',
+  rename_page: 'test/rename-page-op.test.ts',
   purge_deleted_pages: 'test/operations-trust-boundary.test.ts',
   capture: 'test/capture-op.test.ts',
   edit_page: 'test/edit-page.test.ts',

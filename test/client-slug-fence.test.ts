@@ -56,6 +56,8 @@ const FENCED_OPS: Array<{ name: string; params: (slug: string) => Record<string,
   { name: 'put_page', params: (slug) => ({ slug, content: 'stub' }) },
   { name: 'delete_page', params: (slug) => ({ slug }) },
   { name: 'restore_page', params: (slug) => ({ slug }) },
+  // Both endpoints are fenced; the target here stays under the same prefix.
+  { name: 'rename_page', params: (slug) => ({ slug, new_slug: `${slug}-renamed` }) },
   { name: 'add_tag', params: (slug) => ({ slug, tag: 't' }) },
   { name: 'remove_tag', params: (slug) => ({ slug, tag: 't' }) },
   { name: 'add_link', params: (slug) => ({ from: slug, to: 'org-wiki/roadmap' }) },
