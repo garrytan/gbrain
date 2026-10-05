@@ -48,6 +48,7 @@ import { normalizeModelId } from '../model-id.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { resolveCycleDate } from './cycle-date.ts';
 import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
+import { maintenancePublicationDeferral } from './publication-deferral.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
@@ -361,24 +362,19 @@ export async function runPhasePatterns(
     throwIfAborted(opts.signal, '[dream] patterns output');
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
-    await stampPatternOutputs(engine, maintenance, writtenRefs.filter(ref => ref.slug.startsWith(`${config.outputSlugPrefix}/`)), cycleDate, config.sourceSlugPrefix, sharedSeat(reflections), opts.signal);
-    const reverseWriteCount = maintenance ? await verifyMaintenanceOutputs(engine, maintenance, writtenRefs)
+    const deferredSlugs = await stampPatternOutputs(engine, maintenance, writtenRefs.filter(ref => ref.slug.startsWith(`${config.outputSlugPrefix}/`)), cycleDate, config.sourceSlugPrefix, sharedSeat(reflections), opts.signal);
+    const finalizedRefs = writtenRefs.filter(ref => !deferredSlugs.has(ref.slug));
+    const reverseWriteCount = maintenance ? (finalizedRefs.length ? await verifyMaintenanceOutputs(engine, maintenance, finalizedRefs) : 0)
       : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
-    const details = {
-      reflections_considered: reflections.length,
-      patterns_written: writtenRefs.length,
-      reverse_write_count: reverseWriteCount,
-      child_outcome: outcome,
-      job_id: job.id,
-    };
+    const details = patternOutputDetails(reflections.length, finalizedRefs.length, reverseWriteCount, outcome, job.id, deferredSlugs.size);
 
     // #2782: the phase status must reflect the child outcome. Pre-fix this
     // returned status:ok even when the subagent timed out (e.g. no
     // subagent-capable worker slot free for the whole wait window) and zero
     // pattern pages were written — a silent no-op for days.
     if (outcome !== 'completed') {
-      if (writtenRefs.length === 0) {
+      if (finalizedRefs.length === 0) {
         return {
           phase: 'patterns',
           status: 'fail',
@@ -400,9 +396,14 @@ export async function runPhasePatterns(
         phase: 'patterns',
         status: 'warn',
         duration_ms: 0,
-        summary: `${writtenRefs.length} pattern page(s) written but subagent job ${job.id} ended '${outcome}'`,
+        summary: `${finalizedRefs.length} pattern page(s) written but subagent job ${job.id} ended '${outcome}'`,
         details,
       };
+    }
+
+    if (deferredSlugs.size) {
+      return { phase: 'patterns', status: 'warn', duration_ms: 0,
+        summary: `${finalizedRefs.length} pattern page(s) finalized; ${deferredSlugs.size} publication(s) deferred (writer busy); retry next cycle`, details };
     }
 
     // #4879: stamp the EVIDENCE watermark (not now()) only on a completed
@@ -440,6 +441,12 @@ export async function runPhasePatterns(
 }
 
 // ── Config ────────────────────────────────────────────────────────────
+
+function patternOutputDetails(reflections: number, finalized: number, reverseWrites: number,
+  outcome: MinionJobStatus | 'timeout', jobId: number, deferred: number) {
+  return { reflections_considered: reflections, patterns_written: finalized,
+    reverse_write_count: reverseWrites, child_outcome: outcome, job_id: jobId, publish_deferred: deferred };
+}
 
 interface PatternsConfig {
   enabled: boolean;
@@ -634,14 +641,24 @@ When done, briefly list the pattern slugs you wrote/updated in your final messag
  * stamped raw-trace exempt (doctor raw_provenance) on every run that writes it.
  */
 async function stampPatternOutputs(engine: BrainEngine, maintenance: MaintenanceAuthority | null,
-  refs: Array<{ slug: string; source_id: string }>, cycleDate: string, sourceSlugPrefix: string, seat: string | undefined, signal?: AbortSignal): Promise<void> {
+  refs: Array<{ slug: string; source_id: string }>, cycleDate: string, sourceSlugPrefix: string, seat: string | undefined, signal?: AbortSignal): Promise<Set<string>> {
   const reason = `derived from reflections under ${sourceSlugPrefix}/; raw traces live on the cited reflection pages`;
   // A pattern earns a seat only while its reflections share one, so a pattern without one drops a seat an earlier run stamped.
-  if (!maintenance) return stampDreamProvenance(engine, refs.map(ref => ({ ...ref, raw_trace_exempt_reason: reason, seat: seat ?? null })), cycleDate, signal);
+  const deferred = new Set<string>();
+  if (!maintenance) {
+    await stampDreamProvenance(engine, refs.map(ref => ({ ...ref, raw_trace_exempt_reason: reason, seat: seat ?? null })), cycleDate, signal);
+    return deferred;
+  }
   for (const ref of refs) {
     throwIfAborted(signal, '[dream] patterns provenance');
-    await stampMaintenancePage(engine, maintenance, ref.slug, cycleDate, undefined, reason, seat ?? null);
+    try {
+      await stampMaintenancePage(engine, maintenance, ref.slug, cycleDate, undefined, reason, seat ?? null);
+    } catch (error) {
+      if (!maintenancePublicationDeferral(error)) throw error;
+      deferred.add(ref.slug);
+    }
   }
+  return deferred;
 }
 
 // ── Provenance via put_page tool execution rows ─────────────────────

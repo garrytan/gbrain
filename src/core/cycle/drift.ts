@@ -31,6 +31,7 @@ import type { DreamPhaseResult } from './auto-think.ts';
 import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { maintenancePublicationDeferral } from './publication-deferral.ts';
 
 export interface DriftPhaseOpts {
   brainDir?: string;
@@ -362,6 +363,7 @@ export async function runPhaseDrift(
 
   const driftedCount = judged.filter(j => j.verdict.drifted).length;
   let reportSlug: string | undefined;
+  let publicationDeferred: 'pending' | 'contention' | null = null;
   if (judged.length > 0) {
     reportSlug = `reports/drift-${cycleDate}`;
     // Report-only v1: the report page is the ONLY write this phase makes.
@@ -370,8 +372,14 @@ export async function runPhaseDrift(
     // upsert the same slug).
     if (maintenance) {
       const snapshot = await engine.readPageSnapshot(reportSlug, { sourceId: 'default' });
-      await publishMaintenancePage(engine, maintenance, reportSlug, serializeMarkdown({ report_type: 'drift' }, buildReportBody(judged, config, modelId), '',
-        { type: 'note', title: `Drift report ${cycleDate}`, tags: [] }), { expectedRevision: snapshot?.revision ?? null, file: false });
+      try {
+        await publishMaintenancePage(engine, maintenance, reportSlug, serializeMarkdown({ report_type: 'drift' }, buildReportBody(judged, config, modelId), '',
+          { type: 'note', title: `Drift report ${cycleDate}`, tags: [] }), { expectedRevision: snapshot?.revision ?? null, file: false });
+      } catch (error) {
+        publicationDeferred = maintenancePublicationDeferral(error);
+        if (!publicationDeferred) throw error;
+        reportSlug = undefined;
+      }
     } else {
       await maintenanceTransaction(engine, tx => tx.putPage(reportSlug!, {
         type: 'note',
@@ -385,6 +393,7 @@ export async function runPhaseDrift(
   const detail =
     `judged ${judged.length}/${candidates.length} candidates: ${driftedCount} drifted` +
     (reportSlug ? ` → ${reportSlug}` : '') +
+    (publicationDeferred ? ` (publication deferred: ${publicationDeferred === 'pending' ? 'accepted report still publishing' : 'admission contended; retry next cycle'})` : '') +
     (budgetExhausted ? ' (budget exhausted)' : '') +
     (failed > 0 ? ` (${failed} judge failure(s))` : '') +
     `. Cumulative cost: $${meter.totalSpent.toFixed(4)} / $${config.budgetUsd.toFixed(2)}` +
@@ -393,7 +402,7 @@ export async function runPhaseDrift(
   return {
     name: 'drift',
     status: judged.length > 0
-      ? (budgetExhausted || failed > 0 ? 'partial' : 'complete')
+      ? (budgetExhausted || failed > 0 || publicationDeferred ? 'partial' : 'complete')
       // Zero judged: budget capped before any judge ran → partial (capped,
       // not broken); otherwise every judge call failed → failed.
       : (budgetExhausted ? 'partial' : 'failed'),
@@ -403,6 +412,8 @@ export async function runPhaseDrift(
       judged: judged.length,
       drifted: driftedCount,
       failed,
+      reports_written: reportSlug ? 1 : 0,
+      publish_deferred: publicationDeferred ? 1 : 0,
     },
     duration_ms: Date.now() - start,
   };
