@@ -10,6 +10,7 @@
  * - graduation-drain.ts      request-only drain under the kernel lock
  * - graduation-target.ts     target routes, identity, probes, nonce cross-check
  * - graduation-custody.ts    intent marker, tombstone, lock-retaining close, move-aside
+ * - graduation-discard.ts    --discard-source: delete the retained copy, tombstone and marker after `graduated`
  * - graduation-schema.ts     persistence_graduation table and gbrain_graduation_fence triggers
  * - engine-graduation.ts     orchestrator: plan, run, status, resume, rollback, reconcile
  */
@@ -243,6 +244,8 @@ export interface GraduationManifest {
   force?: boolean;
   /** Mount ids whose database_path named the source, rewritten at the routing flip. */
   rewrittenMounts?: readonly string[];
+  /** `--discard-source` started deleting the retained copy (recorded before the first delete); rollback refuses from then on. */
+  sourceDiscardedAt?: string;
 }
 
 /** Sibling intent marker `<dataDir>.gbrain-graduation.json` (mode 0600). */
@@ -408,6 +411,8 @@ export interface GraduationStatusDoc {
   splitBrain?: readonly { path: string; brainId: string | null; rows: number; newestWriteAt: string | null }[];
   /** The next command for this state (resume, rollback, nothing), echoing the user's spelling. */
   nextArgv: readonly string[] | null;
+  /** When `--discard-source` deleted the retained PGLite copy (null while it is kept). */
+  sourceDiscardedAt?: string | null;
 }
 
 export interface GraduationRollbackResult {

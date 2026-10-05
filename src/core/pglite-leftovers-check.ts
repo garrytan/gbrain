@@ -150,9 +150,14 @@ function walkSize(root: string, budget: { entries: number }): { bytes: number; i
   return { bytes, incomplete };
 }
 
+/** Size of one directory over the same bounded, symlink-free walk (a floor when `incomplete`). */
+export function measureDirSize(path: string, maxEntries: number = SIZE_WALK_MAX_ENTRIES): { bytes: number; incomplete: boolean } {
+  return walkSize(path, { entries: maxEntries });
+}
+
 /** Human-readable size. For floors (incomplete walks) the value is rounded
  *  DOWN, so ">= 1.6 MB" can never display as ">= 2 MB". */
-function humanBytes(n: number, floor: boolean): string {
+export function humanBytes(n: number, floor: boolean): string {
   const fmt = (v: number, digits: number) => (floor ? Math.floor(v * 10 ** digits) / 10 ** digits : v).toFixed(digits);
   if (n >= 1024 ** 3) return `${fmt(n / 1024 ** 3, 1)} GB`;
   if (n >= 1024 ** 2) return `${fmt(n / 1024 ** 2, 0)} MB`;

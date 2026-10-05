@@ -16,7 +16,7 @@
  * Graduation is CLI-only: no operations.ts entry, no remote caller.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -411,7 +411,8 @@ function sourceDataDir(config: GBrainConfig): string {
   return graduationDataDir(config.database_path);
 }
 
-function planHashOf(input: Record<string, unknown>): string {
+/** Short sha256 over a key-sorted rendering: the hash an approval (`--expect`) binds. */
+export function planHashOf(input: Record<string, unknown>): string {
   const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
     : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value as object).sort().map(k => [k, canonical((value as Record<string, unknown>)[k])]))
       : value;
@@ -1094,7 +1095,8 @@ export async function runGraduation(opts: GraduationOptions): Promise<Graduation
   } finally { await cleanup(run); }
 }
 
-function existingRunError(m: GraduationManifest): OperationError {
+/** The refusal for a recorded run that has not finished: in progress when its process lives, otherwise interrupted. */
+export function existingRunError(m: GraduationManifest): OperationError {
   const marker = (() => { try { return readIntentMarker(m.source.dataDir); } catch { return null; } })();
   if (marker && markerLiveness(marker) === 'alive') return inProgressError({ runId: m.runId, state: m.state, pid: marker.pid, dataDir: m.source.dataDir });
   return interruptedError({ runId: m.runId, state: m.state, dataDir: m.source.dataDir });
@@ -1233,6 +1235,7 @@ async function rollbackBeforeCutover(run: Run): Promise<GraduationRollbackResult
 
 async function rollbackAfterCutover(run: Run, opts: RunOptions): Promise<GraduationRollbackResult> {
   const from = run.m.state;
+  assertRetainedCopy(run, from);
   const hadAuthority = from === 'authoritative' || from === 'graduated';
   await openTargets(run);
   if (hadAuthority) {
@@ -1251,6 +1254,8 @@ async function rollbackAfterCutover(run: Run, opts: RunOptions): Promise<Graduat
   try {
     await claimPause(run);
     await takeKernelLock(run);
+    // A --discard-source that held the lock before this rollback got it may have removed the copy.
+    assertRetainedCopy(run, from);
     if (hadAuthority) losses = await detectRollbackLosses(run);
   } catch (error) {
     if (hadAuthority) await returnToAuthority(run);
@@ -1272,6 +1277,25 @@ async function rollbackAfterCutover(run: Run, opts: RunOptions): Promise<Graduat
   await approveAndRestore(run);
   return { state: 'rolled_back', restoredPath: run.dataDir,
     dropped: losses.filter(l => l.lossKind === 'operational').map(l => ({ relation: l.relation, rows: l.rows, lossKind: l.lossKind })) };
+}
+
+/**
+ * After cutover a rollback restores the retained copy. Once `--discard-source`
+ * (or the user) removed it there is nothing to restore: going on would open an
+ * empty brain at the old path and route this machine to it.
+ */
+function assertRetainedCopy(run: Run, from: ManifestState): void {
+  const movedTo = graduatedPath(run.dataDir, run.m.runId);
+  let unmoved = false;
+  try { unmoved = from === 'cutover' && lstatSync(run.dataDir).isDirectory(); } catch { /* absent */ }
+  if (!run.m.sourceDiscardedAt && (existsSync(movedTo) || unmoved)) return;
+  const gone = run.m.sourceDiscardedAt ? `was discarded at ${run.m.sourceDiscardedAt}` : `is no longer at ${movedTo}`;
+  const why = `A rollback makes the PGLite brain kept by graduation run ${run.m.runId} authoritative again, and that copy ${gone}. Nothing was changed: the Postgres brain stays authoritative.`;
+  throw opError('not_found', `Rollback refused: the retained PGLite copy of graduation run ${run.m.runId} ${gone}, so there is nothing to roll back to.`,
+    'Keep using the Postgres brain; nothing changed.',
+    { why, docs: 'docs/guides/move-to-postgres.md#discard-the-retained-copy',
+      fix: { consent: [], actor: 'agent', requires_exclusive: false, verify: { argv: STATUS_ARGV }, why,
+        user_message: 'Your brain cannot go back to PGLite: the local copy a rollback would restore was deleted. It keeps working on Postgres.' } });
 }
 
 async function approveAndRestore(run: Run): Promise<void> {
@@ -1406,7 +1430,7 @@ export async function graduationStatus(opts: Pick<GraduationInternals, 'manifest
     target: { identity: m.target, displayUrl: m.routes.main, row: (ours?.state ?? null) as TargetRowState | null, reachable },
     receipt, liveRun, tables: m.tables,
     ...(path?.state === 'split_brain' ? { splitBrain: await splitBrainSides(deps, path, m) } : {}),
-    nextArgv,
+    nextArgv, sourceDiscardedAt: m.sourceDiscardedAt ?? null,
   };
 }
 

@@ -52,6 +52,10 @@ export function intentMarkerPath(dataDir: string): string {
 export function graduatedPath(dataDir: string, runId: string): string {
   return `${graduationDataDir(dataDir)}.graduated-${runId}`;
 }
+/** Where `--discard-source` renames the retained copy before removing it, so `graduatedPath` never holds half a copy. */
+export function discardingPath(dataDir: string, runId: string): string {
+  return `${graduatedPath(dataDir, runId)}-discarding`;
+}
 
 // ── durable writes ─────────────────────────────────────────────────────────
 

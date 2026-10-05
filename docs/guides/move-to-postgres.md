@@ -190,7 +190,9 @@ the move:
   report`) and the target stays authoritative. Recover forward on Postgres.
 
 Rollback never writes anything back to the PGLite brain. A refused, declined
-or interrupted rollback returns the target to service.
+or interrupted rollback returns the target to service. Once the retained copy
+is gone ([discarded](#discard-the-retained-copy) or deleted by hand), rollback
+refuses with `not_found` and the target stays authoritative.
 
 ## What moves and what stays
 
@@ -199,7 +201,7 @@ or interrupted rollback returns the target to service.
 | pages, facts, takes, versions, links, timeline | file storage object bytes (the storage backend's files) |
 | embeddings, transcripts and paid caches | git worktrees and their host bindings |
 | write request history and withdrawals | the MCP endpoint and OAuth issuer URL |
-| access token and OAuth rows (hashes, not secrets) | the retained `<path>.graduated-<run_id>` copy |
+| access token and OAuth rows (hashes, not secrets) | the retained `<path>.graduated-<run_id>` copy, until you discard it |
 
 The database side is everything another machine needs to query and write the
 brain. The host side is bound to this computer: worktrees owned by another host
@@ -214,8 +216,8 @@ not security boundaries.
 
 **The PGLite copy is retained.** The data dir is renamed to
 `<path>.graduated-<run_id>`. It still holds private memory and token hashes.
-`gbrain doctor` reports it under `pglite_leftovers` with its size and the
-deletion command; deleting it is the user's call.
+`gbrain doctor` reports it under `pglite_leftovers` with its size; deleting it
+is the user's call ([discard the retained copy](#discard-the-retained-copy)).
 
 **The old path is a tombstone.** A small file sits where the data dir was. Any
 gbrain client pointed at it gets `engine_graduated` with a one-step fix
@@ -262,6 +264,41 @@ that exited repeatedly.
 To share the brain, run `gbrain mcp expose` on this host and connect other
 machines over MCP. A machine with its own config pointing at the old path gets
 `engine_graduated`; follow its fix.
+
+### Discard the retained copy
+
+Once the brain works on Postgres and nobody needs a rollback, delete the
+retained PGLite copy: it still holds private memory and access-token hashes.
+
+**Say to your agent:** *"My brain runs on Postgres now. Delete the old local
+copy, but show me what goes first."*
+
+```bash
+gbrain migrate --discard-source --dry-run                  # read-only: what it deletes, sizes, plan_hash
+gbrain migrate --discard-source                            # asks: prints the plan, exits 3, deletes nothing
+gbrain migrate --discard-source --yes --expect <plan_hash> # after the user agrees
+```
+
+It deletes what the recorded run left on this computer: the retained copy
+`<path>.graduated-<run_id>`, the tombstone at the old path and the intent
+marker `<path>.gbrain-graduation.json`. The graduation manifest stays;
+`gbrain migrate --status --json` reports `sourceDiscardedAt`.
+
+It refuses and deletes nothing unless all of these hold:
+
+- The recorded run is `graduated`. An unfinished move or a pending rollback
+  refuses with `graduation_interrupted` (`graduation_in_progress` while its
+  process runs); a rolled-back run refuses with `not_found`.
+- The Postgres target confirms, in a read-only session, that it is
+  authoritative for this run. A rollback that already fenced it refuses with
+  `graduation_in_progress`; an unreachable target with `database_error`.
+- Only the run's own files sit at those paths (`local_conflict` otherwise).
+- `--expect` matches the current plan (`preview_changed` otherwise).
+
+Afterwards `gbrain migrate --rollback-to-source` refuses: there is nothing left
+to restore. The old path is free again, so a gbrain client still configured for
+it creates a new, empty brain there instead of getting `engine_graduated`.
+`gbrain doctor` names this command in the `pglite_leftovers` fix.
 
 ## Recovery by code
 
@@ -414,6 +451,7 @@ the agent reruns the command. Details:
 | `--force` | wipe a non-empty target the plan listed; requires `--expect` |
 | `--json` | one result document on stdout; progress on stderr |
 | `--status`, `--resume`, `--rollback-to-source` | act on the recorded run |
+| `--discard-source [--dry-run]` | delete the recorded run's retained copy, tombstone and marker once it is `graduated` ([details](#discard-the-retained-copy)) |
 
 ## Other directions and the legacy copier
 

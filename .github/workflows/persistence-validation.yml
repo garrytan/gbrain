@@ -250,6 +250,7 @@ jobs:
                 test/doctor-frontmatter-holds.test.ts
                 test/embedding-completion-atomic.serial.test.ts
                 test/graduation-copy.test.ts
+                test/graduation-discard.test.ts
                 test/graduation-rollback.test.ts
                 test/graduation-target.test.ts
                 test/graduation-verify.test.ts

@@ -11,8 +11,9 @@
  *     --plan | --dry-run    the read-only plan, exit 0
  *     --yes --expect <hash> the run; ends with the target doctor result
  *   gbrain migrate --status | --resume | --rollback-to-source   (the run in the manifest)
+ *   gbrain migrate --discard-source [--dry-run] [--yes --expect <hash>]   (delete the retained copy once graduated)
  *
- * Exit codes: 0 graduated / plan shown; 3 confirmation_required; 1 refusals;
+ * Exit codes: 0 graduated / plan shown / discarded; 3 confirmation_required; 1 refusals;
  * 2 usage; 11 resumable drain stop; 75 graduation_in_progress; 130 SIGINT.
  * `--json` prints one document on stdout; progress goes to stderr.
  */
@@ -28,10 +29,12 @@ import type {
   GraduationCommandOptions, GraduationPhase, GraduationPlan, GraduationProgressSink, GraduationReceipt,
   GraduationRollbackResult, GraduationStatusDoc, GraduationTargetSpelling, TriggerBypass,
 } from '../core/persistence/engine-graduation.types.ts';
-import { DEFAULT_TARGET_URL_ENV, planArgv, resumeArgv, statusArgv } from '../core/persistence/graduation-errors.ts';
+import type { DiscardOptions, DiscardPlan, DiscardResult } from '../core/persistence/graduation-discard.ts';
+import { DEFAULT_TARGET_URL_ENV, discardArgv, planArgv, resumeArgv, statusArgv } from '../core/persistence/graduation-errors.ts';
+import { humanBytes } from '../core/pglite-leftovers-check.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 
-export type GraduationMode = 'plan' | 'run' | 'status' | 'resume' | 'rollback';
+export type GraduationMode = 'plan' | 'run' | 'status' | 'resume' | 'rollback' | 'discard';
 
 export interface GraduationArgs {
   mode: GraduationMode;
@@ -48,6 +51,8 @@ export interface GraduationArgs {
   yes: boolean;
   expect?: string;
   json: boolean;
+  /** `--discard-source --dry-run` (or `--plan`): the read-only discard plan. */
+  dryRun: boolean;
 }
 
 export const DEFAULT_DRAIN_TIMEOUT_SEC = 60;
@@ -59,6 +64,8 @@ export interface GraduationApi {
   graduationStatus(): Promise<GraduationStatusDoc>;
   resumeGraduation(opts: GraduationCommandOptions): Promise<GraduationReceipt>;
   rollbackGraduation(opts: GraduationCommandOptions): Promise<GraduationRollbackResult>;
+  planDiscardSource(opts?: DiscardOptions): Promise<DiscardPlan>;
+  discardSource(opts: DiscardOptions): Promise<DiscardResult>;
 }
 
 export interface GraduationCliDeps {
@@ -82,10 +89,12 @@ export const GRADUATION_USAGE = [
   '       gbrain migrate --status [--json]',
   '       gbrain migrate --resume [--drain-timeout <seconds>] [--url-env <VAR>] [--json]',
   '       gbrain migrate --rollback-to-source [--yes --expect <hash>] [--json]',
+  '       gbrain migrate --discard-source [--dry-run] [--yes --expect <hash>] [--json]',
 ].join('\n');
 
 const MODE_FLAGS: ReadonlyArray<[string, GraduationMode]> = [
   ['--plan', 'plan'], ['--dry-run', 'plan'], ['--status', 'status'], ['--resume', 'resume'], ['--rollback-to-source', 'rollback'],
+  ['--discard-source', 'discard'],
 ];
 
 function usage(message: string, suggestion: string): OperationError {
@@ -114,9 +123,12 @@ function positiveInt(raw: string | undefined, name: string): number | undefined 
 
 export function parseGraduationArgs(args: readonly string[]): GraduationArgs {
   const modes = MODE_FLAGS.filter(([f]) => args.includes(f));
-  const distinct = [...new Set(modes.map(([, m]) => m))];
+  let distinct = [...new Set(modes.map(([, m]) => m))];
+  // --discard-source previews with --dry-run (or --plan), like the move itself.
+  const dryRun = distinct.includes('discard') && distinct.includes('plan');
+  if (dryRun) distinct = distinct.filter(m => m !== 'plan');
   if (distinct.length > 1) throw usage(`${modes.map(([f]) => f).join(' and ')} cannot be combined; pick one.`,
-    'Run one mode per command: preview with --plan, then the run itself with --yes --expect PLAN_HASH; --status, --resume and --rollback-to-source each run alone.');
+    'Run one mode per command: preview with --plan, then the run itself with --yes --expect PLAN_HASH; --status, --resume, --rollback-to-source and --discard-source each run alone.');
   const mode: GraduationMode = distinct[0] ?? 'run';
   const toRaw = flagValue(args, '--to');
   if (toRaw !== undefined && toRaw !== 'postgres' && toRaw !== 'supabase') {
@@ -132,6 +144,10 @@ export function parseGraduationArgs(args: readonly string[]): GraduationArgs {
   if (urlRaw !== undefined && urlEnv !== undefined) throw usage('--url and --url-env cannot be combined; prefer --url-env so the URL never appears in a command line.',
     `Keep --url-env (e.g. --url-env ${DEFAULT_TARGET_URL_ENV}) and drop --url.`);
   if (mode === 'status' && (args.includes('--yes') || args.includes('--force'))) throw usage('--status is read-only; it takes no --yes or --force.', 'Run gbrain migrate --status (add --json for the machine form) without --yes or --force.');
+  if (mode === 'discard' && (toRaw !== undefined || urlRaw !== undefined || urlEnv !== undefined || args.includes('--force'))) {
+    throw usage('--discard-source acts on the recorded run; it takes no --to, --url, --url-env or --force.',
+      'Run gbrain migrate --discard-source --dry-run; to record a changed target URL first, run gbrain migrate --resume --url-env VAR.');
+  }
   const bypass = flagValue(args, '--trigger-bypass');
   if (bypass !== undefined && bypass !== 'replica' && bypass !== 'disable-trigger') throw usage(`--trigger-bypass takes replica or disable-trigger (got "${bypass}").`,
     'Pass --trigger-bypass replica or --trigger-bypass disable-trigger, or omit the flag.');
@@ -150,6 +166,7 @@ export function parseGraduationArgs(args: readonly string[]): GraduationArgs {
     yes: args.includes('--yes'),
     ...(flagValue(args, '--expect') !== undefined ? { expect: flagValue(args, '--expect') } : {}),
     json: args.includes('--json'),
+    dryRun,
   };
 }
 
@@ -300,7 +317,7 @@ function successLines(receipt: GraduationReceipt): string {
     `Graduated to Postgres${receipt.targetDisplayUrl ? ` at ${receipt.targetDisplayUrl}` : ''} (run ${receipt.runId}${seconds ? `, ${seconds.toFixed(0)}s` : ''}).`,
     `  Copied ${receipt.tables.length} tables, ${rows} rows; verify passed; replay probe: ${receipt.replay.status}.`,
     `  Target doctor: ${failing.length ? `failing checks: ${failing.join(', ')}` : 'no failing checks'}.`,
-    ...(receipt.retainedPath ? [`  Retained PGLite copy: ${receipt.retainedPath} (still holds private memory and token hashes; deleting it is your call; gbrain doctor reports it).`] : []),
+    ...(receipt.retainedPath ? [`  Retained PGLite copy: ${receipt.retainedPath} (still holds private memory and token hashes; deleting it is your call: gbrain migrate --discard-source).`] : []),
     `  ${CREDENTIALS_NOTE}`,
     '  Next: share this brain with other machines: gbrain mcp expose',
     ...(receipt.serveHandoff ? [`  ${MCP_RESTART_NOTE}`] : []),
@@ -312,12 +329,77 @@ function statusLines(doc: GraduationStatusDoc): string {
   const done = doc.tables.filter(t => t.state === 'copied' || t.state === 'verified').length;
   return [
     `Engine graduation ${doc.runId}: ${doc.state}${doc.liveRun ? ` (running, PID ${doc.liveRun.pid})` : ''}`,
-    ...(doc.source ? [`  Source: ${doc.source.dataDir} (brain ${doc.source.brainId})`] : []),
+    ...(doc.source ? [`  Source: ${doc.source.dataDir} (brain ${doc.source.brainId})${doc.sourceDiscardedAt ? `, retained copy discarded ${doc.sourceDiscardedAt}` : ''}`] : []),
     ...(doc.target ? [`  Target: ${doc.target.displayUrl} (row ${doc.target.row ?? 'absent'}${doc.target.reachable ? '' : ', unreachable'})`] : []),
     ...(doc.tables.length ? [`  Tables: ${done}/${doc.tables.length} copied`] : []),
     ...(doc.splitBrain ?? []).map(p => `  Split brain: ${p.path} (brain ${p.brainId ?? 'unknown'}, ${p.rows} rows, newest write ${p.newestWriteAt ?? 'unknown'})`),
     ...(doc.nextArgv ? [`Next: ${shellQuote([...doc.nextArgv])}`] : []),
   ].join('\n') + '\n';
+}
+
+const DISCARD_LABEL: Readonly<Record<DiscardPlan['paths'][number]['kind'], string>> = {
+  retained_copy: 'Retained copy', tombstone: 'Tombstone', intent_marker: 'Intent marker',
+};
+
+function sizeOf(p: DiscardPlan['paths'][number]): string {
+  return `${p.sizeIncomplete ? '>=' : ''}${humanBytes(p.bytes, p.sizeIncomplete)}`;
+}
+
+function discardPlanLines(plan: DiscardPlan, next: string): string {
+  return [
+    `Discard what graduation run ${plan.runId} kept on this computer (the brain is on Postgres at ${plan.target})`,
+    ...plan.paths.map(p => `  ${`${DISCARD_LABEL[p.kind]}:`.padEnd(15)}${p.path} (${sizeOf(p)})${p.kind === 'retained_copy' ? ': private memory and access-token hashes' : ''}`),
+    '  Afterwards a rollback to PGLite is no longer possible.',
+    `  plan_hash ${plan.planHash}`,
+    `Next: ${next}`,
+  ].join('\n') + '\n';
+}
+
+function discardConsentRequest(plan: DiscardPlan, args: readonly string[]): ConsentRequest {
+  const copy = plan.paths.find(p => p.kind === 'retained_copy');
+  return {
+    command: 'migrate', effects: ['destructive'], actor: 'agent',
+    what: 'Deleting the PGLite copy kept after the move to Postgres',
+    why: `Graduation run ${plan.runId} moved this brain to Postgres at ${plan.target}, which confirms it is authoritative. This deletes ${plan.paths.map(p => p.path).join(', ')}; the copy still holds private memory and access-token hashes.`,
+    risk: 'Afterwards `gbrain migrate --rollback-to-source` is no longer possible, and a gbrain client still configured for the old path no longer gets engine_graduated there.',
+    user_message: `After moving your brain to Postgres, gbrain kept the old local copy${copy ? ` at ${copy.path}` : ''}. It still contains your private memory and access-token hashes. Should I delete it? You could then no longer roll back to it.`,
+    argv: discardArgv(), preview_argv: discardArgv(['--dry-run']), plan_hash: plan.planHash, args,
+  };
+}
+
+/** `--discard-source`: the plan (dry run or exit-3 confirmation), then the delete against `--yes --expect`. */
+async function runDiscard(a: GraduationArgs, api: GraduationApi, args: readonly string[], json: boolean,
+  emit: (doc: unknown, human: string) => void, err: (text: string) => void): Promise<number> {
+  if (a.yes && a.expect && !a.dryRun) {
+    const result = await api.discardSource({ yes: true, expectPlanHash: a.expect });
+    const listed = result.deleted.map(p => `${p.path}${p.kind === 'retained_copy' ? ` (${sizeOf(p)})` : ''}`).join(', ');
+    emit({ schema_version: 1, status: result.deleted.length ? 'discarded' : 'nothing_to_discard', run_id: result.runId, source_discarded_at: result.sourceDiscardedAt, deleted: result.deleted },
+      result.deleted.length
+        ? `Discarded what graduation run ${result.runId} kept on this computer: ${listed}.\n  The brain stays on Postgres at ${result.target}; a rollback to PGLite is no longer possible.\n`
+        : `Nothing to discard: graduation run ${result.runId} left nothing on this computer.\n`);
+    return 0;
+  }
+  const plan = await api.planDiscardSource();
+  if (!plan.paths.length) {
+    emit({ schema_version: 1, status: 'nothing_to_discard', run_id: plan.runId, source_discarded_at: plan.sourceDiscardedAt },
+      `Nothing to discard: graduation run ${plan.runId} left nothing on this computer.\n`);
+    return 0;
+  }
+  const next = shellQuote(discardArgv(['--yes', '--expect', plan.planHash]));
+  if (a.dryRun) {
+    emit({ schema_version: 1, status: 'plan', plan, next: { command: next } }, discardPlanLines(plan, next));
+    return 0;
+  }
+  const req = discardConsentRequest(plan, args);
+  try {
+    await requireConsent(req, { interactive: false, preapprovals: {} });
+  } catch (e) {
+    if (!isConsentRefusal(e)) throw e;
+    Object.assign(e.consent, { plan });
+    if (!json) err(discardPlanLines(plan, e.consent.fix.command ?? ''));
+    return printConsentRefusal(e, { json });
+  }
+  throw buildConsentRefusal(req, cliRenderContext());
 }
 
 async function resolveUrl(a: GraduationArgs, deps: GraduationCliDeps): Promise<string | undefined> {
@@ -358,12 +440,13 @@ export async function runMigrateGraduation(args: readonly string[], deps: Gradua
       throw usage('Engine graduation is turned off on this machine (migrate.graduation = false), so there is no plan to show.',
         'Turn it back on with `gbrain config unset migrate.graduation`, or run the legacy copier with `gbrain migrate --to postgres --url <url>` (it refuses brains with write history).');
     }
-    const api = deps.api ?? await import('../core/persistence/engine-graduation.ts');
+    const api = deps.api ?? { ...await import('../core/persistence/engine-graduation.ts'), ...await import('../core/persistence/graduation-discard.ts') };
     if (a.mode === 'status') {
       const doc = await api.graduationStatus();
       emit(doc, statusLines(doc));
       return 0;
     }
+    if (a.mode === 'discard') return await runDiscard(a, api, args, json, emit, err);
     const url = await resolveUrl(a, deps);
     const opts = orchestratorOptions(a, url, { progress: sink, signal });
     if (a.mode === 'plan') {

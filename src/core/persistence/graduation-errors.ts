@@ -67,6 +67,10 @@ export function rollbackArgv(extra: readonly string[] = []): string[] {
   return ['gbrain', 'migrate', '--rollback-to-source', ...extra];
 }
 
+export function discardArgv(extra: readonly string[] = []): string[] {
+  return ['gbrain', 'migrate', '--discard-source', ...extra];
+}
+
 const STATUS_VERIFY = { argv: statusArgv() };
 const DOCTOR_VERIFY = { argv: ['gbrain', 'doctor', '--no-migrate', '--json'] };
 const planVerify = (s: GraduationCommandSpelling) => ({ argv: planArgv(s) });

@@ -426,8 +426,10 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   // postgres for one process, and deletion advice must never rest on an
   // env override (Codex review P1).
   // Warn-only by design: WHEN the abandoned store is safe to drop is a
-  // policy question (#3856), so the remediation is a verified manual delete
-  // — no CLI command is named that does not exist (#3697).
+  // policy question (#3856), so the legacy store's remediation is a verified
+  // manual delete — no CLI command is named that does not exist (#3697).
+  // Engine graduation's retained copy of the recorded run names
+  // `gbrain migrate --discard-source`, which asks before it deletes.
   try {
     const { readFileSync } = await import('node:fs');
     const durableEngine = (
@@ -444,15 +446,23 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
     );
     if (leftovers.status !== 'skip') {
       const copy = leftovers.retained?.[0];
+      // The recorded, graduated run's copy has its own confirmation-gated command; any other retained copy is a manual delete.
+      const recorded = manifest?.state === 'graduated' ? leftovers.retained?.find(r => r.path.includes(`.graduated-${manifest.runId}`)) : undefined;
+      const { discardArgv } = await import('../../../core/persistence/graduation-errors.ts');
+      const verify = { argv: ['gbrain', 'doctor', '--only', 'pglite_leftovers', '--json'] };
       checks.push({
         name: 'pglite_leftovers',
         status: leftovers.status,
         message: leftovers.message,
         ...(copy ? {
           details: { retained: leftovers.retained },
-          fix: {
+          fix: recorded ? {
+            argv: discardArgv(), preview_argv: discardArgv(['--dry-run']), consent: [], actor: 'agent', requires_exclusive: false,
+            verify, docs: 'docs/guides/move-to-postgres.md#discard-the-retained-copy',
+            why: `${recorded.path} is the PGLite brain engine graduation moved to Postgres; it still holds private memory and token hashes. The command changes nothing on its own: it prints what it deletes (the copy, the tombstone and the intent marker) with the user's question and a plan_hash, and exits 3. Only the approved \`--yes --expect <plan_hash>\` run deletes them, which ends the option to roll back.`,
+          } : {
             argv: ['rm', '-rf', copy.path], consent: ['destructive'], actor: 'agent', requires_exclusive: false,
-            verify: { argv: ['gbrain', 'doctor', '--only', 'pglite_leftovers', '--json'] }, docs: 'docs/guides/move-to-postgres.md#after-the-move',
+            verify, docs: 'docs/guides/move-to-postgres.md#after-the-move',
             why: `${copy.path} is the PGLite brain engine graduation moved to Postgres; it still holds private memory and token hashes. Deleting it frees the disk and ends the option to roll back.`,
             user_message: `After moving your brain to Postgres, gbrain kept the old local copy at ${copy.path}. It still contains your private memory and access-token hashes. Should I delete it? You could then no longer roll back to it.`,
           },

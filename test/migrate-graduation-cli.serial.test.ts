@@ -1,7 +1,8 @@
 /**
  * `gbrain migrate` engine graduation CLI (plan §7, DX amendments): routing,
  * flag parsing, the exit-3 consent payload, `--plan`, the run, run-scoped
- * verbs, the exit-code map (0/1/2/3/11/75/130) and secret hygiene, over a
+ * verbs, `--discard-source` (dry run, exit-3 consent, the approved delete),
+ * the exit-code map (0/1/2/3/11/75/130) and secret hygiene, over a
  * fake orchestrator (the G2a module is exercised by its own lane's tests).
  * Serial: it points GBRAIN_HOME at a temp dir and reads the file-plane
  * opt-out from it.
@@ -17,7 +18,8 @@ import type { ProgressReporter } from '../src/core/progress.ts';
 import type {
   GraduationCommandOptions, GraduationPlan, GraduationReceipt, GraduationStatusDoc,
 } from '../src/core/persistence/engine-graduation.types.ts';
-import { drainTimeoutError, inProgressError } from '../src/core/persistence/graduation-errors.ts';
+import type { DiscardOptions, DiscardPlan } from '../src/core/persistence/graduation-discard.ts';
+import { drainTimeoutError, inProgressError, interruptedError } from '../src/core/persistence/graduation-errors.ts';
 import {
   parseGraduationArgs, routesToGraduation, runMigrateGraduation, type GraduationApi,
 } from '../src/commands/migrate-graduation.ts';
@@ -50,14 +52,24 @@ const receipt: GraduationReceipt = {
   targetDisplayUrl: 'postgresql://alice:***@db.acme-example.test:5432/brain', retainedPath: '/home/alice-example/.gbrain/brain.pglite.graduated-run-1',
   serveHandoff: true, doctor: { source: [], target: [] },
 };
+const discardPlan: DiscardPlan = {
+  planHash: 'dh_0123456789abcdef', runId: 'run-1', dataDir: '/home/alice-example/.gbrain/brain.pglite', target: plan.routes.main,
+  paths: [
+    { kind: 'retained_copy', path: '/home/alice-example/.gbrain/brain.pglite.graduated-run-1', bytes: 47 * 1024 * 1024, sizeIncomplete: false },
+    { kind: 'tombstone', path: '/home/alice-example/.gbrain/brain.pglite', bytes: 680, sizeIncomplete: false },
+    { kind: 'intent_marker', path: '/home/alice-example/.gbrain/brain.pglite.gbrain-graduation.json', bytes: 393, sizeIncomplete: false },
+  ],
+  sourceDiscardedAt: null,
+};
 const statusDoc: GraduationStatusDoc = {
   schema_version: 1, state: 'copying', runId: 'run-1', to: 'postgres', source: plan.source, sourcePath: null,
   target: { identity: plan.target, displayUrl: plan.routes.main, row: 'copying', reachable: true }, receipt: null,
   liveRun: { pid: 123 }, tables: [], nextArgv: ['gbrain', 'migrate', '--status', '--json'],
 };
 
-function fakeApi(over: Partial<GraduationApi> = {}): GraduationApi & { calls: { fn: string; opts?: GraduationCommandOptions }[] } {
-  const calls: { fn: string; opts?: GraduationCommandOptions }[] = [];
+type Call = { fn: string; opts?: Partial<GraduationCommandOptions> & DiscardOptions };
+function fakeApi(over: Partial<GraduationApi> = {}): GraduationApi & { calls: Call[] } {
+  const calls: Call[] = [];
   return {
     calls,
     planGraduation: async (opts) => { calls.push({ fn: 'plan', opts }); return plan; },
@@ -65,6 +77,11 @@ function fakeApi(over: Partial<GraduationApi> = {}): GraduationApi & { calls: { 
     graduationStatus: async () => { calls.push({ fn: 'status' }); return statusDoc; },
     resumeGraduation: async (opts) => { calls.push({ fn: 'resume', opts }); return receipt; },
     rollbackGraduation: async (opts) => { calls.push({ fn: 'rollback', opts }); return { state: 'abandoned', restoredPath: null, dropped: [] }; },
+    planDiscardSource: async () => { calls.push({ fn: 'discard_plan' }); return discardPlan; },
+    discardSource: async (opts) => {
+      calls.push({ fn: 'discard', opts });
+      return { runId: 'run-1', target: plan.routes.main, sourceDiscardedAt: '2026-10-05T00:00:00.000Z', deleted: discardPlan.paths };
+    },
     ...over,
   };
 }
@@ -111,7 +128,7 @@ describe('routing', () => {
   test('opt-out and Windows keep the legacy copier for the bare run; run-scoped verbs always route', () => {
     expect(routesToGraduation(['--to', 'postgres'], { ...pglite, migrate: { graduation: false } }, 'linux')).toBe(false);
     expect(routesToGraduation(['--to', 'postgres'], pglite, 'win32')).toBe(false);
-    for (const verb of ['--status', '--resume', '--rollback-to-source', '--plan', '--dry-run']) {
+    for (const verb of ['--status', '--resume', '--rollback-to-source', '--discard-source', '--plan', '--dry-run']) {
       expect(routesToGraduation([verb], { ...pglite, migrate: { graduation: false } }, 'win32')).toBe(true);
     }
   });
@@ -125,11 +142,16 @@ describe('parseGraduationArgs', () => {
     expect(a).toMatchObject({ mode: 'run', to: 'postgres', urlEnv: 'U', drainTimeoutSec: 120, triggerBypass: 'disable_trigger', batchSize: 500, yes: true, expect: 'ph_x' });
     expect(parseGraduationArgs(['--to', 'postgres']).drainTimeoutSec).toBe(60);
     expect(parseGraduationArgs(['--to', 'postgres', '--url', '-']).urlFromStdin).toBe(true);
+    expect(parseGraduationArgs(['--discard-source'])).toMatchObject({ mode: 'discard', dryRun: false });
+    expect(parseGraduationArgs(['--discard-source', '--dry-run'])).toMatchObject({ mode: 'discard', dryRun: true });
+    expect(parseGraduationArgs(['--discard-source', '--plan', '--yes', '--expect', 'dh_x'])).toMatchObject({ mode: 'discard', dryRun: true, yes: true, expect: 'dh_x' });
   });
   test.each([
     [['--plan', '--status']], [['--resume', '--rollback-to-source']], [['--to', 'mysql']], [['--to', 'pglite', '--plan']],
     [['--plan']], [['--to', 'postgres', '--url', 'u', '--url-env', 'V']], [['--to', 'postgres', '--drain-timeout', '0']],
     [['--to', 'postgres', '--trigger-bypass', 'off']], [['--status', '--yes']], [['--to', 'postgres', '--url']],
+    [['--discard-source', '--status']], [['--discard-source', '--rollback-to-source']], [['--discard-source', '--to', 'postgres']],
+    [['--discard-source', '--url-env', 'GBRAIN_TARGET_URL']], [['--discard-source', '--force']],
   ])('usage error %j', (args) => {
     let code: string | undefined;
     try { parseGraduationArgs(args); } catch (e) { code = (e as { code?: string }).code; }
@@ -247,5 +269,64 @@ describe('runMigrateGraduation', () => {
     } finally {
       rmSync(optedOut, { recursive: true, force: true });
     }
+  });
+});
+
+describe('--discard-source', () => {
+  test('bare: exit 3 consent payload bound to the discard plan; nothing is deleted', async () => {
+    const r = await run(['--discard-source', '--json']);
+    expect(r.code).toBe(3);
+    const doc = JSON.parse(r.stdout);
+    expect(doc.code).toBe('confirmation_required');
+    expect(doc.effects).toEqual(['destructive']);
+    expect(doc.plan_hash).toBe(discardPlan.planHash);
+    expect(doc.fix.argv).toEqual(['gbrain', 'migrate', '--discard-source', '--yes', '--expect', discardPlan.planHash]);
+    expect(doc.fix.next).toBe('ask_user');
+    expect(doc.preview.argv).toEqual(['gbrain', 'migrate', '--discard-source', '--dry-run']);
+    expect(doc.user_message).toContain('brain.pglite.graduated-run-1');
+    expect(doc.plan.paths.map((p: { kind: string }) => p.kind)).toEqual(['retained_copy', 'tombstone', 'intent_marker']);
+    expect(r.api.calls.map(c => c.fn)).toEqual(['discard_plan']);
+    const yesOnly = await run(['--discard-source', '--yes', '--json']);
+    expect(yesOnly.code).toBe(3);
+    expect(yesOnly.api.calls.map(c => c.fn)).toEqual(['discard_plan']);
+  });
+
+  test('--dry-run: exit 0 with the plan and the next command; the human form lists every path', async () => {
+    const r = await run(['--discard-source', '--dry-run', '--json']);
+    expect(r.code).toBe(0);
+    const doc = JSON.parse(r.stdout);
+    expect(doc).toMatchObject({ schema_version: 1, status: 'plan', plan: { planHash: discardPlan.planHash, runId: 'run-1' } });
+    expect(doc.next.command).toBe(`gbrain migrate --discard-source --yes --expect ${discardPlan.planHash}`);
+    expect(r.api.calls.map(c => c.fn)).toEqual(['discard_plan']);
+    const human = await run(['--discard-source', '--dry-run']);
+    for (const p of discardPlan.paths) expect(human.stdout).toContain(p.path);
+    expect(human.stdout).toContain('47 MB');
+    expect(human.stdout).toContain(`plan_hash ${discardPlan.planHash}`);
+  });
+
+  test('--yes --expect deletes against the approved hash; --expect alone with another hash is preview_changed', async () => {
+    const r = await run(['--discard-source', '--yes', '--expect', discardPlan.planHash, '--json']);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ status: 'discarded', run_id: 'run-1', source_discarded_at: '2026-10-05T00:00:00.000Z' });
+    expect(r.api.calls).toEqual([{ fn: 'discard', opts: { yes: true, expectPlanHash: discardPlan.planHash } }]);
+    const stale = await run(['--discard-source', '--expect', 'dh_stale', '--json']);
+    expect(stale.code).toBe(1);
+    expect(JSON.parse(stale.stdout).code).toBe('preview_changed');
+    expect(stale.api.calls.map(c => c.fn)).toEqual(['discard_plan']);
+  });
+
+  test('nothing left: exit 0 with nothing_to_discard', async () => {
+    const empty = fakeApi({ planDiscardSource: async () => ({ ...discardPlan, paths: [], sourceDiscardedAt: '2026-10-05T00:00:00.000Z' }) });
+    const r = await run(['--discard-source', '--json'], empty);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ status: 'nothing_to_discard', run_id: 'run-1' });
+  });
+
+  test('refusals keep their code and exit: an unfinished run 1, a rollback in flight 75', async () => {
+    const unfinished = await run(['--discard-source', '--json'], fakeApi({ planDiscardSource: async () => { throw interruptedError({ runId: 'run-1', state: 'rollback_fenced' }); } }));
+    expect(unfinished.code).toBe(1);
+    expect(JSON.parse(unfinished.stdout).code).toBe('graduation_interrupted');
+    const inFlight = await run(['--discard-source', '--json'], fakeApi({ planDiscardSource: async () => { throw inProgressError({ runId: 'run-1', state: 'rollback_fenced' }); } }));
+    expect(inFlight.code).toBe(75);
   });
 });

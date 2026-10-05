@@ -119,7 +119,10 @@ Full reference: [Move a PGLite brain to Postgres](../../docs/guides/move-to-post
   user to stop it first. `graduation_source_writer_held` names the process to
   stop when one does not.
 - The old data dir is kept as `<path>.graduated-<run_id>` (doctor's
-  `pglite_leftovers` reports it). Deleting it is the user's call.
+  `pglite_leftovers` reports it). Deleting it is the user's call:
+  `gbrain migrate --discard-source --json` returns the plan and the question
+  (exit 3); run its `fix.command` only after the user agrees. Afterwards a
+  rollback to PGLite is no longer possible.
 - `gbrain doctor`'s `pglite_scale` check warns at 1000+ pages and points at
   the plan command — that warning is this skill's cue.
 

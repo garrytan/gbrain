@@ -8,12 +8,14 @@
  * revocations, needs `--yes --expect <hash>` for other user-data loss, never
  * writes back to the source, and returns the target to authority on every
  * refusal; durable substeps reconcile after a crash (back to authority before
- * approval, forward to rolled_back after it). Regressions that fail it: a
- * timestamp-based security check (revocations delete rows), a refusal that
- * strands the target fenced, a crash after approval that restores authority.
+ * approval, forward to rolled_back after it); with the retained copy gone
+ * (discarded or deleted by hand) it refuses instead of opening an empty brain.
+ * Regressions that fail it: a timestamp-based security check (revocations
+ * delete rows), a refusal that strands the target fenced, a crash after
+ * approval that restores authority, a rollback that runs without its copy.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   planGraduation, readGraduationManifest, reconcileGraduation, rollbackGraduation, runGraduation, type GraduationOptions,
@@ -104,6 +106,34 @@ for (const [label, postgresUrl] of targets) {
         const result = await rollbackGraduation(rollbackOpts());
         expect(result.state).toBe('rolled_back');
         await assertRolledBack();
+      });
+    }, 120_000);
+
+    test('a retained copy deleted by hand: rollback refuses, the target stays authoritative and routing stays on Postgres', async () => {
+      await fresh();
+      await h.inHome(async () => {
+        await graduate();
+        rmSync(`${h.dataDir}.graduated-${manifest().runId}`, { recursive: true, force: true });
+        const refused = await refusal(rollbackGraduation(rollbackOpts()));
+        expect(refused.code).toBe('not_found');
+        expect(refused.message).toContain('nothing to roll back to');
+        expect(manifest().state).toBe('graduated');
+        expect(config().engine).toBe('postgres');
+        await assertTargetAuthoritative();
+      });
+    }, 120_000);
+
+    test('a retained copy removed between the fence and the kernel lock: the target returns to authority', async () => {
+      await fresh();
+      await h.inHome(async () => {
+        await graduate();
+        const copy = `${h.dataDir}.graduated-${manifest().runId}`;
+        const removeAtFence = async (step: string) => { if (step === 'rollback_fenced') rmSync(copy, { recursive: true, force: true }); };
+        const refused = await refusal(rollbackGraduation(rollbackOpts({ pauseAt: 'rollback_fenced', pauseHook: removeAtFence })));
+        expect(refused.code).toBe('not_found');
+        expect(manifest().state).toBe('graduated');
+        expect(config().engine).toBe('postgres');
+        await assertTargetAuthoritative();
       });
     }, 120_000);
 

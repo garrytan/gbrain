@@ -5,7 +5,8 @@
  * `engine_graduated` with its one-step fix, a status-only/degraded serve
  * exits for relaunch when the engine identity changes, the resident serve
  * hand-off fires only for another live run, doctor's graduation finding and
- * pglite_leftovers report the run and the retained copy, and
+ * pglite_leftovers report the run and the retained copy (the recorded
+ * graduated run's copy names `gbrain migrate --discard-source`), and
  * `gbrain engine status --json` shows the graduation state. File fixtures
  * follow the plan's marker and tombstone formats.
  */
@@ -21,6 +22,9 @@ import {
 import { probeStatus, statusPayload, initialStatusState } from '../src/mcp/status-mode.ts';
 import { graduationStateCheck } from '../src/commands/doctor/checks/engine-graduation.ts';
 import { assessPgliteLeftovers } from '../src/core/pglite-leftovers-check.ts';
+import { homeDirInWorktreeEntry } from '../src/commands/doctor/checks/local-audits.ts';
+import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import type { Check } from '../src/commands/doctor.ts';
 import { inspectLockHolder } from '../src/core/pglite-lock.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -140,6 +144,22 @@ describe('doctor and engine status', () => {
     expect(a.message).toContain('private memory and access-token hashes');
     expect(assessPgliteLeftovers('postgres', join(home, '.gbrain'), undefined, { inFlight: true }).status).toBe('skip');
     expect(assessPgliteLeftovers('pglite', join(home, '.gbrain')).status).toBe('skip');
+  });
+
+  test('pglite_leftovers points the recorded graduated run\'s copy at --discard-source; any other copy stays a manual delete', async () => {
+    writeTombstone();
+    writeConfig({ engine: 'postgres', database_url: 'postgresql://alice@db.acme-example.test:5432/brain' });
+    const manifest = (state: string) => writeFileSync(join(home, '.gbrain', 'graduation-manifest.json'), JSON.stringify({
+      version: 3, runId: 'run-1', state, source: { dataDir, brainId: 'b1', hostId: 'h1' }, target, updatedAt: new Date().toISOString() }));
+    const leftovers = async () => ((await inHome(() => homeDirInWorktreeEntry.run({} as DoctorContext))) as Check[]).find(c => c.name === 'pglite_leftovers')!;
+    manifest('graduated');
+    const recorded = await leftovers();
+    expect(recorded.status).toBe('warn');
+    expect(recorded.fix).toMatchObject({ argv: ['gbrain', 'migrate', '--discard-source'], preview_argv: ['gbrain', 'migrate', '--discard-source', '--dry-run'], consent: [] });
+    mkdirSync(`${dataDir}.graduated-run-0`);
+    rmSync(`${dataDir}.graduated-run-1`, { recursive: true });
+    const orphan = await leftovers();
+    expect(orphan.fix).toMatchObject({ argv: ['rm', '-rf', `${dataDir}.graduated-run-0`], consent: ['destructive'] });
   });
 
   test('engine status --json carries the graduation block', async () => {
