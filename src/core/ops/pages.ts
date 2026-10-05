@@ -26,6 +26,7 @@ import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descr
 import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
 import { invalidParam } from './op-fix.ts';
+import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -308,7 +309,7 @@ const put_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    pageMutationSource(ctx, p, 'put_page');
+    const sourceId = pageMutationSource(ctx, p, 'put_page');
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         validatePageSlug(p.slug);
@@ -317,7 +318,7 @@ const put_page: Operation = {
       }
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
-    return submitPageMutation(ctx, { operation: 'put_page', params: p });
+    return submitPageMutation(ctx, { operation: 'put_page', params: p }).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };

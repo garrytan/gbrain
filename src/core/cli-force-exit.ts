@@ -936,6 +936,11 @@ export async function finishCliTeardown(opts: FinishCliTeardownOpts): Promise<vo
         `[cli] background-work drain failed during teardown: ${e instanceof Error ? e.message : String(e)} — continuing to disconnect`,
       );
     }
+    // The first chat_fallback_chain hop of this process, when no op notice channel drained it.
+    try {
+      const hops = (await import('./ai/fallback-hop-queue.ts')).takeChatFallbackHopNotices();
+      if (hops.length > 0) (await import('./interop-notices.ts')).writeCliNotices(hops);
+    } catch { /* a notice never blocks teardown */ }
     try {
       await opts.engine.disconnect();
     } catch (e) {

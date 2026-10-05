@@ -50,7 +50,7 @@ Capture a quick note into the brain — the "just remember this" write. Auto-der
 | Parameter | Type | Guidance |
 | --- | --- | --- |
 | `source_id` | string | Source to mutate. Defaults to the selected source. Remote callers may only use their current write source. |
-| `expected_revision` | string | Revision returned by the page read. Required when replacing an existing page unless force is true. Omit both for create-only writes. |
+| `expected_revision` | string | Revision returned by the page read. Required when replacing an existing page unless force is true. Omit both for create-only writes. Carry the read's `source_id` with it: if this revision is the current revision of the same slug in another source you can read, the `revision_conflict` refusal names that source and its fix re-reads the page there. |
 | `force` | boolean | Explicitly overwrite the current revision. Mutually exclusive with expected_revision; does not bypass authorization or the empty-content guard. |
 | `request_id` | string | Optional caller-generated UUID for this write. Reuse the same UUID and original arguments to recover its outcome after a timeout; a different intent requires a new UUID. |
 | `who` | string | For event captures, comma-separated entity slugs. |
@@ -163,6 +163,7 @@ Read a page by slug (supports optional fuzzy matching). Slug aliases left by ren
 | `slug` (required) | string | Page slug |
 | `fuzzy` | boolean | Enable fuzzy slug resolution (default: false) |
 | `include_content` | boolean | Include the canonical serialized `content` field (frontmatter + body + timeline sentinel) for lossless get→edit→put_page round-trips. Default false — it roughly duplicates compiled_truth + timeline, so read-only callers should not pay for it. |
+| `content_only` | boolean | With include_content: true, return only the round-trip fields: `slug`, `source_id`, `type`, `title`, `revision`, `tags` and `content` (plus `deleted_at`, `resolved_slug`, `content_flag`, `file_held` and `timeline_entries` when they apply), without the duplicate compiled_truth / timeline / frontmatter. Ignored without include_content. To write back, send `content` to put_page with this `source_id` and `revision` as expected_revision: on a multi-source brain the same slug can live in several sources, and a write without source_id goes to your default source. |
 | `include_deleted` | boolean | Surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows. |
 | `include_timeline_entries` | boolean | Also return `timeline_entries`, the page's timeline rows (the same rows and filtering as get_timeline for this caller). Default false to keep the payload small. |
 | `source_id` | string | Scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers. |

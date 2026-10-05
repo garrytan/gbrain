@@ -192,6 +192,8 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
  * Infrastructure liveness signals. DB, workers, OAuth, RLS, locks, providers.
  */
 export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
+  // The effective chat_fallback_chain, its config plane, the providers it reaches and per-entry readiness.
+  'chat_fallback_chain',
   // Agent operator wave: is an agent harness wired to this brain (registration read; --only adds the smoke test).
   'harness_wiring',
   'frontmatter_hook',
@@ -212,6 +214,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'bootstrap_serve_lock',
   'batch_retry_health',
   'canonical_content_writes',
+  // Sources opted out of, or parked by, the shared-skills migration (checks/shared-skills.ts).
+  'shared_skills_sources',
   'brainstorm_health',
   'connectors',
   'dream_paid_loop',
@@ -283,6 +287,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
  * housekeeping. Default category for unknown names (with stderr warn).
  */
 export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
+  // The one-time behavior-change disclosure, readable again here (read-only).
+  'behavior_changes',
   // Agent operator wave E11: recent agent dead ends from the agent-contract event log.
   'agent_contract',
   'cycle_phase_scope',

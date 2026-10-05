@@ -1,5 +1,27 @@
 # TODOS
 
+## Contributor audit wave follow-ups (filed 2026-10-05, GBRA-40)
+
+### delta (owner: GBRA-40 (delta follow-ups))
+
+- [ ] **P2 — Commit-visibility watermark for delta.** **What:** rows are stamped with their transaction's start time, so a transaction that commits more than 2 s (`DELTA_COMMIT_LAG_MS`) after it started can be passed by an empty wake that advanced the cursor meanwhile. `test/delta-cursor-integrity.test.ts` ("commit visibility", Postgres) pins the bound. **Fix:** advance each arm only to a watermark below the oldest in-flight writer (e.g. `pg_snapshot_xmin` mapped to time, or a commit-sequence column), so the bound becomes zero. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Paginated thread arm.** **What:** thread events key on event date through `buildEntityCard`, which caps and swallows internally, so delta's threads are best-effort and follow the pages' time cursor. **Fix:** give threads their own keyset (event id or date + id) and an overflow signal like the pages and facts arms. **Effort:** M. **Priority:** P3.
+
+### Agent contract (former GBRA-42 hand-offs; owner: whoever picks up the next agent-contract wave)
+
+- [ ] **P2 — A structured retry delay on `Action`.** **What:** `fix.next: wait` is derived from `actor: provider`, and the delay lives only in prose (`why`: "Retry the same call in about 30 seconds"). delta's `delta_incomplete` notice and its `unavailable`/`session_state` refusal use it today (`src/core/ops/facts.ts` `incompleteNotice`, `sessionUnavailableError`). **Fix:** add an optional `retry_after_ms` (or `retry_after_s`) to `Action` in `src/core/agent-output.ts`, render it in the CLI `[AGENT]` block, the MCP notice block (`retry_after:` line) and `_meta`, extend the decision table in `docs/protocol/AGENT_OPERATOR_v1.md` ("`wait` → retry after `retry_after`"), regenerate the agent-operator goldens, and switch delta to it. Additive under contract v1. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — `GrantError` family onto the why/fix contract.** **What:** `src/core/grants/cli.ts` throws about 19 `invalid_grant` `GrantError`s (two added by #6008 for `--operations all`) with a message only: no `code`-level `why`, no structured `fix`. **Fix:** convert the family together so the fix echoes the flag the user actually typed (`--operations`, `--allowed-operations`, `--profile`, `--takes-holders`), with a read-only verify (`gbrain auth clients --json`); keep `invalid_grant` as the code and add `reason` values instead of new codes. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Scanner rule for CLI parser usage errors.** **What:** #5942 and #6002 printed raw `console.error` usage lines and exited 1 instead of throwing `invalid_params` (exit 2); `scripts/check-agent-contract.ts` has no rule for it, so the audit found them by hand (fixed in this wave for `connectors sync` and `recall --limit`). **Fix:** a scanner rule flagging `console.error('Usage:` / `process.exit(1)` pairs in `src/commands/**` parsers, baselined at today's count. **Effort:** S. **Priority:** P3.
+
+### OAuth grants
+
+- [ ] **P2 — List the operations an unbounded OAuth client gained after an upgrade.**
+  **What:** `gbrain auth clients` marks a client with no operation snapshot `operations: "all"` with `includes_future_operations: true` (#6008 visibility), but it cannot say which operations became reachable since the client's last regrant: the server knows only today's operation set. **Why:** an operator reviewing an unbounded client after an upgrade sees "all", not "these five are new". **Fix:** a versioned operation inventory (operation name → first release that shipped it, generated at build time from `operations.ts`), plus the release each client was last granted under, so `auth clients` and doctor can list operations added since then; reuse the legacy-token `--refresh-operations` preview shape. **Effort:** M. **Priority:** P2.
+
+### Measurement
+
+- [ ] **P3 — Paid retrieval-quality eval of #5783's smaller transcript parts.** **What:** the wave measured the free cost (pages ×6.75, chunks ×1.116, embedding tokens ×1.087 on a synthetic 1 MB session, `scripts/measure-transcript-split-cost.ts`) but not whether 45,000-byte parts retrieve better or worse. **Fix:** a gbrain-evals run on a transcript-heavy corpus at both part targets, newest frontier models only. **Effort:** M. **Priority:** P3.
+
 ## Test, eval and CI fix wave follow-ups (filed 2026-10-04, GBRA-47)
 
 Context: `.github/nightly-known-red.tsv` rows point here; nightly-watch keeps their incidents open until the row is deleted. Scale-tier evidence: per-batch `vectors` lines and the phase watchdog in `scripts/scale/`.

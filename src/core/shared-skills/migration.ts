@@ -8,7 +8,8 @@ import { checkedContentRoot, inventorySkillpack, sameInventory, type PackInvento
 import { contentSetupKey, installPackagedSharedSkills, setupSharedBrainContent, type SharedContentReceipt } from './setup.ts';
 import type { DatabaseContentExportReceipt } from './migration-export.ts';
 import { inspectSharedMemberMigration, type SharedMemberMigration } from './migration-members.ts';
-import { sharedSkillSourcePolicy } from './setup-source-policy.ts';
+import { sharedSkillSourcePolicyOrPreserve } from './setup-source-policy.ts';
+import { INVENTORY_LIMIT_CEILINGS, readInventoryLimits, type InventoryLimits } from './inventory-limits.ts';
 
 export type MigrationPublication = 'disabled' | 'prose_only' | 'consent_required';
 export interface SharedMigrationStage {
@@ -25,6 +26,19 @@ export interface SharedSourceMigration {
   stages: SharedMigrationStage[];
   status: 'complete' | 'action_required' | 'conflict' | 'planned';
   member_installations?: SharedMemberMigration[];
+  parked?: SharedSourceParked;
+}
+/**
+ * A source whose pack exceeds an inventory bound. Later runs skip it without
+ * re-inventorying (the migration completes instead of going partial) until the
+ * configured bounds change, the source opts out, or
+ * `gbrain sources shared-skills <id> on` releases it.
+ */
+export interface SharedSourceParked {
+  limit: string;
+  limits: InventoryLimits;
+  reason: string;
+  parked_at: string;
 }
 export interface SharedMigrationReport {
   version: 1;
@@ -39,6 +53,17 @@ export interface SharedMigrationReport {
 
 export function migrationCheckpointKey(sourceId: string, incarnation: string): string {
   return `shared_skills.migration.v1.${sourceId}.${incarnation}`;
+}
+
+const sameLimits = (a: InventoryLimits, b: InventoryLimits): boolean =>
+  (Object.keys(INVENTORY_LIMIT_CEILINGS) as Array<keyof InventoryLimits>).every(name => a[name] === b[name]);
+
+export function parkedReason(sourceId: string, parked: SharedSourceParked): string {
+  const ceiling = INVENTORY_LIMIT_CEILINGS[parked.limit.split('.').pop() as keyof InventoryLimits];
+  return `payload_too_large: ${parked.reason} Parked: this source is skipped, not retried, and the rest of the migration completes. `
+    + `Raise the bound (gbrain config set ${parked.limit} <n>, at most ${ceiling}), opt the source out (gbrain sources shared-skills ${sourceId} off), `
+    + `or shrink the pack and release it (gbrain sources shared-skills ${sourceId} on); then run gbrain apply-migrations --migration 0.53.0 --yes. `
+    + 'See docs/guides/shared-brain-skills.md#oversized-skill-packs.';
 }
 
 export async function legacyPublication(ctx: OperationContext): Promise<MigrationPublication> {
@@ -70,11 +95,11 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
   }
   report.brain_id = brain.brain_id;
   const publication = await legacyPublication(ctx);
+  const limits = await readInventoryLimits(ctx.engine);
   const roots = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>('SELECT id,incarnation,local_path FROM sources WHERE NOT archived ORDER BY id');
   const fallback = await ctx.engine.getConfig('sync.repo_path');
   for (const source of roots) {
-    const sourcePolicy = await sharedSkillSourcePolicy(ctx.engine, source.id).catch(error => ({ mode: 'preserve_files' as const,
-      reason: error instanceof OperationError ? `${error.code}: ${error.message}` : 'profile_incompatible: the source writeback policy could not be verified; no repository changes were attempted.' }));
+    const sourcePolicy = await sharedSkillSourcePolicyOrPreserve(ctx.engine, source.id);
     const contentCheckpoint = await ctx.engine.getConfig(contentSetupKey(source.id, source.incarnation));
     if (contentCheckpoint && !dryRun && sourcePolicy.mode === 'content') {
       let content: SharedContentReceipt;
@@ -121,7 +146,13 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         throw opError('local_conflict', 'The registered canonical root is missing.',
           `Source ${source.id}'s registered root ${row.root} does not exist. Restore it (from its Git remote or backup), then run the migration again.`);
       }
-      row.inventory = inventorySkillpack(row.root);
+      if (prior?.parked && prior.root === row.root && sameLimits(prior.parked.limits, limits)) {
+        row.inventory = prior.inventory;
+        row.parked = prior.parked;
+        await pending('inventory', parkedReason(source.id, row.parked));
+        continue;
+      }
+      row.inventory = inventorySkillpack(row.root, limits);
       if (prior && (prior.source_incarnation !== source.incarnation || prior.root !== row.root)) {
         throw opError('local_conflict', 'The source root changed since migration inventory.',
           `Source ${source.id} was recreated or moved since its migration inventory was taken; review the checkpoint with the user before continuing the migration.`);
@@ -137,6 +168,12 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         }
       }
     } catch (error) {
+      if (error instanceof OperationError && error.code === 'payload_too_large' && error.detail) {
+        row.inventory = prior?.inventory ?? null;
+        row.parked = { limit: error.detail, limits, reason: error.message, parked_at: prior?.parked?.parked_at ?? new Date().toISOString() };
+        await pending('inventory', parkedReason(source.id, row.parked));
+        continue;
+      }
       await pending('inventory', error instanceof OperationError ? error.message : 'The source pack cannot be inventoried safely; inspect its manifest and declared files.', true);
       continue;
     }
@@ -165,7 +202,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       if (!dryRun) {
         try {
           await installPackagedSharedSkills(ctx, source.id, ['README.md', 'LICENSE'].filter(path => existsSync(join(row.root!, path))));
-          row.inventory = inventorySkillpack(row.root);
+          row.inventory = inventorySkillpack(row.root, limits);
         } catch (error) {
           await pending('projection', error instanceof OperationError ? `${error.code}: ${error.message}` : 'Pack initialization failed; inspect the canonical receipt before retrying.');
           continue;
@@ -197,7 +234,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
               `Inspect request ${open.request_id ?? 'receipts'} first; rerunning the migration resumes the same durable request (same request_id), never a second adoption.`);
           }
         }
-        row.inventory = inventorySkillpack(row.root);
+        row.inventory = inventorySkillpack(row.root, limits);
       } catch (error) {
         await pending('projection', error instanceof OperationError ? `${error.code}: ${error.message}` : 'Catalog adoption failed; retry after inspecting the canonical publication receipt.');
         continue;
@@ -220,7 +257,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       try {
         checkedContentRoot(hostDir);
         const entries = readdirSync(hostDir);
-        complete = entries.length <= 256 && entries.every(name => !existsSync(join(hostDir, name, 'SKILL.md')) || declared.has(name));
+        complete = entries.length <= limits.max_files && entries.every(name => !existsSync(join(hostDir, name, 'SKILL.md')) || declared.has(name));
       } catch { complete = false; }
     }
     if (!complete) report.pending_actions.push('Host-global catalog assignment is pending. Review a dedicated content pack root with skillpack.json (brain_resident:true) and declared skills; never register the application checkout. After approval, register it with `gbrain sources add shared-skills --path <reviewed-pack-root> --force --no-federated`. Inspect `gbrain sources writer status --json` before deliberate ownership changes; follow skills/migrations/v0.53.0.0.md for action-specific --admin-intent and reviewed --expected-state claim/activation steps. Quiescence is a separate prerequisite, not administration authority. Preview `gbrain apply-migrations --migration 0.53.0 --dry-run --json`, then apply with --yes only when those stages are approved. Original files and grants are unchanged; unmanifested or undeclared skills require explicit review.');

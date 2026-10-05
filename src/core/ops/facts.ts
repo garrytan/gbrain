@@ -20,7 +20,8 @@ import { readHolders } from './context.ts';
  */
 
 import type { Operation, OperationContext } from './contract.ts';
-import { OperationError, verbError } from './contract.ts';
+import type { Notice } from '../agent-output.ts';
+import { OperationError, opError, verbError } from './contract.ts';
 import { invalidParam, paramUse } from './op-fix.ts';
 import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
 import { markKeywordHits } from '../search/evidence.ts';
@@ -729,13 +730,14 @@ const delta: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
-  description: 'MEMORY VERB (v1): what changed since a time (pages, facts, thread events), zero LLM. Keep a cursor with session_id, or pass since.',
+  description: 'MEMORY VERB (v1): pages, facts, thread events changed since a cursor, zero LLM. Pass session_id, cursor or since.',
   params: {
-    since: { type: 'string', description: 'ISO 8601 cursor (or use session_id).' },
-    since_slug: { type: 'string', description: 'next_cursor.slug from the previous response.' },
-    entities: { type: 'string', description: 'Entity scope for thread events (max 8).' },
+    since: { type: 'string', description: 'ISO 8601 start time.' },
+    since_slug: { type: 'string', description: 'Legacy: next_cursor.slug.' },
+    cursor: { type: 'string', description: 'next_cursor.cursor (exact).' },
+    entities: { type: 'string', description: 'Entities for thread events (max 8).' },
     budget_tokens: { type: 'number', description: 'Token budget; pages pack first.' },
-    session_id: { type: 'string', description: 'Opaque session id; keeps a cursor.' },
+    session_id: { type: 'string', description: 'Session id; keeps a cursor.' },
     include_private: { type: 'boolean', description: 'Local trusted callers only.' },
   },
   scope: 'read',
@@ -745,42 +747,48 @@ const delta: Operation = {
   handler: async (ctx, p) => {
     const { assembleDeltaContext, renderDelta, PACK_DEFAULT_MAX_ENTITIES, renderPageLine, renderFactLine, renderThreadLine, deltaHeaderCost } =
       await import('../context/turn-context.ts');
-    const { getSessionContextState, upsertSessionContextState } = await import('../context/session-state.ts');
+    const { readDeltaSessionState, upsertSessionContextState, gcSessionContextState } = await import('../context/session-state.ts');
+    const cur = await import('../context/delta-cursor.ts');
     const sourceId = ctx.sourceId ?? 'default';
     const rawSince = typeof p.since === 'string' && p.since.trim() ? p.since : null;
-    if (rawSince !== null && !Number.isFinite(Date.parse(rawSince))) {
-      throw verbError(
-        'invalid_params',
-        `delta: since is not a parseable timestamp: "${rawSince.slice(0, 60)}"`,
-        `Pass an ISO 8601 datetime, e.g. ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')}.`,
-      );
-    }
     // NORMALIZE to ISO immediately (red-team F4): the raw string is echoed
     // into the injectable `text` block, so an attacker-shaped-but-parseable
     // `since` must never reach rendering verbatim. A value already in the
     // canonical microsecond shape `listPages` projects (`next_cursor.since`
-    // passed back) is kept verbatim: rounding it through a JS Date would
-    // re-select every same-millisecond row on the resumed wake.
-    // Date.parse normalizes dates such as Feb 31 into March. Check the ISO
-    // calendar date before normalization, including cursors without the
-    // microsecond passthrough shape.
-    const isoDate = rawSince?.match(/^(\d{4})-(\d{2})-(\d{2})T/);
-    const [year, month, day] = isoDate?.slice(1).map(Number) ?? [];
-    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-    const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    if (rawSince !== null && isoDate && (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1])) {
-      throw verbError(
-        'invalid_params',
-        `delta: since is not a valid ISO 8601 calendar timestamp: "${rawSince.slice(0, 60)}"`,
-        `Pass a real calendar datetime, e.g. ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')}.`,
-      );
+    // passed back) is kept verbatim. Date.parse normalizes Feb 31 into March
+    // and accepts years 0 and 10000+ that Postgres timestamptz refuses, so the
+    // calendar date and the 0001-9999 range are checked on the parsed value.
+    let explicitSince: string | null = null;
+    if (rawSince !== null) {
+      const checked = cur.checkDeltaTimestamp(rawSince);
+      if (!checked.ok) {
+        throw verbError(
+          'invalid_params',
+          checked.why === 'unparseable'
+            ? `delta: since is not a parseable timestamp: "${rawSince.slice(0, 60)}"`
+            : checked.why === 'calendar'
+              ? `delta: since is not a valid ISO 8601 calendar timestamp: "${rawSince.slice(0, 60)}"`
+              : `delta: since is outside the accepted range ${cur.DELTA_TIMESTAMP_RANGE}: "${rawSince.slice(0, 60)}"`,
+          checked.why === 'unparseable'
+            ? `Pass an ISO 8601 datetime, e.g. ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')}.`
+            : `Pass a real calendar datetime between years 0001 and 9999, e.g. ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')}.`,
+        );
+      }
+      explicitSince = checked.value;
     }
-    const explicitSince =
-      rawSince === null
-        ? null
-        : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(rawSince)
-          ? rawSince
-          : new Date(Date.parse(rawSince)).toISOString();
+    const rawCursor = typeof p.cursor === 'string' && p.cursor.trim() ? p.cursor.trim() : null;
+    let cursorPos: import('../context/delta-cursor.ts').DeltaPosition | null = null;
+    if (rawCursor !== null) {
+      const decoded = cur.decodeDeltaCursor(rawCursor);
+      if (!decoded.ok) {
+        throw verbError(
+          'invalid_params',
+          `delta: cursor is invalid: ${decoded.why}`,
+          `Pass next_cursor.cursor from a previous delta response unchanged, or omit cursor and pass ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')}.`,
+        );
+      }
+      cursorPos = decoded.pos;
+    }
     const sessionId = typeof p.session_id === 'string' && p.session_id.trim() ? p.session_id : null;
     // Cursor namespace (pre-landing review, fail-closed): 'local' is RESERVED
     // for the trusted CLI/hook lane, gated on STRICT ctx.remote === false —
@@ -793,67 +801,82 @@ const delta: Operation = {
       typeof p.budget_tokens === 'number' && Number.isFinite(p.budget_tokens) && p.budget_tokens > 0
         ? Math.floor(p.budget_tokens)
         : null;
+    const explicitSlug = typeof p.since_slug === 'string' ? p.since_slug : undefined;
+    const read = sessionId ? await readDeltaSessionState(ctx.engine, sourceId, clientId, sessionId) : null;
 
-    const state = sessionId ? await getSessionContextState(ctx.engine, sourceId, clientId, sessionId) : null;
-    const effectiveSince = explicitSince ?? state?.last_wake_at ?? null;
+    // Start position. Explicit overrides replace WHOLE tuples: `cursor` sets
+    // both arms; `since` sets both arms to "strictly after since" with only the
+    // slug the caller supplied (never the session's slug for another time).
+    type Pos = import('../context/delta-cursor.ts').DeltaPosition;
+    const start: Pos | null = cur.resolveDeltaStart({ cursorPos, explicitSince, explicitSlug, session: read?.status === 'loaded' ? read.state : null });
+    const stateful = sessionId !== null;
+    const retryArgs: Record<string, unknown> = {
+      ...(stateful ? { session_id: sessionId } : { cursor: start ? cur.encodeDeltaCursor(start) : undefined }),
+      ...(typeof p.entities === 'string' ? { entities: p.entities } : {}),
+      ...(budgetTokens !== null ? { budget_tokens: budgetTokens } : {}),
+      ...(includePrivate ? { include_private: true } : {}),
+    };
+    const emitIncomplete = (reason: string, consecutive: number) =>
+      ctx.emitNotice?.(incompleteNotice(reason, stateful && consecutive >= DELTA_ESCALATE_AFTER, consecutive, retryArgs));
 
-    if (!effectiveSince) {
+    if (!start) {
       if (!sessionId) {
         throw verbError(
           'invalid_params',
-          'delta requires `since` (ISO 8601) or a `session_id` with an established cursor.',
+          'delta requires `since` (ISO 8601), a `cursor`, or a `session_id` with an established cursor.',
           `Pass ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')} for a stateless delta, or a stable ${paramUse(ctx, 'session_id', 'agent-main')} — the first call establishes the cursor and later calls return only newer changes.`,
         );
       }
-      // First wake for this session: establish the cursor at now and report an
-      // empty delta (there is no prior point to diff against yet). Opportunistic
-      // GC on row creation bounds session-row accumulation on serve-less CLI
-      // lanes and remote read callers minting session ids (pre-landing review).
-      // AWAITED (v0.45.7): a floating engine promise here races the CLI lane's
-      // engine teardown and wedges the process — `gbrain delta --session-id`
-      // printed its response but never exited (the exact command the shipped
-      // HEARTBEAT.md ambient-delta row tells agents to run). GC is two fast
-      // DELETEs on a capped table and internally fail-open, so awaiting costs
-      // one first-wake round-trip, never an error. The serve-boot call site
-      // (src/mcp/server.ts) stays fire-and-forget — that process is long-lived.
+      if (read?.status === 'unavailable') {
+        // A failed state read is NOT a first wake: initializing at now would
+        // drop everything since the session's checkpoint. With no position
+        // there is nothing to deliver, so refuse retryably and move nothing.
+        throw sessionUnavailableError(ctx, bumpLocalDegraded(sourceId, clientId, sessionId, true) >= DELTA_ESCALATE_AFTER, retryArgs);
+      }
+      // First wake (no row, including a GC-expired session): establish the
+      // cursor at now and report an empty delta. Opportunistic GC on row
+      // creation bounds session-row accumulation. AWAITED (v0.45.7): a
+      // floating engine promise races the CLI lane's engine teardown.
       const now = new Date().toISOString();
-      const { gcSessionContextState } = await import('../context/session-state.ts');
-      await upsertSessionContextState(ctx.engine, sourceId, clientId, sessionId, { lastWakeAt: now });
+      const first: Pos = { pages: { since: now }, facts: { at: now, id: null } };
+      const wrote = await upsertSessionContextState(ctx.engine, sourceId, clientId, sessionId, {
+        lastWakeAt: now, factsCursor: { at: now, id: null }, degradedWakes: 'reset',
+      });
       await gcSessionContextState(ctx.engine);
+      ctx.emitNotice?.({
+        code: 'empty_retrieval',
+        kind: 'info',
+        why: `delta started this session's cursor now (${now}); this call and later calls return only changes after it. To read earlier changes, replay statelessly with since (no session_id), which leaves this cursor alone.`,
+        fix: { argv: ['gbrain', 'delta', '--since', '<since>'], mcp: { tool: 'delta', arguments: { since: '<since>' } },
+          inputs: [{ name: 'since', how: 'the ISO 8601 time to read changes from, e.g. 24 hours ago' }],
+          consent: [], actor: 'agent', requires_exclusive: false, why: 'Reads the changes before this session started without moving its cursor.', docs: DELTA_REPLAY_DOCS },
+      });
+      if (!wrote.ok) emitIncomplete('session_state', bumpLocalDegraded(sourceId, clientId, sessionId, true));
       return {
         protocol_version: MEMORY_VERBS_VERSION,
         since: now, pages: [], facts: [], threads: [], text: '', has_more: false,
-        next_cursor: { since: now, slug: '' },
-        ...(budgetTokens !== null
-          ? { budget_tokens: budgetTokens, budget_used: 0, dropped_count: 0 }
-          : {}),
+        next_cursor: { since: now, slug: '', cursor: cur.encodeDeltaCursor(first) },
+        ...(wrote.ok ? {} : { degraded_reason: 'session_state' }),
+        ...(budgetTokens !== null ? { budget_tokens: budgetTokens, budget_used: 0, dropped_count: 0 } : {}),
       };
     }
 
-    // Keyset cursor (red-team F1/F2 fix): pages page by (updated_at, slug), so
-    // a >limit cluster at one timestamp is reachable and a delivered page never
-    // re-appears unless it changes. The keyset slug lives in the session row
-    // (surfaced_slugs[0]); an explicit-`since` caller has no stored slug and
-    // resumes via the returned `next_cursor`.
-    const cursorSlug = sessionId ? state?.surfaced_slugs?.[0] : undefined;
-    const explicitSlug = typeof p.since_slug === 'string' ? p.since_slug : undefined;
-    const sinceSlug = explicitSlug ?? cursorSlug;
-
+    const effectiveSince = start.pages.since;
     const res = await assembleDeltaContext(ctx.engine, {
       sourceId,
       since: effectiveSince,
-      ...(sinceSlug !== undefined ? { sinceSlug } : {}),
+      ...(start.pages.slug !== undefined ? { sinceSlug: start.pages.slug } : {}),
+      factsAfter: start.facts,
       entities: parseEntityList(p.entities),
       sessionId: sessionId ?? undefined,
       includePrivate,
       maxEntities: PACK_DEFAULT_MAX_ENTITIES,
     });
 
-    // Pages arrive OLDEST first by (updated_at, slug) — no client-side dedup
-    // needed; the keyset already excludes everything at/before the cursor.
-    // Pack, price and render the redacted presentation sets (one echo
-    // dictionary). The cursor reads the raw page at the delivered index and
-    // local callers get the delivered facts back raw below.
+    // Pages arrive OLDEST first by (updated_at, slug), facts OLDEST first by
+    // (created_at, id). Pack, price and render the redacted presentation sets
+    // (one echo dictionary). The cursors read the raw rows at the delivered
+    // index and local callers get the delivered facts back raw below.
     const rawPages = res.deltaPages ?? [];
     const rawFacts = res.facts ?? [];
     const view = redactRetrievalOutput([{ pages: rawPages, facts: rawFacts, threads: res.openThreads ?? [] }], {}).results[0];
@@ -864,15 +887,15 @@ const delta: Operation = {
     const threads = view.threads;
     let droppedCount: number | undefined;
     let factsDropped = 0;
+    let itemBudget = 0;
     const fetchedPages = pages.length;
+    const fetchedFacts = facts.length;
     if (budgetTokens !== null) {
       // packToBudget keeps a contiguous PREFIX (order-preserving, stops at the
-      // first overflow) — with oldest-first pages the kept set stays contiguous
-      // from the cursor, which the advance logic below depends on.
-      // #4761: reserve the envelope + headers (they embed `since`, so price per
-      // call) AND every thread line, then cost each page/fact as its rendered
-      // line — `text` fits the budget whenever the reserved part alone does.
-      const itemBudget =
+      // first overflow), which both arms' delivered-prefix cursors depend on.
+      // #4761: reserve the envelope + headers and every thread line, then cost
+      // each page/fact as its rendered line.
+      itemBudget =
         budgetTokens - deltaHeaderCost(effectiveSince) - threads.reduce((n, t) => n + lineCost(renderThreadLine(t)), 0);
       const pagePack = itemBudget > 0 ? packToBudget(pages, (pg) => lineCost(renderPageLine(pg)), itemBudget) : dropAll(pages);
       pages = pagePack.items;
@@ -883,45 +906,96 @@ const delta: Operation = {
       factsDropped = factPack.meta.dropped;
     }
     const pagesDropped = fetchedPages - pages.length;
-    // has_more covers ALL undelivered content — fetch-limit overflow, budget-
-    // dropped pages, AND budget-dropped facts (pre-landing review: facts were
-    // silently lost when pages fit but facts overflowed).
-    // ponytail: dropped facts keep the pre-existing ceiling — the cursor still
-    // advances past delivered pages, so they re-surface only if their
-    // created_at is after the new cursor; a per-arm cursor would fix it.
-    const hasMore = res.deltaOverflow === true || pagesDropped > 0 || factsDropped > 0;
+    const factsOverflowRow = res.deltaFactsOverflowRow ?? null;
+    // has_more: more content is waiting (fetch-limit overflow on either arm or
+    // a budget drop). Failure is signalled by degraded_reason + the notice.
+    const hasMore = res.deltaOverflow === true || factsOverflowRow !== null || pagesDropped > 0 || factsDropped > 0;
 
-    // Cursor advance (keyset, at-least-once): advance to the last DELIVERED
-    // (updated_at, slug). The keyset's strict `>` means the next wake starts
-    // exactly after it — a >limit same-timestamp cluster drains one page at a
-    // time across wakes (F1), and a delivered page never re-appears (F2). On a
-    // page-less wake with nothing dropped, advance the TIME cursor to now()
-    // minus a safety lag (in-flight write txns stamp updated_at at txn START)
-    // and clear the keyset slug. If nothing delivered but something dropped, do
-    // NOT advance (deliver-before-advance; a too-small budget must not eat it).
-    const nextCursor =
-      pages.length > 0
-        ? { since: rawPages[pages.length - 1].updated_at, slug: rawPages[pages.length - 1].slug }
-        : { since: effectiveSince, slug: sinceSlug ?? '' };
+    // Per-arm advance (at-least-once): each arm moves through the prefix it
+    // DELIVERED and never past now() - lag; an arm whose read failed or never
+    // finished holds. Thread events follow the pages' time cursor, so an
+    // incomplete threads arm holds the pages arm too.
+    const arms = res.deltaArms ?? { pages: 'unknown', facts: 'unknown', threads: 'unknown' };
+    const horizon = cur.horizonIso();
+    const pagesNext = cur.nextPagesPos({
+      start: start.pages,
+      complete: arms.pages === 'ok' && arms.threads === 'ok',
+      delivered: rawPages.slice(0, pages.length),
+      undelivered: res.deltaOverflow === true || pagesDropped > 0,
+      horizon,
+      advanceOnEmpty: stateful,
+    });
+    const deliveredRepIds = new Set(rawFacts.slice(0, facts.length).map((f) => f.id));
+    const { next: factsNext, oldestUndelivered } = cur.nextFactsPos({
+      start: start.facts,
+      complete: arms.facts === 'ok',
+      raw: res.deltaFactsRaw ?? [],
+      overflowRow: factsOverflowRow,
+      deliveredRepIds,
+      horizon,
+      advanceOnEmpty: stateful,
+    });
+    const next: Pos = { pages: pagesNext, facts: factsNext };
+
+    // Conservative legacy `since`/`slug` for clients that do not send `cursor`.
+    const incomplete = res.degradedReason !== undefined;
+    const { legacy, clamped } = cur.legacyDeltaCursor({
+      start, pagesNext, factsNext, oldestUndelivered, incomplete,
+      pagesDelivered: pages.length, factsDelivered: facts.length,
+      pagesQuiet: res.deltaOverflow !== true && pagesDropped === 0,
+    });
+    if (clamped && !stateful && cursorPos === null && cur.comparePages(legacy, start.pages) <= 0) {
+      // A legacy stateless caller at a boundary it cannot page (more undelivered
+      // facts at one timestamp than the fetch limit): advancing would skip
+      // them and holding would loop forever. Only the opaque cursor can page it.
+      const exact = cur.encodeDeltaCursor(next);
+      const e = opError(
+        'delta_cursor_upgrade_required',
+        'delta: more undelivered facts share one timestamp than a since/since_slug cursor can page.',
+        `Repeat the call with ${paramUse(ctx, 'cursor', exact)} instead of since/since_slug.`,
+        {
+          why: 'The legacy cursor is a single timestamp; facts that share it can only be paged by fact id, which the opaque cursor carries. Nothing was skipped and no cursor moved.',
+          fix: { argv: deltaArgv({ cursor: exact }), mcp: { tool: 'delta', arguments: { cursor: exact } }, consent: [], actor: 'agent', requires_exclusive: false,
+            why: 'Resumes both arms exactly; keep passing next_cursor.cursor on later calls.', docs: DELTA_REPLAY_DOCS },
+        },
+      );
+      e.protocolVersion = MEMORY_VERBS_VERSION;
+      throw e;
+    }
+
+    let degradedReason = res.degradedReason;
     if (sessionId) {
-      if (pages.length > 0) {
-        await upsertSessionContextState(ctx.engine, sourceId, clientId, sessionId, {
-          lastWakeAt: nextCursor.since,
-          cursorSlug: nextCursor.slug,
-        });
-      } else if (!hasMore) {
-        await upsertSessionContextState(ctx.engine, sourceId, clientId, sessionId, {
-          lastWakeAt: new Date(Date.now() - 2000).toISOString(),
-          cursorSlug: '',
-        });
-      }
+      const wrote = await upsertSessionContextState(ctx.engine, sourceId, clientId, sessionId, {
+        lastWakeAt: pagesNext.since,
+        cursorSlug: pagesNext.slug ?? '',
+        factsCursor: { at: factsNext.at, id: factsNext.id },
+        degradedWakes: incomplete ? 'increment' : 'reset',
+      });
+      if (!wrote.ok) degradedReason = degradedReason ? `${degradedReason},session_state` : 'session_state';
+      const consecutive = wrote.ok ? (bumpLocalDegraded(sourceId, clientId, sessionId, false), wrote.degradedWakes) : bumpLocalDegraded(sourceId, clientId, sessionId, true);
+      if (degradedReason) emitIncomplete(degradedReason, consecutive);
+    } else if (degradedReason) {
+      emitIncomplete(degradedReason, 1);
+    }
+
+    // A budget too small for even ONE waiting item would return has_more
+    // forever; say so with the budget that fits the next item.
+    if (budgetTokens !== null && pages.length === 0 && facts.length === 0 && (pagesDropped > 0 || factsDropped > 0)) {
+      const nextItem = fetchedPages > 0 ? lineCost(renderPageLine(view.pages[0])) : fetchedFacts > 0 ? lineCost(renderFactLine(view.facts[0])) : 0;
+      const needed = budgetTokens - itemBudget + nextItem;
+      const bigger = { ...retryArgs, budget_tokens: needed };
+      ctx.emitNotice?.({
+        code: 'delta_incomplete',
+        kind: 'degraded',
+        why: `budget_tokens ${budgetTokens} cannot fit even one waiting item (the next one needs ${needed}); repeating the call with the same budget returns has_more forever.`,
+        fix: { argv: deltaArgv(bigger), mcp: { tool: 'delta', arguments: bigger }, consent: [], actor: 'agent', requires_exclusive: false,
+          why: `Repeat with budget_tokens ${needed} or more; nothing was skipped and no cursor moved.` },
+      });
     }
 
     // Re-render the injectable block from the FINAL sets (adversarial review):
     // `text` must honor the budget AND the boundary-tie exclusion the
     // structured arrays reflect — the assembler's render predates both.
-    // budget_used reports that text; it exceeds budget_tokens only when the
-    // header + the never-truncated threads alone do.
     const text = renderDelta(pages, facts, threads, effectiveSince);
     const budgetUsed = budgetTokens !== null ? estimateTokens(text) : undefined;
 
@@ -930,6 +1004,7 @@ const delta: Operation = {
       since: effectiveSince,
       pages,
       facts: (ctx.remote === false ? rawFacts.slice(0, facts.length) : facts).map((f) => ({
+        id: f.id,
         fact: f.fact,
         kind: f.kind,
         entity_slug: f.entity_slug,
@@ -941,16 +1016,95 @@ const delta: Operation = {
       threads,
       text,
       has_more: hasMore,
-      // Stateless resume: a caller with no session_id passes these back as
-      // `since` + `since_slug` on the next call to page deterministically.
-      next_cursor: nextCursor,
-      ...(res.degradedReason ? { degraded_reason: res.degradedReason } : {}),
+      // Stateless resume: pass `cursor` back (exact, both arms). Older clients
+      // pass `since` + `since_slug` (conservative: may re-see, never skips).
+      next_cursor: { since: legacy.since, slug: legacy.slug ?? '', cursor: cur.encodeDeltaCursor(next) },
+      // Replay audit trail: where each arm started and where it resumes.
+      cursor_arms: {
+        pages: { start: { since: start.pages.since, slug: start.pages.slug ?? null }, next: { since: pagesNext.since, slug: pagesNext.slug ?? null } },
+        facts: { start: { since: start.facts.at, id: start.facts.id }, next: { since: factsNext.at, id: factsNext.id } },
+      },
+      ...(degradedReason ? { degraded_reason: degradedReason } : {}),
       ...(budgetTokens !== null
         ? { budget_tokens: budgetTokens, budget_used: budgetUsed, dropped_count: droppedCount }
         : {}),
     };
   },
 };
+
+/** delta: consecutive incomplete wakes before the notice escalates from `wait` to `report`. */
+const DELTA_ESCALATE_AFTER = 3;
+const DELTA_RETRY_SECONDS = 30;
+const DELTA_REPLAY_DOCS = 'docs/guides/ambient-recall.md#replay-after-a-degraded-wake';
+
+/** The delta_incomplete notice: retry the same call after a short wait, or report once it keeps failing. */
+function incompleteNotice(reason: string, escalate: boolean, consecutive: number, retryArgs: Record<string, unknown>): Notice {
+  return {
+    code: 'delta_incomplete',
+    kind: 'degraded',
+    why: escalate
+      ? `delta has been incomplete on ${consecutive} consecutive wakes (${reason}); no cursor moved past content it did not deliver, but the store is not recovering on its own.`
+      : `delta could not complete this read (${reason}); no cursor moved past content it did not deliver. Retry the same call in about ${DELTA_RETRY_SECONDS} seconds and the held cursor re-reads the same window.`,
+    fix: escalate
+      ? { consent: [], actor: 'agent', requires_exclusive: false,
+          why: 'Tell the user delta keeps failing, then run gbrain doctor --json to find the failing store.',
+          verify: { argv: ['gbrain', 'doctor', '--json'] }, docs: DELTA_REPLAY_DOCS }
+      : { argv: deltaArgv(retryArgs), mcp: { tool: 'delta', arguments: retryArgs }, consent: [], actor: 'provider', requires_exclusive: false,
+          why: `Retry the same read after about ${DELTA_RETRY_SECONDS} seconds; nothing was skipped.`, docs: DELTA_REPLAY_DOCS },
+  };
+}
+
+/** A failed session-state read is NOT a first wake: refuse retryably, move nothing. */
+function sessionUnavailableError(ctx: OperationContext, escalate: boolean, retryArgs: Record<string, unknown>): OperationError {
+  const e = opError(
+    'unavailable',
+    'delta: the session cursor could not be read, so this wake delivered nothing and moved nothing.',
+    escalate
+      ? 'The session store has failed on several consecutive wakes: tell the user and run `gbrain doctor --json`.'
+      : `Retry the same call in about ${DELTA_RETRY_SECONDS} seconds, or replay statelessly with ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')}.`,
+    {
+      reason: 'session_state',
+      why: 'Treating a failed read as a new session would restart the cursor at now and silently skip everything since its checkpoint.',
+      fix: escalate
+        ? { consent: [], actor: 'agent', requires_exclusive: false, why: 'Tell the user the session store keeps failing, then run gbrain doctor --json.', verify: { argv: ['gbrain', 'doctor', '--json'] }, docs: DELTA_REPLAY_DOCS }
+        : { argv: deltaArgv(retryArgs), mcp: { tool: 'delta', arguments: retryArgs }, consent: [], actor: 'provider', requires_exclusive: false,
+            why: `Retry the same read after about ${DELTA_RETRY_SECONDS} seconds; the checkpoint is intact.`, docs: DELTA_REPLAY_DOCS },
+    },
+  );
+  e.protocolVersion = MEMORY_VERBS_VERSION;
+  return e;
+}
+
+/** CLI form of a delta call (flags mirror the params). */
+function deltaArgv(args: Record<string, unknown>): string[] {
+  const argv = ['gbrain', 'delta'];
+  for (const [k, v] of Object.entries(args)) {
+    if (v === undefined) continue;
+    const flag = `--${k.replace(/_/g, '-')}`;
+    if (v === true) argv.push(flag);
+    else argv.push(flag, String(v));
+  }
+  return argv;
+}
+
+/**
+ * In-process consecutive-incomplete counter: the fallback when the session
+ * store itself is down (the durable counter lives in session_context_state).
+ * Bounded; returns the count after the update.
+ */
+const localDegraded = new Map<string, number>();
+function bumpLocalDegraded(sourceId: string, clientId: string | null, sessionId: string, incomplete: boolean): number {
+  const key = `${sourceId}|${clientId ?? 'local'}|${sessionId}`;
+  if (!incomplete) {
+    localDegraded.delete(key);
+    return 0;
+  }
+  const n = (localDegraded.get(key) ?? 0) + 1;
+  localDegraded.delete(key);
+  localDegraded.set(key, n);
+  if (localDegraded.size > 1_000) localDegraded.delete(localDegraded.keys().next().value!);
+  return n;
+}
 
 const forget_fact: Operation = {
   name: 'forget_fact',

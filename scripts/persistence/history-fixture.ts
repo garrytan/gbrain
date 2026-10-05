@@ -27,14 +27,15 @@
  *   and `exchangeClientCredentials`;
  * - the access token with unified grant columns: `mintLegacyToken`;
  * - the delayed effect: a real Git effect that failed on a stale `index.lock`
- *   and was rescheduled with `next_attempt_at` in the future (the lock is then
- *   removed);
+ *   (dated past the 10-minute contention grace, `git_index_stale`) and was
+ *   rescheduled with `next_attempt_at` in the future, then held a day out so
+ *   it stays delayed for the fixture's lifetime (the lock is then removed);
  * - the queued request: `admitWrite`, the journal call every page mutation
  *   makes, with no owner running: the state a crash right after admission leaves.
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -45,6 +46,7 @@ import { admitWrite } from '../../src/core/persistence/journal.ts';
 import { submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { requestPrincipalForContext } from '../../src/core/persistence/page-mutations.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { declarePersistenceProtocol } from '../../src/core/persistence/protocol.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
@@ -227,10 +229,14 @@ export async function buildHistoryFixture(engine: BrainEngine,
   const failed = observations.filter(o => o.status !== 'committed');
   assert.deepEqual(failed.map(o => `${o.id} ${o.kind} ${o.code}`), [], 'every history op must commit');
 
-  // A Git effect that fails on a stale index.lock reschedules into the future.
+  // A Git effect that fails on a stale index.lock reschedules into the future. A lock younger than
+  // 10 minutes is contention (`git_index_locked`, retried after 250 ms), so the lock is dated
+  // 11 minutes back: the effect fails as `git_index_stale` and requeues 30 s out.
   const delayedSource = fixtureSources[0];
   const lock = join(checkouts[delayedSource.worktree], '.git', 'index.lock');
   writeFileSync(lock, '');
+  const staleAt = new Date(Date.now() - 11 * 60_000);
+  utimesSync(lock, staleAt, staleAt);
   let delayedEffectId: string;
   try {
     const delayed = descriptor('delayed-effect', 'put_page', 'local', delayedSource.id,
@@ -241,11 +247,18 @@ export async function buildHistoryFixture(engine: BrainEngine,
     for (;;) {
       const [effect] = await engine.executeRaw<{ id: string }>(`SELECT e.id::text AS id FROM persistence_effects e
         JOIN persistence_requests r ON r.id=e.request_id WHERE r.request_id=$1::uuid AND e.kind='git'
-          AND e.state='queued' AND e.attempts>0 AND e.next_attempt_at>now()`, [delayed.requestId]);
+          AND e.state='queued' AND e.attempts>0 AND e.error_code='git_index_stale' AND e.next_attempt_at>now()`, [delayed.requestId]);
       if (effect) { delayedEffectId = effect.id; break; }
       assert(Date.now() < deadline, 'history fixture: the Git effect never rescheduled after the stale index.lock');
       await Bun.sleep(100);
     }
+    // The production requeue is a fixed 30 s with no setting to lengthen it, and callers keep the
+    // fixture longer than that (a graduation copies it), so the recorded failure is kept and only
+    // its retry moves a day out: the effect stays delayed for the fixture's lifetime.
+    await engine.transaction(async tx => {
+      await declarePersistenceProtocol(tx);
+      await tx.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 day' WHERE id=$1", [delayedEffectId]);
+    });
   } finally {
     await disposePersistenceConsumer(engine);
     if (existsSync(lock)) rmSync(lock);

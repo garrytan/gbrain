@@ -237,7 +237,8 @@ export type CollapsedHotFact<R extends HotFactRow> = R & { entity_slugs?: string
  * (fingerprint, entity) group; groups of different entities merge only when
  * the claim names one of them. Input order is preserved by representative.
  */
-export async function collapseHotFacts<R extends HotFactRow>(engine: BrainEngine, sourceId: string, rows: R[]): Promise<CollapsedHotFact<R>[]> {
+/** `members` (optional) receives raw row id -> emitted representative id, so delta can advance its facts keyset through raw rows. */
+export async function collapseHotFacts<R extends HotFactRow>(engine: BrainEngine, sourceId: string, rows: R[], members?: Map<number, number>): Promise<CollapsedHotFact<R>[]> {
   const byFingerprint = new Map<string, R[]>();
   for (const row of rows) {
     const key = row.fact_fingerprint ?? `id:${row.id}`;
@@ -264,6 +265,7 @@ export async function collapseHotFacts<R extends HotFactRow>(engine: BrainEngine
     if (emitted.has(cluster)) continue;
     emitted.add(cluster);
     const newest = cluster.reduce((a, b) => b.created_at.getTime() > a.created_at.getTime() || b.created_at.getTime() === a.created_at.getTime() && b.id > a.id ? b : a);
+    if (members) for (const r of cluster) members.set(r.id, newest.id);
     const slugs = [...new Set([newest.entity_slug, ...cluster.map(r => r.entity_slug)].filter((s): s is string => !!s))];
     out.push(slugs.length > 1 ? { ...newest, entity_slugs: slugs } : newest);
   }

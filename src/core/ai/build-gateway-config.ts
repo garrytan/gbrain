@@ -85,6 +85,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     expansion_model: c.expansion_model,
     chat_model: c.chat_model,
     chat_fallback_chain: c.chat_fallback_chain,
+    chat_fallback_on_refusal: c.chat_fallback_on_refusal,
     base_urls: { ...envBaseUrls, ...(c.provider_base_urls ?? {}) }, // config wins over env
     provider_chat_options: c.provider_chat_options,
     // #1249 empty-string drop + GEMINI alias applied inside mergedProviderEnv.

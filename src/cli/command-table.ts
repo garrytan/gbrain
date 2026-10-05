@@ -359,7 +359,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // top-level help's own SOURCES block promises `sources --help` as the place to find the long tail
   // (rename, default, attach, current, federate, set-cr-mode, webhook, harden, ...). That made the
   // pointer circular and those subcommands undiscoverable from the CLI in either direction.
-  { name: 'sources', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/sources.ts') },
+  { name: 'sources', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/sources.ts') },
   // CLI_ONLY: Open-loop engine CLI (engine-bound; trusted-local op dispatch).
   { name: 'waiting', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/waiting.ts') },
   { name: 'loops', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/loops.ts') },

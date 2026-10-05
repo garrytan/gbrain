@@ -599,6 +599,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | The brain database could not be reached or refused the operation. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### delta_cursor_upgrade_required
+
+<a id="delta_cursor_upgrade_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A since/since_slug delta call reached more undelivered facts at one timestamp than that cursor can page; repeat the call with the opaque cursor. | The legacy cursor is a single timestamp, so facts that share one can only be paged by fact id, which next_cursor.cursor carries. Nothing was skipped and no cursor moved. | Repeat the delta call with the cursor from fix (next_cursor.cursor) instead of since/since_slug, and keep passing next_cursor.cursor afterwards. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/guides/ambient-recall.md#replay-after-a-degraded-wake)
+
 ### demo_graph_failed
 
 <a id="demo_graph_failed"></a>

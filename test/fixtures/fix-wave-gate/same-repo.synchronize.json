@@ -1,0 +1,40 @@
+{
+  "action": "synchronize",
+  "pull_request": {
+    "number": 9002,
+    "title": "fix: something",
+    "user": {
+      "login": "garrytan",
+      "type": "User"
+    },
+    "labels": [],
+    "head": {
+      "ref": "capy/gbra-42-fix-sync",
+      "sha": "1111111111111111111111111111111111111111",
+      "repo": {
+        "id": 1000000001,
+        "full_name": "garrytan/gbrain",
+        "fork": false
+      },
+      "user": {
+        "login": "garrytan"
+      }
+    },
+    "base": {
+      "ref": "master",
+      "sha": "2222222222222222222222222222222222222222",
+      "repo": {
+        "id": 1000000001,
+        "full_name": "garrytan/gbrain"
+      }
+    }
+  },
+  "repository": {
+    "id": 1000000001,
+    "full_name": "garrytan/gbrain"
+  },
+  "sender": {
+    "login": "garrytan",
+    "type": "User"
+  }
+}

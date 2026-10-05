@@ -238,6 +238,18 @@ Vacuous-assertion shapes to avoid (they recur):
 - asserting a substring that would also appear in the broken output —
   assert parsed structure instead.
 
+For a whole range of merged changes or open PRs, the contributor audit runs
+the same check per change without the helper's whole-file revert: it reverses
+only that change's product hunks at the audited head, so later fixes stay in
+place. Try it on the offline fixture first:
+
+```bash
+bun scripts/contributor-audit-fixture.ts /tmp/audit-demo   # prints the audit command for the fixture range
+bun run audit:contributors <base>..<head> [--prs <manifest>] [--json]
+```
+
+Details, exit codes and the scrubbed sandbox: [Contributor audit](docs/TESTING.md#contributor-audit).
+
 Before adding a test, answer the four questions in the
 [authoring gate](docs/TESTING.md#authoring-gate); before deleting one, follow
 [Retiring a test](docs/TESTING.md#retiring-a-test) and record its evidence
@@ -662,6 +674,28 @@ community-PR-wave workflow) lives in [`docs/RELEASING.md`](docs/RELEASING.md).
 Community PRs are batched into release waves rather than merged one-by-one;
 contributor attribution stays attached via `Co-Authored-By:` trailers and every
 accepted contribution is credited in `CHANGELOG.md`.
+
+### How a contributor PR lands
+
+Contributor PRs are never merged into master as-is. A maintainer folds the
+change into a fix-wave PR, revises it there (tests, agent-facing errors,
+conventions) and lands it with credit: the commit says `Contributed by @handle`
+and carries a `Co-Authored-By:` trailer. Your PR stays open until then. When
+the fix wave merges, a workflow closes your PR with a comment that links the wave.
+
+The **Fix-wave gate** check enforces this. It fails every PR into master whose
+head branch is not in `garrytan/gbrain` itself, and posts one comment saying
+so when the PR opens. A red gate on a contributor PR is expected and is not a
+judgment of the work. Maintainers' own branches (`capy/*`, `garrytan/*`) pass.
+
+`maintainer-override` label: a human on the maintainer allowlist in
+`scripts/fix-wave-gate.ts` (it starts as `garrytan`) may apply it to pass the
+gate for one PR a maintainer has decided may land from its fork (for example a
+fix wave a maintainer opened from a fork); record the reason in a PR comment.
+Bots never count, and the label only counts when the most recent
+`labeled` event was made by an allowlisted human. Every override is written to
+the check's run log and step summary with who applied it and when. Process and
+settings: [docs/RELEASING.md](docs/RELEASING.md#fix-wave-gate).
 
 ## Welcome PRs
 

@@ -2879,6 +2879,16 @@ async function completeEngineStartup(engine: BrainEngine): Promise<void> {
   } catch {
     // Non-fatal. Pre-v39 brains may not have a usable config table yet.
   }
+
+  // The one-time behavior-change disclosure on the CLI channel (stderr). `serve`
+  // delivers it per MCP channel; `doctor` reads it without marking it shown.
+  if (dispatchedCommand !== 'serve' && dispatchedCommand !== 'doctor') {
+    try {
+      const { takeLocalBehaviorNotice } = await import('./core/behavior-change-notice.ts');
+      const notice = await takeLocalBehaviorNotice(engine, 'cli', { cfg: MERGED_CONFIG_BY_ENGINE.get(engine) ?? config });
+      if (notice) writeCliNotice(notice);
+    } catch { /* a disclosure never breaks a command */ }
+  }
 }
 
 /** CLI-only usage examples appended to `gbrain <command> --help`. */

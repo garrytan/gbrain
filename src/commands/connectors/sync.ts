@@ -16,7 +16,8 @@ import { connectorProviderNames, isConnectorProviderName } from '../../core/conn
 import { loadCredential } from '../../core/connectors/credentials.ts';
 import { sourceIdKey } from '../../core/connectors/config-keys.ts';
 import type { ConnectorProviderName } from '../../core/connectors/types.ts';
-import { intFlagValue } from '../../cli/flag-values.ts';
+import { flagValueError, intFlagValue } from '../../cli/flag-values.ts';
+import { usageError } from '../../cli/cli-error.ts';
 
 interface SyncFlags {
   full: boolean;
@@ -30,9 +31,10 @@ interface SyncFlags {
   all: boolean;
 }
 
-function parseFlags(args: string[]): { provider: string; flags: SyncFlags } {
+function parseFlags(args: string[]): { provider: string; providerIndex: number; flags: SyncFlags } {
   const flags: SyncFlags = { full: false, dryRun: false, embed: false, background: false, json: false, all: false };
   let provider = '';
+  let providerIndex = -1;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--all') flags.all = true;
@@ -45,19 +47,35 @@ function parseFlags(args: string[]): { provider: string; flags: SyncFlags } {
     else if (a === '--limit') flags.limit = intFlagValue(args[++i], '--limit', { min: 1, example: 50 });
     else if (a === '--window-days') flags.windowDays = intFlagValue(args[++i], '--window-days', { min: 0, example: 30 });
     else if (a === '--source') flags.source = args[++i];
-    else if (!a.startsWith('-')) provider = a;
+    else if (!a.startsWith('-')) { provider = a; providerIndex = i; }
   }
-  return { provider, flags };
+  return { provider, providerIndex, flags };
+}
+
+const SYNC_USAGE = 'gbrain connectors sync <chatgpt|claude>|--all [--full] [--dry-run] [--limit N] [--window-days N] [--source id] [--embed] [--background] [--json]';
+
+/** Agent contract v1: usage errors are `invalid_params` (exit 2, one `--json` envelope) naming the usage and the fix. */
+function syncUsageError(message: string, fix: { argv: string[]; inputs: Array<{ name: string; how: string }> }) {
+  return usageError(message, `Usage: ${SYNC_USAGE}`, {
+    why: 'gbrain connectors sync needs one provider (or --all) and a value after every value flag.',
+    fix: { ...fix, consent: [], actor: 'agent', why: 'A corrected command line runs the sync.', requires_exclusive: false },
+  });
 }
 
 export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): Promise<void> {
-  if (args.some((arg, i) => arg === '--source' && (!args[i + 1] || args[i + 1].startsWith('-')))) {
-    console.error('Usage: gbrain connectors sync <chatgpt|claude>|--all [--full] [--dry-run] [--limit N] [--source id]');
-    setCliExitVerdict(1);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`Usage: ${SYNC_USAGE}`);
     return;
   }
+  const badSource = args.findIndex((arg, i) => arg === '--source' && (!args[i + 1] || args[i + 1].startsWith('-')));
+  if (badSource !== -1) {
+    const argv = ['gbrain', 'connectors', 'sync', ...args.slice(0, badSource + 1), '<SOURCE_ID>', ...args.slice(badSource + 1)];
+    throw syncUsageError(flagValueError('--source', args[badSource + 1], 'a source id', 'default').message, {
+      argv, inputs: [{ name: 'SOURCE_ID', how: 'The id of the source the imported conversations belong to (gbrain sources list), or drop --source to use the configured connector source.' }],
+    });
+  }
 
-  const { provider, flags } = parseFlags(args);
+  const { provider, providerIndex, flags } = parseFlags(args);
 
   // Resolve the target provider set.
   let providers: ConnectorProviderName[];
@@ -72,9 +90,11 @@ export async function runConnectorSyncCmd(engine: BrainEngine, args: string[]): 
   } else if (isConnectorProviderName(provider)) {
     providers = [provider];
   } else {
-    console.error('Usage: gbrain connectors sync <chatgpt|claude>|--all [--full] [--dry-run] [--limit N]');
-    setCliExitVerdict(1);
-    return;
+    const names = connectorProviderNames();
+    throw syncUsageError(provider ? `Unknown connector provider '${provider}'; expected ${names.join(', ')} or --all.` : `Name a connector provider (${names.join(', ')}) or pass --all.`, {
+      argv: ['gbrain', 'connectors', 'sync', '<PROVIDER>', ...args.filter((_, i) => i !== providerIndex)],
+      inputs: [{ name: 'PROVIDER', how: `One of ${names.join(', ')}, or --all for every provider with a credential (gbrain connectors providers lists them).` }],
+    });
   }
 
   const sourceId = flags.source ?? (await engine.getConfig(sourceIdKey())) ?? 'default';

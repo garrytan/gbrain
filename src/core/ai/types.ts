@@ -504,6 +504,8 @@ export interface AIGatewayConfig {
    * Judge, critic and eval call sites opt out with `allowFallback: false`.
    */
   chat_fallback_chain?: string[];
+  /** `false` keeps outage fallback but never sends a refused request to the next chain entry. Default true. */
+  chat_fallback_on_refusal?: boolean;
   /** Optional per-provider base URL override (openai-compatible variants). */
   base_urls?: Record<string, string>;
   /** Optional chat providerOptions overrides keyed by recipe id or "recipe:modelId". */

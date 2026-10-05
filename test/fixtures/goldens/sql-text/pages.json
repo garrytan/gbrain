@@ -540,8 +540,8 @@
               "number",
               "number"
             ],
-            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND (p.updated_at > $1::timestamptz OR (p.updated_at = $2::timestamptz AND p.slug > $3)) AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $4 OFFSET $5",
-            "textSha256": "9a681698e0e8f5db467af463257f72afd33c8bf51ac91ae09b7119c8ace39e9c"
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND (p.updated_at > $1::text::timestamptz OR (p.updated_at = $2::text::timestamptz AND p.slug > $3)) AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $4 OFFSET $5",
+            "textSha256": "e8c035bd6109b92df5e6f89080db721da06e12d57e58d3d7d7c98346d70a30af"
           }
         ],
         "updated_after": [
@@ -552,8 +552,8 @@
               "number",
               "number"
             ],
-            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.updated_at > $1::timestamptz AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
-            "textSha256": "1df2d216e9f3e7a7b13e7e2c765a1b87e086d9367ce7540d13b7de62be8bf004"
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.updated_at > $1::text::timestamptz AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "98825ce723c789c3a2796f00c1fa36e988d6630803577600aed5a85adb258624"
           }
         ]
       },

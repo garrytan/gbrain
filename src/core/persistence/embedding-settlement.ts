@@ -35,6 +35,7 @@ import { guardEffectSource } from './effect-recovery.ts';
 import { assertEmbeddingEffectEnabled, readEmbeddingEffectProjection, selectedEffectPage } from './effects.ts';
 import { targetedWithdrawalEffect } from './effect-targets.ts';
 import type { PersistenceEffect } from './effect-model.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 
 export type EmbeddingSettlementOutcome = 'reconciled' | 'superseded' | 'retry_queued' | 'blocked' | 'changed_since_preview';
 
@@ -85,6 +86,7 @@ export function embeddingGrantId(runId: string, effectId: string | number): stri
 export async function settleEmbeddingEffect(engine: BrainEngine, candidate: Pick<EmbeddingCandidate, 'effect_id' | 'state' | 'attempts'>,
   opts: { dryRun: boolean; config: GBrainConfig | null; hostId: string; runId?: string }): Promise<EmbeddingSettlement> {
   return engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
     const [effect] = await tx.executeRaw<PersistenceEffect & { request_state: string }>(`SELECT e.*, r.state AS request_state
       FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id WHERE e.id = $1 FOR UPDATE OF e`, [candidate.effect_id]);
     if (!effect || effect.kind !== 'embedding' || effect.request_state !== 'committed' || effect.state !== candidate.state

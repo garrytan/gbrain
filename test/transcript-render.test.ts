@@ -306,6 +306,20 @@ describe('part splitting [embed-skip is the binding limit]', () => {
     }
   });
 
+  test('partTargetBytes overrides the part target and defaults to PART_TARGET_BYTES', () => {
+    const msgs = Array.from({ length: 40 }, (_, i) => ({
+      role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      timestamp: `2026-08-02T09:00:${String(i).padStart(2, '0')}.000Z`,
+      text: `m${i} ${'y'.repeat(900)}`,
+    }));
+    const red = redactSession(session(msgs), { userPatternsPath: '/nonexistent' });
+    expect(renderSessionParts(red).parts.length).toBe(1);
+    expect(renderSessionParts(red, { sourcePath: '', partTargetBytes: PART_TARGET_BYTES }).parts.length).toBe(1);
+    const small = renderSessionParts(red, { sourcePath: '', partTargetBytes: 10_000 });
+    expect(small.parts.length).toBeGreaterThan(3);
+    for (const p of small.parts) expect(Buffer.byteLength(p.body, 'utf8')).toBeLessThan(10_000 + 2_000);
+  });
+
   test('sessions with zero timestamps are refused (never fabricate provenance)', () => {
     const noTs = session(
       [{ role: 'user', timestamp: '', text: 'hello' }],

@@ -766,12 +766,16 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
     properties: {
       protocol_version: { type: 'integer', const: MEMORY_VERBS_VERSION },
       since: { type: 'string', description: 'The ISO cursor this delta was computed against.' },
-      has_more: { type: 'boolean', description: 'True when changes beyond the fetch limit or budget were NOT delivered; with session_id the cursor advanced only to the last delivered page, so the tail surfaces on the next wake.' },
+      has_more: { type: 'boolean', description: 'True when more content is waiting (a fetch limit or the budget); each arm advanced only through what it delivered, so the rest surfaces on the next wake. Failure is degraded_reason, never has_more.' },
       next_cursor: {
         type: 'object',
         required: ['since', 'slug'],
-        description: 'Keyset to resume from (stateless callers pass back as since + since_slug).',
-        properties: { since: { type: 'string' }, slug: { type: 'string' } },
+        description: 'Where to resume. `cursor` (opaque, both arms exact) is passed back as cursor; older clients pass since + since_slug, which is conservative (may re-deliver, never skips): it holds while any arm failed and stays strictly before the oldest undelivered fact.',
+        properties: { since: { type: 'string' }, slug: { type: 'string' }, cursor: { type: 'string' } },
+      },
+      cursor_arms: {
+        type: 'object',
+        description: 'Replay audit trail: each arm\'s start and next keyset (pages: since + slug; facts: since + id).',
       },
       pages: {
         type: 'array',
@@ -792,6 +796,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
           type: 'object',
           required: ['fact', 'kind'],
           properties: {
+            id: { type: 'integer', description: 'Fact id (dedupe key for replay).' },
             fact: { type: 'string' },
             kind: { type: 'string' },
             entity_slug: { type: ['string', 'null'] },
@@ -813,7 +818,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
         },
       },
       text: { type: 'string' },
-      degraded_reason: { type: 'string' },
+      degraded_reason: { type: 'string', description: 'Comma-joined incomplete parts: deadline, pages, facts, threads, session_state. No cursor moved past anything undelivered; a delta_incomplete notice carries the retry step.' },
       budget_tokens: { type: 'integer' },
       budget_used: { type: 'integer' },
       dropped_count: { type: 'integer' },

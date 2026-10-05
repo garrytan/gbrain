@@ -537,7 +537,13 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
    or manually re-implement the best fixes from each PR. Do NOT merge PR branches directly —
    read the diff, understand the fix, and write it yourself if needed.
 4. **Test the wave** — verify with `bun test && bun run test:e2e` (full E2E lifecycle).
-   Every fix in the wave must have test coverage.
+   Every fix in the wave must have test coverage. Run
+   `bun run audit:contributors <base>..<collector-head> --prs <manifest>` to re-prove,
+   per merged change and per open PR (trial-merged), that its tests fail with its product
+   hunks reversed; the tool pins the PR heads into `prs.pinned.json` so a rerun tests the
+   same code, and its Markdown table keeps mechanical results apart from your verdicts
+   (see [Contributor audit](TESTING.md#contributor-audit)). Paste the table into the wave
+   PR body.
 5. **Security review** — run `bun run wave-security-scan <base>..<collector-head>` over the
    collector branch (the repeatable mechanical sweep). It ALARMS on newly-introduced
    obfuscation/eval in code, secrets found by gitleaks **with the test/skills allowlist
@@ -549,7 +555,11 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
    this. It is a net, not a proof — a human still reads the diffs.
 6. **Close with context** — every closed PR gets a comment explaining why and what (if
    anything) supersedes it. Contributors did real work; respect that with clear communication
-   and thank them.
+   and thank them. In the wave PR body, put each folded-in contributor PR on a
+   `Supersedes #N` line and each fixed issue on a `Fixes #N` line: when the wave merges,
+   the [fix-wave closeout](#fix-wave-closeout) closes those PRs with a thank-you comment and
+   GitHub closes the issues. Write `Addresses #N` or `Refs #N` for anything only partly
+   done, so it stays open. Close declined or duplicate PRs by hand, with the reason.
 7. **Ship as one PR** — single PR to master with all attributions preserved via
    `Co-Authored-By:` trailers. Include a summary of what merged and what closed.
 
@@ -558,6 +568,70 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
   promotional material (README intro, CHANGELOG voice, skill templates).
 - Never auto-merge PRs that remove YC references or "neutralize" the founder perspective.
 - Preserve contributor attribution in commit messages.
+
+### Fix-wave gate
+
+`.github/workflows/fix-wave-gate.yml` (job `contributor-gate`) fails every PR into
+master unless its head repository is `garrytan/gbrain` or the `maintainer-override`
+label counts. Only maintainers can push to `garrytan/gbrain`, so GBRA thread PRs
+(`capy/*`) and `garrytan/*` branches pass; fork PRs fail whatever their branch is
+called. When a contributor PR opens, a second job posts one comment with the same
+text as the failure: the work is welcome and the PR stays open, it lands through a
+fix wave with credit (`Contributed by @handle` plus a `Co-Authored-By:` trailer), and
+CONTRIBUTING.md "Where does my change go?" explains where changes belong.
+
+The workflow uses `pull_request_target`, so the workflow and
+`scripts/fix-wave-gate.ts` always come from the default branch: a PR that edits
+either cannot change its own result. It reads only the event payload and the PR
+timeline, never PR code, with `permissions: {}` at the top, `pull-requests: read`
+for the gate and `pull-requests: write` only for the comment job. A null head
+repository (deleted fork) fails closed. The check re-runs on `opened`, `edited`,
+`reopened`, `synchronize`, `labeled` and `unlabeled`.
+
+**`maintainer-override` label.** Who: a human on `MAINTAINERS` in
+`scripts/fix-wave-gate.ts` (starts as `garrytan`; changing it is a reviewed PR to
+master). When: only for a PR a maintainer has decided may land from its fork, such as
+a fix wave a maintainer opened from a fork; record the reason in a PR comment. How it
+is checked: the label counts only when the most recent `labeled` timeline event for it
+was made by an allowlisted `User`; bots (`capy-ai[bot]`, `github-actions[bot]`, any
+`[bot]` login) never qualify, and removing the label fails the PR again. Audit: the run
+log prints a `notice` naming who applied the label, when, and the timeline event id,
+and the step summary repeats it.
+
+**Turning it on (repository settings, maintainer only).** The guard is active only
+after this step; until then the check is advisory. Settings → Rules → Rulesets (or
+Settings → Branches → the `master` protection rule) → Require status checks to pass →
+add `contributor-gate` with GitHub Actions as the source → save. The check must have
+run once on any PR before GitHub offers it in the picker.
+
+**Residual risk.** A same-repo branch (`capy/*` or `garrytan/*`) that carries
+contributor commits passes by design. Keeping contributor work inside a revised fix
+wave on those branches stays a policy rule, enforced by review, not by this check.
+
+### Fix-wave closeout
+
+`.github/workflows/fix-wave-closeout.yml` (job `close-superseded`) runs when a PR
+into master closes. If it merged and its head repository is `garrytan/gbrain`,
+`scripts/fix-wave-closeout.ts` reads the merged PR's body and closes every open pull
+request named on a `Supersedes #N` line (`Supersedes #5085`, `- Supersedes #5089,
+#5096 and #5107`, `**Supersedes:** #5113`). Only the list right after the keyword
+counts, so `Supersedes #5140, which conflicts with #5000` closes #5140 alone. Each
+closed PR gets one comment, keyed by `<!-- fix-wave-closeout -->`, that thanks the
+contributor, links the wave, and says the work landed with credit when the wave body
+contains `Contributed by @<their handle>`. Numbers that are issues or already-closed
+PRs are skipped. A failed close is a warning in the run log, and the step summary
+lists every number with what happened to it. One run closes at most 50 PRs.
+
+Issues need nothing extra: `Fixes #N` in the same body closes them through GitHub.
+Before this workflow, contributor PRs stayed open after their wave merged, which is
+most of why the open-PR count grew. To preview a body locally without writing
+anything, save the event payload and run
+`bun scripts/fix-wave-closeout.ts --event <payload.json> --dry-run`.
+
+Like the gate, it uses `pull_request_target`: the workflow and script come from the
+default branch, it sparse-checks-out only the script, and it never checks out or
+runs PR code. Permissions are `{}` at the top and `contents: read` plus
+`pull-requests: write` for the one job.
 
 ## Checking out PRs from garrytan-agents
 

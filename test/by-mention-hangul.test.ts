@@ -16,11 +16,11 @@ beforeAll(async () => {
     ['people/jiwon', '지원'],
     ['companies/jangin', '장인'],
     ['people/inha', '인하'],
-    ['companies/samsung-card', '삼성카드'],
-    ['companies/spaced', '삼성 카드'],
+    ['companies/example-card', '예시카드'],
+    ['companies/spaced', '예시 카드'],
     ['companies/longer', '지원 회사'],
     ['companies/alias', 'Example Company'],
-    ['people/naval', '纳瓦尔'],
+    ['people/alice-example', '艾例丝'],
   ]) {
     await engine.putPage(slug!, {
       type: 'company', title: title!, compiled_truth: '', timeline: '', frontmatter: {},
@@ -54,6 +54,16 @@ describe('Hangul mention boundaries', () => {
     expect(mentions(body)).toEqual(['people/jiwon']);
   });
 
+  test.each(['지원씨는 왔다', '지원님께 드렸다', '지원에게서 받았다', '지원이었다', '지원아 가자', '지원 대표가 말했다', '지원대표가 말했다'])
+  ('keeps attached honorifics, titles and copula forms: %s', body => {
+    expect(mentions(body)).toEqual(['people/jiwon']);
+  });
+
+  test.each(['지원하는 방법', '지원금 신청', '지원군을 보냈다', '장인정신', '인하여 늦었다'])
+  ('rejects a name that only starts a longer word: %s', body => {
+    expect(mentions(body)).toEqual([]);
+  });
+
   test('matches an alias using alias spelling, not its canonical Latin title', () => {
     const body = '😀 아내와 만났다';
     const found = findMentionedEntities(body, gazetteer, opts);
@@ -64,10 +74,10 @@ describe('Hangul mention boundaries', () => {
   });
 
   test('preserves spaces explicitly present in a Hangul name', () => {
-    expect(tokenizeTitle('삼성 카드')).toEqual(['삼', '성', '카', '드']);
-    expect(mentions('삼성\t카드에서 일한다')).toEqual(['companies/spaced']);
-    expect(mentions('삼성카드에서 일한다')).toEqual(['companies/samsung-card']);
-    expect(mentions('삼성,카드')).toEqual([]);
+    expect(tokenizeTitle('예시 카드')).toEqual(['예', '시', '카', '드']);
+    expect(mentions('예시\t카드에서 일한다')).toEqual(['companies/spaced']);
+    expect(mentions('예시카드에서 일한다')).toEqual(['companies/example-card']);
+    expect(mentions('예시,카드')).toEqual([]);
   });
 
   test('rejecting the longest candidate still allows a valid shorter name', () => {
@@ -83,21 +93,21 @@ describe('Hangul mention boundaries', () => {
   });
 
   test('same-token own-source preference cannot override a spacing mismatch', () => {
-    const entry = gazetteer.get('삼')!.find(e => e.slug === 'companies/spaced')!;
-    const twin: Gazetteer = new Map([['삼', [
+    const entry = gazetteer.get('예')!.find(e => e.slug === 'companies/spaced')!;
+    const twin: Gazetteer = new Map([['예', [
       { ...entry, source_id: 'foreign' },
-      { ...entry, source_id: 'default', matchText: '삼성카드' },
+      { ...entry, source_id: 'default', matchText: '예시카드' },
     ]]]);
-    expect(findMentionedEntities('삼성 카드에서 일한다', twin, {
+    expect(findMentionedEntities('예시 카드에서 일한다', twin, {
       ...opts, allowCrossSource: true,
     }).map(m => m.source_id)).toEqual(['foreign']);
-    expect(findMentionedEntities('삼성 카드에서 일한다', twin, opts)).toEqual([]);
+    expect(findMentionedEntities('예시 카드에서 일한다', twin, opts)).toEqual([]);
   });
 
   test('resume identity includes spelling and invalidates the old matcher fingerprint', () => {
-    const entry = gazetteer.get('삼')!.find(e => e.slug === 'companies/spaced')!;
-    const spaced: Gazetteer = new Map([['삼', [entry]]]);
-    const unspaced: Gazetteer = new Map([['삼', [{ ...entry, matchText: '삼성카드' }]]]);
+    const entry = gazetteer.get('예')!.find(e => e.slug === 'companies/spaced')!;
+    const spaced: Gazetteer = new Map([['예', [entry]]]);
+    const unspaced: Gazetteer = new Map([['예', [{ ...entry, matchText: '예시카드' }]]]);
     expect(hashGazetteer(spaced)).not.toBe(hashGazetteer(unspaced));
     const legacy = createHash('sha256').update(
       `${entry.source_id}\0${entry.slug}\0${entry.title}\0${entry.tokens.join(' ')}`,
@@ -107,7 +117,7 @@ describe('Hangul mention boundaries', () => {
   });
 
   test('preserves Han substring matching and self/cross-source/code guards', () => {
-    expect(mentions('我读了纳瓦尔的书')).toEqual(['people/naval']);
+    expect(mentions('我读了艾例丝的书')).toEqual(['people/alice-example']);
     expect(mentions('```\n지원이 왔다\n```')).toEqual([]);
     expect(findMentionedEntities('지원이 왔다', gazetteer, {
       fromSlug: 'people/jiwon', fromSourceId: 'default',

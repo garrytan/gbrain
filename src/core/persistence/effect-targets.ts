@@ -4,6 +4,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { discoverWithdrawalTargets, withdrawalDiscoveryFailure, WITHDRAWAL_LIMITS, type WithdrawalClaim } from '../facts/withdrawal-discovery.ts';
 import type { PersistenceEffect } from './effect-model.ts';
 import { guardEffectSource } from './effect-recovery.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 
 export function targetedWithdrawalEffect(effect: PersistenceEffect): boolean {
   if (effect.data.version === undefined) return false;
@@ -26,6 +27,7 @@ export async function upgradeWithdrawalEffect(engine: BrainEngine, effect: Persi
   }
   return engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
+    await declarePersistenceProtocol(tx);
     if (effect.worktree_id) await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [effect.worktree_id]);
     await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [effect.source_id]);
     await guardEffectSource(tx, effect, hostId);

@@ -109,6 +109,26 @@ export function publishesDatabaseOnly(root: string, slug: string, snapshot: Page
   if (!snapshot || snapshot.page.deleted_at) return false;
   return isSourceDbOnlySlug(root, slug, 'refuse') || isNeverFiledDerivedPage(slug, snapshot.page);
 }
+/**
+ * Whether file bytes hold the snapshot's page: the canonical (format-insensitive)
+ * comparison prepareFileTarget applies before replacing a canonical file. Lint
+ * uses it to bind a repair to the revision it read before reading the file.
+ */
+export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, bytes: string, snapshot: PageSnapshot,
+  activePack?: ParseOpts['activePack']): Promise<boolean> {
+  const parsed = parseMarkdown(bytes, slug, { activePack });
+  // #5521 parity for subtype (#5928): a pack rule is not part of the file's bytes, so a file
+  // without an explicit `subtype:` keeps the stored subtype (or none); the import still stamps it.
+  delete parsed.inferredSubtype;
+  resolveParsedSubtype(parsed, snapshot.page);
+  // #1035 parity (#5521): a file without an explicit `type:` keeps the stored type on import.
+  const type = parsed.typeExplicit ? parsed.type : snapshot.page.type;
+  // Withdrawal overlays intentionally precede physical mirroring. The ledger
+  // is applied by the import preparation and cannot be undone by this check.
+  const actual = canonical({ ...parsed, type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
+    parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals) }, parsed.tags);
+  return digest(actual) === digest(canonical(snapshot.page, snapshot.tags));
+}
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,
   content: string | null, hostId?: string, options: { allowMissing?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
@@ -153,25 +173,13 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   // A normal edit may replace only the bytes represented by its read snapshot.
   // Unknown local edits require explicit import/recovery, even for force writes.
   if (before && snapshot) {
-    const parsed = parseMarkdown(before.toString('utf8'), row.slug, { activePack: options.activePack });
-    // #5521 parity for subtype (#5928): a pack rule is not part of the file's bytes, so a file
-    // without an explicit `subtype:` keeps the stored subtype (or none); the import still stamps it.
-    delete parsed.inferredSubtype;
-    resolveParsedSubtype(parsed, snapshot.page);
-    const expected = canonical(snapshot.page, snapshot.tags);
-    // #1035 parity (#5521): a file without an explicit `type:` keeps the stored type on import.
-    const type = parsed.typeExplicit ? parsed.type : snapshot.page.type;
-    const actual = canonical({ ...parsed, type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
-      parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals) }, parsed.tags);
-    // Withdrawal overlays intentionally precede physical mirroring. The ledger
-    // is applied by the import preparation and cannot be undone by this check.
-    if (digest(actual) !== digest(expected)) {
+    if (!await fileMatchesSnapshot(engine, row.slug, before.toString('utf8'), snapshot, options.activePack)) {
       const held = await heldFileRefusal(engine, row, root, path, 'drift', options.remote === true);
       if (held) throw held;
-      const error = new OperationError('source_changed', 'The canonical file contains an uncoordinated local edit.',
-        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`);
-      error.detail = 'file_database_drift';
-      throw error;
+      throw opError('source_changed', 'The canonical file contains an uncoordinated local edit.',
+        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
+        { detail: 'file_database_drift', fix: readFix(`Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
+          { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview'] }) });
     }
   } else if (before && !snapshot && content !== null && sha256(before) !== sha256(content)
     && !(options.capture && sha256(before) === options.capture.hash)) {

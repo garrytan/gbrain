@@ -10,6 +10,7 @@ import { cliRenderContext, renderNotice, type Notice } from '../core/agent-outpu
 import { renderCliNotices } from '../core/agent-markers.ts';
 import { isInteractive } from '../core/interaction.ts';
 import { processNoticeLedger, mutedNoticeCodes } from '../core/notice-ledger.ts';
+import { takeChatFallbackHopNotices } from '../core/ai/fallback-hop-queue.ts';
 
 let pending: Notice[] = [];
 
@@ -19,7 +20,7 @@ export function captureOpNotice(n: Notice): void {
 
 /** Drain the captured notices into the result (`--json` objects) and/or a stderr string. */
 export function applyCliOpNotices(result: unknown, json: boolean): { result: unknown; stderr?: string } {
-  const captured = pending;
+  const captured = [...pending, ...takeChatFallbackHopNotices()];
   pending = [];
   if (captured.length === 0) return { result };
   let admitted = captured;

@@ -310,8 +310,9 @@ function speakerLabel(m: TranscriptMessage): string {
  */
 export function renderSessionParts(
   redacted: RedactedSession,
-  opts: { sourcePath: string } = { sourcePath: '' },
+  opts: { sourcePath: string; partTargetBytes?: number } = { sourcePath: '' },
 ): RenderSessionResult {
+  const partTargetBytes = opts.partTargetBytes ?? PART_TARGET_BYTES;
   const { session, imperativesFlagged } = redacted;
   const { meta, messages } = session;
   if (!messages.length) throw new Error('renderSessionParts: session has no messages');
@@ -350,7 +351,7 @@ export function renderSessionParts(
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
     const bytes = Buffer.byteLength(b, 'utf8') + 2;
-    if (current.length > 0 && currentBytes + bytes > PART_TARGET_BYTES) {
+    if (current.length > 0 && currentBytes + bytes > partTargetBytes) {
       groups.push(current);
       const overlap = current.slice(-OVERLAP_MESSAGES);
       current = [...overlap];

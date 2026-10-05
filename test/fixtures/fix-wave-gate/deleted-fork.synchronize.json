@@ -1,0 +1,36 @@
+{
+  "action": "synchronize",
+  "pull_request": {
+    "number": 9004,
+    "title": "fix: something",
+    "user": {
+      "login": "alice-example",
+      "type": "User"
+    },
+    "labels": [],
+    "head": {
+      "ref": "patch-2",
+      "sha": "1111111111111111111111111111111111111111",
+      "repo": null,
+      "user": {
+        "login": "alice-example"
+      }
+    },
+    "base": {
+      "ref": "master",
+      "sha": "2222222222222222222222222222222222222222",
+      "repo": {
+        "id": 1000000001,
+        "full_name": "garrytan/gbrain"
+      }
+    }
+  },
+  "repository": {
+    "id": 1000000001,
+    "full_name": "garrytan/gbrain"
+  },
+  "sender": {
+    "login": "alice-example",
+    "type": "User"
+  }
+}

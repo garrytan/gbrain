@@ -176,8 +176,10 @@ export class ReferenceModel {
 
   /**
    * After a concurrent group: each touched page's revision must be one a
-   * committed group member returned, every committed edit's marker is
-   * visible, and every superseded member revision is in the page's history.
+   * committed group member returned, or the write of a committed sync or
+   * connector publish (which returns no revision) whose marker the page
+   * carries; every committed edit's marker is visible, and every superseded
+   * member revision is in the page's history.
    */
   async settleGroup(batch: OpDescriptor[], observed: OpObservation[]): Promise<void> {
     const committed = batch.map((d, i) => ({ d, o: observed[i] })).filter(x => x.o.status === 'committed');
@@ -190,13 +192,18 @@ export class ReferenceModel {
       const [source, slug] = k.split('\u0000');
       const read = await this.readPage('local', source, slug);
       const revisions = members.map(x => x.o.values.revision).filter(Boolean) as string[];
-      if (revisions.length && !revisions.includes(String(read?.revision))) {
-        this.violate({ class: 'lost_write', op: members.map(x => x.d.id).join('+'), detail: `concurrent group left ${source}/${slug} at ${String(read?.revision)}, none of the committed revisions ${revisions.join(',')}` });
-      }
       // Whole-page writers (put, sync, connector) may legally replace each other; edits and fact writes compose.
       const replacing = members.some(x => ['put_page', 'sync', 'connector_publish'].includes(x.d.kind));
       const memberMarkers = members.map(x => ['edit_page', 'put_page', 'sync', 'connector_publish'].includes(x.d.kind) ? markersIn(JSON.stringify(x.d.args)).at(-1) : null);
-      if (replacing && memberMarkers.some(Boolean) && !memberMarkers.some(mk => mk && markersIn(String(read?.content)).includes(mk))) {
+      const visible = markersIn(String(read?.content));
+      // A sync or connector publish returns no revision: the page may end at its write when it ran after a
+      // receipted member, and then carries its marker.
+      const unreceiptedFinal = members.some((x, i) => ['sync', 'connector_publish'].includes(x.d.kind) && !x.o.values.revision
+        && !!memberMarkers[i] && visible.includes(memberMarkers[i]!));
+      if (revisions.length && !revisions.includes(String(read?.revision)) && !unreceiptedFinal) {
+        this.violate({ class: 'lost_write', op: members.map(x => x.d.id).join('+'), detail: `concurrent group left ${source}/${slug} at ${String(read?.revision)}, none of the committed revisions ${revisions.join(',')}` });
+      }
+      if (replacing && memberMarkers.some(Boolean) && !memberMarkers.some(mk => mk && visible.includes(mk))) {
         this.violate({ class: 'lost_write', op: members.map(x => x.d.id).join('+'), detail: `no committed whole-page write of the group is visible in ${source}/${slug}` });
       }
       for (const [i, x] of members.entries()) {

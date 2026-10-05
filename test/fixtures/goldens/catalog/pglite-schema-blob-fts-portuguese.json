@@ -1935,7 +1935,10 @@
           "5 surfaced_slugs jsonb/jsonb NOT NULL DEFAULT '[]'::jsonb",
           "6 checkpoint_manifest jsonb/jsonb NOT NULL DEFAULT '[]'::jsonb",
           "7 last_wake_at timestamp with time zone/timestamptz NULL",
-          "8 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "8 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "9 facts_cursor_at timestamp with time zone/timestamptz NULL",
+          "10 facts_cursor_id bigint/int8 NULL",
+          "11 degraded_wakes integer/int4 NOT NULL DEFAULT 0"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

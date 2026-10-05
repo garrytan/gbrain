@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { opError, OperationError } from '../ops/contract.ts';
+import { DEFAULT_INVENTORY_LIMITS, inventoryLimitKey, type InventoryLimits } from './inventory-limits.ts';
 
 export const setupHash = (content: string | Uint8Array): string => createHash('sha256').update(content).digest('hex');
 
@@ -29,7 +30,15 @@ export interface PackInventory {
   excluded_from_install: string[];
 }
 
-export function inventorySkillpack(root: string): PackInventory | null {
+/** The pack exceeds a configured inventory bound; `detail` names the config key. The migration parks the source instead of retrying. */
+function inventoryOverflow(root: string, limit: keyof InventoryLimits, value: number, what: string) {
+  const key = inventoryLimitKey(limit);
+  return opError('payload_too_large', `The skillpack in ${root} exceeds the migration inventory bound ${key}=${value}: ${what}.`,
+    `Raise ${key} with gbrain config set, opt the source out with gbrain sources shared-skills followed by its source id and off, or move large assets out of the declared skills and shared_deps; then run gbrain apply-migrations --migration 0.53.0 --yes.`,
+    { detail: key, docs: 'docs/guides/shared-brain-skills.md#oversized-skill-packs' });
+}
+
+export function inventorySkillpack(root: string, limits: InventoryLimits = DEFAULT_INVENTORY_LIMITS): PackInventory | null {
   checkedContentRoot(root);
   const manifestPath = join(root, 'skillpack.json');
   if (!existsSync(manifestPath)) return null;
@@ -44,16 +53,15 @@ export function inventorySkillpack(root: string): PackInventory | null {
         `${path} resolves outside ${root}. Replace the link with the real files inside the pack (or drop the entry from skillpack.json), then run the migration again.`);
     }
     const stat = lstatSync(absolute);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 262144) {
-      throw opError('local_conflict', 'A skillpack file is unsafe or exceeds the migration limit.',
-        `${path} in ${root} must be a regular, singly linked file of at most 262144 bytes; shrink, split or remove it, then run the migration again.`);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
+      throw opError('local_conflict', 'A skillpack file is unsafe.',
+        `${path} in ${root} must be a regular, singly linked file; replace it with a real file or remove it, then run the migration again.`);
     }
+    if (stat.size > limits.max_file_bytes) throw inventoryOverflow(root, 'max_file_bytes', limits.max_file_bytes, `${path} is ${stat.size} bytes`);
+    if (Object.keys(hashes).length >= limits.max_files) throw inventoryOverflow(root, 'max_files', limits.max_files, `it declares more than ${limits.max_files} files`);
     const data = readFileSync(absolute);
     bytes += data.length;
-    if (Object.keys(hashes).length >= 256 || bytes > 4 * 1024 * 1024) {
-      throw opError('local_conflict', 'The skillpack exceeds the bounded migration inventory.',
-        `The pack in ${root} holds more than 255 files or 4 MiB; move large assets out of the declared skills and shared_deps, then run the migration again.`);
-    }
+    if (bytes > limits.max_total_bytes) throw inventoryOverflow(root, 'max_total_bytes', limits.max_total_bytes, `its declared files exceed ${limits.max_total_bytes} bytes`);
     hashes[path] = setupHash(data);
     return data.toString('utf8');
   };
@@ -74,10 +82,11 @@ export function inventorySkillpack(root: string): PackInventory | null {
       `List each skill once in "skills" of ${manifestPath}, then run the migration again.`);
   }
   const visit = (path: string, depth: number): void => {
-    if (++entries > 1024 || depth > 8 || path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..') || isAbsolute(path)) {
+    if (depth > 8 || path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..') || isAbsolute(path)) {
       throw opError('local_conflict', 'The skillpack contains an unsafe dependency path.',
-        `Declared skill and shared_deps paths in ${manifestPath} must be relative forward-slash paths without empty, . or .. segments, at most 8 directories deep and 1024 entries in total; fix the manifest, then run the migration again.`);
+        `Declared skill and shared_deps paths in ${manifestPath} must be relative forward-slash paths without empty, . or .. segments and at most 8 directories deep; fix the manifest, then run the migration again.`);
     }
+    if (++entries > limits.max_entries) throw inventoryOverflow(root, 'max_entries', limits.max_entries, `its declared paths hold more than ${limits.max_entries} entries`);
     const stat = lstatSync(join(root, path));
     if (stat.isSymbolicLink()) {
       throw opError('local_conflict', 'Skillpack migration does not follow symlinks.',

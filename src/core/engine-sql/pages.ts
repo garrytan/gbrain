@@ -343,9 +343,13 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       // Exact only when the cursor carries the column's microseconds: callers
       // resume from `Page.updated_at_iso` (projected below), never from a JS
       // Date, which would re-select every row in the last row's millisecond.
-      ? sqlFragment`AND (p.updated_at > ${keyset.updatedAt}::timestamptz OR (p.updated_at = ${keyset.updatedAt}::timestamptz AND p.slug > ${keyset.slug}))`
+      // `::text::timestamptz`: a bare `::timestamptz` param is typed by the
+      // postgres.js driver, which serializes strings through a JS Date and
+      // truncates the cursor to milliseconds (re-selecting the whole
+      // millisecond; a >limit cluster inside one millisecond never drains).
+      ? sqlFragment`AND (p.updated_at > ${keyset.updatedAt}::text::timestamptz OR (p.updated_at = ${keyset.updatedAt}::text::timestamptz AND p.slug > ${keyset.slug}))`
       : updatedAfter
-        ? sqlFragment`AND p.updated_at > ${updatedAfter}::timestamptz`
+        ? sqlFragment`AND p.updated_at > ${updatedAfter}::text::timestamptz`
         : sqlFragment``;
     // slugPrefix uses the (source_id, slug) UNIQUE btree index for range scans.
     // Escape LIKE metacharacters so the user prefix is treated as a literal.

@@ -447,6 +447,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,
     chat_fallback_chain: normalizeChatFallbackChain(config.chat_fallback_chain),
+    chat_fallback_on_refusal: config.chat_fallback_on_refusal,
     // v0.35.0.0+: reranker_model stays undefined when unset — reranker is
     // opt-in and pulling DEFAULT_RERANKER_MODEL into every gateway start
     // would silently register a third-party model id on brains that never
@@ -3427,7 +3428,7 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, a
 
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const fallbackChain = opts.allowFallback === false ? undefined : _config?.chat_fallback_chain;
-  if (fallbackChain?.length) return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat);
+  if (fallbackChain?.length) return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat, { onRefusal: _config?.chat_fallback_on_refusal !== false });
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
 

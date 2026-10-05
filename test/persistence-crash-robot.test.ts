@@ -18,13 +18,15 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { descriptor, executeOp, parseDescriptor } from '../scripts/persistence/ops.ts';
+import { ReferenceModel } from '../scripts/persistence/model.ts';
 import { crossBoundarySequences, randomSchedule } from '../scripts/persistence/generator.ts';
 import { ROBOT_TOPOLOGY, restrict } from '../scripts/persistence/robot-driver.ts';
 import { shrinkRun } from '../scripts/persistence/shrink.ts';
-import { runSchedule } from '../scripts/persistence/crash-robot.ts';
+import { runSchedule, runSteps } from '../scripts/persistence/crash-robot.ts';
 import { installLockOrderTrace, lockOrderReport } from '../scripts/persistence/lock-order.ts';
 import { prepareTopology } from '../scripts/persistence/history-fixture.ts';
 import { claimPersistenceEffect, releaseAbandonedClaims } from '../src/core/persistence/effect-journal.ts';
+import { LOCK_COUNTERS_SQL } from '../src/core/persistence/journal.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -99,6 +101,36 @@ describe('reference model on master behavior', () => {
   }, 180_000);
 });
 
+describe('concurrent connector publish and direct write', () => {
+  // CI run 37322995874: the direct put committed first, then the connector republish imported the newer
+  // item over it. The group check knew only the put's revision; the connector reports none.
+  test('the connector republishing after a receipted put is a legal final state; an unexplained revision is still lost', async () => {
+    await robotBrain(async ({ world }) => {
+      const schedule = crossBoundarySequences(ROBOT_TOPOLOGY).find(s => s.label === 'sync_and_connector_race_direct_write')!;
+      const [again, racing] = schedule.groups.find(g => g.length === 2 && schedule.ops.some(d => d.id === g[0] && d.kind === 'connector_publish'))!
+        .map(id => schedule.ops.find(d => d.id === id)!);
+      const model = new ReferenceModel(world);
+      world.descriptors = new Map(schedule.ops.map(d => [d.id, d]));
+      await runSteps(world, model, { ...schedule, ops: schedule.ops.filter(d => d !== again && d !== racing), groups: schedule.groups.filter(g => !g.includes(again.id)) });
+      expect(model.violations).toEqual([]);
+      const put = await executeOp(world, racing);
+      const connector = await executeOp(world, again);
+      expect([put.status, connector.status]).toEqual(['committed', 'committed']);
+      model.beginStep(true);
+      await model.observe(again, connector); await model.observe(racing, put);
+      await model.settleGroup([again, racing], [connector, put]);
+      expect(model.violations).toEqual([]);
+
+      // A write no group member returned moves the page to the put's content at a revision nobody receipted.
+      const unseen = await executeOp(world, { ...racing, id: `${racing.id}-unseen`, requestId: crypto.randomUUID() });
+      expect(unseen.status).toBe('committed');
+      model.beginStep(true);
+      await model.settleGroup([again, racing], [connector, put]);
+      expect(model.violations.map(v => v.class)).toEqual(['lost_write']);
+    });
+  }, 120_000);
+});
+
 describe('lock order', () => {
   test('real publications keep worktree > sources-by-id order; an inversion is reported', async () => {
     await robotBrain(async ({ world }) => {
@@ -114,6 +146,32 @@ describe('lock order', () => {
         await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', ['00000000-0000-4000-8000-000000000000']);
       });
       expect(lockOrderReport().violations.slice(before).map(v => v.rule)).toEqual(['worktrees_before_sources', 'sources_in_id_order']);
+    });
+  }, 120_000);
+
+  test('real publications lock the brain row before worktrees, sources and counters; a later brain read is reported', async () => {
+    await robotBrain(async ({ world }) => {
+      installLockOrderTrace();
+      const before = lockOrderReport().violations.length;
+      await runSchedule(world, crossBoundarySequences(ROBOT_TOPOLOGY)[1]);
+      const clean = lockOrderReport();
+      expect(clean.violations.slice(before)).toEqual([]);
+      expect(clean.publications_reading_brain_for_share).toBeGreaterThan(0);
+      await world.engine.transaction(async tx => {
+        await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR SHARE', ['robot-0']);
+        await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
+      });
+      await world.engine.transaction(async tx => {
+        await tx.executeRaw(LOCK_COUNTERS_SQL, [['brain']]);
+        await tx.executeRaw('UPDATE persistence_requests SET updated_at=updated_at WHERE false');
+      });
+      await world.engine.transaction(async tx => {
+        await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+        await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');
+        await tx.executeRaw('SELECT id FROM sources WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE', [['robot-0', 'robot-1']]);
+        await tx.executeRaw(LOCK_COUNTERS_SQL, [['brain']]);
+      });
+      expect(lockOrderReport().violations.slice(before).map(v => v.rule)).toEqual(['brain_before_rows', 'brain_before_rows']);
     });
   }, 120_000);
 });

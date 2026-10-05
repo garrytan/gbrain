@@ -14,6 +14,7 @@ import { authorizeStoredRequest, submissionAuthority } from './authority.ts';
 import { admitWrite, admitWriteInTransaction, assertPageRequestIdentity, assertReplayIntent, completeWrite, getWriteRequest, intentDigest } from './journal.ts';
 import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, writeResponse } from './service.ts';
 import { claimWorktree } from './ownership.ts';
+import { declareDurablePersistence } from './protocol.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { parseMutationPrecondition } from './preconditions.ts';
@@ -184,9 +185,8 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   let withdrawn: WithdrawalCommit['pages'] = [];
   const done = await retryWriteAdmission(requestId, remaining => ctx.engine.transaction(async tx => {
     withdrawn = [];
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true)",
-      [`${Math.min(1000, remaining)}ms`, `${remaining}ms`]);
-    // Source -> current grant -> counters/request -> sorted page keys -> facts.
+    await declareDurablePersistence(tx, `${Math.min(1000, remaining)}ms`, `${remaining}ms`);
+    // Brain row -> source -> current grant -> counters/request -> sorted page keys -> facts.
     // Do not acquire a shared source lock first and upgrade it after admission.
     const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>(
       'SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);

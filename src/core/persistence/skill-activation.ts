@@ -46,10 +46,10 @@ export async function activateSharedSkillPersistence(engine: BrainEngine,
       locks.push(lock);
     }
     return await engine.transaction(async tx => {
-      await declarePersistenceProtocol(tx);
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true)");
       await assertWriterAdminState(tx, options.expectedState);
       await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+      await declarePersistenceProtocol(tx);
       await assertWriterAdminUnlocked(tx);
       await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');
       await tx.executeRaw('SELECT id FROM sources ORDER BY id FOR SHARE');

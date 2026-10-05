@@ -51,3 +51,5 @@ test/e2e/write-attribution-postgres.test.ts
 test/e2e/write-attribution-read-parity.test.ts
 test/e2e/feedback-parity.test.ts
 test/e2e/mentions-parity.test.ts
+test/e2e/persistence-publish-lock-order-postgres.test.ts
+test/e2e/delta-cursor-integrity-postgres.test.ts

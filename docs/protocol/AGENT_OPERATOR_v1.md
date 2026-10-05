@@ -748,7 +748,18 @@ final document.
 is stateless, so dedupe is per authenticated client and session, and
 `degraded` and `safety` notices ride every affected call. At most 2
 `coaching` notices per session. Notices that describe one call's result
-(`empty_retrieval`, `unknown_param`, `listing_truncated`) are never deduped.
+(`empty_retrieval`, `unknown_param`, `listing_truncated`, `delta_incomplete`)
+are never deduped.
+
+**Degraded retry hint.** A `degraded` notice whose fix has `actor: provider`
+renders `next: wait`: repeat the same call (the fix carries it) after the delay
+the `why` states, in seconds. `delta_incomplete` uses it: delta moved no cursor
+past what it did not deliver, so the retry re-reads the same window. When the
+same session has been incomplete on three consecutive wakes, the fix has no
+command and renders `next: report`: tell the user and run
+`gbrain doctor --json`. Stateless callers always get `wait`. A session store
+that cannot be read at all refuses the call with `unavailable` (reason
+`session_state`) and the same wait/report fix.
 
 **Mute.** `coaching` and `info` notices can be muted, plus one `ask`:
 `first_run_decisions`, so an unanswered first-run bundle stays dismissible.
@@ -769,6 +780,8 @@ instead.
 | `features_auto_fix` | on `get_backlinks` / `traverse_graph` while the link graph is empty | never | `gbrain features` |
 | `first_run_decisions` | on the second successful call of a session while a decision is open | never | `gbrain init` |
 | `post_upgrade` | the first session after an upgrade | never | `gbrain post-upgrade` |
+| `behavior_changes` (safety) | the first tool result per brain | the first tool result per authenticated client (names no chain entries or providers) | once, on stderr, on the first command; `gbrain doctor --only behavior_changes` reads it again |
+| `chat_fallback_hop` (safety) | the first fallback hop of the server process | never | the first hop of the command |
 | `backup_coverage` | once per process | never | the CLI startup rail |
 | `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call | every affected call (redacted) | the command's own notices |
 
@@ -799,6 +812,23 @@ otherwise `gbrain onboard --check` rendered `tell_user_to_run`. CLI remedies
 take the brain lock the stdio serve holds, so run them after the session ends
 or through the running server. An empty brain and `GBRAIN_NO_ONBOARD_NUDGE=1`
 emit nothing.
+
+**One-time safety disclosures.** Two `safety` notices disclose behavior that
+stays on; they ask for nothing and their delivery is never consent.
+`behavior_changes` lists what an upgrade turned on for an existing brain: a
+live `chat_fallback_chain` (its entries, the providers that receive traffic,
+and that it falls back on refusals unless `chat_fallback_on_refusal` is
+false), managed-brain lint writing repairs (`gbrain config set cycle.lint_fix
+false` opts out), smaller transcript parts re-embedded once, and a one-time
+mention-linker rescan. It arrives once per brain on each local channel and
+once per authenticated HTTP client, and a fresh install never sees it; it is
+not silenced by `GBRAIN_NO_ONBOARD_NUDGE`. Tell the user. Its `fix`, when a
+chain is set, is the optional removal for the plane that set it (`ask_user`
+for the database; the user's own step for the environment or `config.json`):
+remove nothing unless the user asks. `chat_fallback_hop` says a request
+went to another model for the first time in this process, naming both
+models; its fix is the read-only `gbrain doctor --only chat_fallback_chain`.
+See [chat fallback](../guides/chat-fallback.md).
 
 **First-run decisions on stdio.** An MCP-only agent gets the `writeback` and
 `skills_scaffold` decisions (never `search_mode` or `harness_wiring`) on the

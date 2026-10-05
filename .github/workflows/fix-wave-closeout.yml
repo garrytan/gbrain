@@ -1,0 +1,39 @@
+name: Fix-wave closeout
+
+# When a fix wave (a same-repo PR) merges into master, close every pull request
+# its body names on a `Supersedes #N` line, with a thank-you comment linking the
+# wave (docs/RELEASING.md, "Fix-wave closeout"). `Fixes #N` closes issues
+# through GitHub itself.
+#
+# pull_request_target runs this file and the checked-out script from the
+# default branch. It reads only event metadata and the REST API: it NEVER
+# checks out, builds or runs PR code.
+
+on:
+  pull_request_target:
+    branches: [master]
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  close-superseded:
+    if: github.event.pull_request.merged == true && github.event.pull_request.head.repo.full_name == 'garrytan/gbrain'
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/fix-wave-closeout.ts
+          sparse-checkout-cone-mode: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.2
+      - name: Close superseded PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/fix-wave-closeout.ts

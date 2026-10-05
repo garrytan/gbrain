@@ -104,6 +104,35 @@ suite('client capability grants — Postgres and admin HTTP', () => {
     const body = await result.json() as any; expect(Object.keys(body).sort()).toEqual(['clientId', 'clientName', 'federatedRead', 'sourceId']);
   });
 
+  test('admin allowedOperations:null clears the operation snapshot and profile; with a named profile it is refused', async () => {
+    const registration = await post('/admin/api/register-client', { name: 'ops-all-' + randomUUID(), profile: 'memory-writer', sourceId: 'default' });
+    expect(registration.status).toBe(200);
+    const created = await registration.json() as any; clients.push(created.clientId);
+    const before = await readClientGrant(engine, created.clientId);
+    expect(before.profile).toBe('memory-writer'); expect(before.allowedOperations?.length).toBeGreaterThan(0);
+    const refused = await post('/admin/api/rescope-client', { clientId: created.clientId, allowedOperations: null, profile: 'memory-writer', expectedRevision: before.revision });
+    expect(refused.status).toBe(400);
+    const unchanged = await readClientGrant(engine, created.clientId);
+    expect(unchanged.revision).toBe(before.revision); expect(unchanged.allowedOperations).toEqual(before.allowedOperations);
+    const preview = await post('/admin/api/rescope-client', { clientId: created.clientId, allowedOperations: null, expectedRevision: before.revision, dryRun: true });
+    expect(preview.status).toBe(200); expect((await readClientGrant(engine, created.clientId)).revision).toBe(before.revision);
+    const cleared = await post('/admin/api/rescope-client', { clientId: created.clientId, allowedOperations: null, expectedRevision: before.revision });
+    expect(cleared.status).toBe(200);
+    const after = await readClientGrant(engine, created.clientId);
+    expect(after.allowedOperations).toBeNull(); expect(after.profile).toBeNull(); expect(after.revision).toBe(before.revision + 1);
+    expect(after.scopes).toEqual(before.scopes);
+    const [row] = await engine.executeRaw('SELECT allowed_operations, grant_profile FROM oauth_clients WHERE client_id = $1', [created.clientId]);
+    expect(row.allowed_operations).toBeNull(); expect(row.grant_profile).toBeNull();
+    // W-C6: the listing marks the unbounded grant and names the re-pin command.
+    const env = keylessBrainEnv(process.env, home, { DATABASE_URL: databaseUrl, GBRAIN_DATABASE_URL: databaseUrl, GBRAIN_BRAIN_ID: undefined, GBRAIN_MCP_URL: undefined });
+    const listing = Bun.spawn(['bun', '--no-env-file', 'run', resolve('src/cli.ts'), 'auth', 'clients', '--json'], { cwd: home, env: env as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
+    const [stdout, exitCode] = await Promise.all([new Response(listing.stdout).text(), listing.exited]);
+    expect(exitCode).toBe(0);
+    const listed = (JSON.parse(stdout) as any).clients.find((c: any) => c.client_id === created.clientId);
+    expect(listed).toMatchObject({ operations: 'all', operations_state: 'all', includes_future_operations: true, revoked: false });
+    expect(listed.fix.argv.slice(0, 6)).toEqual(['gbrain', 'auth', 'rescope', '--client', created.clientId, '--operations']);
+  });
+
   test('admin credential delivery can be recovered without another grant or secret rotation', async () => {
     const name = 'delivery-admin-' + randomUUID();
     const request = { name, profile: 'memory-reader', sourceId: 'default' };

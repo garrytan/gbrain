@@ -315,6 +315,18 @@ from `gbrain auth list`. The older commands stay as aliases:
 `--allowed-operations`, `--surface`, `--profile`, ...), which also pass through
 `auth rescope --client`, and `gbrain auth permissions <name>
 set-takes-holders <list>` is `auth rescope --token <name> --takes-holders <list>`.
+For a client, `--allowed-operations all` and `--operations all` are aliases:
+both store no operation snapshot and clear the profile.
+
+`gbrain auth clients` (text and `--json`) reports each client's operation
+snapshot in one of four states: `operations: "all"` with
+`includes_future_operations: true` when no snapshot is stored (scopes, surface
+and source limits still apply), `[]` (deny-all), an explicit list, or
+`"unavailable"` on a brain whose schema predates operation snapshots. A live
+client with no snapshot carries a `fix` that re-pins it:
+`gbrain auth rescope --client <client_id> --operations <op,...>` or
+`--profile <profile>`. A revoked client is marked `revoked` with its
+`revoked_at` time and gets no fix.
 
 ### One grant shape
 

@@ -582,7 +582,7 @@ degraded_reason?, budget_tokens?, budget_used?, dropped_count? }`. `text` is the
 pre-rendered, envelope-wrapped injectable block; with `budget_tokens` it is
 rendered from the packed sets and never exceeds the declared budget.
 
-### delta(since?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
+### delta(since?, since_slug?, cursor?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
 
 "What changed since T" for heartbeats — pages updated after
 the cursor (oldest first) + facts recorded after the cursor + open-thread
@@ -599,16 +599,50 @@ namespaced by their auth client id, auth-less remotes share the `'remote'`
 sentinel, and `'local'` is RESERVED for the trusted CLI/hook lane, so a remote
 harness can never read or advance the local lane's cursor.
 
-Delivery is at-least-once via a **keyset cursor `(updated_at, slug)`**: a cluster
-of pages sharing one `updated_at` (bulk syncs stamp identical timestamps) pages
-deterministically by slug, so a >fetch-limit cluster drains across wakes instead
-of livelocking. Stateless callers resume by passing the response's
-`next_cursor.since` + `next_cursor.slug` back as `since` + `since_slug`;
-`session_id` callers get this automatically.
+Delivery is at-least-once **per arm**. Pages page by the keyset
+`(updated_at, slug)`, facts by `(created_at, id)`, both at column (microsecond)
+precision, each arm with its own cursor: a cluster sharing one timestamp (bulk
+syncs stamp identical timestamps) pages deterministically, so a >fetch-limit
+cluster drains across wakes instead of livelocking. **No-advance rule:** each
+arm advances through the prefix it delivered and no further; an arm whose read
+threw or did not finish before a deadline does not advance; neither arm
+advances past `now() - 2 s` (rows from a transaction that commits later than
+that lag can be passed by an empty wake; this is the documented bound).
+Duplicate facts collapse to their newest row, and the facts cursor is computed
+from the raw rows, so a duplicate cluster split by a budget cut loses nothing.
+Stateless callers resume by passing `next_cursor.cursor` back as `cursor`
+(exact, both arms); `session_id` callers get this automatically. Explicit
+overrides replace whole tuples: `since` without `since_slug` reads strictly
+after `since` on both arms, never with the session's stored slug.
+
+**Legacy cursor.** `next_cursor.since` + `next_cursor.slug` (passed back as
+`since` + `since_slug`) keep working and are conservative: they do not move
+while any arm failed, and they stay strictly before the oldest undelivered fact
+(the slug resets to `''` whenever `since` was clamped), so an older client may
+re-see pages but never skips facts. A legacy caller that reaches more
+undelivered facts at one timestamp than the fetch limit gets
+`delta_cursor_upgrade_required` with the same call using `cursor` as its fix.
+
+**Failure is not `has_more`.** `has_more` means more content is waiting.
+`degraded_reason` lists what did not complete, comma-joined: `deadline`,
+`pages`, `facts`, `threads` (only when the thread builder throws; threads are
+best-effort and follow the pages' time cursor), `session_state` (the session
+row could not be written; `next_cursor` is the stateless continuation). Every
+degraded response carries a `delta_incomplete` notice (kind `degraded`) whose
+fix retries the same call after about 30 seconds (`fix.next: wait`); on the
+third consecutive incomplete wake of one session it becomes `report`. A
+`budget_tokens` too small for even one waiting item gets the same notice code
+with a fix naming the budget that fits. A session whose state cannot be read is
+refused with `unavailable` (`reason: session_state`), never re-initialized at
+now; a first wake (no row, including a garbage-collected one) gets an
+`empty_retrieval` info notice explaining how to replay earlier changes.
 
 Response: `{ protocol_version, since, pages[], facts[], threads[], text,
-has_more, next_cursor: { since, slug }, degraded_reason?, budget_tokens?,
-budget_used?, dropped_count? }`. `budget_tokens` applies to pages and facts
+has_more, next_cursor: { since, slug, cursor }, cursor_arms, degraded_reason?,
+budget_tokens?, budget_used?, dropped_count? }`. Each fact carries its `id` (the
+replay dedupe key); `cursor_arms` reports each arm's start and next keyset.
+`since` and the timestamps inside `cursor` must fall in 0001-01-01 to
+9999-12-31 on the parsed UTC value (`invalid_params` otherwise). `budget_tokens` applies to pages and facts
 (pages pack first, then facts) — each item costs its rendered line and the
 envelope + section headers are reserved first, so `text` (rendered from the
 packed sets) fits the declared budget. **Threads are never truncated**: every
@@ -616,9 +650,9 @@ open-thread event after `since` is delivered and its line is reserved ahead of
 pages and facts, so `dropped_count` / `has_more` count only pages and facts.
 If the envelope + headers + threads alone exceed `budget_tokens`, all threads
 are still returned and `budget_used` (the token estimate of `text`) reports the
-real rendered size, which then exceeds the budget. Cursor semantics are the v1
-page keyset alone — facts and threads never move `next_cursor`. `since` is
-always normalized ISO (never the raw input string).
+real rendered size, which then exceeds the budget. `since` is always
+normalized ISO (never the raw input string). Replay recipe:
+[ambient recall guide](../guides/ambient-recall.md#replay-after-a-degraded-wake).
 
 ## Latency classes (per verb)
 

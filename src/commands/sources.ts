@@ -1246,6 +1246,8 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const gitHolds = await statusView.readGitHoldStatuses(engine, sources.map(source => source.id));
   const drainMod = await import('../core/persistence/sync-drain.ts');
   const backlog = new Map((await drainMod.readManagedSyncBacklog(engine).catch(() => [])).map(b => [b.source_id, b]));
+  const sharedSkillsView = await import('../core/shared-skills/source-opt-out.ts');
+  const sharedSkills = new Map(await Promise.all(sources.map(async source => [source.id, await sharedSkillsView.readSharedSkillsSourceView(engine, source.id).catch(() => null)] as const)));
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,
@@ -1255,6 +1257,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
       ...(connectors.get(m.source_id) ? { connector: connectors.get(m.source_id) } : {}),
       ...(backlog.get(m.source_id) ? { managed_backlog: backlog.get(m.source_id) } : {}),
       ...(gitHolds.get(m.source_id) ? { git_holds: gitHolds.get(m.source_id) } : {}),
+      ...(sharedSkills.get(m.source_id) ? { shared_skills: sharedSkills.get(m.source_id) } : {}),
     }));
     console.log(JSON.stringify({ schema_version: 1, sources: enriched }, null, 2));
     return;
@@ -1295,6 +1298,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   for (const [sourceId, status] of connectors) for (const line of statusView.connectorStatusLines(sourceId, status)) console.log(line);
   for (const [sourceId, status] of gitHolds) for (const line of statusView.gitHoldStatusLines(sourceId, status)) console.log(line);
   for (const b of backlog.values()) console.log(`  ${drainMod.formatManagedSyncBacklog(b)}`);
+  for (const view of sharedSkills.values()) if (view && (only || view.configured === false || view.parked)) for (const line of sharedSkillsView.sharedSkillsStatusLines(view)) console.log(`  ${line}`);
   for (const m of metrics) {
     const warns: string[] = [];
     if (!m.local_path) warns.push('no local_path');
@@ -1859,6 +1863,10 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
       console.log(SOURCES_WEBHOOK_HELP);
       return;
     }
+    if (sub === 'shared-skills') {
+      console.log((await import('./sources-shared-skills.ts')).SOURCES_SHARED_SKILLS_HELP);
+      return;
+    }
     printHelp();
     return;
   }
@@ -1898,6 +1906,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-cr-mode': return runSetCrMode(engine, rest);
     // #4739 non-destructive local_path pointer repair
     case 'set-path':   { const { runSetPath } = await import('./sources-set-path.ts'); return runSetPath(engine, rest); }
+    case 'shared-skills': { const { runSourcesSharedSkills } = await import('./sources-shared-skills.ts'); return runSourcesSharedSkills(engine, rest); }
     case 'retry-held': { const { runRetryHeld } = await import('./sources-retry-held.ts'); return runRetryHeld(engine, rest); }
     case 'audit':      return runAudit(engine, rest);
     // v0.46 github-source demo (offline, privacy-clean fixtures)
@@ -1988,6 +1997,8 @@ Subcommands:
                                     Re-attempt a connector source's held items, or re-screen a Git source's held files, on its next sync.
                                     Runs nothing now. Most Git holds re-screen by themselves (file changed or
                                     deleted, newer gbrain); fix the files with gbrain repair frontmatter --source <id>.
+  shared-skills <id> on|off|status [--json]
+                                    Opt a source out of (or back into) shared-skills adoption; status explains its effective policy.
   set-path <id> --clear             Clear a connector source's (google, github)
                                     stale local_path; takes no path.
   webhook <set|show|rotate|clear> <id> [options]

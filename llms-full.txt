@@ -1465,7 +1465,7 @@ are one principal. See [shared brain skills](shared-brain-skills.md).
 
 A **profile grants authority**. A **surface selects visible tools**. Full surface does not bypass a grant, and `admin` does not imply delegation, the named shared-skill scopes, or owner dashboard/client-management authority. Starter includes authorized skill discovery and membership; the exact seven-tool `verbs` surface is memory-only. Thin CLI adapters use the full surface while retaining their source, operation, and write restrictions. Direct local CLI access is trusted access to the local computer; OAuth profiles do not confine a local shell.
 
-New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. Explicitly regrant to include them: `gbrain auth rescope-client <client_id> --allowed-operations …` for OAuth clients, or `gbrain auth rescope-token <name> --refresh-operations` (preview) then `--add <op,...>` for legacy tokens. `gbrain auth rescope --client <client_id> --operations all` stores no snapshot and clears the profile instead, so the scopes and the surface alone decide, including operations later upgrades add. A `bootstrap harness` re-run carries the replaced token's grants and does not widen its snapshot ([legacy token grants](../mcp/ADMIN.md#legacy-token-grants)). Archived sources are excluded. Legacy clients with a `NULL` operation snapshot retain their prior operation behavior.
+New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. Explicitly regrant to include them: `gbrain auth rescope-client <client_id> --allowed-operations …` for OAuth clients, or `gbrain auth rescope-token <name> --refresh-operations` (preview) then `--add <op,...>` for legacy tokens. `gbrain auth rescope --client <client_id> --operations all` (alias: `gbrain auth rescope-client <client_id> --allowed-operations all`) stores no snapshot and clears the profile instead, so the scopes and the surface alone decide, including operations later upgrades add. `gbrain auth clients` marks such a client `operations: "all"` with `includes_future_operations: true` and the command that re-pins it. A `bootstrap harness` re-run carries the replaced token's grants and does not widen its snapshot ([legacy token grants](../mcp/ADMIN.md#legacy-token-grants)). Archived sources are excluded. Legacy clients with a `NULL` operation snapshot retain their prior operation behavior.
 
 Snapshot-bound clients write through approved MCP operations such as `remember`, `capture`, or `put_page`. They cannot use the legacy `POST /ingest` webhook, whose queued writes do not yet enforce operation snapshots. Existing webhook clients with a `NULL` snapshot keep their legacy behavior.
 
@@ -3878,7 +3878,18 @@ final document.
 is stateless, so dedupe is per authenticated client and session, and
 `degraded` and `safety` notices ride every affected call. At most 2
 `coaching` notices per session. Notices that describe one call's result
-(`empty_retrieval`, `unknown_param`, `listing_truncated`) are never deduped.
+(`empty_retrieval`, `unknown_param`, `listing_truncated`, `delta_incomplete`)
+are never deduped.
+
+**Degraded retry hint.** A `degraded` notice whose fix has `actor: provider`
+renders `next: wait`: repeat the same call (the fix carries it) after the delay
+the `why` states, in seconds. `delta_incomplete` uses it: delta moved no cursor
+past what it did not deliver, so the retry re-reads the same window. When the
+same session has been incomplete on three consecutive wakes, the fix has no
+command and renders `next: report`: tell the user and run
+`gbrain doctor --json`. Stateless callers always get `wait`. A session store
+that cannot be read at all refuses the call with `unavailable` (reason
+`session_state`) and the same wait/report fix.
 
 **Mute.** `coaching` and `info` notices can be muted, plus one `ask`:
 `first_run_decisions`, so an unanswered first-run bundle stays dismissible.
@@ -3899,6 +3910,8 @@ instead.
 | `features_auto_fix` | on `get_backlinks` / `traverse_graph` while the link graph is empty | never | `gbrain features` |
 | `first_run_decisions` | on the second successful call of a session while a decision is open | never | `gbrain init` |
 | `post_upgrade` | the first session after an upgrade | never | `gbrain post-upgrade` |
+| `behavior_changes` (safety) | the first tool result per brain | the first tool result per authenticated client (names no chain entries or providers) | once, on stderr, on the first command; `gbrain doctor --only behavior_changes` reads it again |
+| `chat_fallback_hop` (safety) | the first fallback hop of the server process | never | the first hop of the command |
 | `backup_coverage` | once per process | never | the CLI startup rail |
 | `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call | every affected call (redacted) | the command's own notices |
 
@@ -3929,6 +3942,23 @@ otherwise `gbrain onboard --check` rendered `tell_user_to_run`. CLI remedies
 take the brain lock the stdio serve holds, so run them after the session ends
 or through the running server. An empty brain and `GBRAIN_NO_ONBOARD_NUDGE=1`
 emit nothing.
+
+**One-time safety disclosures.** Two `safety` notices disclose behavior that
+stays on; they ask for nothing and their delivery is never consent.
+`behavior_changes` lists what an upgrade turned on for an existing brain: a
+live `chat_fallback_chain` (its entries, the providers that receive traffic,
+and that it falls back on refusals unless `chat_fallback_on_refusal` is
+false), managed-brain lint writing repairs (`gbrain config set cycle.lint_fix
+false` opts out), smaller transcript parts re-embedded once, and a one-time
+mention-linker rescan. It arrives once per brain on each local channel and
+once per authenticated HTTP client, and a fresh install never sees it; it is
+not silenced by `GBRAIN_NO_ONBOARD_NUDGE`. Tell the user. Its `fix`, when a
+chain is set, is the optional removal for the plane that set it (`ask_user`
+for the database; the user's own step for the environment or `config.json`):
+remove nothing unless the user asks. `chat_fallback_hop` says a request
+went to another model for the first time in this process, naming both
+models; its fix is the read-only `gbrain doctor --only chat_fallback_chain`.
+See [chat fallback](../guides/chat-fallback.md).
 
 **First-run decisions on stdio.** An MCP-only agent gets the `writeback` and
 `skills_scaffold` decisions (never `search_mode` or `harness_wiring`) on the
@@ -9323,7 +9353,7 @@ degraded_reason?, budget_tokens?, budget_used?, dropped_count? }`. `text` is the
 pre-rendered, envelope-wrapped injectable block; with `budget_tokens` it is
 rendered from the packed sets and never exceeds the declared budget.
 
-### delta(since?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
+### delta(since?, since_slug?, cursor?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
 
 "What changed since T" for heartbeats — pages updated after
 the cursor (oldest first) + facts recorded after the cursor + open-thread
@@ -9340,16 +9370,50 @@ namespaced by their auth client id, auth-less remotes share the `'remote'`
 sentinel, and `'local'` is RESERVED for the trusted CLI/hook lane, so a remote
 harness can never read or advance the local lane's cursor.
 
-Delivery is at-least-once via a **keyset cursor `(updated_at, slug)`**: a cluster
-of pages sharing one `updated_at` (bulk syncs stamp identical timestamps) pages
-deterministically by slug, so a >fetch-limit cluster drains across wakes instead
-of livelocking. Stateless callers resume by passing the response's
-`next_cursor.since` + `next_cursor.slug` back as `since` + `since_slug`;
-`session_id` callers get this automatically.
+Delivery is at-least-once **per arm**. Pages page by the keyset
+`(updated_at, slug)`, facts by `(created_at, id)`, both at column (microsecond)
+precision, each arm with its own cursor: a cluster sharing one timestamp (bulk
+syncs stamp identical timestamps) pages deterministically, so a >fetch-limit
+cluster drains across wakes instead of livelocking. **No-advance rule:** each
+arm advances through the prefix it delivered and no further; an arm whose read
+threw or did not finish before a deadline does not advance; neither arm
+advances past `now() - 2 s` (rows from a transaction that commits later than
+that lag can be passed by an empty wake; this is the documented bound).
+Duplicate facts collapse to their newest row, and the facts cursor is computed
+from the raw rows, so a duplicate cluster split by a budget cut loses nothing.
+Stateless callers resume by passing `next_cursor.cursor` back as `cursor`
+(exact, both arms); `session_id` callers get this automatically. Explicit
+overrides replace whole tuples: `since` without `since_slug` reads strictly
+after `since` on both arms, never with the session's stored slug.
+
+**Legacy cursor.** `next_cursor.since` + `next_cursor.slug` (passed back as
+`since` + `since_slug`) keep working and are conservative: they do not move
+while any arm failed, and they stay strictly before the oldest undelivered fact
+(the slug resets to `''` whenever `since` was clamped), so an older client may
+re-see pages but never skips facts. A legacy caller that reaches more
+undelivered facts at one timestamp than the fetch limit gets
+`delta_cursor_upgrade_required` with the same call using `cursor` as its fix.
+
+**Failure is not `has_more`.** `has_more` means more content is waiting.
+`degraded_reason` lists what did not complete, comma-joined: `deadline`,
+`pages`, `facts`, `threads` (only when the thread builder throws; threads are
+best-effort and follow the pages' time cursor), `session_state` (the session
+row could not be written; `next_cursor` is the stateless continuation). Every
+degraded response carries a `delta_incomplete` notice (kind `degraded`) whose
+fix retries the same call after about 30 seconds (`fix.next: wait`); on the
+third consecutive incomplete wake of one session it becomes `report`. A
+`budget_tokens` too small for even one waiting item gets the same notice code
+with a fix naming the budget that fits. A session whose state cannot be read is
+refused with `unavailable` (`reason: session_state`), never re-initialized at
+now; a first wake (no row, including a garbage-collected one) gets an
+`empty_retrieval` info notice explaining how to replay earlier changes.
 
 Response: `{ protocol_version, since, pages[], facts[], threads[], text,
-has_more, next_cursor: { since, slug }, degraded_reason?, budget_tokens?,
-budget_used?, dropped_count? }`. `budget_tokens` applies to pages and facts
+has_more, next_cursor: { since, slug, cursor }, cursor_arms, degraded_reason?,
+budget_tokens?, budget_used?, dropped_count? }`. Each fact carries its `id` (the
+replay dedupe key); `cursor_arms` reports each arm's start and next keyset.
+`since` and the timestamps inside `cursor` must fall in 0001-01-01 to
+9999-12-31 on the parsed UTC value (`invalid_params` otherwise). `budget_tokens` applies to pages and facts
 (pages pack first, then facts) — each item costs its rendered line and the
 envelope + section headers are reserved first, so `text` (rendered from the
 packed sets) fits the declared budget. **Threads are never truncated**: every
@@ -9357,9 +9421,9 @@ open-thread event after `since` is delivered and its line is reserved ahead of
 pages and facts, so `dropped_count` / `has_more` count only pages and facts.
 If the envelope + headers + threads alone exceed `budget_tokens`, all threads
 are still returned and `budget_used` (the token estimate of `text`) reports the
-real rendered size, which then exceeds the budget. Cursor semantics are the v1
-page keyset alone — facts and threads never move `next_cursor`. `since` is
-always normalized ISO (never the raw input string).
+real rendered size, which then exceeds the budget. `since` is always
+normalized ISO (never the raw input string). Replay recipe:
+[ambient recall guide](../guides/ambient-recall.md#replay-after-a-degraded-wake).
 
 ## Latency classes (per verb)
 

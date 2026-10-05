@@ -110,7 +110,7 @@ export function hashGazetteer(gazetteer: Gazetteer): string {
     for (const e of bucket) entries.push(`${e.source_id}\0${e.slug}\0${e.title}\0${e.tokens.join(' ')}\0${e.matchText ?? ''}${e.caseTokens ? `\0${e.caseTokens.join(' ')}` : ''}`);
   }
   // Matching semantics are part of the resume identity, not just DB contents.
-  return createHash('sha256').update('hangul-boundaries-v1\n').update(entries.sort().join('\n')).digest('hex').slice(0, 8);
+  return createHash('sha256').update('hangul-boundaries-v2\n').update(entries.sort().join('\n')).digest('hex').slice(0, 8);
 }
 
 /** One row of the saved entry set the mention pass diffs (mention_gazetteer_entries). */
@@ -666,10 +666,23 @@ function caseTokensOf(name: string): string[] {
 // Body-text scanner (pure)
 // ============================================================
 
+/** Suffixes that may attach to a Hangul name: an optional title or honorific,
+ * then up to two particles or copula forms (지원씨는, 지원에게서, 지원이었다).
+ * Any other attached Hangul continues a longer word (지원하는, 지원금), which
+ * was 99% of 1,041 word-internal matches on a Korean corpus while this suffix
+ * set kept 65 of 74 real name mentions (docs/designs/hangul-mention-boundaries.md).
+ */
+const HANGUL_NAME_TITLES = '씨 님 오빠 언니 누나 선배 후배 선생님 선생 교수 대표 사장 회장 팀장 부장 과장 이사 의원 기자 작가 감독 측';
+const HANGUL_NAME_PARTICLES = '이 가 은 는 을 를 의 에 에게 에게서 한테 한테서 께 께서 와 과 랑 이랑 도 만 로 으로 로서 으로서 로부터 으로부터 에서 부터 까지 처럼 보다 마저 조차 뿐 밖에 이나 이든 이라도 라도 이여 이며 이고 이다 입니다 이에요 예요 이었다 였다 이었던 였던 이라는 라는 이라고 라고 이란 이야 야 아';
+const hangulAlternation = (words: string) => `(?:${words.split(' ').sort((a, b) => b.length - a.length).join('|')})`;
+const HANGUL_NAME_SUFFIX_RE = new RegExp(
+  `^${hangulAlternation(HANGUL_NAME_TITLES)}?${hangulAlternation(HANGUL_NAME_PARTICLES)}{0,2}(?![가-힣])`, 'u',
+);
+
 /** Korean uses word spaces; Han/Kana retain character-substring matching.
  * Validate each candidate before maximal-munch selection so an invalid longer
- * phrase does not consume a valid shorter name. Do not require an end boundary:
- * Korean particles attach directly to names (지원은, 지원에게).
+ * phrase does not consume a valid shorter name. The name must start a word and
+ * end at a non-Hangul character or an attached name suffix (above).
  */
 function hasHangulMatchBoundary(
   text: string, tokens: ScannedToken[], start: number, entry: GazetteerEntry,
@@ -678,9 +691,10 @@ function hasHangulMatchBoundary(
   const first = tokens[start]!;
   if (first.offset > 0 && /[가-힣]/u.test(text[first.offset - 1]!)) return false;
   const last = tokens[start + entry.tokens.length - 1]!;
-  const actual = text.slice(first.offset, last.offset + last.length).replace(/\s+/gu, ' ');
+  const end = last.offset + last.length;
+  const actual = text.slice(first.offset, end).replace(/\s+/gu, ' ');
   const expected = (entry.matchText ?? entry.tokens.join('')).trim().replace(/\s+/gu, ' ');
-  return actual === expected;
+  return actual === expected && HANGUL_NAME_SUFFIX_RE.test(text.slice(end, end + 12));
 }
 
 /**

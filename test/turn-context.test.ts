@@ -263,7 +263,7 @@ describe('assembleDeltaContext read failures', () => {
     await seedFact('WORLD-FACT remains available', 'world');
     const partialEngine = {
       listPages: async () => { throw new Error('private storage detail'); },
-      listFactsSince: (...args: Parameters<BrainEngine['listFactsSince']>) => engine.listFactsSince(...args),
+      listFactsKeyset: (...args: Parameters<BrainEngine['listFactsKeyset']>) => engine.listFactsKeyset(...args),
     } as unknown as BrainEngine;
 
     const result = await assembleDeltaContext(partialEngine, {
@@ -281,7 +281,7 @@ describe('assembleDeltaContext read failures', () => {
     await seedPage('notes/delta-readable', 'Readable page', 'A changed page.');
     const partialEngine = {
       listPages: (...args: Parameters<BrainEngine['listPages']>) => engine.listPages(...args),
-      listFactsSince: async () => { throw new Error('private storage detail'); },
+      listFactsKeyset: async () => { throw new Error('private storage detail'); },
     } as unknown as BrainEngine;
 
     const result = await assembleDeltaContext(partialEngine, {
@@ -298,7 +298,7 @@ describe('assembleDeltaContext read failures', () => {
   test('both failed read arms are reported together as a degraded empty result', async () => {
     const partialEngine = {
       listPages: async () => { throw new Error('private page detail'); },
-      listFactsSince: async () => { throw new Error('private fact detail'); },
+      listFactsKeyset: async () => { throw new Error('private fact detail'); },
     } as unknown as BrainEngine;
 
     const result = await assembleDeltaContext(partialEngine, {

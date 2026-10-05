@@ -37,6 +37,13 @@ import { safeCliToken, sanitizeTypeForDisplay, storedTypeMissesPack, type TypeUs
 import { pathToSlug } from '../core/sync.ts';
 import { isManagedBrain } from '../core/cycle/phase-table.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
+import { fileMatchesSnapshot, prepareFileTarget } from '../core/persistence/page-prepare.ts';
+import { heldFileDiagnostic, writeFailureDiagnostic } from '../core/persistence/verb-errors.ts';
+import { loadActivePackForEngine } from '../core/schema-pack/engine-resolution.ts';
+import { OperationError, opError } from '../core/ops/contract.ts';
+import { readFix } from '../core/ops/op-fix.ts';
+import { cliRenderContext, docsUrl, toAgentError, type RenderedAction } from '../core/agent-output.ts';
+import type { ParseOpts } from '../core/markdown.ts';
 
 export interface LintIssue {
   file: string;
@@ -44,6 +51,13 @@ export interface LintIssue {
   rule: string;
   message: string;
   fixable: boolean;
+  /** A managed-brain repair that waits (`managed-write-pending`): the stable machine code. */
+  code?: 'managed_write_pending';
+  /** Why it waits: the coordinator refusal's reason (`file_database_drift`, `held_file`, `canonical_file_missing`, ...), `revision_changed` or `not_indexed`. */
+  reason?: string;
+  /** The coordinator refusal's own next step, rendered for the CLI; lint never adds one of its own. */
+  fix?: RenderedAction;
+  docs?: string;
 }
 
 /** Map of frontmatter validation codes to lint rule names. Stable across
@@ -576,35 +590,79 @@ export interface LintResult {
    *  no indexed page, or the page changed mid-scan); each is reported as a
    *  non-fixable `managed-write-pending` issue and retried next cycle. */
   fix_pending: number;
+  /** The first MAX_PENDING_ISSUES of those issues with their code, reason and fix. */
+  pending_issues: LintIssue[];
+}
+
+const MAX_PENDING_ISSUES = 50;
+const MANAGED_LINT_DOCS = 'docs/guides/concurrent-writes.md#lint-repairs-waiting-on-a-managed-brain';
+
+function pendingIssue(file: string, slug: string, reason: string, error: OperationError | null, message?: string): LintIssue {
+  const envelope = error ? toAgentError(error, { transport: 'cli', command: 'lint', render: cliRenderContext() }) : null;
+  return { file, line: 1, rule: 'managed-write-pending', fixable: false, code: 'managed_write_pending', reason,
+    message: message ?? `fix not applied: ${slug}: ${envelope!.message}`,
+    ...(envelope?.fix ? { fix: envelope.fix } : {}), docs: docsUrl(MANAGED_LINT_DOCS) };
+}
+
+function refusalReason(error: OperationError): string {
+  if (error.code === 'revision_conflict') return 'revision_changed';
+  if (heldFileDiagnostic(error.message)) return 'held_file';
+  return error.detail ?? writeFailureDiagnostic(error.code, error.message).reason;
+}
+
+function changedWhileLinting(sourceId: string, slug: string): OperationError {
+  return opError('revision_conflict', 'The page changed while lint ran.',
+    `Page ${slug} in '${sourceId}' changed after lint read it, so its repair was not submitted; the next cycle lints the current revision.`,
+    { fix: readFix(`Shows page ${slug} in source ${sourceId} as it is now, with its revision.`, { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] }) });
 }
 
 /**
  * #5180: publish one lint repair through the persistence coordinator, the
  * only writer a managed brain's worktree accepts. Resolves the page's slug
- * the way sync does, admits the repaired markdown against the page's current
- * revision, and returns null once the coordinator has committed it (DB row
- * and file in one guarded write). Returns a non-fixable issue instead of
- * throwing when the repair must wait: the file is not an indexed page of the
- * source (README/RESOLVER and other sync-skipped files, or a stray file the
- * coordinator never wrote), or the page changed between scan and admission.
- * Any other failure propagates and fails the run.
+ * the way sync does and reads its revision BEFORE the bytes the repair is
+ * built from, so the repair only ever replaces what it read: the file must
+ * hold that revision (the coordinator's own canonical comparison) and the
+ * repair is admitted against it. Returns 'published' once the coordinator
+ * committed it (DB row and file in one guarded write), null when the file
+ * no longer needs a repair, or a non-fixable issue when the repair must
+ * wait: the file is not an indexed page of the source, the file diverged
+ * from the database (the coordinator's refusal travels unchanged: its reason
+ * and its fix), or the page changed between scan and admission. Any other
+ * failure propagates and fails the run.
  */
-async function publishLintFix(engine: BrainEngine, authority: MaintenanceAuthority, root: string, page: string, fixed: string): Promise<LintIssue | null> {
+async function publishLintFix(engine: BrainEngine, authority: MaintenanceAuthority, root: string, page: string,
+  activePack: ParseOpts['activePack']): Promise<LintIssue | 'published' | null> {
   const relPath = relative(root, page);
   const slug = pathToSlug(relPath);
   const sourceId = authority.writer.sourceId;
   const snapshot = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
   if (!snapshot || snapshot.page.deleted_at) {
-    return { file: relPath, line: 1, rule: 'managed-write-pending', fixable: false,
-      message: `fix not applied: ${slug} is not an indexed page of source ${sourceId} (a managed brain only rewrites indexed pages)` };
+    return pendingIssue(relPath, slug, 'not_indexed', null,
+      `fix not applied: ${slug} is not an indexed page of source ${sourceId} (a managed brain only rewrites indexed pages)`);
+  }
+  const scanned = existsSync(page) ? readSourceFileSync(page, 'utf-8') : null;
+  const fixed = scanned === null ? null : fixContent(scanned);
+  if (scanned === null ? !authority.binding : fixed === scanned) return null;
+  if (authority.binding && (scanned === null || !await fileMatchesSnapshot(engine, slug, scanned, snapshot, activePack))) {
+    const current = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
+    if (current?.revision !== snapshot.revision) return pendingIssue(relPath, slug, 'revision_changed', changedWhileLinting(sourceId, slug));
+    try {
+      await prepareFileTarget(engine, { source_id: sourceId, worktree_id: authority.binding.worktree_id, slug }, snapshot, fixed, undefined, { activePack });
+    } catch (e) {
+      if (e instanceof OperationError) return pendingIssue(relPath, slug, refusalReason(e), e);
+      throw e;
+    }
+    // No refusal: the file now holds the scanned revision again (or the page has no file to repair).
+    return scanned === null ? null : pendingIssue(relPath, slug, 'revision_changed', changedWhileLinting(sourceId, slug));
   }
   try {
-    await publishMaintenancePage(engine, authority, slug, fixed, { expectedRevision: snapshot.revision });
-    return null;
+    await publishMaintenancePage(engine, authority, slug, fixed!, { expectedRevision: snapshot.revision });
+    return 'published';
   } catch (e) {
-    if ((e as { code?: unknown } | null)?.code === 'revision_conflict') {
-      return { file: relPath, line: 1, rule: 'managed-write-pending', fixable: false,
-        message: `fix not applied: ${slug} changed while lint ran; the next cycle retries` };
+    // An admitted request the coordinator refused at its own file or revision check; a source-level
+    // refusal before admission (no receipt) still fails the run.
+    if (e instanceof OperationError && (e.code === 'revision_conflict' || e.code === 'source_changed' && e.writeRequest)) {
+      return pendingIssue(relPath, slug, refusalReason(e), e);
     }
     throw e;
   }
@@ -679,6 +737,11 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   let totalFixed = 0;
   let pagesWithIssues = 0;
   let fixPending = 0;
+  const pendingIssues: LintIssue[] = [];
+  // The coordinator parses files with the source's active pack; the divergence check must too.
+  const activePack = maintenance?.binding
+    ? (await loadActivePackForEngine(opts.engine!, { remote: false, sourceId: maintenance.writer.sourceId }).catch(() => null))?.manifest
+    : undefined;
 
   for (let idx = 0; idx < pages.length; idx++) {
     assertSourceFilesystemActive();
@@ -710,13 +773,14 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
         } else if (maintenance) {
           // #5180: managed brain — the coordinator rewrites the page (DB row
           // and worktree file together) or says why the repair must wait.
-          const pending = await publishLintFix(opts.engine!, maintenance, managedRoot, page, fixed);
-          if (pending) {
-            issues.push(pending);
+          const outcome = await publishLintFix(opts.engine!, maintenance, managedRoot, page, activePack);
+          if (outcome === 'published') {
+            fixCount = fixable;
+          } else if (outcome) {
+            issues.push(outcome);
             totalIssues++;
             fixPending++;
-          } else {
-            fixCount = fixable;
+            if (pendingIssues.length < MAX_PENDING_ISSUES) pendingIssues.push(outcome);
           }
         } else {
           assertSourceFilesystemActive();
@@ -742,6 +806,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     applied_fix: !!opts.fix,
     write_path: !applyFixes ? 'none' : maintenance ? 'coordinator' : 'filesystem',
     fix_pending: fixPending,
+    pending_issues: pendingIssues,
   };
 }
 

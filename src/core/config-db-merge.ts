@@ -3,7 +3,7 @@
  *
  * DB-plane values that `gbrain config set` accepted for years, `config get`
  * echoed back, and NOTHING read: provider credentials, chat/expansion model
- * pins, the chat fallback chain, and flat `cycle.*` knobs. This module owns
+ * pins, the chat fallback chain and its refusal switch, and flat `cycle.*` knobs. This module owns
  * their sparse-merge into the loaded config — called by
  * `loadConfigWithEngine()` (src/core/config.ts) after its per-key merges,
  * with the same precedence: env > file > DB.
@@ -65,12 +65,34 @@ export interface DbPlaneEngineReader {
   ): Promise<T[]>;
 }
 
+/**
+ * The DB-plane `chat_fallback_chain` string: the comma-separated form the
+ * GBRAIN_CHAT_FALLBACK_CHAIN env var uses, or a JSON string array. `error`
+ * names why a JSON payload was rejected (doctor reports it); an empty chain
+ * is no chain.
+ */
+export function parseDbChatFallbackChain(raw: string): { chain?: string[]; error?: string } {
+  if (!raw.trim().startsWith('[')) {
+    const chain = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    return chain.length > 0 ? { chain } : {};
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === 'string')) return { error: 'is not a JSON array of strings' };
+    const chain = parsed.map((s) => s.trim()).filter(Boolean);
+    return chain.length > 0 ? { chain } : {};
+  } catch (err) {
+    return { error: `is not valid JSON (${(err as Error).message})` };
+  }
+}
+
 /** The flat scalar keys the batched read fetches (plus the `cycle.` prefix). */
 const DB_MERGED_SCALAR_KEYS: readonly string[] = [
   ...DB_MERGED_PROVIDER_KEY_FIELDS,
   'expansion_model',
   'chat_model',
   'chat_fallback_chain',
+  'chat_fallback_on_refusal',
 ];
 
 const CYCLE_PREFIX = 'cycle.';
@@ -185,25 +207,15 @@ export async function applyDbPlaneReadSideMerge(
   if (merged.chat_fallback_chain === undefined) {
     const rawChain = values.get('chat_fallback_chain');
     if (rawChain !== undefined) {
-      let chain: string[] | undefined;
-      if (rawChain.trim().startsWith('[')) {
-        try {
-          const parsed = JSON.parse(rawChain);
-          if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) {
-            chain = parsed.map((s) => s.trim()).filter(Boolean);
-          } else {
-            console.warn('[gbrain] config: chat_fallback_chain DB value is not a JSON array of strings; ignoring');
-          }
-        } catch (err) {
-          console.warn(`[gbrain] config: chat_fallback_chain DB value is not valid JSON; ignoring (${(err as Error).message})`);
-        }
-      } else {
-        chain = rawChain.split(',').map((s) => s.trim()).filter(Boolean);
-      }
-      if (chain !== undefined && chain.length > 0) {
-        merged.chat_fallback_chain = chain;
-      }
+      const parsed = parseDbChatFallbackChain(rawChain);
+      if (parsed.error) console.warn(`[gbrain] config: chat_fallback_chain DB value ${parsed.error}; ignoring`);
+      if (parsed.chain) merged.chat_fallback_chain = parsed.chain;
     }
+  }
+  // chat_fallback_on_refusal — 'true' / 'false' (strict); any other DB value is ignored.
+  if (merged.chat_fallback_on_refusal === undefined) {
+    const rawOnRefusal = values.get('chat_fallback_on_refusal');
+    if (rawOnRefusal === 'true' || rawOnRefusal === 'false') merged.chat_fallback_on_refusal = rawOnRefusal === 'true';
   }
 
   // Flat cycle.* merge (#2137/#4297 read-side), fed by the same batched read

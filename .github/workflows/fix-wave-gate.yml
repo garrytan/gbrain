@@ -1,0 +1,66 @@
+name: Fix-wave gate
+
+# Contributor PRs land only through a revised fix-wave PR (docs/RELEASING.md,
+# "Fix-wave gate"). This check fails every PR into master unless its head
+# repository is garrytan/gbrain, or a human on the maintainer allowlist in
+# scripts/fix-wave-gate.ts applied the `maintainer-override` label (audited in
+# the run log and step summary).
+#
+# pull_request_target runs this file and the checked-out script from the
+# default branch, so a PR that edits either cannot change its own result. It
+# reads only event metadata and the PR timeline: it NEVER checks out, builds or
+# runs PR code. Required-check status is a repository setting a maintainer
+# turns on (docs/RELEASING.md#fix-wave-gate); until then the check is advisory.
+
+on:
+  pull_request_target:
+    branches: [master]
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: fix-wave-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  contributor-gate:
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/fix-wave-gate.ts
+          sparse-checkout-cone-mode: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.2
+      - name: Decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/fix-wave-gate.ts
+
+  welcome-comment:
+    if: github.event.action == 'opened'
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/fix-wave-gate.ts
+          sparse-checkout-cone-mode: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.2
+      - name: Post the welcome comment once on a contributor PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/fix-wave-gate.ts --comment

@@ -617,6 +617,46 @@
           }
         ]
       },
+      "listFactsKeyset": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "number"
+            ],
+            "sql": "SELECT *, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at_iso FROM facts WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY created_at ASC, id ASC LIMIT $2",
+            "textSha256": "0a40122b0f45781fe163473acc69c889aeb6c63e2fd366f2f15731229025b466"
+          }
+        ],
+        "keyset": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT *, gbrain_fact_fingerprint(fact) AS fact_fingerprint, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at_iso FROM facts WHERE source_id = $1 AND (created_at > $2::text::timestamptz OR (created_at = $3::text::timestamptz AND id > $4)) ORDER BY created_at ASC, id ASC LIMIT $5",
+            "textSha256": "48e52d1c6898cb66b520371fe6e65624ccfca9643f2e6e4dcf8f30186bbbdd0f"
+          }
+        ],
+        "strictTime": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "array<string>",
+              "number"
+            ],
+            "sql": "SELECT *, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at_iso FROM facts WHERE source_id = $1 AND created_at > $2::text::timestamptz AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND visibility = ANY($3::text[]) ORDER BY created_at ASC, id ASC LIMIT $4",
+            "textSha256": "8918057b510da33d9b032fdefda14dfd7c9f5e67dd28b763ee8823cfa87b42f5"
+          }
+        ]
+      },
       "listFactsSince": {
         "allFilters": [
           {

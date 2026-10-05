@@ -1060,6 +1060,13 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       catch (error) { console.error(`[config] ${(error as Error).message}`); process.exit(1); }
     }
 
+    // The shared-skills migration reads these bounds on every run; refuse a malformed or over-ceiling value.
+    const { INVENTORY_LIMIT_KEYS, parseInventoryLimitValue } = await import('../core/shared-skills/inventory-limits.ts');
+    if (INVENTORY_LIMIT_KEYS.includes(key)) {
+      try { parseInventoryLimitValue(key, value); }
+      catch (error) { (await import('../cli/cli-error.ts')).exitCliError(error, 'config'); }
+    }
+
     // #5254: an unknown value would silently keep refusing unbound writes.
     const { UNBOUND_WRITE_KEY, parseUnboundWriteValue } = await import('../core/persistence/unbound-source.ts');
     if (key === UNBOUND_WRITE_KEY) {

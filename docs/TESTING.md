@@ -317,6 +317,42 @@ Bad: a test that reads `src/commands/remote.ts` and asserts it contains
 `job.status`. It passes when the loop is broken in a way that keeps the token,
 fails on a harmless rename, and duplicates the behavioral test above.
 
+### Contributor audit
+
+`bun run audit:contributors <base>..<head> [--prs <manifest>] [--json]`
+(`scripts/contributor-audit.ts`) re-proves discrimination for every
+first-parent commit in the range and for each PR head in `--prs`, trial-merged
+onto `<head>`. In an isolated worktree of `<head>` it runs the change's test
+files, one Bun process per file as the unit loop does (green baseline required), reverses only that change's product hunks
+(`git diff M^1 M -- <product files> | git apply -R`; tests and docs stay),
+reruns, restores, checks the tree is identical and re-verifies green. Hunks
+that no longer apply at `<head>` are audited at the merge commit itself.
+
+Results use the helper's vocabulary (`discriminates`, `does_not_discriminate`,
+`vacuous_failure`) plus `setup_failed`, `conflict` and `not_audited`, with a
+reason. Human verdicts (`accept`, `rework`, `reject`, `not_yet_proven`) live in
+a separate `--verdicts` file and print in their own column. It also runs
+`wave-security-scan` (range and each PR) and `check:postgres-lanes` (head and
+each trial merge) from the trusted checkout; `--skip-security` and
+`--skip-lanes` opt out.
+
+Preflight checks Bun against `engines.bun`, the refs, gitleaks and python3,
+and a `--postgres` database (which must be test-shaped). PR heads are pinned
+into `<run-dir>/prs.pinned.json`; state and per-step logs live in the run dir
+(default `.git/contributor-audit/<base>-<head>/`), so `--resume` skips finished
+cases and refuses when refs or pins differ. `--step-timeout` (default 900s)
+bounds each step. Exit: 0 clean, 1 needs a human look, 2 usage or preflight
+refusal (an agent-contract envelope), 130 interrupted.
+
+Untrusted code (install with `--ignore-scripts`, tests) runs under `env -i`
+with an allowlist: temporary `HOME` and `GBRAIN_HOME`, no credential files,
+`DATABASE_URL` and `GBRAIN_DATABASE_URL` empty unless `--postgres` is given,
+`bun --no-env-file`. For stronger isolation, run the unit audit on an
+ephemeral Ubicloud VM with outbound network blocked after `bun install`
+(optional). First run: `bun scripts/contributor-audit-fixture.ts <dir>` builds
+an offline range covering each result. Tests:
+`test/scripts/contributor-audit.test.ts`.
+
 ### Retiring a test
 
 Delete or merge a test only with evidence, recorded in the PR body:

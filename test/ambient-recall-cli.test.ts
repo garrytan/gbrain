@@ -77,7 +77,8 @@ describe('gbrain delta (CLI)', () => {
     expect(env.since).toBe('1970-01-01T00:00:00.000Z');
     expect(env.pages).toEqual([]);
     expect(env.has_more).toBe(false);
-    expect(env.next_cursor).toEqual({ since: '1970-01-01T00:00:00.000Z', slug: '' });
+    expect(env.next_cursor).toMatchObject({ since: '1970-01-01T00:00:00.000Z', slug: '' });
+    expect(typeof env.next_cursor.cursor).toBe('string');
   }, 60_000);
 
   test('unparseable --since: exit 2 (usage), invalid_params rendering on stderr', () => {

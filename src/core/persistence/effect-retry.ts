@@ -13,6 +13,7 @@ import { assertEmbeddingEffectEnabled, readEmbeddingEffectProjection, selectedEf
 import { PARK_AFTER_FAILURES, type PersistenceEffect } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
 import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targets.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its blocking, retrying and parked effects, read-only.`,
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
@@ -142,6 +143,7 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
   const configuredSignature = config?.embedding_model && config.embedding_dimensions
     ? `${config.embedding_model}:${config.embedding_dimensions}` : null;
   return engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
     const [selected] = await tx.executeRaw<PersistenceEffect>("SELECT * FROM persistence_effects WHERE request_id=$1::uuid AND kind='embedding'", [request.id]);
     if (!selected) throw opError('invalid_params', 'The embedding obligation is unavailable.',
       `The embedding effect of request ${requestId} in source ${sourceId} disappeared while retry-effects ran (it settled or was compacted), so nothing was queued. Preview the request again.`,

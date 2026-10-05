@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 203001,
-    "stdoutSha256": "1c7a6e9584099345f3d0f2ef2756bce55121ef709144cc7e60a78ec9ee6c6e0d",
+    "stdoutBytes": 203079,
+    "stdoutSha256": "3f2a347db6f4a41890023a83565e4a811e9fb1127b881fad419a24f3365f3d21",
     "toolNames": [
       "remember",
       "entity",
@@ -5411,13 +5411,14 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): what changed since a time (pages, facts, thread events), zero LLM. Keep a cursor with session_id, or pass since.",
+        "description": "MEMORY VERB (v1): pages, facts, thread events changed since a cursor, zero LLM. Pass session_id, cursor or since.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "delta",
         "parameters": {
           "budget_tokens": "number?",
+          "cursor": "string?",
           "entities": "string?",
           "include_private": "boolean?",
           "session_id": "string?",
@@ -5431,8 +5432,12 @@
               "description": "Token budget; pages pack first.",
               "type": "number"
             },
+            "cursor": {
+              "description": "next_cursor.cursor (exact).",
+              "type": "string"
+            },
             "entities": {
-              "description": "Entity scope for thread events (max 8).",
+              "description": "Entities for thread events (max 8).",
               "type": "string"
             },
             "include_private": {
@@ -5440,15 +5445,15 @@
               "type": "boolean"
             },
             "session_id": {
-              "description": "Opaque session id; keeps a cursor.",
+              "description": "Session id; keeps a cursor.",
               "type": "string"
             },
             "since": {
-              "description": "ISO 8601 cursor (or use session_id).",
+              "description": "ISO 8601 start time.",
               "type": "string"
             },
             "since_slug": {
-              "description": "next_cursor.slug from the previous response.",
+              "description": "Legacy: next_cursor.slug.",
               "type": "string"
             }
           },

@@ -886,6 +886,8 @@ CREATE TABLE IF NOT EXISTS retrieval_weights (
 -- per-session cursor + boundary-tie dedup for the `delta` verb + heartbeat
 -- runtime. Key (source_id, client_id, session_id); client_id 'local' sentinel
 -- for CLI/hook, remote auth client id otherwise. jsonb DDL-literal defaults.
+-- facts_cursor_at/_id + degraded_wakes (migration v208): delta's per-arm facts
+-- keyset and its consecutive incomplete-wake counter.
 CREATE TABLE IF NOT EXISTS session_context_state (
   source_id           TEXT NOT NULL,
   client_id           TEXT NOT NULL DEFAULT 'local',
@@ -895,6 +897,9 @@ CREATE TABLE IF NOT EXISTS session_context_state (
   checkpoint_manifest JSONB NOT NULL DEFAULT '[]'::jsonb,
   last_wake_at        TIMESTAMPTZ,
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  facts_cursor_at     TIMESTAMPTZ,
+  facts_cursor_id     BIGINT,
+  degraded_wakes      INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (source_id, client_id, session_id)
 );
 CREATE INDEX IF NOT EXISTS session_context_state_updated_idx

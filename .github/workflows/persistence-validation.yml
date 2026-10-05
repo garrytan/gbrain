@@ -206,6 +206,7 @@ jobs:
           case "$SHARD" in
             1) files=(
                 test/attribution-backfill-history.test.ts
+                test/behavior-change-notice.test.ts
                 test/colon-slug-windows-5032.test.ts
                 test/decide/conflict-proposals-managed.test.ts
                 test/declared-lineage-visibility.test.ts
@@ -244,6 +245,7 @@ jobs:
                 test/alias-source-cascade-5094.test.ts
                 test/company-brain-policy.test.ts
                 test/company-brain-runtime.test.ts
+                test/engine-sql-facts-keyset.test.ts
                 test/derived-link-reconciliation.test.ts
                 test/doctor-frontmatter-holds.test.ts
                 test/embedding-completion-atomic.serial.test.ts
@@ -271,6 +273,7 @@ jobs:
                 test/repair-frontmatter.test.ts
                 test/shared-skills-catalog.test.ts
                 test/shared-skills-retention-capacity.test.ts
+                test/shared-skills-source-opt-out.test.ts
                 test/stats-health-source-scope.test.ts
                 test/sync-frontmatter-recovery.test.ts
                 test/sync-frontmatter-slug-conflict.test.ts

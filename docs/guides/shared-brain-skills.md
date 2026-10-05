@@ -386,6 +386,86 @@ with `joined`, `refresh_pending`, `delivery_reported`, `source_changed`, or
 delivery only; every row remains native-unverified. Unknown or disconnected
 installations are not proven migrated by that inventory.
 
+## Choose which sources adopt shared skills
+
+**Say to your agent:** *"Stop the shared-skills migration from touching the
+acme-example source; it already serves its own skills."* The agent runs
+`gbrain sources shared-skills acme-example off` on the brain host.
+
+The 0.53.0 migration adopts the skillpack of every owned content source. A
+source that already delivers skills another way (its own brain-resident pack
+read through `list_brain_skillpack`/`get_skill`, or a plugin install) can opt
+out. The setting is `config.shared_skills` on the source; when it is `false`
+the migration preserves the source's files and reports
+`source_shared_skills_disabled`.
+
+Prerequisites: a shell on the brain host (the command reads and writes the
+host's source configuration) and the source id from `gbrain sources list`.
+
+```bash
+gbrain sources shared-skills acme-example status --json   # read-only
+gbrain sources shared-skills acme-example off             # opt out
+gbrain sources shared-skills acme-example on              # back to the default
+```
+
+Expected result: every form prints `config.shared_skills` (`false`, or unset,
+which means on), the effective policy mode (`content`, `preserve_files` or
+`explicit_pack_required`) with its reason code, an explanation, and any parked
+inventory. After `off`, the next `gbrain apply-migrations --migration 0.53.0 --yes`
+reports the source as `source_shared_skills_disabled` and changes none of its
+files or grants. `on` deletes the key; the default is on.
+
+`on` cannot override the source kind. A connector-managed source stays
+`preserve_files` and an unapproved external repository stays
+`explicit_pack_required`, both with `source_skill_adoption_required`; `status`
+says so instead of reporting the source as adopted.
+
+Failure example: on a thin client, or from any connection other than the
+brain host's own CLI, the command refuses with `trusted_local_only`. Its fix
+is the same command for the host operator (`actor: host_admin`) and its verify
+is the read-only `status --json` form. On a hosted brain, ask the host's
+operator to run it there. An unknown action exits with `invalid_params` and
+names the `status` form.
+
+Verify: `gbrain sources shared-skills <id> status --json`, the `shared_skills`
+object in `gbrain sources status <id> --json`, or
+`gbrain doctor --only shared_skills_sources`, which lists opted-out sources.
+
+### Oversized skill packs
+
+The migration inventories a pack within bounded limits. These database config
+keys hold today's defaults; `gbrain config set` refuses a value above the
+ceiling. Only the brain host's CLI writes them.
+
+| Key | Default | Ceiling |
+| --- | --- | --- |
+| `shared_skills.inventory.max_files` | 256 | 4096 |
+| `shared_skills.inventory.max_total_bytes` | 4194304 (4 MiB) | 67108864 (64 MiB) |
+| `shared_skills.inventory.max_file_bytes` | 262144 | 8388608 (8 MiB) |
+| `shared_skills.inventory.max_entries` | 1024 | 16384 |
+
+Symlinks, hard links, unsafe paths and the eight-directory depth limit are not
+configurable.
+
+A pack over a bound parks its source once: the per-source migration record
+holds `parked` (the bound, the limits in force and when it parked), the stage
+reports `payload_too_large` with the next step, and the rest of the migration
+completes instead of recording a partial run. Later runs skip the source
+without re-reading the pack. Resume it in one of three ways, then run
+`gbrain apply-migrations --migration 0.53.0 --yes`:
+
+1. Raise the named bound: `gbrain config set shared_skills.inventory.max_file_bytes 524288`.
+2. Opt the source out: `gbrain sources shared-skills <id> off`.
+3. Shrink the pack, then release it: `gbrain sources shared-skills <id> on`.
+
+`gbrain doctor` warns `shared_skills_sources` while a source is parked.
+
+An install whose 0.53.0 migration already shows as wedged (three partial runs
+before parking existed) resumes with
+`gbrain apply-migrations --force-retry 0.53.0`, then
+`gbrain apply-migrations --migration 0.53.0 --yes`; the oversized source parks
+and the migration completes.
+
 ## Troubleshoot, leave, and recover
 
 Inspect this installation's local receipt without credentials or a live host:
