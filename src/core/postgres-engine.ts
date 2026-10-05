@@ -479,9 +479,8 @@ export class PostgresEngine implements BrainEngine {
     // is in dual-pool mode. The pooler's 2-min statement_timeout truncates
     // SCHEMA_SQL replays + migrations on Supabase; the direct pool gets
     // 30min. Lane B replaces the lock primitive with a TTL+heartbeat table
-    // lock; Lane A does the routing and keeps pg_advisory_lock(42) on the
-    // SAME connection so the lock is correct.
-    const conn = this.connectionManager
+    // lock; Lane A does the routing.
+    const pool = this.connectionManager
       ? await this.connectionManager.ddl()
       : this.sql;
 
@@ -509,11 +508,13 @@ export class PostgresEngine implements BrainEngine {
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock).
     //
-    // v0.30.1 honest limitation: pg_advisory_lock(42) is session-scoped to
-    // `conn`. When dual-pool routing is active, conn is a direct-pool reserved
-    // backend, so the lock is held for the duration of initSchema. Lane B
-    // replaces this with a TTL+heartbeat table lock that survives pooler-side
-    // session resets.
+    // pg_advisory_lock(42) is session-scoped, but ddl() returns a POOL (the read
+    // pool on every plain Postgres brain), so each tagged query may run on a
+    // different backend: the unlock then hits a session that does not hold the
+    // lock and the holder idles in the pool with key 42 held, stalling every
+    // later initSchema. Reserve one backend so acquire, DDL and unlock share it.
+    // Lane B replaces this with a TTL+heartbeat table lock.
+    const conn = await pool.reserve();
     const t0 = Date.now();
     logConnectionEvent({
       pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
@@ -525,7 +526,12 @@ export class PostgresEngine implements BrainEngine {
     // an unbounded pg_advisory_lock — a leaked pooler session holding key 42
     // hung every gbrain invocation forever with no output. On timeout the
     // error names the holder pid with pg_terminate_backend recovery guidance.
-    await acquireInitSchemaAdvisoryLock((q) => conn.unsafe(q));
+    try {
+      await acquireInitSchemaAdvisoryLock((q) => conn.unsafe(q));
+    } catch (e) {
+      conn.release();
+      throw e;
+    }
     try {
       // Pre-schema bootstrap: add forward-referenced state the embedded schema
       // blob requires but that older brains don't have yet (issues #366/#375/
@@ -563,7 +569,11 @@ export class PostgresEngine implements BrainEngine {
         }
       } catch { /* best-effort */ }
     } finally {
-      await conn`SELECT pg_advisory_unlock(42)`;
+      try {
+        await conn`SELECT pg_advisory_unlock(42)`;
+      } finally {
+        conn.release();
+      }
       logConnectionEvent({
         pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
         op: 'release',
