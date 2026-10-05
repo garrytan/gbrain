@@ -12,7 +12,7 @@
  */
 
 import { existsSync } from 'fs';
-import { execFileSync } from 'child_process';
+import { execFileSync } from './spawn.ts';
 import { join } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { importImageFile } from './import-file.ts';

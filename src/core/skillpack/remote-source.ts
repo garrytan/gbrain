@@ -22,7 +22,7 @@
  */
 
 import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../spawn.ts';
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'fs';
 import { isAbsolute, join, resolve } from 'path';
 

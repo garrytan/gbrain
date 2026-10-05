@@ -22,7 +22,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, lstatSync, statSync, realpathSync } from 'fs';
 import { join, resolve, dirname } from 'path';
-import { execSync } from 'child_process';
+import { execSync } from '../../core/spawn.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { gbrainChildCommand } from './in-process.ts';
 import { cliChildStdio } from '../../core/cli-force-exit.ts';

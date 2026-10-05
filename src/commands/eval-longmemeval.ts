@@ -39,7 +39,7 @@
 
 import { homedir } from 'os';
 import { join } from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../core/spawn.ts';
 import { brainRecycler, createBenchmarkBrain, LME_BRAIN_RECYCLE_EVERY, resetTables } from '../eval/longmemeval/harness.ts';
 export { LME_BRAIN_RECYCLE_EVERY };
 import { haystackToPages, normalizeSessions } from '../eval/longmemeval/adapter.ts';

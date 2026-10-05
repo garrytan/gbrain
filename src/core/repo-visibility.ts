@@ -39,6 +39,7 @@ import { dirname, join } from 'node:path';
 import { ensureGbrainHome } from './gbrain-home.ts';
 import { durableSsrfFlags } from './git-remote.ts';
 import { isCredentialInjectingProxy } from './execution-env.ts';
+import { bunSpawn } from './spawn.ts';
 
 // ── Subprocess seam (canonical home; bootstrap/repo.ts re-exports) ─────────
 
@@ -55,7 +56,7 @@ export type ExecRunner = (argv: string[]) => Promise<ExecResult>;
  * GIT_TERMINAL_PROMPT=0 so an unauthenticated git can never hang on a prompt. */
 export const defaultRunner: ExecRunner = async (argv: string[]): Promise<ExecResult> => {
   try {
-    const proc = Bun.spawn(argv, {
+    const proc = bunSpawn(argv, {
       stdout: 'pipe',
       stderr: 'pipe',
       stdin: 'ignore',

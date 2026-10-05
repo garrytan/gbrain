@@ -33,7 +33,7 @@ import {
   existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, statSync, renameSync,
 } from 'fs';
 import { join, dirname, relative, isAbsolute } from 'path';
-import { execFile, execFileSync, execSync, type ChildProcess, type ExecFileException } from 'child_process';
+import { execFile, execFileSync, execSync, type ChildProcess, type ExecFileException } from './spawn.ts';
 import {
   GIT_ENV, GIT_ENV_AUTH, divergenceSafePull, detectDefaultBranch, pushProbe,
   type PullOutcome, type PushProbeResult,

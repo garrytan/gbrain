@@ -360,7 +360,7 @@ export function changedSlugsSinceVersion(
 ): string[] | null {
   // Synchronously execute git via Bun.spawnSync to avoid the async overhead
   // and keep this callable from CLI dispatch without awaiting.
-  const { spawnSync } = require('child_process') as typeof import('child_process');
+  const { spawnSync } = require('../spawn.ts') as typeof import('../spawn.ts');
 
   // Probe git availability + repo state. `.git` may be a directory OR a file
   // (worktrees). Either is fine for `git log`.

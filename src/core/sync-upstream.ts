@@ -8,7 +8,7 @@
  * three `sources.upstream_*` columns, so a remote doctor needs no subprocess.
  * A missing or older-than-24 h observation is "upstream unknown", never fresh.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from './spawn.ts';
 import { statSync } from 'node:fs';
 import type { BrainEngine } from './engine.ts';
 import { ERROR_CATALOGUE } from './error-catalogue.ts';

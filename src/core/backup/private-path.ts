@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile } from '../spawn.ts';
 import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentInstallError, assertNoSymlinks } from '../agent-install/state.ts';

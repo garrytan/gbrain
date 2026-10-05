@@ -15,7 +15,7 @@
  */
 
 import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../spawn.ts';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join } from 'path';
 

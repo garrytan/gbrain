@@ -2,7 +2,7 @@
 import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, renameSync, realpathSync, readlinkSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from './spawn.ts';
 import { readProcessCommand, type ProcessCommandProbeDeps } from './autopilot-lock.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseGlobalFlags } from './cli-options.ts';

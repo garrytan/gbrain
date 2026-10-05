@@ -10,7 +10,7 @@
  * stay the fallback.
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync } from './spawn.ts';
 import { realpathSync } from 'fs';
 import { relative } from 'path';
 

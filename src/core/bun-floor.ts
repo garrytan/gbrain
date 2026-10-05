@@ -20,7 +20,7 @@
  * No DB; readers return failure values instead of throwing.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from './spawn.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { VERSION } from '../version.ts';

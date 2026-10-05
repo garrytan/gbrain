@@ -34,7 +34,7 @@
  * sees the constraint.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative } from 'node:path';
 

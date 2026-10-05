@@ -3,7 +3,7 @@
  * and sizes through chunked `ls-tree`, contents through `cat-file --batch`,
  * never one process per file and never an unbounded full-tree read.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 
 /** The sync read bound (`readSyncFile`): bigger files are held without being read. */
 export const SYNC_READ_BOUND = 10 * 1024 ** 2;

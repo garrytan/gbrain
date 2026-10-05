@@ -36,7 +36,7 @@
  *                  (escalating exponential backoff).
  */
 
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from '../spawn.ts';
 import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, resolve as resolvePath } from 'node:path';

@@ -25,7 +25,7 @@
 
 import { assertLegacySkillFilesystemWrite } from '../skillpack/writer-guard.ts';
 import * as fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import { dirname } from 'node:path';
 import type { EditOp, EditResult, EditRejectionReason } from './types.ts';
 

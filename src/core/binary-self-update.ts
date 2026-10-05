@@ -44,7 +44,7 @@
 
 import { chmodSync, closeSync, fsyncSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from './spawn.ts';
 import { createHash } from 'node:crypto';
 
 /**

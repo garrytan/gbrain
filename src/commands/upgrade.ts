@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { execSync, execFileSync, spawnSync } from 'child_process';
+import { execSync, execFileSync, spawnSync } from '../core/spawn.ts';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
 import { parseSemver, semverGt } from '../core/semver.ts';

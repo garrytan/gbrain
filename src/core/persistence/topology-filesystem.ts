@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn } from '../spawn.ts';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';

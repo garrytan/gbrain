@@ -16,7 +16,7 @@
  *  └────────────────────┘
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../spawn.ts';
 import { statSync } from 'fs';
 
 export interface AgentRunner {

@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync } from '../core/spawn.ts';
 import { readdirSync, lstatSync, existsSync, copyFileSync, mkdirSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';

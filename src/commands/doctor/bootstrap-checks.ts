@@ -5,7 +5,7 @@
  */
 import { join } from 'path';
 import { existsSync } from 'fs';
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../../core/spawn.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { LATEST_VERSION } from '../../core/migrate.ts';
 // Agent-bootstrap doctor group (plan B2/B4/ENG-4 + one-live-serve note).

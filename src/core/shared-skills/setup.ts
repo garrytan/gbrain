@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../spawn.ts';
 import { gbrainPath, isThinClient } from '../config.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';

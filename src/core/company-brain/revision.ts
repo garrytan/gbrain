@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn } from '../spawn.ts';
 import { createHash } from 'node:crypto';
 import { constants, existsSync, lstatSync, openSync, fstatSync, readSync, closeSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';

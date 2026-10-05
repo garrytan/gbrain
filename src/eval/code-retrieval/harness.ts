@@ -289,7 +289,7 @@ export async function runCodeRetrievalEval(
 
   let commit = 'unknown';
   try {
-    const { execSync } = await import('child_process');
+    const { execSync } = await import('../../core/spawn.ts');
     commit = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
   } catch {
     // Not in a git repo or git unavailable — leave as 'unknown'

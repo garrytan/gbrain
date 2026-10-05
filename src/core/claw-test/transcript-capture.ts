@@ -26,7 +26,7 @@
  */
 
 import { createWriteStream, type WriteStream } from 'fs';
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from '../spawn.ts';
 import { dirname } from 'path';
 import { mkdirSync, existsSync } from 'fs';
 import type { TranscriptEvent, TranscriptSink } from './agent-runner.ts';
