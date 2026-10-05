@@ -1494,7 +1494,12 @@ export async function runExtractConversationFactsCore(
           result.pages_skipped_type_mismatch++;
           continue;
         }
-        await processPageWithLock(page);
+        try {
+          await processPageWithLock(page);
+        } catch (error) {
+          if (isAbortError(error) || error instanceof BudgetExhausted) throw error;
+          recordPageFailure(result, slug, error);
+        }
       }
     } else if (opts.slug) {
       const page = await engine.getPage(opts.slug, { sourceId });
@@ -1577,14 +1582,8 @@ export async function runExtractConversationFactsCore(
               name: 'AbortError',
             });
           }
-          result.pages_failed += poolResult.errored;
           for (const failure of poolResult.failures) {
-            const message = failure.error instanceof Error
-              ? failure.error.message
-              : String(failure.error);
-            process.stderr.write(
-              `[extract-conversation-facts] ${failure.label} failed: ${message}\n`,
-            );
+            recordPageFailure(result, failure.label, failure.error);
           }
 
           processedPagesCount += claimable.length;
@@ -2158,6 +2157,14 @@ function pickLaterIso(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function recordPageFailure(result: ExtractConversationFactsResult, slug: string, error: unknown): void {
+  result.pages_failed++;
+  const reason = error instanceof Error
+    ? /extraction failed \(([a-z_]+)\)/.exec(error.message)?.[1] ?? 'page_error'
+    : 'page_error';
+  process.stderr.write(`[extract-conversation-facts] ${slug} failed (${reason})\n`);
 }
 
 export function isAbortError(err: unknown): boolean {

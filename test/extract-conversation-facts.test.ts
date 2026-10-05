@@ -47,6 +47,7 @@ import {
 import { _resetLlmCacheForTests } from '../src/core/conversation-parser/llm-base.ts';
 import { BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
 import { loadOpCheckpoint } from '../src/core/op-checkpoint.ts';
+import { runIngestFacts } from '../src/core/transcripts/ingest-facts.ts';
 
 // ---------------------------------------------------------------------------
 // pageTypesForAllowed — logical→concrete page-type expansion.
@@ -329,6 +330,7 @@ describe('runExtractConversationFactsCore', () => {
   let mainChatCalls = 0;
   let chatStopReason: ChatResult['stopReason'] = 'end';
   let chatTextOverride: string | null = null;
+  let chatMalformedOnCall: number | null = null;
   let embeddedTexts: string[] = [];
   let fallbackCalls = 0;
   let fallbackContents: string[] = [];
@@ -389,8 +391,12 @@ describe('runExtractConversationFactsCore', () => {
       chatHook = null;
       if (hook) await hook();
       callIndex++;
+      const malformedCall = chatMalformedOnCall !== null &&
+        (mainChatCalls === chatMalformedOnCall || mainChatCalls === chatMalformedOnCall + 1);
       return {
-        text: chatTextOverride ?? JSON.stringify({
+        text: malformedCall
+          ? JSON.stringify({ facts: [{ fact: 123, kind: 'fact' }] })
+          : chatTextOverride ?? JSON.stringify({
           facts: [{
             fact: `synthetic fact #${callIndex}`,
             kind: 'event',
@@ -435,6 +441,7 @@ describe('runExtractConversationFactsCore', () => {
     mainChatCalls = 0;
     chatStopReason = 'end';
     chatTextOverride = null;
+    chatMalformedOnCall = null;
     embeddedTexts = [];
     fallbackCalls = 0;
     fallbackContents = [];
@@ -1469,6 +1476,77 @@ describe('runExtractConversationFactsCore', () => {
       [TERMINAL_AUDIT_SOURCE],
     );
     expect(Number(terminals[0]?.count ?? 0)).toBe(0);
+  });
+
+  test('explicit slugs continue after a malformed page and leave it unfinished', async () => {
+    const slugs = [
+      'conversations/batch-first',
+      'conversations/batch-malformed',
+      'conversations/batch-last',
+    ];
+    for (const slug of slugs) {
+      await engine.putPage(slug, {
+        type: 'conversation',
+        title: slug,
+        compiled_truth: [
+          fmt('Alice Example', '2024-03-15', '9:00 AM', 'We signed the contract.'),
+          fmt('Bob Demo', '2024-03-15', '9:01 AM', 'The contract is signed.'),
+        ].join('\n'),
+        timeline: '',
+        frontmatter: {},
+      });
+    }
+    chatMalformedOnCall = 2;
+
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slugs,
+      sleepMs: 0,
+    });
+    expect(result.pages_failed).toBe(1);
+    expect(result.pages_processed).toBe(2);
+
+    chatMalformedOnCall = null;
+    const retry = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slugs,
+      sleepMs: 0,
+    });
+    expect(retry.pages_processed).toBe(1);
+    expect(retry.pages_skipped_completed).toBe(2);
+  });
+
+  test('transcript ingest reports failed explicit-slug extraction', async () => {
+    chatTextOverride = JSON.stringify({ facts: [{ fact: 123, kind: 'fact' }] });
+    const result = await runIngestFacts(engine, {
+      sourceId: 'default',
+      slugs: ['conversations/imessage/alice-example'],
+      quiet: true,
+    });
+    expect(result.pages).toBe(1);
+    expect(result.pagesFailed).toBe(1);
+  });
+
+  test('explicit-slug failure log omits provider error details', async () => {
+    chatFailure = new Error('provider response included api_key=private-value');
+    const writes: string[] = [];
+    const originalWrite = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const result = await runExtractConversationFactsCore(engine, {
+        sourceId: 'default',
+        slugs: ['conversations/imessage/alice-example'],
+        sleepMs: 0,
+      });
+      expect(result.pages_failed).toBe(1);
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    expect(writes.join('')).toContain('failed (provider_error)');
+    expect(writes.join('')).not.toContain('private-value');
   });
 
   test('insert failure leaves no terminal and retries from a clean replay', async () => {

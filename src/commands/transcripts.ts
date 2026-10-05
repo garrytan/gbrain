@@ -522,7 +522,7 @@ async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
 
   // --facts: ONE extractor invocation over every touched slug (including
   // hash-skipped pages — the extractor's version-token gate dedupes work).
-  let factsSummary: { pages: number; spentUsd?: number } | undefined;
+  let factsSummary: { pages: number; pagesFailed: number; spentUsd?: number } | undefined;
   if (parsed.facts && !parsed.dryRun && result.slugsTouched.length > 0) {
     const { runIngestFacts } = await import('../core/transcripts/ingest-facts.ts');
     factsSummary = await runIngestFacts(engine, {
@@ -539,7 +539,7 @@ async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
     console.log(fmtSummary(result));
     if (factsSummary) {
       console.log(
-        `facts: extracted over ${factsSummary.pages} page(s)` +
+        `facts: attempted ${factsSummary.pages} page(s), ${factsSummary.pagesFailed} failed` +
           (factsSummary.spentUsd !== undefined ? `, ~$${factsSummary.spentUsd.toFixed(2)} spent` : ''),
       );
     }
@@ -552,7 +552,7 @@ async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
   const allFailed =
     result.files.length > 0 &&
     result.files.every((f) => f.error !== undefined || (f.drift && f.sessions.length === 0));
-  if (allFailed) setCliExitVerdict(1);
+  if (allFailed || (factsSummary?.pagesFailed ?? 0) > 0) setCliExitVerdict(1);
 }
 
 async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
