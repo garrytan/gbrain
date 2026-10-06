@@ -71,6 +71,33 @@ No server, no tunnel, no token needed. Works on both PGLite and Postgres engines
 `--surface starter` sits between (~27 ops: the verbs plus the daily-driver set);
 omit the flag (default `full`) for every operation.
 
+#### Multiple local clients with PGLite
+
+PGLite permits one process to own a database directory at a time. An MCP
+client that starts a separate `gbrain serve` for each chat can therefore
+encounter a conflict when another chat already owns the same database.
+The second server cannot open the database and defaults to a status-only
+surface with `gbrain_status`, leaving memory operations unavailable. Older
+versions, or a server started with `--fail-fast`, can instead terminate
+during initialization; the client may report a closed connection.
+
+For example:
+
+- Two Codex chats start stdio servers against the same PGLite directory:
+  one owns the database and the other cannot open it.
+- A local CLI command that cannot delegate to the running owner also
+  encounters `pglite_busy`; this does not mean the notes were deleted.
+- Two clients connect to one `gbrain serve --http` process: both use the
+  same database owner, so the clients do not compete for the PGLite lock.
+
+For concurrent local clients, use one authenticated HTTP MCP server bound
+to `127.0.0.1`, or use Postgres when separate server processes are needed.
+HTTP replaces the per-client stdio processes; changing the database engine
+is not required for this shared-server arrangement. See
+[MCP administration](ADMIN.md) for client credentials and permissions.
+Do not remove a live owner's lock or stop another chat's server merely
+to make a second connection succeed.
+
 `--surface` is the callable ceiling. To keep every operation callable while
 listing fewer tools to the agent, set `mcp.advertised_surface`:
 
