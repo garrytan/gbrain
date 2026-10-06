@@ -14,6 +14,16 @@ verb; `remember` and `extract_facts` do all the writing.
 
 Off by default. Nothing in this feature ever enables itself.
 
+An explicit `gbrain config set memory.auto_writeback off` also stops fact
+extraction from PreCompact/checkpoint segments, including the maintenance
+sweep fallback. Banked segments remain on disk but are marked skipped; a
+later re-enable does not replay their unextracted windows. Already-written
+facts are not deleted. Context reads, checkpoint banking and ordinary
+session-corpus ingestion are unchanged. Legacy checkpoint extraction when
+the setting is unset remains unchanged; set `off` explicitly to revoke it.
+Unreadable, invalid or diverged configuration holds segments for retry
+without extracting them, rather than treating uncertainty as an opt-out.
+
 ## Who gets asked (and who is never asked)
 
 gbrain distinguishes PERSONAL brains from company/team brains and only ever

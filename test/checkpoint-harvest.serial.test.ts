@@ -120,6 +120,131 @@ async function enableFenceWrites(): Promise<string> {
   return brainDir;
 }
 
+describe('compact respects explicit writeback opt-out (#6091)', () => {
+  afterEach(async () => {
+    await engine.unsetConfig('memory.auto_writeback');
+  });
+
+  test('off retires a banked segment without extraction; sweep cannot revive it on re-enable', async () => {
+    await engine.setConfig('memory.auto_writeback', 'off');
+    let calls = 0;
+    __setChatTransportForTests(async () => { calls++; throw new Error('off must not call a provider'); });
+    const seg = bankSegment('sess-off', toCorpusText([{ role: 'user', text: 'I prefer a quiet office for focused work.' }]));
+    scheduleCheckpointHarvest({ engine, sourceId: 'default', sessionId: 'sess-off', corpusDir, file: seg.file, capabilities: KEYED });
+    await __drainCheckpointHarvestForTests();
+    expect(calls).toBe(0);
+    expect(JSON.parse(readFileSync(join(corpusDir, seg.file + CORPUS_INGESTED_SUFFIX), 'utf8')).skipped).toBe('writeback_off');
+    expect(existsSync(join(corpusDir, seg.file))).toBe(true);
+    expect(existsSync(join(corpusDir, seg.file + HARVEST_RECEIPT_SUFFIX))).toBe(false);
+    expect(existsSync(join(corpusDir, seg.file + CORPUS_CLAIM_SUFFIX))).toBe(false);
+    await engine.setConfig('memory.auto_writeback', 'all');
+    await runMaintenanceSweep(engine, { capabilities: KEYED, budgetMs: 120_000 });
+    expect(calls).toBe(0);
+    expect(await engine.executeRaw('SELECT id FROM facts')).toHaveLength(0);
+  });
+
+  test('off retires an unharvested segment even keyless, but does not retire ordinary session corpus', async () => {
+    await engine.setConfig('memory.auto_writeback', 'off');
+    const seg = bankSegment('sess-backstop-off', 'User: I prefer quiet workspaces.');
+    writeFileSync(join(corpusDir, 'ordinary.txt'), 'User: I prefer a standing desk.');
+    const report = await runMaintenanceSweep(engine, { capabilities: KEYLESS, budgetMs: 120_000 });
+    expect(report.skipped).toContainEqual({ reason: 'writeback_off', count: 1 });
+    expect(JSON.parse(readFileSync(join(corpusDir, seg.file + CORPUS_INGESTED_SUFFIX), 'utf8')).skipped).toBe('writeback_off');
+    expect(existsSync(join(corpusDir, 'ordinary.txt' + CORPUS_INGESTED_SUFFIX))).toBe(false);
+  });
+
+  test('invalid mode preserves the segment for retry without paying for extraction', async () => {
+    await engine.setConfig('memory.auto_writeback', 'invalid');
+    let calls = 0;
+    __setChatTransportForTests(async () => { calls++; throw new Error('invalid mode must not call a provider'); });
+    const seg = bankSegment('sess-invalid', 'User: I prefer quiet workspaces.');
+    scheduleCheckpointHarvest({ engine, sourceId: 'default', sessionId: 'sess-invalid', corpusDir, file: seg.file, capabilities: KEYED });
+    await __drainCheckpointHarvestForTests();
+    const report = await runMaintenanceSweep(engine, { capabilities: KEYED, budgetMs: 120_000 });
+    expect(calls).toBe(0);
+    expect(report.skipped).toContainEqual({ reason: 'writeback_mode_invalid', count: 1 });
+    expect(existsSync(join(corpusDir, seg.file + CORPUS_INGESTED_SUFFIX))).toBe(false);
+    expect(existsSync(join(corpusDir, seg.file + CORPUS_CLAIM_SUFFIX))).toBe(false);
+  });
+
+  test('off retires unfinished windows; re-enable never extracts the revoked tail', async () => {
+    await engine.setConfig('memory.auto_writeback', 'all');
+    chatStub([]);
+    const seg = bankSegment('sess-partial-off', toCorpusText([
+      { role: 'user', text: 'I prefer quiet workspaces. '.repeat(200) },
+      { role: 'assistant', text: 'The office discussion continues. '.repeat(200) },
+    ]));
+    const job = { engine, sourceId: 'default', sessionId: 'sess-partial-off', corpusDir, file: seg.file, capabilities: KEYED };
+    scheduleCheckpointHarvest(job);
+    await __drainCheckpointHarvestForTests();
+    expect(existsSync(join(corpusDir, seg.file + '.progress'))).toBe(true);
+    expect(existsSync(join(corpusDir, seg.file + CORPUS_INGESTED_SUFFIX))).toBe(false);
+    await engine.setConfig('memory.auto_writeback', 'off');
+    const offReport = await runMaintenanceSweep(engine, { capabilities: KEYED, budgetMs: 120_000 });
+    expect(offReport.skipped).toContainEqual({ reason: 'writeback_off', count: 1 });
+    await engine.setConfig('memory.auto_writeback', 'all');
+    let calls = 0;
+    __setChatTransportForTests(async () => { calls++; throw new Error('revoked tail must not be extracted'); });
+    const report = await runMaintenanceSweep(engine, { capabilities: KEYED, budgetMs: 120_000 });
+    expect(calls).toBe(0);
+    expect(report.skipped).toContainEqual({ reason: 'already_ingested', count: 1 });
+  });
+
+  test('unreadable config does not use cached enablement or retire retryable work', async () => {
+    await engine.setConfig('memory.auto_writeback', 'all');
+    const { resolveWritebackConfig } = await import('../src/core/facts/writeback-config.ts');
+    await resolveWritebackConfig(engine); // seed last-known-good enabled
+    const seg = bankSegment('sess-unreadable', 'User: I prefer quiet workspaces.');
+    let calls = 0;
+    __setChatTransportForTests(async () => { calls++; throw new Error('unreadable gate must not call a provider'); });
+    const original = engine.getConfig.bind(engine);
+    const probe = spyOn(engine, 'getConfig').mockImplementation(async key => {
+      if (key === 'memory.auto_writeback') throw new Error('synthetic config read failure');
+      return original(key);
+    });
+    try {
+      scheduleCheckpointHarvest({ engine, sourceId: 'default', sessionId: 'sess-unreadable', corpusDir, file: seg.file, capabilities: KEYED });
+      await __drainCheckpointHarvestForTests();
+      const report = await runMaintenanceSweep(engine, { capabilities: KEYED, budgetMs: 120_000 });
+      expect(calls).toBe(0);
+      expect(report.skipped).toContainEqual({ reason: 'writeback_gate_unreadable', count: 1 });
+      expect(existsSync(join(corpusDir, seg.file + CORPUS_INGESTED_SUFFIX))).toBe(false);
+    } finally { probe.mockRestore(); }
+  });
+
+  test('OpenClaw direct-engine compaction honors authoritative off despite an enabled file mirror', async () => {
+    await engine.setConfig('memory.auto_writeback', 'off');
+    const { createGBrainContextEngine, __resetSdkLoadStateForTests } = await import('../src/core/context-engine.ts');
+    const reflex = await import('../src/core/context/reflex.ts');
+    const probe = spyOn(reflex, 'getDirectPostgresEngine').mockResolvedValue(engine);
+    const configHome = join(homeDir, '.gbrain');
+    mkdirSync(configHome, { recursive: true });
+    writeFileSync(join(configHome, 'config.json'), JSON.stringify({
+      engine: 'postgres', memory: { auto_writeback: 'all' },
+    }));
+    const workspace = join(homeDir, 'workspace');
+    mkdirSync(join(workspace, 'memory'), { recursive: true });
+    mkdirSync(join(workspace, 'ops'), { recursive: true });
+    const sessionFile = join(homeDir, 'session.jsonl');
+    writeFileSync(sessionFile, JSON.stringify({
+      type: 'message', timestamp: '2026-08-01T10:00:00Z',
+      message: { role: 'user', content: [{ type: 'text', text: 'I prefer quiet workspaces for focused work.' }] },
+    }) + '\n');
+    let calls = 0;
+    __setChatTransportForTests(async () => { calls++; throw new Error('direct compact off must not call a provider'); });
+    __resetSdkLoadStateForTests();
+    try {
+      const contextEngine = createGBrainContextEngine({ workspaceDir: workspace });
+      const result = await contextEngine.compact({ sessionId: 'sess-direct-off', sessionFile });
+      expect(result.ok).toBe(true);
+      expect(result.result).toMatchObject({ gbrain_checkpoint: { status: 'banked', reason: 'writeback_off' } });
+      expect(probe).toHaveBeenCalled();
+      expect(calls).toBe(0);
+      expect(await engine.executeRaw('SELECT id FROM facts')).toHaveLength(0);
+    } finally { probe.mockRestore(); __resetSdkLoadStateForTests(); }
+  });
+});
+
 describe('post-compaction recall (the done criterion)', () => {
   test('segment → harvest → truthful manifest → link re-pull via trusted get_page', async () => {
     const brainDir = await enableFenceWrites();

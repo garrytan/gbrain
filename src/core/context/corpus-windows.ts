@@ -33,7 +33,7 @@ import { join } from 'node:path';
 import { MAX_TURN_TEXT_CHARS } from '../facts/extract.ts';
 import type { runFactsPipeline } from '../facts/backstop.ts';
 import { stripPastedContent } from '../transcripts/pasted-content.ts';
-import { CORPUS_PROGRESS_LOCK_SUFFIX, CORPUS_PROGRESS_SUFFIX, parseWbFileName } from './corpus-segments.ts';
+import { CORPUS_PROGRESS_LOCK_SUFFIX, CORPUS_PROGRESS_SUFFIX, parseWbFileName, parseSegmentFileName } from './corpus-segments.ts';
 
 /** Per-file window cap per sweep; longer files converge over later sweeps. */
 export const CORPUS_WINDOWS_PER_SWEEP = 8;
@@ -365,6 +365,12 @@ export async function finishedCorpusFileState(
   name: string,
 ): Promise<'done' | 'changed' | 'legacy' | 'legacy_changed'> {
   if (parseWbFileName(name)) return 'done';
+  // Content-addressed compact segments retired by explicit opt-out stay
+  // retired even if a previous harvest left an unfinished window ledger.
+  if (parseSegmentFileName(name)) {
+    const sidecar = await readFile(full + '.ingested', 'utf8');
+    try { if (JSON.parse(sidecar).skipped === 'writeback_off') return 'done'; } catch { /* legacy sidecar */ }
+  }
   const st = await stat(full);
   const progress = await readCorpusProgress(full);
   if (progress) return sameCorpusFileStat(progress.finished, corpusFileStat(st)) ? 'done' : 'changed';

@@ -109,6 +109,16 @@ export interface WritebackConfig extends WritebackFileConfig {
   plane_drift?: true;
 }
 
+/** Compaction predates ambient writeback: an unset mode keeps its legacy
+ * behavior, but an explicit opt-out must cover both harvest and sweep.
+ * Uncertain config never authorizes extraction or terminal retirement. */
+export function compactWritebackSkipReason(cfg: WritebackConfig): string | null {
+  if (cfg.read_error) return 'writeback_gate_unreadable';
+  if (cfg.plane_drift) return 'writeback_plane_drift';
+  if (!cfg.mode_valid) return 'writeback_mode_invalid';
+  return cfg.raw_mode === 'off' ? 'writeback_off' : null;
+}
+
 function normalizeMode(raw: unknown): Pick<WritebackFileConfig, 'mode' | 'mode_valid' | 'raw_mode'> {
   if (raw == null) return { mode: 'off', mode_valid: true, raw_mode: null };
   const s = String(raw).trim().toLowerCase();

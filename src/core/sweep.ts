@@ -531,6 +531,26 @@ async function runLinksTimelinePass(
   }
 }
 
+/** Retire explicit opt-out candidates even when extraction is keyless/disabled. */
+async function retireCorpusCandidates(
+  dir: string,
+  candidates: string[],
+  shouldRetire: (name: string) => boolean,
+  skip: PassCtx['skip'],
+): Promise<Set<string>> {
+  const { writebackOffSidecarJson } = await import('./context/corpus-segments.ts');
+  const retired = new Set<string>();
+  for (const name of candidates) {
+    if (!shouldRetire(name)) continue;
+    try {
+      await writeFile(join(dir, name) + CORPUS_INGESTED_SUFFIX, writebackOffSidecarJson());
+      retired.add(name);
+      skip('writeback_off');
+    } catch { /* per-file best effort — the next sweep retries */ }
+  }
+  return retired;
+}
+
 /**
  * Pass 3 body. `runFactsPipeline` — the narrowest existing entry that takes
  * raw transcript text through extract → resolve → dedup → insert — runs once
@@ -594,8 +614,8 @@ async function runCorpusIngestPass(
   // OFF retires banked turns even when the brain cannot extract — otherwise
   // the files linger eligible and a later re-enable would extract turns the
   // operator already revoked (codex re-review, this wave).
-  const { parseWbFileName, writebackOffSidecarJson, selfCaptureSidecarJson, corpusFileSessionId, corpusTextForExtraction } = await import('./context/corpus-segments.ts');
-  const { resolveWritebackConfig } = await import('./facts/writeback-config.ts');
+  const { parseWbFileName, parseSegmentFileName, writebackOffSidecarJson, selfCaptureSidecarJson, corpusFileSessionId, corpusTextForExtraction } = await import('./context/corpus-segments.ts');
+  const { resolveWritebackConfig, compactWritebackSkipReason } = await import('./facts/writeback-config.ts');
   const { loadConfig: loadFileCfg } = await import('./config.ts');
   const { isValidSourceId } = await import('./source-id.ts');
   // Gate semantics: never extract on a last-known-good ENABLED bundle — an
@@ -604,23 +624,16 @@ async function runCorpusIngestPass(
   // an unrecognized mode value all skip wb files WITHOUT a terminal sidecar
   // so the next sweep retries them once the config is coherent.
   const wbCfg = await resolveWritebackConfig(engine, loadFileCfg(), { gate: true });
+  const compactSkip = compactWritebackSkipReason(wbCfg);
   // Genuinely-resolved OFF: terminal-sidecar the wb candidates regardless of
   // extraction capability (idempotent one-line writes; a lost race with a
   // concurrent sweep writing the same sidecar is benign).
   const wbGenuinelyOff = !wbCfg.enabled && wbCfg.mode_valid && !wbCfg.plane_drift && !wbCfg.read_error;
-  const retireWbCandidatesIfOff = async (): Promise<Set<string>> => {
-    const retired = new Set<string>();
-    if (!wbGenuinelyOff) return retired;
-    for (const name of candidates) {
-      if (!parseWbFileName(name)) continue;
-      try {
-        await writeFile(join(dir, name) + CORPUS_INGESTED_SUFFIX, writebackOffSidecarJson());
-        retired.add(name);
-        skip('writeback_off');
-      } catch { /* per-file best effort — the next sweep retries */ }
-    }
-    return retired;
-  };
+  const retireWbCandidatesIfOff = (): Promise<Set<string>> => retireCorpusCandidates(
+    dir, candidates,
+    name => wbGenuinelyOff && (!!parseWbFileName(name) || (compactSkip === 'writeback_off' && !!parseSegmentFileName(name))),
+    skip,
+  );
 
   // [CX-P0.5] Keyless rule: no extraction provider configured ⇒ skip the
   // whole pass. Agent-authored fences (pass 1) carry keyless memory.
@@ -689,6 +702,11 @@ async function runCorpusIngestPass(
       }
 
       const wbMeta = parseWbFileName(name);
+      if (parseSegmentFileName(name) && compactSkip) {
+        if (compactSkip === 'writeback_off') await writeFile(full + CORPUS_INGESTED_SUFFIX, writebackOffSidecarJson());
+        skip(compactSkip);
+        continue;
+      }
       if (wbMeta && wbCfg.read_error) {
         skip('writeback_gate_unreadable');
         continue; // no sidecar — retry next sweep once the config is readable

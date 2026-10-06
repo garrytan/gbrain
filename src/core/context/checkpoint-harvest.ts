@@ -364,6 +364,13 @@ async function runOne(job: HarvestJob): Promise<{
 
     if (job.lane === 'writeback') return await runWritebackTurn(job, full, ingestedPath);
 
+    // #6091: the compact lane must honor the same explicit operator opt-out
+    // as Stop capture, before either extracting or retrying a receipt.
+    const { applyCompactWritebackGate } = await import('./compact-writeback.ts');
+    const { loadConfig } = await import('../config.ts');
+    const compactSkip = await applyCompactWritebackGate(job.engine, loadConfig(), full);
+    if (compactSkip) return { outcome: 'ok', reason: compactSkip };
+
     // Receipt retry path (codex round 2): extraction already happened; the
     // manifest publish failed transiently. Re-publish WITHOUT re-extracting.
     let receipt = await readReceipt(receiptPath);

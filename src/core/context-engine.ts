@@ -1085,6 +1085,9 @@ export function createGBrainContextEngine(ctx: {
       if (ingested(fullPath + sweep.CORPUS_INGESTED_SUFFIX)) {
         return { status: 'banked', reason: 'already_ingested' };
       }
+      const { applyCompactWritebackGate } = await import('./context/compact-writeback.ts');
+      const compactSkip = await applyCompactWritebackGate(pg, cfg, fullPath);
+      if (compactSkip) return { status: 'banked', reason: compactSkip };
       const { extractionAvailableForEngine } = await import('./facts/extraction-availability.ts');
       if (!(await extractionAvailableForEngine(pg))) return { status: 'banked', reason: 'keyless' };
       const { isFactsExtractionEnabled } = await import('./facts/extract.ts');
