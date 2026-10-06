@@ -82,6 +82,7 @@ import { globalMaintenanceTimeoutsEntry } from './checks/global-maintenance-time
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
 import { syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
+import { gitConvergenceEntry } from './checks/git-convergence.ts';
 import { retrievalFeedbackEntry } from './checks/retrieval-feedback.ts';
 import { autoChronicleEntry } from './checks/auto-chronicle.ts';
 import { factsDrainEntry } from './checks/facts-drain.ts';
@@ -89,10 +90,13 @@ import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
 import { edgeValidityEntry } from './checks/edge-validity.ts';
+import { coreMemoryEntry } from './checks/core-memory.ts';
 import { plannerStatsEntry } from './checks/planner-stats.ts';
 import { revisionBackfillEntry } from './checks/revision-backfill.ts';
 import { harnessWiringDoctorEntry } from './checks/harness-wiring.ts';
 import { agentContractEntry } from './checks/agent-contract.ts';
+import { chatFallbackChainEntry } from './checks/chat-fallback.ts';
+import { behaviorChangesEntry } from './checks/behavior-changes.ts';
 import { STOP_DOCTOR, type DoctorContext, type DoctorEntry } from './context.ts';
 import type { Check } from '../doctor.ts';
 import { infoCheck } from './check-fix.ts';
@@ -129,6 +133,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   embeddingQueryPrefixEntry,
   embeddingColumnRegistryEntry,
   embeddingEnvOverrideEntry,
+  chatFallbackChainEntry,
+  behaviorChangesEntry,
   graphCoverageEntry,
   orphanRatioEntry,
   staleMentionsEntry,
@@ -153,6 +159,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   indexAuditEntry,
   imageAssetsEntry,
   syncFreshnessEntry,
+  gitConvergenceEntry,
   decideHealthEntry,
   unlinkedFactsEntry,
   edgeValidityEntry,
@@ -162,6 +169,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   plannerStatsEntry,
   retrievalFeedbackEntry,
   revisionBackfillEntry,
+  coreMemoryEntry,
   searchModeEntry,
 ];
 

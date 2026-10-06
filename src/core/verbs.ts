@@ -62,14 +62,19 @@ const remember: Operation = {
   name: 'remember',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'MEMORY VERB (v1): save one fact; provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.',
+  description: 'MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.',
   params: {
     ...PAGE_MUTATION_PARAMS,
-    fact: { type: 'string', description: 'One claim.', required: true },
+    fact: { type: 'string', description: 'One claim.' },
+    items: {
+      type: 'array',
+      description: '≤20 facts: [{fact, provenance}]',
+      items: { type: 'object' },
+    },
     provenance: {
       type: 'string',
-      required: true,
-      description: 'Where the fact came from (max 500 chars).',
+      // Required for a single fact (the handler refuses with provenance_required); with items it may be given per item.
+      description: 'Fact source (max 500 chars).',
     },
     ttl: {
       type: 'string',
@@ -77,7 +82,7 @@ const remember: Operation = {
     },
     entity: {
       type: 'string',
-      description: 'Who or what it is about (name or slug).',
+      description: 'Subject (name or slug).',
     },
     infer_entity: {
       type: 'boolean',
@@ -92,6 +97,7 @@ const remember: Operation = {
       enum: ['world', 'private'],
       description: 'world (default) or private (local CLI only).',
     },
+    replaces: { type: 'string', description: 'fact_id this fact replaces (same entity).', fullSurfaceOnly: true },
   },
   mutating: true,
   scope: 'write',
@@ -99,12 +105,26 @@ const remember: Operation = {
   annotations: { title: 'remember (memory write)', idempotentHint: true },
   handler: async (ctx, p) => {
     const { verbError, parseTtlParam } = await import('./operations.ts');
+    if (p.items !== undefined) {
+      const { runRememberBatch } = await import('./remember-batch.ts');
+      return runRememberBatch(ctx, p, remember.handler, (code, message, suggestion) => verbError(code as never, message, suggestion));
+    }
     const fact = typeof p.fact === 'string' ? p.fact.trim() : '';
     if (!fact) {
       throw verbError(
         'invalid_params',
         'fact must be a non-empty string.',
-        'Pass the claim to remember, e.g. fact: "picked Stripe over Adyen — onboarding speed".',
+        p.fact === undefined && Object.keys(p).length === 0
+          ? 'The call arrived with no arguments; a tool call cut off at your output-token limit looks like this. Pass fact, or items with fewer entries per call.'
+          : 'Pass the claim to remember, e.g. fact: "picked Stripe over Adyen — onboarding speed", or several as items: [{fact, provenance}].',
+      );
+    }
+    // v1 contract: an absent provenance is a missing required parameter (invalid_params), an empty one is provenance_required.
+    if (p.provenance === undefined) {
+      throw verbError(
+        'invalid_params',
+        'Missing required parameter: provenance',
+        'Pass `provenance` as a string (where the fact came from), e.g. provenance: "user told me, 2026-06-12". With items, provenance may be given per item instead.',
       );
     }
     const provenance = typeof p.provenance === 'string' ? p.provenance.trim() : '';
@@ -138,6 +158,14 @@ const remember: Operation = {
         'Use "world" (default — agents can recall it) or "private" (local CLI reads only).',
       );
     }
+    const replaces = typeof p.replaces === 'string' ? p.replaces.trim() : typeof p.replaces === 'number' ? String(p.replaces) : undefined;
+    if (replaces !== undefined && (!/^\d+$/.test(replaces) || Number(replaces) <= 0)) {
+      throw verbError(
+        'not_found',
+        `No fact with id "${String(p.replaces)}" to replace.`,
+        'Pass the opaque fact_id from remember or recall (facts[].fact_id), or omit replaces.',
+      );
+    }
     if (ctx.dryRun) {
       parseTtlParam(p.ttl); // Dry runs still validate without admitting intent.
       return {
@@ -150,7 +178,7 @@ const remember: Operation = {
 
     const { submitRememberMutation } = await import('./persistence/memory-mutations.ts');
     const { runMemoryWrite } = await import('./persistence/verb-errors.ts');
-    const result = await runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility }));
+    const result = await runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility, ...(replaces !== undefined ? { replaces } : {}) }));
     // F8: the explanation the CLI formatter prints, as a model-visible notice.
     if ((result as { degraded_dedup?: boolean } | null)?.degraded_dedup) {
       const { degradedDedupNotice } = await import('./interop-notices.ts');
@@ -332,6 +360,7 @@ const synthesize: Operation = {
 
     return {
       answer: result.answer,
+      ...(result.answer_raw !== undefined ? { answer_raw: result.answer_raw, quote_check: result.quote_check, unverified_quotes: result.unverified_quotes } : {}),
       sources: result.citations.map(c => c.page_slug),
       gaps: result.gaps,
       cost,
@@ -357,6 +386,7 @@ const forget: Operation = {
     request_id: WRITE_REQUEST_PARAM,
     id: { type: 'string', required: true, description: 'fact_id from remember or recall.' },
     reason: { type: 'string', description: 'Audit note (default "forgotten").' },
+    semantic_review: { type: 'boolean', description: 'false: skip overnight rewording review.', fullSurfaceOnly: true },
   },
   mutating: true,
   scope: 'write',
@@ -484,7 +514,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
           },
         },
       },
-      search_degraded: { type: 'string', description: 'Present when the search arm fell back to keyword-only (no embedding provider).' },
+      search_degraded: { type: 'string', description: 'Present when the search arm fell back to keyword-only: keyword_only_no_embedding_provider (no embedding provider) or keyword_only_embedding_disabled (embeddings off by choice; no query text sent to a provider).' },
       budget_tokens: { type: 'integer', description: 'Present for a positive finite numeric budget, including when its floor is zero.' },
       budget_used: { type: 'integer' },
       dropped_count: { type: 'integer' },
@@ -517,6 +547,8 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
       warnings: { type: 'array', items: { type: 'string', enum: ['NO_ENTITY', 'ENTITY_LINK_FAILED'] },
         description: 'NO_ENTITY: saved unattributed. ENTITY_LINK_FAILED: an inferred entity could not be linked; saved unattributed.' },
       hint: { type: 'string', description: 'Present with warnings: how to attribute the fact (pass `entity`).' },
+      superseded_fact_id: { type: 'string', description: 'Present on status=superseded: the fact this one replaced.' },
+      replaced_by_caller: { type: 'boolean', description: 'Present (true) when the caller named the replaced fact with `replaces`.' },
       write_request: WRITE_RECEIPT_SCHEMA,
     },
   },
@@ -626,7 +658,10 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
     required: ['answer', 'sources', 'cost', 'protocol_version'],
     properties: {
       protocol_version: { type: 'integer', const: MEMORY_VERBS_VERSION },
-      answer: { type: 'string' },
+      answer: { type: 'string', description: 'Quoted words not found in the evidence are unquoted and marked [unverified]; never present them as quotes.' },
+      answer_raw: { type: 'string', description: 'With think.quote_verify on and quotes in the answer: the answer as the model wrote it.' },
+      quote_check: { type: 'object', properties: { grounded: { type: 'integer' }, repaired: { type: 'integer' }, unverified: { type: 'integer' } } },
+      unverified_quotes: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, reason: { type: 'string' } } } },
       sources: { type: 'array', items: { type: 'string' } },
       gaps: { type: 'array', items: { type: 'string' } },
       cost: {
@@ -662,6 +697,16 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
       expired: { type: 'boolean', description: 'true = this call expired the fact; false = it was ALREADY expired (idempotent re-forget).' },
       reason: { type: ['string', 'null'] },
       write_request: WRITE_RECEIPT_SCHEMA,
+      similar_active: {
+        type: 'object',
+        description: 'Active facts about the same entity close in meaning to the withdrawn claim (ids and scores only; zero model calls). Similarity is not sameness: ask the user before forgetting any of them.',
+        properties: {
+          state: { type: 'string', enum: ['checked', 'not_checked_no_embedding', 'not_checked_pending'] },
+          candidates: { type: 'array', items: { type: 'object', properties: { fact_id: { type: 'string' }, similarity: { type: 'number' } } } },
+          semantic_review: { type: 'string', enum: ['scheduled', 'off', 'unavailable', 'opted_out'] },
+          next: { type: 'string' },
+        },
+      },
     },
   },
   // v0.45.7 (issue #1) — ambient recall. World-only by default; include_private
@@ -766,12 +811,16 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
     properties: {
       protocol_version: { type: 'integer', const: MEMORY_VERBS_VERSION },
       since: { type: 'string', description: 'The ISO cursor this delta was computed against.' },
-      has_more: { type: 'boolean', description: 'True when changes beyond the fetch limit or budget were NOT delivered; with session_id the cursor advanced only to the last delivered page, so the tail surfaces on the next wake.' },
+      has_more: { type: 'boolean', description: 'True when more content is waiting (a fetch limit or the budget); each arm advanced only through what it delivered, so the rest surfaces on the next wake. Failure is degraded_reason, never has_more.' },
       next_cursor: {
         type: 'object',
         required: ['since', 'slug'],
-        description: 'Keyset to resume from (stateless callers pass back as since + since_slug).',
-        properties: { since: { type: 'string' }, slug: { type: 'string' } },
+        description: 'Where to resume. `cursor` (opaque, both arms exact) is passed back as cursor; older clients pass since + since_slug, which is conservative (may re-deliver, never skips): it holds while any arm failed and stays strictly before the oldest undelivered fact.',
+        properties: { since: { type: 'string' }, slug: { type: 'string' }, cursor: { type: 'string' } },
+      },
+      cursor_arms: {
+        type: 'object',
+        description: 'Replay audit trail: each arm\'s start and next keyset (pages: since + slug; facts: since + id).',
       },
       pages: {
         type: 'array',
@@ -792,6 +841,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
           type: 'object',
           required: ['fact', 'kind'],
           properties: {
+            id: { type: 'integer', description: 'Fact id (dedupe key for replay).' },
             fact: { type: 'string' },
             kind: { type: 'string' },
             entity_slug: { type: ['string', 'null'] },
@@ -813,7 +863,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
         },
       },
       text: { type: 'string' },
-      degraded_reason: { type: 'string' },
+      degraded_reason: { type: 'string', description: 'Comma-joined incomplete parts: deadline, pages, facts, threads, session_state. No cursor moved past anything undelivered; a delta_incomplete notice carries the retry step.' },
       budget_tokens: { type: 'integer' },
       budget_used: { type: 'integer' },
       dropped_count: { type: 'integer' },

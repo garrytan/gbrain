@@ -10,6 +10,7 @@
 import { embedBackfillFix } from '../../../core/embed-consent.ts';
 import * as db from '../../../core/db.ts';
 import { loadConfig } from '../../../core/config.ts';
+import { isSupabasePoolerUrl } from '../../../core/connection-manager.ts';
 import { LATEST_VERSION } from '../../../core/migrate.ts';
 import { schemaVersionHealth } from '../../../core/schema-version-health.ts';
 import { pgvectorCheck, pagesUpsertArbiterCheck, linkSourceCheckConstraintCheck } from './core-health.ts';
@@ -154,6 +155,7 @@ async function runRls(ctx: DoctorContext): Promise<Check[]> {
           message: `RLS enabled on ${tables.length - exempt.length}/${tables.length} public tables${suffix}`,
         });
       } else {
+        const exposure = await publicSchemaExposure(sql);
         const names = gaps.join(', ');
         // Double-escape " inside identifiers so a pathological table name
         // like `weird"table` renders as `"weird""table"` in the remediation
@@ -166,14 +168,12 @@ async function runRls(ctx: DoctorContext): Promise<Check[]> {
         const exemptInfo = exempt.length > 0
           ? ` (${exempt.length} other table(s) explicitly exempt.)`
           : '';
-        checks.push({
-          name: 'rls',
-          status: 'fail',
-          message:
-            `${gaps.length} table(s) WITHOUT Row Level Security: ${names}.${exemptInfo} ` +
-            `Fix: ${fixes} ` +
-            `If a table should stay readable by the anon key on purpose, see docs/guides/rls-and-you.md for the GBRAIN:RLS_EXEMPT comment escape hatch.`,
-        });
+        const fixTail = `Fix: ${fixes} ` +
+          `If a table should stay readable by the anon key on purpose, see docs/guides/rls-and-you.md for the GBRAIN:RLS_EXEMPT comment escape hatch.`;
+        const gapLine = `${gaps.length} table(s) WITHOUT Row Level Security: ${names}.${exemptInfo} `;
+        checks.push(exposure
+          ? { name: 'rls', status: 'fail', message: `${gapLine}The public schema may be served to the anon key (${exposure}). ${fixTail}` }
+          : { name: 'rls', status: 'warn', message: `${gapLine}No PostgREST exposure detected (no anon, authenticated, authenticator or service_role role; not a Supabase URL), so this is a warning: enable RLS before putting PostgREST or a similar API in front of the public schema. ${fixTail}` });
       }
     } catch {
       checks.push(checkError('rls', 'check RLS status'));
@@ -183,6 +183,17 @@ async function runRls(ctx: DoctorContext): Promise<Check[]> {
 }
 
 export const rlsEntry: DoctorEntry = { name: 'rls', emits: ['rls'], run: runRls };
+
+/** PostgREST role conventions or a Supabase host mean the public schema may be reachable with the anon key; null when neither is present. */
+async function publicSchemaExposure(sql: ReturnType<typeof db.getConnection>): Promise<string | null> {
+  const roles = await sql`SELECT rolname FROM pg_roles
+    WHERE rolname IN ('anon', 'authenticated', 'authenticator', 'service_role') ORDER BY rolname`;
+  if (roles.length > 0) return `PostgREST role(s) present: ${(roles as unknown as Array<{ rolname: string }>).map(r => r.rolname).join(', ')}`;
+  const url = loadConfig()?.database_url ?? '';
+  let host = '';
+  try { host = new URL(url.replace(/^postgres(ql)?:\/\//, 'http://')).hostname; } catch { /* no parsable URL */ }
+  return /(^|\.)supabase\.(co|com)$/i.test(host) || isSupabasePoolerUrl(url) ? 'Supabase database URL' : null;
+}
 
 async function runSchemaVersion(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;

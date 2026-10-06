@@ -18,7 +18,7 @@ import { sanitizeRemoteBody } from '../src/core/remote-body.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { syncLockId } from '../src/core/db-lock.ts';
-import { createConnectorFixture, options, json, sourceCheckpoint } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, settleConnectorWrites, sourceCheckpoint } from './helpers/connector-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const { engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
@@ -46,6 +46,7 @@ async function seed(engine: BrainEngine, bound = false, count = 1) {
   await withConnectorSync(engine, f.id, 'google', cfg, options, async managed => {
     for (let n = 1; n <= count; n++) await managed!.importMarkdown(`${slug(n)}.md`, content(n));
   });
+  await settleConnectorWrites(engine, f.id);
   return { ...f, cfg };
 }
 

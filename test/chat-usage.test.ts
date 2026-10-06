@@ -19,12 +19,14 @@ import {
 } from '../src/core/ai/gateway.ts';
 import {
   withChatPhase,
+  withChatCallMeter,
   currentChatPhase,
   setChatUsageSink,
   registerChatUsageSink,
   recordChatUsage,
   estimateChatCostUsd,
   makeEngineChatUsageSink,
+  type ChatCallMeter,
   type ChatUsageRecord,
 } from '../src/core/ai/chat-usage.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
@@ -130,6 +132,50 @@ describe('estimateChatCostUsd — canonical pricing incl. cache tokens', () => {
     expect(
       estimateChatCostUsd('acme:unpriced-model-9000', { input_tokens: 10, output_tokens: 10 }),
     ).toBeNull();
+  });
+});
+
+describe('#5506: chat call meter prices what it counts', () => {
+  const usage = { input_tokens: 1000, output_tokens: 500 };
+  const PRICED = 'anthropic:claude-haiku-4-5';
+  const UNPRICED = 'acme:unpriced-model-9000';
+
+  function meterCalls(meter: ChatCallMeter, models: string[]): void {
+    withChatCallMeter(meter, () => {
+      for (const model of models) recordChatUsage({ model, usage });
+    });
+  }
+
+  test('a pricing meter sums priced calls and counts unpriced ones apart, with no sink registered', () => {
+    setChatUsageSink(null);
+    const meter: ChatCallMeter = { calls: 0, cost_usd: 0, unpriced_calls: 0 };
+    meterCalls(meter, [PRICED, UNPRICED, PRICED]);
+    expect(meter.calls).toBe(3);
+    expect(meter.unpriced_calls).toBe(1);
+    expect(meter.cost_usd).toBeCloseTo(2 * estimateChatCostUsd(PRICED, usage)!, 12);
+  });
+
+  test('the sink record carries the same cost the meter added', () => {
+    const records: ChatUsageRecord[] = [];
+    setChatUsageSink((r) => { records.push(r); });
+    const meter: ChatCallMeter = { calls: 0, cost_usd: 0, unpriced_calls: 0 };
+    meterCalls(meter, [PRICED, UNPRICED]);
+    expect(records.map(r => r.cost_usd)).toEqual([meter.cost_usd!, null]);
+  });
+
+  test('the meter prices with the budget tracker resolver: overrides, the claude-cli sibling rate and free local models', () => {
+    setChatUsageSink(null);
+    const meter: ChatCallMeter = { calls: 0, cost_usd: 0, unpriced_calls: 0, pricing_overrides: { [UNPRICED]: { input: 2, output: 4 } } };
+    meterCalls(meter, [UNPRICED, 'claude-cli:claude-haiku-4-5', 'ollama:llama3']);
+    expect(meter.unpriced_calls).toBe(0);
+    const overridden = (usage.input_tokens * 2 + usage.output_tokens * 4) / 1_000_000;
+    expect(meter.cost_usd).toBeCloseTo(overridden + estimateChatCostUsd('anthropic:claude-haiku-4-5', usage)!, 12);
+  });
+
+  test('a { calls } meter still only counts calls', () => {
+    const meter: ChatCallMeter = { calls: 0 };
+    meterCalls(meter, [PRICED, UNPRICED]);
+    expect(meter).toEqual({ calls: 2 });
   });
 });
 

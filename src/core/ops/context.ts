@@ -442,7 +442,7 @@ export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
   // Own-principal receipt controls recheck original/current source + slug
   // authority. They are not meta-op exemptions: degraded fences still deny.
   'get_write_request', 'list_write_requests', 'cancel_write_request',
-  'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede',
+  'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede', 'takes_remove',
   'put_skill', 'delete_skill',
 ]);
 

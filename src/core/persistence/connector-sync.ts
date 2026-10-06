@@ -43,6 +43,7 @@ import { readJournalLimits } from './limits.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { maintenanceAttribution } from './attribution.ts';
 import { readConnectorV2Cutoff } from './connector-checkpoint-migration.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 import type { GoogleSourceConfig } from '../google/types.ts';
 
 interface ConnectorLease { handle: DbLockHandle; signal: AbortSignal; }
@@ -844,6 +845,7 @@ export class ManagedConnectorSync {
             { fix: ownerStatusFix(this.sourceId, 'Shows what the canonical owner is running and what is queued behind it.') });
         }
         row = await this.engine.transaction(async tx => {
+          await declarePersistenceProtocol(tx);
           if (this.binding) await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [this.binding.worktree_id]);
           await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [this.sourceId]);
           await this.validate(tx, slug);

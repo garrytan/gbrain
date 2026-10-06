@@ -34,6 +34,9 @@ export function heldFileDiagnostic(message: string | null | undefined, sourceId 
 export function writeFailureDiagnostic(code: string, message?: string | null): { reason: string; message: string; suggestion: string } {
   const held = code === 'source_changed' ? heldFileDiagnostic(message) : null;
   if (held) return held;
+  // Always-loaded core refusals carry their numbers and the owner command in the message.
+  if (code.startsWith('core_') && message) return { reason: code, message,
+    suggestion: 'Change the content as the message says, or ask the user for the owner step it names (docs/guides/core-memory.md).' };
   if (code === 'source_changed') {
     if (message === 'The canonical file contains an uncoordinated local edit.') return {
       reason: 'file_database_drift', message: 'The canonical file and database disagree. Neither copy was overwritten.',
@@ -85,9 +88,22 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
     suggestion: 'Correct the frontmatter in the file and commit the change.' };
   if (code === 'invalid_params' && isFrontmatterHoldMessage(message)) return { reason: code, message: message!,
     suggestion: 'Correct the named frontmatter line in the file (one line per key, the whole value quoted) and commit the change.' };
+  const replaces = code === 'invalid_params' ? REPLACES_REFUSAL.exec(message ?? '') : null;
+  if (replaces) return { reason: code, message: message!, suggestion: REPLACES_SUGGESTION[replaces[1]!]! };
   return { reason: isWriteErrorCode(code) ? code : 'storage_error', message: 'The write did not commit. Inspect its durable request on the source host.',
     suggestion: 'Resolve the reported write failure before starting a corrected attempt.' };
 }
+
+/** `remember.replaces` refusals decided under the target row lock keep their code and next step. */
+const REPLACES_REFUSAL = /^(target_superseded|target_withdrawn|target_expired|replaces_entity_mismatch|replaces_cross_page|replaces_duplicate): /;
+const REPLACES_SUGGESTION: Record<string, string> = {
+  target_superseded: 'Recall the entity to check the current fact, then pass replaces with the fact id named here if the new claim replaces that one.',
+  target_withdrawn: 'Remember the new claim without replaces; the forgotten claim stays withdrawn.',
+  target_expired: 'Remember the new claim without replaces.',
+  replaces_entity_mismatch: 'Pass the same entity as the fact being replaced, or forget the old fact and remember the new one separately.',
+  replaces_cross_page: 'Forget the old fact, then remember the new one.',
+  replaces_duplicate: 'Forget the replaced fact if it is no longer true; the existing fact named here already says the new claim.',
+};
 
 /** Apply the frozen contract at the verb boundary for CLI and every transport. */
 export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
@@ -113,7 +129,7 @@ export function frozenVerbWriteError(receipt: WriteReceipt, reason?: WriteErrorC
     : receipt.state === 'conflict' ? 'revision_conflict'
       : receipt.state === 'cancelled' ? 'cancelled' : 'storage_error');
   const code = ['source_changed','permission_denied','scope_denied','writer_registration_required'].includes(writeError) ? 'scope_denied'
-    : ['revision_required', 'revision_conflict', 'idempotency_conflict','invalid_params','page_identity_changed'].includes(writeError)
+    : ['revision_required', 'revision_conflict', 'idempotency_conflict','invalid_params','page_identity_changed'].includes(writeError) || writeError.startsWith('core_')
       ? 'invalid_params' : 'unavailable';
   const diagnostic = writeFailureDiagnostic(writeError, message);
   const suggestion = pending

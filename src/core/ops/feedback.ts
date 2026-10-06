@@ -10,6 +10,7 @@ const rate_answer: Operation = {
   area: 'search',
   outputRedaction: 'no_stored_text',
   mutating: true,
+  writeInference: 'none',
   idempotent: true,
   description:
     'Rate how useful an answer\'s retrieved evidence was, so this brain ranks better next time (zero LLM calls). ' +

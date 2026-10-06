@@ -35,18 +35,17 @@ describe('autopilot wiring: conversation-parser probe', () => {
     expect(SOURCE).toMatch(/parserEnabled \|\| searchMode === 'tokenmax'/);
   });
 
-  test('fixtures resolve from the gbrain package root, NOT the brain repoPath', () => {
-    // The committed fixtures live in the gbrain source tree; resolving
-    // them against sync.repo_path would point into the user's brain repo.
-    expect(SOURCE).toMatch(/fileURLToPath\(new URL\('\.\.\/\.\.', import\.meta\.url\)\)/);
-    expect(SOURCE).toContain(`'conversation-formats', 'all.jsonl'`);
-    expect(SOURCE).toContain(`'conversation-formats', 'adversarial.jsonl'`);
+  test('fixtures are the embedded package assets, NOT the brain repoPath (C-N6)', () => {
+    // A compiled binary carries no source tree; the embedded assets are
+    // readable there and in a source checkout alike.
+    expect(SOURCE).toContain(`resolveFixturePath: () => NIGHTLY_PROBE_FIXTURES.parserFormats`);
+    expect(SOURCE).toContain(`resolveAdversarialPath: () => NIGHTLY_PROBE_FIXTURES.parserAdversarial`);
   });
 
-  test('missing fixtures skip quietly (no audit row, once-per-process stderr note)', () => {
-    // Compiled-binary installs carry no source tree; writing failure rows
-    // would flip doctor to WARN on every binary install.
-    expect(SOURCE).toContain(`parserProbeFixtureWarned`);
+  test('no quiet skip: an unreadable fixture becomes an audited skipped row (C-N6)', () => {
+    // The once-per-process stderr note left doctor reporting ok on binary
+    // installs; the phase now returns `skipped`, which the wiring logs.
+    expect(SOURCE).not.toContain(`parserProbeFixtureWarned`);
   });
 
   test('rate_limited outcomes are NOT audit-logged (flood guard)', () => {

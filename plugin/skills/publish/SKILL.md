@@ -9,6 +9,7 @@ tools:
   - get_page
   - search
 mutating: false
+when_to_use: "Use when the user asks: \"share this page\", \"publish page\", \"create shareable link\"."
 ---
 
 # Publish Skill

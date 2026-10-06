@@ -12,6 +12,7 @@
  * stateless pack, never an error.
  */
 
+import { readPressureGate } from '../core/context/pressure.ts';
 import { existsSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -26,6 +27,8 @@ import {
 } from '../core/context/session-state.ts';
 import { scheduleCheckpointHarvest, type HarvestAck } from '../core/context/checkpoint-harvest.ts';
 import { parseWbFileName } from '../core/context/corpus-segments.ts';
+import { loadCoreBlock } from '../core/core-memory.ts';
+import type { TurnContextResult } from '../core/context/turn-context.ts';
 
 /** Tighter entity-card fan-out on the PUSH path (eng 4A): the server budget
  * can't absorb the pull path's 8-card ceiling on a cold cache. */
@@ -47,6 +50,16 @@ async function serveCorpusDir(engine: BrainEngine): Promise<string> {
   return join(configDir(), 'transcripts', 'corpus');
 }
 
+/** The session's core block for the push path; null on any failure (fail-open, never blocks a pack). */
+async function coreForSession(engine: BrainEngine, sourceId: string): Promise<TurnContextResult['core'] | null> {
+  try {
+    const block = await loadCoreBlock(engine, { sessionSourceId: sourceId, excludePrivate: true });
+    return { text: block.text, revision: block.revision, chars_used: block.chars_used, chars_limit: block.chars_limit, truncated: block.truncated };
+  } catch {
+    return null;
+  }
+}
+
 export function makeContextPackIpcHandler(
   engine: BrainEngine,
   defaultSource: string,
@@ -60,6 +73,13 @@ export function makeContextPackIpcHandler(
     // checkpointLinks field entirely — the engine's capability probe treats
     // that as "unavailable" and keeps its retry budget, whereas an empty
     // array is a CONFIRMED empty manifest and settles the poll.
+    const sessionSource = typeof req.sourceId === 'string' && req.sourceId.trim() ? req.sourceId : defaultSource;
+    if (req.coreOnly === true) {
+      const core = await coreForSession(engine, sessionSource);
+      // The OpenClaw lane reads the pressure gate on the same fetch; it checks remember's availability itself.
+      const pressure = await readPressureGate(engine, true).catch(() => null);
+      return { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(core ? { core } : {}), ...(pressure ? { pressure } : {}) };
+    }
     if (req.manifestOnly === true) {
       const links = sessionId
         ? await getCheckpointManifest(engine, defaultSource, null, sessionId)
@@ -145,6 +165,8 @@ export function makeContextPackIpcHandler(
         ? { checkpointLinks: (await getCheckpointManifest(engine, defaultSource, null, sessionId)) ?? [] }
         : {}),
     });
+    const core = typeof req.trigger === 'string' && req.trigger.startsWith('session-start') ? await coreForSession(engine, sessionSource) : null;
+    if (core) result.core = core;
     if (sessionId) {
       // Bank the standing set; advance the wake cursor only on a COMPLETE
       // pack — a deadline-partial pack may have dropped the delta section,

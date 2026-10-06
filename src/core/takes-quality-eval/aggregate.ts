@@ -62,16 +62,26 @@ const TOP_IMPROVEMENTS_CAP = 10;
 const DEDUP_PREFIX_LEN = 40;
 
 /**
- * Returns true iff `parsed.scores` contains a finite number for every
- * declared rubric dimension. Codex review #5: missing-dim disqualifies
- * the contribution.
+ * Declared rubric dimensions without a finite score. Codex review #5: a
+ * missing dim disqualifies the contribution.
  */
-function hasAllRequiredDims(parsed: ParsedModelResult): boolean {
-  for (const dim of RUBRIC_DIMENSIONS) {
-    const entry = parsed.scores[dim];
-    if (!entry || !Number.isFinite(entry.score)) return false;
-  }
-  return true;
+function missingDims(parsed: ParsedModelResult): RubricDimension[] {
+  return RUBRIC_DIMENSIONS.filter(d => {
+    const e = parsed.scores[d];
+    return !e || !Number.isFinite(e.score);
+  });
+}
+
+/**
+ * The slot's format failure (`parse_failed:` unparseable reply, or
+ * `incomplete_scores:` missing dims), or null for a valid slot or a
+ * provider error. Only format failures get a correction pass (#5325); a
+ * valid low score is never re-asked.
+ */
+export function slotFormatFailure(slot: SlotResult): string | null {
+  if (!slot.ok) return slot.error.startsWith('parse_failed:') ? slot.error : null;
+  const missing = missingDims(slot.parsed);
+  return missing.length > 0 ? `incomplete_scores: missing dim(s) [${missing.join(', ')}]` : null;
 }
 
 export function aggregate(input: AggregateInput): AggregateResult {
@@ -84,15 +94,9 @@ export function aggregate(input: AggregateInput): AggregateResult {
       failed.push({ modelId: s.modelId, error: s.error });
       continue;
     }
-    if (!hasAllRequiredDims(s.parsed)) {
-      const missing = RUBRIC_DIMENSIONS.filter(d => {
-        const e = s.parsed.scores[d];
-        return !e || !Number.isFinite(e.score);
-      });
-      failed.push({
-        modelId: s.modelId,
-        error: `incomplete_scores: missing dim(s) [${missing.join(', ')}]`,
-      });
+    const formatFailure = slotFormatFailure(s);
+    if (formatFailure) {
+      failed.push({ modelId: s.modelId, error: formatFailure });
       continue;
     }
     contributing.push(s);

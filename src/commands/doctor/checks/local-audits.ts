@@ -8,6 +8,8 @@
  */
 
 import { applyExtractAtomsNoPricing, readExtractAtomsNoPricing } from '../../../core/cycle/extract-atoms-cost-gate.ts';
+import { applyFactsReconcileBacklog, readFactsReconcileBacklog } from '../../../core/facts/reconcile-watermark.ts';
+import { managedPersistenceEnabled } from '../../../core/persistence/ownership.ts';
 import { join } from 'path';
 import { gbrainPath } from '../../../core/config.ts';
 import { multiSourceDriftCheck, multiSourceDriftNotVerified } from '../schema-pack-checks.ts';
@@ -200,6 +202,12 @@ async function runExtractionBacklogs(ctx: DoctorContext): Promise<Check[]> {
       // expected limit in the rollup, not a halt; the overlay names the fix.
       const check = await computeExtractHealthCheck(engine);
       applyExtractAtomsNoPricing(check, await readExtractAtomsNoPricing(engine).catch(() => []));
+      // #5151: unmanaged brains reconcile fences in the cycle, so fence pages
+      // behind their facts watermark are facts not indexed yet.
+      if (!await managedPersistenceEnabled(engine).catch(() => true)) {
+        const backlog = await readFactsReconcileBacklog(engine).catch(() => null);
+        if (backlog) applyFactsReconcileBacklog(check, backlog);
+      }
       checks.push(check);
     } catch {
       // Best-effort; rollup-table missing on pre-v106 brains is normal

@@ -26,6 +26,7 @@ tools:
   - context_pack
 mutating: true
 writes_pages: false
+when_to_use: "Use when the user asks: \"connect gmail\", \"connect google\", \"connect calendar\", \"connect contacts\", \"who is waiting on me\"."
 ---
 
 # Google Loops — Setup and Daily Operation

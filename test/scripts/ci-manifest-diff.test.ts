@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { safeLoad } from 'js-yaml';
+import { load } from 'js-yaml';
 
 const root = join(import.meta.dir, '../..');
 const SCRIPT = join(root, 'scripts/ci-manifest-diff.sh');
@@ -81,7 +81,7 @@ describe('ci-manifest-diff.sh', () => {
 });
 
 describe('test.yml dependency-audit scope', () => {
-  const step = (safeLoad(readFileSync(join(root, '.github/workflows/test.yml'), 'utf8')) as {
+  const step = (load(readFileSync(join(root, '.github/workflows/test.yml'), 'utf8')) as {
     jobs: Record<string, { steps: Array<{ id?: string; run?: string }> }>;
   }).jobs['dependency-audit'].steps.find(s => s.id === 'scope')!;
 

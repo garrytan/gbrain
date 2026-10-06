@@ -181,7 +181,7 @@ interface HermesMcpConfig {
 function readHermesConfig(home: string): HermesMcpConfig {
   const p = join(home, '.hermes', 'config.yaml');
   expect(existsSync(p)).toBe(true);
-  return (yaml.safeLoad(readFileSync(p, 'utf-8')) ?? {}) as HermesMcpConfig;
+  return (yaml.load(readFileSync(p, 'utf-8')) ?? {}) as HermesMcpConfig;
 }
 
 /** Shared registration: real `hermes mcp add` with the piped-Y confirmation.
@@ -276,7 +276,7 @@ describe.skipIf(!CAN_RUN)('install real-hermes door (serial e2e)', () => {
         },
       },
     };
-    writeFileSync(configPath, yaml.safeDump(doc), 'utf-8');
+    writeFileSync(configPath, yaml.dump(doc), 'utf-8');
 
     // Targeted probe, asserted HARD (eng D3): `mcp test` connects to exactly
     // the entry under test. Global `doctor` is NOT asserted here — it

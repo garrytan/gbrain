@@ -23,6 +23,7 @@ writes_to:
   - companies/
   - concepts/
 upstream: correction-pipeline@fc834ee
+when_to_use: "Use when the user asks: \"that's wrong\", \"that's not true\", \"I never said that\", \"where did you get that\", \"you got that wrong\"."
 ---
 
 # Correction Pipeline

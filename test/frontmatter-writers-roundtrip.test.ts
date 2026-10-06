@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { safeLoad } from 'js-yaml';
+import { load } from 'js-yaml';
 
 import { FRONTMATTER_SCHEMA } from '../src/core/data-frontmatter.ts';
 import { serializeFrontmatter, yamlScalar } from '../src/core/frontmatter-inference.ts';
@@ -29,7 +29,7 @@ const HOSTILE = [
 function strictFrontmatter(doc: string): Record<string, unknown> {
   const m = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(doc);
   if (!m) throw new Error(`no frontmatter block in:\n${doc}`);
-  return safeLoad(m[1]!, { schema: FRONTMATTER_SCHEMA }) as Record<string, unknown>;
+  return load(m[1]!, { schema: FRONTMATTER_SCHEMA }) as Record<string, unknown>;
 }
 
 describe('frontmatter writers round-trip hostile strings under a strict YAML parse', () => {
@@ -73,7 +73,7 @@ describe('schema init pack.yaml', () => {
       for (const name of ['a: b #c', '[x]', '"q" tail', '---', 'yes']) {
         await withEnv({ GBRAIN_HOME: home }, () => runSchema(['init', name, '--json']));
         const yaml = readFileSync(join(home, '.gbrain', 'schema-packs', name, 'pack.yaml'), 'utf8');
-        expect((safeLoad(yaml, { schema: FRONTMATTER_SCHEMA }) as { name: unknown }).name).toBe(name);
+        expect((load(yaml, { schema: FRONTMATTER_SCHEMA }) as { name: unknown }).name).toBe(name);
       }
     } finally {
       console.log = logOrig;

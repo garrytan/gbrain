@@ -26,6 +26,8 @@ export interface BatchAllOpts {
   skillsDir: string;
   /** Per-skill budget (each skill gets its own tracker). */
   perSkillMaxCostUsd: number;
+  /** `user` when either cap came from a flag (refuses unpriced models), `default` otherwise (#5563). Default `user`. */
+  maxCostSource?: 'user' | 'default';
   /** Brain-wide cumulative ceiling. */
   brainWideMaxCostUsd: number;
   /** Common knobs threaded to each skill. */
@@ -119,6 +121,7 @@ export async function runBatchAll(opts: BatchAllOpts): Promise<BatchAllResult> {
       bootstrapReviewed: false,
       json: true,
       maxCostUsd: cap,
+      maxCostSource: opts.maxCostSource ?? 'user',
       maxRuntimeMin: 30,
       force: opts.force,
     };
@@ -174,6 +177,8 @@ export interface FleetOpts {
   /** F11: optional held-out test set (one skill, so a single path is valid here). */
   heldOutPath?: string;
   maxCostUsd: number;
+  /** See SkillOptOpts.maxCostSource. Default `user`. */
+  maxCostSource?: 'user' | 'default';
   maxRuntimeMin: number;
   force: boolean;
 }
@@ -259,6 +264,7 @@ export async function runFleet(opts: FleetOpts): Promise<FleetResult> {
       ...(opts.heldOutPath ? { heldOutPath: opts.heldOutPath } : {}),
       json: true,
       maxCostUsd: opts.maxCostUsd,
+      maxCostSource: opts.maxCostSource ?? 'user',
       maxRuntimeMin: opts.maxRuntimeMin,
       force: opts.force,
     };

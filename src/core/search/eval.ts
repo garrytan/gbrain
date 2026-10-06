@@ -245,6 +245,8 @@ async function runQuery(
     // model, searched on that column. `embed()` is the DOCUMENT side and
     // handicapped the vector baseline on Voyage-class providers.
     const cfg = (await loadConfigWithEngine(engine).catch(() => null)) ?? loadConfig();
+    const { assertBrainEmbeddingEnabled } = await import('../embedding-dim-check.ts');
+    await assertBrainEmbeddingEnabled(engine, cfg);
     const column = resolveEmbeddingColumn(undefined, cfg ?? { engine: 'pglite' });
     const embedding = await embedQuery(query, column.embeddingModel
       ? { embeddingModel: column.embeddingModel, dimensions: column.dimensions }

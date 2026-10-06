@@ -27,7 +27,7 @@
  * not a silent failure to exempt.
  */
 
-import { FAILSAFE_SCHEMA, safeLoad as yamlSafeLoad } from 'js-yaml';
+import { FAILSAFE_SCHEMA, load as yamlLoad } from 'js-yaml';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -137,7 +137,7 @@ export function parseSkillFrontmatter(content: string): ParsedFrontmatter | null
  */
 function parseArrayField(raw: string, field: string): string[] | undefined {
   try {
-    const parsed = yamlSafeLoad(raw, { schema: FAILSAFE_SCHEMA });
+    const parsed = yamlLoad(raw, { schema: FAILSAFE_SCHEMA });
     if (parsed && typeof parsed === 'object' && Object.hasOwn(parsed, field)) {
       const value = (parsed as Record<string, unknown>)[field];
       if (!Array.isArray(value)) return undefined;

@@ -152,7 +152,7 @@ describe('runEvalLongMemEval — trajectory routing on (default)', () => {
     expect(out[0].trajectory_points).toBeGreaterThan(0);
     expect(out[0].entity_resolved).toBe('marco');
     expect(out[0].resolution_source).toBe('fallback_slugify');  // benchmark brain has no people/marco page
-    expect(out[0].methodology_note).toBe('extractor=haiku-preprocess-full-haystack-v1');
+    expect(out[0].methodology_note).toBe('extractor=stub-preprocess-full-haystack-v1');
     expect(out[1].intent).toBe('other');
     expect(out[1].trajectory_points).toBe(0);
     expect(out[1].entity_resolved).toBe(null);
@@ -181,17 +181,34 @@ describe('runEvalLongMemEval — --no-trajectory bypasses both extractor and inj
 });
 
 describe('runEvalLongMemEval — methodology_note presence', () => {
-  test('default run stamps methodology_note on every routed row', async () => {
+  // #5872: the note names the extractor that ran; a Haiku extractor keeps the
+  // published string byte for byte.
+  test.each([
+    { extractorModel: 'stub', note: 'extractor=stub-preprocess-full-haystack-v1' },
+    { extractorModel: 'anthropic:claude-haiku-4-5-20251001', note: 'extractor=haiku-preprocess-full-haystack-v1' },
+    { extractorModel: 'claude-cli:claude-sonnet-5', note: 'extractor=claude-cli:claude-sonnet-5-preprocess-full-haystack-v1' },
+  ])('extractor $extractorModel: every routed row and the stderr line carry $note', async ({ extractorModel, note }) => {
     const state: StubState = { answerCalls: [], extractorCalls: 0 };
     const { answerClient, extractorClient } = stubClients(state);
-    await runEvalLongMemEval(
-      [datasetPath, '--keyword-only', '--output', outputPath],
-      { client: answerClient, extractorClient, extractorModel: 'stub' },
-    );
+    let stderr = '';
+    const originalWrite = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderr += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await runEvalLongMemEval(
+        [datasetPath, '--keyword-only', '--output', outputPath],
+        { client: answerClient, extractorClient, extractorModel },
+      );
+    } finally {
+      process.stderr.write = originalWrite;
+    }
     const out = readOutput();
     for (const row of out) {
-      expect(row.methodology_note).toBe('extractor=haiku-preprocess-full-haystack-v1');
+      expect(row.methodology_note).toBe(note);
     }
+    expect(stderr).toContain(`[longmemeval] methodology_note: ${note}\n`);
   });
 });
 

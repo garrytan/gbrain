@@ -107,10 +107,19 @@ database dropped every 400 ms, and the owner killed right after a
 `facts-absorb` job's extraction commits (deterministic chat and embedding
 stubs); the job then runs again and every absorbed fact must be active
 exactly once.
+The robot records each session-drop round it injects. Its own reads (oracle
+checks, drain polls, `$current` revision lookups, token re-verification)
+retry a closed connection only after a round that began before the error
+terminated a session; any other close fails the run with the next step,
+so a database, pooler or product-side close is never retried away.
 
 The reference model (`model.ts`) checks: a committed receipt is visible at
 once and later revisions move only through committed ops; a late receipt
-names a revision the page really had; a refused write never becomes visible;
+names a revision the page really had; after a concurrent group a page ends
+at a revision a committed member returned, or at the write of a committed sync
+or connector publish (which return no revision) whose marker it carries, and
+every receipted revision a later member replaced is in the page's history; a
+refused write never becomes visible;
 a withdrawn fact never returns through recall, `get_page` or the facts table;
 a write never lands in another source; another principal reusing a request
 id never receives the original receipt; takes and facts rows equal their
@@ -118,8 +127,11 @@ page fences; content rows carry write attribution; no orphan rows; every
 request and effect drains (within 20 s on PGLite, whose restarted owner
 releases a dead owner's claims, and within the 2-minute effect lease plus
 margin on Postgres); a fresh write still commits. `lock-order.ts` checks each
-transaction's row locks: worktrees before sources, sources in id order, and
-no exclusive brain-row lock inside a publication.
+transaction's row locks: worktrees before sources, sources in id order, no
+exclusive brain-row lock inside a publication, and the brain row before any
+worktree, source or counter row whenever one transaction locks both (a write
+to `persistence_requests` or `persistence_effects` counts as the brain-row
+FOR SHARE read its protocol trigger takes).
 
 Postgres runs connect through `GBRAIN_PGBOUNCER_URL` when it is set, with
 prepared statements off. A Postgres run with a budget under 300 s (the

@@ -24,6 +24,7 @@ writes_to:
   - sources/
   - projects/
 upstream: blog-ingest@fc834ee
+when_to_use: "Use when the user asks: \"ingest this publication\", \"ingest this whole blog\", \"ingest this feed\", \"ingest this newsletter archive\", \"save this whole substack\"."
 ---
 
 # blog-ingest — Feed & Whole-Publication Ingestion

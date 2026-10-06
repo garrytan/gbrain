@@ -1,6 +1,6 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { CLAIMABLE_WRITE_SQL, claimGroupFollowers, claimNextWrite, publicationGroupKey, compactWriteReceipts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues } from './journal.ts';
+import { CLAIMABLE_WRITE_SQL, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, compactWriteReceipts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues } from './journal.ts';
 import { finishUnpublishedFailure, publishMutation, recoverPublication, type PreparedMutation } from './coordinator.ts';
 import { localHostId } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX } from './group-publish.ts';
@@ -9,6 +9,7 @@ import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
 import { cancelOrphanedWindowGroup } from './sync-window.ts';
+import { laneOf, laneRoots, laneTask } from './sync-lanes.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { isWriteErrorCode } from './types.ts';
@@ -69,6 +70,8 @@ export class PersistenceConsumer {
   private idleLaneRetryAt = 0;
   private active = new Set<Promise<void>>();
   private activeRoots = new Set<string>();
+  /** #5984 lanes: running lane tasks per worktree. */
+  private laneTasks = new Map<string, number>();
   private foregroundCounts = new Map<string, number>();
   private rootRetryAfter = new Map<string, number>();
   private projectionWorker: Promise<unknown> | undefined;
@@ -352,23 +355,47 @@ export class PersistenceConsumer {
       return;
     }
     const concurrency = this.opts.concurrency ?? 2;
-    const attemptedRoots = new Set([...this.activeRoots, ...this.rootRetryAfter.keys()]);
-    while (!this.stopping && this.active.size < concurrency) {
+    const attemptedRoots = new Set([...this.activeRoots, ...this.laneTasks.keys(), ...this.rootRetryAfter.keys()]);
+    while (!this.stopping && this.active.size - this.laneTaskCount() < concurrency) {
       const row = await this.phase('claim', () => claimNextWrite(this.engine, this.hostId, 30_000, [...attemptedRoots]));
       if (!row) break;
       if (this.stopping) { await releaseUnpublishedClaim(this.engine, row, 'consumer_stopping'); break; }
       const key = row.worktree_id ?? `db:${row.source_incarnation}`;
       attemptedRoots.add(key);
+      // #5984 lanes: the FIFO head of an open lane run runs as the run's first lane.
+      if (laneOf(row)) { this.startLaneTask(row, key); continue; }
       if (this.activeRoots.has(key)) { await releaseUnpublishedClaim(this.engine, row, 'writer_busy'); break; }
       this.activeRoots.add(key);
-      let progressed = false;
-      const task = this.executeOrGroup(row).then(result => { progressed = result; }).catch(error => this.report(error)).finally(() => {
-        if (!progressed) this.rootRetryAfter.set(key, Date.now() + (this.opts.pollMs ?? 250));
-        else { this.progressWake = true; this.publishedSinceMaintenance++; }
-        this.active.delete(task); this.activeRoots.delete(key); this.schedule(progressed ? 0 : this.opts.pollMs ?? 250);
-      });
-      this.active.add(task);
+      this.track(row, () => this.activeRoots.delete(key), key);
     }
+    await this.claimLanes();
+  }
+  /** #5984 lanes: claims the next group heads of every open lane run in this process, up to its effective lane count. */
+  private async claimLanes(): Promise<void> {
+    for (const { worktreeId, run, capacity } of laneRoots()) {
+      if (this.rootRetryAfter.has(worktreeId) || this.activeRoots.has(worktreeId)) continue;
+      while (!this.stopping && (this.laneTasks.get(worktreeId) ?? 0) < capacity) {
+        const row = await this.phase('claim', () => claimNextLaneHead(this.engine, this.hostId, worktreeId, run));
+        if (!row) break;
+        this.startLaneTask(row, worktreeId);
+      }
+    }
+  }
+  private laneTaskCount(): number { let count = 0; for (const n of this.laneTasks.values()) count += n; return count; }
+  private startLaneTask(row: WriteRequest, key: string): void {
+    this.laneTasks.set(key, (this.laneTasks.get(key) ?? 0) + 1);
+    const state = laneOf(row);
+    const release = state ? laneTask(state) : () => undefined;
+    this.track(row, () => { release(); const n = (this.laneTasks.get(key) ?? 1) - 1; if (n > 0) this.laneTasks.set(key, n); else this.laneTasks.delete(key); }, key);
+  }
+  private track(row: WriteRequest, done: () => void, key: string): void {
+    let progressed = false;
+    const task = this.executeOrGroup(row).then(result => { progressed = result; }).catch(error => this.report(error)).finally(() => {
+      if (!progressed) this.rootRetryAfter.set(key, Date.now() + (this.opts.pollMs ?? 250));
+      else { this.progressWake = true; this.publishedSinceMaintenance++; }
+      this.active.delete(task); done(); this.schedule(progressed ? 0 : this.opts.pollMs ?? 250);
+    });
+    this.active.add(task);
   }
   /** Effects keep pace with publication: full batches continue without waiting for the next tick. */
   private async drainEffects(): Promise<void> {
@@ -529,17 +556,19 @@ export class PersistenceConsumer {
   /** #5984: a claimed bulk sync head takes its directly following group members along; one row runs the single path. */
   private async executeOrGroup(row: WriteRequest): Promise<boolean> {
     // #5984 admit-ahead: a window group whose predecessor did not commit is cancelled, never published after it.
-    const orphaned = await cancelOrphanedWindowGroup(this.engine, row);
+    // A lane group may be claimed while its predecessor still publishes; its commit wait decides instead.
+    const lane = laneOf(row);
+    const orphaned = lane ? null : await cancelOrphanedWindowGroup(this.engine, row);
     if (orphaned) { for (const done of orphaned) this.settled(done); return true; }
     const group = publicationGroupKey(row);
     if (!group || this.engine.kind !== 'postgres') return this.execute(row);
     // #6007: a put_pages batch publishes in groups of at most PAGE_BATCH_GROUP_MAX pages.
     const followers = await claimGroupFollowers(this.engine, row, group, group.startsWith('batch:') ? PAGE_BATCH_GROUP_MAX - 1 : 63);
-    if (!followers.length) return this.execute(row);
+    if (!followers.length && !lane) return this.execute(row);
     const rows = [row, ...followers];
     for (const member of rows) this.executing.add(member.id);
     try {
-      return await executeClaimedGroup(this.engine, rows, { hostId: this.hostId, prepare: member => this.prepare(this.engine, member, this.config),
+      return await executeClaimedGroup(this.engine, rows, { hostId: this.hostId, lane, prepare: member => this.prepare(this.engine, member, this.config),
         settled: done => {
           this.executing.delete(done.id);
           if (done.state === 'committed' && done.worktree_id && !String(done.intent?.kind).startsWith('managed_sync_')) {

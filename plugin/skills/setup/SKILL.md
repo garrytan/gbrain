@@ -13,6 +13,7 @@ tools:
   - sync_brain
   - put_page
 mutating: true
+when_to_use: "Use when the user asks: \"set up gbrain\", \"initialize brain\", \"gbrain setup\", \"install gbrain into this agent workspace\", \"add gbrain to my agent\"."
 ---
 
 # Set up GBrain memory

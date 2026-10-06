@@ -13,6 +13,7 @@ import type { CyclePhase, PhaseResult } from '../cycle.ts';
 import { LockStolenError } from '../db-lock.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { withChatCallMeter } from '../ai/chat-usage.ts';
+import { withAIAttribution } from '../ai/invocation-guard.ts';
 import { recordContainedPaidFailure } from './dream-breaker.ts';
 import { cliRenderContext, toAgentError, type RenderedAction } from '../agent-output.ts';
 
@@ -39,7 +40,7 @@ export async function timeContainedPhase<T extends PhaseResult>(containment: Pha
   const start = performance.now();
   const meter = { calls: 0 };
   try {
-    const result = await withChatCallMeter(meter, fn);
+    const result = await withAIAttribution({ phase: `cycle:${phase}` }, () => withChatCallMeter(meter, fn));
     return { result, duration_ms: Math.round(performance.now() - start) };
   } catch (error) {
     if (isUncontainedPhaseError(error, containment.signal)) throw error;

@@ -54,7 +54,7 @@ export const SHARED_SKILLS_SCHEMA_STATEMENTS: readonly string[] = [
 ];
 
 export const SHARED_SKILLS_DELIVERY_LEASE_SCHEMA_STATEMENTS: readonly string[] = [
-  `CREATE OR REPLACE FUNCTION gbrain_lease_shared_skill_delivery() RETURNS trigger LANGUAGE plpgsql AS $$
+  `CREATE OR REPLACE FUNCTION gbrain_lease_shared_skill_delivery() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   DECLARE item text; found_revision shared_skill_revisions%ROWTYPE; brain text;
   BEGIN
     SELECT brain_id::text INTO brain FROM persistence_brain WHERE singleton=1;

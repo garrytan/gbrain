@@ -16,6 +16,7 @@ import {
   renderAmbientInstructionBlock,
 } from '../src/core/bootstrap/instructions-block.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { writeHeartbeat, type HookHeartbeatEntry } from '../src/core/context/hook-heartbeat.ts';
 
 let engine: PGLiteEngine;
 let tmp: string;
@@ -258,4 +259,49 @@ describe('memory_writeback doctor check', () => {
       expect(Array.isArray(c.details?.lingering_instruction_blocks)).toBe(true);
     });
   });
+
+  // #5557: a share of failed serve-side harvests is visible, not a silent counter.
+  const harvestCases: Array<{ name: string; ok: number; errors: string[]; requeued: number; warn: string | null }> = [
+    {
+      name: 'mostly failed harvests warn with the top error reason',
+      ok: 8,
+      errors: [...Array(10).fill('operationerror:writer_lock_unavailable'), 'aitransienterror', 'aitransienterror'],
+      requeued: 3,
+      warn: '12/20 writeback harvests failed in 7d (top: operationerror:writer_lock_unavailable x10)',
+    },
+    { name: 'a small failure share stays ok', ok: 18, errors: ['operationerror:writer_lock_unavailable', 'aborterror'], requeued: 5, warn: null },
+    { name: 'exactly 20% failed stays ok', ok: 8, errors: ['operationerror:writer_lock_unavailable', 'aborterror'], requeued: 0, warn: null },
+    {
+      name: 'exactly 10 finished harvests is enough to judge',
+      ok: 7,
+      errors: ['operationerror:writer_lock_unavailable', 'operationerror:writer_lock_unavailable', 'aborterror'],
+      requeued: 0,
+      warn: '3/10 writeback harvests failed in 7d (top: operationerror:writer_lock_unavailable x2)',
+    },
+    { name: 'too few harvests to judge stays ok', ok: 1, errors: ['operationerror:writer_lock_unavailable', 'aborterror'], requeued: 0, warn: null },
+  ];
+  for (const c of harvestCases) {
+    test(`#5557 harvest failures: ${c.name}`, async () => {
+      await engine.setConfig('memory.auto_writeback', 'salient');
+      writeFileMirror(tmp, { auto_writeback: 'salient' });
+      await withEnv({ GBRAIN_HOME: tmp }, async () => {
+        const ts = new Date().toISOString();
+        const entries: HookHeartbeatEntry[] = [
+          ...Array.from({ length: c.ok }, (): HookHeartbeatEntry => ({ ts, event: 'writeback', outcome: 'ok', duration_ms: 5000, inserted: 1 })),
+          ...c.errors.map((reason): HookHeartbeatEntry => ({ ts, event: 'writeback', outcome: 'error', reason, duration_ms: 1000 })),
+          ...Array.from({ length: c.requeued }, (): HookHeartbeatEntry => ({ ts, event: 'writeback', outcome: 'degraded', reason: 'writer_busy_requeued', duration_ms: 1000 })),
+        ];
+        for (const entry of entries) await writeHeartbeat(entry, { trim: false });
+        const check = await buildMemoryWritebackCheck(engine);
+        expect(check.details?.backstop_7d).toMatchObject({ failed: c.errors.length, last_ok_at: ts });
+        if (c.warn) {
+          expect(check.status).toBe('warn');
+          expect(check.message).toContain(c.warn);
+          expect(check.message).toContain('gbrain sweep --once');
+        } else {
+          expect(check.status).toBe('ok');
+        }
+      });
+    });
+  }
 });

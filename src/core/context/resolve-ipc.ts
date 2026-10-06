@@ -219,6 +219,12 @@ export interface ContextPackRequest {
    * OpenClaw assemble poll.
    */
   manifestOnly?: boolean;
+  /**
+   * Always-loaded core (additive, read-only): return only the core block for
+   * the session source — no assembly, no cursor advance, no banking. Used by
+   * the OpenClaw assemble lane. An older serve ignores it and assembles.
+   */
+  coreOnly?: boolean;
 }
 
 export type IpcRequest =

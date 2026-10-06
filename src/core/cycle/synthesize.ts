@@ -76,6 +76,7 @@ import { resolveCycleDate, utcDate } from './cycle-date.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { stampDreamProvenance } from './dream-provenance.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { findLegacyCompletion, findSynthV2Completion, partitionCompletedSynthesis } from './synthesize-completion.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -527,11 +528,9 @@ async function runPhaseSynthesizeInner(
       process.stderr.write(`[dream] warning: verdict cache sweep failed: ${e instanceof Error ? e.message : String(e)}\n`);
     }
 
-    const synthesisIdentity = maintenance ? `${opts.sourceId ?? 'default'}/${maintenance.writer.sourceIncarnation}` : opts.sourceId ?? 'default';
-    const retainedKeys = maintenance ? await loadSuccessfulSynthesisKeys(engine, opts.sourceId ?? 'default', 'dream:synth-v2:') : [];
-    const retained = new Set(transcripts.filter(t => maintenance && findSynthV2Completion(retainedKeys, t.filePath,
-      t.contentHash.slice(0, 16), synthesisIdentity)).map(t => t.filePath));
-    const pass = await runTriagePass(engine, transcripts.filter(t => !retained.has(t.filePath)), {
+    const { completed, successfulLegacyKeys, successfulV2Keys, synthesisIdentity } = await partitionCompletedSynthesis(engine, transcripts, opts.sourceId ?? 'default', maintenance, opts.dryRun);
+    const synthesisState = { candidates: transcripts.length - completed.size, already_synthesized: completed.size };
+    const pass = await runTriagePass(engine, transcripts.filter(t => !completed.has(t.filePath)), {
       model: config.triage.model,
       maxChars: config.triage.maxChars,
       maxTokens: config.triage.maxTokens,
@@ -541,9 +540,8 @@ async function runPhaseSynthesizeInner(
       signal: opts.signal,
       rescue: rescueConfigOf(config.triage), decide: await resolveTriageDecide(engine),
     }, opts.yieldDuringPhase);
-    pass.reports.push(...transcripts.filter(t => retained.has(t.filePath)).map(t => ({ filePath: t.filePath,
+    pass.reports.push(...transcripts.filter(t => completed.has(t.filePath)).map(t => ({ filePath: t.filePath,
       worth: true, score: null, content_type: null, cached: true, reasons: ['retained_completed_output'] })));
-    pass.cacheHits += retained.size;
     const verdicts = pass.reports;
 
     // Read-time gate: retuning dream.triage.threshold (or the rescue knobs)
@@ -592,12 +590,13 @@ async function runPhaseSynthesizeInner(
     // synthesis. Codex finding #8: --dry-run does NOT mean "zero LLM calls";
     // it means "skip the synthesis model."
     if (opts.dryRun) {
-      return ok(`dry-run: ${worthProcessing.length} of ${transcripts.length} transcripts would synthesize${deferralSuffix}`, {
+      return ok(`dry-run: ${worthProcessing.length - completed.size} of ${synthesisState.candidates} transcripts would synthesize${completed.size ? `; ${completed.size} already synthesized` : ''}${deferralSuffix}`, {
         transcripts_discovered: transcripts.length,
         transcripts_processed: 0,
         pages_written: 0,
         verdicts,
         triage: triageDetails,
+        synthesis_state: synthesisState,
         dryRun: true,
       });
     }
@@ -619,6 +618,7 @@ async function runPhaseSynthesizeInner(
         pages_written: 0,
         verdicts,
         triage: triageDetails,
+        synthesis_state: synthesisState,
       });
     }
 
@@ -679,8 +679,6 @@ async function runPhaseSynthesizeInner(
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
-    const successfulLegacyKeys = maintenance ? [] : await loadSuccessfulSynthesisKeys(engine, cycleSourceId, 'dream:synth:');
-    const successfulV2Keys = maintenance ? retainedKeys : await loadSuccessfulSynthesisKeys(engine, cycleSourceId, 'dream:synth-v2:');
 
     // Per-source daily submission cap (D2D: default 0 = disabled; opt-in
     // backstop via dream.synthesize.max_submissions_per_source_per_day).
@@ -1032,6 +1030,7 @@ async function runPhaseSynthesizeInner(
         skips: skipReports,
         verdicts,
         triage: triageDetails,
+        synthesis_state: synthesisState,
       });
     }
 
@@ -1312,6 +1311,7 @@ async function runPhaseSynthesizeInner(
           skips: skipReports,
           verdicts,
           triage: triageDetails,
+          synthesis_state: synthesisState,
           synthesis: {
             jobs: childIds.length,
             max_turns_config: config.maxTurns,
@@ -1370,6 +1370,7 @@ async function runPhaseSynthesizeInner(
       summary_slug: summarySlug,
       verdicts,
       triage: triageDetails,
+      synthesis_state: synthesisState,
       synthesis: {
         jobs: childIds.length,
         max_turns_config: config.maxTurns,
@@ -1902,15 +1903,10 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
         maxTokens: params.max_tokens,
         // DeepSeek v4 thinks by default and bills reasoning as OUTPUT tokens
         // against max_tokens (recipe thinking_by_default, #4172) — same for
-        // OpenRouter's DeepSeek hosts (#4758). The judge wants only the small
-        // JSON verdict, so pin thinking off per-call — the openai-compatible
-        // adapter spreads providerOptions[recipe.id] into the wire body,
-        // where `thinking` is DeepSeek's documented knob.
-        ...(v.parsed.providerId === 'deepseek'
-          || (v.parsed.providerId === 'openrouter'
-            && v.parsed.modelId.trim().toLowerCase().startsWith('deepseek/'))
-          ? { providerOptions: { [v.parsed.providerId]: { thinking: { type: 'disabled' } } } }
-          : {}),
+        // OpenRouter's DeepSeek hosts (#4758) and a configured Anthropic
+        // thinking mode. The judge wants only the small JSON verdict, so it
+        // turns thinking off per call (#5331; per-route mapping in thinking-off.ts).
+        thinking: 'off',
         // #4077: a cancelled cycle tears down the in-flight judge call too.
         abortSignal: options?.signal,
       });
@@ -2933,119 +2929,6 @@ async function collectChildPutPageSlugs(
     const first_write_at = firstWriteAt.get(slug);
     return { slug, source_id: sourceId, ...(raw_source ? { raw_source } : {}), ...(first_write_at ? { first_write_at } : {}) };
   });
-}
-
-/**
- * Load every `completed` subagent job key in one synthesis key family for
- * one source. Called once per phase per family so the submit loop can skip
- * transcripts already synthesized BEFORE building their link manifest:
- *  - D8 legacy `dream:synth:<filePath>:<hash16>[:c<i>of<n>]` (pre-v2 shape;
- *    must not be re-submitted under v2 keys);
- *  - current `dream:synth-v2:<source>:filename:<basename>:<hash16>[:c<i>of<n>]`
- *    (the queue's idempotency dedupe would coalesce these too, but only after
- *    the manifest build, and the coalesced children would re-enter writtenRefs).
- * `dream:synth:%` does not match `dream:synth-v2:` keys.
- *
- * Plain `status = 'completed'` deliberately mirrors the queue-level
- * idempotency semantics the legacy keys relied on: a completed job blocks
- * re-submission regardless of `result.stop_reason` (pinned in
- * test/minions.test.ts). Filtering on stop_reason here would re-pay for
- * transcripts the old code path never re-ran, and reading `result` at all
- * would need the `(result #>> '{}')` double-encoded-jsonb defense.
- *
- * Completed rows that `jobs prune` removed live on in
- * `dream_synthesis_completions` (the prune archives them), so pruning never
- * makes a synthesized transcript eligible again. Loads source-scoped
- * completions once per phase; no repeated history scan per transcript.
- */
-async function loadSuccessfulSynthesisKeys(
-  engine: BrainEngine,
-  sourceId: string,
-  keyPrefix: 'dream:synth:' | 'dream:synth-v2:',
-): Promise<string[]> {
-  const rows = await engine.executeRaw<{ idempotency_key: string }>(
-    `SELECT idempotency_key
-       FROM minion_jobs
-      WHERE name = 'subagent'
-        AND status = 'completed'
-        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
-        AND idempotency_key LIKE $2
-     UNION
-     SELECT idempotency_key FROM dream_synthesis_completions
-      WHERE source_id = $1 AND idempotency_key LIKE $2`,
-    [sourceId, `${keyPrefix}%`],
-  );
-  return rows.map(row => row.idempotency_key);
-}
-
-/**
- * Mirror of findLegacyCompletion for the synth-v2 key family (grammar as
- * produced by the submit loop / parsed by `parseSynthV2Key`): `'single'` when
- * the unchunked key completed, `'chunked'` when a FULL `:c0of<n>`..`:c<n-1>of<n>`
- * set completed, null otherwise (a cancelled row never counts).
- */
-function findSynthV2Completion(
-  successfulKeys: string[],
-  filePath: string,
-  hash16: string,
-  sourceId: string,
-): 'single' | 'chunked' | null {
-  const prefix =
-    `dream:synth-v2:${encodeURIComponent(sourceId)}` +
-    `:filename:${encodeURIComponent(basename(filePath))}:${hash16}`;
-  const chunkSets = new Map<number, Set<number>>();
-  for (const key of successfulKeys) {
-    if (key === prefix) return 'single';
-    if (!key.startsWith(prefix + ':c')) continue;
-    const chunk = /:c(\d+)of(\d+)$/.exec(key);
-    if (!chunk) continue;
-    const i = Number(chunk[1]);
-    const n = Number(chunk[2]);
-    if (n < 1 || i < 0 || i >= n) continue;
-    let seen = chunkSets.get(n);
-    if (!seen) chunkSets.set(n, seen = new Set());
-    seen.add(i);
-  }
-  for (const [n, seen] of chunkSets) {
-    if (seen.size === n) return 'chunked';
-  }
-  return null;
-}
-
-/**
- * Match a transcript (by filename + content hash) against completed legacy
- * keys. `'single'` when a `dream:synth:<path>:<hash16>` completion exists;
- * `'chunked'` when a FULL chunk set `:c0of<n>`..`:c<n-1>of<n>` completed
- * (chunk indices are 0-based). Partial chunk sets return null so the
- * transcript gets a fresh v2 synthesis instead of shipping with holes.
- */
-function findLegacyCompletion(
-  successfulKeys: string[],
-  filePath: string,
-  hash16: string,
-): 'single' | 'chunked' | null {
-  const filename = basename(filePath);
-  const hashSuffix = `:${hash16}`;
-  /** total chunk count n → completed 0-based chunk indices */
-  const chunkSets = new Map<number, Set<number>>();
-  for (const key of successfulKeys) {
-    const chunk = /:c(\d+)of(\d+)$/.exec(key);
-    const base = chunk ? key.slice(0, -chunk[0].length) : key;
-    if (!base.endsWith(hashSuffix)) continue;
-    const historicalPath = base.slice('dream:synth:'.length, -hashSuffix.length);
-    if (basename(historicalPath) !== filename) continue;
-    if (!chunk) return 'single';
-    const i = Number(chunk[1]);
-    const n = Number(chunk[2]);
-    if (n < 1 || i < 0 || i >= n) continue;
-    let seen = chunkSets.get(n);
-    if (!seen) chunkSets.set(n, seen = new Set());
-    seen.add(i);
-  }
-  for (const [n, seen] of chunkSets) {
-    if (seen.size === n) return 'chunked';
-  }
-  return null;
 }
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────

@@ -12,10 +12,19 @@
  * - `findIssueByTitle` looks an issue up through the list API by label and
  *   exact title (open first, else the most recently updated closed one, so a
  *   flapping workflow reopens its own issue).
+ * - `fetchArtifactJson` reads one JSON file out of a run artifact's zip
+ *   (`readZipEntry`, stored or deflated entries); every failure is returned
+ *   as a reason string so callers report incomplete evidence, never zero
+ *   failures.
+ * - `redactCredentials` strips user:password from database URLs in any text
+ *   shown to an agent.
  */
+import { inflateRawSync } from 'node:zlib';
 
 export interface GitHubClient {
   request<T = unknown>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T>;
+  /** Raw bytes of a GET (artifact archives); follows the redirect to blob storage without forwarding the token. */
+  download?(path: string): Promise<Uint8Array>;
 }
 
 export interface Issue {
@@ -24,6 +33,7 @@ export interface Issue {
   state: 'open' | 'closed';
   body?: string | null;
   labels?: Array<{ name: string } | string>;
+  created_at?: string;
   updated_at?: string;
   pull_request?: unknown;
 }
@@ -76,6 +86,14 @@ export function restClient(repo: string, token = process.env.GH_TOKEN || process
       }
       return (res.status === 204 ? undefined : await res.json()) as T;
     },
+    async download(path: string): Promise<Uint8Array> {
+      const url = `https://api.github.com/${resolve(path)}`;
+      const res = await fetch(url, { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' }, redirect: 'manual' });
+      const location = res.headers.get('location');
+      const body = location ? await fetch(location) : res;
+      if (!body.ok) throw Object.assign(new Error(`GitHub download ${url} -> ${body.status}`), { status: body.status });
+      return new Uint8Array(await body.arrayBuffer());
+    },
   };
 }
 
@@ -91,6 +109,11 @@ function ghCliClient(resolve: (path: string) => string): GitHubClient {
       }
       const out = r.stdout.toString().trim();
       return (out ? JSON.parse(out) : undefined) as T;
+    },
+    async download(path: string): Promise<Uint8Array> {
+      const r = Bun.spawnSync(['gh', 'api', resolve(path)], { stdout: 'pipe', stderr: 'pipe' });
+      if (r.exitCode !== 0) throw new Error(`gh api ${resolve(path)} failed: ${r.stderr.toString().slice(0, 300)}. Fix: gh auth login, or export GH_TOKEN.`);
+      return new Uint8Array(r.stdout);
     },
   };
 }
@@ -144,4 +167,90 @@ export function readJsonBlock<T>(body: string | null | undefined, marker: string
 
 export function jsonBlock(marker: string, value: unknown): string {
   return `<!-- ${marker} -->\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
+}
+
+export async function getIssue(client: GitHubClient, number: number): Promise<Issue> {
+  return client.request<Issue>('GET', `repos/{repo}/issues/${number}`);
+}
+
+/** Issues carrying a label (newest created first), pull requests excluded. */
+export async function listLabeled(client: GitHubClient, label: string, state: 'open' | 'all', maxPages = 3): Promise<Issue[]> {
+  const out: Issue[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const batch = await client.request<Issue[]>('GET', `repos/{repo}/issues?labels=${encodeURIComponent(label)}&state=${state}&sort=created&direction=desc&per_page=100&page=${page}`);
+    out.push(...batch.filter(i => !i.pull_request));
+    if (batch.length < 100) break;
+  }
+  return out;
+}
+
+export interface LinkedPull { number: number; merged_at: string | null; state: string; user?: string }
+
+/** Pull requests that cross-reference or connect to an issue (its timeline), oldest first. */
+export async function linkedPulls(client: GitHubClient, number: number): Promise<Array<LinkedPull & { linked_at: string }>> {
+  const events = await client.request<Array<{ event: string; created_at?: string; source?: { issue?: { number: number; state: string; user?: { login: string }; pull_request?: { merged_at?: string | null } } } }>>(
+    'GET', `repos/{repo}/issues/${number}/timeline?per_page=100`);
+  const seen = new Set<number>();
+  const out: Array<LinkedPull & { linked_at: string }> = [];
+  for (const e of events) {
+    const src = e.source?.issue;
+    if (e.event !== 'cross-referenced' || !src?.pull_request || seen.has(src.number)) continue;
+    seen.add(src.number);
+    out.push({ number: src.number, merged_at: src.pull_request.merged_at ?? null, state: src.state, user: src.user?.login, linked_at: e.created_at ?? '' });
+  }
+  return out;
+}
+
+const DB_URL_CREDENTIALS = /\b((?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?):\/\/)[^\s/@:]*(?::[^\s/@]*)?@/gi;
+
+/** Remove user:password from database URLs (`postgres://u:p@h/db` -> `postgres://<redacted>@h/db`). */
+export function redactCredentials(text: string): string {
+  return text.replace(DB_URL_CREDENTIALS, '$1<redacted>@');
+}
+
+/** Read one file from a zip archive (stored or deflated entries, central directory lookup). */
+export function readZipEntry(zip: Uint8Array, name: string): Uint8Array | undefined {
+  const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  let eocd = -1;
+  for (let i = zip.length - 22; i >= Math.max(0, zip.length - 65_557); i--) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return undefined;
+  const entries = view.getUint16(eocd + 10, true);
+  let at = view.getUint32(eocd + 16, true);
+  const decoder = new TextDecoder();
+  for (let n = 0; n < entries && at + 46 <= zip.length; n++) {
+    if (view.getUint32(at, true) !== 0x02014b50) return undefined;
+    const method = view.getUint16(at + 10, true);
+    const size = view.getUint32(at + 20, true);
+    const nameLen = view.getUint16(at + 28, true);
+    const extraLen = view.getUint16(at + 30, true);
+    const commentLen = view.getUint16(at + 32, true);
+    const local = view.getUint32(at + 42, true);
+    const entryName = decoder.decode(zip.subarray(at + 46, at + 46 + nameLen));
+    at += 46 + nameLen + extraLen + commentLen;
+    if (entryName !== name) continue;
+    const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+    const data = zip.subarray(start, start + size);
+    if (method === 0) return data;
+    if (method === 8) return new Uint8Array(inflateRawSync(data));
+    return undefined;
+  }
+  return undefined;
+}
+
+/** One JSON file from a run's named artifact; `reason` says why it could not be read (missing, expired, unreadable). */
+export async function fetchArtifactJson(client: GitHubClient, runId: number, artifact: string, file: string): Promise<{ value?: unknown; reason?: string }> {
+  if (!client.download) return { reason: 'this client cannot download artifacts' };
+  try {
+    const list = await client.request<{ artifacts: Array<{ id: number; name: string; expired: boolean }> }>('GET', `repos/{repo}/actions/runs/${runId}/artifacts?name=${encodeURIComponent(artifact)}&per_page=10`);
+    const found = list.artifacts.find(a => a.name === artifact);
+    if (!found) return { reason: `run ${runId} has no '${artifact}' artifact` };
+    if (found.expired) return { reason: `run ${runId}'s '${artifact}' artifact has expired` };
+    const bytes = readZipEntry(await client.download(`repos/{repo}/actions/artifacts/${found.id}/zip`), file);
+    if (!bytes) return { reason: `run ${runId}'s '${artifact}' artifact has no readable ${file}` };
+    return { value: JSON.parse(new TextDecoder().decode(bytes)) };
+  } catch (e) {
+    return { reason: `reading run ${runId}'s '${artifact}' artifact failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
 }

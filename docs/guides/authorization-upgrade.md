@@ -100,8 +100,16 @@ no tools; only an absent trusted-local binding uses the default registry.
    installation, replace `vX.Y.Z.W` below with the exact release being installed:
 
    ```sh
+   bun remove --global gbrain
    bun install --global --ignore-scripts github:garrytan/gbrain#vX.Y.Z.W
    ```
+
+   Remove first. Installing a different tag over an existing global install
+   fails with `DependencyLoop` on Bun 1.3, and on Bun 1.4 it exits 0 without
+   swapping the code while it corrupts the global `package.json` and
+   `bun.lock` (#5034). If the install step fails after the removal, run it
+   again before restarting anything; `gbrain --version` must print the new
+   release.
 
    For a linked source checkout, update that checkout to the chosen release
    through its normal Git workflow, then run `bun install --ignore-scripts`.

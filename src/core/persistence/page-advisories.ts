@@ -4,6 +4,67 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { writerLintForPutPage } from '../output/post-write.ts';
 import type { WriteRequest } from './model.ts';
 import { prepareFactsBackstop } from './effect-facts.ts';
+import { lineGrammarOptions, parseLineGrammar } from '../line-grammar.ts';
+import { isAutoLinkEnabled } from '../link-extraction.ts';
+import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
+import { findSimilarPages } from '../similar-pages.ts';
+import { isQuarantined } from '../quarantine.ts';
+import { readFix } from '../ops/op-fix.ts';
+
+const LINE_GRAMMAR_FINDINGS_MAX = 5;
+
+/**
+ * On a create: existing pages in the same source that this one probably
+ * duplicates (same title or alias, same name elsewhere, very similar title).
+ * A question for the writer, never a merge; slugs only.
+ */
+async function similarPagesAdvisory(engine: BrainEngine, row: WriteRequest, page: ParsedPage): Promise<Record<string, unknown> | undefined> {
+  if (!['put_page', 'capture'].includes(row.operation) || row.page_id != null || row.slug.startsWith('wiki/agents/')
+    || page.frontmatter?.dream_generated === true || (page.type as string) === 'extract_receipt' || isQuarantined(page.frontmatter)) return undefined;
+  const found = await findSimilarPages(engine, { sourceId: row.source_id, slug: row.slug, title: page.title ?? '',
+    excludePrivate: row.authority.excludePrivate ?? row.authority.remote });
+  if (!found?.candidates.length) return undefined;
+  const first = found.candidates[0];
+  return {
+    candidates: found.candidates,
+    checks_ran: found.checks_ran,
+    semantic: 'not_checked',
+    message: `This new page looks like ${found.candidates.length === 1 ? 'an existing page' : 'existing pages'} (${found.candidates.map(c => `${c.slug}: ${c.evidence}`).join(', ')}). If it is the same thing, move this content into that page with edit_page and delete this one; if it is different, keep both.`,
+    fix: readFix(`Shows existing page ${first.slug} in source ${first.source_id} so you can compare it with the new page, read-only.`,
+      { argv: ['gbrain', 'get', '--source', first.source_id, '--', first.slug], mcp: { tool: 'get_page', arguments: { slug: first.slug, source_id: first.source_id } } }),
+  };
+}
+
+/**
+ * What the line grammar read from this page body: typed relation lines and
+ * fact lines, with every near-miss explained. Absent when the page has none.
+ * Relations are stored with the page's links (or by the next sweep for a
+ * remote writer); fact lines stay page text and are not added to `facts`.
+ */
+async function lineGrammarAdvisory(engine: BrainEngine, row: WriteRequest, page: ParsedPage): Promise<Record<string, unknown> | undefined> {
+  // Declared-type gating only turns relations into findings, so a body with nothing to read needs no config or pack reads.
+  const ungated = parseLineGrammar(page.compiled_truth);
+  if (!ungated.relations.length && !ungated.facts.length && !ungated.diagnostics.length) return undefined;
+  const options = await lineGrammarOptions(engine);
+  if (!options.enabled) return undefined;
+  const pack = options.allowUndeclaredTypes ? null : (await loadActivePackForLocalEngine(engine, { sourceId: row.source_id }))?.manifest ?? null;
+  const declaredTypes = pack?.link_types.length ? new Set(pack.link_types.map(lt => lt.name)) : null;
+  const parsed = parseLineGrammar(page.compiled_truth, { declaredTypes });
+  if (!parsed.relations.length && !parsed.facts.length && !parsed.diagnostics.length) return undefined;
+  const relationsState = !(await isAutoLinkEnabled(engine)) ? 'auto_link_disabled'
+    : row.authority.remote && !row.authority.autoLinkTrusted ? 'pending_sweep' : 'stored';
+  return {
+    relations: parsed.relations.length,
+    relations_state: relationsState,
+    facts: parsed.facts.length,
+    ...(parsed.facts.length ? { facts_state: 'page_text_only',
+      facts_message: 'Fact lines are searchable page text; they are not added to recall facts. Use remember (or the page ## Facts table) for a fact recall must return.' } : {}),
+    findings: parsed.diagnostics.slice(0, LINE_GRAMMAR_FINDINGS_MAX).map(d => ({ severity: 'warning', validator: 'line-grammar',
+      line: d.line, reason: d.reason, text: d.text, message: d.message })),
+    total: parsed.diagnostics.length,
+    details_truncated: parsed.diagnostics.length > LINE_GRAMMAR_FINDINGS_MAX,
+  };
+}
 
 const LINT_MESSAGES: Record<string,string> = { citation:'Paragraph has no citation marker.',
   link:'A link target is unavailable.', 'back-link':'A reverse link is missing.', 'triple-hr':'An ambiguous timeline separator was found.' };
@@ -24,5 +85,8 @@ export async function preparePageAdvisories(engine: BrainEngine, row: WriteReque
     top_findings: lint.top_findings.map(finding => ({ ...finding, message: LINT_MESSAGES[finding.validator] ?? `${finding.validator} validation finding.` })) } : lint;
   const facts = ['put_page', 'capture', 'edit_page'].includes(row.operation)
     ? await prepareFactsBackstop(engine, row, page).catch(() => ({ skipped: 'backstop_error' })) : undefined;
-  return { ...remoteLinkHint(row), ...(sanitized ? { writer_lint: sanitized } : {}), ...(facts ? { facts_backstop: facts } : {}) };
+  const grammar = await lineGrammarAdvisory(engine, row, visible).catch(() => undefined);
+  const similar = await similarPagesAdvisory(engine, row, page).catch(() => undefined);
+  return { ...remoteLinkHint(row), ...(sanitized ? { writer_lint: sanitized } : {}), ...(facts ? { facts_backstop: facts } : {}),
+    ...(grammar ? { line_grammar: grammar } : {}), ...(similar ? { similar_pages: similar } : {}) };
 }

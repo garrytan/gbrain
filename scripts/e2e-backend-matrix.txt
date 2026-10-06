@@ -27,7 +27,7 @@ test/e2e/backup-coverage-parity.test.ts
 test/e2e/chronicle-event-projection-parity.test.ts
 test/e2e/code-edges-read-parity.test.ts
 test/e2e/doctor-silent-death-parity.test.ts
-test/e2e/embedding-recovery-parity.test.ts	pooled-timeout=600
+test/e2e/embedding-recovery-parity.test.ts
 test/e2e/engine-parity-cjk.test.ts
 test/e2e/engine-parity-salience.test.ts
 test/e2e/engine-parity.test.ts
@@ -51,3 +51,6 @@ test/e2e/write-attribution-postgres.test.ts
 test/e2e/write-attribution-read-parity.test.ts
 test/e2e/feedback-parity.test.ts
 test/e2e/mentions-parity.test.ts
+test/e2e/persistence-publish-lock-order-postgres.test.ts
+test/e2e/p8-memory-writes-postgres.test.ts
+test/e2e/delta-cursor-integrity-postgres.test.ts

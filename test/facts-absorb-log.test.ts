@@ -129,15 +129,18 @@ describe('writeFactsAbsorbLog — ingest_log row shape', () => {
     expect(FACTS_ABSORB_REASONS).toContain('gateway_auth');
     expect(FACTS_ABSORB_REASONS).toContain('gateway_billing');
     expect(FACTS_ABSORB_REASONS).toContain('gateway_rate_limit');
+    // B-N7: a provider 404 (unknown or inaccessible model) is not an auth failure.
+    expect(FACTS_ABSORB_REASONS).toContain('gateway_model_not_found');
     // #5362: write-path refusals record their own code.
     expect(FACTS_ABSORB_REASONS).toContain('write_refused');
-    expect(FACTS_ABSORB_REASONS.length).toBe(16);
+    expect(FACTS_ABSORB_REASONS.length).toBe(17);
   });
 
   test.each([
     ['typed-auth', Object.assign(new Error('invalid api key sk-sensitive-auth'), { status: 401 }), 'gateway_auth'],
     ['typed-billing', new Error('credit balance is too low: acct-sensitive'), 'gateway_billing'],
     ['typed-rate', Object.assign(new Error('rate limit: req-sensitive'), { status: 429 }), 'gateway_rate_limit'],
+    ['typed-model-not-found', Object.assign(new Error('The model gpt-x does not exist or you do not have access to it (org-sensitive)'), { status: 404 }), 'gateway_model_not_found'],
   ])('%s provider failure records only its typed class', async (ref, err, reason) => {
     await writeFactsAbsorbFailure(engine, `meetings/${ref}`, err);
     const log = await engine.getIngestLog({ limit: 30 });

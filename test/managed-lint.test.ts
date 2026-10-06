@@ -7,19 +7,21 @@
 // legacy filesystem path for unmanaged brains.
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runLintCore } from '../src/commands/lint.ts';
+import { runLintCore, type LintIssue } from '../src/commands/lint.ts';
 import { runPhaseLint } from '../src/core/cycle.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
-import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { disposePersistenceConsumer, startPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { waitFor } from './helpers/wait-for.ts';
 
 const PREAMBLE = 'Of course. Here is a detailed brain page for Jane Doe.\n\n';
 const BODY = '# Jane Doe\n\nContent that stays.\n';
@@ -67,10 +69,12 @@ async function fixture(run: (engine: BrainEngine, sourceId: string, root: string
   }
 }
 
-async function seed(engine: BrainEngine, sourceId: string, slug = 'people/jane-doe') {
+async function seed(engine: BrainEngine, sourceId: string, slug = 'people/jane-doe', content = PAGE) {
   const ctx = { engine, sourceId, remote: false as const, config: { engine: engine.kind, embedding_disabled: true },
     dryRun: false, logger: { info() {}, warn() {}, error() {} } };
-  await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: PAGE, request_id: randomUUID() } });
+  const current = await engine.readPageSnapshot(slug, { sourceId });
+  await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, request_id: randomUUID(),
+    ...(current ? { expected_revision: current.revision } : {}) } });
 }
 
 async function requests(engine: BrainEngine, sourceId: string): Promise<number> {
@@ -181,3 +185,250 @@ test('unmanaged lint keeps the legacy filesystem write path', async () => {
     }
   }
 }, 30_000);
+
+// ── Diverged files (P1-1): the coordinator's source_changed refusal is a pending issue, never a failed run ──
+
+const JANE = 'people/jane-doe';
+const BOB = 'people/bob-example';
+
+async function body(engine: BrainEngine, sourceId: string, slug: string): Promise<string> {
+  return (await engine.readPageSnapshot(slug, { sourceId }))!.page.compiled_truth;
+}
+
+async function lintCollecting(engine: BrainEngine, sourceId: string, root: string) {
+  const byFile = new Map<string, LintIssue[]>();
+  const result = await runLintCore({ target: root, fix: true, engine, sourceId, onPageIssues: (rel, issues) => byFile.set(rel, issues) });
+  const pending = (rel: string) => byFile.get(rel)?.find(i => i.rule === 'managed-write-pending');
+  return { result, pending };
+}
+
+/** Every pending issue carries the stable code, the guide link and never prescribes a sync. */
+function expectPendingContract(issue: LintIssue | undefined, reason: string): LintIssue {
+  expect(issue).toBeDefined();
+  expect(issue).toMatchObject({ rule: 'managed-write-pending', fixable: false, code: 'managed_write_pending', reason });
+  expect(issue!.docs).toContain('docs/guides/concurrent-writes.md#lint-repairs-waiting-on-a-managed-brain');
+  expect(issue!.fix?.argv ?? []).not.toContain('sync');
+  return issue!;
+}
+
+test('probe A: an unsynced hand edit leaves its page pending with the coordinator reconcile fix; the run fixes the other page', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    await seed(engine, sourceId, BOB, PAGE.replace('Jane Doe', 'Bob Example'));
+    const file = join(root, `${JANE}.md`);
+    const edited = `${readFileSync(file, 'utf8')}\nA hand edit not yet synced.\n`;
+    writeFileSync(file, edited);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const before = await requests(engine, sourceId);
+
+    const { result, pending } = await lintCollecting(engine, sourceId, root);
+    expect(result).toMatchObject({ pages_scanned: 2, total_fixed: FIXABLE_ON_INDEXED_PAGE, fix_pending: 1, write_path: 'coordinator' });
+    const issue = expectPendingContract(pending(`${JANE}.md`), 'file_database_drift');
+    expect(issue.fix).toMatchObject({ argv: ['gbrain', 'sources', 'reconcile', sourceId, JANE, '--brain', 'host', '--preview'], next: 'run' });
+    expect(result.pending_issues).toEqual([issue]);
+    // Neither copy of the diverged page changed, and no request was journaled for it.
+    expect(readFileSync(file, 'utf8')).toBe(edited);
+    expect(await body(engine, sourceId, JANE)).toContain('Of course');
+    expect(await body(engine, sourceId, JANE)).not.toContain('hand edit');
+    expect(await requests(engine, sourceId)).toBe(before + 1);
+    // The other page was repaired in the same run.
+    expect(await body(engine, sourceId, BOB)).not.toContain('Of course');
+    expect(readFileSync(join(root, `${BOB}.md`), 'utf8')).not.toContain('Of course');
+  });
+}, 60_000);
+
+test('probe B: a file older than the database stays pending and the newer database content survives', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    const file = join(root, `${JANE}.md`);
+    const older = readFileSync(file, 'utf8');
+    await seed(engine, sourceId, JANE, PAGE.replace('Content that stays.', 'Content that stays.\n\nA newer database line.'));
+    writeFileSync(file, older);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+
+    const { result, pending } = await lintCollecting(engine, sourceId, root);
+    expect(result).toMatchObject({ total_fixed: 0, fix_pending: 1 });
+    const issue = expectPendingContract(pending(`${JANE}.md`), 'file_database_drift');
+    expect(issue.fix?.argv).toEqual(['gbrain', 'sources', 'reconcile', sourceId, JANE, '--brain', 'host', '--preview']);
+    expect(await body(engine, sourceId, JANE)).toContain('A newer database line.');
+    expect(readFileSync(file, 'utf8')).toBe(older);
+  });
+}, 60_000);
+
+test('a file sync holds keeps the hold repair as its fix', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    const file = join(root, `${JANE}.md`);
+    writeFileSync(file, `${readFileSync(file, 'utf8')}\nHeld edit.\n`);
+    const snapshot = (await engine.readPageSnapshot(JANE, { sourceId }))!;
+    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+    await writeGitHold(engine, { source_id: sourceId, incarnation, path: `${JANE}.md`, source_path: `${JANE}.md`, slug: JANE,
+      page_id: Number(snapshot.page.id), code: 'invalid_frontmatter', message: 'Invalid YAML frontmatter: key "title" at line 2 continues on unquoted lines.',
+      upstream_version: 'sha-fixture', observed_at: new Date().toISOString(), run_id: 'run-1', mode: 'managed',
+      meta: { reason: 'needs_interpretation', key: 'title', line: 2, recovery_version: 1 } });
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+
+    const { result, pending } = await lintCollecting(engine, sourceId, root);
+    expect(result.fix_pending).toBe(1);
+    const issue = expectPendingContract(pending(`${JANE}.md`), 'held_file');
+    expect(issue.fix?.argv).toEqual(['gbrain', 'repair', 'frontmatter', '--source', sourceId, '--include-ambiguous']);
+  });
+}, 60_000);
+
+test('a canonical file removed between scan and repair is pending as canonical_file_missing', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    const file = join(root, `${JANE}.md`);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const restore = await interceptSnapshot(engine, sourceId, JANE, 'before', async () => { unlinkSync(file); });
+    try {
+      const { result, pending } = await lintCollecting(engine, sourceId, root);
+      expect(result.fix_pending).toBe(1);
+      expectPendingContract(pending(`${JANE}.md`), 'canonical_file_missing');
+      expect(await body(engine, sourceId, JANE)).toContain('Of course');
+    } finally { restore(); }
+  });
+}, 60_000);
+
+test('a listed canonical file removed before its scan read: managed --fix reports canonical_file_missing, report-only reports file_removed_during_scan', async () => {
+  for (const fix of [true, false]) {
+    await fixture(async (engine, sourceId, root) => {
+      await seed(engine, sourceId, BOB, PAGE.replace(/Jane Doe/g, 'Bob Example'));
+      await seed(engine, sourceId);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      const byFile = new Map<string, LintIssue[]>();
+      let scanned = 0;
+      const result = await runLintCore({ target: root, fix, engine, sourceId, onPageIssues: (rel, issues) => byFile.set(rel, issues),
+        onPageScanned: () => { if (scanned++ === 0) unlinkSync(join(root, `${JANE}.md`)); } });
+      expect(result.pages_scanned).toBe(2);
+      if (fix) {
+        expect(result.fix_pending).toBe(1);
+        expect(result.pending_issues).toEqual([expectPendingContract(byFile.get(`${JANE}.md`)?.[0], 'canonical_file_missing')]);
+        expect(await body(engine, sourceId, JANE)).toContain('Of course');
+        expect(await body(engine, sourceId, BOB)).not.toContain('Of course');
+      } else {
+        expect(result.fix_pending).toBe(0);
+        expect(byFile.get(`${JANE}.md`)).toEqual([expect.objectContaining({ rule: 'file-removed-during-scan', code: 'file_removed_during_scan', fixable: false,
+          fix: expect.objectContaining({ argv: ['gbrain', 'lint', root] }) })]);
+      }
+    });
+  }
+}, 60_000);
+
+/**
+ * Runs `effect` once, around lint's first revision read of `slug` (in publishLintFix, after the scan read):
+ * before it (the read sees the effect) or after it. The persistence consumer reads page snapshots through the
+ * same engine (the seeded page's git and embedding effects), so the seed's effects settle first and only
+ * lint's own read counts: a background read must never fire the effect.
+ */
+async function interceptSnapshot(engine: BrainEngine, sourceId: string, slug: string, when: 'before' | 'after', effect: () => Promise<void>): Promise<() => void> {
+  startPersistenceConsumer(engine, { engine: engine.kind });
+  await waitFor(async () => (await engine.executeRaw(`SELECT 1 FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
+    WHERE r.source_id=$1 AND e.state IN ('queued','running')`, [sourceId])).length === 0, { label: `${engine.kind}: effects of ${slug} settled before interception` });
+  const original = engine.readPageSnapshot;
+  let fired = false;
+  // A transaction handle inherits this property, so the read keeps its own receiver.
+  engine.readPageSnapshot = async function (this: BrainEngine, s: string, opts?: Parameters<BrainEngine['readPageSnapshot']>[1]) {
+    if (fired || s !== slug || !new Error().stack?.includes('publishLintFix')) return original.call(this, s, opts);
+    fired = true;
+    if (when === 'before') await effect();
+    const snapshot = await original.call(this, s, opts);
+    if (when === 'after') await effect();
+    return snapshot;
+  } as BrainEngine['readPageSnapshot'];
+  return () => { engine.readPageSnapshot = original; };
+}
+
+const NEWER = PAGE.replace('Content that stays.', 'Content that stays.\n\nA concurrent publication.');
+
+test('a publication after the scan but before lint reads the revision is repaired as published, never overwritten', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const restore = await interceptSnapshot(engine, sourceId, JANE, 'before', () => seed(engine, sourceId, JANE, NEWER));
+    try {
+      const { result } = await lintCollecting(engine, sourceId, root);
+      expect(result.fix_pending).toBe(0);
+    } finally { restore(); }
+    const stored = await body(engine, sourceId, JANE);
+    expect(stored).toContain('A concurrent publication.');
+    expect(stored).not.toContain('Of course');
+    expect(readFileSync(join(root, `${JANE}.md`), 'utf8')).toContain('A concurrent publication.');
+  });
+}, 60_000);
+
+test('a publication between the revision read and the submission is refused as revision_changed', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const restore = await interceptSnapshot(engine, sourceId, JANE, 'after', () => seed(engine, sourceId, JANE, NEWER));
+    try {
+      const { result, pending } = await lintCollecting(engine, sourceId, root);
+      expect(result.fix_pending).toBe(1);
+      const issue = expectPendingContract(pending(`${JANE}.md`), 'revision_changed');
+      expect(issue.fix?.argv).toEqual(['gbrain', 'get', '--source', sourceId, '--', JANE]);
+    } finally { restore(); }
+    const stored = await body(engine, sourceId, JANE);
+    expect(stored).toContain('A concurrent publication.');
+    expect(stored).toContain('Of course');
+  });
+}, 60_000);
+
+test('fixable formatting differences are repaired, not mistaken for divergence', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    const file = join(root, `${JANE}.md`);
+    const original = readFileSync(file, 'utf8');
+    const [, frontmatter, rest] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(original)!;
+    // Same page, other bytes: frontmatter keys reversed and the title quoted.
+    const reformatted = `---\n${frontmatter.split('\n').reverse().join('\n').replace(/^title: (.*)$/m, 'title: "$1"')}\n---\n${rest}`;
+    expect(reformatted).not.toBe(original);
+    writeFileSync(file, reformatted);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+
+    const { result } = await lintCollecting(engine, sourceId, root);
+    expect(result).toMatchObject({ total_fixed: FIXABLE_ON_INDEXED_PAGE, fix_pending: 0 });
+    expect(await body(engine, sourceId, JANE)).not.toContain('Of course');
+  });
+}, 60_000);
+
+test('a cycle with a fresh hand edit ends its lint phase at warn with one pending issue instead of failing', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    const file = join(root, `${JANE}.md`);
+    writeFileSync(file, `${readFileSync(file, 'utf8')}\nFresh hand edit.\n`);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const phase = await runPhaseLint(root, false, engine, undefined, sourceId);
+    expect(phase.status).toBe('warn');
+    expect(phase.error).toBeUndefined();
+    expect(phase.details).toMatchObject({ fixed: 0, fix_pending: 1, lint_fix: true, write_path: 'coordinator' });
+    expect((phase.details.pending as LintIssue[]).map(i => [i.code, i.reason])).toEqual([['managed_write_pending', 'file_database_drift']]);
+  });
+}, 60_000);
+
+test('cycle.lint_fix=false makes the cycle lint phase report-only; true (the default) repairs', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    const file = join(root, `${JANE}.md`);
+    const bytes = readFileSync(file, 'utf8');
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const before = await requests(engine, sourceId);
+    try {
+      await engine.setConfig('cycle.lint_fix', 'false');
+      const off = await runPhaseLint(root, false, engine, undefined, sourceId);
+      expect(off.status).toBe('warn');
+      expect(off.summary).toContain('cycle.lint_fix=false');
+      expect(off.details).toMatchObject({ issues: FIXABLE_ON_INDEXED_PAGE, fixed: 0, lint_fix: false, write_path: 'none', fix_pending: 0 });
+      expect(readFileSync(file, 'utf8')).toBe(bytes);
+      expect(await requests(engine, sourceId)).toBe(before);
+
+      await engine.setConfig('cycle.lint_fix', 'true');
+      const on = await runPhaseLint(root, false, engine, undefined, sourceId);
+      expect(on.status).toBe('ok');
+      expect(on.details).toMatchObject({ fixed: FIXABLE_ON_INDEXED_PAGE, lint_fix: true, write_path: 'coordinator' });
+      expect(readFileSync(file, 'utf8')).not.toContain('Of course');
+    } finally {
+      await engine.unsetConfig('cycle.lint_fix');
+    }
+  });
+}, 60_000);

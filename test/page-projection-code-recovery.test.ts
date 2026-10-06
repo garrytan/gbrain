@@ -6,7 +6,8 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importCodeFile } from '../src/core/import-file.ts';
 import { runReindexCode } from '../src/commands/reindex-code.ts';
-import { readProjectionSnapshot, preparePageProjection, installPageProjection, rebuildPendingPageProjections, queuePageProjection } from '../src/core/page-state/projections.ts';
+import { reindexCodeProjection } from '../src/core/persistence/projection-reindex.ts';
+import { readProjectionSnapshot, preparePageProjection, installPageProjection, rebuildPendingPageProjections, queuePageProjection, PageProjectionConflictError } from '../src/core/page-state/projections.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
@@ -224,5 +225,65 @@ test('archived sources stay unsealed and are excluded from reindex', async () =>
       expect((await runReindexCode(engine, { sourceId, noEmbed: true, force: true })).codePages).toBe(0);
       expect(await engine.getChunks(slug, { sourceId })).toEqual([]);
     } finally { await engine.executeRaw('UPDATE sources SET archived=false WHERE id=$1', [sourceId]); }
+  }
+});
+
+/** Runs `intervene` after each of the next `times` projection reads of `slug` (the read's transaction has released its guard). */
+function afterProjectionReads(engine: BrainEngine, slug: string, times: number, intervene: () => Promise<void>): () => void {
+  const original = engine.transaction;
+  let left = times, busy = false;
+  engine.transaction = async function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
+    const result = await original.call(this, run) as T;
+    if (!busy && left > 0 && (result as { indexingContext?: string; snapshot?: { page: { slug: string } } })?.indexingContext !== undefined
+      && (result as { snapshot: { page: { slug: string } } }).snapshot.page.slug === slug) {
+      left--; busy = true;
+      try { await intervene(); } finally { busy = false; }
+    }
+    return result;
+  } as BrainEngine['transaction'];
+  return () => { engine.transaction = original; };
+}
+
+test('unmanaged reindex-code that loses to the resident rebuild re-reads instead of failing', async () => {
+  for (const engine of engines) {
+    for (const force of [false, true]) {
+      const slug = await seed(engine, `resident-race-${force}`);
+      await unseal(engine, slug);
+      const restore = afterProjectionReads(engine, slug, 1, async () => {
+        expect((await rebuildPendingPageProjections(engine, 100, { pages: { sourceId, slugs: [slug] } })).rebuilt).toBe(1);
+      });
+      try {
+        expect(await reindexCodeProjection(engine, slug, sourceId, { noEmbed: true, force }))
+          .toEqual(force ? { status: 'imported', chunks: expect.any(Number) } : { status: 'skipped', chunks: 0 });
+      } finally { restore(); }
+      const after = (await engine.readPageSnapshot(slug, { sourceId }))!;
+      expect(after.page.text_projection_revision).toBe(after.revision);
+      expect((await engine.getChunks(slug, { sourceId })).map(c => c.symbol_name).sort()).toEqual(['alpha', 'beta']);
+    }
+  }
+});
+
+test('unmanaged reindex-code reports page_projection_conflict once the bounded retries run out', async () => {
+  for (const engine of engines) {
+    const slug = await seed(engine, 'exhausted');
+    let competing = 0;
+    const compete = async () => {
+      const read = (await readProjectionSnapshot(engine, slug, sourceId, { allowUnsealed: true }))!;
+      await installPageProjection(engine, read, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: `competing ${++competing}` }]);
+    };
+    let restore = afterProjectionReads(engine, slug, 4, compete);
+    try {
+      const error = await reindexCodeProjection(engine, slug, sourceId, { noEmbed: true, force: true }).catch(e => e);
+      expect(error).toBeInstanceOf(PageProjectionConflictError);
+      expect(error.changed).toContain('chunk_digest');
+      expect(competing).toBe(4);
+    } finally { restore(); }
+    restore = afterProjectionReads(engine, slug, 4, compete);
+    try {
+      const result = await runReindexCode(engine, { sourceId, noEmbed: true, force: true });
+      const failure = result.failures?.find(f => f.slug === slug);
+      expect(failure?.error).toStartWith(`[page_projection_conflict] The search projection of ${slug} (source ${sourceId}) changed during preparation`);
+      expect(failure?.error).toContain('Re-run gbrain reindex-code; it re-reads the current projection.');
+    } finally { restore(); }
   }
 });

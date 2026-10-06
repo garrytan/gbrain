@@ -586,7 +586,8 @@ export function formatDefaultWriteWarning(a: DefaultWriteAssessment, sourceFlag?
   return (
     `[gbrain] WARNING: writing to source 'default' on a multi-source brain ` +
     `(${a.nonDefaultSources} non-default source(s), ${a.nonDefaultPages} pages). ` +
-    `${escape} to scope writes and avoid cross-source duplicate slugs.`
+    `${escape} to scope writes and avoid cross-source duplicate slugs.` +
+    (sourceFlag ? ` GBRAIN_SOURCE=<id> works too; GBRAIN_ALLOW_DEFAULT_WRITE=1 keeps 'default' on purpose.` : '')
   );
 }
 

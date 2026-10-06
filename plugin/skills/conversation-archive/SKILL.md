@@ -24,6 +24,7 @@ writes_pages: true
 writes_to:
   - conversations/
 upstream: conversation-history+transcript-save@fc834ee
+when_to_use: "Use when the user asks: \"chatgpt export\", \"claude export\", \"perplexity export\", \"conversation history\", \"import my conversations\"."
 ---
 
 # conversation-archive — AI-Chat Exports + Session Transcripts as Brain Pages

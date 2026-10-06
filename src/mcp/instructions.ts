@@ -31,6 +31,8 @@ export interface InstructionTools {
   readiness?: readonly ReadinessEntry[];
   /** Status-only serve (F4): one line naming gbrain_status. */
   statusLine?: string;
+  /** Callable tools left out of the listed set (mcp.advertised_surface narrower than the callable set). */
+  hiddenCallable?: number;
 }
 
 const ALL: CallablePredicate = () => true;
@@ -101,6 +103,9 @@ export function buildMcpInstructions(opts?: { writeback?: AmbientWritebackOpts |
   const clauses = contractClauses(tools?.callable ?? ALL);
   let text = `GBrain agent operating contract (apply on every cold start):\n${clauses.map((c, i) => `${i + 1}. ${c}`).join('\n')}`;
   if (tools?.statusLine) text += `\n${tools.statusLine}`;
+  if (tools?.hiddenCallable && tools.callable('request_tools')) {
+    text += `\nThe tool list shows the everyday tools; ${tools.hiddenCallable} more are callable. Call request_tools with no arguments to list them, or with tools: [names] for their schemas, then call them directly.`;
+  }
   if (opts?.writeback) text += `\n\n${buildAmbientWritebackSection(opts.writeback)}`;
   const tail = tools?.readiness ? readinessTail(tools.readiness, tools.callable) : null;
   if (tail) text += `\n\n${tail}`;

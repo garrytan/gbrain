@@ -5,6 +5,9 @@ import { extractPageLinks, isGlobalBasenameEnabled, makeResolver, resolvedLinkCa
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
 import { DerivedLinkEndpointChangedError } from '../derived-links.ts';
 import { capturedLinkEndpoints, indexLinkSources, loadLinkSourcePolicy, resolveCandidateSources } from '../link-reconciliation.ts';
+import { collectWantedLinks, isWantedPagesEnabled } from '../wanted-links.ts';
+import { readFix } from '../ops/op-fix.ts';
+import { lineGrammarOptions } from '../line-grammar.ts';
 
 async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: string[]): Promise<Map<string, string>> {
   if (!targets.length) return new Map();
@@ -23,7 +26,7 @@ async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: s
 export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'>, sourceId: string) {
   const resolver = makeResolver(engine, { mode: 'live', sourceId });
-  const opts = { globalBasename: await isGlobalBasenameEnabled(engine),
+  const opts = { globalBasename: await isGlobalBasenameEnabled(engine), lineGrammar: await lineGrammarOptions(engine),
     pack: (await loadActivePackForLocalEngine(engine, { sourceId }))?.manifest ?? null };
   if (!opts.pack) return { pageKeys: [{ sourceId, slug }], attendanceComplete: true,
     apply: async () => ({ created: 0, removed: 0, errors: 1, unresolved_count: 1 }) };
@@ -51,6 +54,10 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
       return resolved.ok ? (targetSlug === slug && resolved.toSourceId === sourceId ? page.type
         : metadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type) : undefined;
     } });
+  const wanted = { producers: ['body', 'frontmatter'] as const, rows: await isWantedPagesEnabled(engine)
+    ? collectWantedLinks({ candidates: candidates.map(retarget), frontmatterUnresolved: unresolved, originSourceId: sourceId,
+      crossSourceAllowed: policy.allowCrossSource || policy.crossSource, resolve })
+    : [] };
   const rows = candidates.map(retarget).flatMap(candidate => {
     const resolved = resolve(candidate);
     if (!resolved.ok) return [];
@@ -65,11 +72,15 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
     if (!snapshot) throw new Error('Automatic link origin disappeared');
     try {
       const result = await tx.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
-        sourceIncarnation: snapshot.sourceIncarnation }, rows, { preserveExisting: true,
+        sourceIncarnation: snapshot.sourceIncarnation }, rows, { preserveExisting: true, wanted: { ...wanted, producers: [...wanted.producers] },
         expectedEndpoints: capturedLinkEndpoints(rows, new Map([...metadata,
           [`${sourceId}\0${slug}`, { slug, source_id: sourceId, type: page.type, knowledge_revision: snapshot.revision }]]))
           .filter(endpoint => endpoint.slug !== slug || endpoint.sourceId !== sourceId) });
-      return { ...result, errors: 0, unresolved_count: unresolved.length };
+      return { ...result, errors: 0, unresolved_count: unresolved.length, wanted_count: wanted.rows.length,
+        ...(wanted.rows.length ? { wanted: wanted.rows.slice(0, 10).map(row => ({ slug: row.target_ref, source_id: row.target_source_id })),
+          wanted_message: 'These link targets have no page yet; each edge is created when its page is. Create the page if it is real, or fix the link if it is a typo.',
+          fix: readFix(`Lists every link target in source ${sourceId} that has no page yet, with the pages that link to it, read-only.`,
+            { argv: ['gbrain', 'wanted', '--source-id', sourceId], mcp: { tool: 'wanted_pages', arguments: { source_id: sourceId } } }) } : {}) };
     } catch (error) {
       if (!(error instanceof DerivedLinkEndpointChangedError)) throw error;
       return { created: 0, removed: 0, errors: 1, unresolved_count: Math.max(1, unresolved.length) };

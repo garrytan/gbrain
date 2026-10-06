@@ -7,7 +7,7 @@
  * `ambiguous_first_word`, `below_min_length`, `generic_token`,
  * `alias_collision`, `case_mismatch`, `type_not_linkable`,
  * `linking_disabled`, `pending`, `ignored_by_page`, `ignored_by_config`,
- * `not_a_known_name`. Only `pending` suggests a sweep; a policy rejection
+ * `excluded_by_config`, `not_a_known_name`. Only `pending` suggests a sweep; a policy rejection
  * names the setting or the page text that would change it.
  */
 
@@ -19,7 +19,7 @@ import { deriveEntityAliases } from '../core/mentions/aliases.ts';
 import { MENTION_EXTRACTOR_VERSION } from '../core/mentions/pass.ts';
 
 export type ExplainReason = 'ambiguous_first_word' | 'below_min_length' | 'generic_token' | 'alias_collision' | 'case_mismatch'
-  | 'type_not_linkable' | 'linking_disabled' | 'pending' | 'ignored_by_page' | 'ignored_by_config' | 'not_a_known_name';
+  | 'type_not_linkable' | 'linking_disabled' | 'pending' | 'ignored_by_page' | 'ignored_by_config' | 'excluded_by_config' | 'not_a_known_name';
 
 export interface MentionExplanation {
   query: string;
@@ -35,7 +35,7 @@ export interface MentionExplanation {
 
 const DROP_REASON: Record<DroppedName['reason'], ExplainReason> = {
   below_min_length: 'below_min_length', generic_token: 'generic_token', alias_collision: 'alias_collision',
-  ambiguous_first_word: 'ambiguous_first_word', ignored: 'ignored_by_config', title_wins: 'alias_collision',
+  ambiguous_first_word: 'ambiguous_first_word', ignored: 'ignored_by_config', excluded_slug: 'excluded_by_config', title_wins: 'alias_collision',
 };
 
 const MESSAGES: Record<ExplainReason, string> = {
@@ -49,6 +49,7 @@ const MESSAGES: Record<ExplainReason, string> = {
   pending: 'The page changed or was never scanned since the last mention pass.',
   ignored_by_page: 'The page lists this name in its frontmatter `mention_ignore`.',
   ignored_by_config: 'The name is on an ignore list (`mentions.ignore` or the built-in ambiguous-brand list).',
+  excluded_by_config: 'The page is listed in `mentions.exclude_slugs`, so none of its names link.',
   not_a_known_name: 'No linkable entity page has this title, title subject or alias in this source.',
 };
 

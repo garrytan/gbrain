@@ -25,6 +25,7 @@ writes_pages: true
 writes_to:
   - people/
 upstream: draft-in-voice@fc834ee
+when_to_use: "Use when the user asks: \"draft in voice\", \"write this as\", \"make this sound like\", \"ghostwrite\", \"draft a tweet as\"."
 ---
 
 # draft-in-voice — Memory-Grounded Ghostwriting

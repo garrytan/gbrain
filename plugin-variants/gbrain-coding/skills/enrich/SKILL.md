@@ -24,6 +24,7 @@ writes_pages: true
 writes_to:
   - people/
   - companies/
+when_to_use: "Use when the user asks: \"enrich\", \"create person page\", \"update company page\", \"who is this person\", \"look up this company\"."
 ---
 
 # Enrich Skill

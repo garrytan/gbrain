@@ -292,6 +292,40 @@
           "skipped": 0
         },
         "plain": "contradiction",
+        "proposal_review": [
+          {
+            "accepted_30d": 0,
+            "enabled": true,
+            "kind": "supersede",
+            "oldest_pending_days": null,
+            "pending": 0,
+            "rejected_30d": 0
+          },
+          {
+            "accepted_30d": 0,
+            "enabled": true,
+            "kind": "withdraw",
+            "oldest_pending_days": null,
+            "pending": 0,
+            "rejected_30d": 0
+          },
+          {
+            "accepted_30d": 0,
+            "enabled": false,
+            "kind": "duplicate_page",
+            "oldest_pending_days": null,
+            "pending": 0,
+            "rejected_30d": 0
+          },
+          {
+            "accepted_30d": 0,
+            "enabled": false,
+            "kind": "duplicate_entity",
+            "oldest_pending_days": null,
+            "pending": 0,
+            "rejected_30d": 0
+          }
+        ],
         "provider": "none",
         "readiness": "off",
         "receipts_24h": 0,

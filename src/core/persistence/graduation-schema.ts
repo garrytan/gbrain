@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS persistence_graduation (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE OR REPLACE FUNCTION gbrain_graduation_fence() RETURNS trigger LANGUAGE plpgsql AS $fence$
+CREATE OR REPLACE FUNCTION gbrain_graduation_fence() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fence$
 DECLARE fence_run text;
 BEGIN
   SELECT run_id::text INTO fence_run FROM persistence_graduation WHERE singleton = 1;

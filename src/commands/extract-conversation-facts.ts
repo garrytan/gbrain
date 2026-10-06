@@ -379,6 +379,7 @@ import {
   type ParseConversationOpts as OrchestratorParseOpts,
 } from '../core/conversation-parser/parse.ts';
 import { readConversationBodyForParsing } from '../core/conversation-parser/body.ts';
+import { conversationSkip } from '../core/facts/conversation-skip.ts';
 import { runLlmFallback } from '../core/conversation-parser/llm-fallback.ts';
 import { resolveModel, resolveTierDefault } from '../core/model-config.ts';
 import { FAILED_EXIT_CODE } from '../core/exit-codes.ts';
@@ -1022,20 +1023,32 @@ async function processPage(
       );
     }
   }
-  const gapMinutes = pageSegmentGapMinutes(page);
+  // #5025 / N2: undated time-only turns, a single email or a prose
+  // meeting/email page end in a not-extractable outcome instead of
+  // epoch-dated facts or a rescan every run.
+  const skip = conversationSkip(page, body, parseResult, messages, { llmFallback: Boolean(state.llmFallbackModel), managed: state.managed });
+  const terminalSkip = skip?.durable ? skip : null;
+  if (skip) {
+    process.stderr.write(`[extract-conversation-facts] SKIP ${page.slug}: ${skip.message}\n`);
+    messages = [];
+  }
+  // An email thread is one conversation even when replies are hours apart;
+  // a frontmatter conversation_segment_gap_minutes still wins.
+  const gapMinutes = pageSegmentGapMinutes(page) ??
+    (parseResult.matched_pattern_id === 'email-thread-heading' ? MAX_PAGE_SEGMENT_GAP_MINUTES : undefined);
   const allSegments = splitIntoSegments(messages, { gapMinutes });
   const segments = splitIntoSegments(messages, { gapMinutes, sinceIso });
   if (segments.length === 0) {
     state.result.pages_skipped++;
-    if (!declinedUnrecognizedSpeaker) {
+    if (!declinedUnrecognizedSpeaker && !terminalSkip) {
       if (messages.length === 0) state.result.pages_skipped_unparsed++;
       else if (allSegments.length === 0) state.result.pages_skipped_insufficient_turns++;
       else state.result.pages_skipped_since++;
     }
     if (
       !state.dryRun &&
-      parseResult.phase !== 'no_match' &&
-      allSegments.length === 0 &&
+      (parseResult.phase !== 'no_match' || terminalSkip !== null) &&
+      allSegments.length === 0 && !(skip && !skip.durable) &&
       // #4136 — a decline must stay NON-TERMINAL. The audit row is keyed by
       // a content versionToken and skips the page on every future run; a
       // declined page must retry once the parser learns the label instead.
@@ -1043,9 +1056,9 @@ async function processPage(
       // orphan cleanup below until the page re-extracts.)
       !declinedUnrecognizedSpeaker
     ) {
-      const reason = messages.length === 0
+      const reason = terminalSkip?.reason ?? (messages.length === 0
         ? 'no conversation messages found'
-        : 'fewer than two eligible messages';
+        : 'fewer than two eligible messages');
       if (await snapshotIsCurrent(state.engine, state.sourceId, snapshot)) {
         if (state.managed) {
           await replacePageFacts(state, snapshot, async tx => [

@@ -50,6 +50,19 @@ mcp_servers:
 To remove gbrain, delete this block (or set `enabled: false` to disable
 without losing the config).
 
+## Always-loaded core memory
+
+Hermes does not read MCP server instructions, so core memory
+([guide](../guides/core-memory.md)) reaches it through a project context file:
+
+```bash
+gbrain compile-context --target hermes --include-core
+```
+
+This writes `.hermes.md` at the git root and adds it to the repository's local
+exclude file (`.git/info/exclude`), so it is never committed. Rerun it after
+core changes; `gbrain doctor` names a stale copy.
+
 ## Verify
 
 ```bash

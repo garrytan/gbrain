@@ -580,7 +580,15 @@ config key). A long-running process (`gbrain serve`, `gbrain autopilot`,
 `gbrain jobs work`) needs at least **6**: two for write publication, one for the
 idle work probe, one each for the projection and effects workers, and one for
 reads and tool calls. Below that, boot or projection draining stalls under
-traffic. One-shot CLI commands can use `GBRAIN_POOL_SIZE=2`.
+traffic. One-shot CLI commands can use `GBRAIN_POOL_SIZE=2`. With
+`GBRAIN_POOL_SIZE=1`, schema setup and maintenance still run (`gbrain init
+--db-only`, `apply-migrations`, `repair request-indexes`, `backfill`), but
+managed writes need two connections: they stay queued with
+`writer_pool_capacity`, so `gbrain init` without `--db-only` stops at its
+packaged-skill install. Long holds keep one connection free for reads and
+control work; only holds that use nothing but their own connection (migration
+DDL, concurrent index builds, backfill batches) may take a single
+connection.
 
 Size the pooler for every process at once:
 

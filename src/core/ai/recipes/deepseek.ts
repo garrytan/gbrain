@@ -1,7 +1,7 @@
 import type { Recipe } from '../types.ts';
 
 /**
- * DeepSeek's thinking mode (default on `deepseek-v4-flash`/`deepseek-v4-pro`;
+ * DeepSeek's thinking mode (default on `deepseek-flash`, `deepseek-v4-flash` and `deepseek-v4-pro`;
  * formerly the `deepseek-reasoner` model, retired 2026-07-24) returns its
  * answer in a separate `reasoning_content` field and leaves `content`
  * empty/whitespace when the whole response was reasoning. The AI SDK's openai-compatible adapter reads only `content`, so
@@ -63,8 +63,8 @@ export const deepseekReasoningContentCompatFetch = (async (
 /**
  * DeepSeek exposes an OpenAI-compatible /v1/chat/completions endpoint.
  * Useful as the second hop in a refusal-fallback chain and for cheap-
- * research delegation: 25-40x cheaper than Anthropic on equivalent
- * reasoning workloads.
+ * research delegation.
+ * Pricing: https://api-docs.deepseek.com/quick_start/pricing
  */
 export const deepseek: Recipe = {
   id: 'deepseek',
@@ -82,17 +82,20 @@ export const deepseek: Recipe = {
     // declaration an explicit `expansion_model: deepseek:...` silently
     // yields no expansion (#1135).
     // `deepseek-chat` / `deepseek-reasoner` were retired by DeepSeek on
-    // 2026-07-24 (#1255); both map to `deepseek-v4-flash` (non-thinking /
-    // thinking mode). Do not re-add the old names — the API 404s them.
+    // 2026-07-24 (#1255). Do not re-add the old names — the API 404s them.
+    // `deepseek-flash` (DeepSeek-V4.1-Flash) is the current name; the legacy
+    // `deepseek-v4-flash` is still accepted and served by the same model.
     // openai-compat tier means user-configured legacy names still pass
     // validation locally; the provider rejects them at call time.
+    // Rates are DeepSeek's PEAK cache-miss rates (an upper bound; off-peak
+    // bills half), matching model-pricing.ts.
     expansion: {
-      models: ['deepseek-v4-flash'],
-      cost_per_1m_tokens_usd: 0.14,
-      price_last_verified: '2026-07-27',
+      models: ['deepseek-flash', 'deepseek-v4-flash'],
+      cost_per_1m_tokens_usd: 0.30,
+      price_last_verified: '2026-10-05',
     },
     chat: {
-      models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+      models: ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-pro'],
       supports_tools: true,
       supports_subagent_loop: true,
       // DeepSeek's context caching is on by default for every account — the
@@ -102,14 +105,14 @@ export const deepseek: Recipe = {
       // baseline — i.e. it already assumes a cache exists — and produced advice
       // telling operators to move to a more expensive provider "for lower cost".
       supports_prompt_cache: true,
-      // Thinking mode is DEFAULT ON for both v4 models (see module docstring):
+      // Thinking mode is DEFAULT ON for every listed model (see module docstring):
       // reasoning bills as output and counts against max_tokens, so callers
       // that size output caps must grant reasoning headroom (gbrain#4172).
       thinking_by_default: true,
       max_context_tokens: 1_000_000,
-      cost_per_1m_input_usd: 0.14, // deepseek-v4-flash cache-miss baseline
-      cost_per_1m_output_usd: 0.28,
-      price_last_verified: '2026-07-27',
+      cost_per_1m_input_usd: 0.30, // deepseek-flash peak cache-miss baseline
+      cost_per_1m_output_usd: 1.20,
+      price_last_verified: '2026-10-05',
     },
   },
   setup_hint: 'Get an API key at https://platform.deepseek.com/api_keys, then `export DEEPSEEK_API_KEY=...`',

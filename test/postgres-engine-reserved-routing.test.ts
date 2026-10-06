@@ -173,3 +173,42 @@ test('two engines sharing a physical pool share one long-hold ceiling', async ()
   await second.withReservedConnection(async () => {});
   expect(log).toEqual(['reserve:read','release:read','reserve:read','release:read']);
 });
+
+describe('withReservedConnection on a one-connection ordinary pool (GBRAIN_POOL_SIZE=1)', () => {
+  test('an ordinary long hold is refused before reserving', async () => {
+    const log: string[] = [];
+    const engine = makeEngine({ dualPool: false, log });
+    (engine.sql as unknown as { options: { max: number } }).options.max = 1;
+    await expect(engine.withReservedConnection(async () => 'x')).rejects.toMatchObject({ code: 'writer_pool_capacity' });
+    expect(log).toEqual([]);
+  });
+
+  test('a self-contained hold reserves the only connection and releases it', async () => {
+    const log: string[] = [];
+    const engine = makeEngine({ dualPool: false, log });
+    (engine.sql as unknown as { options: { max: number } }).options.max = 1;
+    expect(await engine.withReservedConnection(async () => 'ddl', { selfContained: true })).toBe('ddl');
+    expect(await engine.withReservedConnection(async () => 'again', { selfContained: true })).toBe('again');
+    expect(log).toEqual(['reserve:read', 'release:read', 'reserve:read', 'release:read']);
+  });
+
+  test('a second concurrent self-contained hold is refused instead of waiting on the only connection', async () => {
+    const log: string[] = [];
+    const engine = makeEngine({ dualPool: false, log });
+    (engine.sql as unknown as { options: { max: number } }).options.max = 1;
+    let release!: () => void;
+    const held = engine.withReservedConnection(() => new Promise<void>(resolve => { release = resolve; }), { selfContained: true });
+    await Promise.resolve();
+    await expect(engine.withReservedConnection(async () => {}, { selfContained: true })).rejects.toMatchObject({ code: 'writer_pool_capacity' });
+    release(); await held;
+    expect(log).toEqual(['reserve:read', 'release:read']);
+  });
+
+  test('direct_pool_size=1 still never lends the only direct session; the hold uses the ordinary pool', async () => {
+    const log: string[] = [];
+    const engine = makeEngine({ dualPool: true, directPoolSize: 1, log });
+    (engine.sql as unknown as { options: { max: number } }).options.max = 1;
+    await engine.withReservedConnection(async () => 'ok', { selfContained: true });
+    expect(log).toEqual(['reserve:read', 'release:read']);
+  });
+});

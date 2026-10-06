@@ -10,6 +10,7 @@ import { REFERENCE_CALIBRATIONS } from '../../src/core/ai/decide/reference-calib
 import { readDecideConfig } from '../../src/core/ai/decide/config.ts';
 import { packShape } from '../../src/core/ai/decide/pack.ts';
 import { resolveSlotPolicy } from '../../src/core/ai/decide/policy.ts';
+import { reviewGate } from '../../src/core/ai/decide/review-lane.ts';
 import { SLOT_SPECS } from '../../src/core/ai/decide/slots.ts';
 import { cycleSlotPackShape } from '../../src/core/cycle/decide-slot.ts';
 
@@ -42,5 +43,12 @@ describe('reference calibrations', () => {
       expect(policy.calibration?.ref).toBe(`ref:${r.id}`);
       if (r.proposal_floor !== undefined) expect(policy.calibration?.proposal_floor).toBe(r.proposal_floor);
     }
+  });
+
+  test('the withdrawal review lane opens on a fresh brain with only a TypeSafe key', () => {
+    const cfg = readDecideConfig({}, { typesafeKey: true });
+    const policy = resolveSlotPolicy({ cfg, slot: 'conflict', callSite: 'review_withdraw', packShape: packShape('conflict'), calibrations: [], hasTypesafeKey: true });
+    expect(policy.calibration?.ref).toBe('ref:conflict-review-withdraw-jev-1.13.0-2026-10-05');
+    expect(reviewGate(policy, cfg)).toEqual({ effective: 'on' });
   });
 });

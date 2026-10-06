@@ -130,6 +130,24 @@ describe('add_timeline_entry on an FS-canonical brain (#1856)', () => {
     expect(page?.timeline ?? '').toContain('Manual milestone added via timeline-add');
   });
 
+  test('helper splices into a canonical file whose basename is near NAME_MAX (D-NEW-3, #5861)', async () => {
+    await engine.setConfig('sync.repo_path', brainDir);
+    const slug = `notes/${'a'.repeat(240)}`;
+    const filePath = await seedPage(slug);
+    expect(Buffer.byteLength(path.basename(filePath))).toBe(243);
+
+    const out = await writeTimelineEntryThrough(engine, slug, 'default', {
+      date: '2026-07-15',
+      summary: 'Milestone on a long page name',
+      source: 'meetings/2026-07-15',
+    });
+
+    expect(out.error).toBeUndefined();
+    expect(out.handled).toBe(true);
+    expect(fs.readFileSync(filePath, 'utf8')).toContain('Milestone on a long page name');
+    expect(fs.readdirSync(path.dirname(filePath)).filter((name) => name.includes('.tmp.'))).toEqual([]);
+  });
+
   test('FS→DB rebuild recovers the entry from the file (the P0 loss mode)', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     const slug = 'notes/rebuild-example';

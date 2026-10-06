@@ -129,6 +129,7 @@ async function enable(opts: EnableOpts): Promise<Record<string, unknown>> {
     fileCfg.embedding_dimensions = width;
     delete fileCfg.embedding_disabled;
     saveConfig(fileCfg);
+    await engine.unsetConfig('embedding_disabled');
     const queuedChunks = await engine.countStaleChunks();
     const queuedFacts = (await countStaleFactEmbeddings(engine, opts.model, width)).count;
     return {

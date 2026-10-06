@@ -50,6 +50,7 @@ tools:
   - get_job_progress
 mutating: true
 upstream: long-ops@fc834ee, subagent-deadman@fc834ee, pipeline-stage-cache@fc834ee
+when_to_use: "Use when the user asks: \"gbrain jobs submit\", \"submit a gbrain job\", \"submit a shell job\", \"shell job\", \"run shell command in background\"."
 ---
 
 # Minion Orchestrator

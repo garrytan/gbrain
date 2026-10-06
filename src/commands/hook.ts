@@ -69,6 +69,7 @@ import {
   bankWritebackTurn,
   decideCorpusMode,
   gcCorpusArtifacts,
+  gcCorpusTurnFiles,
   CORPUS_PROGRESS_SUFFIX,
   CORPUS_PROGRESS_LOCK_SUFFIX,
   HARVEST_RECEIPT_SUFFIX,
@@ -87,6 +88,8 @@ import {
   type HookHeartbeatEntry,
 } from '../core/context/hook-heartbeat.ts';
 import { CLAUDE_HOOK_OUTPUT_CAP_CHARS } from '../core/bootstrap/host-specs.ts';
+import { composeSessionStartOutput } from '../core/context/session-start-output.ts';
+import { claudeCodePressure } from '../core/context/pressure.ts';
 import { readManifest, readReceipt, type InstallReceipt } from '../core/bootstrap/format.ts';
 import { githubOwnerRepoString } from '../core/repo-visibility.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
@@ -478,6 +481,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
   let outcome: HookHeartbeatEntry['outcome'] = 'ok';
   let reason: string | undefined;
   const out: string[] = [];
+  const coreBox: { core: { text: string; revision: string; chars_used: number } | null; reason?: string } = { core: null };
   // Deferred nag records: fire ONLY after the digest actually reached stdout
   // (record-after-write — a deadline-suppressed note must re-fire next time).
   const deferredRecords: Array<() => void> = [];
@@ -556,6 +560,8 @@ async function hookSessionStart(io: HookIo): Promise<number> {
               if (res !== IPC_UNAVAILABLE && !('degraded' in res)) {
                 const pack = res as ContextPackResponse;
                 if (pack.ok && pack.block?.text) out.push(pack.block.text);
+                if (pack.ok && pack.block?.core && process.env.GBRAIN_CORE !== '0') coreBox.core = pack.block.core;
+                else if (pack.ok && !pack.block?.core) coreBox.reason = 'stale_serve_no_core';
               }
             }
           }
@@ -570,7 +576,8 @@ async function hookSessionStart(io: HookIo): Promise<number> {
     }
     // Print whatever accumulated before the deadline — a partial digest
     // beats an empty one (the deadline bounds latency, not usefulness).
-    const text = out.filter(Boolean).join('\n\n');
+    // Always-loaded core first; digest/pack trimmed to the cap (session-start-output.ts).
+    const text = composeSessionStartOutput(coreBox.core?.text ?? '', out.filter(Boolean));
     if (text) {
       write(io, text + '\n');
       for (const record of deferredRecords) {
@@ -589,8 +596,9 @@ async function hookSessionStart(io: HookIo): Promise<number> {
     ts: new Date().toISOString(),
     event: 'session-start',
     outcome,
-    ...(reason ? { reason } : {}),
+    ...(reason ? { reason } : coreBox.reason ? { reason: coreBox.reason } : {}),
     duration_ms: Date.now() - t0,
+    ...(coreBox.core ? { core_chars: coreBox.core.chars_used, core_revision: coreBox.core.revision } : {}),
   });
   return 0;
 }
@@ -1075,6 +1083,7 @@ interface UserPromptOutcome {
   outcome: HookHeartbeatEntry['outcome'];
   reason?: string;
   turns?: number;
+  pressure_pct?: number;
 }
 
 async function hookUserPrompt(io: HookIo): Promise<number> {
@@ -1106,6 +1115,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // path aborts the event (heartbeat + empty stdout), never "best effort".
     let turns: WindowTurn[] = [];
     let priorContextText: string | undefined;
+    let transcriptPath: string | undefined;
     if (j.transcript_path !== undefined && j.transcript_path !== null) {
       const conf = confineTranscriptPath(j.transcript_path, {
         ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
@@ -1115,6 +1125,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
         allowOversize: true,
       });
       if (!conf.ok) return { outcome: 'degraded', reason: `transcript_${conf.reason}` };
+      transcriptPath = conf.path;
       try {
         const parsed = parseTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES });
         turns = parsed.turns.slice(-USER_PROMPT_WINDOW_TURNS);
@@ -1191,7 +1202,9 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     if (!resp.ok) {
       return { outcome: 'degraded', reason: reasonCode(resp.error ?? 'server_error'), turns: turns.length };
     }
-    const text = resp.block?.text ?? '';
+    // Context-pressure notice (pressure.ts) leads the block so the cap loop never trims it.
+    const pressure = transcriptPath ? claudeCodePressure(resp.block?.pressure, transcriptPath, sessionId) : null;
+    const text = [pressure?.notice, resp.block?.text].filter(Boolean).join('\n\n');
     if (!text) return { outcome: 'ok', reason: 'empty_block', turns: turns.length };
 
     // [ENG-1] The 10000-char harness cap applies to the WHOLE stdout payload;
@@ -1222,10 +1235,9 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // were never injected. Record it so the doctor's heartbeat reconciliation
     // (and a future reconciler) can see the divergence — outcome stays ok
     // (context WAS injected), the reason carries the signal.
-    if (blockText.length < text.length) {
-      return { outcome: 'ok', reason: 'trimmed', turns: turns.length };
-    }
-    return { outcome: 'ok', turns: turns.length };
+    const pct = pressure?.notice ? { pressure_pct: pressure.percent } : {};
+    if (blockText.length < text.length) return { outcome: 'ok', reason: 'trimmed', turns: turns.length, ...pct };
+    return { outcome: 'ok', turns: turns.length, ...pct };
   })();
 
   let result: UserPromptOutcome;
@@ -1263,6 +1275,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     ...(result.reason ? { reason: result.reason } : {}),
     duration_ms: Date.now() - t0,
     ...(result.turns !== undefined ? { turns: result.turns } : {}),
+    ...(result.pressure_pct !== undefined ? { pressure_pct: result.pressure_pct } : {}),
   });
   return 0;
 }
@@ -1720,6 +1733,12 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
           /* status telemetry best-effort */
         }
       } else if (turnsN > 0) {
+        // E-N4: assistant turns with not one user turn is how #5163 (a host
+        // renamed its user-turn record) banked half-sessions silently. The
+        // corpus is still written; the heartbeat says the human side is gone.
+        // Whole-file reads only: a bounded tail of a long agentic run can
+        // legitimately hold assistant turns alone.
+        if (parsed.genuineUserTurnIndexes.length === 0 && bytesN >= conf.size) degrade('no_user_turns');
         const dir = await corpusDir(cfg);
         // #4618: the seat is recorded BEFORE any corpus file of this session
         // is renamed into place, so a sweep never sees one without its seat.
@@ -1811,7 +1830,7 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
           }
         }
         const retentionMs = corpusRetentionDays(cfg) * 24 * 60 * 60 * 1000;
-        gcOldFiles(dir, retentionMs); // [G15]
+        gcCorpusTurnFiles(dir, retentionMs); // [G15]; un-ingested turns kept longer (E-N1)
         gcCorpusArtifacts(dir, retentionMs, [
           CORPUS_INGESTED_SUFFIX,
           CORPUS_CLAIM_SUFFIX,

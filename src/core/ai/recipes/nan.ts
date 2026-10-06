@@ -30,6 +30,11 @@ export const nan: Recipe = {
   name: 'nan.builders (reranker)',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  // No shipped rate for these yet: they warn and run under a default cap; a
+  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  unpriced_models: [
+    'rerank',
+  ],
   base_url_default: 'https://api.nan.builders/v1',
   auth_env: {
     required: ['NAN_API_KEY'],

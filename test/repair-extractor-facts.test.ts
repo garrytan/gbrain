@@ -41,6 +41,9 @@ import { managedBrain } from './helpers/managed-brain.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { configureGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { startPersistenceConsumer } from '../src/core/persistence/service.ts';
+import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 
 const EXTRACTOR = 'cli:extract-conversation-facts:sess';
 const ENTITY = 'people/alice-example';
@@ -394,6 +397,38 @@ for (const backend of testBackends()) {
         mkdirSync(join(root, 'conversations'), { recursive: true });
         writeFileSync(join(root, 'conversations/synthetic-chat.md'), serializePageToMarkdown(snapshot.page, snapshot.tags));
       } });
+    }, 180_000);
+
+    // Nightly full-corpus lane (run 37273083933): with an embedding key in the environment, writeSingleFact embedded
+    // the claim and admitted it under a stub config while the running consumer was keyless, so preparation refused it
+    // with embedding_configuration. A deterministic fake embedder stands in for the key here.
+    test('a keyless consumer admits writeSingleFact without vectors even when the gateway can embed', async () => {
+      const embedded: string[] = [];
+      try {
+        configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: { OPENAI_API_KEY: 'fixture-key' } });
+        __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+          embedded.push(...values);
+          return { embeddings: values.map(() => [1, ...Array(LEGACY_EMBEDDING_CONFIG.embedding_dimensions - 1).fill(0)]) };
+        }) as never);
+        await managedBrain(async ({ engine, ctx }) => {
+          expect(ctx.config.embedding_disabled).toBe(true);
+          startPersistenceConsumer(engine, ctx.config);
+          const written = await writeSingleFact(engine, 'default', { fact: CLAIM, provenance: 'fixture', entity: ENTITY, kind: 'commitment' });
+          expect(written).toMatchObject({ status: 'inserted', entity_slug: ENTITY });
+          // The keyless consumer's config is the effective config: the claim never reaches the embedder.
+          expect(embedded).toEqual([]);
+          const [row] = await engine.executeRaw<{ has_vector: boolean }>('SELECT embedding IS NOT NULL AS has_vector FROM facts WHERE id=$1', [written.id]);
+          expect(row.has_vector).toBe(false);
+        }, { databaseUrl, setup: async ({ engine, root }) => {
+          const person = await engine.putPage(ENTITY, { type: 'person', title: 'Alice Example', compiled_truth: '# Alice Example' }, { sourceId: 'default' });
+          await engine.executeRaw('UPDATE pages SET source_path=$1 WHERE id=$2', [`${ENTITY}.md`, person.id]);
+          const snapshot = (await engine.readPageSnapshot(ENTITY, { sourceId: 'default' }))!;
+          mkdirSync(join(root, 'people'), { recursive: true });
+          writeFileSync(join(root, `${ENTITY}.md`), serializePageToMarkdown(snapshot.page, snapshot.tags));
+        } });
+      } finally {
+        __setEmbedTransportForTests(null);
+      }
     }, 180_000);
   });
 

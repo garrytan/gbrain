@@ -241,7 +241,7 @@ async function runMigrationSQL(
         // Falling through means the DDL runs with the server default.
       }
       await conn.executeRaw(sql);
-    });
+    }, { selfContained: true });
   }
 }
 

@@ -16,6 +16,7 @@ tools:
   - get_timeline
 mutating: false
 upstream: briefing@fc834ee
+when_to_use: "Use when the user asks: \"daily briefing\", \"morning briefing\", \"what's happening today\", \"brain pulse\", \"pre-briefing pull\"."
 ---
 
 # Briefing Skill

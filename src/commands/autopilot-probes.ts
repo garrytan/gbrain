@@ -5,11 +5,25 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
-import { gbrainPath as gbrainHomePath } from '../core/config.ts';
-import type { AutopilotDaemonState } from './autopilot-daemon.ts';
+import type { NightlyProbeModelRoutes } from '../core/cycle/nightly-probe-routes.ts';
 import { logError } from './autopilot.ts';
 
-export async function runNightlyQualityProbeStep(engine: BrainEngine, cfg: GBrainConfig | null, repoPath: string): Promise<void> {
+/**
+ * The quality probe's model routes (#5872): refresh the daemon's gateway from
+ * the brain the way queued jobs do, so a `gbrain config set models.*` made
+ * after daemon start reaches the #4636 judge substitute, then resolve the
+ * reader, extractor and judge-slot routes against the same brain.
+ */
+export async function resolveNightlyProbeModelRoutesForDaemon(engine: BrainEngine): Promise<NightlyProbeModelRoutes> {
+  // refreshGatewayForJob's two calls, inlined: importing jobs.ts would grant its flags to `autopilot` in the flag registry.
+  const { refreshGatewayEnvFromFilePlane, reconfigureGatewayWithEngine } = await import('../core/ai/gateway.ts');
+  const { resolveNightlyProbeModelRoutes } = await import('../core/cycle/nightly-probe-routes.ts');
+  refreshGatewayEnvFromFilePlane();
+  await reconfigureGatewayWithEngine(engine);
+  return resolveNightlyProbeModelRoutes(engine);
+}
+
+export async function runNightlyQualityProbeStep(engine: BrainEngine, cfg: GBrainConfig | null): Promise<void> {
   // 4.5 — Nightly quality probe (v0.41).
   // Per D10: trust the phase's internal 24h rate-limit (via shouldRunNightly
   // reading the audit JSONL). No scheduler-side precheck — one source of
@@ -18,7 +32,7 @@ export async function runNightlyQualityProbeStep(engine: BrainEngine, cfg: GBrai
   // loop. Probe runs even when cycleOk=false (probe may surface signal
   // explaining why the cycle is failing).
   try {
-    const { resolveProbeEnabled, resolveProbeMaxUsd, runNightlyQualityProbe } =
+    const { resolveProbeEnabled, resolveProbeCap, runNightlyQualityProbe } =
       await import('../core/cycle/nightly-quality-probe.ts');
     const { resolveNightlyProbeSearchConfigSnapshot } =
       await import('../core/cycle/nightly-probe-search-config.ts');
@@ -33,20 +47,19 @@ export async function runNightlyQualityProbeStep(engine: BrainEngine, cfg: GBrai
     const probeEnabled = resolveProbeEnabled(dbEnabled, cfg?.autopilot?.nightly_quality_probe?.enabled);
     if (probeEnabled) {
       const { runLongMemEvalForProbe, runCrossModalBatchForProbe } = await import('../core/cycle/nightly-probe-adapters.ts');
+      const { NIGHTLY_PROBE_FIXTURES } = await import('../core/cycle/nightly-probe-fixtures.ts');
+      const { loadPricingOverrides } = await import('../core/budget/budget-tracker.ts');
       const { isAvailable } = await import('../core/ai/gateway.ts');
-      const { existsSync } = await import('node:fs');
-      const { fileURLToPath } = await import('node:url');
-      const { join } = await import('node:path');
-      const maxUsd = resolveProbeMaxUsd(dbMaxUsd, cfg?.autopilot?.nightly_quality_probe?.max_usd);
-      // The fixture lives in the package, not usually in the user's brain repo.
-      const pkgRoot = fileURLToPath(new URL('../..', import.meta.url));
-      const fixtureAtPkgRoot = existsSync(join(pkgRoot, 'test', 'fixtures', 'longmemeval-nightly.jsonl'));
+      const cap = resolveProbeCap(dbMaxUsd, cfg?.autopilot?.nightly_quality_probe?.max_usd);
       await runNightlyQualityProbe({
         isEnabled: () => true, // already gated above; phase re-checks for defense-in-depth
         hasEmbeddingProvider: () => isAvailable('embedding'),
-        resolveMaxUsd: () => maxUsd,
-        resolveRepoRoot: () => (fixtureAtPkgRoot ? pkgRoot : repoPath ?? gbrainHomePath('.')),
+        resolveMaxUsd: () => cap.maxUsd,
+        resolveBudgetPolicy: async () => ({ capSource: cap.capSource, pricingOverrides: await loadPricingOverrides(engine) }),
+        // Embedded with the package (#5187): a compiled binary reads it from the bundle, not the brain repo.
+        resolveFixturePath: () => NIGHTLY_PROBE_FIXTURES.longMemEval,
         resolveSearchConfigSnapshot: () => resolveNightlyProbeSearchConfigSnapshot(engine),
+        resolveModelRoutes: () => resolveNightlyProbeModelRoutesForDaemon(engine),
         runLongMemEval: runLongMemEvalForProbe,
         runCrossModalBatch: runCrossModalBatchForProbe,
         now: () => new Date(),
@@ -59,7 +72,7 @@ export async function runNightlyQualityProbeStep(engine: BrainEngine, cfg: GBrai
   }
 }
 
-export async function runParserProbeStep(engine: BrainEngine, cfg: GBrainConfig | null, state: AutopilotDaemonState): Promise<void> {
+export async function runParserProbeStep(engine: BrainEngine, cfg: GBrainConfig | null): Promise<void> {
   // 4.6 — Nightly conversation-parser probe (v0.41.16.0 phase module;
   // the scheduler wire-up was deferred at ship and is added here). Same
   // posture as 4.5: the phase owns its gates (enabled/mode-gate, LLM
@@ -70,9 +83,7 @@ export async function runParserProbeStep(engine: BrainEngine, cfg: GBrainConfig 
     const { runConversationParserNightlyProbe } = await import('../core/conversation-parser/nightly-probe.ts');
     const { logParserProbeEvent, parserProbeRanWithin } = await import('../core/audit-parser-probe.ts');
     const { isAvailable } = await import('../core/ai/gateway.ts');
-    const { existsSync } = await import('node:fs');
-    const { fileURLToPath } = await import('node:url');
-    const { join } = await import('node:path');
+    const { NIGHTLY_PROBE_FIXTURES } = await import('../core/cycle/nightly-probe-fixtures.ts');
     // Flag reads dual-plane: the DB row (`gbrain config set …`) wins,
     // ~/.gbrain/config.json is the fallback. search.mode lives on the
     // DB plane only (mode.ts owns it).
@@ -86,30 +97,22 @@ export async function runParserProbeStep(engine: BrainEngine, cfg: GBrainConfig 
       ? parserDbEnabled === 'true'
       : cfg?.autopilot?.conversation_parser_probe?.enabled === true;
     const searchMode = dbSearchMode ?? '';
-    // Fixtures are committed in the gbrain package (test/fixtures/…),
-    // NOT the brain repo — resolve from the module location. Compiled
-    // binaries carry no source tree: skip quietly instead of writing
-    // failure rows that would flip doctor to WARN on every binary install.
-    const pkgRoot = fileURLToPath(new URL('../..', import.meta.url));
-    const fixturePath = join(pkgRoot, 'test', 'fixtures', 'conversation-formats', 'all.jsonl');
-    const adversarialPath = join(pkgRoot, 'test', 'fixtures', 'conversation-formats', 'adversarial.jsonl');
-    const shouldInvoke = parserEnabled || searchMode === 'tokenmax';
-    if (shouldInvoke && existsSync(fixturePath) && existsSync(adversarialPath)) {
+    // Fixtures are embedded with the package (C-N6), so a compiled binary
+    // reads them from its bundle; the phase writes a `skipped` row if they
+    // are ever unreadable, and that row also holds the 24h rate limit.
+    if (parserEnabled || searchMode === 'tokenmax') {
       const result = await runConversationParserNightlyProbe({
         isEnabled: () => parserEnabled,
         searchMode: () => searchMode,
         hasLlmKey: () => isAvailable('chat'),
-        resolveFixturePath: () => fixturePath,
-        resolveAdversarialPath: () => adversarialPath,
+        resolveFixturePath: () => NIGHTLY_PROBE_FIXTURES.parserFormats,
+        resolveAdversarialPath: () => NIGHTLY_PROBE_FIXTURES.parserAdversarial,
         now: () => new Date(),
         shouldSkipForRateLimit: () => parserProbeRanWithin(24 * 60 * 60 * 1000),
       });
       // rate_limited is a non-run: the loop ticks every few minutes, so
       // logging every skip would flood the audit file with no-signal rows.
       if (result.outcome !== 'rate_limited') logParserProbeEvent(result);
-    } else if (shouldInvoke && !state.parserProbeFixtureWarned) {
-      state.parserProbeFixtureWarned = true;
-      console.error(`[parser-probe] fixtures not found under ${pkgRoot}; skipping (probe needs a source-checkout install)`);
     }
   } catch (e) {
     logError('autopilot.parser_probe', e);

@@ -112,6 +112,19 @@ export const minimax: Recipe = {
   name: 'MiniMax (海螺AI)',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  // No shipped rate for these yet: they warn and run under a default cap; a
+  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  unpriced_models: [
+    'embo-01',
+    'MiniMax-M3',
+    'MiniMax-M2.7',
+    'MiniMax-M2.7-highspeed',
+    'MiniMax-M2.5',
+    'MiniMax-M2.5-highspeed',
+    'MiniMax-M2.1',
+    'MiniMax-M2.1-highspeed',
+    'MiniMax-M2',
+  ],
   base_url_default: 'https://api.minimaxi.com/v1',
   auth_env: {
     required: ['MINIMAX_API_KEY'],

@@ -259,7 +259,7 @@ function literalProp(obj: ts.ObjectLiteralExpression, name: string): string | un
 /** Read-only invocations a verify step may always name (doctor --only is the canonical one). */
 const STATIC_READ_ONLY = new Set(['doctor', 'errors', 'status', 'get', 'search', 'query', 'list', 'write-request', 'write-requests', 'whoami', 'stats']);
 /** Read-only subcommands of otherwise-mutating commands. */
-const READ_ONLY_SUBCOMMANDS = new Set(['config get', 'sources list', 'sources status', 'jobs get', 'jobs stats', 'jobs list', 'auth list', 'backup status', 'engine status',
+const READ_ONLY_SUBCOMMANDS = new Set(['config get', 'sources list', 'sources status', 'jobs get', 'jobs stats', 'jobs list', 'auth list', 'auth clients', 'backup status', 'engine status',
   // Engine graduation: --status and --plan are zero-mutation (pre-connect; no schema migration, no target DDL).
   'migrate --status', 'migrate --plan']);
 

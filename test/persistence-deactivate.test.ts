@@ -27,6 +27,7 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { put } from './helpers/wave-fixture.ts';
+import { waitFor } from './helpers/wait-for.ts';
 
 const admin = (engine: BrainEngine, operation: string, params: Record<string, unknown> = {}) =>
   runPersistenceAdministration(engine, operation as never, params) as Promise<Record<string, any>>;
@@ -34,6 +35,12 @@ const deactivate = async (engine: BrainEngine, extra: Record<string, unknown> = 
   admin(engine, 'writer_deactivate', { admin_intent: 'writer_deactivate', expected_state: await writerAdminState(engine), ...extra });
 const protocol = (engine: BrainEngine, sql: string, params: unknown[] = []) =>
   engine.transaction(async tx => { await declarePersistenceProtocol(tx); await tx.executeRaw(sql, params); });
+// The consumer started by put keeps running its effects. Rewriting effect rows
+// while one is in flight lets its completion overwrite the rewrite (a requeued
+// embedding effect read back as committed), so settle the source first.
+const settleEffects = (engine: BrainEngine) => waitFor(async () => (await engine.executeRaw(
+  "SELECT 1 FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE r.source_id='default' AND e.state IN ('queued','running')")).length === 0,
+  { label: `${engine.kind}: default source effects settled` });
 const registry = () => { const dir = join(configDir(), 'persistence', 'managed-roots'); return existsSync(dir) ? readdirSync(dir).map(f => join(dir, f)) : []; };
 const brainRow = async (engine: BrainEngine) => (await engine.executeRaw<{ brain_id: string; enabled: boolean; mode_epoch: string }>(
   'SELECT brain_id, enabled, mode_epoch::text FROM persistence_brain WHERE singleton=1'))[0];
@@ -41,6 +48,7 @@ const brainRow = async (engine: BrainEngine) => (await engine.executeRaw<{ brain
 for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DATABASE_URL] : [undefined]) describe(`#5455 sources writer deactivate (${databaseUrl ? 'postgres' : 'pglite'})`, () => {
   test('dry run lists every blocker and changes nothing; each blocker refuses with its exit', () => managedBrain(async ({ engine, ctx }) => {
     await put(ctx, 'notes/one', 'Body.');
+    await settleEffects(engine);
     const [request] = await engine.executeRaw<{ request_id: string; id: string }>("SELECT request_id::text, id::text FROM persistence_requests WHERE slug='notes/one'");
     await protocol(engine, "UPDATE persistence_effects SET state='committed'");
     await protocol(engine, "UPDATE persistence_effects SET state='queued', next_attempt_at=now()+interval '1 day' WHERE request_id=$1::uuid AND kind='embedding'", [request.id]);
@@ -78,6 +86,7 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
 
   test('success: classic mode, retired worktrees keep receipts, markers from the real activation are removed, content unchanged; rerun is a no-op', () => managedBrain(async ({ engine, ctx, root }) => {
     await put(ctx, 'notes/one', 'Body one.');
+    await settleEffects(engine);
     await protocol(engine, "UPDATE persistence_effects SET state='committed'");
     const file = readFileSync(join(root, 'notes', 'one.md'), 'utf8');
     const page = await engine.getPage('notes/one', { sourceId: 'default' });

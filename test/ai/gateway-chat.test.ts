@@ -404,6 +404,52 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
     });
   });
 
+  test('anthropic call-scoped thinking override wins without dropping configured siblings (#5331)', async () => {
+    // From @kvnloo's #5972: the generic providerOptions merge is a per-call
+    // seam where call-scoped leaves win and configured siblings survive.
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: {
+          thinking: { type: 'adaptive' },
+          cacheControl: { type: 'ephemeral', ttl: '1h' },
+        },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    }, {
+      providerOptions: { anthropic: { thinking: { type: 'disabled' } } },
+    });
+
+    expect(providerOptions).toEqual({
+      anthropic: {
+        thinking: { type: 'disabled' },
+        cacheControl: { type: 'ephemeral', ttl: '1h' },
+      },
+    });
+  });
+
+  test("thinking: 'off' replaces a configured thinking object instead of merging into it (#5331)", async () => {
+    // A deep merge of { type: 'disabled' } into { type: 'enabled', budgetTokens }
+    // keeps budgetTokens; the switch replaces the whole thinking object.
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      provider_chat_options: {
+        anthropic: {
+          thinking: { type: 'enabled', budgetTokens: 4000 },
+          cacheControl: { type: 'ephemeral', ttl: '1h' },
+        },
+      },
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    }, { thinking: 'off' });
+
+    expect(providerOptions).toEqual({
+      anthropic: {
+        thinking: { type: 'disabled' },
+        cacheControl: { type: 'ephemeral', ttl: '1h' },
+      },
+    });
+  });
+
   test('anthropic cacheControl survives provider_chat_options merging', async () => {
     // gbrain#2490: this call-level cacheControl is real (not a no-op) —
     // @ai-sdk/anthropic serializes it as the Anthropic API's documented

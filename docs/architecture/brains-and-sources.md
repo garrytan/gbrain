@@ -41,6 +41,14 @@ AND under `source=gstack` — they're different pages.
 Routing: `--source <id>`, `GBRAIN_SOURCE`, `.gbrain-source` dotfile, or
 registered `local_path` match in the `sources` table.
 
+A few commands have their own `--source` option for provenance:
+`timeline-add`, `ontology-add`, `takes add|update|supersede` and the raw-data
+operations. On those, `--source` is the provenance value (a slug, URL or
+source name) and never picks the repo, on a local brain, through a running
+`gbrain serve` or on a thin client. The write goes to the source that
+`GBRAIN_SOURCE`, `.gbrain-source` or the defaults select, and the JSON result
+names it in `source_id`.
+
 ### When does each axis move?
 
 | You want to | Adjust |

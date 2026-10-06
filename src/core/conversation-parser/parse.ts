@@ -346,10 +346,14 @@ export function applyPattern(
   // is diagnostic-only (zero behavior change here): collect the folded
   // labels so ParseResult can surface them. Fence-aware so a transcript
   // whose answers paste markdown/shell inside code fences is not flagged.
+  // A heading anchor that carries its own inline date (email-thread-heading)
+  // cannot be mistaken for a section title, so its other headings are body
+  // text, not lost speakers.
   const headingAnchored =
     diag !== undefined &&
     entry.multi_line === true &&
     entry.score_continuations_as_body === true &&
+    entry.captures.date_group === undefined &&
     (entry.test_positive ?? []).some((s) => /^#{2,3}\s/.test(s));
   let fenceMarker: '```' | '~~~' | null = null;
   const collectFoldedHeading = (line: string): void => {

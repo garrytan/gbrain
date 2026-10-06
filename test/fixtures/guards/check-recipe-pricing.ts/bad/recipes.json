@@ -1,0 +1,3 @@
+[
+  { "id": "openai", "touchpoints": { "chat": { "models": ["gpt-5.5", "gpt-unpriced-example"] } } }
+]

@@ -282,7 +282,7 @@ async function runSyncAll(
   input: { noEmbed: boolean; embeddingCredentialError: Error | undefined; resumeCommand: string },
 ): Promise<void> {
   const {
-    dryRun, full, noPull, noBulk, noExtract, skipFailed, retryFailed, noSchemaPack, explicitProcessing, includeGitignored,
+    dryRun, full, noPull, noBulk, lanes, noExtract, skipFailed, retryFailed, noSchemaPack, explicitProcessing, includeGitignored,
     workingTree, missingPathMode, jsonOut, yesFlag, serialFlag, noAutoEmbed, maxSources, concurrency, timeoutSeconds,
   } = flags;
   const { noEmbed, embeddingCredentialError, resumeCommand } = input;
@@ -460,7 +460,7 @@ async function runSyncAll(
       strategy: cfg.strategy,
       concurrency,
       signal: composeAbortSignals(allInterrupt.signal, controller?.signal),
-      drain: true, noBulk,
+      drain: true, noBulk, lanes,
     };
     // v0.40.6.0 (D6): wrap performSync in withSourcePrefix so every slog /
     // serr line emitted from inside the sync code path gets prefixed with
@@ -715,7 +715,7 @@ async function runSingleSourceSync(
   input: { sourceId: string; companyPolicy: Awaited<ReturnType<typeof getCompanyBrainProfile>> | null; noEmbed: boolean; resumeCommand: string },
 ): Promise<void> {
   const {
-    repoPath, watch, interval, dryRun, full, noPull, noBulk, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack,
+    repoPath, watch, interval, dryRun, full, noPull, noBulk, lanes, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack,
     explicitProcessing, includeGitignored, workingTree, jsonOut, yesFlag, noAutoEmbed, strategyArg, srcSubpath,
     excludePatterns, includeHiddenPatterns, concurrency, timeoutSeconds,
   } = flags;
@@ -742,7 +742,7 @@ async function runSingleSourceSync(
     exclude: excludePatterns.length > 0 ? excludePatterns : undefined,
     includeHidden: includeHiddenPatterns.length > 0 ? includeHiddenPatterns : undefined,
     signal: composeAbortSignals(singleSourceInterrupt.signal, singleSourceController?.signal),
-    drain: true, noBulk,
+    drain: true, noBulk, lanes,
   };
 
   // v0.42.42.0 (#2139, Step 4b): single-source `gbrain sync` gets the SAME

@@ -59,6 +59,17 @@ export const REFERENCE_CALIBRATIONS: readonly ReferenceCalibration[] = [
     pack_shape: 'v1:order=rank-id:max=budget:slots=conflict', dataset_hash: '37fe4083e9722308', split_hash: '2ec631956c4b9e33', proposal_floor: 0.65,
     verdict: 'win', shipped_in: '0.60.17.0',
   },
+  {
+    // P8 withdrawal review (conflict slot, review_withdraw call site): held-out qualification by the custodian,
+    // gbrain-evals docs/benchmarks/2026-10-05-heldout-verdicts/p8-withdraw-heldout-2026-10-05.json. 240 families
+    // (66 custodian-checked model-written paraphrase pairs per the 2026-10-05 amendment); threshold calibrated on the
+    // 116-family calibrate half (precision and recall 1.0); 124/124 eval families correct over 248 withdraw actions.
+    // The record reports no retest/repack spread (dev seed A measured 0.000) and no dataset hashes: the ids name it.
+    id: 'conflict-review-withdraw-jev-1.13.0-2026-10-05', slot: 'conflict', call_site: 'review_withdraw', provider: 'typesafe:jev-1.13.0', model_resolved: 'jev-1.13.0',
+    threshold: 0.62, min_keep: null, retest_sd: 0, repack_sd: 0, action_precision_lb: 0.970, policy_fingerprint: null,
+    pack_shape: 'v1:order=rank-id:max=budget:slots=conflict', dataset_hash: 'heldout:p8-withdraw-2026-10-05', split_hash: 'heldout:p8-withdraw-2026-10-05',
+    verdict: 'win', shipped_in: 'P8',
+  },
 ];
 
 /**

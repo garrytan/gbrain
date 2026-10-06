@@ -13,6 +13,7 @@ writes_pages: true
 writes_to:
   - media/books/
 upstream: book-mirror@fc834ee
+when_to_use: "Use when the user asks: \"personalized version of this book\", \"mirror this book\", \"two-column book analysis\", \"apply this book to my life\", \"how does this book apply to me\"."
 ---
 
 # book-mirror — Personalized Chapter-by-Chapter Book Analysis

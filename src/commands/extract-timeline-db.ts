@@ -265,6 +265,19 @@ async function publishPageTimeline(engine: BrainEngine, authority: MaintenanceAu
   }
 }
 
+/**
+ * One page's timeline on a managed brain, through the coordinator (the serve
+ * sweep's path): rows added, 0 when nothing changes, or 'unsettled' when the
+ * page changed mid-run or its request is still pending (retry next time).
+ */
+export async function publishManagedPageTimeline(engine: BrainEngine, slug: string, sourceId: string): Promise<number | 'unsettled'> {
+  const authority = await maintenancePreflight(engine, sourceId);
+  if (!authority) throw opError('writer_coordinator_required', 'This brain is not managed; write the timeline batch directly.',
+    `Source ${sourceId} has no managed writer, so there is no coordinator to publish through.`);
+  const outcome = await publishPageTimeline(engine, authority, slug, sourceId, { dryRun: false, jsonMode: false });
+  return outcome === 'skipped' || outcome === 'pending' ? 'unsettled' : outcome ?? 0;
+}
+
 /** Preparer for `managed_maintenance_timeline_extract`: a database-only publication on the page key. */
 function timelinePageChanged(row: WriteRequest, message: string): OperationError {
   return opError('page_identity_changed', message,

@@ -2,14 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { safeLoad } from 'js-yaml';
+import { load as loadYaml } from 'js-yaml';
 
 type Job = {
   'runs-on'?: string;
   strategy?: { matrix: { os?: string[]; target?: string[] } };
 };
 const root = join(import.meta.dir, '../..');
-const load = (name: string) => safeLoad(readFileSync(join(root, '.github/workflows', name), 'utf8')) as { jobs: Record<string, Job> };
+const load = (name: string) => loadYaml(readFileSync(join(root, '.github/workflows', name), 'utf8')) as { jobs: Record<string, Job> };
 const normal = 'ubicloud-standard-16-ubuntu-2404';
 const heavy = 'ubicloud-standard-30-ubuntu-2404';
 const small = 'ubicloud-standard-2-ubuntu-2404';
@@ -88,7 +88,7 @@ describe('CI runner routing', () => {
 
   test('macOS 26 validation is pinned, time-boxed, label-gated on pull requests and uses no secrets', () => {
     const text = readFileSync(join(root, '.github/workflows/macos-validation.yml'), 'utf8');
-    const workflow = safeLoad(text) as { on: Record<string, unknown>; jobs: Record<string, Job & { 'timeout-minutes'?: number; if?: string }> };
+    const workflow = loadYaml(text) as { on: Record<string, unknown>; jobs: Record<string, Job & { 'timeout-minutes'?: number; if?: string }> };
     expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'schedule', 'workflow_dispatch']);
     const job = workflow.jobs['macos-26']!;
     expect(job['runs-on']).toBe('macos-26');
@@ -109,9 +109,9 @@ describe('CI runner routing', () => {
   });
 
   test('actionlint recognizes every configured custom label and watches its configuration', () => {
-    const config = safeLoad(readFileSync(join(root, '.github/actionlint.yaml'), 'utf8')) as { 'self-hosted-runner': { labels: string[] } };
+    const config = loadYaml(readFileSync(join(root, '.github/actionlint.yaml'), 'utf8')) as { 'self-hosted-runner': { labels: string[] } };
     expect(config['self-hosted-runner'].labels.sort()).toEqual([small, report, pooled, normal, heavy, arm].sort());
-    const workflow = safeLoad(readFileSync(join(root, '.github/workflows/actionlint.yml'), 'utf8')) as { on: Record<string, { paths: string[] }> };
+    const workflow = loadYaml(readFileSync(join(root, '.github/workflows/actionlint.yml'), 'utf8')) as { on: Record<string, { paths: string[] }> };
     for (const event of ['push', 'pull_request']) expect(workflow.on[event].paths).toContain('.github/actionlint.yaml');
   });
 });

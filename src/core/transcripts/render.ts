@@ -27,7 +27,7 @@
  * per-session id would make parts 2..N skip as cross-slug duplicates.
  */
 
-import { safeDump } from 'js-yaml';
+import { dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_BYTES_WARN } from '../content-sanity.ts';
@@ -278,7 +278,7 @@ export interface RenderedPart {
 }
 
 export function renderPartContent(frontmatter: Record<string, unknown>, body: string): string {
-  return `---\n${safeDump(frontmatter, { lineWidth: 1000 })}---\n\n${body}\n`;
+  return `---\n${dumpFrontmatterYaml(frontmatter, { lineWidth: 1000 })}---\n\n${body}\n`;
 }
 
 export interface RenderSessionResult {
@@ -310,8 +310,9 @@ function speakerLabel(m: TranscriptMessage): string {
  */
 export function renderSessionParts(
   redacted: RedactedSession,
-  opts: { sourcePath: string } = { sourcePath: '' },
+  opts: { sourcePath: string; partTargetBytes?: number } = { sourcePath: '' },
 ): RenderSessionResult {
+  const partTargetBytes = opts.partTargetBytes ?? PART_TARGET_BYTES;
   const { session, imperativesFlagged } = redacted;
   const { meta, messages } = session;
   if (!messages.length) throw new Error('renderSessionParts: session has no messages');
@@ -350,7 +351,7 @@ export function renderSessionParts(
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
     const bytes = Buffer.byteLength(b, 'utf8') + 2;
-    if (current.length > 0 && currentBytes + bytes > PART_TARGET_BYTES) {
+    if (current.length > 0 && currentBytes + bytes > partTargetBytes) {
       groups.push(current);
       const overlap = current.slice(-OVERLAP_MESSAGES);
       current = [...overlap];

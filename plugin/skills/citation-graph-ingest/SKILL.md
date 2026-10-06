@@ -24,6 +24,7 @@ requires:
 mutating: true
 writes_pages: false
 upstream: citation-graph-ingest@fc834ee
+when_to_use: "Use when the user asks: \"citation graph\", \"citation graph ingest\", \"typed citation graph\", \"build a reference graph\", \"graph over a corpus\"."
 ---
 
 # Citation Graph Ingest — Typed Reference Graph Over a Corpus

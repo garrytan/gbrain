@@ -7,6 +7,10 @@ export const GRANT_PROFILES = ['memory-reader', 'memory-writer', 'coding-agent',
 export type GrantProfileId = typeof GRANT_PROFILES[number];
 export type GrantSurface = 'verbs' | 'starter' | 'full';
 
+/** Access-token lifetime bounds for every per-client override and the server default: 1 minute to 90 days. */
+export const TOKEN_TTL_MIN_SECONDS = 60;
+export const TOKEN_TTL_MAX_SECONDS = 7_776_000;
+
 /** SQL NULL operation snapshots preserve legacy clients; [] grants no operations. */
 export interface ClientGrant {
   clientId: string;
@@ -131,7 +135,7 @@ export function validateClientGrant(grant: ClientGrant, ctx: GrantValidationCont
   if (grant.allowedOperations?.some(name => !ctx.operationNames.has(name))) reasons.push('operations_unavailable');
   if (grant.profile !== null && grant.allowedOperations === null) reasons.push('operations_snapshot_missing');
   if (grant.budgetUsdPerDay !== null && (!/^\d+(?:\.\d{1,2})?$/.test(grant.budgetUsdPerDay) || Number(grant.budgetUsdPerDay) > 99999999.99)) reasons.push('budget_invalid');
-  if (grant.tokenTtlSeconds !== null && (!Number.isSafeInteger(grant.tokenTtlSeconds) || grant.tokenTtlSeconds < 60 || grant.tokenTtlSeconds > 7776000)) reasons.push('token_ttl_invalid');
+  if (grant.tokenTtlSeconds !== null && (!Number.isSafeInteger(grant.tokenTtlSeconds) || grant.tokenTtlSeconds < TOKEN_TTL_MIN_SECONDS || grant.tokenTtlSeconds > TOKEN_TTL_MAX_SECONDS)) reasons.push('token_ttl_invalid');
   if (grant.surface !== null && !['verbs', 'starter', 'full'].includes(grant.surface)) reasons.push('surface_invalid');
   if (grant.profile !== null && !(GRANT_PROFILES as readonly string[]).includes(grant.profile)) reasons.push('profile_invalid');
   if (!Number.isSafeInteger(grant.boundMaxConcurrent) || grant.boundMaxConcurrent < 1) reasons.push('concurrency_invalid');

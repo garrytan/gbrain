@@ -56,6 +56,7 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/diagnostics.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/evidence-packet.ts', reason: 'script-reachable' },
+  { path: 'src/eval/longmemeval/locomo.ts', reason: 'script-reachable' },
   { path: 'src/eval/shared/autocut-replay.ts', reason: 'script-reachable' },
   { path: 'src/mcp/http-transport.ts', reason: 'script-reachable' },
   { path: 'src/mcp/tool-catalog.ts', reason: 'script-reachable' },

@@ -79,6 +79,9 @@ export async function searchByImage(
     // Both branches use the same source-scope threading.
   };
 
+  // A brain that opted out of embedding refuses image search before anything is sent to a provider.
+  const { assertBrainEmbeddingEnabled } = await import('../embedding-dim-check.ts');
+  await assertBrainEmbeddingEnabled(engine);
   // Image branch — always runs.
   const imageEmbedding = await embedQueryMultimodalImage({
     data: input.base64,

@@ -25,9 +25,9 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
+import { freePort, startServeHttp, type ServeHttp } from './helpers/serve-http.ts';
 
 const MARKER = 'zelkova-status-marker-4q7';
 
@@ -174,10 +174,8 @@ describe('status-only serve: no brain → init → recovery in place', () => {
 describe('status-only serve: lock contention → one shared serve --http (b)', () => {
   let home: string;
   let env: Record<string, string>;
-  let http: ChildProcess | null = null;
+  let http: ServeHttp | null = null;
   const opened: Array<{ client: Client; transport: StdioClientTransport }> = [];
-  const PORT = 41000 + Math.floor(Math.random() * 2000);
-  const URL_ = `http://127.0.0.1:${PORT}/mcp`;
 
   beforeAll(() => {
     home = mkdtempSync(join(tmpdir(), 'gbrain-status-http-'));
@@ -191,7 +189,7 @@ describe('status-only serve: lock contention → one shared serve --http (b)', (
 
   afterAll(async () => {
     for (const c of opened) { try { await c.client.close(); } catch { /* best-effort */ } }
-    if (http) { try { http.kill('SIGTERM'); } catch { /* best-effort */ } }
+    await http?.stop();
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -213,9 +211,7 @@ describe('status-only serve: lock contention → one shared serve --http (b)', (
     });
     expect(tokens.every(Boolean)).toBe(true);
     // Step 2: one shared HTTP server owns the brain.
-    http = spawn('bun', ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--http', '--bind', '127.0.0.1', '--port', String(PORT)],
-      { cwd: process.cwd(), env, stdio: ['ignore', 'ignore', 'ignore'] });
-    expect(await waitFor(async () => (await fetch(`http://127.0.0.1:${PORT}/health`).catch(() => null))?.ok === true, 60_000)).toBe(true);
+    http = await startServeHttp({ cwd: process.cwd(), env });
 
     // The stale stdio server cannot take the brain back; it names the HTTP owner and the rewiring fix.
     const after = body(await stale.client.callTool({ name: 'gbrain_status', arguments: {} }));
@@ -227,7 +223,7 @@ describe('status-only serve: lock contention → one shared serve --http (b)', (
     // Step 3: each harness, rewired to the shared server, recalls.
     for (const token of tokens) {
       const client = new Client({ name: 'shared-http', version: '1' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(URL_), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${http.base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
       try {
         const found = await client.callTool({ name: 'search', arguments: { query: MARKER } });
         expect(found.isError).toBeFalsy();
@@ -244,7 +240,6 @@ describe('status-only serve: the shared-HTTP transition fails midway (H2)', () =
   let env: Record<string, string>;
   let blocker: ReturnType<typeof import('node:http').createServer> | null = null;
   const opened: Array<{ client: Client; transport: StdioClientTransport }> = [];
-  const PORT = 44000 + Math.floor(Math.random() * 2000);
 
   beforeAll(() => {
     home = mkdtempSync(join(tmpdir(), 'gbrain-status-midway-'));
@@ -275,7 +270,8 @@ describe('status-only serve: the shared-HTTP transition fails midway (H2)', () =
     // Step 2 fails: the port is taken, so the shared server cannot start.
     const http = await import('node:http');
     blocker = http.createServer((_q, r) => { r.end('not gbrain'); });
-    await new Promise<void>(r => blocker!.listen(PORT, '127.0.0.1', () => r()));
+    await new Promise<void>((r, reject) => { blocker!.once('error', reject); blocker!.listen(0, '127.0.0.1', () => r()); });
+    const PORT = (blocker.address() as import('node:net').AddressInfo).port;
     const started = spawnSync('bun', ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--http', '--bind', '127.0.0.1', '--port', String(PORT)],
       { cwd: process.cwd(), env, input: '', encoding: 'utf8', timeout: 60_000 });
     expect(started.signal, 'serve --http on a taken port must exit, not hang holding the brain').toBeNull();
@@ -336,12 +332,12 @@ describe('status-only serve: one re-probe for both transports; Postgres keeps th
     expect(stderr).toContain('"event":"serve_status_mode_recovered","reason":"lock_held","transport":"stdio"');
   }, 180_000);
 
-  test('a Postgres connect failure on --http takes the degraded-engine path, not status-only mode', () => {
+  test('a Postgres connect failure on --http takes the degraded-engine path, not status-only mode', async () => {
     const pgHome = mkdtempSync(join(tmpdir(), 'gbrain-status-pg-'));
     try {
       mkdirSync(join(pgHome, '.gbrain'), { recursive: true });
       writeFileSync(join(pgHome, '.gbrain', 'config.json'), JSON.stringify({ engine: 'postgres', database_url: 'postgresql://127.0.0.1:1/gbrain' }));
-      const r = spawnSync('bun', ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--http', '--bind', '127.0.0.1', '--port', String(46000 + Math.floor(Math.random() * 2000))],
+      const r = spawnSync('bun', ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--http', '--bind', '127.0.0.1', '--port', String(await freePort())],
         { cwd: process.cwd(), env: { ...envFor(pgHome), GBRAIN_NO_RETRY_CONNECT: '1' }, encoding: 'utf8', timeout: 60_000, input: '' });
       expect(r.stderr).toContain('GBRAIN_DB_ACCESS');
       expect(r.stderr).not.toContain('serve_status_mode_enter');

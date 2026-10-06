@@ -16,7 +16,8 @@ name: macOS 26 validation
 #   #5286  the published signed darwin-arm64 release binary: codesign --verify
 #          --strict and --version against the release tag.
 #   #5810  every tracked *.sh parses under /bin/bash (GNU bash 3.2), and
-#          `bun run verify` passes with `bash` resolving to /bin/bash.
+#          `bun run verify` passes with `bash` resolving to /bin/bash
+#          (typecheck included, under a 240 s per-check cap on this runner).
 
 on:
   schedule:
@@ -35,6 +36,8 @@ concurrency:
 jobs:
   macos-26:
     name: macOS 26 validation
+    # Named exception (docs/TESTING.md#event-parity): label-gated on pull requests;
+    # the nightly macOS validation schedule and manual dispatch always run it.
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'macos-validation')
@@ -90,11 +93,17 @@ jobs:
         env:
           GBRAIN_BASH32: /bin/bash
           GBRAIN_TEST_BASH32_REQUIRE: '1'
-          # tsc peaks near 3 GB of heap on this repo; Node's default limit on
-          # the 7 GB runner is lower, so typecheck aborted on heap exhaustion.
-          NODE_OPTIONS: --max-old-space-size=4096
+          # #6056: a cold tsc takes 110-142 s alone on this 3-core arm64
+          # runner (121-167 s inside verify), past the 120 s per-check cap that
+          # Linux keeps. Typecheck runs here too, so this runner's cap is 240 s
+          # (about 1.4x the slowest measured run); test.yml's Linux verify job
+          # keeps the default 120 s.
+          GBRAIN_VERIFY_TIMEOUT: '240'
+        # tsc peaks near 3.5 GB of heap; the typecheck script sets its own
+        # --max-old-space-size, so no NODE_OPTIONS here (it reached every node
+        # process verify spawns).
         run: |
-          NODE_OPTIONS='' node -p '"default node heap limit MB " + require("v8").getHeapStatistics().heap_size_limit / 1048576'
+          node -p '"default node heap limit MB " + require("v8").getHeapStatistics().heap_size_limit / 1048576'
           mkdir -p "$RUNNER_TEMP/bash32"
           ln -sf /bin/bash "$RUNNER_TEMP/bash32/bash"
           export PATH="$RUNNER_TEMP/bash32:$PATH"

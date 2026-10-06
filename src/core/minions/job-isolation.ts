@@ -455,6 +455,29 @@ export function killProcessGroup(pid: number, signal: 'SIGTERM' | 'SIGKILL'): bo
   }
 }
 
+/**
+ * #5062: does any process remain in group `pgid`? Liveness, not
+ * `ChildProcess.killed` (which flips as soon as a signal is SENT), drives
+ * SIGTERM→SIGKILL escalation and confirmed termination. Same /bin/kill
+ * fallback as killProcessGroup for runtimes that reject negative pids.
+ */
+export function processGroupAlive(pgid: number): boolean {
+  if (!Number.isInteger(pgid) || pgid <= 1) return false;
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ESRCH') return false;
+    if (code === 'EPERM') return true;
+    try {
+      return spawnSync('/bin/kill', ['-s', '0', '--', `-${pgid}`], { stdio: 'ignore' }).status === 0;
+    } catch {
+      return false;
+    }
+  }
+}
+
 export function observeTiniChildProcessGroups(pid: number, groups: Set<number>): void {
   if (process.platform !== 'linux' || !Number.isInteger(pid) || pid <= 1) return;
   try {

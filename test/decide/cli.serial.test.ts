@@ -83,7 +83,7 @@ describe('gbrain decide CLI', () => {
     expect(badSlot.exitCode).toBe(1);
     const list = await cli(['decide', 'proposals', 'list', '--json']);
     expect(list.exitCode).toBe(0);
-    expect(JSON.parse(list.stdout)).toEqual({ status: 'pending', proposals: [] });
+    expect(JSON.parse(list.stdout)).toEqual({ status: 'pending', proposals: [], review_proposals: [] });
     const missing = await cli(['decide', 'proposals', 'accept', '999']);
     expect(missing.exitCode).toBe(1);
     expect(missing.stdout).toContain('proposal 999: not found');

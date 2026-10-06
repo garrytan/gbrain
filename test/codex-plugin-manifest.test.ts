@@ -391,11 +391,13 @@ describe('curated tree membership + scanner guard', () => {
     }
   });
 
+  // #5858: the generator's only frontmatter change is one `when_to_use:` line built from triggers.
+  const withoutWhenToUse = (text: string) => text.replace(/^when_to_use: .*\n/m, '');
   test('F6: a starter-gap skill ends with its CLI-equivalent surface note; a gap-free skill is byte-identical', () => {
     const gaps = lanes.starter_gaps as Record<string, string[]>;
     expect(Object.keys(gaps).length).toBeGreaterThan(0);
     for (const [slug, ops] of Object.entries(gaps)) {
-      const generated = read(`plugin/skills/${slug}/SKILL.md`);
+      const generated = withoutWhenToUse(read(`plugin/skills/${slug}/SKILL.md`));
       expect(generated.startsWith(read(`skills/${slug}/SKILL.md`).replace(/\n*$/, '\n'))).toBe(true);
       expect(generated).toContain('## Tools outside your MCP surface');
       for (const op of ops) expect(generated).toMatch(new RegExp(`- \`${op}\` → \`gbrain [^\`]+\``));
@@ -403,7 +405,7 @@ describe('curated tree membership + scanner guard', () => {
     }
     expect(read('plugin/skills/maintain/SKILL.md')).toContain('- `get_health` → `gbrain doctor --json`');
     const gapFree = [...laneSet].find(slug => !(slug in gaps))!;
-    expect(read(`plugin/skills/${gapFree}/SKILL.md`)).toBe(read(`skills/${gapFree}/SKILL.md`));
+    expect(withoutWhenToUse(read(`plugin/skills/${gapFree}/SKILL.md`))).toBe(read(`skills/${gapFree}/SKILL.md`));
   });
 
   test('non-skill dirs carry no SKILL.md (the scanner never grows a surprise skill)', () => {

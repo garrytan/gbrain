@@ -12,7 +12,7 @@ import { filterBacklinkRows, readBacklinkPage, wantsPagedBacklinks } from './bac
 import { opError, type Operation } from './contract.ts';
 import type { Action } from '../agent-output.ts';
 import { presentEdgeContext, resolveChainAnchors, runRelationalChain, validateChainHops, type ChainEvidenceEdge, type ChainPlan } from '../search/relational-chain.ts';
-import { paramUse, readFix } from './op-fix.ts';
+import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import {
   assertExplicitSourceLive,
   enforceClientSlugFence,
@@ -23,7 +23,10 @@ import {
   reclassifyMutationTimePageMiss,
   requireWritablePage,
   sourceScopeOpts,
+  assertSourceInCallerScope,
 } from './context.ts';
+import { listWantedPages } from '../wanted-links-store.ts';
+import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import type { OperationContext } from './contract.ts';
 import type { Link, PageReadPolicy } from '../types.ts';
 import { ALL_SOURCES } from '../source-id.ts';
@@ -589,8 +592,53 @@ const traverse_graph: Operation = {
   cliHints: { name: 'graph', positional: ['slug'] },
 };
 
+const WANTED_DEFAULT_LIMIT = 50;
+const WANTED_MAX_LIMIT = 100;
+
+const wanted_pages: Operation = {
+  name: 'wanted_pages',
+  mutating: false,
+  writeInference: 'none',
+  idempotent: true,
+  outputRedaction: 'retrieval',
+  description: 'Link targets that have no page yet, most-referenced first: each was written as a link but its page does not exist, so no edge exists. Use to find entities worth a page (enrichment) or typo links to fix. The edge appears on its own once the page is created.',
+  params: {
+    source_id: { type: 'string', description: 'Only targets referenced from this source (must be inside your source grant).' },
+    limit: { type: 'number', description: `Rows per page (default ${WANTED_DEFAULT_LIMIT}, max ${WANTED_MAX_LIMIT}).` },
+    offset: { type: 'number', description: 'Skip the first N targets.' },
+    count_only: { type: 'boolean', description: 'Return the total with no rows.' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const named = p.source_id === undefined ? undefined : String(p.source_id);
+    if (named !== undefined) assertSourceInCallerScope(ctx, named);
+    const policy = named !== undefined ? await readPolicyOpts(ctx, { sourceId: named }) : await readPolicyOpts(ctx);
+    const limit = p.limit === undefined ? WANTED_DEFAULT_LIMIT : Number(p.limit);
+    const offset = p.offset === undefined ? 0 : Number(p.offset);
+    const limitOk = Number.isInteger(limit) && limit >= 1 && limit <= WANTED_MAX_LIMIT;
+    if (!limitOk || !Number.isInteger(offset) || offset < 0) {
+      throw invalidParam(ctx, 'wanted_pages', limitOk ? 'offset' : 'limit',
+        `wanted_pages: limit must be 1-${WANTED_MAX_LIMIT} and offset a non-negative integer`,
+        limitOk ? { def: wanted_pages.params.offset, example: 0 } : { def: wanted_pages.params.limit, example: WANTED_DEFAULT_LIMIT });
+    }
+    const { total, rows } = await listWantedPages(ctx.engine, { sourceId: policy.sourceId, sourceIds: policy.sourceIds,
+      excludePrivate: policy.excludePrivate, privateFilter: privatePagesFilterFragment,
+      limit: p.count_only === true ? 1 : limit, offset });
+    const next = offset + limit < total ? offset + limit : null;
+    return {
+      total, limit, offset, next_offset: p.count_only === true ? null : next,
+      targets: p.count_only === true ? [] : rows.map(row => ({ ...row,
+        next: row.existing_matches.length
+          ? `A page with this name exists (${row.existing_matches[0].slug}); link it by its full slug, e.g. [[${row.existing_matches[0].slug}]].`
+          : `Create ${row.target} if it is a real entity (the ${row.referenced_by} linking page(s) gain the edge on the next extraction), or fix the link if it is a typo.` })),
+      ...(total === 0 ? { note: 'Every authored link resolves to an existing page.' } : {}),
+    };
+  },
+  cliHints: { name: 'wanted' },
+};
+
 
 // Ops in EXACTLY the canonical `operations` array order.
 export const linksOperations: Operation[] = [
-  add_link, remove_link, get_links, get_backlinks, list_link_sources, traverse_graph,
+  add_link, remove_link, get_links, get_backlinks, list_link_sources, traverse_graph, wanted_pages,
 ];

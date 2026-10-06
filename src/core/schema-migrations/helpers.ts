@@ -108,7 +108,7 @@ export async function buildIndexOnline(
   // No session SET: a reservation can fall back to a transaction-pooled connection, where a SET or RESET
   // reaches another client's backend. The build runs under the session's startup timeouts; one that times
   // out leaves an INVALID index, which the next call drops and rebuilds.
-  await engine.withReservedConnection(conn => conn.executeRaw(index.sql.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')));
+  await engine.withReservedConnection(conn => conn.executeRaw(index.sql.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')), { selfContained: true });
   // IF NOT EXISTS also skips an INVALID index a concurrent caller's failed build left behind.
   const [built] = await engine.executeRaw<{ valid: boolean }>('SELECT indisvalid AS valid FROM pg_index WHERE indexrelid = to_regclass($1)', [index.name]);
   if (!built?.valid) throw new Error(`Index ${index.name} is not valid after its concurrent build; rerun: gbrain repair request-indexes --apply`);

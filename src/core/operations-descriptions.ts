@@ -167,7 +167,7 @@ export const SKILL_CATALOG_INSTRUCTIONS = {
       "are not callable by you on this server.",
     "For host-repository skills, declared `tools` narrow the usable tools. Valid " +
       "frontmatter without `tools` inherits your available brain tools; `tools: []` permits none. " +
-      "Canonical shared skills use their approved requirements instead.",
+      "Canonical shared skills follow the same rule; their other requirements gate `usable`.",
   ],
 } as const;
 
@@ -185,7 +185,7 @@ export const SKILL_CLIENT_GUIDANCE = {
     "Do not invent tools — only the tools in `usable_tools` are callable by you.",
     "For host-repository skills, declared `tools` narrow this list. Valid frontmatter " +
       "without `tools` inherits your available brain tools; `tools: []` permits none. " +
-      "Canonical shared skills use their approved requirements instead.",
+      "Canonical shared skills follow the same rule; their other requirements gate `usable`.",
     "If `mutating` is true, this skill writes to the brain; confirm before doing so " +
       "if the user hasn't clearly asked for a write.",
   ],

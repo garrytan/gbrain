@@ -63,25 +63,23 @@ describe('autopilot wiring: nightly quality probe', () => {
     );
   });
 
-  test('DI shape: isEnabled / hasEmbeddingProvider / resolveMaxUsd / resolveRepoRoot / runLongMemEval / runCrossModalBatch / now', () => {
-    // The exact 7 fields of NightlyProbeDeps.
+  test('DI shape: isEnabled / hasEmbeddingProvider / resolveMaxUsd / resolveBudgetPolicy / resolveFixturePath / runLongMemEval / runCrossModalBatch / now', () => {
     expect(SOURCE).toContain(`isEnabled:`);
     expect(SOURCE).toContain(`hasEmbeddingProvider:`);
     expect(SOURCE).toContain(`resolveMaxUsd:`);
-    expect(SOURCE).toContain(`resolveRepoRoot:`);
+    expect(SOURCE).toContain(`resolveBudgetPolicy:`);
+    expect(SOURCE).toContain(`resolveFixturePath:`);
     expect(SOURCE).toContain(`runLongMemEval:`);
     expect(SOURCE).toContain(`runCrossModalBatch:`);
     expect(SOURCE).toContain(`now:`);
   });
 
-  test('resolveRepoRoot prefers the gbrain package root (committed fixture home), not the brain repoPath', () => {
-    // The DI harness in nightly-quality-probe.test.ts passes process.cwd()
-    // (= the gbrain repo in CI), which papered over the wiring passing
-    // repoPath (= sync.repo_path, the user's BRAIN repo, where the fixture
-    // never exists). Pin the package-root resolution + existence check.
-    expect(SOURCE).toMatch(/fileURLToPath\(new URL\('\.\.\/\.\.', import\.meta\.url\)\)/);
-    expect(SOURCE).toContain(`'longmemeval-nightly.jsonl'`);
-    expect(SOURCE).toMatch(/fixtureAtPkgRoot \? pkgRoot : repoPath/);
+  test('the fixture is the embedded package asset, never the brain repoPath (#5187)', () => {
+    // Before #5187 the wiring resolved the fixture from the package root on
+    // disk, which a compiled binary does not have, and fell back to the
+    // user's brain repo. The embedded asset is readable in both installs.
+    expect(SOURCE).toContain(`resolveFixturePath: () => NIGHTLY_PROBE_FIXTURES.longMemEval`);
+    expect(SOURCE).not.toMatch(/fixtureAtPkgRoot \? pkgRoot : repoPath/);
   });
 
   test('hasEmbeddingProvider reads from gateway.isAvailable("embedding") (codex round-2 #12 — in-process, not subprocess)', () => {
@@ -89,8 +87,8 @@ describe('autopilot wiring: nightly quality probe', () => {
     expect(SOURCE).toContain(`gateway`);
   });
 
-  test('max_usd resolves dual-plane (default = 5 pinned by resolveProbeMaxUsd unit tests)', () => {
+  test('max_usd resolves dual-plane with its cap source (default = 5 pinned by resolveProbeCap unit tests)', () => {
     expect(SOURCE).toContain(`getConfig('autopilot.nightly_quality_probe.max_usd')`);
-    expect(SOURCE).toMatch(/resolveProbeMaxUsd\(dbMaxUsd,\s*cfg\?\.autopilot\?\.nightly_quality_probe\?\.max_usd\)/);
+    expect(SOURCE).toMatch(/resolveProbeCap\(dbMaxUsd,\s*cfg\?\.autopilot\?\.nightly_quality_probe\?\.max_usd\)/);
   });
 });

@@ -43,7 +43,7 @@ import { VERSION } from '../version.ts';
 import { dispatchToolCall, requestLogStatusForResult, errorResult } from './dispatch.ts';
 import { GBRAIN_CLIENT_HEADER, resolveResultRowsMode, resultRowsForRequest } from './result-rows.ts';
 import { parseStrictParamsMode } from './validate-params.ts';
-import { filterOpsForSurface, clampSurface, type McpSurface } from './surface.ts';
+import { filterOpsForSurface, clampSurface, advertisedOps, resolveAdvertisedSurface, type McpSurface } from './surface.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
@@ -217,10 +217,10 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   // config plane — this transport builds its tool list once, so a
   // `mcp.strict_params` flip needs a restart here (deliberate; the OAuth
   // serve-http path re-reads dual-plane per request). Dispatch-side
-  // enforcement still resolves per call.
+  // enforcement still resolves per call. mcp.advertised_surface (file plane) narrows the tool list only.
   const fileConfig = loadConfig();
   const strictParams = parseStrictParamsMode(fileConfig?.mcp?.strict_params) === 'reject';
-  const tools = buildToolDefs(surfacedOps, { strictParams });
+  const tools = buildToolDefs(advertisedOps(surfacedOps, surface, await resolveAdvertisedSurface(null, fileConfig)), { strictParams });
 
   /**
    * v0.41.3 (T6): single consolidated CORS header builder. Pre-fix there were

@@ -12,8 +12,8 @@
  *                   pre-existing fenced takes tables in markdown populate the
  *                   takes table without blocking the foreground upgrade.
  *                   Falls back to inline run on PGLite (no Minion worker).
- *   C. Re-chunk   — emit a pending-host-work TODO for `gbrain re-chunk
- *                   --where pages-with-takes` (Codex P0 #3 fix: pages with
+ *   C. Re-chunk   — emit a pending-host-work TODO for `gbrain reindex
+ *                   --markdown` (Codex P0 #3 fix: pages with
  *                   pre-v0.28 chunks still contain the fenced takes content;
  *                   the chunker strip only applies to NEW imports). Re-chunk
  *                   is heavy + per-page-disruptive, so we queue a TODO instead
@@ -21,7 +21,8 @@
  *   D. Record     — runner-owned ledger write (handled by apply-migrations.ts).
  *
  * No content mutation. No data loss. Operator runs `gbrain doctor` after
- * upgrade to verify takes_backfill_complete + takes_fence_chunk_leak checks.
+ * upgrade, then `gbrain reindex --markdown` for pages chunked before the
+ * fence strip.
  */
 
 import { existsSync, mkdirSync, appendFileSync, readFileSync } from 'node:fs';
@@ -96,9 +97,10 @@ async function phaseBBackfill(
   if (!engine) return { name: 'backfill', status: 'skipped', detail: 'no_brain_configured' };
 
   try {
-    // Inline run on both engines for v0.28.0 simplicity. Larger brains can run
-    // `gbrain extract takes --rebuild` later; the migration's job is to get
-    // the table populated for upgrade-time doctor checks.
+    // Inline run on both engines for v0.28.0 simplicity. Re-running this
+    // backfill is `gbrain apply-migrations --migration 0.28.0`; one page's
+    // index rebuilds with `gbrain takes rebuild <slug>`. The migration's job
+    // is to get the table populated for upgrade-time doctor checks.
     const { extractTakes } = await import('../../core/cycle/extract-takes.ts');
     const result = await extractTakes(engine, { source: 'db' });
 
@@ -162,7 +164,7 @@ function phaseCRechunkTodo(opts: OrchestratorOpts): OrchestratorPhaseResult {
       ts: new Date().toISOString(),
       skill: 'skills/migrations/v0.28.0.md',
       reason: 'Pages with pre-v0.28 chunks still contain fenced takes content. Re-chunk so the new chunker strip rule is applied (Codex P0 #3 fix).',
-      command: "gbrain extract takes --rebuild  # forces re-chunk via reimport pipeline; see migration doc for the precise sweep command in your env",
+      command: 'gbrain reindex --markdown',
       _key: key,
     };
     appendFileSync(pendingHostWorkPath(), JSON.stringify(entry) + '\n');

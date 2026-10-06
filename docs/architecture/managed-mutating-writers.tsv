@@ -44,6 +44,7 @@ op	think	engine_guard	Remote callers are read-only; a local --save persists thro
 op	takes_add	coordinator	submitPageMutation takes intent.
 op	takes_update	coordinator	submitPageMutation takes intent.
 op	takes_resolve	coordinator	submitPageMutation takes intent.
+op	takes_remove	coordinator	submitPageMutation takes intent; local-only removal of one fence row and its takes row.
 op	takes_supersede	coordinator	submitPageMutation takes intent.
 op	sources_add	early_refusal	Deliberate administrative refusal on managed brains; source topology changes through writer administration.
 op	sources_remove	early_refusal	Deliberate administrative refusal on managed brains; source topology changes through writer administration.

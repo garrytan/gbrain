@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, renameSync, writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startResolveIpcServer } from '../../src/core/context/resolve-ipc.ts';
 import { startPersistenceIpcServer } from '../../src/core/persistence/ipc.ts';
@@ -11,7 +11,8 @@ const binding = role === 'persistence'
   ? await startPersistenceIpcServer(path, {
     brainId: '10000000-0000-4000-8000-000000000001', dispatch: async () => ({ owner: result }),
   }) : await startResolveIpcServer(path, async () => ({ pointers: [], text: result }));
-writeFileSync(result, binding ? 'bound' : 'busy');
+writeFileSync(`${result}.partial`, binding ? 'bound' : 'busy');
+renameSync(`${result}.partial`, result);
 if (binding) {
   await new Promise<void>(resolve => {
     process.stdin.once('data', () => resolve());

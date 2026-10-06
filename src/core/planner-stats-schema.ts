@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS planner_stats_state (
   analyzed_at TIMESTAMPTZ,
   last_analyze_ms INTEGER
 );
-CREATE OR REPLACE FUNCTION gbrain_count_modifications() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION gbrain_count_modifications() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
 DECLARE
   modified BIGINT;
 BEGIN

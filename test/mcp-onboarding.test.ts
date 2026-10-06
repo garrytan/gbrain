@@ -31,6 +31,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Onboarding state is process-wide: leave a fresh process for the next file in this shard,
+  // or its stdio dispatches inherit this file's warm snapshot and first-run bundle.
+  newProcess();
   await engine.disconnect();
 });
 

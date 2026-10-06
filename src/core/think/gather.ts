@@ -21,6 +21,7 @@ import { INTERNAL_BREADTH_SEARCH_OPTS } from '../search/internal-breadth.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import type { Page, SearchResult } from '../types.ts';
 import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
+import { pageContentDate } from './temporal-context.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
@@ -606,7 +607,8 @@ export const INJECTION_SUSPECTED_LINE = 'injection_suspected: this page contains
 
 /**
  * Render gather results into the per-block strings the prompt builder uses.
- * Pages are rendered as `<page slug="..." score="...">excerpt</page>`;
+ * Pages are rendered as `<page slug="..." rank="..." date="...">excerpt</page>`; `date` appears only
+ * for content-dated pages (see temporal-context.ts) and renders in `opts.timeZone`;
  * takes are rendered via the renderTakesBlock helper from sanitize.ts.
  * `excerptLen` is exact per page — callers wanting budget-aware sizing pass
  * `pagesBlockExcerptLen(pages.length)` (the think pipeline does).
@@ -615,9 +617,11 @@ export function renderPagesBlock(
   pages: SearchResult[],
   excerptLen = 600,
   query = '',
-  opts: { verbatim?: boolean | ((p: SearchResult) => boolean); verbatimLen?: number } = {},
+  opts: { verbatim?: boolean | ((p: SearchResult) => boolean); verbatimLen?: number; timeZone?: string } = {},
 ): string {
   return pages.map((p, idx) => {
+    const day = pageContentDate(p, opts.timeZone ?? 'UTC');
+    const dateAttr = day ? ` date="${day}"` : '';
     const page = p as unknown as {
       slug?: string;
       title?: string;
@@ -633,7 +637,7 @@ export function renderPagesBlock(
     // Evidence delivery: the block was already budgeted and cut around its
     // hits; render it whole (capped only by excerptLen).
     if (typeof opts.verbatim === 'function' ? opts.verbatim(p) : opts.verbatim) {
-      return `<page slug="${slug}" rank="${idx + 1}">\n${flag}${content.slice(0, opts.verbatimLen ?? excerptLen)}\n</page>`;
+      return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}>\n${flag}${content.slice(0, opts.verbatimLen ?? excerptLen)}\n</page>`;
     }
     const excerpt = selectRelevantExcerptDetailed(
       content,
@@ -645,7 +649,7 @@ export function renderPagesBlock(
       (excerpt.truncatedStart ? `${EXCERPT_CUT_START_MARKER}\n` : '') +
       excerpt.text +
       (excerpt.truncatedEnd ? `\n${EXCERPT_CUT_END_MARKER}` : '');
-    return `<page slug="${slug}" rank="${idx + 1}">\n${flag}${body}\n</page>`;
+    return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}>\n${flag}${body}\n</page>`;
   }).join('\n\n');
 }
 

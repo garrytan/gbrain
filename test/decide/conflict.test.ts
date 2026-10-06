@@ -113,7 +113,11 @@ describe('request shape and dataset', () => {
     const req = adapter.request([...families(items).values()][0]!);
     expect(req.state.fact).toMatchObject({ text: 'Alice is CTO of Acme', class: 'facts' });
     expect(req.questions.map((q) => q.inputs?.candidate?.text)).toEqual(['Alice is VP Eng at Acme', 'Alice is the CTO at Acme']);
-    expect(adapter.harmfulActions).toBeUndefined();
+    // The review lane's acting call sites qualify on it: an action at or above the threshold is correct only on a duplicate label.
+    const [a1, a2] = items;
+    const p = { threshold: 0.9, margin: 0, minKeep: 0 };
+    expect(adapter.harmfulActions!([a1!, a2!], { a1: 0.95, a2: 0.95 }, p).map((a) => [a.item.id, a.correct])).toEqual([['a1', false], ['a2', true]]);
+    expect(adapter.harmfulActions!([a1!, a2!], { a1: 0.5, a2: null }, p)).toEqual([]);
   });
 });
 

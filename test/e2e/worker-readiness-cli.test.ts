@@ -78,7 +78,9 @@ describeDatabase('worker CLI admission against Postgres', () => {
       expect(current?.attempts_made).toBe(0);
       expect(current?.stalled_counter).toBe(0);
       expect(current?.result?.stdout_tail).toBe('ready-fixture');
-      expect(child.exitCode, diagnostic).toBe(143);
+      // #5062: SIGTERM now drains through the worker's signal owner and exits
+      // 0; 143 was the generic cleanup handler killing it before the drain.
+      expect(child.exitCode, diagnostic).toBe(0);
     } finally {
       if (child.exitCode === null) child.kill('SIGKILL');
       await child.exited;
@@ -120,7 +122,9 @@ describeDatabase('worker CLI admission against Postgres', () => {
       expect(diagnostic).not.toContain('could not be published');
       expect(current?.status, diagnostic).toBe('completed');
       expect(current?.result?.stdout_tail).toBe('legacy-owner-fixture');
-      expect(child.exitCode, diagnostic).toBe(143);
+      // #5062: SIGTERM now drains through the worker's signal owner and exits
+      // 0; 143 was the generic cleanup handler killing it before the drain.
+      expect(child.exitCode, diagnostic).toBe(0);
     } finally {
       if (child.exitCode === null) child.kill('SIGKILL');
       await child.exited;

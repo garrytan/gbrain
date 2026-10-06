@@ -105,6 +105,29 @@ describe('managed dream publication deferral (#6052)', () => {
       expect(await engine.getPage('reports/drift-2030-01-20')).toBeNull();
     });
   }
+  for (const fault of ['contention', 'pending'] as const) {
+    test(`patterns defers quote-grounding ${fault} before provenance or finalized verification`, async () => {
+      await engine.putPage('wiki/personal/patterns/example', {
+        type: 'note', title: 'Example pattern', compiled_truth: 'A recurring synthetic theme.',
+      });
+      publishError = fault === 'contention' ? await contention() : pending();
+      const result = await runPhasePatterns(engine, { brainDir: scratch, dryRun: false, once: true });
+      expect(result.status).toBe('warn');
+      expect(result.details.publish_deferred).toBe(1);
+      expect(result.details.patterns_written).toBe(0);
+      expect(publishCalls).toBe(1);
+      expect(stampCalls).toBe(0);
+      expect(verified).toBe(0);
+      expect(await engine.getConfig(STAMP_KEY)).toBeNull();
+      publishError = undefined;
+      const resumed = await runPhasePatterns(engine, { brainDir: scratch, dryRun: false, once: true });
+      expect(resumed.status).toBe('ok');
+      expect(resumed.details.patterns_written).toBe(1);
+      expect(stampCalls).toBe(1);
+      expect(verified).toBe(1);
+      expect(await engine.getConfig(STAMP_KEY)).not.toBeNull();
+    });
+  }
   test('a failed patterns child remains a failure even if its partial output is pending', async () => {
     childStatus = 'failed'; publishError = pending();
     const result = await runPhasePatterns(engine, { brainDir: scratch, dryRun: false, once: true });

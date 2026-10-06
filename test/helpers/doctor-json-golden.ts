@@ -15,7 +15,9 @@
  * details, issues) plus the report envelope, with volatile tokens replaced:
  * temp home / repo / os tmpdir paths, UUIDs, ISO timestamps, the running
  * package and Bun versions, the machine hostname, and `*_ms` / elapsed / pid-style
- * detail keys. Check order is emitted order (deterministic; no Map/Set
+ * detail keys, and the latest schema migration number in the `schema_version`
+ * message (`<latest>`, so a migration renumber does not churn the goldens;
+ * `expectSchemaLatestMatchesRegistry` keeps the hidden number honest). Check order is emitted order (deterministic; no Map/Set
  * iteration is re-sorted). stderr lines are kept (normalized) because the
  * early-stop paths announce themselves there.
  */
@@ -24,11 +26,14 @@ import { hostname, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { defineNormalizer, mapStrings, scrubKeys, scrubPaths, scrubTimestamps } from './golden.ts';
 import { PROVIDER_ENV_KEYS } from './provider-env.ts';
+import { MIGRATIONS } from '../../src/core/schema-migrations/registry.generated.ts';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 const CLI = join(REPO_ROOT, 'src', 'cli.ts');
 const PRELOAD = join(import.meta.dir, 'no-network-preload.ts');
 const PACKAGE_VERSION = (JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8')) as { version: string }).version;
+const REGISTRY_LATEST = Math.max(...MIGRATIONS.map((m) => m.version));
+const SCHEMA_LATEST = /\b(Version |latest: |latest is |latest known version \()(\d+)\b/g;
 
 export interface DoctorHome {
   home: string;
@@ -140,10 +145,31 @@ export function normalizeDoctorText(text: string, roots: Record<string, string>,
   out = scrubTimestamps(out).replace(UUID, '<uuid>');
   out = out.replace(/\(most recent caller: at [^()]*\([^()]*\)\)/g, '(most recent caller: <frame>)');
   out = out.split(PACKAGE_VERSION).join('<version>');
+  out = out.replace(SCHEMA_LATEST, (match, prefix: string, n: string) => (Number(n) === REGISTRY_LATEST ? `${prefix}<latest>` : match));
   out = out.split(`Bun ${Bun.version}`).join('Bun <bun-version>');
   const host = hostname();
   if (host) out = out.split(host).join('<hostname>');
   return out;
+}
+
+/**
+ * Golden guard for the `<latest>` placeholder: the raw (un-normalized) doctor
+ * report must name the migration registry maximum as both the brain's schema
+ * version and the latest version, so normalizing it away hides nothing.
+ */
+export function expectSchemaLatestMatchesRegistry(run: GbrainRun): void {
+  const checks = (run.json as { checks?: Array<{ name: string; message: string }> } | null)?.checks ?? [];
+  const message = checks.find((c) => c.name === 'schema_version')?.message ?? '<no schema_version check>';
+  const expected = `Version ${REGISTRY_LATEST} (latest: ${REGISTRY_LATEST})`;
+  if (message !== expected) {
+    throw new Error([
+      `FAIL: doctor schema_version says "${message}", expected "${expected}" (migration registry maximum ${REGISTRY_LATEST}).`,
+      'Why:  the doctor goldens replace the latest migration number with <latest>; this guard keeps the doctor\'s reported',
+      '      latest version equal to src/core/schema-migrations/registry.generated.ts, so the placeholder cannot hide a stale schema.',
+      'Fix:  bun run build:schema-migrations (stale registry), then rerun this test; a fresh brain must migrate to the registry maximum.',
+      'See:  docs/TESTING.md#refactor-wave-1-goldens',
+    ].join('\n'));
+  }
 }
 
 /** `doctor-json-v1` with optional extra literal/regex replacements (e.g. a Postgres URL). */

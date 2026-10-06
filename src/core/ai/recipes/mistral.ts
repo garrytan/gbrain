@@ -31,6 +31,16 @@ export const mistral: Recipe = {
   name: 'Mistral AI',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  // No shipped rate for these yet: they warn and run under a default cap; a
+  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  unpriced_models: [
+    'ministral-3b-latest',
+    'mistral-small-latest',
+    'mistral-medium-latest',
+    'mistral-large-latest',
+    'ministral-8b-latest',
+    'magistral-small-latest',
+  ],
   base_url_default: 'https://api.mistral.ai/v1',
   auth_env: {
     required: ['MISTRAL_API_KEY'],

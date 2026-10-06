@@ -702,6 +702,7 @@ export async function computeExtractAtomsBacklogCheck(
     }
 
     const { packDeclaresPhase } = await import('../../../core/cycle.ts');
+    const { extractAtomsPhaseStaleWarning } = await import('../../../core/cycle/extract-atoms-stamp.ts');
     let declared = false;
     try { declared = await packDeclaresPhase(engine, 'extract_atoms'); } catch { declared = false; }
 
@@ -768,7 +769,13 @@ export async function computeExtractAtomsBacklogCheck(
           },
         };
       }
-      // Pack runs it AND a cycle completed recently (or the backlog is small,
+      // #5028: a recent cycle does not prove THIS phase ran; check each backlog source's own stamp.
+      if (evidence && evidence.state === 'fresh') {
+        const bySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog, opts.sourceIds);
+        const phaseWarn = bySource ? await extractAtomsPhaseStaleWarning(engine, backlog, bySource, buildExtractAtomsDrainCommand, approx) : null;
+        if (phaseWarn) return { name, status: 'warn', ...phaseWarn };
+      }
+      // Pack runs it AND the phase ran recently (or the backlog is small,
       // or evidence is unreadable — fail-open). Informational.
       return {
         name, status: 'ok',
@@ -1003,6 +1010,7 @@ export async function computeExtractHealthCheck(
       expected_limit_count: number;
       rollup_write_failures: number;
       last_updated_at: Date | string | null;
+      last_halt_age_days: number | string | null;
     };
 
     // #4482: expected_limit_count (migration v141) counts runs that stopped
@@ -1019,7 +1027,8 @@ export async function computeExtractHealthCheck(
          SUM(round_completed_count) AS round_completed_count,
          ${withExpected ? 'SUM(expected_limit_count)' : '0'} AS expected_limit_count,
          SUM(rollup_write_failures) AS rollup_write_failures,
-         MAX(updated_at) AS last_updated_at
+         MAX(updated_at) AS last_updated_at,
+         CURRENT_DATE - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
        FROM extract_rollup_7d
        WHERE day >= CURRENT_DATE - 7
        GROUP BY kind
@@ -1055,6 +1064,7 @@ export async function computeExtractHealthCheck(
       expected_limit_count: number;
       halt_rate: number;
       last_updated_at: string | null;
+      last_halt_age_days: number | null;
     };
 
     const kinds: KindAggregate[] = rows.map(r => {
@@ -1078,6 +1088,7 @@ export async function computeExtractHealthCheck(
         last_updated_at: r.last_updated_at
           ? new Date(r.last_updated_at).toISOString()
           : null,
+        last_halt_age_days: r.last_halt_age_days == null ? null : Number(r.last_halt_age_days),
       };
     });
 
@@ -1097,16 +1108,15 @@ export async function computeExtractHealthCheck(
       // high halt rate from entirely historical failures with nothing
       // currently wrong — the operator has no way to tell "actively
       // failing" from "hasn't run since a bug that's already fixed" without
-      // this. last_updated_at is already computed (MAX(updated_at) above)
-      // but wasn't surfaced in the message text, only in `details`.
+      // this. The age is the most recent day with a halt, not the last
+      // rollup write: a kind that halted 4 days ago and ran cleanly today
+      // reads "last halt 4d ago".
       const top3 = [...highHaltKinds]
         .sort((a, b) => b.halt_rate - a.halt_rate)
         .slice(0, 3)
         .map(k => {
-          const ageDays = k.last_updated_at
-            ? Math.floor((Date.now() - new Date(k.last_updated_at).getTime()) / 86_400_000)
-            : null;
-          const ageSuffix = ageDays === null ? '' : ageDays <= 0 ? ', today' : `, ${ageDays}d ago`;
+          const ageDays = k.last_halt_age_days;
+          const ageSuffix = ageDays === null ? '' : ageDays <= 0 ? ', last halt today' : `, last halt ${ageDays}d ago`;
           return `${k.kind}=${(k.halt_rate * 100).toFixed(1)}%${ageSuffix}`;
         })
         .join(', ');

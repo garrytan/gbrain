@@ -28,6 +28,7 @@ import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import type { ScopedReadRunner } from './cjk-search.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { quoteIdentifier, resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
 
 /**
  * PGLite can return zero rows from `INSERT ... ON CONFLICT DO UPDATE ...
@@ -240,7 +241,7 @@ export async function restorePage(exec: SqlExecutor, slug: string, opts?: { sour
     const sourceId = opts?.sourceId;
     const sourceCondition = sourceId ? sqlFragment`AND source_id = ${sourceId}` : sqlFragment``;
     const { rows } = await exec.run(sqlFragment`
-      UPDATE pages SET deleted_at = NULL
+      UPDATE pages SET deleted_at = NULL, updated_at = now()
       WHERE slug = ${slug} AND deleted_at IS NOT NULL ${sourceCondition}
       RETURNING slug
     `);
@@ -314,6 +315,35 @@ export async function updatePageContextualRetrievalState(
   mode: string,
   corpusGeneration: string | null,
 ): Promise<void> {
+    if (mode === 'none') {
+      const { rows: config } = await exec.run<{ key: string; value: string }>(sqlFragment`
+        SELECT key,value FROM config WHERE key IN ('search_embedding_column','embedding_columns')`);
+      const column = resolveWriteColumnFromConfigRows({
+        searchEmbeddingColumn: config.find(row => row.key === 'search_embedding_column')?.value ?? null,
+        embeddingColumnsJson: config.find(row => row.key === 'embedding_columns')?.value ?? null,
+      });
+      const vector = trustedSql(quoteIdentifier(column.name));
+      await exec.run(sqlFragment`
+        WITH previous AS MATERIALIZED (
+          SELECT id, contextual_retrieval_mode AS old_mode,
+            COALESCE(frontmatter, '{}'::jsonb) ? 'embed_skip' AS skipped
+          FROM pages WHERE source_id=${sourceId} AND slug=${slug} AND deleted_at IS NULL
+          FOR UPDATE
+        ), changed AS (
+          UPDATE pages p SET contextual_retrieval_mode=${mode}, corpus_generation=${corpusGeneration},
+            updated_at=now(), embedding_signature=CASE
+              WHEN previous.old_mode IN ('title','per_chunk_synopsis') AND NOT previous.skipped
+              THEN NULL ELSE p.embedding_signature END
+          FROM previous WHERE p.id=previous.id
+          RETURNING p.id, previous.old_mode, previous.skipped
+        )
+        UPDATE content_chunks cc SET ${vector}=NULL, embedded_at=NULL,
+          embedded_text_hash=NULL, embedding_input_hash=NULL
+        FROM changed WHERE cc.page_id=changed.id
+          AND changed.old_mode IN ('title','per_chunk_synopsis') AND NOT changed.skipped
+          AND cc.${vector} IS NOT NULL`);
+      return;
+    }
     // Narrow UPDATE — bumps updated_at as a side effect so the autopilot
     // sweep doesn't think the page hasn't changed since last touch. Skips
     // soft-deleted rows. corpus_generation nullable (caller passes NULL
@@ -343,9 +373,13 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       // Exact only when the cursor carries the column's microseconds: callers
       // resume from `Page.updated_at_iso` (projected below), never from a JS
       // Date, which would re-select every row in the last row's millisecond.
-      ? sqlFragment`AND (p.updated_at > ${keyset.updatedAt}::timestamptz OR (p.updated_at = ${keyset.updatedAt}::timestamptz AND p.slug > ${keyset.slug}))`
+      // `::text::timestamptz`: a bare `::timestamptz` param is typed by the
+      // postgres.js driver, which serializes strings through a JS Date and
+      // truncates the cursor to milliseconds (re-selecting the whole
+      // millisecond; a >limit cluster inside one millisecond never drains).
+      ? sqlFragment`AND (p.updated_at > ${keyset.updatedAt}::text::timestamptz OR (p.updated_at = ${keyset.updatedAt}::text::timestamptz AND p.slug > ${keyset.slug}))`
       : updatedAfter
-        ? sqlFragment`AND p.updated_at > ${updatedAfter}::timestamptz`
+        ? sqlFragment`AND p.updated_at > ${updatedAfter}::text::timestamptz`
         : sqlFragment``;
     // slugPrefix uses the (source_id, slug) UNIQUE btree index for range scans.
     // Escape LIKE metacharacters so the user prefix is treated as a literal.
@@ -616,6 +650,19 @@ export async function resolveSlugs(
 // ── v0.42.7 (#1696): link/timeline extraction freshness watermark ──
 
 /**
+ * Origins of wanted links whose target now exists: a live page with the wanted
+ * slug (or, for a bare-name reference, the wanted basename) updated after the
+ * origin last resolved it. Their next extraction creates the edge
+ * (src/core/wanted-links.ts).
+ */
+const WANTED_ORIGIN_IS_STALE = sqlFragment`id IN (SELECT w.origin_page_id FROM wanted_links w
+      JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL
+      WHERE t.updated_at > w.checked_at
+    UNION SELECT w.origin_page_id FROM wanted_links w
+      JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL
+      WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)`;
+
+/**
  * Shared stale-for-extraction predicate. `attendance` narrows it by the #5761
  * marker: a page is attendance-blocked while its marker equals its current
  * knowledge revision. Extraction itself never passes it, so it keeps
@@ -623,8 +670,8 @@ export async function resolveSlugs(
  */
 function stalePagesWhere(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked' }) {
   const version = opts?.versionTs
-    ? sqlFragment`(links_extracted_at IS NULL OR links_extracted_at < ${opts.versionTs}::timestamptz OR updated_at > links_extracted_at)`
-    : sqlFragment`(links_extracted_at IS NULL OR updated_at > links_extracted_at)`;
+    ? sqlFragment`(links_extracted_at IS NULL OR links_extracted_at < ${opts.versionTs}::timestamptz OR updated_at > links_extracted_at OR ${WANTED_ORIGIN_IS_STALE})`
+    : sqlFragment`(links_extracted_at IS NULL OR updated_at > links_extracted_at OR ${WANTED_ORIGIN_IS_STALE})`;
   const source = opts?.sourceId ? sqlFragment` AND source_id = ${opts.sourceId}` : sqlFragment``;
   const attendance = opts?.attendance === 'exclude'
     ? sqlFragment` AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision`

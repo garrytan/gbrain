@@ -29,6 +29,7 @@ upstream: brain-ingest-gate@fc834ee
 # brain-first lookup performed at write time (entity card, alias-expanded
 # search, read the top hit) before anything external or new is written.
 brain_first: true
+when_to_use: "Use when the user asks: \"move this to brain\", \"migrate to brain\", \"copy these files into the brain\", \"is this already in the brain\", \"check for duplicates before writing\"."
 ---
 
 # Brain Ingest Gate — Resolve and Dedup Before Anything Enters the Brain

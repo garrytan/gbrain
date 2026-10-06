@@ -31,6 +31,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import { gbrainPath } from '../core/config.ts';
 import {
   DEFAULT_ALIASES,
   TIER_DEFAULTS,
@@ -42,6 +43,13 @@ import {
   type ResolveSource,
 } from '../core/model-config.ts';
 import { resolveExtractAtomsModelWithSource } from '../core/cycle/extract-atoms.ts';
+import {
+  NIGHTLY_PROBE_EXTRACTOR_ROUTE,
+  NIGHTLY_PROBE_READER_ROUTE,
+  NIGHTLY_PROBE_SLOT_KEYS,
+  resolveNightlyProbeModelRoutes,
+  type NightlyProbeSlotId,
+} from '../core/cycle/nightly-probe-routes.ts';
 import { maybeAttachVersionSuffixHint } from '../core/ai/base-url-probe.ts';
 import { newerAnthropicModel } from '../core/ai/anthropic-model-ids.ts';
 import type { AIGatewayConfig } from '../core/ai/types.ts';
@@ -131,12 +139,31 @@ interface PerTaskEntry {
   newer_available?: NewerAvailable;
 }
 
+interface NightlyProbeRouteEntry {
+  model: string;
+  source: string;
+}
+
+interface NightlyProbeReport {
+  reader: NightlyProbeRouteEntry;
+  extractor: NightlyProbeRouteEntry;
+  /** Judge panel in slot order; `source` is `config: <slot key>`, `panel default` or `substitute for <default> (no usable provider)`. */
+  slots: Array<NightlyProbeRouteEntry & { id: string }>;
+  /**
+   * Slot availability, substitutes and key-aware defaults are judged from this
+   * process's environment, not the daemon's: says which keys the daemon may
+   * hold that this report cannot see.
+   */
+  environment_note?: string;
+}
+
 interface ModelsReport {
   schema_version: 1;
   global_default: { value: string | null };
   tiers: Record<ModelTier, ModelEntry>;
   per_task: PerTaskEntry[];
   aliases: { defaults: Record<string, string>; user: Record<string, string> };
+  nightly_probe: NightlyProbeReport;
 }
 
 /**
@@ -238,6 +265,47 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
     tiers,
     per_task,
     aliases: { defaults: { ...DEFAULT_ALIASES }, user: userAliases },
+    nightly_probe: await buildNightlyProbeReport(engine),
+  };
+}
+
+/**
+ * The nightly quality probe's routes as the probe resolves them (#5872): the
+ * probe's own route resolver, then the #4636 substitution over the panel
+ * defaults against this process's brain-configured gateway (silent log —
+ * the report labels each substituted slot instead). The daemon's launcher
+ * also sources the gbrain env file, which this command never loads, so the
+ * report names that gap instead of reading a secrets file.
+ */
+async function buildNightlyProbeReport(engine: BrainEngine): Promise<NightlyProbeReport> {
+  const routes = await resolveNightlyProbeModelRoutes(engine);
+  const { substituteUnavailableDefaultSlots } = await import('./eval-cross-modal.ts');
+  const { DEFAULT_SLOTS } = await import('../core/cross-modal-eval/runner.ts');
+  const explicit: Record<string, string | undefined> = routes.slots;
+  const panel = substituteUnavailableDefaultSlots(
+    DEFAULT_SLOTS.map(s => ({ id: s.id, model: explicit[s.id] ?? s.model })),
+    explicit,
+    () => {},
+  );
+  return {
+    reader: {
+      model: routes.reader.model,
+      source: sourceLabel(routes.reader.source, NIGHTLY_PROBE_READER_ROUTE, 'tier.reasoning'),
+    },
+    extractor: {
+      model: routes.extractor.model,
+      source: sourceLabel(routes.extractor.source, NIGHTLY_PROBE_EXTRACTOR_ROUTE, 'tier.utility'),
+    },
+    slots: panel.map((slot, i) => {
+      const panelDefault = DEFAULT_SLOTS[i]!.model;
+      const source = explicit[slot.id]
+        ? `config: ${NIGHTLY_PROBE_SLOT_KEYS[slot.id as NightlyProbeSlotId]}`
+        : slot.model === panelDefault ? 'panel default' : `substitute for ${panelDefault} (no usable provider)`;
+      return { id: slot.id, model: slot.model, source };
+    }),
+    environment_note:
+      "Slot availability, substitutes and key-aware defaults are judged from this process's environment; " +
+      `a provider key set only in ${gbrainPath('env')} (sourced by the autopilot daemon's launcher) reads here as unavailable.`,
   };
 }
 
@@ -260,6 +328,18 @@ function formatText(report: ModelsReport): string {
   for (const t of report.per_task) {
     lines.push(`  ${t.key.padEnd(34)} → ${t.resolved.padEnd(45)} [${t.source}]${formatNewer(t.newer_available)}`);
   }
+  lines.push('');
+  lines.push('Nightly quality probe (autopilot.nightly_quality_probe):');
+  const probe = report.nightly_probe;
+  const probeRows: Array<[string, NightlyProbeRouteEntry]> = [
+    ['reader (LongMemEval answers)', probe.reader],
+    ['extractor (trajectory claims)', probe.extractor],
+    ...probe.slots.map(s => [`judge slot ${s.id}`, s] as [string, NightlyProbeRouteEntry]),
+  ];
+  for (const [label, route] of probeRows) {
+    lines.push(`  ${label.padEnd(34)} → ${route.model.padEnd(45)} [${route.source}]`);
+  }
+  if (probe.environment_note) lines.push(`  Note: ${probe.environment_note}`);
   lines.push('');
   lines.push('Aliases:');
   for (const [k, v] of Object.entries(report.aliases.defaults)) {

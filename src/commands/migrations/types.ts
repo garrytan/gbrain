@@ -42,6 +42,8 @@ export interface OrchestratorOpts {
     /** The runner's own orchestration lease, which the quiescence check ignores. */
     ownLeaseToken?: string;
   };
+  /** #5476: `--accept-reviewed-inventory <source>=<digest>`: the reviewed shared-skills inventory change to accept, per source. */
+  acceptReviewedInventory?: Record<string, string>;
 }
 
 export interface OrchestratorPhaseResult {

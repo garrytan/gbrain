@@ -14,6 +14,7 @@ writes_to:
   - originals/
   - personal/
   - ideas/
+when_to_use: "Use when the user asks: \"crawl my archive\", \"find gold in my archive\", \"archive crawler\", \"scan my dropbox for\", \"mine my old files for\"."
 ---
 
 # archive-crawler — The Universal Archivist

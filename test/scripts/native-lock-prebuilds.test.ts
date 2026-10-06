@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { safeLoad } from 'js-yaml';
+import { load } from 'js-yaml';
 import manifest from '../../native/locks/manifest.json';
 
 const repo = join(import.meta.dir, '../..');
@@ -71,7 +71,7 @@ describe('native lock distribution integrity', () => {
       strategy: { matrix: { bun: string[]; target: string[] } };
       steps: Array<{ run?: string }>;
     };
-    const workflow = safeLoad(readFileSync(join(repo, '.github/workflows/native-locks.yml'), 'utf8')) as {
+    const workflow = load(readFileSync(join(repo, '.github/workflows/native-locks.yml'), 'utf8')) as {
       jobs: Record<string, NativeJob>;
     };
     const pairs: string[] = [];

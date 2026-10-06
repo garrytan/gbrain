@@ -100,6 +100,61 @@ export interface World {
   roots?: Record<string, string>;
   /** The connector source, when the topology has one. */
   connector?: { sourceId: string; root: string };
+  /** Session drops this robot injects (the pooler_disconnect fault); absent in every other run. */
+  sessionDrops?: SessionDrops;
+}
+
+/**
+ * The robot's own session drops. A harness read treats a closed connection as
+ * injected only once a drop round that began before the error terminated at
+ * least one session; any other close is unexpected and fails the run.
+ */
+export class SessionDrops {
+  private killed = 0;
+  private readonly inFlight = new Set<Promise<number>>();
+  /** Run one drop round; resolves to the number of sessions it terminated (0 when the round itself failed). */
+  inject(terminate: () => Promise<number>): Promise<number> {
+    const round: Promise<number> = terminate().catch(() => 0).then(n => { this.killed += n; this.inFlight.delete(round); return n; });
+    this.inFlight.add(round);
+    return round;
+  }
+  /** Whether a round started before this call terminated a session. */
+  async injectedBefore(): Promise<boolean> {
+    if (!this.killed) await Promise.all([...this.inFlight]);
+    return this.killed > 0;
+  }
+}
+
+const DROPPED_CONNECTION = /CONNECTION_CLOSED|CONNECTION_ENDED|ECONNRESET|57P01|08P01|08006|server conn crashed|terminating connection|Connection terminated/i;
+const DROP_RETRIES = 8;
+
+/**
+ * Run a harness read (an oracle check, a drain poll, an argument lookup) across
+ * a session drop the robot injected; only the system under test is judged on
+ * such errors. A close the robot did not inject, or one that outlasts the
+ * retries, fails the run with the next step.
+ */
+export async function retryingRead<T>(world: Pick<World, 'sessionDrops'>, read: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await read(); } catch (error) {
+      const code = (error as { code?: string }).code;
+      const seen = `${code ?? 'error'}: ${String((error as Error).message).slice(0, 200)}`;
+      if (!DROPPED_CONNECTION.test(seen)) throw error;
+      if (!(await world.sessionDrops?.injectedBefore())) {
+        throw new Error(`crash robot: a harness read lost its database connection (${seen}), but the robot had dropped no session `
+          + 'before it, so the database, the pooler or the code under test closed it. Check the Postgres and PgBouncer logs for a restart '
+          + 'at that time, then re-run the crash robot: bun --no-env-file scripts/persistence/validate.ts --engine=postgres --schedules=0 '
+          + '--operations=0 --no-crashes. Docs: scripts/persistence/README.md#crash-robot', { cause: error });
+      }
+      if (attempt >= DROP_RETRIES) {
+        throw new Error(`crash robot: a harness read still lost its connection after ${DROP_RETRIES + 1} attempts across injected session `
+          + `drops (${seen}), so the database stayed unreachable between drop rounds. Check that Postgres and PgBouncer are up, then re-run `
+          + 'the crash robot: bun --no-env-file scripts/persistence/validate.ts --engine=postgres --schedules=0 --operations=0 --no-crashes. '
+          + 'Docs: scripts/persistence/README.md#crash-robot', { cause: error });
+      }
+      await Bun.sleep(150 * (attempt + 1));
+    }
+  }
 }
 
 /** The GitHub item the connector fixture serves; its page is `CONNECTOR_SLUG` in the connector source. */
@@ -179,14 +234,8 @@ async function reauthenticate(world: World, actor: string): Promise<void> {
   const remote = world.remotes.find(r => r.name === actor);
   if (!remote) return;
   const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(world.engine) });
-  // The transport's own verification retries a dropped connection; only the operation is under test.
-  for (let attempt = 0; ; attempt++) {
-    try { world.auth.set(actor, await provider.verifyAccessToken(remote.token) as unknown as AuthInfo); return; }
-    catch (error) {
-      if (attempt >= 8 || !/CONNECTION_CLOSED|ECONNRESET|08P01|57P01|server conn crashed/i.test(`${(error as { code?: string }).code} ${(error as Error).message}`)) throw error;
-      await Bun.sleep(150 * (attempt + 1));
-    }
-  }
+  // The transport's own verification retries an injected session drop; only the operation is under test.
+  world.auth.set(actor, await retryingRead(world, () => provider.verifyAccessToken(remote.token)) as unknown as AuthInfo);
 }
 
 /** Revoke a remote actor's credential through the owner's real revocation path. */
@@ -237,7 +286,7 @@ export async function paramsFor(world: World, d: OpDescriptor): Promise<{ op: st
   const a = resolveArg(world, d.args as OpArg) as Record<string, unknown>;
   if (a.content === '$stale_content') a.content = world.observations.get(String(a.stale_of))?.pageContent ?? 'missing stale content';
   if (a.expected_revision === '$current') {
-    const snapshot = await world.engine.readPageSnapshot(String(a.slug), { sourceId: d.source, includeDeleted: true });
+    const snapshot = await retryingRead(world, () => world.engine.readPageSnapshot(String(a.slug), { sourceId: d.source, includeDeleted: true }));
     a.expected_revision = snapshot?.revision ?? 'missing-page';
   }
   const revision = a.expected_revision === undefined ? {} : { expected_revision: a.expected_revision };
@@ -340,8 +389,8 @@ export async function executeOp(world: World, d: OpDescriptor): Promise<OpObserv
   const slug = typeof params.slug === 'string' ? params.slug : typeof params.entity === 'string' ? params.entity : null;
   if (observation.status === 'committed' && slug) {
     try {
-      const page = await operationsByName.get_page.handler(contextFor(world, 'local', d.source),
-        { slug, include_content: true, source_id: d.source }) as Record<string, unknown>;
+      const page = await retryingRead(world, () => operationsByName.get_page.handler(contextFor(world, 'local', d.source),
+        { slug, include_content: true, source_id: d.source })) as Record<string, unknown>;
       if (typeof page?.content === 'string') observation.pageContent = page.content;
     } catch { /* deleted or not a page */ }
   }

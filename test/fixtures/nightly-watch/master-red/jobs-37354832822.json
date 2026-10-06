@@ -1,0 +1,485 @@
+{
+"total_count": 78,
+"jobs": [
+{
+"id": 111914483571,
+"name": "changes",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914483861,
+"name": "slow-brainbench-e2e",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914483942,
+"name": "brainbench",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914483963,
+"name": "persistence-validation / PgBouncer, RLS and pool capacity / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914483978,
+"name": "persistence-validation / Read latency / pglite / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914483981,
+"name": "persistence-validation / PgBouncer, RLS and pool capacity / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914483987,
+"name": "serial-tests (3)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484013,
+"name": "serial-tests (1)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484017,
+"name": "slow-entity-resolve-perf",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484037,
+"name": "verify",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484063,
+"name": "serial-tests (4)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484073,
+"name": "persistence-validation / Unit-lane PostgreSQL arms 2/2 / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484123,
+"name": "persistence-validation / Unit-lane PostgreSQL arms 1/2 / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484156,
+"name": "gitleaks",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484179,
+"name": "test (2)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484195,
+"name": "persistence-validation / Unit-lane PostgreSQL arms 1/2 / Bun 1.4.0",
+"conclusion": "failure",
+"steps": [
+{
+"number": 7,
+"name": "Require PostgreSQL arms of unit-lane suites",
+"conclusion": "failure"
+}
+]
+},
+{
+"id": 111914484201,
+"name": "admin-browser",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484210,
+"name": "dependency-audit",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484211,
+"name": "test (3)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484218,
+"name": "test (5)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484244,
+"name": "persistence-validation / Unit-lane PostgreSQL arms 2/2 / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484288,
+"name": "shared-skills-compatibility",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484306,
+"name": "serial-tests (2)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484320,
+"name": "persistence-validation / Read latency / postgres / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484338,
+"name": "persistence-validation / Read latency / pglite / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484357,
+"name": "test (6)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484384,
+"name": "persistence-validation / postgres / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484440,
+"name": "persistence-validation / postgres / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484445,
+"name": "security-regressions (ubuntu-latest, 1.4.0)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484467,
+"name": "test (8)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484469,
+"name": "persistence-validation / Reconciliation crashes / pglite / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484480,
+"name": "test (7)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484482,
+"name": "persistence-validation / pglite / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484503,
+"name": "security-regressions (macos-26, 1.4.2)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484522,
+"name": "persistence-validation / Reconciliation crashes / pglite / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484545,
+"name": "persistence-validation / Reconciliation crashes / postgres / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484555,
+"name": "security-regressions (macos-26, 1.4.0)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484557,
+"name": "persistence-validation / Crash robot / postgres / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484567,
+"name": "persistence-validation / Crash robot / pglite / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484571,
+"name": "test (4)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484578,
+"name": "security-regressions (windows-latest, 1.4.0)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484579,
+"name": "persistence-validation / Crash robot / postgres / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484580,
+"name": "persistence-validation / Crash robot / pglite / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484590,
+"name": "security-regressions (windows-latest, 1.4.2)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484605,
+"name": "persistence-validation / Read latency / postgres / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484645,
+"name": "persistence-validation / Reconciliation crashes / postgres / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484663,
+"name": "security-regressions (ubuntu-latest, 1.4.2)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914484724,
+"name": "persistence-validation / pglite / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914485413,
+"name": "test (1)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666079,
+"name": "native-locks / Windows ACL API probe / windows-2022 / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666083,
+"name": "native-locks / OpenClaw 2026.9.4 native context-engine startup",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666087,
+"name": "native-locks / Windows PowerShell console probe / windows-2022 / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666106,
+"name": "native-locks / Windows PowerShell console probe / windows-11-arm / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666117,
+"name": "native-locks / linux-x64-musl / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666123,
+"name": "native-locks / linux-x64-musl / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666133,
+"name": "native-locks / Windows ACL API probe / windows-11-arm / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666135,
+"name": "native-locks / Windows PowerShell console probe / windows-11-arm / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666142,
+"name": "native-locks / linux-arm64-musl / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666152,
+"name": "native-locks / Windows ACL API probe / windows-11-arm / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666165,
+"name": "native-locks / Windows ACL API probe / windows-2022 / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666209,
+"name": "native-locks / Windows PowerShell console probe / windows-2022 / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666301,
+"name": "native-locks / linux-arm64-glibc / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666355,
+"name": "native-locks / linux-arm64-musl / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666380,
+"name": "native-locks / win32-x64 / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666383,
+"name": "native-locks / linux-x64-glibc / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666392,
+"name": "native-locks / win32-arm64 / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666400,
+"name": "native-locks / darwin-arm64 / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666436,
+"name": "native-locks / win32-x64 / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666449,
+"name": "native-locks / darwin-x64 / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666475,
+"name": "native-locks / win32-arm64 / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666507,
+"name": "native-locks / darwin-arm64 / Bun 1.4.2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666517,
+"name": "native-locks / darwin-x64 / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666675,
+"name": "native-locks / linux-arm64-glibc / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914666789,
+"name": "native-locks / linux-x64-glibc / Bun 1.4.0",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111918327520,
+"name": "Native-only result (full CI not run)",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111920042853,
+"name": "coverage-report",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111920042989,
+"name": "executed-receipts",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111921205893,
+"name": "test-status",
+"conclusion": "failure",
+"steps": [
+{
+"number": 3,
+"name": "Aggregate result",
+"conclusion": "failure"
+}
+]
+}
+]
+}

@@ -19,6 +19,7 @@ writes_to:
 # uploaded source text + writes brain pages; it doesn't call external
 # APIs. Declarative opt-out.
 brain_first: exempt
+when_to_use: "Use when the user asks: \"strategic reading\", \"read this through the lens of\", \"apply this to my problem\", \"what can I learn from this about\", \"extract a playbook from\"."
 ---
 
 # strategic-reading — Applied Analysis from Source Texts

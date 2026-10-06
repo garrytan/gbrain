@@ -187,7 +187,23 @@ beforeAll(async () => {
 
 afterAll(() => { if (temporary) fs.rmSync(temporary, { recursive: true, force: true }); });
 
+/**
+ * A fresh Windows runner's first PowerShell launch pays the engine's cold start (3-15 s on CI, against
+ * 0.2-1.5 s once warm), which can exceed the production 15 s bound on its own. The console probe compares
+ * window modes, so it first waits for one PowerShell that loads the ACL types to report it is ready.
+ */
+async function powershellReady(): Promise<number> {
+  const started = performance.now();
+  const output = await new Promise<string>((done, fail) => childProcess.execFile(
+    join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', "[void][System.Security.AccessControl.DirectorySecurity]::new(); [Console]::Write('ready')"],
+    { encoding: 'utf8', maxBuffer: 64 * 1024, windowsHide: true }, (error, stdout) => error ? fail(error) : done(stdout)));
+  if (output !== 'ready') throw new Error(`Windows PowerShell started but did not report ready (stdout ${JSON.stringify(output.slice(0, 200))}); run powershell.exe -NoProfile on this runner to see why`);
+  return Math.round(performance.now() - started);
+}
+
 test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSOLE_PROBE !== '1')('private ACL setup compares hidden and visible PowerShell windows', async () => {
+  const readyMs = await powershellReady();
   const observations = [];
   for (const mode of ['hidden', 'visible', 'visible', 'hidden'] as const) {
     const path = join(temporary, `console-${observations.length} [literal] 'é`);
@@ -244,7 +260,7 @@ test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSO
       sameIdentity: before.dev === after.dev && before.ino === after.ino && before.birthtimeNs === after.birthtimeNs,
       empty: after.isDirectory() && fs.readdirSync(path).length === 0 });
   }
-  process.stderr.write(`Windows backup console controls: ${JSON.stringify({ arch: process.arch, runtime: Bun.version, observations })}\n`);
+  process.stderr.write(`Windows backup console controls: ${JSON.stringify({ arch: process.arch, runtime: Bun.version, readyMs, observations })}\n`);
   for (const observation of observations) {
     expect(observation.launches).toBe(1);
     expect(observation.bounded).toBe(true);

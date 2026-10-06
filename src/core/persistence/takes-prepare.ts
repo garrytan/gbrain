@@ -70,6 +70,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   let changed: ParsedTake[] = [];
   let result: Record<string, unknown>;
   let oldRow: number | undefined;
+  let removedRow: number | undefined;
   if (row.operation === 'takes_add') {
     if (typeof p.claim !== 'string' || !p.claim.trim() || typeof p.kind !== 'string' || typeof p.holder !== 'string') throw takesRefusal('invalid_params','claim, kind and holder are required.',row,
       'takes_add needs claim, kind and holder as non-empty text.');
@@ -85,8 +86,18 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
     const target=edit.findFenceRow(parsed.takes,number,holders,row.slug);
     requiredHolders.add(target.holder);
     if (target.resolvedAt) throw new TakesWriteError('already_resolved','Resolved takes are immutable.');
-    if (!target.active) throw new TakesWriteError('row_inactive','The take was superseded.');
-    if (row.operation==='takes_supersede') {
+    if (row.operation==='takes_remove') {
+      const citing=parsed.takes.find(t=>t.rowNum!==number && Number(t.source?.match(/superseded by #(\d+)/)?.[1])===number);
+      if (citing) throw takesRefusal('invalid_params',`Row #${number} replaces row #${citing.rowNum}.`,row,
+        `Row #${citing.rowNum} on ${row.slug} cites row #${number} as "superseded by #${number}"; remove row #${citing.rowNum} first, or keep both.`);
+      const [stored]=await engine.executeRaw<{claim:string}>('SELECT claim FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,number]);
+      if (stored && stored.claim!==target.claim) throw takesRefusal('invalid_params',`Row #${number}'s database copy disagrees with the page's takes fence; run gbrain takes rebuild ${row.slug} --source-id ${row.source_id} first.`,row,
+        `Rebuild the page's takes index from its fence first with gbrain takes rebuild ${row.slug} --source-id ${row.source_id}, check the row, then remove it again.`);
+      removedRow=number;
+      next=edit.replaceFence(body,parsed.takes.filter(t=>t.rowNum!==number));
+      result={slug:row.slug,row_num:number,removed:true};
+    } else if (!target.active) throw new TakesWriteError('row_inactive','The take was superseded.');
+    else if (row.operation==='takes_supersede') {
       if (typeof p.claim!=='string' || !p.claim.trim()) throw takesRefusal('invalid_params','claim is required.',row,
         'takes_supersede needs the replacement claim as non-empty text.');
       const holder=typeof p.holder==='string'?p.holder:target.holder;
@@ -112,7 +123,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
           resolvedEvidence:p.evidence as string | undefined,resolvedValue:p.value as number | undefined,
           resolvedUnit:p.unit as string | undefined,resolvedBy:String(p.resolved_by)};
       } else throw takesRefusal('invalid_params','Unsupported takes mutation.',row,
-        `${row.operation} is not a takes mutation this release can publish (takes_add, takes_update, takes_supersede or takes_resolve).`);
+        `${row.operation} is not a takes mutation this release can publish (takes_add, takes_update, takes_supersede, takes_resolve or takes_remove).`);
       changed=[updated]; next=edit.replaceFence(body,parsed.takes.map(t=>t.rowNum===number?updated:t));
       result={slug:row.slug,row_num:number,...(row.operation==='takes_resolve'?{quality:p.quality,resolved_by:p.resolved_by}:{})};
     }
@@ -130,7 +141,8 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
     if (!prepared.noop) {
       const batch:TakeBatchInput[]=changed.map(t=>edit.toBatchInput(snapshot.page.id,t,
         t.rowNum===oldRow?Number(result.new_row):null));
-      await tx.addTakesBatch(batch);
+      if (batch.length) await tx.addTakesBatch(batch);
+      if (removedRow!==undefined) await tx.executeRaw('DELETE FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,removedRow]);
       if (row.operation==='takes_resolve') {
         const t=changed[0];
         await tx.resolveTake(snapshot.page.id,t.rowNum,{quality:t.resolvedQuality!,outcome:t.resolvedOutcome,

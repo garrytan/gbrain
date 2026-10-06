@@ -29,15 +29,18 @@
  * that call, so preflight refuses before any spend and names the role and
  * the control that fixes it (`reservation_exceeds_cap`).
  *
- * Prices come from the canonical pricing table (model-pricing.ts) via
- * canonicalLookup. For unknown providers `lookupPrice` returns a warn-only
- * Sonnet-tier fallback (preflight estimates, never gates) — the actual
- * fail-loud gate is BudgetTracker's TX2 contract at run time.
+ * Prices come from the shared resolver (`priceFor`: operator
+ * `pricing.overrides`, the claude-cli → Anthropic sibling, canonical rows),
+ * the same chain the run's BudgetTracker uses. A model nothing prices is
+ * reported as unpriced (`est_cost_usd: null`, `unpriced_models`), never at an
+ * invented rate (#5563 / A-N4). Under a cap the user set, an unpriced model
+ * refuses before any spend (`no_pricing`, the shared guidance); under the
+ * default cap it runs with a warning, as the tracker does.
  */
 
 import { defaultMaxOutputTokens } from '../ai/gateway.ts';
-import { reservationCostUsd, type PricingOverrides } from '../budget/reservation-cost.ts';
-import { canonicalLookup } from '../model-pricing.ts';
+import { peakRateNote, priceFor, reservationCostUsd, type PricingOverrides } from '../budget/reservation-cost.ts';
+import { noPricingGuidance, noPricingMessage, type NoPricingGuidance } from '../budget/no-pricing.ts';
 import { skilloptOutputCap } from './output-cap.ts';
 import { JUDGE_SITE_MAX_TOKENS } from './score.ts';
 import { VALIDATION_RUNS_PER_TASK } from './types.ts';
@@ -60,6 +63,8 @@ export interface PreflightOpts {
   targetModel: string;
   judgeModel: string;
   maxCostUsd: number;
+  /** Where a positive `maxCostUsd` came from: `user` (a flag; the default when unset) refuses an unpriced model, `default` warns. */
+  maxCostSource?: 'user' | 'default';
   /**
    * Held-out task count (F11). When > 0, the held-out gate scores baseline +
    * candidate on the held-out set at every accepted step. Conservatively
@@ -124,9 +129,12 @@ export interface PreflightEstimate {
   judge_calls: number;
   est_input_tokens: number;
   est_output_tokens: number;
-  est_cost_usd: number;
-  /** Per-model breakdown for the audit. */
-  per_model_cost_usd: Record<string, number>;
+  /** null when a model the run calls has no price (see `unpriced_models`). */
+  est_cost_usd: number | null;
+  /** Per-model breakdown for the audit; null for an unpriced model. */
+  per_model_cost_usd: Record<string, number | null>;
+  /** Models the run can call that nothing prices. */
+  unpriced_models: string[];
   /** True when est_cost_usd > maxCostUsd (caller should refuse or prompt). */
   exceeds_cap: boolean;
   /** The priciest single call any role will reserve (separate from expected cost). */
@@ -139,8 +147,10 @@ export interface PreflightResult {
   proceed: boolean;
   /** Reason for abort, if proceed=false. */
   abort_reason?: string;
-  /** Machine code for the abort: one call can never fit the cap, or the expected total exceeds it. */
-  abort_code?: 'reservation_exceeds_cap' | 'cost_cap_exceeded';
+  /** Machine code for the abort: one call can never fit the cap, the expected total exceeds it, or a user cap meets an unpriced model. */
+  abort_code?: 'reservation_exceeds_cap' | 'cost_cap_exceeded' | 'no_pricing';
+  /** Set with abort_code 'no_pricing': the lookup-and-register guidance. */
+  no_pricing?: NoPricingGuidance;
 }
 
 export function estimateCost(opts: PreflightOpts): PreflightEstimate {
@@ -175,12 +185,17 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
   const judge_calls = judgeModels.length > 0 ? judgeCallsRaw : 0;
 
   // Cost per call type. Judge calls price at the priciest judge the run can reach.
-  const targetPrice = lookupPrice(opts.targetModel);
-  const optimizerPrice = lookupPrice(opts.optimizerModel);
-  const judgePrice = judgeModels.map(lookupPrice).reduce(
+  const lookup = (model: string) => priceFor(model, 'chat', opts.pricingOverrides)?.pricing ?? null;
+  const unpriced = [...new Set([opts.targetModel, opts.optimizerModel, ...(judge_calls > 0 ? judgeModels : [])])]
+    .filter((m) => lookup(m) === null);
+  const zero = { input: 0, output: 0 };
+  const targetPrice = lookup(opts.targetModel) ?? zero;
+  const optimizerPrice = lookup(opts.optimizerModel) ?? zero;
+  const judgePrice = judgeModels.map((m) => lookup(m) ?? zero).reduce(
     (a, b) => (b.input + b.output > a.input + a.output ? b : a),
-    { input: 0, output: 0 },
+    zero,
   );
+  const unpricedJudge = judge_calls > 0 && judgeModels.some((m) => unpriced.includes(m));
 
   const rolloutCost = rollout_calls * (
     (ROLLOUT_INPUT_TOKENS * targetPrice.input) / 1_000_000
@@ -200,7 +215,7 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
   const cachedReflectCost = reflectCost * 0.6;
   const cachedJudgeCost = judgeCost * 0.6;
 
-  const total = rolloutCost + cachedReflectCost + cachedJudgeCost;
+  const total = unpriced.length > 0 ? null : rolloutCost + cachedReflectCost + cachedJudgeCost;
   void sel_runs_per_step;
   const largest = largestReservation(opts);
 
@@ -214,12 +229,13 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
     est_output_tokens: rollout_calls * ROLLOUT_OUTPUT_TOKENS + reflect_calls * REFLECT_OUTPUT_TOKENS + judge_calls * JUDGE_OUTPUT_TOKENS,
     est_cost_usd: total,
     per_model_cost_usd: {
-      [opts.targetModel]: rolloutCost,
-      [opts.optimizerModel]: cachedReflectCost,
-      [opts.judgeModel]: cachedJudgeCost,
+      [opts.targetModel]: unpriced.includes(opts.targetModel) ? null : rolloutCost,
+      [opts.optimizerModel]: unpriced.includes(opts.optimizerModel) ? null : cachedReflectCost,
+      [opts.judgeModel]: unpricedJudge ? null : cachedJudgeCost,
     },
+    unpriced_models: unpriced,
     // #3516: maxCostUsd === 0 means uncapped (--no-max-cost) — never refuse.
-    exceeds_cap: opts.maxCostUsd > 0 && total > opts.maxCostUsd,
+    exceeds_cap: opts.maxCostUsd > 0 && total !== null && total > opts.maxCostUsd,
     ...(largest ? { largest_reservation: largest } : {}),
   };
 }
@@ -235,7 +251,7 @@ export function formatPreflightReport(est: PreflightEstimate, opts: PreflightOpt
     `  Reflects:   ${est.reflect_calls.toLocaleString()} calls`,
     `  Judges:     ${est.judge_calls.toLocaleString()} calls`,
     `  Tokens:     ~${(est.est_input_tokens / 1000).toFixed(0)}K in / ~${(est.est_output_tokens / 1000).toFixed(0)}K out`,
-    `  Est. cost:  $${est.est_cost_usd.toFixed(2)} (cap: ${opts.maxCostUsd > 0 ? `$${opts.maxCostUsd.toFixed(2)}` : 'uncapped'})`,
+    `  Est. cost:  ${est.est_cost_usd === null ? `unpriced (no price for ${est.unpriced_models.join(', ')}; register a rate with gbrain pricing set)` : `$${est.est_cost_usd.toFixed(2)}${peakRateNote([opts.targetModel, opts.optimizerModel, ...(opts.judgeModels ?? [opts.judgeModel])])}`} (cap: ${opts.maxCostUsd > 0 ? `$${opts.maxCostUsd.toFixed(2)}${opts.maxCostSource === 'default' ? ' default' : ''}` : 'uncapped'})`,
     est.largest_reservation
       ? `  Per call:   largest single call reserves $${est.largest_reservation.reservation_usd!.toFixed(2)} (${est.largest_reservation.role} ${est.largest_reservation.model}, ${est.largest_reservation.max_output_tokens} output tokens)`
       : '',
@@ -251,6 +267,17 @@ export function formatPreflightReport(est: PreflightEstimate, opts: PreflightOpt
  */
 export function preflight(opts: PreflightOpts): PreflightResult {
   const estimate = estimateCost(opts);
+  const unpriced = estimate.unpriced_models[0];
+  if (opts.maxCostUsd > 0 && (opts.maxCostSource ?? 'user') === 'user' && unpriced) {
+    const guidance = noPricingGuidance(unpriced, 'chat');
+    return {
+      estimate,
+      proceed: false,
+      abort_code: 'no_pricing',
+      abort_reason: noPricingMessage(guidance, { label: 'skillopt', capUsd: opts.maxCostUsd }),
+      no_pricing: guidance,
+    };
+  }
   const big = estimate.largest_reservation;
   if (opts.maxCostUsd > 0 && big && big.reservation_usd! > opts.maxCostUsd) {
     return {
@@ -265,20 +292,8 @@ export function preflight(opts: PreflightOpts): PreflightResult {
       estimate,
       proceed: false,
       abort_code: 'cost_cap_exceeded',
-      abort_reason: `estimated cost $${estimate.est_cost_usd.toFixed(2)} exceeds --max-cost-usd $${opts.maxCostUsd.toFixed(2)}. Raise the cap with --max-cost-usd ${Math.ceil(estimate.est_cost_usd)} or reduce --epochs/--batch-size.`,
+      abort_reason: `estimated cost $${estimate.est_cost_usd!.toFixed(2)} exceeds --max-cost-usd $${opts.maxCostUsd.toFixed(2)}. Raise the cap with --max-usd ${Math.ceil(estimate.est_cost_usd!)} or reduce --epochs/--batch-size.`,
     };
   }
   return { estimate, proceed: true };
-}
-
-function lookupPrice(model: string): { input: number; output: number } {
-  // Canonical lookup handles bare/colon/slash forms (fixes this site's prior
-  // bare-only limitation, which mispriced `anthropic/...` slash ids).
-  const p = canonicalLookup(model);
-  if (p) return p;
-  // Conservative fallback: assume Sonnet-tier pricing for unknown providers.
-  // Don't throw — preflight is for warning, not gating. The actual budget
-  // tracker (BudgetTracker TX2) will fail-loud at run time if pricing is
-  // truly unknown.
-  return { input: 3.0, output: 15.0 };
 }

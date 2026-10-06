@@ -314,18 +314,21 @@ const SYMBOL_ARG = /^[A-Za-z_$][\w$.:/-]{0,199}$/;
  * trusted local `gbrain call` lane on the brain host. The symbol and source
  * are interpolated only when they match strict id shapes.
  */
+const CODE_READ_FOLLOW_UP = 'garrytan/gbrain#5052';
+
 function codeReadRefusal(ctx: OperationContext, op: Operation, params: Record<string, unknown>): OperationError {
-  const message = `${op.name} is temporarily unavailable to agent callers. Use the trusted local CLI for code reads.`;
+  const message = `${op.name} is temporarily unavailable to agent callers: remote code reads stay suspended until they support the remote read policy (follow-up: ${CODE_READ_FOLLOW_UP}). `
+    + 'Code search (search, query) still works here.';
   const key = 'entry_point' in op.params ? 'entry_point' : 'symbol';
   const symbol = params[key];
   if (typeof symbol !== 'string' || !SYMBOL_ARG.test(symbol)) {
     return opError('permission_denied', message,
-      `Code reads over MCP are suspended; ask the user to run ${op.name} with the trusted local CLI on the brain host (gbrain call ${op.name}).`);
+      `Use search or query for code text now, or ask the user to run ${op.name} with the trusted local CLI on the brain host (gbrain call ${op.name} '<params_json>').`);
   }
   const source = typeof params.source_id === 'string' && isValidSourceId(params.source_id) ? ['--source', params.source_id] : [];
   return hostOnlyError(ctx, 'permission_denied', message,
     ['gbrain', 'call', ...source, op.name, JSON.stringify({ [key]: symbol })],
-    'Raw code fragments do not yet support the remote read policy, so code reads run only through the trusted local CLI on the brain host.');
+    `Symbol definitions, references, callers, callees, blast radius and flow run only through the trusted local CLI on the brain host until remote code reads return (${CODE_READ_FOLLOW_UP}).`);
 }
 
 const codeReadOperations: Operation[] = [

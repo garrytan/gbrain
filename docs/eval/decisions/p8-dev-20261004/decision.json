@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "decision_id": "p8-dev-20261004",
+  "plan": "P8",
+  "title": "P8 dev comparison",
+  "verdict_type": "correctness",
+  "stage": "dev",
+  "candidate": {
+    "gbrain": "/workspace/gbrain@850e8ef3dfadcaf15e1547d1d754398caf0edd41",
+    "config": {}
+  },
+  "baseline": {
+    "gbrain": "/workspace/gbrain@6622a119e40ea09a7719233046aca24741863ed2",
+    "config": {}
+  },
+  "sources": [
+    {
+      "id": "n5-forget-residue",
+      "kind": "category",
+      "category": "n5-forget-residue",
+      "script": "eval/runner/n5-forget-residue.ts",
+      "args": [
+        "--seed",
+        "1"
+      ],
+      "paid": false,
+      "comparisons": [],
+      "contracts": [
+        {
+          "path": "verdict",
+          "op": "eq",
+          "value": "pass",
+          "description": "forget leaves no residue and no collateral damage"
+        }
+      ]
+    },
+    {
+      "id": "n1-knowledge-update",
+      "kind": "category",
+      "category": "n1-knowledge-update",
+      "script": "eval/runner/n1-knowledge-update.ts",
+      "args": [
+        "--seed",
+        "1"
+      ],
+      "paid": false,
+      "comparisons": [],
+      "contracts": [
+        {
+          "path": "verdict",
+          "op": "eq",
+          "value": "pass",
+          "description": "knowledge-update safety contracts hold"
+        }
+      ]
+    },
+    {
+      "id": "lme-s-dev",
+      "kind": "memory-qa",
+      "benchmark": "lme-s",
+      "split": "dev",
+      "embed": "real",
+      "limit": null,
+      "search_pins": {
+        "search.mode": "balanced",
+        "search.reranker.enabled": "false",
+        "search.autocut": "false"
+      },
+      "top_k": 10,
+      "id_field": "id",
+      "exclude_when": [
+        "abstention=true"
+      ],
+      "min_clusters": 10,
+      "comparisons": [
+        {
+          "id": "recall-all-5",
+          "metric": "recall_all_at_5",
+          "gate": "noninferiority",
+          "direction": "higher",
+          "tolerance": 0.01,
+          "cluster_by": "conversation",
+          "description": "guardrail: strict recall does not drop by more than one point"
+        },
+        {
+          "id": "ndcg-10",
+          "metric": "ndcg_at_10",
+          "gate": "exploratory",
+          "direction": "higher",
+          "cluster_by": "conversation"
+        },
+        {
+          "id": "latency",
+          "metric": "latency_ms",
+          "gate": "exploratory",
+          "direction": "lower",
+          "cluster_by": "conversation"
+        }
+      ],
+      "estimate_usd": 24
+    }
+  ],
+  "alpha": 0.05,
+  "seed": 42,
+  "draws": 10000,
+  "budget_usd": 24,
+  "created_at": "2026-10-04T19:39:28.116Z",
+  "notes": "Semantic forget, model-judged supersession lane, surface shrink, write-path moat: forget and update contracts plus an LME-S guardrail; cost-speed columns land in milestone M2."
+}

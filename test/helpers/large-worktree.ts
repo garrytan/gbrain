@@ -19,15 +19,27 @@ export function writeLargeWorktree(root: string, count: number): number {
   return bytes;
 }
 
+/**
+ * Commits `root` as a fixture repository. Automatic gc and maintenance are off in the repository's own
+ * config: a commit of ~7k+ loose objects otherwise starts a detached `git gc --auto` that packs and prunes
+ * them while the test clones, reads or deletes the repository (a local clone then dies with
+ * "failed to copy file ... No such file or directory"). Git's stderr is kept for the thrown error.
+ */
+export function commitFixtureRepository(root: string): void {
+  const git = (args: string[]) => execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args], { cwd: root, stdio: ['ignore', 'ignore', 'pipe'] });
+  git(['init', '--quiet']);
+  git(['config', 'gc.auto', '0']);
+  git(['config', 'maintenance.auto', 'false']);
+  git(['add', '-A']);
+  git(['commit', '--quiet', '-m', 'fixture']);
+}
+
 /** Commits a large worktree and returns a local bare repository cloned from it. */
 export function largeBareRepository(directory: string, count: number): string {
   const work = join(directory, 'bare-work'), bare = join(directory, 'large.git');
   mkdirSync(work, { recursive: true });
   writeLargeWorktree(work, count);
-  const git = (cwd: string, args: string[]) => execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args], { cwd, stdio: 'ignore' });
-  git(work, ['init', '--quiet']);
-  git(work, ['add', '-A']);
-  git(work, ['commit', '--quiet', '-m', 'fixture']);
-  git(directory, ['clone', '--quiet', '--bare', work, bare]);
+  commitFixtureRepository(work);
+  execFileSync('git', ['clone', '--quiet', '--bare', work, bare], { cwd: directory, stdio: ['ignore', 'ignore', 'pipe'] });
   return bare;
 }

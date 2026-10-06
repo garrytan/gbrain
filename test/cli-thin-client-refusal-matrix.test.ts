@@ -12,7 +12,7 @@
  * against a remote brain), routes a host-bound subcommand, changes a hint or
  * exit code, or moves a check across the connectEngine terminator.
  * Why new: test/cli-dispatch-thin-client.test.ts asserts refusal for a
- * hand-picked subset by substring; nothing pins all 65 cases or the full
+ * hand-picked subset by substring; nothing pins all 66 cases or the full
  * text. Seam: none.
  *
  * Nothing leaves the machine: issuer and MCP URLs point at 127.0.0.1:1
@@ -104,8 +104,8 @@ describe('A16b thin-client refusal matrix', () => {
     routing = await run(ROUTING_ROWS);
   }, 300_000);
 
-  test('the matrix covers all 65 handleCliOnly cases', () => {
-    expect(CASES.length).toBe(65);
+  test('the matrix covers all 66 handleCliOnly cases', () => {
+    expect(CASES.length).toBe(66);
   });
 
   test('every handleCliOnly case, run bare on a thin client, matches the golden', () => {

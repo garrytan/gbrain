@@ -16,6 +16,7 @@ tools:
   - exec
 mutating: true
 brain_first: exempt
+when_to_use: "Use when the user asks: \"GBrain admin login link\", \"open the MCP admin panel\", \"manage MCP clients\", \"register an MCP client\", \"set up MCP OAuth\"."
 ---
 
 # MCP access and administration

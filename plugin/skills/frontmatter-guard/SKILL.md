@@ -19,6 +19,7 @@ triggers:
 tools:
   - exec
 mutating: true
+when_to_use: "Use when the user asks: \"validate frontmatter\", \"check frontmatter\", \"fix frontmatter\", \"frontmatter audit\", \"brain lint\"."
 ---
 
 # Frontmatter Guard Skill

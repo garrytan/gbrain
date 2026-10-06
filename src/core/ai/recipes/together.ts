@@ -10,6 +10,13 @@ export const together: Recipe = {
   name: 'Together AI',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  // No shipped rate for these yet: they warn and run under a default cap; a
+  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  unpriced_models: [
+    'Qwen/Qwen2.5-72B-Instruct-Turbo',
+    'deepseek-ai/DeepSeek-V3',
+    'mistralai/Mixtral-8x22B-Instruct-v0.1',
+  ],
   base_url_default: 'https://api.together.xyz/v1',
   auth_env: {
     required: ['TOGETHER_API_KEY'],

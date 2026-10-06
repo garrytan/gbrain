@@ -139,8 +139,8 @@ export interface GeneratePerChunkSynopsisArgs {
  *   - failure variants → see D27 P1-2 dispatch in the service layer
  */
 export type GeneratePerChunkSynopsisResult =
-  | { kind: 'success'; synopsis: string }
-  | { kind: SynopsisFailureKind; detail?: string };
+  | { kind: 'success'; synopsis: string; usage?: ChatResult['usage'] }
+  | { kind: SynopsisFailureKind; detail?: string; usage?: ChatResult['usage'] };
 
 /**
  * Generate one synopsis for one chunk. ~$0.00006 per call at Haiku 4.5
@@ -206,7 +206,7 @@ export async function generatePerChunkSynopsis(
       detail: `stop_reason=${result.stopReason}`,
       pageLevelFallback: true,
     });
-    return { kind: 'refusal', detail: `stop_reason=${result.stopReason}` };
+    return { kind: 'refusal', detail: `stop_reason=${result.stopReason}`, usage: result.usage };
   }
 
   // #3883: stop_reason 'length' means the model hit maxTokens mid-sentence —
@@ -224,7 +224,7 @@ export async function generatePerChunkSynopsis(
       detail,
       pageLevelFallback: true,
     });
-    return { kind: 'malformed', detail };
+    return { kind: 'malformed', detail, usage: result.usage };
   }
 
   const synopsis = sanitizeSynopsis(result.text);
@@ -237,7 +237,7 @@ export async function generatePerChunkSynopsis(
       detail: `length=${result.text.length}`,
       pageLevelFallback: true,
     });
-    return { kind: 'empty', detail: `length=${result.text.length}` };
+    return { kind: 'empty', detail: `length=${result.text.length}`, usage: result.usage };
   }
 
   // Content-shape malformed detection stays minimal: synopses are plain
@@ -246,7 +246,7 @@ export async function generatePerChunkSynopsis(
   // stop_reason==='length' check above, #3883). Future extension could
   // parse a JSON-shaped response with `{synopsis, confidence}`.
 
-  return { kind: 'success', synopsis };
+  return { kind: 'success', synopsis, usage: result.usage };
 }
 
 function buildUserPrompt(

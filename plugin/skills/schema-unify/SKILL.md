@@ -24,6 +24,7 @@ triggers:
   - "what does the canonical taxonomy look like"
   - "consolidate page types"
   - "retype pages to canonical"
+when_to_use: "Use when the user asks: \"unify my types\", \"migrate to gbrain-base-v2\", \"94 types to 14\", \"apply canonical taxonomy\", \"clean up my page types\"."
 ---
 
 # Schema Unification (gbrain-base → gbrain-base-v2)

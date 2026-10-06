@@ -15,6 +15,7 @@ triggers:
 tools:
   - advisor
 mutating: false
+when_to_use: "Use when the user asks: \"what should I do to get more out of gbrain\", \"is my brain set up right\", \"gbrain advisor\", \"advise me on my brain\", \"weekly brain checkup\"."
 ---
 
 # gbrain Advisor

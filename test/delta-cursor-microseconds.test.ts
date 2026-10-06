@@ -84,7 +84,9 @@ describe('delta — cursor carries column-precision microseconds', () => {
     const sid = 'us-session';
     const r0 = await call(del, { session_id: sid });
     expect(slugs(r0)).toEqual([]);
-    // Stamp the pair just after the established cursor, inside its millisecond.
+    // Age the established cursor past delta's 2 s commit-visibility horizon,
+    // then stamp the pair just after it, inside its millisecond.
+    await engine.executeRaw(`UPDATE session_context_state SET last_wake_at = last_wake_at - interval '1 minute', facts_cursor_at = facts_cursor_at - interval '1 minute' WHERE session_id = $1`, [sid]);
     await seedPair(`SELECT last_wake_at FROM session_context_state WHERE session_id = $1`, [sid]);
     const r1 = await call(del, { session_id: sid });
     expect(slugs(r1)).toEqual(['notes/us-a', 'notes/us-b']);

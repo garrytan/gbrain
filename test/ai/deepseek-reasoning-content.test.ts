@@ -122,8 +122,13 @@ describe('applyOpenAICompatConfig — compat.fetch wiring (gateway seam)', () =>
     expect(deepseek.compat?.fetch).toBe(deepseekReasoningContentCompatFetch);
   });
 
-  test('recipe lists only v4 model names — deepseek-chat/deepseek-reasoner retired 2026-07-24 (#1255)', () => {
-    expect(deepseek.touchpoints.chat?.models).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro']);
-    expect(deepseek.touchpoints.expansion?.models).toEqual(['deepseek-v4-flash']);
+  test('recipe lists only current model names — deepseek-chat/deepseek-reasoner retired 2026-07-24 (#1255)', () => {
+    // deepseek-flash (V4.1-Flash) is the current name; deepseek-v4-flash is its accepted legacy alias (A-N1).
+    expect(deepseek.touchpoints.chat?.models).toEqual(['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-pro']);
+    expect(deepseek.touchpoints.expansion?.models).toEqual(['deepseek-flash', 'deepseek-v4-flash']);
+    for (const retired of ['deepseek-chat', 'deepseek-reasoner']) {
+      expect(deepseek.touchpoints.chat?.models).not.toContain(retired);
+      expect(deepseek.touchpoints.expansion?.models).not.toContain(retired);
+    }
   });
 });

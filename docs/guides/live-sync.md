@@ -41,16 +41,27 @@ transaction, and the writer publishes the group in one transaction. Every
 page still gets its own write request, receipt, attribution and failure
 report; if one page fails, the pages before it commit, that page is reported,
 and the pages after it are cancelled and re-frozen once it is fixed. Group size
-adapts so a group takes about `sync.bulk_max_txn_ms` (default 15 s). While a
-group publishes, the drain freezes and admits the next one, so the writer
-starts it as soon as the current group commits. Nothing is admitted ahead
-while foreground writes are recent (one was queued in the last minute), so a
-foreground write waits behind at most the group that is publishing. If a page fails, the group admitted ahead of it is
-cancelled with the reason "An earlier page of the same sync did not commit"
-and re-frozen once the failure is fixed. Turn bulk off with
+adapts so a group takes about `sync.bulk_max_txn_ms` (default 15 s).
+
+Groups publish in **lanes**: up to six groups at once, each in its own
+transaction on its own connection (`--lanes N` from 1 to 8, `--no-lanes` for
+one at a time, or `gbrain config set sync.lanes N` / `GBRAIN_SYNC_LANES`; the
+count is capped by the connection pool, so a pool of 10 allows 6). Lanes apply
+their pages at the same time but commit in file order: a group commits only
+after the group before it has committed, so a reader never sees a later page
+without the earlier ones. While lanes publish, the drain keeps freezing and
+admitting the next groups. Nothing is admitted ahead while foreground writes
+are recent (one was queued in the last minute), and a foreground write that
+needs the worktree makes the lanes finish their current groups and step
+aside. If a page fails, the groups after it are cancelled with the reason "An
+earlier page of the same sync did not commit" and re-frozen once the failure
+is fixed. A lock or statement timeout in a lane costs one lane for the rest of
+the run. Turn bulk off with
 `--no-bulk`, `GBRAIN_SYNC_BULK=0` or `gbrain config set sync.bulk false`. The
 final JSON reports `drain.bulk` (`enabled`, `reason` when off, `groups`,
-`largest_group`, `admitted_ahead`). Finish a drain before downgrading gbrain:
+`largest_group`, `admitted_ahead`, and `lanes`: `configured`, `effective`,
+`reason` when fewer, `step_down`, `overlapped_groups` and `fallbacks`, the
+lane groups that published singly or went back to the queue). Finish a drain before downgrading gbrain:
 an older version refuses a group this version admitted ahead, and the sync
 stops there instead of publishing a page twice. PGLite publishes without network round trips and does not
 use bulk groups.

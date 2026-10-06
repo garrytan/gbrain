@@ -10,8 +10,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2 AND links_attendance_blocked_revision = knowledge_revision",
-            "textSha256": "be4f84c6281e3977a29eab4c2d35b5cab52a54f87936fb84eed35ac55b5a3bf3"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND links_attendance_blocked_revision = knowledge_revision",
+            "textSha256": "bcdc72f48530635a4b8db91ba0f824aba03d83fe223ce1220f6d93b816f38353"
           }
         ],
         "attendance-exclude": [
@@ -20,16 +20,16 @@
             "params": [
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision",
-            "textSha256": "ac18ba62c816b3be4564d5a24bdc69304c45d24022c7ade0de8a81d0b36e3123"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision",
+            "textSha256": "4f36f46e2e698e8ff1fc46efb3026fdb71f0d8be893c1cdfa2572d453aefeeda"
           }
         ],
         "default": [
           {
             "lane": "pool",
             "params": [],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR updated_at > links_extracted_at)",
-            "textSha256": "3f9c86c575246f3a4f112b931aa51361c5e7b4c165330c026843dcb614072c94"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at))",
+            "textSha256": "499866fec60ad4c64ed01fef287a6c63bcabfeaa9170969a560ce4296554afc3"
           }
         ],
         "versionTs+sourceId": [
@@ -39,8 +39,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2",
-            "textSha256": "fb4400e83c4a8ed0cf977fad5a1bd11c8336d3be942ba26f6e15486c2561dc3a"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2",
+            "textSha256": "8fe8e241a5f7eaba51b12975460431f21f886ed318a72a8ef976c2f28a66549e"
           }
         ]
       },
@@ -540,8 +540,8 @@
               "number",
               "number"
             ],
-            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND (p.updated_at > $1::timestamptz OR (p.updated_at = $2::timestamptz AND p.slug > $3)) AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $4 OFFSET $5",
-            "textSha256": "9a681698e0e8f5db467af463257f72afd33c8bf51ac91ae09b7119c8ace39e9c"
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND (p.updated_at > $1::text::timestamptz OR (p.updated_at = $2::text::timestamptz AND p.slug > $3)) AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $4 OFFSET $5",
+            "textSha256": "e8c035bd6109b92df5e6f89080db721da06e12d57e58d3d7d7c98346d70a30af"
           }
         ],
         "updated_after": [
@@ -552,8 +552,8 @@
               "number",
               "number"
             ],
-            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.updated_at > $1::timestamptz AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
-            "textSha256": "1df2d216e9f3e7a7b13e7e2c765a1b87e086d9367ce7540d13b7de62be8bf004"
+            "sql": "SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages p WHERE 1=1 AND p.updated_at > $1::text::timestamptz AND p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $2 OFFSET $3",
+            "textSha256": "98825ce723c789c3a2796f00c1fa36e988d6630803577600aed5a85adb258624"
           }
         ]
       },
@@ -615,8 +615,8 @@
               "number",
               "number"
             ],
-            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2 AND id > $3 ORDER BY id LIMIT $4",
-            "textSha256": "02f69476257e0b3f3c2b8526ef5d8c92b84039ab79fe2a86c69cc9670b4603a8"
+            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND id > $3 ORDER BY id LIMIT $4",
+            "textSha256": "7526d404e57e5724991d62594d6144f4a88954151d0b0cfaa102e95fc2eeb9fe"
           }
         ],
         "default": [
@@ -625,8 +625,8 @@
             "params": [
               "number"
             ],
-            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR updated_at > links_extracted_at) ORDER BY id LIMIT $1",
-            "textSha256": "5caf4d2f7968dbdcb18b553c3d4c7e05bb474dbb338ed171071ccaadce8b0188"
+            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) ORDER BY id LIMIT $1",
+            "textSha256": "93aa0563d8be26fed0f4f1659d84d722cbc73232da783346541080b925558e95"
           }
         ]
       },
@@ -1162,8 +1162,8 @@
             "params": [
               "string"
             ],
-            "sql": "UPDATE pages SET deleted_at = NULL WHERE slug = $1 AND deleted_at IS NOT NULL RETURNING slug",
-            "textSha256": "acd1c51520605f0e6825a414c68860b9f4b74c9cbbfd6ce8b33a2ac454de6f09"
+            "sql": "UPDATE pages SET deleted_at = NULL, updated_at = now() WHERE slug = $1 AND deleted_at IS NOT NULL RETURNING slug",
+            "textSha256": "e657e4a81c518ed0669a4f80ce47e3114b42aaa4aa13667cdc35bb516e4d37cd"
           }
         ],
         "sourceId": [
@@ -1173,8 +1173,8 @@
               "string",
               "string"
             ],
-            "sql": "UPDATE pages SET deleted_at = NULL WHERE slug = $1 AND deleted_at IS NOT NULL AND source_id = $2 RETURNING slug",
-            "textSha256": "090e0cc13e4a8f75a1b0348c64728d42d1e3f6d57c91b0957679599af7ca3f3f"
+            "sql": "UPDATE pages SET deleted_at = NULL, updated_at = now() WHERE slug = $1 AND deleted_at IS NOT NULL AND source_id = $2 RETURNING slug",
+            "textSha256": "d36ab3e3d4968ce3e210fbbc3a1e9247e4d6065537b380001da3285a3dc6054b"
           }
         ]
       },

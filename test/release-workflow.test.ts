@@ -186,8 +186,8 @@ Release summary line.
 
 describe('release.yml publish-template skip is visible (D-10)', () => {
   test('an empty TEMPLATE_REPO_PAT warns with the owner-only fix and writes a step summary', async () => {
-    const { safeLoad } = await import('js-yaml');
-    const wf = safeLoad(WORKFLOW) as { jobs: Record<string, { steps: Array<{ id?: string; run?: string }> }> };
+    const { load } = await import('js-yaml');
+    const wf = load(WORKFLOW) as { jobs: Record<string, { steps: Array<{ id?: string; run?: string }> }> };
     const gate = wf.jobs['publish-template']!.steps.find(s => s.id === 'gate')!.run!;
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-publish-template-gate-'));
     try {

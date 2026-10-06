@@ -31,6 +31,7 @@ export const help: CliHelpSpec = {
     { name: '--confirm-quiesced', type: 'boolean', desc: 'Attest old writers and skill servers are stopped.' },
     { name: '--backup-confirmed', type: 'boolean', desc: 'Attest an operational backup was verified.' },
     { name: '--acknowledge-no-backup', type: 'boolean', desc: 'Proceed without a verified backup (explicit choice).', consent: ['destructive'] },
+    { name: '--accept-reviewed-inventory', type: 'string', desc: 'With --migration 0.53.0: accept a skill-pack change the user reviewed, as <source>=<digest> from the conflict message (repeatable; a later edit changes the digest).' },
   ],
   examples: [
     'gbrain apply-migrations --dry-run --json',

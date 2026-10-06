@@ -8,7 +8,7 @@ const REPO = resolve(import.meta.dir, '..');
 const SCRIPT = join(REPO, 'scripts', 'smoke-test.sh');
 const tempDirs: string[] = [];
 
-function runSmoke(opts: { supervisorRunning: boolean; legacyPid?: number }) {
+function runSmoke(opts: { supervisorRunning: boolean; legacyPid?: number; configUrlOnly?: boolean; embeddingStatus?: string }) {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-smoke-worker-'));
   tempDirs.push(dir);
   const fakeBun = join(dir, 'bun');
@@ -21,10 +21,10 @@ printf '%s\\n' "$*" >> "$SMOKE_BUN_CALLS"
 case " $* " in
   *" --help "*) exit 0 ;;
   *" engine status --json "*)
-    printf '%s\\n' '{"schema_version":1,"effective_engine":"postgres","db_url_source":"env:GBRAIN_DATABASE_URL"}'
+    printf '%s\\n' "{\\"schema_version\\":1,\\"effective_engine\\":\\"postgres\\",\\"db_url_source\\":\\"$SMOKE_DB_URL_SOURCE\\"}"
     exit 0 ;;
   *" doctor --json "*)
-    printf '%s\\n' '{"checks":[{"name":"connection","status":"ok"}],"health_score":97}'
+    printf '%s\\n' "{\\"checks\\":[{\\"name\\":\\"connection\\",\\"status\\":\\"ok\\"}$SMOKE_EMBEDDING_CHECK],\\"health_score\\":97}"
     exit 0 ;;
   *" doctor "*) printf '%s\\n' 'GBrain Health Check' 'Health score: 97'; exit 0 ;;
   *" jobs supervisor status --json "*)
@@ -49,11 +49,15 @@ exit 0
       HOME: dir,
       GBRAIN_BUN_PATH: fakeBun,
       GBRAIN_DIR_OVERRIDE: REPO,
-      GBRAIN_DATABASE_URL: 'postgres://smoke.invalid/brain',
+      GBRAIN_DATABASE_URL: opts.configUrlOnly ? '' : 'postgres://smoke.invalid/brain',
+      DATABASE_URL: '',
+      SMOKE_DB_URL_SOURCE: opts.configUrlOnly ? 'config-file' : 'env:GBRAIN_DATABASE_URL',
+      SMOKE_EMBEDDING_CHECK: opts.embeddingStatus ? `,{"name":"embedding_provider","status":"${opts.embeddingStatus}"}` : '',
       GBRAIN_SMOKE_LOG: join(dir, 'smoke.log'),
       GBRAIN_SMOKE_WORKER_PID_FILE: workerPid,
       GBRAIN_BRAIN_PATH: dir,
-      OPENAI_API_KEY: 'test-only-placeholder',
+      OPENAI_API_KEY: opts.embeddingStatus ? '' : 'test-only-placeholder',
+      VOYAGE_API_KEY: '',
       SMOKE_BUN_CALLS: calls,
       SMOKE_WORKER_STARTED: workerStarted,
       SMOKE_SUPERVISOR_RUNNING: opts.supervisorRunning ? '1' : '0',
@@ -92,5 +96,20 @@ describe('smoke-test worker health (#4175)', () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('duplicate supervisor + legacy worker');
     expect(existsSync(result.workerStarted)).toBe(false);
+  }, 30_000);
+});
+
+describe('smoke-test database and embedding sources (#5063)', () => {
+  test('a configured database URL and a keyless embedding provider doctor accepts both pass', () => {
+    const result = runSmoke({ supervisorRunning: true, configUrlOnly: true, embeddingStatus: 'ok' });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain('health score: 97/100');
+    expect(result.stdout).toContain('Embedding provider (doctor embedding_provider: ok)');
+  }, 30_000);
+
+  test('a failing doctor embedding_provider check still fails the smoke test', () => {
+    const result = runSmoke({ supervisorRunning: true, embeddingStatus: 'fail' });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('doctor embedding_provider failed');
   }, 30_000);
 });

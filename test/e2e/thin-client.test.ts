@@ -28,6 +28,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
+import { startServeHttp, type ServeHttp } from '../helpers/serve-http.ts';
 import { cliDiagnostic, fixtureDiagnostic } from '../helpers/fixture-diagnostics.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 
@@ -67,7 +68,7 @@ const describeWhen = DATABASE_URL ? describe : describe.skip;
 describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
   let hostHome: string;          // GBRAIN_HOME for the host (with local engine)
   let clientHome: string;        // GBRAIN_HOME for the thin client (no engine)
-  let serverProc: ReturnType<typeof Bun.spawn> | null = null;
+  let server: ServeHttp | null = null;
   let serverPort: number;
   let clientId: string;
   let clientSecret: string;
@@ -91,32 +92,15 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     const init = await spawn(['init', '--non-interactive', '--no-embedding', '--url', hostDatabaseUrl], hostHome);
     if (init.exitCode !== 0) throw new Error(cliDiagnostic(`host init failed`, init));
 
-    // 2. Pick a random free port for serve --http.
-    serverPort = 30000 + Math.floor(Math.random() * 30000);
-
-    // 3. Spawn serve --http (background, async).
-    const env = keylessBrainEnv(process.env, hostHome, {
-      GBRAIN_REMOTE_CLIENT_SECRET: undefined, GBRAIN_DATABASE_URL: undefined, DATABASE_URL: hostDatabaseUrl,
+    // 2-3. serve --http on a port the kernel reports free, healthy before the suite continues.
+    server = await startServeHttp({
+      cwd: process.cwd(),
+      env: keylessBrainEnv(process.env, hostHome, {
+        GBRAIN_REMOTE_CLIENT_SECRET: undefined, GBRAIN_DATABASE_URL: undefined, DATABASE_URL: hostDatabaseUrl,
+      }),
+      timeoutMs: 20_000,
     });
-    serverProc = Bun.spawn({
-      cmd: ['bun', '--no-env-file', 'run', CLI, 'serve', '--http', '--port', String(serverPort)],
-      env,
-      stdin: 'ignore',
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-
-    // Wait for the server to be ready (poll the discovery endpoint).
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${serverPort}/.well-known/oauth-authorization-server`, {
-          signal: AbortSignal.timeout(500),
-        });
-        if (res.ok) break;
-      } catch { /* retry */ }
-      await new Promise(r => setTimeout(r, 250));
-    }
+    serverPort = server.port;
 
     // 4. Register a client with read,write,admin scope.
     const reg = await spawn([
@@ -146,10 +130,7 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
   }
 
   afterAll(async () => {
-    if (serverProc) {
-      try { serverProc.kill(); } catch { /* best-effort */ }
-      try { await serverProc.exited; } catch { /* ignore */ }
-    }
+    await server?.stop();
     try { rmSync(hostHome, { recursive: true, force: true }); } catch { /* best-effort */ }
     try { rmSync(clientHome, { recursive: true, force: true }); } catch { /* best-effort */ }
     await database?.close();
@@ -431,10 +412,7 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
   test('stopped host: routed verbs fail fast with the canonical unreachable error, not a hang', async () => {
     // Kill the live serve. This test is LAST in the file by design (see the
     // ordering note above); afterAll's kill is a no-op afterwards.
-    if (serverProc) {
-      serverProc.kill();
-      await serverProc.exited;
-    }
+    await server?.stop();
     const t0 = Date.now();
     // Routed-op lane (runThinClientRouted): connection refused surfaces the
     // RemoteMcpError network/unreachable rendering with the mcp_url named.

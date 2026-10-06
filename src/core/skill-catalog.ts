@@ -38,7 +38,7 @@
 
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { basename, join, relative, resolve } from 'path';
-import { FAILSAFE_SCHEMA, safeLoad } from 'js-yaml';
+import { FAILSAFE_SCHEMA, load } from 'js-yaml';
 import {
   autoDetectSkillsDir,
   autoDetectSkillsDirReadOnly,
@@ -356,7 +356,7 @@ function resolveSkillTools(
   if (parsed?.tools !== undefined) return crossReferenceTools(parsed.tools, ctx, gateDisabled);
   if (parsed) {
     try {
-      const data = safeLoad(parsed.raw, { schema: FAILSAFE_SCHEMA });
+      const data = load(parsed.raw, { schema: FAILSAFE_SCHEMA });
       if (data && typeof data === 'object' && !Array.isArray(data) && !Object.hasOwn(data, 'tools')) {
         return { usable_tools: availableBrainTools(ctx, gateDisabled), unavailable_tools: [] };
       }

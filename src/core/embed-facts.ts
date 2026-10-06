@@ -144,10 +144,10 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
         if (await engine.getConfig('embedding_model') !== dbModel || await engine.getConfig('embedding_dimensions') !== dbDims) {
           throw new Error('Embedding model changed during fact backfill; rerun the scoped preview');
         }
-        tracker.reserve({ modelId: call.model, kind: 'embed', estimatedInputTokens: inputCeiling, maxOutputTokens: 0 });
+        const reservation = tracker.reserve({ modelId: call.model, kind: 'embed', estimatedInputTokens: inputCeiling, maxOutputTokens: 0 });
         return { settle: async usage => {
           if (!usage) result.cost_estimated = true;
-          tracker.record({ modelId: call.model, kind: 'embed', inputTokens: usage?.inputTokens ?? inputCeiling, outputTokens: 0 });
+          tracker.record({ modelId: call.model, reservation, kind: 'embed', inputTokens: usage?.inputTokens ?? inputCeiling, outputTokens: 0 });
         } };
       }, () => embed(batch.map(row => row.fact), {
         abortSignal: signal, embeddingModel: model, dimensions: dims, inputType: 'document',

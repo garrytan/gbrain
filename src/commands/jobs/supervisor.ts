@@ -6,6 +6,7 @@ import { WORKER_EXIT_CONFIGURATION } from '../../core/minions/worker-exit-codes.
 import { writeStdoutFinal } from '../../core/cli-force-exit.ts';
 import { opError } from '../../core/ops/contract.ts';
 import { usageError, writeCliRefusal } from '../../cli/cli-error.ts';
+import type { BrainEngine } from '../../core/engine.ts';
 
 export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsCommandContext): Promise<void> {
   // Dispatcher for supervisor subcommands:
@@ -32,7 +33,7 @@ export async function runJobsSupervisor({ args, engine, engineOrNull }: JobsComm
 
   // ----- stop subcommand -----
   if (isStopCmd) {
-    await stopSupervisor(pidFile, jsonMode);
+    await stopSupervisor(engine, args, pidFile, jsonMode);
     return;
   }
 
@@ -291,25 +292,47 @@ async function showSupervisorStatus(
   process.exit(running ? 0 : 1);
 }
 
-/** `gbrain jobs supervisor stop`: SIGTERM + drain wait; always exits the process. */
-async function stopSupervisor(pidFile: string, jsonMode: boolean): Promise<void> {
+/** #5062: supervisor's own 35s worker drain + 5s SIGKILL confirmation + slack. */
+const STOP_WAIT_MS = 45_000;
+
+/**
+ * `gbrain jobs supervisor stop`: SIGTERM, wait for the exit, then verify the
+ * stop before calling it drained; always exits the process. #5062: "the pid
+ * is gone" is not enough. Success also needs the supervisor's own `stopped`
+ * audit row (after its `shutting_down`) saying the worker drained, every
+ * worker it spawned gone, and its queue lock row released. Anything less is
+ * reported with the failing check and exits 1.
+ */
+async function stopSupervisor(engine: BrainEngine, args: string[], pidFile: string, jsonMode: boolean): Promise<void> {
   const { existsSync, readFileSync } = await import('fs');
-  if (!existsSync(pidFile)) {
-    const payload = { stopped: false, reason: 'pid_file_missing', pid_file: pidFile };
+  const { hostname } = await import('os');
+  const { readSupervisorEvents } = await import('../../core/minions/handlers/supervisor-audit.ts');
+  const { supervisorLockId } = await import('../../core/minions/supervisor.ts');
+  const { inspectLock } = await import('../../core/db-lock.ts');
+  const report = (payload: Record<string, unknown>, human: string, ok: boolean): never => {
     if (jsonMode) console.log(JSON.stringify(payload));
-    else console.error(`No PID file at ${pidFile}; supervisor not running.`);
-    process.exit(1);
+    else if (ok) console.log(human);
+    else console.error(human);
+    process.exit(ok ? 0 : 1);
+  };
+  const isAlive = (pid: number): boolean => {
+    try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
+  };
+
+  if (!existsSync(pidFile)) {
+    report({ stopped: false, reason: 'pid_file_missing', pid_file: pidFile }, `No PID file at ${pidFile}; supervisor not running.`, false);
   }
   let supervisorPid: number;
   try {
     supervisorPid = parseInt(readFileSync(pidFile, 'utf8').trim().split('\n')[0], 10);
     if (isNaN(supervisorPid) || supervisorPid <= 0) throw new Error('invalid pid');
   } catch (err) {
-    const payload = { stopped: false, reason: 'pid_file_corrupt', error: String(err) };
-    if (jsonMode) console.log(JSON.stringify(payload));
-    else console.error(`PID file corrupt: ${err}`);
-    process.exit(1);
+    return report({ stopped: false, reason: 'pid_file_corrupt', error: String(err) }, `PID file corrupt: ${err}`, false);
   }
+
+  const ownEvents = () => readSupervisorEvents().filter(e => e.supervisor_pid === supervisorPid);
+  const startedEvt = ownEvents().filter(e => e.event === 'started').pop();
+  const queue = (typeof startedEvt?.queue === 'string' ? startedEvt.queue : undefined) ?? parseFlag(args, '--queue') ?? 'default';
 
   try { process.kill(supervisorPid, 'SIGTERM'); }
   catch (err: unknown) {
@@ -324,21 +347,48 @@ async function stopSupervisor(pidFile: string, jsonMode: boolean): Promise<void>
     process.exit(code === 'ESRCH' ? 0 : 1);
   }
 
-  // Poll for up to 40s (supervisor's own 35s drain + 5s slack).
-  const deadline = Date.now() + 40_000;
-  let stoppedCleanly = false;
-  while (Date.now() < deadline) {
-    try { process.kill(supervisorPid, 0); }
-    catch { stoppedCleanly = true; break; }
+  const deadline = Date.now() + STOP_WAIT_MS;
+  while (Date.now() < deadline && isAlive(supervisorPid)) {
     await new Promise(r => setTimeout(r, 250));
   }
+  if (isAlive(supervisorPid)) {
+    report({ stopped: false, supervisor_pid: supervisorPid, reason: 'timeout', waited_ms: STOP_WAIT_MS },
+      `Supervisor ${supervisorPid} did not exit within ${STOP_WAIT_MS / 1000}s.`, false);
+  }
 
-  const payload = {
-    stopped: stoppedCleanly,
-    supervisor_pid: supervisorPid,
-    reason: stoppedCleanly ? 'drained' : 'timeout_40s',
+  const events = ownEvents();
+  const shuttingIdx = events.map(e => e.event).lastIndexOf('shutting_down');
+  const stoppedEvt = shuttingIdx >= 0 ? events.slice(shuttingIdx + 1).find(e => e.event === 'stopped') : undefined;
+  const spawned = events
+    .filter(e => e.event === 'worker_spawned' && typeof e.pid === 'number')
+    .map(e => e.pid as number);
+  const liveWorkers = spawned.filter(isAlive);
+  let lockReleased: boolean | null;
+  try {
+    const snap = await inspectLock(engine, supervisorLockId(queue));
+    lockReleased = !(snap && snap.holder_pid === supervisorPid && snap.holder_host === hostname());
+  } catch {
+    lockReleased = null;
+  }
+  const checks = {
+    process_exited: true,
+    stopped_event: stoppedEvt !== undefined,
+    worker_drained: stoppedEvt?.drained === true,
+    workers_exited: liveWorkers.length === 0,
+    lock_released: lockReleased,
   };
-  if (jsonMode) console.log(JSON.stringify(payload));
-  else console.log(stoppedCleanly ? `Supervisor ${supervisorPid} stopped.` : `Supervisor ${supervisorPid} did not exit within 40s.`);
-  process.exit(stoppedCleanly ? 0 : 1);
+  const reason = !checks.stopped_event ? 'no_stopped_event'
+    : !checks.workers_exited ? 'worker_still_running'
+      : lockReleased === null ? 'lock_unverified'
+        : !lockReleased ? 'lock_still_held'
+          : !checks.worker_drained ? 'forced'
+            : 'drained';
+  const drained = reason === 'drained';
+  const human = drained
+    ? `Supervisor ${supervisorPid} stopped; worker drained.`
+    : `Supervisor ${supervisorPid} exited but the stop is not verified as drained (${reason}): ` +
+      `${JSON.stringify(checks)}${liveWorkers.length > 0 ? `; live worker pid(s): ${liveWorkers.join(', ')}` : ''}. ` +
+      'Inspect in-flight jobs with `gbrain jobs list --status active`.';
+  report({ stopped: true, supervisor_pid: supervisorPid, queue, reason, drained, checks,
+    ...(liveWorkers.length > 0 ? { live_worker_pids: liveWorkers } : {}) }, human, drained);
 }

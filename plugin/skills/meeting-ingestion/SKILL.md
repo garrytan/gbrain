@@ -41,6 +41,7 @@ upstream:
   - meeting-ingestion@fc834ee
   - meeting-gold-standard@fc834ee
   - chronology-guard@fc834ee
+when_to_use: "Use when the user asks: \"meeting transcript\", \"process this meeting\", \"meeting notes\", \"meeting recorder\", \"ingest this recording\"."
 ---
 
 # Meeting Ingestion Skill — Unified Pipeline

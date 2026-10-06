@@ -19,6 +19,7 @@ mutating: true
 writes_pages: true
 writes_to:
   - conversations/
+when_to_use: "Use when the user asks: \"connect my chatgpt\", \"connect my claude account\", \"sync my chat history\", \"chatgpt oauth\", \"auto-import my chats\"."
 ---
 
 # chat-connectors — Live account sync of ChatGPT + Claude history

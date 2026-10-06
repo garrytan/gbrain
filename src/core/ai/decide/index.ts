@@ -156,7 +156,7 @@ async function runTypesafe(req: DecideRequest, ctx: DecideContext, cfg: DecideCo
     if (req.remote && spent.remote + estimate > cfg.dailyUsd * cfg.remoteShare) throw new DecideError('budget_exhausted', 'decide: remote share of the daily budget exhausted');
   }
   const tracker = getCurrentBudgetTracker();
-  tracker?.reserve({ modelId: a.provider, estimatedInputTokens: estimatedTokens, maxOutputTokens: 0, kind: budgetKind, label: 'gateway.decide' });
+  const reservation = tracker?.reserve({ modelId: a.provider, estimatedInputTokens: estimatedTokens, maxOutputTokens: 0, kind: budgetKind, label: 'gateway.decide' });
 
   const { signal, done } = deadlineSignal(a.deadlineAt, a.now, req.signal);
   const transport = decideTransport();
@@ -213,7 +213,7 @@ async function runTypesafe(req: DecideRequest, ctx: DecideContext, cfg: DecideCo
     throw asDecideError(err, signal, req.signal);
   } finally {
     done();
-    recordOnTracker(tracker, { modelId: a.provider, inputTokens, outputTokens: 0, kind: budgetKind, label: 'gateway.decide' });
+    recordOnTracker(tracker, { modelId: a.provider, reservation, inputTokens, outputTokens: 0, kind: budgetKind, label: 'gateway.decide' });
   }
   if (models.size > 1) throw new DecideError('mixed_model', `decide: batches answered by ${models.size} different models`);
   const modelResolved = [...models][0] ?? modelId;

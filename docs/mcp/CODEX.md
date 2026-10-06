@@ -159,6 +159,21 @@ Codex stores the env-var *name* (`GBRAIN_REMOTE_TOKEN`), not the token itself, a
 reads the value when it launches the MCP server. Add the `export` line to your
 `~/.zshrc` / `~/.bashrc` so it's set in every session.
 
+## Always-loaded core memory
+
+Codex does not put MCP server instructions in the prompt, so core memory
+([guide](../guides/core-memory.md)) reaches Codex through its user-global
+instruction file:
+
+```bash
+gbrain compile-context --target codex-global
+```
+
+This writes the default source's core block into a managed block in
+`$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`), which Codex loads in
+every session. Rerun it after core changes (`gbrain doctor` names a stale copy);
+`gbrain compile-context --target codex-global --remove-core` takes it out.
+
 ## Verify
 
 In Codex, ask it to use the brain:

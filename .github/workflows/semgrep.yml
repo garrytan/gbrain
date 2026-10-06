@@ -19,12 +19,15 @@ on:
 permissions:
   contents: read
 
+# Event parity (docs/TESTING.md#event-parity): grouping only.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   semgrep:
+    # Named exception (docs/TESTING.md#event-parity): pull requests gate on findings
+    # new since the merge base; the weekly full-tree scan below covers the rest.
     if: github.event_name == 'pull_request'
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 20
@@ -55,6 +58,7 @@ jobs:
           semgrep scan --config p/default --config p/typescript --error --baseline-commit "$BASELINE"
 
   semgrep-full:
+    # Named exception (docs/TESTING.md#event-parity): the weekly schedule and dispatch.
     if: github.event_name != 'pull_request'
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 20

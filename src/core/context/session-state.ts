@@ -53,7 +53,30 @@ export interface SessionContextPatch {
    * bucket). Stored in the surfaced_slugs jsonb column (single-element).
    */
   cursorSlug?: string;
+  /** delta's facts keyset `(created_at, id)` at column precision (omit to leave unchanged). */
+  factsCursor?: { at: string; id: number | null };
+  /** `increment` adds one atomically (returned); `reset` sets 0 (omit to leave unchanged). */
+  degradedWakes?: 'increment' | 'reset';
 }
+
+/** delta's view of a session row: both arm cursors plus the incomplete-wake counter. */
+export interface DeltaSessionState {
+  last_wake_at: string | null;
+  cursor_slug: string | undefined;
+  facts_cursor_at: string | null;
+  facts_cursor_id: number | null;
+  degraded_wakes: number;
+}
+
+/**
+ * delta reads distinguish ABSENT (no row: a first wake) from UNAVAILABLE (the
+ * read failed). Treating a failed read as absence would re-initialize the
+ * session at now and silently drop everything since its checkpoint.
+ */
+export type DeltaSessionRead =
+  | { status: 'absent' }
+  | { status: 'loaded'; state: DeltaSessionState }
+  | { status: 'unavailable'; error: string };
 
 /** 'local' sentinel for the trusted CLI/hook path; the auth client id otherwise. */
 export function resolveClientId(clientId?: string | null): string {
@@ -113,6 +136,45 @@ export async function getSessionContextState(
   }
 }
 
+const ISO_US = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+export async function readDeltaSessionState(
+  engine: BrainEngine,
+  sourceId: string,
+  clientId: string | null | undefined,
+  sessionId: string,
+): Promise<DeltaSessionRead> {
+  try {
+    const rows = await engine.executeRaw<{
+      surfaced_slugs: unknown;
+      last_wake_at: string | null;
+      facts_cursor_at: string | null;
+      facts_cursor_id: string | number | null;
+      degraded_wakes: string | number | null;
+    }>(
+      `SELECT surfaced_slugs, ${ISO_US('last_wake_at')} AS last_wake_at,
+              ${ISO_US('facts_cursor_at')} AS facts_cursor_at, facts_cursor_id, degraded_wakes
+       FROM session_context_state
+       WHERE source_id = $1 AND client_id = $2 AND session_id = $3`,
+      [sourceId, resolveClientId(clientId), normSession(sessionId)],
+    );
+    if (!rows.length) return { status: 'absent' };
+    const r = rows[0];
+    return {
+      status: 'loaded',
+      state: {
+        last_wake_at: r.last_wake_at ?? null,
+        cursor_slug: toStringArray(r.surfaced_slugs)[0],
+        facts_cursor_at: r.facts_cursor_at ?? null,
+        facts_cursor_id: r.facts_cursor_id == null ? null : Number(r.facts_cursor_id),
+        degraded_wakes: Number(r.degraded_wakes ?? 0),
+      },
+    };
+  } catch (e) {
+    return { status: 'unavailable', error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * Upsert the session cursor. SINGLE-STATEMENT atomic (adversarial review):
  * keep-if-absent and monotonic-cursor semantics run inside the UPDATE itself,
@@ -132,21 +194,30 @@ export async function upsertSessionContextState(
   clientId: string | null | undefined,
   sessionId: string,
   patch: SessionContextPatch,
-): Promise<void> {
+): Promise<{ ok: true; degradedWakes: number } | { ok: false; error: string }> {
   try {
     const replaceStanding = Array.isArray(patch.standingEntities);
     const replaceCursorSlug = typeof patch.cursorSlug === 'string';
-    await engine.executeRaw(
+    const rows = await engine.executeRaw<{ degraded_wakes: string | number }>(
       `INSERT INTO session_context_state
-         (source_id, client_id, session_id, standing_entities, surfaced_slugs, last_wake_at, updated_at)
-       VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb, $6, now())
+         (source_id, client_id, session_id, standing_entities, surfaced_slugs, last_wake_at,
+          facts_cursor_at, facts_cursor_id, degraded_wakes, updated_at)
+       VALUES ($1, $2, $3, $4::text::jsonb, $5::text::jsonb, $6::text::timestamptz, $9::text::timestamptz, $10::bigint,
+               CASE WHEN $11::text = 'increment' THEN 1 ELSE 0 END, now())
        ON CONFLICT (source_id, client_id, session_id) DO UPDATE SET
          standing_entities = CASE WHEN $7::boolean THEN EXCLUDED.standing_entities
                                   ELSE session_context_state.standing_entities END,
          surfaced_slugs    = CASE WHEN $8::boolean THEN EXCLUDED.surfaced_slugs
                                   ELSE session_context_state.surfaced_slugs END,
          last_wake_at      = COALESCE(EXCLUDED.last_wake_at, session_context_state.last_wake_at),
-         updated_at        = now()`,
+         facts_cursor_at   = COALESCE(EXCLUDED.facts_cursor_at, session_context_state.facts_cursor_at),
+         facts_cursor_id   = CASE WHEN EXCLUDED.facts_cursor_at IS NULL THEN session_context_state.facts_cursor_id
+                                  ELSE EXCLUDED.facts_cursor_id END,
+         degraded_wakes    = CASE $11::text WHEN 'increment' THEN session_context_state.degraded_wakes + 1
+                                            WHEN 'reset' THEN 0
+                                            ELSE session_context_state.degraded_wakes END,
+         updated_at        = now()
+       RETURNING degraded_wakes`,
       [
         sourceId,
         resolveClientId(clientId),
@@ -156,10 +227,15 @@ export async function upsertSessionContextState(
         patch.lastWakeAt ?? null,
         replaceStanding,
         replaceCursorSlug,
+        patch.factsCursor?.at ?? null,
+        patch.factsCursor ? patch.factsCursor.id : null,
+        patch.degradedWakes ?? 'keep',
       ],
     );
-  } catch {
-    /* fail-open: a state-write failure must never block the recall read path */
+    return { ok: true, degradedWakes: Number(rows[0]?.degraded_wakes ?? 0) };
+  } catch (e) {
+    /* fail-open: a state-write failure never blocks the read path; delta surfaces it as `session_state` */
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

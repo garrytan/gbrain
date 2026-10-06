@@ -74,7 +74,7 @@ const addColumns = (table: string, columns: readonly string[]) =>
  * changed (to NULL when no actor is set: an unattributed writer mutated it).
  * Either pair may be filled while it is still NULL (journal backfill).
  */
-const STAMP_ROW_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_write_attribution() RETURNS trigger LANGUAGE plpgsql AS $fn$
+const STAMP_ROW_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_write_attribution() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
 DECLARE req uuid; principal_kind text; principal_id text; changed boolean;
 BEGIN${SETTINGS}
   IF TG_OP = 'INSERT' THEN
@@ -109,7 +109,7 @@ END $fn$`;
  * writes bump the revision through an update of the page row, so they are
  * attributed too.
  */
-const STAMP_REVISION_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_revision_attribution() RETURNS trigger LANGUAGE plpgsql AS $fn$
+const STAMP_REVISION_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_revision_attribution() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
 DECLARE req uuid; principal_kind text; principal_id text;
 BEGIN${SETTINGS}
   IF TG_OP = 'INSERT' THEN
@@ -130,7 +130,7 @@ END $fn$`;
  * the same transaction, so the page row still carries the snapshotted
  * revision and its writer. The archiving actor comes from the settings.
  */
-const STAMP_VERSION_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_version_attribution() RETURNS trigger LANGUAGE plpgsql AS $fn$
+const STAMP_VERSION_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_version_attribution() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
 DECLARE req uuid; principal_kind text; principal_id text;
 BEGIN${SETTINGS}
   IF (NEW.write_request_id, NEW.write_principal_kind, NEW.write_principal_id) IS NOT DISTINCT FROM (NULL::uuid, NULL::text, NULL::text) THEN

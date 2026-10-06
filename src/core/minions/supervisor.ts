@@ -49,6 +49,7 @@ import type { BrainEngine } from '../engine.ts';
 import { tryAcquireDbLock, waitForDbLockTakeover, inspectLock, isLockHolderLive, type DbLockHandle } from '../db-lock.ts';
 import { currentBrainId, readWorkers } from './worker-registry.ts';
 import { autopilotOperatorPauseMarkerPath, autopilotPaused } from '../autopilot-paths.ts';
+import { registerSignalOwner, triggerCleanupAndExit } from '../process-cleanup.ts';
 import { resolveEnvNumber } from '../env-number.ts';
 
 export type SupervisorEvent =
@@ -216,6 +217,13 @@ export function buildWorkerArgs(
 /** Grace before SIGKILL when restarting a wedged child — reuses the 35s
  *  shutdown() drain window (issue #1801, D3). */
 const WEDGE_RESTART_GRACE_MS = 35_000;
+/** #5062: shutdown drain window for the worker (its own 30s job drain + slack). */
+const WORKER_DRAIN_GRACE_MS = 35_000;
+/** #5062: how long to wait for the kernel to confirm a SIGKILLed worker. */
+const WORKER_KILL_CONFIRM_MS = 5_000;
+/** Shutdown reasons that come from an operator signal (always honored, even
+ *  when the owner is configuration-blocked). */
+const SIGNAL_REASONS: ReadonlySet<string> = new Set(['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGPIPE']);
 
 /**
  * issue #1994: resolve the hard permanent-give-up ceiling. Default
@@ -568,6 +576,8 @@ export class MinionSupervisor {
   private exitListener: (() => void) | null = null;
   private sigtermListener: (() => void) | null = null;
   private sigintListener: (() => void) | null = null;
+  private releaseSignalOwner: (() => void) | null = null;
+  private shutdownPromise: Promise<void> | null = null;
   private lockAcquired = false;
   private consecutiveHealthFailures = 0;
   // #1849: queue-scoped DB singleton lock (the real authority) + its refresh
@@ -806,6 +816,12 @@ export class MinionSupervisor {
     this.sigintListener = () => { void this.shutdown('SIGINT', ExitCodes.CLEAN); };
     process.on('SIGTERM', this.sigtermListener);
     process.on('SIGINT', this.sigintListener);
+    // #5062: own the CLI's termination signals so the generic cleanup pass
+    // (which DELETEs this supervisor's lock row and exits 143) cannot pre-empt
+    // the drain above.
+    this.releaseSignalOwner = registerSignalOwner('jobs-supervisor', (signal) => {
+      void this.shutdown(signal, ExitCodes.CLEAN);
+    });
 
     // 4. Health monitoring. Skip when healthInterval=0 — that's the explicit
      // "disable" contract documented on `--health-interval 0`. setInterval(0)
@@ -881,21 +897,47 @@ export class MinionSupervisor {
     }
   }
 
-  /** Unified shutdown path. Reason becomes the audit event name; exitCode is process exit. */
-  private async shutdown(reason: string, exitCode: number): Promise<void> {
-    if (this.configurationBlocked && reason !== 'SIGTERM' && reason !== 'SIGINT') return;
-    if (this.stopping) return;
+  /**
+   * Unified shutdown path. Reason becomes the audit event name; exitCode is
+   * process exit. #5062: every caller (repeated signals included) joins the
+   * same promise. The ordered sequence is: stop restarts (and, via
+   * `stopping`, health actions), keep refreshing the singleton lock while the worker drains (a second
+   * supervisor cannot start mid-drain), stop the worker (SIGTERM, 35s drain,
+   * SIGKILL by liveness, confirmed exit), release the lock, emit `stopped`
+   * with whether the worker actually drained, then run the remaining cleanup
+   * callbacks and exit.
+   */
+  private shutdown(reason: string, exitCode: number): Promise<void> {
+    if (this.configurationBlocked && !SIGNAL_REASONS.has(reason)) return Promise.resolve();
+    this.shutdownPromise ??= this.runShutdown(reason, exitCode);
+    return this.shutdownPromise;
+  }
+
+  private async runShutdown(reason: string, exitCode: number): Promise<void> {
     this.stopping = true;
 
     this.emit('shutting_down', { reason, exit_code: exitCode });
 
-    if (this.childSupervisor) {
-      this.childSupervisor.killChild('SIGTERM');
-      await this.childSupervisor.awaitChildExit(35_000);
-      if (this.childSupervisor.childAlive) this.childSupervisor.killChild('SIGKILL');
+    // Stop the worker: SIGTERM, drain window, SIGKILL by liveness, then wait
+    // for the kernel to confirm the kill.
+    const child = this.childSupervisor;
+    const hadWorker = child?.childAlive === true;
+    let forced = false;
+    let workerGone = true;
+    if (child) {
+      child.killChild('SIGTERM');
+      await child.awaitChildExit(WORKER_DRAIN_GRACE_MS);
+      if (child.childAlive) {
+        forced = true;
+        child.killChild('SIGKILL');
+        await child.awaitChildExit(WORKER_KILL_CONFIRM_MS);
+      }
+      workerGone = !(child as ChildWorkerSupervisor).childAlive;
     }
-    if (this.configurationBlocked && reason !== 'SIGTERM' && reason !== 'SIGINT') {
+    const workerExit = hadWorker ? child?.lastExit ?? null : null;
+    if (this.configurationBlocked && !SIGNAL_REASONS.has(reason)) {
       this.stopping = false;
+      this.shutdownPromise = null;
       return;
     }
 
@@ -907,14 +949,17 @@ export class MinionSupervisor {
     // #1849: stop refreshing + release the DB singleton lock so a clean
     // restart (or a different host) can re-acquire immediately instead of
     // waiting out the TTL. release() is best-effort; the TTL covers a crash.
+    // #5062: only now, after the worker is gone; the refresh timer kept the
+    // lock alive through the drain.
     if (this.lockRefreshTimer) {
       clearInterval(this.lockRefreshTimer);
       this.lockRefreshTimer = null;
     }
+    let lockReleased = this.dbLock === null;
     if (this.dbLock) {
       const lock = this.dbLock;
       this.dbLock = null;
-      try { await lock.release(); } catch { /* best-effort; TTL fallback covers it */ }
+      try { await lock.release(); lockReleased = true; } catch { /* best-effort; TTL fallback covers it */ }
     }
 
     // Remove signal handlers so tests that spin up multiple supervisors on
@@ -928,9 +973,22 @@ export class MinionSupervisor {
       process.removeListener('SIGINT', this.sigintListener);
       this.sigintListener = null;
     }
+    this.releaseSignalOwner?.();
+    this.releaseSignalOwner = null;
 
-    this.emit('stopped', { reason, exit_code: exitCode });
-    process.exit(exitCode);
+    // A worker that needed SIGKILL, is still alive, or exited with anything
+    // but a clean drain did not drain: `jobs supervisor stop` reads this flag.
+    const drained = !hadWorker || (!forced && workerGone && workerExit?.code === 0);
+    this.emit('stopped', {
+      reason,
+      exit_code: exitCode,
+      drained,
+      worker_forced: forced,
+      worker_exit_code: workerExit?.code ?? null,
+      worker_signal: workerExit?.signal ?? null,
+      lock_released: lockReleased,
+    });
+    await triggerCleanupAndExit(exitCode);
   }
 
   /** #1849: the queue-scoped DB lock id for this supervisor's queue. */
@@ -956,7 +1014,13 @@ export class MinionSupervisor {
    * tolerated (counter resets on the next success).
    */
   private async refreshDbLock(): Promise<void> {
-    if (!this.dbLock || this.stopping) return;
+    if (!this.dbLock) return;
+    if (this.stopping) {
+      // #5062: still the singleton while the worker drains; a failed refresh
+      // here cannot start a second shutdown (the TTL still covers the drain).
+      try { await this.dbLock.refresh(); } catch { /* best-effort during drain */ }
+      return;
+    }
     try {
       const stillOwned = await this.dbLock.refresh();
       if (this.configurationBlocked) return;

@@ -408,17 +408,15 @@ export async function submitAutoDrains(
   { timeoutMs, jsonMode, now = Date.now }: { timeoutMs: number; jsonMode: boolean; now?: () => number },
 ): Promise<void> {
   // ── #1685 GAP D: per-source extract_atoms auto-drain ───────────────
-  // The silent-backlog incident: a pack that doesn't declare extract_atoms
-  // never runs the phase in the routine cycle, so the atom backlog grows
-  // invisibly. Auto-submit a bounded, PROTECTED drain per source when the
-  // backlog exceeds the threshold AND the active pack doesn't declare the
-  // phase. Default-ON, daily-capped, time-sloted key so a new slot
-  // opens each UTC day (CODEX #1/#2/#3, DECISION 3C).
-  const { packDeclaresPhase } = await import('../core/cycle.ts');
-  // packDeclaresPhase reads the active pack (brain-wide, not
-  // per-source). If the pack declares extract_atoms the routine
-  // cycle already drains it for every source — nothing to do.
-  if (await packDeclaresPhase(engine, 'extract_atoms')) return;
+  // The silent-backlog incident: the atom backlog grows invisibly when
+  // nothing runs extract_atoms. Auto-submit a bounded, PROTECTED drain per
+  // source when the backlog exceeds the threshold. Default-ON, daily-capped,
+  // time-sloted key so a new slot opens each UTC day (CODEX #1/#2/#3,
+  // DECISION 3C). #5028: this runs whether or not the active pack declares
+  // extract_atoms. The daemon's per-source cycles run only
+  // SOURCE_FRESHNESS_PHASES and the maintenance job runs no source phase, so
+  // a declaring pack does not make the routine cycle drain it; skipping here
+  // left this drain as the only runner switched off.
   const parsePosInt = (v: string | null, d: number): number => {
     if (v == null) return d;
     const n = parseInt(v, 10);

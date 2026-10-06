@@ -259,6 +259,7 @@ const OP_AREAS: Record<string, string> = {
   add_link: 'links', remove_link: 'links', get_links: 'links',
   get_backlinks: 'links', list_link_sources: 'links', traverse_graph: 'links',
   find_orphans: 'links',
+  wanted_pages: 'links',
   // timeline
   add_timeline_entry: 'timeline', get_timeline: 'timeline',
   // life chronicle

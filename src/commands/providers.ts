@@ -445,7 +445,7 @@ function prosFor(r: Recipe, touchpoint: TouchpointFilter): string[] {
     if (r.id === 'anthropic') out.push('Default subagent driver', 'Prompt-cache support', 'Strong tool calling');
     else if (r.id === 'openai') out.push('Strong tool calling', 'Wide adapter support');
     else if (r.id === 'google') out.push('1M context', 'Cheap');
-    else if (r.id === 'deepseek') out.push('25-40x cheaper than Anthropic', 'Strong reasoning');
+    else if (r.id === 'deepseek') out.push('About 7-17x cheaper than Anthropic Sonnet 5.5 to Opus 5.5 at peak rates', 'Strong reasoning');
     else if (r.id === 'groq') out.push('500 tok/s inference', 'Cheap fallback');
     else if (r.id === 'together') out.push('Open-weights house', 'Llama / Qwen / Mixtral');
     return out;

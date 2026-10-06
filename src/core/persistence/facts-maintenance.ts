@@ -19,7 +19,7 @@ import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
 import { authorizeFactsBackstop } from './effect-facts.ts';
 import { admitWriteInTransaction, getWriteRequest, getWriteRequestById, receiptFor } from './journal.ts';
-import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
+import { assertPersistenceAccepting, persistenceConsumerConfig, waitForWrite, writeResponse } from './service.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
 import { digest, requireUuid, sha256 } from './digest.ts';
 import { isTerminal, type WriteAuthority, type WriteRequest } from './model.ts';
@@ -222,7 +222,10 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
     model: ctx.model ?? null, filter: ctx.notabilityFilter ?? 'all' });
   const seed = ctx.persistenceRequestId ?? (ctx.requestId ? requireUuid(ctx.requestId) : inputDigest);
   const batchKey = digest(['managed-facts-v1', authority.principal, source.incarnation, seed]);
-  const session: ManagedFactsSession = { authority, binding: writeThrough ? binding : null, config: ctx.operationContext?.config ?? ctx.config ?? { engine: engine.kind } as GBrainConfig,
+  // With no caller config, admit under the config this process's consumer prepares with, so the embedding signature
+  // checked at admission is the one checked at preparation (a keyless consumer never receives embedded facts).
+  const config = ctx.operationContext?.config ?? ctx.config ?? persistenceConsumerConfig(engine) ?? { engine: engine.kind } as GBrainConfig;
+  const session: ManagedFactsSession = { authority, binding: writeThrough ? binding : null, config,
     batchKey, inputDigest, origin, originalRequestId: ctx.persistenceRequestId ?? null,
     completionRequestId: ctx.requestId ? requireUuid(ctx.requestId) : managedFactRequestId(batchKey, '__managed_facts_complete__') };
   const prior = await getWriteRequest(engine, authority.principal, session.completionRequestId);

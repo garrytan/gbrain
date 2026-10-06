@@ -237,6 +237,7 @@ async function callSlot(
       maxTokens: opts.maxTokens,
       abortSignal: opts.abortSignal,
       allowFallback: false,
+      thinking: 'off',
     });
 
     const parsed = parseModelJSON(result.text ?? '');

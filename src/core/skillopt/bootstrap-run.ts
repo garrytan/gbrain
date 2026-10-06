@@ -36,6 +36,8 @@ export interface GuardedBootstrapOpts {
   modelsStrict?: boolean;
   /** USD cap for the bootstrap calls; 0 = uncapped. */
   maxCostUsd: number;
+  /** `user` (default) refuses an unpriced optimizer; `default` warns and runs it (#5563). */
+  maxCostSource?: 'user' | 'default';
   /** Test seam — substitute gateway.chat. */
   chatFn?: typeof gatewayChat;
 }
@@ -53,7 +55,7 @@ export async function runGuardedBootstrap(opts: GuardedBootstrapOpts): Promise<G
 
   const pricingOverrides = await loadPricingOverrides(opts.engine);
   const tracker = new BudgetTracker({
-    ...(opts.maxCostUsd > 0 ? { maxCostUsd: opts.maxCostUsd } : {}),
+    ...(opts.maxCostUsd > 0 ? { maxCostUsd: opts.maxCostUsd, capSource: opts.maxCostSource ?? 'user' } : {}),
     ...(pricingOverrides ? { pricingOverrides } : {}),
     label: `skillopt-bootstrap:${opts.skillName}`,
   });

@@ -387,8 +387,15 @@ scaffold the bundled skills into it:
 
 ```bash
 cd /path/to/agent/workspace
-gbrain skillpack scaffold --all       # copy the 50+ bundled skills + RESOLVER.md
+gbrain skillpack scaffold --all       # copy the 50+ bundled skills and their shared files
 ```
+
+Scaffold copies each bundled skill plus the shared files the skills depend on
+(`skills/conventions/` and the `skills/_*` files `openclaw.plugin.json` lists
+under `shared_deps`). It does not copy `skills/RESOLVER.md` and leaves your
+workspace's own `RESOLVER.md` / `AGENTS.md` untouched: the skill dispatcher stays
+the bundled `skills/RESOLVER.md`, which a paragraph further down this step tells
+you to read.
 
 Scaffolded skills are first-class files in your repo. Edit freely; re-running scaffold
 refuses to overwrite anything that exists. Use `gbrain skillpack reference <name>` to
@@ -445,8 +452,8 @@ even on failure; read the output). Restart opencode afterwards — it reads
 config at session start. Verified against opencode v1.18.18. Full reference:
 [docs/mcp/OPENCODE.md](docs/mcp/OPENCODE.md).
 
-Whether you scaffolded or not, read `skills/RESOLVER.md` (in your workspace, or
-[the published copy](https://github.com/garrytan/gbrain/blob/master/skills/RESOLVER.md)). It's
+Whether you scaffolded or not, read `skills/RESOLVER.md` (the bundled copy in your
+gbrain install, or [the published copy](https://github.com/garrytan/gbrain/blob/master/skills/RESOLVER.md)). It's
 the skill dispatcher — tells you which skill to read for any task. Save this to your
 memory permanently.
 

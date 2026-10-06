@@ -34,6 +34,7 @@ import { deriveEnvKey, resolveInheritValue } from './shell-inherit.ts';
 import { validateShellJobParams } from './shell-validate.ts';
 import { redactSecretsInText } from './shell-redact.ts';
 import { loadConfig } from '../../config.ts';
+import { killProcessGroup, processGroupAlive } from '../job-isolation.ts';
 
 /** Environment variables passed through to shell children by default. Callers
  *  that need additional keys (e.g. a specific API token for a cron) must name
@@ -202,6 +203,27 @@ class TailBuffer {
   }
 }
 
+/** Poll `alive` every 50ms for up to `ms`; true once it reports dead. */
+async function waitUntilGone(alive: () => boolean, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (alive()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return true;
+}
+
+/** SIGTERM what is left, escalate to SIGKILL after the grace window by
+ *  liveness, then wait for the kernel to confirm termination (bounded). */
+async function reapTree(alive: () => boolean, signal: (s: 'SIGTERM' | 'SIGKILL') => void): Promise<void> {
+  if (!alive()) return;
+  signal('SIGTERM');
+  if (await waitUntilGone(alive, KILL_GRACE_MS)) return;
+  signal('SIGKILL');
+  if (await waitUntilGone(alive, KILL_GRACE_MS)) return;
+  console.warn('[shell] job process group still present after SIGKILL; giving up the wait');
+}
+
 /** The shell handler itself. */
 export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResult> {
   if (process.env.GBRAIN_ALLOW_SHELL_JOBS !== '1') {
@@ -242,6 +264,10 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
 
   const startedAt = Date.now();
 
+  // #5062: on POSIX the job runs in its own process group, so termination
+  // reaches every descendant (a shell's children and grandchildren), not
+  // only the direct child. Windows keeps the direct-child kill path.
+  const ownGroup = process.platform !== 'win32';
   let proc: ChildProcess;
   try {
     if (params.cmd) {
@@ -251,6 +277,7 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
         cwd: params.cwd,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: ownGroup,
       });
     } else {
       const argv = params.argv!;
@@ -258,6 +285,7 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
         cwd: params.cwd,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: ownGroup,
       });
     }
   } catch (err) {
@@ -267,6 +295,17 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
   }
 
   const pid = proc.pid ?? -1;
+  const pgid = ownGroup && pid > 1 ? pid : null;
+  const treeAlive = (): boolean => pgid !== null
+    ? processGroupAlive(pgid)
+    : pid > 0 && proc.exitCode === null && proc.signalCode === null;
+  const signalTree = (signal: 'SIGTERM' | 'SIGKILL'): void => {
+    if (pgid !== null) {
+      killProcessGroup(pgid, signal);
+      return;
+    }
+    try { proc.kill(signal); } catch { /* proc already exited */ }
+  };
   const stdoutTail = new TailBuffer(STDOUT_TAIL_MAX_BYTES);
   const stderrTail = new TailBuffer(STDERR_TAIL_MAX_BYTES);
 
@@ -282,13 +321,9 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
   const onAbort = (label: string) => () => {
     if (killTimer !== null) return; // already started
     killReason = label;
-    if (!proc.killed) {
-      try { proc.kill('SIGTERM'); } catch { /* proc already exited */ }
-    }
+    signalTree('SIGTERM');
     killTimer = setTimeout(() => {
-      if (!proc.killed) {
-        try { proc.kill('SIGKILL'); } catch { /* already exited */ }
-      }
+      if (treeAlive()) signalTree('SIGKILL');
     }, KILL_GRACE_MS);
   };
   const sigAbort = onAbort('signal');
@@ -312,10 +347,14 @@ export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResul
       else if (signal === 'SIGKILL') resolve(137);
       else resolve(-1);
     });
-  }).finally(() => {
+  }).finally(async () => {
     if (killTimer !== null) clearTimeout(killTimer);
     ctx.signal.removeEventListener('abort', sigAbort);
     ctx.shutdownSignal.removeEventListener('abort', shutdownAbort);
+    // #5062: the job is over once its leader exits; anything it left in its
+    // process group (a backgrounded child, a grandchild that ignored
+    // SIGTERM) is terminated and confirmed gone before the job settles.
+    await reapTree(treeAlive, signalTree);
   });
 
   const duration_ms = Date.now() - startedAt;

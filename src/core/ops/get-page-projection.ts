@@ -22,7 +22,8 @@ export interface GetPageProjectionOpts {
  * #2225: `content` is the canonical serialized markdown (frontmatter +
  * compiled_truth + `<!-- timeline -->` sentinel + timeline), built from the
  * visible body so the privacy-fence strip applies to untrusted readers too.
- * content_only returns just what a get→edit→put_page round trip needs, without
+ * content_only returns just what a get→edit→put_page round trip needs (source_id
+ * and revision included, so the write goes back to the page that was read), without
  * the duplicate compiled_truth / timeline / frontmatter the full shape carries
  * next to `content` (a 30 KB page otherwise comes back as ~62 KB).
  */
@@ -37,6 +38,7 @@ export function projectGetPage(visibleBody: Page, o: GetPageProjectionOpts) {
     const deletedAt = visibleBody.deleted_at;
     return {
       slug: visibleBody.slug,
+      source_id: visibleBody.source_id,
       type: visibleBody.type,
       title: visibleBody.title,
       revision,

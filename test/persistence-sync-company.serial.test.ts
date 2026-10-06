@@ -35,13 +35,14 @@ const check = (name: string, run: (engine: BrainEngine) => Promise<void>) => tes
   withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_SOURCE: undefined }, async () => {
     for (const { engine } of stores) await run(engine);
   }), 120_000);
-async function input(engine: BrainEngine, managed: boolean) {
+async function input(engine: BrainEngine, managed: boolean, extra: Record<string, string> = {}) {
   await disposePersistenceConsumer(engine);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=$1 WHERE singleton=1', [managed]);
   const root = mkdtempSync(join(home, 'source-')), git = await makeGitFixture(root);
   for (const [path, content] of Object.entries({
     'people/operator.md': '---\ntype: person\ntitle: Example Operator\n---\n# Example Operator\nOwns the account.\n',
     'customers/account.md': '---\ntype: customer\ntitle: Example Account\nowner: "[[people/operator]]"\naudience: internal\n---\n# Example Account\nA synthetic account.\n',
+    ...extra,
   })) { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), content); }
   git.commitAll('Add approved synthetic source');
   const plan = await inspectCompanyBrain({ path: root, profile: 'company-brain' });
@@ -118,6 +119,19 @@ check('legacy company consent retry preserves the approved manifest and original
   const [after] = await engine.executeRaw<{ completed_keys: any[] }>("SELECT completed_keys FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1", [stored.fingerprint]);
   expect(after.completed_keys[0]).toMatchObject({ runId: cursor.runId, done: true, processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: false } });
   expect(await engine.executeRaw("SELECT id FROM persistence_effects WHERE source_id=$1 AND kind='embedding'", [f.sourceId])).toEqual([]);
+});
+
+// #5493: the company inspection already lists an image as unsupported, so managed discovery neither refuses nor holds it.
+check('a company source with an image and multimodal embedding on syncs without an image hold', async engine => {
+  await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, async () => {
+    const f = await input(engine, true, { 'customers/logo.png': 'not decoded' });
+    expect(await connectCompanyBrain(engine, f)).toMatchObject({ ok: true, receipt: { outcome: 'complete' } });
+    const result = await performSync(engine, { sourceId: f.sourceId, full: true });
+    expect(result.status).not.toBe('blocked_by_failures');
+    expect(result.held).toBeUndefined();
+    expect(await engine.executeRaw('SELECT slug FROM pages WHERE source_id=$1 AND source_path=$2', [f.sourceId, 'customers/logo.png'])).toEqual([]);
+  });
+  await disposePersistenceConsumer(engine);
 });
 
 for (const phase of ['admitted', 'complete']) for (const caller of ['explicit', 'job']) {

@@ -31,6 +31,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { canonicalLookup } from '../model-pricing.ts';
+import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 
 export interface ChatUsageRecord {
   /** "provider:modelId" of the model that actually answered. */
@@ -60,8 +61,21 @@ export function currentChatPhase(): string | null {
   return __chatPhaseStore.getStore() ?? null;
 }
 
-/** Successful chat calls counted for one cycle phase (phase containment, dream_paid_loop). */
-export interface ChatCallMeter { calls: number }
+/**
+ * Successful chat calls counted for one cycle phase (phase containment,
+ * dream_paid_loop) or one nightly probe run. A meter that declares
+ * `cost_usd` also prices each call with the budget tracker's resolver
+ * (`priceFor`: `pricing_overrides`, then the shipped tables, the claude-cli
+ * sibling rate and free local providers; table rows keep their cache-token
+ * rates): priced calls add to `cost_usd`, unpriced ones add to
+ * `unpriced_calls` instead of counting as 0.
+ */
+export interface ChatCallMeter {
+  calls: number;
+  cost_usd?: number;
+  unpriced_calls?: number;
+  pricing_overrides?: PricingOverrides;
+}
 const __chatMeterStore = new AsyncLocalStorage<ChatCallMeter>();
 
 /** Run `fn` counting every successful gateway.chat() inside it on `meter`. */
@@ -143,8 +157,20 @@ export function recordChatUsage(input: {
   const meter = __chatMeterStore.getStore();
   if (meter) meter.calls++;
   const sink = _sinks.length > 0 ? _sinks[_sinks.length - 1]!.sink : null;
-  if (!sink) return;
+  const pricedMeter = meter && meter.cost_usd !== undefined ? meter : null;
+  if (!sink && !pricedMeter) return;
   try {
+    const cost_usd = estimateChatCostUsd(input.model, input.usage);
+    if (pricedMeter) {
+      const price = priceFor(input.model, 'chat', pricedMeter.pricing_overrides);
+      const { input_tokens, output_tokens, cache_read_tokens = 0, cache_write_tokens = 0 } = input.usage;
+      const meterCost = price === null ? null
+        : price.source === 'table' && cost_usd !== null ? cost_usd
+        : ((input_tokens + cache_read_tokens + cache_write_tokens) * price.pricing.input + output_tokens * price.pricing.output) / 1_000_000;
+      if (meterCost === null) pricedMeter.unpriced_calls = (pricedMeter.unpriced_calls ?? 0) + 1;
+      else pricedMeter.cost_usd = (pricedMeter.cost_usd ?? 0) + meterCost;
+    }
+    if (!sink) return;
     const record: ChatUsageRecord = {
       model: input.model,
       provider: input.provider ?? null,
@@ -153,7 +179,7 @@ export function recordChatUsage(input: {
       output_tokens: Math.max(0, Math.round(input.usage.output_tokens || 0)),
       cache_read_tokens: Math.max(0, Math.round(input.usage.cache_read_tokens || 0)),
       cache_write_tokens: Math.max(0, Math.round(input.usage.cache_write_tokens || 0)),
-      cost_usd: estimateChatCostUsd(input.model, input.usage),
+      cost_usd,
     };
     void Promise.resolve(sink(record)).catch(() => {
       /* fail-open: accounting must never break a chat call */

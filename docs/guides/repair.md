@@ -1307,6 +1307,35 @@ brain's own autopilot job (or the shared job an older install still runs it
 from) for a brain under another `GBRAIN_HOME`. The autopilot launchd label
 follows `GBRAIN_AUTOPILOT_LABEL` when set.
 
+### Page projection conflict
+
+`page_projection_conflict` (retryable): another worker installed a newer
+search projection (chunks and text seal) of the same page while this command
+prepared its own, at an unchanged page revision. The usual other worker is the
+persistence owner's resident projection rebuild (`gbrain serve` or autopilot);
+an `embed` or `import` run can be one too. Nothing was installed by the losing
+command, and the newer projection is kept. `detail` names what changed:
+`text_projection_revision` (the page was sealed), `chunk_digest` (its chunk
+set changed) or `indexing_context` (the embedding column, model, chunker
+version or another indexing input changed).
+
+Callers that install a projection re-read the page and prepare again up to
+three times before reporting this code. To recover, re-run the same command;
+it re-reads the current projection. If it conflicts again, another worker is
+still installing: wait for it to finish (`gbrain doctor` shows the pending
+count in `text_projection_readiness`), then re-run. `gbrain get --source <id>
+-- <slug>` shows the page as stored now.
+
+### File removed during scan
+
+`file_removed_during_scan` is a non-fixable `gbrain lint` issue: a file the
+scan listed was deleted or renamed before lint read it, so that file was not
+linted. Lint continues with the remaining files. Re-run `gbrain lint <target>`
+to check the files that exist now. On a managed brain, `lint --fix` instead
+reports the page as a pending `canonical_file_missing` repair (counted in
+`fix_pending`); see
+[lint repairs waiting on a managed brain](concurrent-writes.md#lint-repairs-waiting-on-a-managed-brain).
+
 ## Related
 
 - [Write refusal reasons](write-refusals.md) — what a refused write means and the recovery command

@@ -246,6 +246,7 @@ describe('mcpOperations filter — localOnly ops are excluded from the HTTP-expo
       'retain_skill_revision',
       'sources_inspect',
       'sync_brain',
+      'takes_remove',
     ];
     const derived = operations.filter(o => o.localOnly).map(o => o.name).sort();
     expect(derived).toEqual(LOCAL_ONLY_SNAPSHOT);

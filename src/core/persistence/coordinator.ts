@@ -17,6 +17,7 @@ import { clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters
 import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { lockCoreSources } from './core-guard.ts';
 import { requestAttribution } from './attribution.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { mayReprepare } from './semantic.ts';
@@ -35,6 +36,8 @@ import { faultPoint, withFaultPoints } from './fault-points.ts';
 
 interface PreparedMutationBase {
   sourceExclusive?: boolean;
+  /** Always-loaded core writes: source rows locked FOR UPDATE in id order (core-guard.ts lockCoreSources). */
+  exclusiveSources?: readonly string[];
   observedRevision: string | null;
   additionalPageKeys?: readonly {sourceId:string;slug:string}[];
   noop?: boolean;
@@ -272,7 +275,8 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
     const done = await engine.transaction(async tx => {
       await declareDurablePersistence(tx);
       const liveBinding = await guardOwnership(tx, row, hostId);
-      if (prepared.sourceExclusive) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);
+      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);
+      if (prepared.exclusiveSources?.length) await lockCoreSources(tx, prepared.sourceExclusive ? [row.source_id, ...prepared.exclusiveSources] : prepared.exclusiveSources);
       if (binding && String(liveBinding?.owner_epoch) !== String(binding.owner_epoch)) throw opError('owner_unavailable', 'Owner epoch changed before publication.',
         `Source ${row.source_id}'s canonical owner changed (a transfer or re-claim) after request ${row.request_id} was prepared, so this host published nothing for it. Inspect the owner and the request before resubmitting; do not claim or transfer the source to push this write through.`,
         { fix: ownerStatusFix(row.source_id) });
@@ -384,7 +388,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
         WHERE id=$1::uuid AND recovery IS NOT NULL AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [id]);
       return blocked ?? row;
     }
-    if (row.recovery.version === 1 && !row.recovery.staging && !isTerminal(row)) await upgradeRecoveryStaging(engine, 'persistence_requests', id, row.worktree_id!, 'restore');
+    if (!isTerminal(row)) await upgradeRecoveryStaging(engine, 'persistence_requests', id, row.worktree_id!, 'restore');
     row = await engine.transaction(async tx => {
       await declareDurablePersistence(tx);
       await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [row!.worktree_id]);

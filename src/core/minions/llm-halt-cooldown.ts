@@ -48,6 +48,7 @@ export const HALT_COOLDOWN_BASE_MS: Record<GlobalLlmErrorClass, number> = {
   auth: 5 * 60_000, // deterministic until an operator fixes the key
   billing: 5 * 60_000, // deterministic until quota/credit is restored
   rate_limit: 60_000, // bursts clear on their own — probe sooner
+  model_not_found: 5 * 60_000, // deterministic until an operator changes the model
 };
 export const HALT_COOLDOWN_MAX_MS = 30 * 60_000;
 /** Defer cadence while a probe is in flight (plus jitter). */

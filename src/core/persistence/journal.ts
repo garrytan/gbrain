@@ -414,6 +414,37 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
     return claimed;
   });
 }
+/**
+ * #5984 lanes: claims the head of the next admitted group of lane run `run` in
+ * worktree `worktreeId` while earlier groups of the same run still publish.
+ * Every request before it must already be claimed (none queued, so heads are
+ * claimed in manifest order), and an unfinished earlier request must be a
+ * running request of the same run: a foreground write, a recovering request,
+ * a request of another run or any recovery record still blocks it, exactly
+ * as under the FIFO claim. Followers are claimed with their head by
+ * `claimGroupFollowers`.
+ */
+export async function claimNextLaneHead(engine: BrainEngine, hostId: string, worktreeId: string, run: string, leaseMs = 30_000): Promise<WriteRequest | null> {
+  return engine.transactionDirect(async tx => {
+    await declarePersistenceProtocol(tx);
+    const [row] = await tx.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
+      JOIN persistence_worktrees w ON w.id=r.worktree_id
+      WHERE r.worktree_id=$2::uuid AND r.state='queued' AND r.intent->>'lane'=$3 AND r.intent->>'group'=r.request_id::text
+        AND w.owner_host_id=$1::uuid AND w.state='active' AND ${refreshFenceClear('r')}
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror WHERE mirror.worktree_id=r.worktree_id
+          AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
+          AND (earlier.state IN ('queued','recovering') OR (earlier.state='running' AND COALESCE(earlier.intent->>'lane','')<>$3)))
+      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, [hostId, worktreeId, run]);
+    if (!row) return null;
+    const [claimed] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='running',
+      execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
+      updated_at=now(),blocked_reason=NULL WHERE id=$1::uuid RETURNING *`, [row.id, randomUUID(), leaseMs]);
+    return claimed;
+  });
+}
 export async function renewWriteClaim(engine: SqlEngine, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal): Promise<boolean> {
   const rows = await engine.executeRaw(`UPDATE persistence_requests SET
     claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now()

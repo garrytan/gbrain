@@ -18,6 +18,15 @@ export const nvidia: Recipe = {
   name: 'NVIDIA NIM',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  // No shipped rate for these yet: they warn and run under a default cap; a
+  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  unpriced_models: [
+    'nvidia/nemotron-3-super-120b-a12b',
+    'nvidia/nv-embedqa-e5-v5',
+    'nvidia/llama-nemotron-embed-1b-v2',
+    'nvidia/nv-embed-v1',
+    'nvidia/nv-embedcode-7b-v1',
+  ],
   base_url_default: 'https://integrate.api.nvidia.com/v1',
   auth_env: {
     required: ['NVIDIA_API_KEY'],

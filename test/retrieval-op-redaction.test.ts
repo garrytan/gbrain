@@ -145,6 +145,8 @@ const SWEEP: Record<string, Row> = {
   advisor: { skip: 'aggregate advisory over the installed skill stack; advisor suites own it' },
   get_ingest_log: { args: { limit: 50 } },
   find_orphans: { args: {} },
+  // Targets and origin slugs only; the fixture has no unresolved links (behavior: test/wanted-links.test.ts).
+  wanted_pages: { args: {}, content: false },
   get_calibration_profile: { args: {}, content: false },
   takes_list: { args: { limit: 50 } },
   takes_search: { args: { query: 'PLANTMARK', limit: 20 } },
@@ -342,7 +344,10 @@ describe('budgets and the delta cursor are computed from delivered (redacted) te
     expect(body.has_more).toBe(true);
     expect(body.pages.length).toBeGreaterThan(0);
     const last = body.pages[body.pages.length - 1];
-    expect(body.next_cursor).toEqual({ since: last.updated_at, slug: last.slug });
+    // At or before the last delivered page: equal once the page is older than
+    // delta's 2 s commit-visibility lag, held at the request's since before that.
+    expect(body.next_cursor.since <= last.updated_at).toBe(true);
+    if (body.next_cursor.since === last.updated_at) expect(body.next_cursor.slug).toBe(last.slug);
     for (const p of body.pages) expect(body.text).toContain(`\`${p.slug}\``);
   });
 

@@ -22,14 +22,11 @@
 
 import { describe, test, expect } from 'bun:test';
 import type { Subprocess } from 'bun';
+import { freePort } from './helpers/serve-http.ts';
 import { join } from 'path';
 
 const SERVER_SCRIPT = join(import.meta.dir, '..', 'recipes', 'agent-voice', 'code', 'server.mjs');
 const EVIL = 'https://evil.example';
-
-function pickPort(): number {
-  return 31000 + Math.floor(Math.random() * 4000);
-}
 
 interface VoiceServer {
   port: number;
@@ -40,7 +37,7 @@ interface VoiceServer {
 }
 
 async function spawnVoice(extraEnv: Record<string, string> = {}): Promise<VoiceServer> {
-  const port = pickPort();
+  const port = await freePort();
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     PORT: String(port),
@@ -73,7 +70,7 @@ async function spawnVoice(extraEnv: Record<string, string> = {}): Promise<VoiceS
 
   const base = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && proc.exitCode === null) {
     try {
       const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) return { port, base, proc, stdout: () => out };
@@ -82,7 +79,7 @@ async function spawnVoice(extraEnv: Record<string, string> = {}): Promise<VoiceS
   }
   proc.kill();
   const stderr = await new Response(proc.stderr).text();
-  throw new Error(`agent-voice server did not become healthy in 30s\nstderr: ${stderr.slice(-800)}`);
+  throw new Error(`agent-voice server on port ${port} did not become healthy (exit code ${proc.exitCode})\nstderr: ${stderr.slice(-800)}`);
 }
 
 async function stopVoice(server: VoiceServer): Promise<void> {

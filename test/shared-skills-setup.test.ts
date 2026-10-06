@@ -212,3 +212,53 @@ describe('packaged default skills', () => {
     expect(JSON.parse(output)).toEqual(packagedSharedSkills());
   }, 60_000);
 });
+
+describe('shared-skills migration recovery (#5569, #5476, A-NEW-4)', () => {
+  test('an inventory that never completed is retaken at the corrected root instead of conflicting (#5569)', async () => {
+    const stale = join(temp(), 'missing'), fixed = temp(), f = fixture(stale); writePack(fixed);
+    const first = await runSharedSkillsMigration(f.ctx);
+    expect(first.sources[0].stages[0]).toMatchObject({ stage: 'inventory', status: 'conflict' });
+    f.source.local_path = fixed;
+    const second = await runSharedSkillsMigration(f.ctx);
+    expect(second.status).not.toBe('conflict');
+    expect(second.sources[0].stages[0]).toEqual({ stage: 'inventory', status: 'complete' });
+    expect(second.sources[0].root).toBe(fixed);
+  });
+  test('a completed inventory still refuses a moved root (#5569)', async () => {
+    const first = temp(), moved = temp(), f = fixture(first); writePack(first); writePack(moved);
+    expect((await runSharedSkillsMigration(f.ctx)).sources[0].stages[0]).toEqual({ stage: 'inventory', status: 'complete' });
+    f.source.local_path = moved;
+    const report = await runSharedSkillsMigration(f.ctx);
+    expect(report.status).toBe('conflict');
+    expect(report.sources[0].stages[0].reason).toContain('root changed');
+  });
+  test('a reviewed inventory change is accepted only by its exact digest (#5476)', async () => {
+    const root = temp(), f = fixture(root); writePack(root);
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    writeFileSync(join(root, 'skills/memory-care/SKILL.md'), '---\nname: memory-care\ndescription: Reviewed local edit\n---\nLocal instructions\n');
+    const edited = await runSharedSkillsMigration(f.ctx);
+    expect(edited.status).toBe('conflict');
+    const reason = edited.sources[0].stages[0].reason!;
+    expect(reason).toContain('Changed: skills/memory-care/SKILL.md.');
+    const digest = /--accept-reviewed-inventory default=([a-f0-9]{64})/.exec(reason)![1];
+    expect((await runSharedSkillsMigration(f.ctx, { acceptReviewedInventory: { default: '0'.repeat(64) } })).status).toBe('conflict');
+    const accepted = await runSharedSkillsMigration(f.ctx, { acceptReviewedInventory: { default: digest } });
+    expect(accepted.status).toBe('action_required');
+    expect(accepted.sources[0].stages[0]).toEqual({ stage: 'inventory', status: 'complete' });
+    expect(accepted.sources[0].inventory?.hashes['skills/memory-care/SKILL.md']).toBe(setupHash(readFileSync(join(root, 'skills/memory-care/SKILL.md'))));
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+  });
+  test('a pack one adoption cannot publish is refused at inventory, not after it (A-NEW-4)', async () => {
+    const root = temp(), f = fixture(root);
+    const names = Array.from({ length: 128 }, (_, i) => `skill-${String(i).padStart(3, '0')}`);
+    for (const name of names) {
+      mkdirSync(join(root, 'skills', name), { recursive: true });
+      writeFileSync(join(root, 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: Synthetic\n---\nBody\n`);
+    }
+    writeFileSync(join(root, 'skillpack.json'), JSON.stringify({ name: 'example-pack', brain_resident: true, skills: names.map(name => `skills/${name}`) }));
+    const report = await runSharedSkillsMigration(f.ctx);
+    expect(report.status).toBe('action_required');
+    expect(report.sources[0].stages[0]).toMatchObject({ stage: 'inventory', status: 'action_required' });
+    expect(report.sources[0].stages[0].reason).toContain('declares 128 skills');
+  });
+});

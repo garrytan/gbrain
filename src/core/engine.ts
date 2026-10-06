@@ -537,6 +537,8 @@ export interface FactRow {
   created_at: Date;
   /** Set only when the list call asked for `fingerprint` (#5888 hot-memory collapse). */
   fact_fingerprint?: string;
+  /** Set by `listFactsKeyset`: created_at at the column's microsecond precision (ISO UTC). */
+  created_at_iso?: string;
 }
 
 /** Input for insertFact. source_id supplied via the ctx arg. */
@@ -769,11 +771,11 @@ export interface BrainEngine {
   /** Mandatory resident-consumer stop barrier before datastore/pool shutdown. */
   registerBeforeDisconnect(stop: () => Promise<void>): () => void;
   /**
-   * Run `fn` with a dedicated connection (Postgres: reserved backend;
-   * PGLite: pass-through). See `ReservedConnection` for semantics and
-   * usage constraints. Release is automatic. `route: 'ordinary'` skips the direct route.
+   * Run `fn` with a dedicated connection (Postgres: reserved backend; PGLite: pass-through). See `ReservedConnection`
+   * for semantics and usage constraints. Release is automatic. `route: 'ordinary'` skips the direct route. `selfContained`:
+   * `fn` uses only `conn` and never waits on the pool (like a transaction), so a one-connection ordinary pool may lend it.
    */
-  withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: 'ordinary' }): Promise<T>;
+  withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: 'ordinary'; selfContained?: boolean }): Promise<T>;
 
   // Pages CRUD
   /**
@@ -2205,6 +2207,18 @@ export interface BrainEngine {
     source_id: string,
     since: Date,
     opts?: FactListOpts & { entitySlug?: string; sessionId?: string },
+  ): Promise<FactRow[]>;
+
+  /**
+   * delta's facts arm: facts strictly after a `(created_at, id)` keyset
+   * (`id: null` = strictly after the timestamp), OLDEST first, each row with
+   * `created_at_iso` at column precision. Honors activeOnly, visibility,
+   * fingerprint and limit only.
+   */
+  listFactsKeyset(
+    source_id: string,
+    after: { createdAt: string; id: number | null } | null,
+    opts?: FactListOpts,
   ): Promise<FactRow[]>;
 
   /** List facts captured under a session id within a source. */

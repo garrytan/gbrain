@@ -23,6 +23,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
   registerCleanup,
+  registerSignalOwner,
   triggerCleanupAndExit,
   installSignalHandlers,
   _registeredCleanupCountForTests,
@@ -251,5 +252,66 @@ describe('installSignalHandlers', () => {
     expect(process.listenerCount('unhandledRejection')).toBe(before.rejection);
     expect(process.stdout.listenerCount('error')).toBe(before.stdoutErr);
     expect(process.stderr.listenerCount('error')).toBe(before.stderrErr);
+  });
+});
+
+describe('registerSignalOwner (#5062)', () => {
+  test('an owner receives every termination signal; nothing runs cleanup or exits behind its back', async () => {
+    let cleanupRan = false;
+    registerCleanup('supervisor-lock', async () => { cleanupRan = true; });
+    const seen: string[] = [];
+    registerSignalOwner('supervisor', (signal) => { seen.push(signal); });
+    const exits: number[] = [];
+    const origExit = process.exit;
+    (process as any).exit = (code?: number) => { exits.push(code ?? 0); };
+    try {
+      installSignalHandlers();
+      process.emit('SIGTERM');
+      process.emit('SIGTERM');
+      process.emit('SIGHUP');
+      process.emit('SIGPIPE');
+      process.stdout.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+      await new Promise(r => setTimeout(r, 20));
+    } finally {
+      (process as any).exit = origExit;
+    }
+    expect(seen).toEqual(['SIGTERM', 'SIGTERM', 'SIGHUP', 'SIGPIPE', 'SIGPIPE']);
+    expect(exits).toEqual([]);
+    expect(cleanupRan).toBe(false);
+  });
+
+  test('the owner exits through triggerCleanupAndExit, which still runs the remaining callbacks', async () => {
+    let cleanupRan = false;
+    registerCleanup('other-lock', async () => { cleanupRan = true; });
+    const exits: number[] = [];
+    const origExit = process.exit;
+    (process as any).exit = (code?: number) => { exits.push(code ?? 0); };
+    try {
+      registerSignalOwner('supervisor', () => { void triggerCleanupAndExit(0); });
+      installSignalHandlers();
+      process.emit('SIGTERM');
+      await new Promise(r => setTimeout(r, 20));
+    } finally {
+      (process as any).exit = origExit;
+    }
+    expect(cleanupRan).toBe(true);
+    expect(exits).toEqual([0]);
+  });
+
+  test('after deregistration the generic cleanup-then-exit path is back', async () => {
+    const release = registerSignalOwner('worker', () => { throw new Error('must not be called'); });
+    release();
+    release();
+    const exits: number[] = [];
+    const origExit = process.exit;
+    (process as any).exit = (code?: number) => { exits.push(code ?? 0); };
+    try {
+      installSignalHandlers();
+      process.emit('SIGTERM');
+      await new Promise(r => setTimeout(r, 20));
+    } finally {
+      (process as any).exit = origExit;
+    }
+    expect(exits).toEqual([143]);
   });
 });

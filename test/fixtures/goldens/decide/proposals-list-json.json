@@ -21,6 +21,7 @@
         "threshold": 0.8
       }
     ],
+    "review_proposals": [],
     "status": "all"
   },
   "normalizer": "decide-proposals-v1"

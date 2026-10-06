@@ -4,11 +4,11 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { setupDB, teardownDB } from './e2e/helpers.ts';
 import { testBackends } from './helpers/test-backends.ts';
-import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { resetPgliteState, truncateCascade } from './helpers/reset-pglite.ts';
 import { configureGateway, getEmbeddingModel, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { applyEmbeddingMigration, planEmbeddingMigration, runSchemaTransition, verifyMigrationComplete, readMigrationState, reconcilePageSignatures, verifySearchRoundTrip } from '../src/core/embedding-migration.ts';
 import { readContentChunksEmbeddingDim } from '../src/core/embedding-dim-check.ts';
-import { readProjectionSnapshot } from '../src/core/page-state/projections.ts';
+import { installPageProjection, readProjectionSnapshot, rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { embedStaleForSource } from '../src/core/embed-stale.ts';
 import { embedStaleFacts } from '../src/core/embed-facts.ts';
 import { countStaleFactEmbeddings } from '../src/core/facts/embedding-identity.ts';
@@ -62,7 +62,7 @@ for (const kind of backends) {
     beforeEach(async () => {
       if (kind === 'pglite') await resetPgliteState(engine as PGLiteEngine);
       else {
-        await engine.executeRaw('TRUNCATE facts, pages, fact_withdrawals, page_projection_jobs CASCADE');
+        await truncateCascade(engine, ['facts', 'pages', 'fact_withdrawals', 'page_projection_jobs']);
         await engine.executeRaw("DELETE FROM config WHERE key LIKE 'embedding_migration.%'");
       }
       await engine.setConfig('embedding_model', model);
@@ -78,7 +78,10 @@ for (const kind of backends) {
       await runSchemaTransition(engine, originalDimensions);
       await engine.executeRaw("DELETE FROM config WHERE key IN ('embedding_model','embedding_dimensions')");
       for (const row of originalIdentity) await engine.setConfig(row.key, row.value);
-      if (kind === 'postgres') await teardownDB(); else await engine.disconnect();
+      if (kind === 'postgres') {
+        await engine.executeRaw("DELETE FROM config WHERE key LIKE 'embedding_migration.%'");
+        await teardownDB();
+      } else await engine.disconnect();
     });
     async function seedArchivedEligibility(scenario: string) {
       const sourceId = 'synthetic-cycle6-archive';
@@ -110,7 +113,7 @@ for (const kind of backends) {
     }
     describe('archived eligibility boundary', () => {
     afterEach(async () => {
-      await engine.executeRaw('TRUNCATE pages CASCADE');
+      await truncateCascade(engine, ['pages']);
       await engine.executeRaw("UPDATE sources SET archived=false WHERE id='default'");
     });
     for (const scenario of ['drift', 'null', 'unsealed', 'chunkless', 'signature', 'false-stamp']) {
@@ -401,7 +404,7 @@ for (const kind of backends) {
     });
     describe('explicit archived admission', () => {
       afterEach(async () => {
-        await engine.executeRaw('TRUNCATE pages CASCADE');
+        await truncateCascade(engine, ['pages']);
         await engine.executeRaw("UPDATE sources SET archived=false WHERE id='default'");
       });
       async function seedExplicit(scenario: string) {
@@ -540,6 +543,58 @@ for (const kind of backends) {
         }
       }
     });
+    describe('chunkless embed racing the resident projection rebuild', () => {
+      /** Runs `intervene` after each of the next `times` projection reads of `slug`, once the read released its guard. */
+      function afterProjectionReads(slug: string, times: number, intervene: () => Promise<void>): () => void {
+        const original = engine.transaction;
+        let left = times, busy = false;
+        engine.transaction = async function<T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
+          const result = await original.call(this, run) as T;
+          const read = result as { indexingContext?: string; snapshot?: { page: { slug: string } } };
+          if (!busy && left > 0 && read?.indexingContext !== undefined && read.snapshot?.page.slug === slug) {
+            left--; busy = true;
+            try { await intervene(); } finally { busy = false; }
+          }
+          return result;
+        };
+        return () => { engine.transaction = original; };
+      }
+      const slug = 'resident-race';
+      const seedChunkless = () => engine.putPage(slug, { type: 'note', title: 'Resident race', compiled_truth: 'Synthetic resident race payload.' });
+
+      test('the embed re-reads and embeds the chunks the resident sealed instead of recording an unavailable page', async () => {
+        await seedChunkless();
+        const restore = afterProjectionReads(slug, 1, async () => {
+          expect((await rebuildPendingPageProjections(engine, 100, { pages: { sourceId: 'default', slugs: [slug] } })).rebuilt).toBe(1);
+        });
+        try {
+          const result = await runEmbedCore(engine, { slug, sourceId: 'default', quiet: true });
+          expect(result.failure_samples).toEqual([]);
+          expect(result.failures).toBe(0);
+          expect(result.embedded).toBeGreaterThan(0);
+        } finally { restore(); }
+        const chunks = await engine.getChunks(slug, { sourceId: 'default' });
+        expect(chunks.length).toBeGreaterThan(0);
+        expect(chunks.every(c => c.embedded_at)).toBe(true);
+      });
+
+      test('an embed that keeps losing reports page_projection_conflict after the bounded retries', async () => {
+        await seedChunkless();
+        let competing = 0;
+        const restore = afterProjectionReads(slug, 4, async () => {
+          const read = (await readProjectionSnapshot(engine, slug, 'default', { allowUnsealed: true }))!;
+          await installPageProjection(engine, read, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: `competing ${++competing}` }]);
+        });
+        try {
+          const result = await runEmbedCore(engine, { slug, sourceId: 'default', quiet: true });
+          expect(competing).toBe(4);
+          expect(result.failures).toBe(1);
+          expect(result.failure_samples).toHaveLength(1);
+          expect(result.failure_samples[0]).toStartWith(`${slug}: [page_projection_conflict] The search projection of ${slug} (source default) changed during preparation (chunk_digest)`);
+          expect(result.failure_samples[0]).toContain('Re-run gbrain embed; it re-reads the current projection.');
+        } finally { restore(); }
+      });
+    });
     async function seedLegacyContentDrift() {
       const otherSource = 'synthetic-legacy-drift';
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1) ON CONFLICT DO NOTHING', [otherSource]);
@@ -577,7 +632,7 @@ for (const kind of backends) {
             expect(row.chunk.embedded_at).toBeNull();
           }
           expect(await engine.invalidateContentDriftEmbeddings({ sourceId })).toBe(0);
-        } finally { await engine.executeRaw('TRUNCATE pages CASCADE'); }
+        } finally { await truncateCascade(engine, ['pages']); }
       });
     }
     test('deleted legacy drift: same-width migration completes and preserves deleted vector hash and timestamp', async () => {
@@ -592,7 +647,7 @@ for (const kind of backends) {
           AND cc.embedded_text_hash=md5(cc.chunk_text) AND cc.model=$1 AS correct
           FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE p.slug='live-drift'`, ['openai:text-embedding-3-large']);
         expect(live).toEqual([{ correct: true }, { correct: true }]);
-      } finally { await engine.executeRaw('TRUNCATE pages CASCADE'); }
+      } finally { await truncateCascade(engine, ['pages']); }
     });
     for (const retained of [true, false]) {
       const label = retained ? 'retained vector' : 'NULL vector';
@@ -704,7 +759,7 @@ for (const kind of backends) {
           expect(after).toEqual({ width: targetDimensions, model: targetModel, sealed: true });
         } finally {
           rmSync(dir, { recursive: true, force: true });
-          await engine.executeRaw('TRUNCATE pages CASCADE');
+          await truncateCascade(engine, ['pages']);
           await runSchemaTransition(engine, dimensions);
         }
       });
@@ -745,7 +800,7 @@ for (const kind of backends) {
           if (!blocked) expect(await engine.countStaleChunks({ sourceId: 'default' })).toBe(0);
         } finally {
           await engine.executeRaw('UPDATE sources SET archived=false,archived_at=NULL,archive_expires_at=NULL WHERE id=$1', [archivedSource]);
-          await engine.executeRaw('TRUNCATE facts,pages CASCADE');
+          await truncateCascade(engine, ['facts', 'pages']);
           await runSchemaTransition(engine, dimensions);
         }
       });
@@ -988,7 +1043,7 @@ for (const kind of backends) {
           expect((await readContentChunksEmbeddingDim(engine)).dims).toBe(dimensions);
         } finally {
           await engine.executeRaw("UPDATE sources SET archived=false WHERE id='default'");
-          await engine.executeRaw('TRUNCATE facts, pages CASCADE');
+          await truncateCascade(engine, ['facts', 'pages']);
           await runSchemaTransition(engine, dimensions);
         }
       });
@@ -1107,7 +1162,7 @@ for (const kind of backends) {
         expect((await countStaleFactEmbeddings(engine, 'openai:text-embedding-3-large', dimensions * 2)).count).toBe(0);
       } finally {
         await engine.executeRaw("UPDATE sources SET archived=false,archived_at=NULL,archive_expires_at=NULL WHERE id='default'");
-        await engine.executeRaw('TRUNCATE facts, fact_withdrawals, pages CASCADE');
+        await truncateCascade(engine, ['facts', 'fact_withdrawals', 'pages']);
         await runSchemaTransition(engine, dimensions);
       }
     });

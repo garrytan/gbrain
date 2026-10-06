@@ -17,9 +17,13 @@
       "content_chunks.content_chunks_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "content_chunks.content_chunks_pkey": "p PRIMARY KEY (id)",
       "context_volunteer_events.context_volunteer_events_pkey": "p PRIMARY KEY (id)",
+      "core_edit_notices.core_edit_notices_pkey": "p PRIMARY KEY (id)",
       "decide_calibrations.decide_calibrations_pkey": "p PRIMARY KEY (id)",
       "decide_proposals.decide_proposals_pkey": "p PRIMARY KEY (id)",
       "decide_proposals.decide_proposals_sweep_id_pair_index_key": "u UNIQUE (sweep_id, pair_index)",
+      "decide_review_proposals.decide_review_proposals_kind_source_id_a_ref_b_ref_subject_key": "u UNIQUE (kind, source_id, a_ref, b_ref, subject)",
+      "decide_review_proposals.decide_review_proposals_pkey": "p PRIMARY KEY (id)",
+      "decide_review_queue.decide_review_queue_pkey": "p PRIMARY KEY (kind, source_id, a_ref, b_ref)",
       "decide_spend.decide_spend_pkey": "p PRIMARY KEY (request_id)",
       "decide_state.decide_state_pkey": "p PRIMARY KEY (key)",
       "decide_sweep_deferred.decide_sweep_deferred_pkey": "p PRIMARY KEY (slot, source_id, fact_id)",
@@ -267,7 +271,13 @@
       "think_ab_results.think_ab_results_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "timeline_entries.timeline_entries_event_page_id_fkey": "f FOREIGN KEY (event_page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "timeline_entries.timeline_entries_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
-      "timeline_entries.timeline_entries_pkey": "p PRIMARY KEY (id)"
+      "timeline_entries.timeline_entries_pkey": "p PRIMARY KEY (id)",
+      "wanted_links.wanted_links_origin_page_id_fkey": "f FOREIGN KEY (origin_page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "wanted_links.wanted_links_pkey": "p PRIMARY KEY (id)",
+      "wanted_links.wanted_links_producer_check": "c CHECK ((producer = ANY (ARRAY['body'::text, 'frontmatter'::text])))",
+      "wanted_links.wanted_links_ref_kind_check": "c CHECK ((ref_kind = ANY (ARRAY['slug'::text, 'name'::text])))",
+      "wanted_links.wanted_links_reference_unique": "u UNIQUE (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
+      "wanted_links.wanted_links_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE"
     },
     "extensions": [
       "pg_trgm",
@@ -278,16 +288,16 @@
       "bump_page_generation_clock_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=c40a0a3b86e640b6c8979976173dd93ae92c8c1b9a9e3595cae2af1e265328fe",
       "bump_page_generation_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=c4135ae3f74177aa71313a6c73f22bda7a298bbf12435a8def390212ae11466a",
       "enforce_minion_queue_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=be82640d1979fc81dc812efb78bb3596ef536f656d20750e5e4aa19016bf4784",
-      "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=ae793ff5263f7b76311e0c22593fb658db9f82e7b3781914421d9508b6da0e88",
-      "gbrain_advance_tag_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=7807b26b4933148aa63c67fca824a60d3492396728205d04e16c48c81174cbd5",
-      "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=e8b5589dafd4a355106104daffdf57c7776d34fe18c5b5f5336a27de188688a1",
-      "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=f27354966c25d961fcecbffebba0e45747ad3de23575351319f6aee4f9aefd47",
-      "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=12baf1d365a8aa3009ac0fe6605497e6433304e8d5915a3fc0b0b39ad748f6c2",
-      "gbrain_guard_skill_publication()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=e854c0d058e75a65c3a90127c5c417380975100e83fc34288f6085e786df10a9",
-      "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
-      "gbrain_queue_page_projection()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=6c544b9c129b6a17dcabeb5ee8d44a2b0e0af9d02ca3fe47c7d7f22ec313042c",
-      "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=9dc91548479da39c77e3015481b89901ef13fb02ce496597606fbac592c05201",
-      "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
+      "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=ae793ff5263f7b76311e0c22593fb658db9f82e7b3781914421d9508b6da0e88",
+      "gbrain_advance_tag_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=7807b26b4933148aa63c67fca824a60d3492396728205d04e16c48c81174cbd5",
+      "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e8b5589dafd4a355106104daffdf57c7776d34fe18c5b5f5336a27de188688a1",
+      "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=f27354966c25d961fcecbffebba0e45747ad3de23575351319f6aee4f9aefd47",
+      "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=12baf1d365a8aa3009ac0fe6605497e6433304e8d5915a3fc0b0b39ad748f6c2",
+      "gbrain_guard_skill_publication()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e854c0d058e75a65c3a90127c5c417380975100e83fc34288f6085e786df10a9",
+      "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
+      "gbrain_queue_page_projection()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=6c544b9c129b6a17dcabeb5ee8d44a2b0e0af9d02ca3fe47c7d7f22ec313042c",
+      "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=9dc91548479da39c77e3015481b89901ef13fb02ce496597606fbac592c05201",
+      "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
       "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=8e2e253471f22c3e70b2fa2e67ba9162ee3d2c764d175cb5b674db2b907d1e9d"
     },
     "grants": {
@@ -315,10 +325,19 @@
       "context_volunteer_events": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "core_edit_notices": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "decide_calibrations": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "decide_proposals": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "decide_review_proposals": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "decide_review_queue": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "decide_spend": [
@@ -560,6 +579,9 @@
       ],
       "timeline_entries": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "wanted_links": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ]
     },
     "indexes": {
@@ -581,11 +603,17 @@
       "context_volunteer_events_pkey": "CREATE UNIQUE INDEX context_volunteer_events_pkey ON public.context_volunteer_events USING btree (id)",
       "context_volunteer_events_src_slug_idx": "CREATE INDEX context_volunteer_events_src_slug_idx ON public.context_volunteer_events USING btree (source_id, slug)",
       "context_volunteer_events_src_time_idx": "CREATE INDEX context_volunteer_events_src_time_idx ON public.context_volunteer_events USING btree (source_id, volunteered_at DESC)",
+      "core_edit_notices_pending_idx": "CREATE INDEX core_edit_notices_pending_idx ON public.core_edit_notices USING btree (source_id, slug, id) WHERE (acked_at IS NULL)",
+      "core_edit_notices_pkey": "CREATE UNIQUE INDEX core_edit_notices_pkey ON public.core_edit_notices USING btree (id)",
       "decide_calibrations_lookup_idx": "CREATE INDEX decide_calibrations_lookup_idx ON public.decide_calibrations USING btree (slot, provider, model_resolved, created_at DESC)",
       "decide_calibrations_pkey": "CREATE UNIQUE INDEX decide_calibrations_pkey ON public.decide_calibrations USING btree (id)",
       "decide_proposals_pkey": "CREATE UNIQUE INDEX decide_proposals_pkey ON public.decide_proposals USING btree (id)",
       "decide_proposals_status_created_idx": "CREATE INDEX decide_proposals_status_created_idx ON public.decide_proposals USING btree (status, created_at)",
       "decide_proposals_sweep_id_pair_index_key": "CREATE UNIQUE INDEX decide_proposals_sweep_id_pair_index_key ON public.decide_proposals USING btree (sweep_id, pair_index)",
+      "decide_review_proposals_kind_source_id_a_ref_b_ref_subject_key": "CREATE UNIQUE INDEX decide_review_proposals_kind_source_id_a_ref_b_ref_subject_key ON public.decide_review_proposals USING btree (kind, source_id, a_ref, b_ref, subject)",
+      "decide_review_proposals_pkey": "CREATE UNIQUE INDEX decide_review_proposals_pkey ON public.decide_review_proposals USING btree (id)",
+      "decide_review_proposals_status_idx": "CREATE INDEX decide_review_proposals_status_idx ON public.decide_review_proposals USING btree (status, created_at)",
+      "decide_review_queue_pkey": "CREATE UNIQUE INDEX decide_review_queue_pkey ON public.decide_review_queue USING btree (kind, source_id, a_ref, b_ref)",
       "decide_spend_created_idx": "CREATE INDEX decide_spend_created_idx ON public.decide_spend USING btree (created_at)",
       "decide_spend_pkey": "CREATE UNIQUE INDEX decide_spend_pkey ON public.decide_spend USING btree (request_id)",
       "decide_state_pkey": "CREATE UNIQUE INDEX decide_state_pkey ON public.decide_state USING btree (key)",
@@ -657,6 +685,7 @@
       "idx_oauth_tokens_expiry": "CREATE INDEX idx_oauth_tokens_expiry ON public.oauth_tokens USING btree (expires_at)",
       "idx_pages_frontmatter": "CREATE INDEX idx_pages_frontmatter ON public.pages USING gin (frontmatter)",
       "idx_pages_search": "CREATE INDEX idx_pages_search ON public.pages USING gin (search_vector)",
+      "idx_pages_slug_basename": "CREATE INDEX idx_pages_slug_basename ON public.pages USING btree (source_id, regexp_replace(slug, '^.*/'::text, ''::text))",
       "idx_pages_source_id": "CREATE INDEX idx_pages_source_id ON public.pages USING btree (source_id)",
       "idx_pages_trgm": "CREATE INDEX idx_pages_trgm ON public.pages USING gin (title gin_trgm_ops)",
       "idx_pages_type": "CREATE INDEX idx_pages_type ON public.pages USING btree (type)",
@@ -810,7 +839,11 @@
       "timeline_entries_pkey": "CREATE UNIQUE INDEX timeline_entries_pkey ON public.timeline_entries USING btree (id)",
       "uniq_minion_attachments_job_filename": "CREATE UNIQUE INDEX uniq_minion_attachments_job_filename ON public.minion_attachments USING btree (job_id, filename)",
       "uniq_minion_jobs_idempotency": "CREATE UNIQUE INDEX uniq_minion_jobs_idempotency ON public.minion_jobs USING btree (idempotency_key) WHERE (idempotency_key IS NOT NULL)",
-      "uniq_subagent_messages_idx": "CREATE UNIQUE INDEX uniq_subagent_messages_idx ON public.subagent_messages USING btree (job_id, message_idx)"
+      "uniq_subagent_messages_idx": "CREATE UNIQUE INDEX uniq_subagent_messages_idx ON public.subagent_messages USING btree (job_id, message_idx)",
+      "wanted_links_pkey": "CREATE UNIQUE INDEX wanted_links_pkey ON public.wanted_links USING btree (id)",
+      "wanted_links_reference_unique": "CREATE UNIQUE INDEX wanted_links_reference_unique ON public.wanted_links USING btree (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
+      "wanted_links_source_idx": "CREATE INDEX wanted_links_source_idx ON public.wanted_links USING btree (source_id)",
+      "wanted_links_target_idx": "CREATE INDEX wanted_links_target_idx ON public.wanted_links USING btree (target_source_id, target_ref)"
     },
     "policies": {},
     "sequences": {
@@ -819,8 +852,10 @@
       "chronicle_judge_reservations_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=chronicle_judge_reservations.id",
       "content_chunks_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=content_chunks.id",
       "context_volunteer_events_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=context_volunteer_events.id",
+      "core_edit_notices_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=core_edit_notices.id",
       "decide_calibrations_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decide_calibrations.id",
       "decide_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decide_proposals.id",
+      "decide_review_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decide_review_proposals.id",
       "decision_receipts_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decision_receipts.id",
       "eval_candidates_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=eval_candidates.id",
       "eval_capture_failures_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=eval_capture_failures.id",
@@ -854,7 +889,8 @@
       "take_nudge_log_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=take_nudge_log.id",
       "take_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=take_proposals.id",
       "think_ab_results_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=think_ab_results.id",
-      "timeline_entries_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=timeline_entries.id"
+      "timeline_entries_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=timeline_entries.id",
+      "wanted_links_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=wanted_links.id"
     },
     "tables": {
       "access_tokens": {
@@ -990,6 +1026,21 @@
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
+      "core_edit_notices": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('core_edit_notices_id_seq'::regclass)",
+          "2 source_id text/text NOT NULL",
+          "3 slug text/text NOT NULL",
+          "4 page_id bigint/int8 NULL",
+          "5 revision text/text NULL",
+          "6 base_revision text/text NULL",
+          "7 base_text text/text NULL",
+          "8 actor text/text NOT NULL",
+          "9 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "10 acked_at timestamp with time zone/timestamptz NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
       "decide_calibrations": {
         "columns": [
           "1 id bigint/int8 NOT NULL DEFAULT nextval('decide_calibrations_id_seq'::regclass)",
@@ -1038,6 +1089,41 @@
           "14 decided_at timestamp with time zone/timestamptz NULL",
           "15 before_state text/text NULL",
           "16 after_state text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "decide_review_proposals": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('decide_review_proposals_id_seq'::regclass)",
+          "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "3 kind text/text NOT NULL",
+          "4 source_id text/text NOT NULL",
+          "5 sweep_id text/text NOT NULL",
+          "6 a_ref text/text NOT NULL",
+          "7 b_ref text/text NOT NULL",
+          "8 subject text/text NOT NULL DEFAULT '*'::text",
+          "9 visibility text/text NULL",
+          "10 p_action real/float4 NOT NULL",
+          "11 threshold real/float4 NULL",
+          "12 model_resolved text/text NULL",
+          "13 question_version text/text NULL",
+          "14 status text/text NOT NULL DEFAULT 'pending'::text",
+          "15 decided_at timestamp with time zone/timestamptz NULL",
+          "16 receipt text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "decide_review_queue": {
+        "columns": [
+          "1 kind text/text NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 a_ref text/text NOT NULL",
+          "4 b_ref text/text NOT NULL DEFAULT '*'::text",
+          "5 evidence text/text NULL",
+          "6 reason text/text NOT NULL DEFAULT 'queued'::text",
+          "7 attempts integer/int4 NOT NULL DEFAULT 0",
+          "8 next_attempt_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "9 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -1934,7 +2020,10 @@
           "5 surfaced_slugs jsonb/jsonb NOT NULL DEFAULT '[]'::jsonb",
           "6 checkpoint_manifest jsonb/jsonb NOT NULL DEFAULT '[]'::jsonb",
           "7 last_wake_at timestamp with time zone/timestamptz NULL",
-          "8 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "8 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "9 facts_cursor_at timestamp with time zone/timestamptz NULL",
+          "10 facts_cursor_id bigint/int8 NULL",
+          "11 degraded_wakes integer/int4 NOT NULL DEFAULT 0"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -2253,6 +2342,22 @@
           "6 detail text/text NOT NULL DEFAULT ''::text",
           "7 event_page_id integer/int4 NULL",
           "8 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "wanted_links": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('wanted_links_id_seq'::regclass)",
+          "2 origin_page_id integer/int4 NOT NULL",
+          "3 source_id text/text NOT NULL",
+          "4 producer text/text NOT NULL",
+          "5 ref_kind text/text NOT NULL",
+          "6 target_source_id text/text NOT NULL",
+          "7 target_ref text/text NOT NULL",
+          "8 link_type text/text NOT NULL DEFAULT ''::text",
+          "9 context text/text NOT NULL DEFAULT ''::text",
+          "10 checked_at timestamp with time zone/timestamptz NOT NULL",
+          "11 first_seen_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       }

@@ -5,6 +5,8 @@
  * doctor.ts) and buildChecks / doctorReportRemote consume them.
  */
 import { loadConfigFileOnly } from '../../../core/config.ts';
+import { DEFAULT_MAX_COST_USD, findUnpricedBrainstormChatModel } from '../../../core/brainstorm/cost-gate.ts';
+import { pricingSetCommand } from '../../../core/budget/no-pricing.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError } from '../check-fix.ts';
@@ -114,7 +116,7 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Ch
 /**
  * v0.37.0 brainstorm_health doctor check.
  *
- * Surfaces three readiness signals for `gbrain brainstorm` / `gbrain lsd`:
+ * Surfaces four readiness signals for `gbrain brainstorm` / `gbrain lsd`:
  *
  *   1. Migration v79 applied — the `pages.last_retrieved_at` column exists.
  *      If missing, LSD's stale-page signal degrades silently (corpus-sampling
@@ -125,14 +127,22 @@ export async function checkGraphSignalsCoverage(engine: BrainEngine): Promise<Ch
  *      is fine; explicit-off is a warning so the user notices the setting.
  *      Fix: `gbrain config set search.track_retrieval true`.
  *
- *   3. Calibration cold-start — the latest calibration profile has empty
+ *   3. Chat model pricing (#5873): a cross or judge chat model nothing
+ *      prices runs under the default $5 cap with a warning (its calls go
+ *      unmetered), and a run with an explicit --max-usd refuses it. The
+ *      warning names the model, its role and the `gbrain pricing set`
+ *      command. Skipped when no gateway is configured: the chat model is
+ *      then unknown, not unpriced.
+ *
+ *   4. Calibration cold-start — the latest calibration profile has empty
  *      `active_bias_tags`. brainstorm + LSD judge fall back to no-anti-bias
  *      mode with a stderr warning at run time; this surfaces it earlier.
  *      Fix: `gbrain calibration --regenerate` once enough takes are resolved.
  *
  * Returns the FIRST non-ok signal as the status — column-missing dominates,
- * then disabled-tracking, then cold-start. All three are non-blocking warnings;
- * brainstorm + LSD still work, just with degraded signal.
+ * then disabled-tracking, then unpriced-chat-model, then cold-start. All four
+ * are non-blocking warnings; brainstorm + LSD still work, just with degraded
+ * signal.
  */
 export async function checkBrainstormHealth(engine: BrainEngine): Promise<Check> {
   // (1) Column probe — fast, single-query.
@@ -177,7 +187,26 @@ export async function checkBrainstormHealth(engine: BrainEngine): Promise<Check>
     // Config read miss is benign; default-on applies.
   }
 
-  // (3) Calibration cold-start — empty active_bias_tags.
+  // (3) Chat model pricing: the models runBrainstorm's cost gate checks.
+  try {
+    const unpriced = await findUnpricedBrainstormChatModel(engine);
+    if (unpriced) {
+      return {
+        name: 'brainstorm_health',
+        status: 'warn',
+        message: `brainstorm ${unpriced.role} model "${unpriced.model}" has no price: brainstorm/lsd run it under the default $${DEFAULT_MAX_COST_USD} cap with a warning (its calls go unmetered), and a run with an explicit --max-usd refuses it. Fix: look up its rate and register it: ${pricingSetCommand(unpriced.model, 'chat')}`,
+      };
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'brainstorm_health',
+      status: 'warn',
+      message: `Could not check brainstorm chat model pricing (${msg}); brainstorm/lsd may refuse to start under an explicit --max-usd.`,
+    };
+  }
+
+  // (4) Calibration cold-start — empty active_bias_tags.
   try {
     const calibRows = await engine.executeRaw<{ active_bias_tags: string[] | null }>(
       `SELECT active_bias_tags

@@ -559,6 +559,46 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | The content-sanity gate rejected the content because the operator set `content_sanity.junk_disposition` to `reject`. | A junk-pattern or operator-literal hit is refused instead of quarantined under that setting, so the page was not written. The same content refuses on every retry. | Remove the matched junk from the file, or switch `content_sanity.junk_disposition` back to `quarantine` (a user decision), then import it again. | agent | `repeat the read that failed` | 1 | no |
 
+### core_budget_exceeded
+
+<a id="core_budget_exceeded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The write would push always-loaded core memory over its brain-wide character budget or page limit. | Core pages enter every session's prompt in every harness, so their total size is capped on the write path. | Correct the request using the message above, then retry. Run: gbrain core status --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/core-memory.md#budget](../../docs/guides/core-memory.md#budget)
+
+### core_delete_owner_only
+
+<a id="core_delete_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to delete an always-loaded core page; only the owner can remove pages from core. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/core-memory.md#owner-only](../../docs/guides/core-memory.md#owner-only)
+
+### core_mark_owner_only
+
+<a id="core_mark_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to change always_load or core_priority; only the owner designates core pages. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/core-memory.md#owner-only](../../docs/guides/core-memory.md#owner-only)
+
+### core_remote_edit_refused
+
+<a id="core_remote_edit_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Remote edits to always-loaded core pages are refused by memory.core.remote_edit. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/core-memory.md#remote-edits](../../docs/guides/core-memory.md#remote-edits)
+
 ### cost_cap_exceeded
 
 <a id="cost_cap_exceeded"></a>
@@ -598,6 +638,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The brain database could not be reached or refused the operation. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### delta_cursor_upgrade_required
+
+<a id="delta_cursor_upgrade_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A since/since_slug delta call reached more undelivered facts at one timestamp than that cursor can page; repeat the call with the opaque cursor. | The legacy cursor is a single timestamp, so facts that share one can only be paged by fact id, which next_cursor.cursor carries. Nothing was skipped and no cursor moved. | Repeat the delta call with the cursor from fix (next_cursor.cursor) instead of since/since_slug, and keep passing next_cursor.cursor afterwards. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/guides/ambient-recall.md#replay-after-a-degraded-wake)
 
 ### demo_graph_failed
 
@@ -872,6 +922,16 @@ More: [docs/guides/retrieval-feedback.md#feedback_not_authorized](../../docs/gui
 | Fetching the upstream failed. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/write-refusals.md#fetch_failed](../../docs/guides/write-refusals.md#fetch_failed)
+
+### file_removed_during_scan
+
+<a id="file_removed_during_scan"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A file lint listed was removed before lint read it, so it was not linted. | Another process deleted or renamed the file during the run; lint reports it and continues with the remaining files. | Re-run gbrain lint on the same target; it lints the files present now. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/repair.md#file-removed-during-scan](../../docs/guides/repair.md#file-removed-during-scan)
 
 ### file_too_large
 
@@ -1582,6 +1642,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | No page with that slug exists in the selected source. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+
+### page_projection_conflict
+
+<a id="page_projection_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another worker installed a newer search projection of the page while this command prepared its own. | The projection guard keeps the newer installation instead of overwriting it; the canonical page revision did not change. | Re-run the same command; it re-reads the current projection. If it conflicts again, wait for the other worker to finish. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/repair.md#page-projection-conflict](../../docs/guides/repair.md#page-projection-conflict)
 
 ### parse_error
 

@@ -4,13 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runInNewContext } from 'node:vm';
-import { safeLoad } from 'js-yaml';
+import { load as loadYaml } from 'js-yaml';
 import { MINIMUM_BUN_VERSION } from '../../src/core/runtime-version.ts';
 
 type Matrix = Record<string, unknown> & { exclude?: string };
 type Job = { if?: string; 'runs-on'?: string; strategy?: { matrix: Matrix }; steps?: Array<{ id?: string; run?: string; env?: Record<string, string> }> };
 const root = join(import.meta.dir, '../..');
-const load = (name: string) => safeLoad(readFileSync(join(root, '.github/workflows', name), 'utf8')) as { jobs: Record<string, Job> };
+const load = (name: string) => loadYaml(readFileSync(join(root, '.github/workflows', name), 'utf8')) as { jobs: Record<string, Job> };
 const evaluate = (expression: string, context: Record<string, unknown>) =>
   runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, ''), { fromJSON: JSON.parse, ...context }, { timeout: 100 });
 
@@ -150,22 +150,56 @@ esac
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  test('security and persistence matrices drop only the oldest Bun version on pull requests and merge-queue runs', () => {
-    const queue = { github: { event_name: 'merge_group' } };
-    const pr = { github: { event_name: 'pull_request' } };
-    const push = { github: { event_name: 'push' } };
+  test('security and persistence matrices run both supported Bun versions on pull requests and merge-queue runs (event parity)', () => {
     const security = load('test.yml').jobs['security-regressions'];
-    expect(cells(security, push)).toHaveLength(6);
-    expect(cells(security, pr)).toEqual(['ubuntu-latest/1.4.2', 'macos-26/1.4.2', 'windows-latest/1.4.2']);
-    expect(cells(security, queue)).toEqual(cells(security, pr));
     const persistence = load('persistence-validation.yml').jobs;
-    for (const name of ['read-performance', 'deployment-matrix', 'invariants', 'reconciliation']) {
-      const full = cells(persistence[name], push);
-      const primary = cells(persistence[name], pr);
-      expect(full.filter(cell => cell.endsWith(MINIMUM_BUN_VERSION)).length, name).toBe(full.length / 2);
-      expect(primary, name).toEqual(full.filter(cell => cell.endsWith('1.4.2')));
-      expect(cells(persistence[name], queue), name).toEqual(primary);
+    const jobs = [security, ...['read-performance', 'deployment-matrix', 'unit-postgres-arms', 'invariants', 'crash-robot', 'reconciliation'].map(name => persistence[name]!)];
+    for (const job of jobs) {
+      expect(job.strategy!.matrix.exclude).toBeUndefined();
+      const push = cells(job, { github: { event_name: 'push' }, inputs: {} });
+      for (const event_name of ['pull_request', 'merge_group', 'schedule', 'workflow_dispatch']) {
+        expect(cells(job, { github: { event_name }, inputs: {} })).toEqual(push);
+      }
+      expect(push.filter(cell => cell.split('/').includes(MINIMUM_BUN_VERSION)).length).toBe(push.length / 2);
     }
+    expect(cells(security, { github: { event_name: 'pull_request' }, inputs: {} })).toHaveLength(6);
+  });
+
+  // Every event-conditional behavior in a test workflow is classified beside
+  // the condition: parity, or a named exception naming its covering scheduled
+  // run (docs/TESTING.md#event-parity). Manual dispatch modes are documented
+  // at test.yml's inputs and stripped before scanning.
+  test('every event-conditional job or block in a test workflow carries its event-parity classification', () => {
+    const conditional = /github\.event_name|github\.event\.(?:pull_request|merge_group|action)|inputs\.scope|"\$EVENT"|\$EVENT\b/;
+    const dispatchMode = /github\.event_name\s*(?:!=|==)\s*'workflow_dispatch'/g;
+    const unclassified: string[] = [];
+    for (const name of ['test', 'stress', 'persistence-validation', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep']) {
+      const lines = readFileSync(join(root, '.github/workflows', `${name}.yml`), 'utf8').split('\n');
+      // Blocks: each job (from the comments directly above its key to the next job) and the top-level preamble.
+      const starts = lines.flatMap((line, i) => (/^  [\w-]+:\s*$/.test(line) && lines.slice(0, i).some(l => l === 'jobs:') ? [i] : []));
+      const blocks: Array<{ label: string; from: number; to: number }> = [];
+      const commentTop = (i: number) => { let j = i; while (j > 0 && /^\s*#/.test(lines[j - 1]!)) j--; return j; };
+      const jobsLine = lines.indexOf('jobs:');
+      blocks.push({ label: 'top level', from: 0, to: jobsLine });
+      starts.forEach((start, k) => blocks.push({ label: lines[start]!.trim(), from: commentTop(start), to: k + 1 < starts.length ? commentTop(starts[k + 1]!) : lines.length }));
+      for (const block of blocks) {
+        const text = lines.slice(block.from, block.to);
+        const code = text.filter(l => !/^\s*#/.test(l)).join('\n').replace(dispatchMode, '');
+        if (!conditional.test(code)) continue;
+        if (!text.some(l => /^\s*#.*docs\/(?:TESTING\.md#event-parity|ci-event-parity\.md#dependency-audit-rule)/.test(l) || /^\s*#\s*Event parity/.test(l))) unclassified.push(`${name}.yml › ${block.label}`);
+      }
+    }
+    expect(unclassified).toEqual([]);
+  });
+
+  test('the event-parity table lists every classified workflow', () => {
+    expect(readFileSync(join(root, 'docs/TESTING.md'), 'utf8')).toContain('### Event parity');
+    const docs = readFileSync(join(root, 'docs/ci-event-parity.md'), 'utf8');
+    const section = docs.slice(docs.indexOf('## Classification'), docs.indexOf('## Dependency-audit rule'));
+    for (const name of ['test', 'stress', 'persistence-validation', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'osv-scanner', 'nightly-watch']) {
+      expect(section, name).toContain(`${name}.yml`);
+    }
+    expect(docs).toContain('## Dependency-audit rule');
   });
 
   test('export scale runs 10,001 pages on pull requests and 100,001 everywhere else', () => {

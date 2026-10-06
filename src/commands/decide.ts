@@ -187,9 +187,10 @@ function costPer1k(slot: DecideSlot, provider: string, usage?: { decisions: numb
 // ---------------------------------------------------------------------------
 
 export async function buildStatus(engine: BrainEngine, state: DecideState) {
-  const [spend, usage, noEntity] = await Promise.all([
+  const [spend, usage, noEntity, reviewRates] = await Promise.all([
     dailySpend(engine).catch(() => ({ total: 0, remote: 0 })), slotUsage(engine, 24).catch(() => []),
     conflictNoEntityShare(engine).catch(() => ({ skipped: 0, receipts: 0, share: 0 })),
+    import('../core/ai/decide/review-lane.ts').then(m => m.proposalReviewRates(engine)).catch(() => []),
   ]);
   const slots = DECIDE_SLOTS.map((slot) => {
     const p = policyFor(state, slot);
@@ -208,7 +209,7 @@ export async function buildStatus(engine: BrainEngine, state: DecideState) {
       cost_per_1k: { ...costPer1k(slot, p.provider, u), unit: COST_UNITS[slot]?.unit ?? 'units' },
       effective_line: effectiveModeLine(p),
       ...(state.cfg.slots[slot].keyDefault ? { key_default: true, opt_out: keyDefaultOptOut(slot) } : {}),
-      ...(slot === 'conflict' ? { no_entity_7d: noEntity } : {}),
+      ...(slot === 'conflict' ? { no_entity_7d: noEntity, proposal_review: reviewRates } : {}),
     };
   });
   return {
@@ -254,6 +255,10 @@ async function cmdStatus(engine: BrainEngine, args: string[]): Promise<number> {
     if (s.newer_reference) console.log(`    newer reference available: ${s.newer_reference} (gbrain decide calibrations adopt ${s.newer_reference})`);
     if (s.no_entity_7d && s.no_entity_7d.skipped > 0) {
       console.log(`    ${(s.no_entity_7d.share * 100).toFixed(1)}% of conflict receipts in 7 days (${s.no_entity_7d.skipped} of ${s.no_entity_7d.receipts}) skipped a fact with no entity (no_entity); link them: gbrain facts relink --dry-run`);
+    }
+    for (const r of s.proposal_review ?? []) {
+      if (!r.enabled && r.pending === 0) continue;
+      console.log(`    ${r.kind} proposals: ${r.pending} pending${r.oldest_pending_days !== null ? ` (oldest ${r.oldest_pending_days} days)` : ''}; last 30 days: ${r.accepted_30d} accepted, ${r.rejected_30d} rejected${r.pending > 0 ? ' (review: gbrain decide proposals list)' : ''}`);
     }
     if (s.opt_out) console.log(`    on by default because a TypeSafe key is present (sends ${SLOT_SPECS[s.slot].egressClasses.map((c) => CLASS_TEXT[c]).join(', ')} to TypeSafe); opt out: ${s.opt_out}`);
   }

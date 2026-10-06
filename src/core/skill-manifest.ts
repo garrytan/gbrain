@@ -27,6 +27,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
+import { atomicWriteFileSync } from './atomic-write.ts';
 
 export interface ManifestEntry {
   name: string;
@@ -143,4 +144,27 @@ export function loadOrDeriveManifest(skillsDir: string): ManifestLoadResult {
   }
 
   return { skills: deriveManifest(skillsDir), derived: true };
+}
+
+/**
+ * #4831: register exactly the given just-scaffolded skills in an existing,
+ * valid `skillsDir/manifest.json`. Appends `{name, path}` for each slug not
+ * already listed (by name or path); never removes or reorders entries and
+ * keeps every other key. A missing or malformed manifest is left alone: the
+ * loader derives the skill set from the walk there. Returns the names added.
+ */
+export function registerManifestEntries(skillsDir: string, slugs: readonly string[]): string[] {
+  const unsafe = slugs.find(slug => !slug || slug === '.' || slug.includes('..') || /[\\/]/.test(slug));
+  if (unsafe !== undefined) throw new Error(`refusing to register skill slug ${JSON.stringify(unsafe)}: a slug is one path segment with no separators or '..'`);
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the operator's workspace skills directory; the file name is a constant.
+  const manifestPath = join(skillsDir, 'manifest.json');
+  if (!slugs.length || !existsSync(manifestPath) || loadOrDeriveManifest(skillsDir).derived) return [];
+  const content = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { skills: ManifestEntry[] };
+  const known = new Set(content.skills.flatMap(entry => [entry.name, entry.path]));
+  const added = slugs.filter(slug => !known.has(slug) && !known.has(`${slug}/SKILL.md`))
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- every slug was checked above to be one segment with no separators or '..'.
+    .map(slug => ({ name: parseSkillName(join(skillsDir, slug, 'SKILL.md')) ?? slug, path: `${slug}/SKILL.md` }));
+  if (!added.length) return [];
+  atomicWriteFileSync(manifestPath, JSON.stringify({ ...content, skills: [...content.skills, ...added] }, null, 2) + '\n');
+  return added.map(entry => entry.name);
 }

@@ -42,7 +42,6 @@
  * Serial: subprocess CLIs and servers over temp PGLite brains.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -50,6 +49,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { makeDoctorHome, runGbrain, type DoctorHome, type GbrainRun } from './helpers/doctor-json-golden.ts';
 import { PROVIDER_ENV_KEYS } from './helpers/provider-env.ts';
+import { startServeHttp, type ServeHttp } from './helpers/serve-http.ts';
 import { oldReadError, oldUnpack } from './fixtures/agent-contract/frozen-thin-client-v0.60.37.ts';
 import { extractToolErrorDetail } from '../src/core/mcp-client.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -314,11 +314,9 @@ describe('(3) harness configs registered before the upgrade', () => {
 
 describe('(4) an old thin client against a real new serve --http', () => {
   let h: DoctorHome;
-  let server: ChildProcess | null = null;
+  let server: ServeHttp | null = null;
   let rw = '';
   let ro = '';
-  const PORT = 44000 + Math.floor(Math.random() * 2000);
-  const URL_ = `http://127.0.0.1:${PORT}/mcp`;
 
   beforeAll(async () => {
     h = await upgradedBrain('upgrade-thin-client');
@@ -330,26 +328,17 @@ describe('(4) an old thin client against a real new serve --http', () => {
     rw = await token('old-thin-client', 'read,write');
     ro = await token('old-thin-reader', 'read');
     expect(rw && ro).toBeTruthy();
-    server = spawn(process.execPath, ['--no-env-file', CLI, 'serve', '--http', '--bind', '127.0.0.1', '--port', String(PORT)],
-      { cwd: h.work, env: childEnv(h), stdio: ['ignore', 'ignore', 'ignore'] });
-    const end = Date.now() + 60_000;
-    while (Date.now() < end) {
-      if ((await fetch(`http://127.0.0.1:${PORT}/health`).catch(() => null))?.ok) return;
-      await Bun.sleep(500);
-    }
-    throw new Error('serve --http never became healthy');
+    server = await startServeHttp({ cwd: h.work, env: childEnv(h) });
   }, 180_000);
 
   afterAll(async () => {
-    if (!server) return;
-    server.kill('SIGTERM');
-    await new Promise(r => server!.once('exit', r));
+    await server?.stop();
   });
 
   /** The old client's wire: SDK Client + StreamableHTTP with the bearer it minted. */
   async function oldClient(token: string): Promise<Client> {
     const client = new Client({ name: 'gbrain-thin-client', version: '0.60.37.0' }, { capabilities: {} });
-    await client.connect(new StreamableHTTPClientTransport(new URL(URL_), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${server!.base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
     return client;
   }
 

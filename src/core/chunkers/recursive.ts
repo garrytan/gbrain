@@ -104,8 +104,7 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
 
   // v0.28: strip fenced takes blocks BEFORE chunking. Takes are retrieval-
   // accessible only via the takes table; their content must not appear in
-  // content_chunks where the per-token allow-list cannot reach. The
-  // takes_fence_chunk_leak doctor check verifies this invariant.
+  // content_chunks where the per-token allow-list cannot reach.
   //
   // v0.32.2: also strip private facts (Codex R2-#1). World facts stay so
   // search retains its public-knowledge surface; private rows are filtered

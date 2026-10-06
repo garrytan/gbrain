@@ -156,6 +156,8 @@ Authoring (v0.40.6.0):
 
 Discovery + repair:
   detect                  Cluster pages by source_path → candidate page_types
+  detect --fields         Per page type: frontmatter keys, fact categories and
+                          relation types in use (100% required, >=25% optional)
   suggest                 Heuristic refinement on detect output
   review-candidates       Review disk-derived candidates; promote with --apply
   review-orphans          List pages with no active-pack type match
@@ -497,7 +499,8 @@ async function withConnectedEngine<T>(fn: (engine: import('../core/engine.ts').B
 // ------------- T2: schema detect ----------------------------------
 
 async function runDetectCmd(args: string[]): Promise<void> {
-  const { json, source } = parseFlags(args);
+  const { json, source, positional } = parseFlags(args);
+  if (positional.includes('--fields')) return runFieldUsageCmd(json, source);
   const result = await withConnectedEngine((engine) => runDetect(engine, { sourceId: source }));
   if (json) {
     console.log(JSON.stringify({ schema_version: 1, ...result }, null, 2));
@@ -515,6 +518,25 @@ async function runDetectCmd(args: string[]): Promise<void> {
   console.log('');
   console.log('Next: gbrain schema review-candidates  (decide promote / rename / ignore)');
   console.log('      gbrain schema suggest             (LLM refinement on this candidate)');
+}
+
+async function runFieldUsageCmd(json: boolean, source: string | undefined): Promise<void> {
+  const { runFieldUsage, REQUIRED_SHARE, OPTIONAL_SHARE } = await import('../core/schema-pack/field-usage.ts');
+  const types = await withConnectedEngine((engine) => runFieldUsage(engine, { sourceId: source }));
+  if (json) {
+    console.log(JSON.stringify({ schema_version: 1, required_share: REQUIRED_SHARE, optional_share: OPTIONAL_SHARE, types }, null, 2));
+    return;
+  }
+  console.log(`Field usage by page type (required = on every sampled page, optional = on at least ${OPTIONAL_SHARE * 100}%).`);
+  console.log('Fields are frontmatter keys, [fact categories] and relation types -> from line-grammar lines.');
+  for (const t of types) {
+    console.log('');
+    console.log(`${t.type}  (${t.pages} pages, ${t.sampled} sampled)`);
+    console.log(`  required: ${t.required.join(', ') || '(none)'}`);
+    console.log(`  optional: ${t.optional.join(', ') || '(none)'}`);
+  }
+  console.log('');
+  console.log('Next: declare the relation types you rely on in your schema pack (gbrain schema add-link-type <name>) so relation lines use them.');
 }
 
 // ------------- T3: schema suggest ---------------------------------

@@ -80,7 +80,14 @@ export async function searchWithoutEmbeddings(
   // vector didn't run, and whether the keyword arm itself came up empty
   // (skipped-by-modality is not a keyword miss, hence the image gate).
   // System One S6 fire retrieval asks for keyword-only on purpose: vector is not degraded.
-  if (!opts?.decide?.keywordOnly) {
+  if (!opts?.decide?.keywordOnly && opts?._embeddingOptedOut) {
+    // The brain opted out of embedding: keyword-only by choice, and the query text never left the brain.
+    pushDegraded(degraded, 'embed_unavailable', 'embedding_disabled');
+    warnOncePerProcess(
+      'search-vector-leg-opted-out',
+      '[gbrain] embeddings are off on this brain by choice (embedding_disabled), so search is keyword-only and no query text is sent to an embedding provider. If the user wants semantic search, `gbrain doctor --json` names the enable command; turning it on needs their consent.',
+    );
+  } else if (!opts?.decide?.keywordOnly) {
     pushDegraded(degraded, 'embed_unavailable', 'no_provider');
     // #3808: meta names the degradation for programmatic callers, but a CLI
     // human never saw it — mirror the embed-failure warn (once per process,

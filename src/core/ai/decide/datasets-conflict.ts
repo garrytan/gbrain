@@ -4,7 +4,9 @@
  * The adapter builds the production request shape: state = the new fact
  * (class `facts`), one `choice` question per candidate (duplicate | supersede
  * | independent). Conflict is not a harmful-direction slot (v1 only writes
- * proposals), so it has no harmful-action reducer.
+ * proposals). Its harmful-action reducer serves the review lane's acting call
+ * sites: `gbrain decide qualify --slot conflict --call-site review_withdraw`
+ * bounds the precision of the withdrawals it would propose.
  *
  * `gbrain decide dataset --slot conflict --from facts-fixtures <path>` reads
  * labelled fact pairs, one JSON object per line:
@@ -66,6 +68,14 @@ export function registerConflictDatasets(): void {
     },
     calibrationValue: duplicateValue,
     calibrateExtra: calibrateProposalFloor,
+    // The acting call sites (review_withdraw, review_duplicate_*) act on a duplicate at or above the threshold;
+    // qualification counts each such action correct exactly when the pair is labelled duplicate.
+    harmfulActions(family, values, policy) {
+      return family.flatMap((it) => {
+        const p = values[it.id];
+        return p === null || p === undefined || p < policy.threshold ? [] : [{ item: it, correct: it.label === true }];
+      });
+    },
   });
   registerDatasetBuilder('facts-fixtures', async (path, opts) => parseConflictPairs(await Bun.file(path).text(), opts));
 }

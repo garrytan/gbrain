@@ -2,7 +2,7 @@ import type { AuthInfo } from '../ops/contract.ts';
 import { hasScope, operationScopesAllowed } from '../scope.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { normalizeGrantBrain, validGrantPrefixes } from '../grants/model.ts';
+import { TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, normalizeGrantBrain, validGrantPrefixes } from '../grants/model.ts';
 import { shellQuote } from '../mcp-registration.ts';
 
 /** Keep valid bindings implicit so a repair preview cannot replace unrelated
@@ -39,6 +39,8 @@ function delegationRepair(auth: AuthInfo, reasons: readonly string[]) {
   if (reasons.includes('delegated_concurrency_invalid')) change(() => choose('--bound-max-concurrent', '<POSITIVE_CONCURRENCY>', 'Choose a positive concurrency limit.'));
   if (reasons.some(r => ['delegated_tools_not_granted', 'submit_agent_not_granted'].includes(r))) change(() => choose('--allowed-operations', '<APPROVED_OPERATION_SNAPSHOT>',
     'Explicitly review the complete operation snapshot, including submit_agent and the chosen delegated tools. Do not refresh an existing snapshot implicitly.'));
+  if (reasons.includes('token_ttl_invalid')) change(() => choose('--token-ttl', '<APPROVED_TTL_SECONDS>',
+    `Choose an access-token lifetime from ${TOKEN_TTL_MIN_SECONDS} to ${TOKEN_TTL_MAX_SECONDS} seconds (90 days). Every grant change is refused while the stored lifetime is outside that range.`));
   if (reasons.includes('submit_agent_not_visible')) checks.push('Inspect the selected surface and host publish gates; a client repair cannot override a server gate.');
   if (reasons.includes('grant_projection_unavailable')) checks.push('Repair the host schema/authentication projection before deriving a grant change.');
   return {
@@ -84,6 +86,7 @@ export function describeAuthCapabilities(auth: AuthInfo, options: { surface?: st
     if (auth.delegatedSlugPrefixes != null) reasons.push('delegated_namespace_ambiguous');
   } else if (!validGrantPrefixes(auth.delegatedSlugPrefixes ?? null)) reasons.push('delegated_path_policy_missing');
   if (!Number.isSafeInteger(auth.boundMaxConcurrent) || (auth.boundMaxConcurrent ?? 0) < 1) reasons.push('delegated_concurrency_invalid');
+  if (auth.tokenTtlSeconds != null && (!Number.isSafeInteger(auth.tokenTtlSeconds) || auth.tokenTtlSeconds < TOKEN_TTL_MIN_SECONDS || auth.tokenTtlSeconds > TOKEN_TTL_MAX_SECONDS)) reasons.push('token_ttl_invalid');
   // Delegated authority is agent + explicit tool bindings, independently of
   // direct read/write scopes. The operation snapshot still caps those tools.
   const effectiveTools = (auth.boundTools ?? []).filter(name =>

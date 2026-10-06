@@ -2000,6 +2000,7 @@ export const DEGRADED_REASONS = [
   'candidate_budget',
   'iterative_scan_unavailable',
   'egress_denied', // System One: the Jev reranker skipped a query with a candidate from decide.egress.deny_sources
+  'embedding_disabled', // the brain opted out of embedding: the query text was never sent to the provider
 ] as const;
 export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 

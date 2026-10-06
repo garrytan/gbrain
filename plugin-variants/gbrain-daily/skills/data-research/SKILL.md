@@ -25,6 +25,7 @@ tools:
   - file_upload
 mutating: true
 upstream: data-research@fc834ee
+when_to_use: "Use when the user asks: \"research\", \"track\", \"extract from email\", \"investor updates\", \"donations\"."
 ---
 
 # Data Research

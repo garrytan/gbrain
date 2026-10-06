@@ -84,7 +84,11 @@ skill — read its SKILL.md body in full and follow the workflow described there
 useful for scanning every skill and its trigger phrases in one place, and it
 carries the disambiguation rules for overlapping matches. If the two disagree,
 frontmatter wins. (There is no machine-managed block inside `RESOLVER.md` or
-`AGENTS.md`; that pattern was retired.)
+`AGENTS.md`; that pattern was retired.) `RESOLVER.md` ships in the gbrain
+install's `skills/` directory; `gbrain skillpack scaffold` does not copy it,
+and the Claude Code / Codex plugin lanes do not ship it. Where it is absent,
+routing rests on each skill's frontmatter alone (`triggers:`, `description`,
+and the `when_to_use` the plugin lanes add from the triggers).
 
 ## The memory loop
 
@@ -207,6 +211,6 @@ This file (`_AGENT_README.md`) is the routing contract — keep it short.
   lookup chain — an unexplained exemption is a conformance failure.
 - **`priority:` is NOT part of the routing contract.** Nothing in the routing
   path consumes it — matching is substring-over-`triggers:` (see "Routing"
-  above), with `RESOLVER.md` disambiguation for overlaps. A `priority:` key is
+  above), with `RESOLVER.md` disambiguation for overlaps where it ships. A `priority:` key is
   inert; don't add one expecting it to reorder matches. Encode precedence in
   trigger specificity and the resolver's disambiguation rules instead.

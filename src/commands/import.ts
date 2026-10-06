@@ -6,6 +6,7 @@ import { execFileSync } from 'child_process';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
+import { OperationError } from '../core/ops/contract.ts';
 import { importFile, importImageFile, isImageFilePath, type ImportResult } from '../core/import-file.ts';
 import { gitFirstCommitDates } from '../core/git-first-commit.ts';
 import { currentCompanyBrainSync, getCompanyBrainProfile, importCompanyBrainFile } from '../core/company-brain/profile.ts';
@@ -40,6 +41,7 @@ import { importManagedFile } from '../core/persistence/import-mutations.ts';
 import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
+import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -139,12 +141,41 @@ export class ImportAbortError extends Error {
   readonly partialResult?: RunImportResult;
   /** True: the user-facing message was already printed at the throw site. */
   readonly alreadyReported = true;
-  constructor(reason: string, exitCode = 1, partialResult?: RunImportResult) {
-    super(`import aborted: ${reason}`);
+  /** `cause` keeps the underlying error (and its stack) for in-process callers. */
+  constructor(reason: string, exitCode = 1, partialResult?: RunImportResult, cause?: unknown) {
+    super(`import aborted: ${reason}`, cause === undefined ? undefined : { cause });
     this.name = 'ImportAbortError';
     this.exitCode = exitCode;
     this.partialResult = partialResult;
   }
+}
+
+// The CLI dispatch (src/cli/commands/import.ts) exits on any ImportAbortError
+// without printing, so each refusal below prints its reason and the next
+// command to stderr before the caller throws the returned abort.
+
+/** A managed import of a symlinked input root: name the path, its target and the command that works. */
+function symlinkedRootAbort(dirArg: string, dir: string): ImportAbortError {
+  console.error(`Managed import refuses a symlinked input root: ${dirArg} resolves to ${dir}.`);
+  console.error(`Fix: gbrain import ${dir}`);
+  return new ImportAbortError('managed import refuses a symlinked input root');
+}
+
+/** A refused source filesystem lock admission: print its code, message and fix, and keep it as the cause. */
+function lockAdmissionAbort(dirArg: string, dir: string, error: unknown): ImportAbortError {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`Cannot import ${dirArg}: source filesystem lock admission failed.`);
+  if (error instanceof OperationError) {
+    console.error(`Error [${error.code}]: ${message}`);
+    if (error.suggestion) console.error(`Fix: ${error.suggestion}`);
+    const marker = error.code === 'writer_coordinator_required' ? managedRootMarkerFor(dir)?.marker : undefined;
+    if (marker) console.error(`Marker: ${marker}`);
+  } else {
+    console.error(`Error: ${message}`);
+    console.error('Fix: gbrain doctor --json');
+  }
+  const reason = error instanceof OperationError ? `${error.code}: ${message}` : message;
+  return new ImportAbortError(`source filesystem lock admission failed (${reason})`, 1, undefined, error);
 }
 
 /**
@@ -471,7 +502,7 @@ export async function runImport(
 
   const [persistence] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
   const managedImport = persistence?.enabled === true;
-  if (managedImport && dir !== resolve(dirArg)) throw new ImportAbortError('managed import refuses a symlinked input root');
+  if (managedImport && dir !== resolve(dirArg)) throw symlinkedRootAbort(dirArg, dir);
   const singleFile = managedImport && lstatSync(dir).isFile();
   const importRoot = singleFile ? dirname(dir) : dir;
 
@@ -486,7 +517,7 @@ export async function runImport(
       // Root discovery is part of admission. Preserve the CLI/library's typed
       // preflight error contract without changing errors from an import in flight.
       if (entered || signal?.aborted) throw error;
-      throw new ImportAbortError('source filesystem lock admission failed');
+      throw lockAdmissionAbort(dirArg, dir, error);
     }
   }
 

@@ -18,6 +18,7 @@ tools:
   - add_timeline_entry
 mutating: true
 upstream: daily-task-manager@fc834ee
+when_to_use: "Use when the user asks: \"add task\", \"complete task\", \"what are my tasks\", \"task list\", \"defer task\"."
 ---
 
 # Daily Task Manager

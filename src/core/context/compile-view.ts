@@ -113,6 +113,16 @@ export interface CompileViewInput {
   includePrefixes?: string[];
   /** Pre-loaded sensitivity config — loader failures already threw upstream. */
   scanConfig: SensitivityScanConfig;
+  /**
+   * Always-loaded core block (core-memory.ts), rendered in full right after
+   * the envelope; its tokens come out of the budget first. The header then
+   * records the core revision and the command that refreshes it.
+   */
+  core?: { text: string; revision: string; command: string };
+  /** Slugs never selected by the arms: core pages, which only reach a compiled file through `core`. */
+  excludeSlugs?: ReadonlySet<string>;
+  /** Render the core block alone (no arms), e.g. the user-global codex file. */
+  coreOnly?: boolean;
 }
 
 export interface CompileViewScanDrop {
@@ -179,6 +189,7 @@ async function fetchCandidates(
 
   const add = (pages: Page[], pinned: boolean) => {
     for (const page of pages) {
+      if (input.excludeSlugs?.has(page.slug)) continue;
       const existing = bySlug.get(page.slug);
       if (existing) {
         existing.pinned = existing.pinned || pinned;
@@ -280,8 +291,9 @@ function renderEntry(page: Page, relationshipNote?: string): RenderedEntry {
   return { slug: page.slug, date, block, rendered: `\n\n${block}` };
 }
 
-function headerLine(digestHex16: string, target: string, budget: number): string {
-  return `<!-- gbrain:compiled-context digest=sha256:${digestHex16} target=${target} budget=${budget} -->`;
+function headerLine(digestHex16: string, target: string, budget: number, core?: CompileViewInput['core']): string {
+  const coreAttrs = core ? ` core_revision=${core.revision} refresh="${core.command}"` : '';
+  return `<!-- gbrain:compiled-context digest=sha256:${digestHex16} target=${target} budget=${budget}${coreAttrs} -->`;
 }
 
 function sha256Hex16(text: string): string {
@@ -305,7 +317,7 @@ function computeDigest(entries: RenderedEntry[]): string {
  * sensitivity config was loaded (and its failures thrown) upstream.
  */
 export async function compileView(input: CompileViewInput): Promise<CompileViewResult> {
-  const { candidates, anchor } = await fetchCandidates(input);
+  const { candidates, anchor } = input.coreOnly ? { candidates: [], anchor: null } : await fetchCandidates(input);
 
   // Total order: (score desc, slug asc).
   const scored = candidates
@@ -351,8 +363,9 @@ export async function compileView(input: CompileViewInput): Promise<CompileViewR
   // Header cost: the digest value is FIXED-LENGTH (hex16), so a placeholder
   // of the same length prices the header before the kept set is known.
   const budget = input.budget;
-  const headerWithPlaceholder = headerLine('0'.repeat(16), input.target, budget);
-  const headerText = `${headerWithPlaceholder}\n${COMPILED_CONTEXT_ENVELOPE}`;
+  const headerWithPlaceholder = headerLine('0'.repeat(16), input.target, budget, input.core);
+  const coreText = input.core?.text ? `\n\n${input.core.text}` : '';
+  const headerText = `${headerWithPlaceholder}\n${COMPILED_CONTEXT_ENVELOPE}${coreText}`;
   const noFitComment = `\n\n<!-- no entries fit budget ${budget} -->`;
   // Count every non-entry byte (header, envelope, trailing newline).
   const headerCost = estimateTokens(`${headerText}\n`);
@@ -369,7 +382,7 @@ export async function compileView(input: CompileViewInput): Promise<CompileViewR
   }
 
   const digest = computeDigest(kept);
-  let text = `${headerLine(digest, input.target, budget)}\n${COMPILED_CONTEXT_ENVELOPE}`;
+  let text = `${headerLine(digest, input.target, budget, input.core)}\n${COMPILED_CONTEXT_ENVELOPE}${coreText}`;
   if (kept.length > 0) {
     text += kept.map((e) => e.rendered).join('');
   } else if (entries.length > 0) {

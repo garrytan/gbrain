@@ -32,6 +32,7 @@ mutating: true
 # the word `perplexity` but the skill never actually calls external
 # APIs. It rewrites local routing tables. Declarative opt-out.
 brain_first: exempt
+when_to_use: "Use when the user asks: \"compress agents.md\", \"compress my resolver\", \"resolver too big\", \"resolver.md too big\", \"agents.md too large\"."
 ---
 
 # Functional-Area Resolver — Pattern for Compressing Routing Tables

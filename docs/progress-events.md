@@ -87,12 +87,17 @@ won't emit more often than `minIntervalMs` (default 1000) and
 `minItems` (default `max(10, ceil(total/100))`).
 
 ```json
-{"event":"tick","phase":"orphans.scan","done":15000,"total":52000,"pct":28.8,"elapsed_ms":4200,"eta_ms":10300,"ts":"..."}
+{"event":"tick","phase":"orphans.scan","done":15000,"total":52000,"pct":28.8,"elapsed_ms":4200,"cpu_ms":3900,"eta_ms":10300,"ts":"..."}
 ```
 
 Fields:
 
 - `done` — items completed in this phase.
+- `cpu_ms` — CPU time (user + system) the emitting process's main thread has
+  used since the phase started. Unlike `elapsed_ms` it excludes time the host
+  gave the CPU to other work, and it excludes work on runtime helper threads
+  (garbage collection, JIT) and in other processes (a Postgres server, a
+  provider). The scale tier's import-rate gate times PGLite imports with it.
 - `total` — total items, if known. Omitted when the scan doesn't have a
   total up front (e.g. a streaming iterator).
 - `pct` — `done/total * 100`, one decimal. Omitted when `total` is unknown.

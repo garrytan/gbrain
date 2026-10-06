@@ -5,7 +5,7 @@ import { catalogFix, skillHeadFix } from './fixes.ts';
 import { sourceScopeOpts } from '../ops/context.ts';
 import { stableJson } from '../persistence/digest.ts';
 import { approvedFiles, authorizeSkillRead, legacySharedSkillPolicy, normalizePolicy, publicationEnabled, readSharedSkillPolicy, skillPrincipal } from './policy.ts';
-import { skillName, skillPath } from './manifest.ts';
+import { skillName, skillPath, skillToolsDeclared } from './manifest.ts';
 import { SHARED_SKILL_LIMITS, type SharedSkillDetail, type SharedSkillKey, type SharedSkillList, type SharedSkillSelector,
   type SharedSkillSummary, type SharedSkillPolicy, type StoredSkillRevision } from './model.ts';
 
@@ -80,7 +80,8 @@ async function readSnapshot(ctx: OperationContext, selector: SharedSkillSelector
     if (!policy.policy.enabled || ctx.remote !== false && row.metadata.private ||
       !row.metadata.audience.some(a => (a === 'readers' || a === principal) && policy!.policy.audiences.includes(a))) continue;
     const skillKey = { brain_id: brain.brain_id, source_id: row.source_id, source_incarnation: row.source_incarnation, pack_id: row.pack_id, name: row.name };
-    const { file_policy, ...metadata } = row.metadata;
+    const { file_policy, tools_declared: _toolsDeclared, ...metadata } = row.metadata;
+    const inherits = !skillToolsDeclared(row.metadata, null);
     const complete = file_policy.every(f => policy!.policy.classes.includes(f.file_class) && f.audience.some(a => (a === 'readers' || a === principal) && policy!.policy.audiences.includes(a)));
     const tools = metadata.requirements.filter(r => r.startsWith('tool:')).map(r => r.slice(5));
     const unavailable = metadata.requirements.filter(r => !r.startsWith('tool:') || !availableTools.has(r.slice(5)) ||
@@ -88,7 +89,7 @@ async function readSnapshot(ctx: OperationContext, selector: SharedSkillSelector
     skills.push({ ...skillKey, ...metadata, audience: metadata.audience.filter(a => a === 'readers' || a === principal), qualified_id: qualifiedSkillId(skillKey), revision: row.revision,
       policy_epoch: policy.epoch, allow_follow: policy.policy.allow_follow,
       delivery: complete ? 'complete' : 'prose_only', usable: complete && unavailable.length === 0,
-      usable_tools: tools.filter(t => availableTools.has(t)), unavailable_tools: tools.filter(t => !availableTools.has(t)), unavailable_requirements: unavailable });
+      usable_tools: inherits ? [...availableTools] : tools.filter(t => availableTools.has(t)), unavailable_tools: inherits ? [] : tools.filter(t => !availableTools.has(t)), unavailable_requirements: unavailable });
   }
   const auth = opaque(brain.token_secret, { principal, sources: sourceIds, scopes: ctx.auth?.scopes,
     operations: ctx.auth?.allowedOperations, surface: ctx.auth?.effectiveSurface, grant_revision: ctx.auth?.grantRevision, serving_epoch: brain.serving_epoch });
@@ -174,15 +175,18 @@ async function detail(active: OperationContext, params: SharedSkillSelector) {
   }
   const visible = new Set(files.map(f => f.path));
   const complete = files.length === row.files.length && files.every(f => f.depends_on.every(d => visible.has(d)));
-  const { file_policy: _filePolicy, ...metadata } = row.metadata;
+  const { file_policy: _filePolicy, tools_declared: _toolsDeclared, ...metadata } = row.metadata;
   const { sharedSkillToolAccess } = await import('./tool-access.ts');
-  const tools = new Set(await sharedSkillToolAccess(active));
+  const access = await sharedSkillToolAccess(active);
+  const tools = new Set(access);
+  const body = Buffer.from(main.content, 'base64').toString('utf8');
+  const inherits = !skillToolsDeclared(row.metadata, body);
   const declaredTools = metadata.requirements.filter(r => r.startsWith('tool:')).map(r => r.slice(5));
   const unavailable = metadata.requirements.filter(r => !r.startsWith('tool:') || !tools.has(r.slice(5)) ||
     !['legacy-prose', 'consent-required'].includes(epoch) && !policy.requirements.includes(r));
   const result: SharedSkillDetail = { ...selected, ...metadata, audience: metadata.audience.filter(a => a === 'readers' || a === snapshot.principal), revision: row.revision, schema_version: 2,
-    delivery: complete ? 'complete' : 'prose_only', body: Buffer.from(main.content, 'base64').toString('utf8'),
-    usable_tools: declaredTools.filter(t => tools.has(t)), unavailable_tools: declaredTools.filter(t => !tools.has(t)),
+    delivery: complete ? 'complete' : 'prose_only', body,
+    usable_tools: inherits ? access : declaredTools.filter(t => tools.has(t)), unavailable_tools: inherits ? [] : declaredTools.filter(t => !tools.has(t)),
     unavailable_requirements: unavailable, usable: complete && unavailable.length === 0,
     files: files.map(({ content: _content, ...file }) => ({ ...file, audience: file.audience.filter(a => a === 'readers' || a === snapshot.principal), depends_on: file.depends_on.filter(d => visible.has(d)) })) };
   return { result, files };

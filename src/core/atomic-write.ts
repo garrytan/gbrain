@@ -7,7 +7,9 @@
  * The rename is atomic on POSIX filesystems, so readers never observe a torn
  * file; a crash mid-write leaves only a tmp sibling, never a corrupt target.
  *
- * The tmp name embeds pid + random bytes so concurrent writers (two fixers,
+ * The tmp name is a short hidden sibling, `.<sha256(target)>.tmp.<uuid>`, so
+ * a valid target basename near NAME_MAX still gets a valid stage name (#5861),
+ * the stage stays bound to its full target path, and concurrent writers (two fixers,
  * a fixer racing a render) can never collide on the tmp path itself. Note the
  * rename does NOT prevent lost updates between two read-modify-write writers —
  * callers that need that take the per-page lock (src/core/page-lock.ts).
@@ -33,7 +35,7 @@ import {
   unlinkSync,
   writeSync,
 } from 'fs';
-import { randomBytes, randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
 import { flushDirectory } from './fs-durable.ts';
@@ -99,7 +101,12 @@ export function mkdirPrivate(dir: string, root: string = dir): void {
 
 export function atomicStagingPath(filePath: string): string {
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- internal name allocation only; coordinator checks owner-root containment before staging and publication.
-  return `${resolve(filePath)}.tmp.${randomUUID()}`;
+  return `${stagingPrefix(resolve(filePath))}${randomUUID()}`;
+}
+
+function stagingPrefix(target: string): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- the second segment is a fixed-shape name built from a sha256 hex digest (no separators or ..); dirname is the already-resolved target's own directory.
+  return join(dirname(target), `.${createHash('sha256').update(target).digest('hex')}.tmp.`);
 }
 
 export function validateAtomicStagingPath(filePath: string, stagingPath: string): void {
@@ -107,8 +114,9 @@ export function validateAtomicStagingPath(filePath: string, stagingPath: string)
   const target = resolve(filePath);
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- normalized only to reject non-sibling stages below; recovery also checks symlink-aware root containment before file access.
   const staged = resolve(stagingPath);
-  if (dirname(target) !== dirname(staged) || !staged.startsWith(`${target}.tmp.`)
-    || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(staged.slice(target.length + 5))) {
+  const prefix = [stagingPrefix(target), `${target}.tmp.`].find(candidate => staged.startsWith(candidate));
+  if (dirname(target) !== dirname(staged) || !prefix
+    || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(staged.slice(prefix.length))) {
     throw new Error('atomic-write: invalid journaled staging path');
   }
 }
@@ -116,7 +124,7 @@ export function validateAtomicStagingPath(filePath: string, stagingPath: string)
 export function atomicWriteFileSync(filePath: string, content: string | Uint8Array, opts?: AtomicWriteOpts): void {
   assertManagedFilesystemWrite(filePath);
   if (opts?.stagingPath) validateAtomicStagingPath(filePath, opts.stagingPath);
-  const tmpPath = opts?.stagingPath ?? `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+  const tmpPath = opts?.stagingPath ?? atomicStagingPath(filePath);
   const buf = typeof content === 'string' ? Buffer.from(content, 'utf-8') : Buffer.from(content);
   let created: ReturnType<typeof fstatSync> | undefined;
 

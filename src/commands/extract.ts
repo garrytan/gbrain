@@ -47,6 +47,8 @@ import { isUndefinedTableError } from '../core/utils.ts';
 import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import { resolveCandidateSources, resolveLinkFallbackDefault, loadLinkPageMetadata, capturedLinkEndpoints, fileLinkOwnership, replaceFileLinks, replacePageFileLinks, type LinkPageMetadata } from '../core/link-reconciliation.ts';
+import { collectWantedLinks, isWantedPagesEnabled } from '../core/wanted-links.ts';
+import { lineGrammarOptions, statedRelationTypes } from '../core/line-grammar.ts';
 export { reconcileSourceLinks, type SourceLinkReconciliationResult } from '../core/link-reconciliation.ts';
 export { extractMarkdownLinks } from '../core/link-extraction.ts';
 import {
@@ -495,7 +497,8 @@ async function loadSlugAliasTargets(engine: BrainEngine, sourceId: string, allSl
 export async function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
   opts?: { includeFrontmatter?: boolean; globalBasename?: boolean; pack?: LinkExtractionPack | null;
-    pageTypes?: ReadonlyMap<string, string>; aliases?: ReadonlyMap<string, string> },
+    pageTypes?: ReadonlyMap<string, string>; aliases?: ReadonlyMap<string, string>;
+    lineGrammar?: { enabled?: boolean; allowUndeclaredTypes?: boolean } },
 ): Promise<ExtractedLink[]> {
   const links: ExtractedLink[] = [];
   // Renamed pages: `allSlugs` also holds their old slugs (see
@@ -520,6 +523,7 @@ export async function extractLinksFromFile(
   // DB path, which goes through extractEntityRefs (which strips internally).
   const scanContent = stripCodeBlocks(content);
   const attendanceRanges = attendanceEvidenceRanges(content);
+  const statedType = statedRelationTypes(content, { ...opts?.lineGrammar, declaredVerbs: pack?.link_types.map(lt => lt.name) });
 
   for (const { name, relTarget, index } of extractMarkdownLinks(scanContent, true)) {
     const resolvedSlugs = resolveSlugAll(fileDir, relTarget, allSlugs, { globalBasename });
@@ -543,7 +547,9 @@ export async function extractLinksFromFile(
       const targetType = opts?.pageTypes?.get(target) ?? parseMarkdown('', `${target}.md`, { activePack }).type;
       const position = index ?? scanContent.indexOf(name);
       const evidence = scanContent.slice(Math.max(0, position - 120), position + 240);
-      let inferred = pack ? inferLinkTypeFromPack(pack, guessedPageType, evidence, packBudget, targetType) : null;
+      const stated = statedType(position);
+      let inferred = stated && !(stated === 'attended' && guessedPageType === 'meeting') ? stated
+        : pack ? inferLinkTypeFromPack(pack, guessedPageType, evidence, packBudget, targetType) : null;
       if (inferred === 'attended' && guessedPageType === 'meeting' && !packOwnsAttendance) inferred = null;
       const bareTarget = relTarget.endsWith('.md') ? relTarget.slice(0, -3) : relTarget;
       const ambiguousAttendance = !inferred && guessedPageType === 'meeting' && targetType === 'person'
@@ -1891,7 +1897,7 @@ async function extractLinksFromDB(
     // basename lookup; off by default for back-compat.
     const extracted = await extractPageLinks(
       slug, fullContent, page.frontmatter, page.type, resolver,
-      { skipFrontmatter: !includeFrontmatter, globalBasename, pack, targetType: (targetSlug, targetSourceId) => {
+      { skipFrontmatter: !includeFrontmatter, globalBasename, pack, lineGrammar: await lineGrammarOptions(engine), targetType: (targetSlug, targetSourceId) => {
         const resolved = resolveCandidateSources({ targetSlug, targetSourceId, linkType: '', context: '' }, slug,
           source_id, allSlugs, slugToSources, federatedSourceIds.has(source_id), { crossSource, defaultSourceId: linkDefaultSourceId });
         return resolved.ok ? targetMetadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type : undefined;
@@ -1939,8 +1945,13 @@ async function extractLinksFromDB(
     }
     if (!dryRun) {
       try {
+        const wanted = await isWantedPagesEnabled(engine) ? collectWantedLinks({ candidates: extracted.candidates,
+          frontmatterUnresolved: includeFrontmatter ? extracted.unresolved : [], originSourceId: source_id,
+          crossSourceAllowed: federatedSourceIds.has(source_id) || crossSource, resolve: c => resolveCandidateSources(c, slug, source_id,
+            allSlugs, slugToSources, federatedSourceIds.has(source_id), { crossSource, defaultSourceId: linkDefaultSourceId }) }) : [];
         const written = await engine.replaceDerivedLinks({ slug, sourceId: source_id, expectedRevision: snapshot.revision,
           sourceIncarnation: snapshot.sourceIncarnation }, batch, { includeFrontmatter,
+          wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] : ['body'], rows: wanted },
           expectedEndpoints: capturedLinkEndpoints(batch, targetMetadata) });
         created += written.created;
       } catch (error) {
@@ -2119,6 +2130,7 @@ export async function extractStaleFromDB(
   // from a genuinely missing target.
   let skippedCrossSource = 0;
 
+  const wantedEnabled = await isWantedPagesEnabled(engine);
   for (;;) {
     const rows = await engine.listStalePagesForExtraction({
       batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs,
@@ -2145,7 +2157,7 @@ export async function extractStaleFromDB(
       const resolver = resolvers.get(page.source_id)!;
       const extracted = await extractPageLinks(
         page.slug, fullContent, snapshot.page.frontmatter, snapshot.page.type, resolver,
-        { skipFrontmatter: !includeFrontmatter, globalBasename, pack, targetType: (targetSlug, targetSourceId) => {
+        { skipFrontmatter: !includeFrontmatter, globalBasename, pack, lineGrammar: await lineGrammarOptions(engine), targetType: (targetSlug, targetSourceId) => {
           const resolved = resolveCandidateSources({ targetSlug, targetSourceId, linkType: '', context: '' }, page.slug,
             page.source_id, allSlugs, slugToSources, federatedSourceIds.has(page.source_id), { crossSource, defaultSourceId: linkDefaultSourceId });
           return resolved.ok ? targetMetadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type : undefined;
@@ -2170,7 +2182,12 @@ export async function extractStaleFromDB(
         linkRows.push(resolvedLinkCandidate(c, page.slug, page.source_id, r));
       }
       const origin = { slug: page.slug, sourceId: page.source_id, expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation };
-      const linkOpts = { includeFrontmatter, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata) };
+      const wanted = wantedEnabled ? collectWantedLinks({ candidates: extracted.candidates,
+        frontmatterUnresolved: includeFrontmatter ? extracted.unresolved : [], originSourceId: page.source_id,
+        crossSourceAllowed: federatedSourceIds.has(page.source_id) || crossSource, resolve: c => resolveCandidateSources(c, page.slug,
+          page.source_id, allSlugs, slugToSources, federatedSourceIds.has(page.source_id), { crossSource, defaultSourceId: linkDefaultSourceId }) }) : [];
+      const linkOpts = { includeFrontmatter, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata),
+        wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] as const : ['body'] as const, rows: wanted } };
       const stampIso = page.updated_at.getTime() >= Date.parse(versionTs) ? page.updated_at_iso : versionTs;
       const written = await engine.replaceDerivedLinks(origin, linkRows, linkOpts);
       linksCreated += written.created;

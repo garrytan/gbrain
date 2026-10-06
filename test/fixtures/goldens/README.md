@@ -48,7 +48,10 @@ reproduce byte for byte. Each file is written by `test/helpers/golden.ts` as
   skills dir, reduced PATH, keyless, `fetch` refused and logged by
   `test/helpers/no-network-preload.ts`). Variants: PGLite fresh / `--fast` / degraded
   embedding config, no config, unreachable Postgres (+`--fast`), fresh Postgres in a
-  scratch database.
+  scratch database. The `schema_version` message carries `<latest>` for the migration
+  registry maximum (as the package version is `<version>`), so a migration renumber does
+  not regenerate these files; `expectSchemaLatestMatchesRegistry` asserts the raw report
+  names the registry maximum (`test/doctor-json-golden-latest.test.ts` pins both).
 - `doctor/early-stop-*.json` (`test/doctor-early-stop-golden.serial.test.ts`,
   `doctor-checks-v1`): `buildChecks` null-engine, `--fast`, connect-error and
   getStats-failure early stops.

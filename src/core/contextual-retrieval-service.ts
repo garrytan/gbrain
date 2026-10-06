@@ -62,6 +62,7 @@ import type { BrainEngine } from './engine.ts';
 import type { ChunkInput, CRMode, Page } from './types.ts';
 import type { SourceRow } from './sources-ops.ts';
 import { installPageEmbeddings, readProjectionSnapshot, type ProjectionSnapshot } from './page-state/projections.ts';
+import { reconcileContextualEmbeddingInputs } from './page-state/contextual-proof.ts';
 import { digest } from './persistence/digest.ts';
 
 /**
@@ -288,6 +289,8 @@ export interface ReembedPageArgs {
    * calls. Embedding remains one batch after all synopses succeed.
    */
   chunkConcurrency?: number;
+  /** @internal Synopsis generator seam (benchmark caching/metering); production callers omit this. */
+  generateSynopsis?: typeof generatePerChunkSynopsis;
 }
 
 /**
@@ -328,6 +331,10 @@ export async function reembedPageWithContextualRetrieval(
           if (!sameProjection(prepared, current)) return false;
         }
         await tx.updatePageContextualRetrievalState(page.slug, page.source_id, mode, generation);
+        if (!embedded && mode === 'none' && page.contextual_retrieval_mode == null
+          && !Object.hasOwn(page.frontmatter ?? {}, 'embed_skip')) {
+          await reconcileContextualEmbeddingInputs(tx, prepared.snapshot, mode, generation);
+        }
         return true;
       });
       return installed ? null : superseded;
@@ -626,7 +633,7 @@ async function buildWrappedChunkText(opts: {
       }
       leaseAcquired = true;
     }
-    synopsisResult = await generatePerChunkSynopsis({
+    synopsisResult = await (args.generateSynopsis ?? generatePerChunkSynopsis)({
       documentText: sourceText,
       chunkText: c.chunk_text,
       pageTitle: page.title,

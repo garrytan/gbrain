@@ -30,6 +30,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { buildChecks, computeDoctorReport, type Check } from '../src/commands/doctor.ts';
 import { getDbUrlSource } from '../src/core/config.ts';
+import { MIGRATION_VERSIONS } from '../src/core/migration-ledger.ts';
 
 let tmp: string;
 
@@ -234,6 +235,37 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     const minions = checks.find(c => c.name === 'minions_migration');
     expect(minions!.status).toBe('fail');
     expect(minions!.message).toContain('0.16.0');
+  });
+
+  function seedLedger(entries: Array<Record<string, unknown>>): void {
+    const migrationsDir = join(tmp, '.gbrain', 'migrations');
+    mkdirSync(migrationsDir, { recursive: true });
+    writeFileSync(join(migrationsDir, 'completed.jsonl'), entries.map(e => JSON.stringify(e)).join('\n') + '\n');
+  }
+
+  test('C-NEW-2: a retry marker resets the wedge counter; only trailing partials count', async () => {
+    seedLedger(['partial', 'partial', 'partial', 'retry', 'partial'].map(status => ({ version: '0.53.0', status })));
+    const minions = (await runFastChecks()).checks.find(c => c.name === 'minions_migration');
+    expect(minions!.status).toBe('fail');
+    expect(minions!.message).toContain('MINIONS HALF-INSTALLED (partial migration: 0.53.0)');
+    expect(minions!.message).not.toContain('--force-retry');
+  });
+
+  test('C-NEW-2: after --force-retry the version is pending, not still wedged', async () => {
+    seedLedger(['partial', 'partial', 'partial', 'retry'].map(status => ({ version: '0.53.0', status })));
+    const result = await runFastChecks();
+    const minions = result.checks.find(c => c.name === 'minions_migration');
+    expect(minions!.status).toBe('warn');
+    expect(minions!.message).toBe('1 host migration(s) not run yet: 0.53.0. Run: gbrain apply-migrations --yes');
+    expect(result.exitCode).toBe(0);
+  });
+
+  test('C-NEW-3: a host migration a newer one skipped past is reported as never run', async () => {
+    seedLedger(MIGRATION_VERSIONS.filter(v => v !== '0.53.0').map(version => ({ version, status: 'complete' })));
+    const minions = (await runFastChecks()).checks.find(c => c.name === 'minions_migration');
+    expect(minions!.status).toBe('warn');
+    expect(minions!.message).toBe('1 host migration(s) not run yet: 0.53.0. Run: gbrain apply-migrations --yes');
+    expect((minions!.details as { pending: string[] }).pending).toEqual(['0.53.0']);
   });
 
   test('human output: prints MINIONS HALF-INSTALLED loud banner', async () => {

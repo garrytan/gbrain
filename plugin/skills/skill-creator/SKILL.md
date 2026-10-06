@@ -13,6 +13,7 @@ tools:
   - search
   - list_pages
 mutating: true
+when_to_use: "Use when the user asks: \"create a skill\", \"new skill\", \"improve this skill\"."
 ---
 
 # Skill Creator

@@ -47,6 +47,7 @@ import { resolveHybridRequest } from './hybrid/request.ts';
 import { prepareSemanticCache, resolveCacheSearchMode, semanticCacheSkipped, serveSemanticCacheHit } from './hybrid/cache-stages.ts';
 import { buildPostFusionOpts, buildRelationalList, resolveModalityAndQueries, runLexicalArms, runVectorArms } from './hybrid/arms.ts';
 import { searchVectorFallback, searchWithoutEmbeddings } from './hybrid/keyword-only.ts';
+import { factEmbeddingDisabled } from '../embedding-disabled.ts';
 import { expandStructuralNeighbors, finalizeHybridResults, fuseArms, rerankAndPin, sizeReturnPool } from './hybrid/rank.ts';
 
 export const RRF_K = 60;
@@ -943,6 +944,8 @@ export interface HybridSearchOpts extends SearchOpts {
    * prepended to the text vector arm's query embeddings only.
    */
   _queryPrefix?: string;
+  /** INTERNAL — the brain opted out of embedding (factEmbeddingDisabled), read once per request: keyword-only, no query embed. */
+  _embeddingOptedOut?: boolean;
 
   /**
    * Hermetic eval canaries/CI — non-semantic embeddings. When set, the query
@@ -1065,6 +1068,7 @@ export async function hybridSearch(
     opts = { ...opts, ...filters };
   }
   if (opts?._queryPrefix === undefined) opts = { ...opts, _queryPrefix: await loadEmbeddingQueryPrefix(engine) };
+  if (opts._embeddingOptedOut === undefined) opts = { ...opts, _embeddingOptedOut: await factEmbeddingDisabled(engine) };
   // Named stages (src/core/search/hybrid/): request -> lexical arms ->
   // relational arm -> [keyword-only return] -> modality + expansion ->
   // vector arms -> [keyword fallback return] -> fusion + post-fusion boosts
@@ -1100,11 +1104,12 @@ export async function hybridSearch(
       earlyModality === 'image' ||
       earlyModality === 'both' ||
       mayEscalateToMultimodal) &&
+    !opts?._embeddingOptedOut &&
     isAvailable('embedding', multimodalProviderProbe);
   // Hermetic eval canaries/CI: a caller-supplied queryEmbedFn produces the
   // vector-arm query embedding without the gateway, so provider
   // availability is irrelevant — skip the keyword-only short-circuit.
-  if (opts?.decide?.keywordOnly || (!opts?.queryEmbedFn && !isAvailable('embedding', providerProbe) && !willTryMultimodal)) {
+  if (opts?.decide?.keywordOnly || (!opts?.queryEmbedFn && (opts?._embeddingOptedOut || !isAvailable('embedding', providerProbe)) && !willTryMultimodal)) {
     return searchWithoutEmbeddings(req, lexical, relationalList, postFusionOpts, providerProbe);
   }
 
@@ -1176,6 +1181,7 @@ export async function hybridSearchCached(
   if (opts?.types?.length === 0) return [];
   const { modeInputForCache, resolvedForCache, knobsHash } = await resolveCacheSearchMode(engine, opts);
   const queryPrefix = opts?._queryPrefix ?? await loadEmbeddingQueryPrefix(engine);
+  const embeddingOptedOut = opts?._embeddingOptedOut ?? await factEmbeddingDisabled(engine);
   // Result caching is off (semanticResultCacheAvailable() === false): skip the
   // key/config setup entirely so the wrapper costs no round-trips of its own.
   const semanticCache = semanticResultCacheAvailable()
@@ -1206,7 +1212,7 @@ export async function hybridSearchCached(
       // 'embedding' column (skipCache short-circuits non-default above),
       // so this is the default embeddingModel — but threading it keeps
       // the provider probe consistent with the bare hybridSearch path.
-      if (isAvailable('embedding', semanticCache.providerProbe)) {
+      if (!embeddingOptedOut && isAvailable('embedding', semanticCache.providerProbe)) {
         // v0.35.0.0+: query-side embedding (cache lookup path).
         // v0.42.20.0 (Fix 3) — bounded by the shared deadline; on timeout this
         // throws → caught below → cacheStatus 'disabled' → falls through to the
@@ -1238,6 +1244,7 @@ export async function hybridSearchCached(
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,
     _queryPrefix: queryPrefix,
+    _embeddingOptedOut: embeddingOptedOut,
     // #2952 — classify this search's telemetry record (emitted by the inner
     // function) with the cache-consult outcome. 'hit' already returned above,
     // so only miss/disabled reach this call.

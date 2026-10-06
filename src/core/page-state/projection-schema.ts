@@ -13,7 +13,7 @@ export const PAGE_PROJECTION_SCHEMA_STATEMENTS = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY(source_incarnation,slug)
   )`,
-  `CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql AS $fn$
+  `CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
     DECLARE incarnation UUID;
     BEGIN
       IF TG_OP='DELETE' THEN

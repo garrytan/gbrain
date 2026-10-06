@@ -51,6 +51,11 @@ interface CleanupEntry {
 }
 
 const registry = new Map<symbol, CleanupEntry>();
+/** #5062: long-lived commands that run their own ordered shutdown. The most
+ *  recent registration wins; while one is registered, termination signals
+ *  and a broken stdout/stderr pipe go to it instead of the generic
+ *  cleanup-then-exit pass. */
+const signalOwners: Array<{ key: symbol; onSignal: (signal: NodeJS.Signals) => void }> = [];
 let installed = false;
 let cleanupPass: Promise<void> | null = null;
 /** Refs to every listener attached by installSignalHandlers, keyed by
@@ -81,6 +86,39 @@ export function registerCleanup(name: string, fn: () => Promise<void>): () => vo
     deregistered = true;
     registry.delete(key);
   };
+}
+
+/**
+ * #5062: claim the process's termination signals (SIGTERM, SIGHUP, SIGPIPE
+ * and a broken stdout/stderr pipe). Without an owner the generic handler
+ * runs every cleanup callback (which DELETEs held DB locks) and exits at
+ * once, so a supervisor or worker loses its singleton lock and dies before
+ * it can drain. With an owner registered the generic handler only forwards
+ * the signal; the owner stops admissions, drains, releases its own locks and
+ * then calls `triggerCleanupAndExit` (or exits) itself. Repeated signals are
+ * forwarded again, so `onSignal` must be idempotent. Crashes
+ * (uncaughtException / unhandledRejection) keep the generic path.
+ *
+ * Returns a deregister handle (idempotent).
+ */
+export function registerSignalOwner(name: string, onSignal: (signal: NodeJS.Signals) => void): () => void {
+  const key = Symbol(name);
+  signalOwners.push({ key, onSignal });
+  return () => {
+    const i = signalOwners.findIndex((o) => o.key === key);
+    if (i >= 0) signalOwners.splice(i, 1);
+  };
+}
+
+function forwardToSignalOwner(signal: NodeJS.Signals): boolean {
+  const owner = signalOwners[signalOwners.length - 1];
+  if (!owner) return false;
+  try { owner.onSignal(signal); }
+  catch (err) {
+    try { process.stderr.write(`[process-cleanup] signal owner: ${err instanceof Error ? err.message : String(err)}\n`); }
+    catch { /* stderr might be broken */ }
+  }
+  return true;
 }
 
 /**
@@ -153,6 +191,7 @@ export function installSignalHandlers(opts: { keepServingOnLogEpipe?: boolean } 
   const keepServing = opts.keepServingOnLogEpipe === true;
 
   const handleSignal = (signal: NodeJS.Signals) => {
+    if (forwardToSignalOwner(signal)) return;
     void runCleanupPass().finally(() => {
       // Match GNU `kill` exit-code convention: 128 + signal number for
       // signal-terminated processes. The actual integer doesn't matter
@@ -193,6 +232,7 @@ export function installSignalHandlers(opts: { keepServingOnLogEpipe?: boolean } 
   // through the cleanup pass so locks release BEFORE we exit.
   attach(process.stdout, 'error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EPIPE' && !keepServing) {
+      if (forwardToSignalOwner('SIGPIPE')) return;
       void triggerCleanupAndExit(0);
     }
   });
@@ -200,6 +240,7 @@ export function installSignalHandlers(opts: { keepServingOnLogEpipe?: boolean } 
   // stderr was rerouted to stdout).
   attach(process.stderr, 'error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EPIPE' && !keepServing) {
+      if (forwardToSignalOwner('SIGPIPE')) return;
       // No stderr means no useful logs on the way out; still cleanup.
       void triggerCleanupAndExit(0);
     }
@@ -214,6 +255,7 @@ export function installSignalHandlers(opts: { keepServingOnLogEpipe?: boolean } 
  */
 export function _resetForTests(): void {
   registry.clear();
+  signalOwners.length = 0;
   // Detach every listener installSignalHandlers attached — clearing flags
   // alone leaves a live SIGTERM→exit(143) listener on the shared test-runner
   // process, which a later synthetic `process.emit('SIGTERM')` would trigger,

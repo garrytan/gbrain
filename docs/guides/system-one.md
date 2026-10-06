@@ -269,6 +269,62 @@ gbrain decide proposals accept <id> | reject <id>           # or --all-from <swe
 gbrain decide proposals undo <id>                           # reverse an accepted proposal
 ```
 
+### Ambiguous-band review (rides `conflict`)
+
+Some pairs sit in the similarity band where a threshold cannot tell a
+restatement from a related claim. The review lane asks the contradiction
+slot's provider about them overnight, at the end of the same `extract_facts`
+tail, and writes owner-reviewed proposals. Each kind has its own switch, call
+site, calibration and qualification:
+
+| Kind | Switch | Reviews | Accepting |
+|---|---|---|---|
+| `withdraw` | `decide.slots.conflict.review_withdraw` | active facts close to a fact you forgot | withdraws the fact exactly like `forget` (permanent) |
+| `duplicate_page` | `decide.slots.conflict.review_duplicate_page` | page pairs the page-duplicate detector queued | runs the registered merge or link action, or records your verdict |
+| `duplicate_entity` | `decide.slots.conflict.review_duplicate_entity` | entity pairs deterministic entity dedup left ambiguous | same as `duplicate_page` |
+
+`withdraw` is on by default: its held-out qualification passed (action
+precision lower bound 0.970, end-to-end recall 0.977), and the binary ships
+that reference calibration for TypeSafe `jev-1.13.0`, so it proposes wherever
+the contradiction slot is on with a TypeSafe key. Turn it off with
+`gbrain config set decide.slots.conflict.review_withdraw false`. The duplicate
+kinds are off by default. A kind proposes only when its calibration for call
+site `review_<kind>` is qualified for action precision
+(`decide.slots.conflict.min_action_precision`, default 0.90); until then it
+does not call the provider at all. An operator `decide.slots.conflict.threshold`
+override does not count as a qualification for review kinds. To qualify a kind
+on your own data:
+
+```bash
+gbrain decide calibrate --slot conflict --call-site review_duplicate_page --dataset pairs.jsonl
+gbrain decide qualify --slot conflict --call-site review_duplicate_page --dataset pairs.jsonl
+gbrain config set decide.slots.conflict.review_duplicate_page true
+```
+
+Work is queued in the same transaction as the event that creates it: a
+withdrawal (unless `forget` passed `semantic_review: false`), or another
+subsystem's enqueue. Nothing older than turning a kind on is reviewed. A fact
+the contradiction sweep processes also re-queues up to two withdrawn claims it
+may restate. The text of a forgotten private fact is sent only when
+`decide.egress.private` is `allow`; the TypeSafe key alone does not cover it.
+
+Review proposals list with `r` ids next to supersede proposals:
+
+```bash
+gbrain decide proposals list
+gbrain decide proposals accept r12 --yes          # a withdraw is permanent: confirm with the user first
+gbrain decide proposals reject r12
+gbrain decide proposals accept --all-from <sweep id> --include-withdrawals --yes
+```
+
+`--all-from` skips withdraw proposals unless `--include-withdrawals` is given.
+Accepting re-checks that the claim is still withdrawn and that the affected
+fact is still active and unchanged; otherwise the proposal goes `stale`. A
+withdraw has no undo: the withdrawal ledger is durable, so to state the claim
+again, remember a corrected wording with new provenance. `gbrain decide
+status` shows each kind's pending count, oldest pending age, and 30-day
+accepted and rejected counts.
+
 ## Turning a slot on
 
 ```bash

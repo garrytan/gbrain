@@ -12,6 +12,15 @@
  *     `assemble_evidence` with `auto` delivers for the same hits.
  *
  * Postgres arm runs when DATABASE_URL is set.
+ *
+ * The off-path golden is a keyless capture: with an embedding key the query
+ * family turns on the vector path and the reranker, which changes the
+ * retrieval meta and can reorder rows (the nightly full-corpus lane carries
+ * OPENAI_API_KEY and ANTHROPIC_API_KEY, run 37273083933). So the golden is
+ * compared under an explicitly keyless gateway in every lane, and a keyed lane
+ * additionally checks the keyed capture: key-independent calls (keyword search,
+ * think's prompt) still match the frozen bytes, and query/recall report the
+ * vector path as on.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -23,6 +32,10 @@ import { operations, type OperationContext } from '../../src/core/operations.ts'
 import { evidenceFingerprint, pageEvidenceText } from '../../src/core/search/evidence-delivery.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { captureOffPath, seedOffPath, withCostWave } from '../helpers/evidence-delivery-fixture.ts';
+import { configureGateway } from '../../src/core/ai/gateway.ts';
+import { LEGACY_EMBEDDING_CONFIG } from '../helpers/legacy-embedding-config.ts';
+import { PROVIDER_ENV_KEYS } from '../helpers/provider-env.ts';
+import { emptyHome, withEnv } from '../helpers/with-env.ts';
 
 const FIXTURE = join(import.meta.dir, '../fixtures/goldens/evidence-delivery/off-path.json');
 const backends = process.env.DATABASE_URL ? ['pglite', 'postgres'] as const : ['pglite'] as const;
@@ -35,6 +48,21 @@ function ctxOf(engine: BrainEngine, remote = false): OperationContext {
 }
 
 const op = (name: string) => operations.find(o => o.name === name)!;
+const keyedLane = PROVIDER_ENV_KEYS.some(k => k.endsWith('_API_KEY') && process.env[k]);
+const gatewayFromProcessEnv = () => configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: { ...process.env } });
+
+async function keyless<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await withEnv({ ...Object.fromEntries(PROVIDER_ENV_KEYS.map(k => [k, undefined])), GBRAIN_HOME: emptyHome() }, async () => {
+      gatewayFromProcessEnv();
+      return fn();
+    });
+  } finally {
+    gatewayFromProcessEnv();
+  }
+}
+
+const KEY_INDEPENDENT = /^(search|search-remote|search-subagent|mcp-search)(:chunk)?$|^think-prompt$/;
 
 beforeAll(async () => {
   for (const backend of backends) {
@@ -66,8 +94,23 @@ describe('evidence delivery parity', () => {
       await engine.setConfig('search.return_unit', 'chunk');
       await engine.setConfig('think.return_unit', 'chunk');
       try {
-        const got = await captureOffPath(engine);
+        const got = await keyless(() => captureOffPath(engine));
         for (const key of Object.keys(want)) expect(`${key}: ${got[key]}`).toBe(`${key}: ${withCostWave(key, want[key])}`);
+        if (keyedLane) {
+          const keyed = await captureOffPath(engine);
+          const independent = Object.keys(want).filter(k => KEY_INDEPENDENT.test(k));
+          expect(independent.length).toBe(8);
+          for (const key of independent) expect(`${key}: ${keyed[key]}`).toBe(`${key}: ${withCostWave(key, want[key])}`);
+          for (const key of Object.keys(want).filter(k => /^query/.test(k))) {
+            const retrieval = (JSON.parse(keyed[key]).meta as Array<{ key: string; value: { vector_enabled: boolean; degraded?: Array<{ stage: string }> } }>)
+              .find(m => m.key === 'retrieval')!.value;
+            expect(`${key}: vector_enabled=${retrieval.vector_enabled}`).toBe(`${key}: vector_enabled=true`);
+            expect((retrieval.degraded ?? []).map(d => d.stage)).not.toContain('embed_unavailable');
+          }
+          for (const key of Object.keys(want).filter(k => /^recall/.test(k))) {
+            expect(JSON.parse(keyed[key]).result.search_degraded).toBeUndefined();
+          }
+        }
       } finally {
         await engine.executeRaw(`DELETE FROM config WHERE key IN ('search.return_unit', 'think.return_unit')`);
       }

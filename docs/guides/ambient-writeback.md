@@ -118,6 +118,37 @@ bank remains harmless — the target serve's own DB gate decides.
    `gbrain serve` for that brain is running (heartbeat `no_serve` between
    serves — the banked file is the durable artifact either way).
 
+   When the brain's canonical writer stays busy past the extraction
+   preflight's own wait (a Git commit or push holds the writer lock for a few
+   seconds), the serve re-queues the turn up to three times, 5, 15 and 45
+   seconds apart (heartbeat `writer_busy_requeued`), before any model call.
+   A turn that still fails ends with the error name and code as its reason
+   (for example `operationerror:writer_lock_unavailable`), the serve's
+   stderr names the first failure of each reason, and `gbrain doctor` warns
+   in `memory_writeback` when at least 10 harvests finished in the last 7
+   days and more than 20% of them failed. A failed turn keeps its file and
+   waits for a corpus sweep.
+
+   **A failed turn is swept on its own.** `gbrain serve --http` runs a
+   corpus drain every 10 minutes while any corpus file is still unextracted
+   (a sweep with a 60-second budget), and a stdio serve sweeps at startup
+   and after 10 minutes idle. A sweep's budget stops it between files, never
+   mid-extraction, so a slow model (`claude-cli` often takes 8 to 25 seconds
+   per turn) still finishes the file it started. Turns the serve could not
+   extract (failed, over the per-session cap, or banked while the serve was
+   down) are picked up by the next drain or sweep. To clear a backlog
+   sooner, run `gbrain sweep --once --budget-ms 600000` on the brain host.
+   A corpus file nothing has extracted is kept for three times
+   `dream.synthesize.corpus_retention_days` (90 days by default), and
+   `gbrain doctor` warns in `memory_writeback` once one is past plain
+   retention. `GBRAIN_SWEEP=0` turns every serve sweep and drain off.
+
+   **Say to your agent:** *"Make sure the turns my brain could not extract
+   are swept."* (the agent runs `gbrain sweep --once --budget-ms 600000` on
+   the brain host) or *"Why are my writeback harvests
+   failing?"* (the agent reads `gbrain doctor` `memory_writeback` and the
+   `writeback` heartbeat reasons).
+
    Sessions run by gbrain's own `claude-cli` model provider are never
    banked (heartbeat reason `self_capture`): extracting gbrain's internal
    LLM calls as your conversations would spawn another call that banks
@@ -165,6 +196,16 @@ gbrain recall projects/offsite-example
 
 Or ask your agent: *"Remember the offsite date from the email I just pasted,
 and note that it came from that email."*
+
+## Proving an extraction ran
+
+`extract_facts` has no caller-defined binding field such as a `job_binding`
+(#5278). On a managed brain the attestation is the durable write receipt:
+pass your own `request_id` (a UUID you can record against your job), and the
+response carries a `write_request` receipt for it; `get_write_request` with
+the same `request_id` reads it back later, including after a timeout. A brain
+that is not managed runs extraction without a journal, so there is no receipt
+to bind to.
 
 ## Duplicates across lanes
 

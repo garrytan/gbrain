@@ -517,11 +517,17 @@ built from (`content_chunks.embedding_input_hash`: column, model, dimensions,
 wrapping tier and wrapped text), and a rebuild keeps it only when the current
 page would produce the same input, so an unchanged contextual page keeps its
 vectors and a synopsis-mode body edit nulls every synopsis-tier chunk. Vectors
-written before that record existed are kept on non-contextual pages and nulled
-once on contextual ones. Remaining NULL vectors still need an explicitly
-authorized `gbrain embed --stale` run. A text-ready index is not a promise that
-every page has a vector. Diagnostics do not disclose private or foreign-source
-pending pages and never start repair themselves.
+written before that record existed are grandfathered on pages whose mode
+is still NULL; contextual-mode repair and reindex stamp compatible raw inputs
+when moving those pages to explicit `none`. An explicit `none` page may have
+inherited a title-wrapped vector, so a rebuild clears unstamped vectors there,
+and switching from title or synopsis to `none` clears active text vectors
+immediately. Genuine old raw vectors on explicit `none` pages may need a
+one-time re-embed; it never starts automatically. Remaining NULL vectors
+still need an explicitly authorized `gbrain embed --stale` run. A text-ready
+index is not a promise that every page has a vector. Diagnostics do not
+disclose private or foreign-source pending pages and never start repair
+themselves.
 
 Markdown chunk creation applies the strict protected-body sanitizer before
 splitting text. For remote reads, all existing chunks of every page kind are

@@ -309,6 +309,10 @@ const request_tools: Operation = {
       const { buildToolDefs } = await import('../../mcp/tool-defs.ts');
       const { resolveStrictParamsMode } = await import('../../mcp/validate-params.ts');
       const strictParams = (await resolveStrictParamsMode(ctx.engine, ctx.config)) === 'reject';
+      if (ctx.revealTools && picked.length) {
+        ctx.revealTools(picked.map(o => o.name));
+        return { tools: buildToolDefs(picked, { strictParams }), listed: true, note: 'These tools are now in your tool list (tools/list_changed was sent); call them directly.' };
+      }
       return { tools: buildToolDefs(picked, { strictParams }) };
     }
 

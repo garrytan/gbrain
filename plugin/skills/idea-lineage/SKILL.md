@@ -24,6 +24,7 @@ tools:
   - find_contradictions
   - find_trajectory
 mutating: false
+when_to_use: "Use when the user asks: \"idea lineage\", \"trace the lineage of this idea\", \"how my thinking about\", \"how has my thinking about\", \"current version of this idea\"."
 ---
 
 # idea-lineage - Single-Idea Evolution Through the Brain

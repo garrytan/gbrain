@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 139 tools across 23 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 140 tools across 23 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -117,6 +117,7 @@ Every non-localOnly operation on the MCP surface: 139 tools across 23 areas. **S
 | `list_link_sources` | Link provenances in the brain (e.g. | read | yes |  |
 | `remove_link` | Remove a link between two pages (optionally only one link_type or link_source). | write |  |  |
 | `traverse_graph` | Walk the link graph from a page. | read | yes |  |
+| `wanted_pages` | Link targets that have no page yet, most-referenced first: each was written as a link but its page does not exist, so no edge exists. | read |  |  |
 
 ## loops
 
@@ -138,12 +139,12 @@ Every non-localOnly operation on the MCP surface: 139 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `context_pack` | MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. | read | yes |  |
-| `delta` | MEMORY VERB (v1): what changed since a time (pages, facts, thread events), zero LLM. | read | yes |  |
+| `context_pack` | MEMORY VERB (v1): core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. | read | yes |  |
+| `delta` | MEMORY VERB (v1): pages, facts, thread events changed since a cursor, zero LLM. | read | yes |  |
 | `entity` | MEMORY VERB (v1): person/company/account card, zero LLM. | read | yes |  |
 | `forget` | MEMORY VERB (v1): expire a remembered fact by its fact_id (never a page slug). | write | yes |  |
 | `recall` | MEMORY VERB (v1): read saved facts by entity, since or session_id; `query` also searches pages. | read | yes |  |
-| `remember` | MEMORY VERB (v1): save one fact; provenance required. | write | yes |  |
+| `remember` | MEMORY VERB (v1): save facts with provenance. | write | yes |  |
 | `synthesize` | [EXPENSIVE / SLOW: LLM calls, costs money] MEMORY VERB (v1): answer a broad question across pages with citations. | read | yes |  |
 
 ## ontology

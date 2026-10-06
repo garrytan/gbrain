@@ -24,6 +24,7 @@ writes_pages: true
 writes_to:
   - research/
 upstream: research-compendium@fc834ee
+when_to_use: "Use when the user asks: \"compendium\", \"research everything about\", \"read them all and summarize\", \"definitive guide\", \"comprehensive guide to\"."
 ---
 
 # research-compendium — Archive Everything, Summarize 1:1, Synthesize Once

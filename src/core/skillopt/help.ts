@@ -61,18 +61,22 @@ Modes:
   --json                        Machine-readable stdout
 
 Safety:
-  --max-cost-usd N              Hard cap. Default 5.00. Preflight refuses
-                                if estimate exceeds. 0 disables the cap
-                                (unpriced model ids then warn-once instead
-                                of aborting with no_pricing).
-  --no-max-cost                 Shorthand for --max-cost-usd 0.
+  --max-usd N|off               Hard cap. Default 5.00. Preflight refuses
+                                if estimate exceeds. A model with no price
+                                runs under the default with a warning; an
+                                explicit cap refuses it before any spend
+                                until you register its rate (gbrain pricing
+                                set). off runs uncapped (spend still ledgered).
+  --max-cost-usd N              Legacy spelling of --max-usd; 0 still means
+                                uncapped (deprecated: write --max-usd off).
+  --no-max-cost                 Shorthand for --max-usd off.
   --max-runtime-min N           Wall-clock cap. Default 30
   --force                       Bypass dirty-working-tree refusal (rare)
   --resume <run-id>             Resume a prior interrupted run
 
 Batch + fleet + background:
   --all                         Optimize every skill with a benchmark
-                                (per-skill cap = --max-cost-usd; brain-wide
+                                (per-skill cap = --max-usd; brain-wide
                                 cap = --brain-wide-max-cost-usd, default $10)
   --brain-wide-max-cost-usd N   Cumulative ceiling for --all (default 10.00)
   --target-models a,b,c         Fleet mode: optimize ONCE per model. Always

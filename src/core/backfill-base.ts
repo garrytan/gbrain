@@ -182,7 +182,7 @@ export async function ensureBackfillIndex<TRow>(
     // semantics directly.
     await engine.withReservedConnection(async conn => {
       await conn.executeRaw(sql);
-    });
+    }, { selfContained: true });
     return { existed: false, created: true };
   } catch (err) {
     process.stderr.write(`[backfill] index creation failed: ${(err as Error).message}; will continue without partial index\n`);
@@ -318,7 +318,7 @@ export async function runBackfill<TRow = Record<string, unknown>>(
             }
             throw err;
           }
-        });
+        }, { selfContained: true });
       } catch (err) {
         if (err instanceof BackfillRollbackError) throw err;
         errors++;

@@ -15,6 +15,7 @@ tools:
   - add_tag
   - sync_brain
 mutating: true
+when_to_use: "Use when the user asks: \"migrate from\", \"import from obsidian\", \"import from notion\", \"connect our company brain\", \"connect our existing company brain\"."
 ---
 
 # Migrate Skill

@@ -71,15 +71,16 @@ export function statusForVersion(
   const latest = entries[entries.length - 1];
   if (latest.status === 'retry') return 'pending';
   if (entries.some(e => e.status === 'complete')) return 'complete';
-  let consecutive = 0;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i];
-    if (e.status === 'partial') consecutive++;
-    else break;
-  }
-  if (consecutive >= MAX_CONSECUTIVE_PARTIALS) return 'wedged';
+  if (trailingPartialCount(entries) >= MAX_CONSECUTIVE_PARTIALS) return 'wedged';
   if (entries.some(e => e.status === 'partial')) return 'partial';
   return 'pending';
+}
+
+/** Consecutive `partial` entries at the end of one version's ledger history: the wedge counter. A `retry` or `complete` entry resets it. */
+export function trailingPartialCount(entries: readonly CompletedMigrationEntry[]): number {
+  let consecutive = 0;
+  for (let i = entries.length - 1; i >= 0 && entries[i].status === 'partial'; i--) consecutive++;
+  return consecutive;
 }
 
 /** A ledger entry `gbrain init` wrote for a `fresh_install_noop` migration (src/commands/migrations/fresh-install.ts). */

@@ -109,7 +109,12 @@ only — never content.
   `dream_output` (dream-cycle output is never re-harvested) / `aborted`
   (retryable — nothing was written) / `manifest_failed` (receipt kept; the
   retry re-publishes without re-extracting). Hard failures carry the error
-  name as the reason.
+  name as the reason, plus its code when it has one
+  (`operationerror:writer_lock_unavailable`); serve's stderr names the first
+  failure of each reason. A segment refused because the canonical writer
+  stayed busy is not re-queued (its first window already wrote `.progress`):
+  the error stands and the sweep resumes the segment. Only the writeback
+  lane re-queues a busy-writer refusal.
 
 **Single-corpus-dir invariant:** the hook resolves the corpus dir from file
 config while serve resolves it from DB config. Keep

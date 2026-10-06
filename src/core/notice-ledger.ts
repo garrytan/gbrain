@@ -23,7 +23,7 @@ export const COACHING_BUDGET_PER_SESSION = 2;
 /** Notices that describe THIS call's result (never deduped): the diagnosis must ride every affected call. */
 /** The one muteable `ask`: an unanswered first-run bundle must stay dismissible. Every other ask always shows. */
 export const MUTEABLE_ASK_CODES: ReadonlySet<string> = new Set(['first_run_decisions']);
-export const PER_CALL_NOTICE_CODES: ReadonlySet<string> = new Set(['empty_retrieval', 'unknown_param', 'listing_truncated', 'former_relationships_hidden', 'source_binding_narrowed', 'local_transcripts', 'held_files', 'relational_chain', 'mention_index']);
+export const PER_CALL_NOTICE_CODES: ReadonlySet<string> = new Set(['empty_retrieval', 'unknown_param', 'listing_truncated', 'former_relationships_hidden', 'source_binding_narrowed', 'local_transcripts', 'held_files', 'relational_chain', 'mention_index', 'delta_incomplete']);
 
 export interface NoticeAudience {
   transport: Transport;

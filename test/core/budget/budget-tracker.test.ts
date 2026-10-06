@@ -551,22 +551,23 @@ describe('BudgetTracker outstanding reservations (#4365)', () => {
   test('record() settles the reservation: reserve→record→reserve at the same margin succeeds', () => {
     const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
     t.record({ modelId: 'claude-haiku-4-5-20251001', inputTokens: 900_000, outputTokens: 0, kind: 'chat' });
-    t.reserve(estimate);
-    // Actual usage far under the projection: cumulative $0.901.
-    t.record({ modelId: 'claude-haiku-4-5-20251001', inputTokens: 1000, outputTokens: 0, kind: 'chat' });
+    const reservation = t.reserve(estimate);
+    // Actual usage far under the projection: cumulative $0.901. The record
+    // settles the reservation it names (eng I6: by id, not FIFO-by-model).
+    t.record({ modelId: 'claude-haiku-4-5-20251001', inputTokens: 1000, outputTokens: 0, kind: 'chat', reservation });
     // Outstanding released — the same $0.06 projection fits again
     // ($0.901 + $0.06 = $0.961 ≤ $1.00).
     expect(() => t.reserve(estimate)).not.toThrow();
   });
 
-  test('record() under the post-resolution model id still settles (same-kind fallback)', () => {
+  test('record() under the post-resolution model id still settles (by reservation id)', () => {
     // gateway.chat reserves with the pre-resolution string (alias/bare/slash
-    // form) but records `${recipe.id}:${modelId}` — a missed pop would leak
-    // phantom outstanding budget forever.
+    // form) but records `${recipe.id}:${modelId}` — a missed settle would leak
+    // phantom outstanding budget forever. The id makes the model string moot.
     const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
     t.record({ modelId: 'claude-haiku-4-5-20251001', inputTokens: 900_000, outputTokens: 0, kind: 'chat' });
-    t.reserve({ ...estimate, modelId: 'anthropic/claude-haiku-4-5-20251001' });
-    t.record({ modelId: 'anthropic:claude-haiku-4-5-20251001', inputTokens: 1000, outputTokens: 0, kind: 'chat' });
+    const reservation = t.reserve({ ...estimate, modelId: 'anthropic/claude-haiku-4-5-20251001' });
+    t.record({ modelId: 'anthropic:claude-haiku-4-5-20251001', inputTokens: 1000, outputTokens: 0, kind: 'chat', reservation });
     expect(() => t.reserve(estimate)).not.toThrow();
   });
 

@@ -114,7 +114,7 @@ describe('snapshot schema hash inputs (EO7)', () => {
         `FAIL: src/core/${f} is in the static import closure of the PGLite schema roots but computeSnapshotSchemaHash does not hash it.`,
         'Why:  a change to it would leave the test-fixture PGLite snapshot stale.',
         'Fix:  make src/core/snapshot-schema-inputs.ts reach it (import form it does not follow?), and cover it in every',
-        '      pglite-snapshot cache key in .github/workflows/e2e.yml and .github/workflows/test.yml.',
+        '      pglite-snapshot cache key in .github/workflows/e2e.yml, test.yml and stress.yml.',
         SEE,
       ].join('\n')).join('\n'));
     }
@@ -142,10 +142,11 @@ describe('snapshot schema hash inputs (EO7)', () => {
 describe('pglite-snapshot CI cache keys (DX O7)', () => {
   const keys = discoverCacheKeys();
 
-  test('discovers every key: 13 across e2e.yml and test.yml, two profiles', () => {
-    expect(keys.length).toBe(13);
+  test('discovers every key: 14 across e2e.yml, test.yml and stress.yml, two profiles', () => {
+    expect(keys.length).toBe(14);
     expect(keys.filter((k) => k.file.endsWith('e2e.yml')).length).toBe(6);
     expect(keys.filter((k) => k.file.endsWith('test.yml')).length).toBe(7);
+    expect(keys.filter((k) => k.file.endsWith('stress.yml')).length).toBe(1);
     expect([...new Set(keys.map((k) => k.namespace))].sort()).toEqual(['pglite-snapshot', 'pglite-snapshot-default']);
   });
 
@@ -176,7 +177,7 @@ describe('pglite-snapshot CI cache keys (DX O7)', () => {
         `FAIL: ${f} is a computeSnapshotSchemaHash input but no pglite-snapshot cache key covers it.`,
         'Why:  CI would restore a snapshot baked before the file changed, so the suite runs on a stale schema.',
         `Fix:  add '${f}' (or a glob covering it) to the hashFiles(...) list of all ${keys.length} pglite-snapshot keys in`,
-        '      .github/workflows/e2e.yml and .github/workflows/test.yml (keep the lists identical).',
+        '      .github/workflows/e2e.yml, test.yml and stress.yml (keep the lists identical).',
         SEE,
       ].join('\n')).join('\n'));
     }

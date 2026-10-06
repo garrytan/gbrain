@@ -30,9 +30,15 @@
 import { readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import {
-  commentIssue, createIssue, ensureLabel, findIssueByTitle, inert, inertBlock, jsonBlock, labelNames, readJsonBlock, restClient, updateIssue,
+  commentIssue, createIssue, ensureLabel, findIssueByTitle, inert, inertBlock, jsonBlock, labelNames, readJsonBlock, redactCredentials, restClient, updateIssue,
   type GitHubClient, type Issue,
 } from './lib/gh-issue.ts';
+import {
+  annotationFiles, collectEvidence, EXEMPTION_DAYS, EXEMPTION_MARKER, exemptionRows, FAILING, OWNER_SIGNAL, pagedJobs, plusDays, reproduceCommand, type ExemptionRow, type Annotation, type EvidenceOptions, type JobInfo, type RunEvidence, type RunInfo,
+} from './lib/ci-run.ts';
+import { closeFlakes, externalPass, PUSH_ALLOWLIST, watchMasterRed, type MasterRedPlan } from './lib/master-red.ts';
+
+export type { Annotation, JobInfo, RunInfo } from './lib/ci-run.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 export const KNOWN_RED_FILE = '.github/nightly-known-red.tsv';
@@ -42,30 +48,8 @@ export const KNOWN_LABEL = 'known-red';
 export const JSON_MARKER = 'nightly-watch:json';
 export const DOCS = 'docs/RELEASING.md#nightly-red-issues';
 
-export interface RunInfo {
-  id: number;
-  name: string;
-  event: string;
-  conclusion: string | null;
-  run_attempt: number;
-  path: string;
-  workflow_id: number;
-  head_branch: string;
-  head_sha: string;
-  html_url: string;
-  head_repository?: { full_name: string };
-  repository?: { full_name: string };
-}
-export interface JobInfo {
-  id: number;
-  name: string;
-  conclusion: string | null;
-  html_url?: string;
-  steps?: Array<{ number: number; name: string; conclusion: string | null }>;
-}
-export interface Annotation { annotation_level: string; title?: string | null; message: string }
 export interface KnownRow { workflow: string; job: string; signature: string; kind: 'known-red' | 'known-skipped'; todo: string; review_by: string }
-export interface Failure { job: string; job_id: number; job_url?: string; conclusion: string; step: string; errors: string[] }
+export interface Failure { job: string; job_id: number; job_url?: string; conclusion: string; step: string; errors: string[]; files: string[] }
 export interface Assessment {
   state: 'green' | 'red' | 'known-red' | 'known-skipped';
   failures: Failure[];
@@ -82,13 +66,15 @@ export interface IncidentRecord {
   run_attempt: number;
   run_url: string;
   head_sha: string;
-  failing: Array<{ job: string; job_id: number; step: string; errors: string[] }>;
+  failing: Array<{ job: string; job_id: number; step: string; errors: string[]; files?: string[] }>;
   known: Array<{ job: string; signature: string; kind: string; todo: string; review_by: string }>;
   first_red: { run_id: number; sha: string };
   last_green_sha: string | null;
   dispatch_argv: string[];
   next_step: 'code_fix' | 'owner_action' | 'known_red_wait' | 'review_by_passed' | 'none';
   review_by_notified?: string[];
+  files?: string[];
+  evidence?: { complete: boolean; problems: string[] };
 }
 export interface Plan {
   action: 'create' | 'update' | 'reopen' | 'close' | 'none';
@@ -101,9 +87,9 @@ export interface Plan {
   reason: string;
 }
 
-const FAILING = new Set(['failure', 'timed_out', 'cancelled', 'startup_failure']);
 const GENERIC_ERROR = /^Process completed with exit code \d+\.?$/;
-const OWNER_SIGNAL = /gh secret set|secret is empty|secrets? (?:is |are )?(?:empty|missing|not configured)/i;
+/** Jobs whose reds must be repaired, never parked as known-red (the race hunt reports races in product or test code). */
+export const NO_KNOWN_RED_JOBS = /^race[- ]hunt\b/i;
 
 export function parseKnownRed(text: string): { rows: KnownRow[]; problems: string[] } {
   const rows: KnownRow[] = [];
@@ -129,6 +115,7 @@ export function validateKnownRed(text: string, todosText: string): string[] {
   const { rows, problems } = parseKnownRed(text);
   for (const row of rows) {
     if (!todosText.includes(row.todo)) problems.push(`row '${row.job}': todo '${row.todo}' is not in TODOS.md; every known-red row needs the TODO that owns its fix`);
+    if (NO_KNOWN_RED_JOBS.test(row.job)) problems.push(`row '${row.job}': race-hunt failures cannot be known-red; delete the row and open a repair PR for each file the race hunt lists (docs/ci-red-runbook.md#ci-issue-labels)`);
   }
   return problems.map(p => `${KNOWN_RED_FILE}: ${p}. Fix: edit the row, then run bun test --timeout=60000 test/scripts/nightly-issue.test.ts. Docs: ${DOCS}`);
 }
@@ -138,9 +125,9 @@ export function assessRun(run: RunInfo, jobs: JobInfo[], annotations: Record<num
     const step = j.steps?.find(s => FAILING.has(s.conclusion ?? ''));
     const errors = (annotations[j.id] ?? []).filter(a => a.annotation_level === 'failure' && !GENERIC_ERROR.test(a.message.trim()))
       .map(a => [a.title, a.message].filter(Boolean).join(': '));
-    return { job: j.name, job_id: j.id, job_url: j.html_url, conclusion: j.conclusion!, step: step?.name ?? '(job-level)', errors };
+    return { job: j.name, job_id: j.id, job_url: j.html_url, conclusion: j.conclusion!, step: step?.name ?? '(job-level)', errors, files: annotationFiles(annotations[j.id] ?? []) };
   });
-  const mine = rows.filter(r => r.workflow === run.name);
+  const mine = rows.filter(r => r.workflow === run.name && !NO_KNOWN_RED_JOBS.test(r.job));
   const matched: Assessment['matched'] = [];
   const stale: KnownRow[] = [];
   const unmatched = failures.filter(f => {
@@ -199,7 +186,7 @@ function nextStepText(rec: IncidentRecord, assessment: Assessment): string {
   }
 }
 
-export function renderBody(rec: IncidentRecord, assessment: Assessment): string {
+export function renderBody(rec: IncidentRecord, assessment: Assessment, exemptions: ExemptionRow[] = []): string {
   const lines = [
     `Workflow **${inert(rec.workflow)}** (\`${rec.workflow_file}\`) — state: **${rec.state}**.`,
     '',
@@ -217,8 +204,18 @@ export function renderBody(rec: IncidentRecord, assessment: Assessment): string 
       lines.push(`| \`${inert(f.job)}\` | \`${inert(f.step)}\` | ${inert(f.conclusion, 20)} | ${row ? `known-red (TODO: ${inert(row.todo)}, review by ${row.review_by})` : 'no'} |`);
     }
     lines.push('');
+    const files = [...new Set([...(rec.files ?? []), ...rec.failing.flatMap(f => f.files ?? [])])].sort();
+    if (files.length) {
+      lines.push(`<details><summary>Every failing test file (${files.length})</summary>`, '');
+      for (const file of files) {
+        const jobs = rec.failing.filter(f => (f.files ?? []).includes(file));
+        const repro = reproduceCommand(file, jobs.some(f => /postgres/i.test(`${f.job} ${f.errors.join(' ')}`)));
+        lines.push(`- \`${file}\`${jobs.length ? ` (${jobs.map(f => `\`${f.job}\``).join(', ')})` : ''}; reproduce: ${repro ? `\`${repro}\`` : '(path failed validation; read the job log)'}`);
+      }
+      lines.push('', '</details>', '');
+    }
     for (const f of assessment.failures.filter(x => x.errors.length)) {
-      lines.push(`Errors in \`${inert(f.job)}\`:`, '~~~text', inertBlock(f.errors.slice(0, 3).join('\n')), '~~~', '');
+      lines.push(`Errors in \`${inert(f.job)}\` (sanitized excerpts):`, '~~~text', inertBlock(f.errors.slice(0, 3).map(redactCredentials).join('\n')), '~~~', '');
     }
   }
   for (const m of assessment.matched.filter(x => x.row.kind === 'known-skipped')) {
@@ -227,11 +224,17 @@ export function renderBody(rec: IncidentRecord, assessment: Assessment): string 
   for (const r of assessment.stale) {
     lines.push(`- Stale row: \`${inert(r.job)}\` / \`${inert(r.signature)}\` no longer matches (the cell ran). Delete it from \`${KNOWN_RED_FILE}\`.`);
   }
+  if (rec.evidence && !rec.evidence.complete) {
+    lines.push(`- Incomplete evidence: ${rec.evidence.problems.join('; ')}. This run's failures may be under-reported and it cannot close an incident. Docs: docs/ci-red-runbook.md#ci-failure-manifest`);
+  }
+  if (exemptions.length) {
+    lines.push('', `Stress-gate exemption records (${exemptions.length}; race-hunt and other failing tests): a PR's stress gate does not count a failure that matches one exactly (file, test name, backend, signature) until ${exemptions[0]!.expires}; any other failure still fails. Docs: docs/ci-red-runbook.md#flake-issues`, '', jsonBlock(EXEMPTION_MARKER, exemptions));
+  }
   lines.push('', '### Next step for the agent', '', nextStepText(rec, assessment), '', jsonBlock(JSON_MARKER, rec), '');
   return lines.join('\n');
 }
 
-export function planIncident(run: RunInfo, assessment: Assessment, existing: Issue | undefined, lastGreenSha: string | null, repo: string, succeededJobs: string[]): Plan {
+export function planIncident(run: RunInfo, assessment: Assessment, existing: Issue | undefined, lastGreenSha: string | null, repo: string, succeededJobs: string[], evidence?: RunEvidence, today?: string): Plan {
   const title = `Nightly red: ${inert(run.name, 100)}`;
   const previous = existing ? readJsonBlock<IncidentRecord>(existing.body, JSON_MARKER) : undefined;
   const keepLabels = existing ? labelNames(existing).filter(l => l !== KNOWN_LABEL && l !== LABEL) : [];
@@ -247,6 +250,14 @@ export function planIncident(run: RunInfo, assessment: Assessment, existing: Iss
         comment: `Run ${runUrl} is green, but previously failing job(s) did not execute and pass: ${notRun.map(j => `\`${inert(j)}\``).join(', ')}. `
           + 'Keeping this incident open; a skipped job is not a fix.',
         reason: 'green but previously failing jobs did not run',
+      };
+    }
+    if (evidence && !evidence.complete) {
+      return {
+        action: 'none', title, labels: [], issue: existing.number,
+        comment: `Run ${runUrl} is green, but its evidence is incomplete (${evidence.problems.map(p => inert(p, 200)).join('; ')}), so this incident stays open. `
+          + `The next complete scheduled run closes it, or re-check with \`gh workflow run nightly-watch.yml -f run_id=<run id>\`. Docs: docs/ci-red-runbook.md#ci-failure-manifest`,
+        reason: 'green but evidence incomplete',
       };
     }
     return {
@@ -268,7 +279,7 @@ export function planIncident(run: RunInfo, assessment: Assessment, existing: Iss
     run_attempt: run.run_attempt,
     run_url: runUrl,
     head_sha: run.head_sha,
-    failing: assessment.failures.map(f => ({ job: inert(f.job), job_id: f.job_id, step: inert(f.step), errors: f.errors.slice(0, 3).map(e => inert(e, 400)) })),
+    failing: assessment.failures.map(f => ({ job: inert(f.job), job_id: f.job_id, step: inert(f.step), errors: f.errors.slice(0, 3).map(e => inert(redactCredentials(e), 400)), files: f.files })),
     known: assessment.matched.map(m => ({ job: inert(m.row.job), signature: inert(m.row.signature), kind: m.row.kind, todo: inert(m.row.todo), review_by: m.row.review_by })),
     first_red: continuing ? previous!.first_red : { run_id: run.id, sha: run.head_sha },
     last_green_sha: lastGreenSha,
@@ -278,8 +289,9 @@ export function planIncident(run: RunInfo, assessment: Assessment, existing: Iss
       : assessment.reviewPassed.length ? 'review_by_passed'
         : assessment.state === 'known-skipped' ? 'owner_action' : 'known_red_wait',
     review_by_notified: [...notified, ...newlyPassed.map(r => `${r.job}|${r.review_by}`)],
+    ...(evidence ? { files: evidence.files, evidence: { complete: evidence.complete, problems: evidence.problems.map(p => inert(p, 300)) } } : {}),
   };
-  const body = renderBody(record, assessment).replaceAll('{repo}', repo);
+  const body = renderBody(record, assessment, evidence && today ? exemptionRows(evidence.tests, plusDays(today, EXEMPTION_DAYS)) : []).replaceAll('{repo}', repo);
   const labels = [LABEL, ...(assessment.state === 'red' ? [] : [KNOWN_LABEL]), ...keepLabels];
 
   if (!existing) return { action: 'create', title, labels, body, record, reason: `new ${assessment.state} incident` };
@@ -299,39 +311,37 @@ export function planIncident(run: RunInfo, assessment: Assessment, existing: Iss
   return { action: 'update', title, labels, body, record, issue: existing.number, comment, reason: changed ? 'failing set changed' : 'same failing set' };
 }
 
-async function pagedJobs(client: GitHubClient, run: RunInfo): Promise<JobInfo[]> {
-  const jobs: JobInfo[] = [];
-  for (let page = 1; page <= 5; page++) {
-    const r = await client.request<{ jobs: JobInfo[]; total_count: number }>('GET', `repos/{repo}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100&page=${page}`);
-    jobs.push(...r.jobs);
-    if (jobs.length >= r.total_count || r.jobs.length < 100) break;
-  }
-  return jobs;
-}
+export interface WatchResult { plan: Plan; assessment: Assessment; run: RunInfo; evidence: RunEvidence; masterRed?: MasterRedPlan; flakesClosed: number[] }
+export interface WatchOptions extends EvidenceOptions { client: GitHubClient; repo: string; runId: number; rows: KnownRow[]; today: string; dryRun: boolean; run?: RunInfo }
 
-export interface WatchResult { plan: Plan; assessment: Assessment; run: RunInfo }
-
-export async function watchRun(opts: { client: GitHubClient; repo: string; runId: number; rows: KnownRow[]; today: string; dryRun: boolean }): Promise<WatchResult> {
-  const { client, repo } = opts;
-  const run = await client.request<RunInfo>('GET', `repos/{repo}/actions/runs/${opts.runId}`);
+const sameRepoCheck = (run: RunInfo) => {
   if (run.head_repository?.full_name && run.repository?.full_name && run.head_repository.full_name !== run.repository.full_name) {
     throw new Error(`run ${run.id} comes from fork ${run.head_repository.full_name}; nightly-watch never reads fork runs.`);
   }
+};
+
+/** The nightly-red path: one scheduled run (a scheduled Test or E2E Tests run also feeds that workflow's open master-red issue). */
+export async function watchRun(opts: WatchOptions): Promise<WatchResult> {
+  const { client, repo } = opts;
+  const run = opts.run ?? await client.request<RunInfo>('GET', `repos/{repo}/actions/runs/${opts.runId}`);
+  sameRepoCheck(run);
   if (run.event !== 'schedule' && !opts.dryRun) {
-    throw new Error(`run ${run.id} is a ${run.event} run; nightly-watch only tracks scheduled runs. Fix: pass a scheduled run id, or add --dry-run to preview.`);
+    throw new Error(`run ${run.id} is a ${run.event} run; the nightly-red path only tracks scheduled runs. Fix: pass a scheduled run id, or add --dry-run to preview.`);
   }
-  const jobs = await pagedJobs(client, run);
-  const annotations: Record<number, Annotation[]> = {};
-  for (const job of jobs.filter(j => FAILING.has(j.conclusion ?? ''))) {
-    annotations[job.id] = await client.request<Annotation[]>('GET', `repos/{repo}/check-runs/${job.id}/annotations?per_page=50`).catch(() => []);
+  const evidence = await collectEvidence(client, run, opts);
+  if (run.event === 'schedule' && (run.conclusion === 'cancelled' || evidence.verdict === 'ignored')) {
+    const plan: Plan = { action: 'none', title: `Nightly red: ${inert(run.name, 100)}`, labels: [], reason: 'run or its failing lanes were cancelled (not run); no state change' };
+    return { plan, assessment: { state: 'green', failures: [], unmatched: [], matched: [], stale: [], reviewPassed: [] }, run, evidence, flakesClosed: [] };
   }
-  const assessment = assessRun(run, jobs, annotations, opts.rows, opts.today);
+  const assessment = assessRun(run, evidence.jobs, evidence.annotations, opts.rows, opts.today);
   const greens = await client.request<{ workflow_runs: Array<{ head_sha: string }> }>('GET',
     `repos/{repo}/actions/workflows/${run.workflow_id}/runs?event=schedule&status=success&per_page=1`).catch(() => ({ workflow_runs: [] }));
   const existing = await findIssueByTitle(client, LABEL, `Nightly red: ${inert(run.name, 100)}`);
-  const succeeded = jobs.filter(j => j.conclusion === 'success').map(j => j.name);
-  const plan = planIncident(run, assessment, existing, greens.workflow_runs[0]?.head_sha ?? null, repo, succeeded);
-  if (opts.dryRun) return { plan, assessment, run };
+  const succeeded = evidence.jobs.filter(j => j.conclusion === 'success').map(j => j.name);
+  const plan = planIncident(run, assessment, existing, greens.workflow_runs[0]?.head_sha ?? null, repo, succeeded, evidence, opts.today);
+  const fed = run.event === 'schedule' && PUSH_ALLOWLIST[run.name] ? await externalPass(client, repo, run, evidence, { dryRun: opts.dryRun, today: opts.today }) : undefined;
+  const flakesClosed = run.event === 'schedule' ? await closeFlakes(client, repo, run, evidence, opts.dryRun) : [];
+  if (opts.dryRun) return { plan, assessment, run, evidence, masterRed: fed, flakesClosed };
 
   if (plan.action === 'create' || plan.action === 'reopen' || plan.action === 'update') {
     await ensureLabel(client, LABEL, 'b60205', 'A scheduled workflow is red (nightly-watch)');
@@ -344,34 +354,114 @@ export async function watchRun(opts: { client: GitHubClient; repo: string; runId
   }
   if (plan.comment && plan.issue) await commentIssue(client, plan.issue, plan.comment);
   if (plan.action === 'close') await updateIssue(client, plan.issue!, { state: 'closed' });
-  return { plan, assessment, run };
+  return { plan, assessment, run, evidence, masterRed: fed, flakesClosed };
+}
+
+export type Route = { track: 'schedule' | 'push' | 'replay' } | { refuse: string };
+
+/** Which state track a run feeds; every refusal names what nightly-watch accepts and the next command. */
+export function routeRun(run: RunInfo, repo: string, replayIssue?: number): Route {
+  const fix = 'Fix: pass a scheduled run id, a push-to-master run id of Test or E2E Tests (gh run list --workflow test.yml --event push --branch master --limit 5), or an E2E Tests dispatch run on master with replay_issue. Docs: docs/RELEASING.md#master-red-issues';
+  if (run.repository?.full_name && run.repository.full_name !== repo) return { refuse: `run ${run.id} belongs to ${run.repository.full_name}, not ${repo}. ${fix}` };
+  if (run.event === 'schedule') return replayIssue ? { refuse: `run ${run.id} is a scheduled run; replay_issue applies only to E2E Tests dispatch runs. ${fix}` } : { track: 'schedule' };
+  if (run.event === 'push') {
+    if (run.head_branch !== 'master') return { refuse: `run ${run.id} is a push to '${inert(run.head_branch, 80)}'; only push-to-master runs open master-red issues. ${fix}` };
+    if (!PUSH_ALLOWLIST[run.name]) return { refuse: `run ${run.id} is a push run of '${inert(run.name, 80)}', which master-red does not watch (allowlist: ${Object.keys(PUSH_ALLOWLIST).join(', ')}). ${fix}` };
+    return replayIssue ? { refuse: `run ${run.id} is a push run; replay_issue applies only to E2E Tests dispatch runs. ${fix}` } : { track: 'push' };
+  }
+  if (run.event === 'workflow_dispatch' && replayIssue) {
+    if (run.name !== 'E2E Tests' || run.head_branch !== 'master') return { refuse: `run ${run.id} is a dispatch of '${inert(run.name, 80)}' on '${inert(run.head_branch, 80)}'; an issue-bound replay must be an E2E Tests dispatch on master (gh workflow run e2e.yml --ref master -f full_corpus=true). ${fix}` };
+    return { track: 'replay' };
+  }
+  return { refuse: `run ${run.id} is a ${inert(run.event, 40)} run; nightly-watch evaluates scheduled runs, push-to-master runs of Test and E2E Tests, and issue-bound E2E replays only (pull-request and other runs are refused). ${fix}` };
+}
+
+export type RoutedResult =
+  | { track: 'schedule'; run: RunInfo; nightly: WatchResult; masterRed?: MasterRedPlan; flakesClosed: number[] }
+  | { track: 'push' | 'replay'; run: RunInfo; masterRed?: MasterRedPlan; flakesClosed: number[] };
+
+/** Entry point: route one run id to the nightly-red, master-red or replay path. */
+export async function watch(opts: WatchOptions & { replayIssue?: number }): Promise<RoutedResult> {
+  const { client, repo } = opts;
+  const run = await client.request<RunInfo>('GET', `repos/{repo}/actions/runs/${opts.runId}`);
+  sameRepoCheck(run);
+  const route = routeRun(run, repo, opts.replayIssue);
+  if ('refuse' in route) throw new Error(route.refuse);
+  if (route.track === 'schedule') {
+    const nightly = await watchRun({ ...opts, run });
+    return { track: 'schedule', run, nightly, masterRed: nightly.masterRed, flakesClosed: nightly.flakesClosed };
+  }
+  if (route.track === 'push') {
+    const masterRed = await watchMasterRed(client, repo, run, { dryRun: opts.dryRun, today: opts.today, manifest: opts.manifest });
+    const flakesClosed = await closeFlakes(client, repo, run, () => masterRed.evidence ? Promise.resolve(masterRed.evidence) : collectEvidence(client, run, opts), opts.dryRun);
+    return { track: 'push', run, masterRed, flakesClosed };
+  }
+  if (run.status && run.status !== 'completed') throw new Error(`replay run ${run.id} is ${run.status}; wait for it (gh run watch ${run.id}), then dispatch nightly-watch again.`);
+  const ev = await collectEvidence(client, run, opts);
+  const masterRed = await externalPass(client, repo, run, ev, { dryRun: opts.dryRun, today: opts.today, issueNumber: opts.replayIssue });
+  if (!masterRed) throw new Error(`issue #${opts.replayIssue} is not the open master-red issue of ${run.name} (or it is not red); nothing to replay against. Fix: pass the number of the open "Master red: ${run.name}" issue.`);
+  return { track: 'replay', run, masterRed, flakesClosed: [] };
+}
+
+/** The serialization key every entry path shares: target workflow id and state track (schedule, push; a replay writes the push track). */
+export async function resolveTarget(client: GitHubClient, repo: string, runId: number, replayIssue?: number): Promise<{ workflow_id: number; track: string; refuse?: string }> {
+  const run = await client.request<RunInfo>('GET', `repos/{repo}/actions/runs/${runId}`);
+  const route = routeRun(run, repo, replayIssue);
+  if ('refuse' in route) return { workflow_id: run.workflow_id, track: 'refused', refuse: route.refuse };
+  return { workflow_id: run.workflow_id, track: route.track === 'replay' ? 'push' : route.track };
+}
+
+function printNightly(r: WatchResult, dryRun: boolean) {
+  const { plan, assessment, run } = r;
+  console.log(`[nightly-watch] ${run.name} run ${run.id} attempt ${run.run_attempt}: ${assessment.state}; action ${plan.action}${plan.issue ? ` #${plan.issue}` : ''} (${plan.reason})${dryRun ? ' [dry run]' : ''}`);
+  if (dryRun) {
+    console.log(`--- title: ${plan.title}\n--- labels: ${plan.labels.join(', ') || '(none)'}`);
+    if (plan.comment) console.log(`--- comment:\n${plan.comment}`);
+    if (plan.body) console.log(`--- body:\n${plan.body}`);
+  }
+}
+
+function printMasterRed(plan: MasterRedPlan | undefined, run: RunInfo, dryRun: boolean) {
+  if (!plan) return;
+  console.log(`[nightly-watch] master-red ${run.name}: ${plan.state.status}; action ${plan.action}${plan.issue ? ` #${plan.issue}` : ''} (${plan.reason}); evaluated runs: ${plan.evaluated.join(', ') || 'none'}${dryRun ? ' [dry run]' : ''}`);
+  if (dryRun) {
+    console.log(`--- title: ${plan.title}`);
+    if (plan.comment) console.log(`--- comment:\n${plan.comment}`);
+    if (plan.body) console.log(`--- body:\n${plan.body}`);
+    for (const f of plan.flakes) console.log(`--- flake issue (opened only when no merged repair PR is linked): ${f.title}`);
+  }
 }
 
 if (import.meta.main) {
   const flag = (name: string) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
   const runId = Number(flag('--run-id'));
+  const replayRaw = flag('--replay-issue');
+  const replayIssue = replayRaw ? Number(replayRaw) : undefined;
   const repo = flag('--repo') ?? process.env.GITHUB_REPOSITORY ?? 'garrytan/gbrain';
   const dryRun = process.argv.includes('--dry-run');
-  if (!Number.isInteger(runId) || runId <= 0) {
-    console.log('Usage: bun scripts/nightly-issue.ts --run-id <id> [--repo owner/name] [--dry-run]');
+  if (!Number.isInteger(runId) || runId <= 0 || (replayIssue !== undefined && (!Number.isInteger(replayIssue) || replayIssue <= 0))) {
+    console.log('Usage: bun scripts/nightly-issue.ts --run-id <id> [--replay-issue <n>] [--repo owner/name] [--dry-run] [--resolve]');
     process.exit(2);
   }
   try {
+    if (process.argv.includes('--resolve')) {
+      const target = await resolveTarget(restClient(repo), repo, runId, replayIssue);
+      console.log(`workflow_id=${target.workflow_id}\ntrack=${target.track}`);
+      if (target.refuse) console.log(`::notice::nightly-watch will refuse run ${runId}: ${target.refuse}`);
+      process.exit(0);
+    }
     const tsv = readFileSync(join(REPO_ROOT, KNOWN_RED_FILE), 'utf8');
     const problems = validateKnownRed(tsv, readFileSync(join(REPO_ROOT, 'TODOS.md'), 'utf8'));
     for (const p of problems) console.log(`::warning::${p}`);
     const { rows } = parseKnownRed(tsv);
     const today = new Date().toISOString().slice(0, 10);
-    const { plan, assessment, run } = await watchRun({ client: restClient(repo), repo, runId, rows, today, dryRun });
-    console.log(`[nightly-watch] ${run.name} run ${run.id} attempt ${run.run_attempt}: ${assessment.state}; action ${plan.action}${plan.issue ? ` #${plan.issue}` : ''} (${plan.reason})${dryRun ? ' [dry run]' : ''}`);
-    if (dryRun) {
-      console.log(`--- title: ${plan.title}\n--- labels: ${plan.labels.join(', ') || '(none)'}`);
-      if (plan.comment) console.log(`--- comment:\n${plan.comment}`);
-      if (plan.body) console.log(`--- body:\n${plan.body}`);
-    }
+    const result = await watch({ client: restClient(repo), repo, runId, rows, today, dryRun, replayIssue });
+    if (result.track === 'schedule') printNightly(result.nightly, dryRun);
+    printMasterRed(result.masterRed, result.run, dryRun);
+    if (result.flakesClosed.length) console.log(`[nightly-watch] flake issue(s) ${dryRun ? 'that would close' : 'closed'}: ${result.flakesClosed.map(n => `#${n}`).join(', ')}`);
   } catch (e) {
     console.log(`[nightly-watch] FAIL: ${e instanceof Error ? e.message : String(e)}`);
-    console.log(`[nightly-watch] Fix: check the run id and the token's actions:read / issues:write scopes, then rerun: bun scripts/nightly-issue.ts --run-id ${runId} --dry-run. Docs: ${DOCS}`);
+    console.log(`[nightly-watch] Fix: check the run id and the token's actions:read / issues:write / contents:read / pull-requests:read scopes, then rerun: bun scripts/nightly-issue.ts --run-id ${runId} --dry-run. Docs: ${DOCS}`);
     process.exit(1);
   }
 }

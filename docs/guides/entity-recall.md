@@ -160,7 +160,15 @@ The reason codes are `ambiguous_first_word`, `below_min_length`,
 | `mentions.auto_link` | `true` | `false` removes mention links and derived names on the next sweep; `true` relinks everything on the next sweep. `auto_link=false` also turns it off. |
 | `mentions.entity_types` | none | `+type` adds a linkable type, `-type` removes one (person, company, organization and entity always stay). |
 | `mentions.ignore` | none | Names never linked, comma-separated or a JSON array. |
+| `mentions.exclude_slugs` | none | Pages never linked by any of their names (title or alias), comma-separated or a JSON array of slugs. Use it for an entity whose name is also a common word, such as a person titled 인하 against "로 인하여" ("due to"). The next sweep removes mention links already written to the page. |
 | frontmatter `mention_ignore: [names]` | none | Names not linked from that one page. |
+
+Mention links written inside a longer Hangul word, or across a space, by a
+matcher older than the Hangul boundary rule (#5829) are stale:
+`gbrain doctor` counts them in `stale_mentions`, and
+`gbrain extract links --by-mention --rebuild --source db` removes them while
+keeping real mentions. A name that is also a common word (a person titled
+인하 against "로 인하여") needs `mentions.exclude_slugs`.
 
 ## How it stays current
 

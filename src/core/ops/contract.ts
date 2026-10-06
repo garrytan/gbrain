@@ -6,6 +6,7 @@
  * this entire surface, so existing importers are unchanged.
  */
 
+import type { WriteInference } from './write-inference.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
@@ -268,6 +269,8 @@ export interface AuthInfo {
   grantRevision?: number;
   grantProfile?: string | null;
   grantRepairReasons?: string[];
+  /** The client's stored access-token lifetime override (`oauth_clients.token_ttl`); null = server default. */
+  tokenTtlSeconds?: number | null;
   delegatedSlugPrefixes?: string[] | null;
   /** Missing grant projection on a profile client is fail-closed. */
   grantProjectionDegraded?: boolean;
@@ -449,6 +452,12 @@ export interface OperationContext {
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
   /** The stdio session's surface (stdio MCP only): `request_tools` widens it for this session, `whoami` reports it. */
   stdioSurface?: StdioSurfaceState;
+  /**
+   * Set by transports that can widen a session's listed tools (stdio): when
+   * `request_tools` returns schemas, the named tools join this session's
+   * tools/list and the client is notified (tools/list_changed).
+   */
+  revealTools?: (names: string[]) => void;
   /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
@@ -658,6 +667,11 @@ export interface Operation {
   outputRedaction: OutputRedactionPolicy;
   mutating?: boolean;
   /**
+   * What model work this write may do and when (`src/core/ops/write-inference.ts`).
+   * Unset resolves through OP_WRITE_INFERENCE, then to `'none'`.
+   */
+  writeInference?: WriteInference;
+  /**
    * Agent contract v1 (A2): repeating the call with the same arguments (and,
    * for journaled writes, the same request identity) has the same effect as
    * calling it once. Drives `idempotentHint` and whether an unknown-outcome
@@ -745,4 +759,14 @@ export interface Operation {
     stdin?: string;
     hidden?: boolean;
   };
+}
+
+/**
+ * An op that declares its own `source` param (timeline-add, ontology-add,
+ * takes add/update/supersede, raw data) takes `--source` as that param, e.g.
+ * provenance. Every CLI route (direct, delegated to a resident serve, thin
+ * client) then leaves it out of source scoping and passes it to the handler.
+ */
+export function opOwnsSource(op: Pick<Operation, 'params'>): boolean {
+  return 'source' in op.params;
 }

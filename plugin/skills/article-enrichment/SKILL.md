@@ -14,6 +14,7 @@ mutating: true
 writes_pages: true
 writes_to:
   - media/articles/
+when_to_use: "Use when the user asks: \"enrich this article\", \"enrich the article\", \"enriching the article\", \"enrich brain pages\", \"batch enrich\"."
 ---
 
 # article-enrichment — From Raw Dumps to Useful Brain Pages

@@ -193,8 +193,8 @@ export function emptyQuoteVerifyStats(): QuoteVerifyStats {
  * source char desynced every later offset and could slice garbage — or
  * nothing — back into a page as a "verbatim" repair).
  */
-export function normalizeForGrounding(s: string): { norm: string; map: number[] } {
-  return foldForGrounding(s, true) as { norm: string; map: number[] };
+export function normalizeForGrounding(s: string, opts: { tolerant?: boolean } = {}): { norm: string; map: number[] } {
+  return foldForGrounding(s, true, opts.tolerant === true) as { norm: string; map: number[] };
 }
 
 /**
@@ -207,9 +207,10 @@ export function normalizeForGrounding(s: string): { norm: string; map: number[] 
  * Parity matters: the rescue gate and the repair ladder must mean the same
  * thing by "normalized substring of the transcript".
  */
-function foldForGrounding(s: string, withMap: boolean): { norm: string; map: number[] } | string {
+function foldForGrounding(s: string, withMap: boolean, tolerant = false): { norm: string; map: number[] } | string {
   const out: string[] = [];
   const map: number[] = [];
+  const skip = tolerant ? bracketMask(s) : null;
   let pendingSpace = false;
   // Iterate by CODE POINT (for..of), not code unit: a surrogate pair
   // lowercases as a pair (Deseret 𐐀 → 𐐨) but never half by half, so a
@@ -219,6 +220,7 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
   for (const cp of s) {
     const i = idx;
     idx += cp.length;
+    if (skip?.has(i)) continue;
     let ch = cp;
     if (/\s/.test(ch)) {
       pendingSpace = out.length > 0;
@@ -231,6 +233,7 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
     // grounding agree. One-to-many like the toLowerCase expansions below —
     // every emitted unit maps to the ellipsis' original index.
     else if (ch === '…') ch = '...';
+    if (tolerant && ch === '"') ch = "'";
     if (pendingSpace) {
       out.push(' ');
       if (withMap) map.push(map.length > 0 ? map[map.length - 1] : i);
@@ -244,6 +247,62 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
   }
   const norm = out.join('');
   return withMap ? { norm, map } : norm;
+}
+
+const MD_LINK = /\[([^\[\]\n]{1,300})\]\([^()\s]{1,500}\)/g;
+
+/**
+ * Code-unit offsets the tolerant fold skips: markdown link syntax (`[` and
+ * `](target)`, since a quote never carries a link target) and every other
+ * square bracket, so `[Ana](people/ana)`, `[Ana]` and `Ana` read alike, and so
+ * do an editorial `[T]he` and `The`.
+ */
+function bracketMask(s: string): Set<number> | null {
+  if (!s.includes('[') && !s.includes(']')) return null;
+  const skip = new Set<number>();
+  for (const m of s.matchAll(MD_LINK)) {
+    const at = m.index!;
+    for (let k = at + 1 + m[1]!.length; k < at + m[0].length; k++) skip.add(k);
+  }
+  for (let i = 0; i < s.length; i++) if (s[i] === '[' || s[i] === ']') skip.add(i);
+  return skip;
+}
+
+/** A source slice as a reader sees it, ready to sit inside a quotation: link syntax reduced to the link text, inner double quotes as single. */
+function displayText(slice: string): string {
+  return slice.replace(MD_LINK, '$1').replace(/\]\([^()\s]*\)/g, '').replace(/"/g, "'");
+}
+
+/**
+ * Whether `form` is the source's `words` with only the changes a writer may
+ * make in a quotation: brackets (link display, editorial), the case of a
+ * bracketed letter (`[T]he` for `the`) and the inner quote style.
+ */
+function sameWords(words: string, form: string): boolean {
+  const src = words.replace(/[[\]]/g, '').replace(/["“”]/g, "'");
+  let out = '';
+  let bracketed = false;
+  const loose = new Set<number>();
+  for (const ch of form.replace(/["“”]/g, "'")) {
+    if (ch === '[' || ch === ']') { bracketed = ch === '['; continue; }
+    if (bracketed) loose.add(out.length);
+    out += ch;
+  }
+  if (out.length !== src.length) return false;
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] !== src[i] && !(loose.has(i) && out[i]!.toLowerCase() === src[i]!.toLowerCase())) return false;
+  }
+  return true;
+}
+
+/** A quote without editorial insertions attached to a word (`decide[s]`, `want[ed]`): the letters are the writer's. */
+function withoutInsertions(inner: string): string {
+  return inner.replace(/(?<=\p{L})\[\p{L}{1,3}\]/gu, '');
+}
+
+/** A quote's core: the elision marks and closing punctuation writers put at a quotation's edges ("the deal," / "…edge cases o…"). */
+function quoteCore(inner: string): string {
+  return inner.replace(/^(?:\s|\.\.\.|…)+/u, '').replace(/(?:\s|[.,;:!?]|…)+$/u, '');
 }
 
 /**
@@ -270,6 +329,14 @@ export interface GroundedTranscript {
   map: number[];
   /** Speaker-turn anchors, ascending. Absent or empty: no turn structure. */
   turns?: SpeakerTurn[];
+  /**
+   * The newer quote grounding's tolerance (think, concepts, patterns): link
+   * syntax reads as its text, and the writer's punctuation or elision at a
+   * quote's edges, brackets (`[Name]`, `[T]he`, `decide[s]`) and inner quote
+   * style (`'` for the source's `"`) do not change its words. Unset (dream
+   * synthesis): exact, normalized and near rungs only.
+   */
+  tolerant?: boolean;
 }
 
 /** A transcript prepared for verification: grounding text, speaker turns,
@@ -466,8 +533,8 @@ function numbersBySpeaker(content: string, turns: SpeakerTurn[]): Map<string, Se
 }
 
 /** Prepare one transcript for verification. */
-export function groundSource(path: string, content: string): GroundedSource {
-  const { norm, map } = normalizeForGrounding(content);
+export function groundSource(path: string, content: string, opts: { tolerant?: boolean } = {}): GroundedSource {
+  const { norm, map } = normalizeForGrounding(content, { tolerant: opts.tolerant });
   const turns = parseSpeakerTurns(content);
   const name = basename(path);
   return {
@@ -480,6 +547,7 @@ export function groundSource(path: string, content: string): GroundedSource {
     numbersBySpeaker: numbersBySpeaker(content, turns),
     nameNorm: normForGrounding(name),
     speakers: speakerMentionPatterns(turns),
+    ...(opts.tolerant ? { tolerant: true } : {}),
   };
 }
 
@@ -567,6 +635,21 @@ const PUNCT_EDGE = /[.,;:!?]/;
  * in another's mouth.
  */
 export function groundQuote(inner: string, t: GroundedTranscript): GroundResult {
+  if (!t.tolerant) return groundQuoteSpan(inner, t, true);
+  const bare = withoutInsertions(inner);
+  const forms = [...new Set([inner, quoteCore(inner), bare, quoteCore(bare)])]
+    .filter((form, i) => i === 0 || form.split(/\s+/).filter(Boolean).length >= 2);
+  for (const form of forms) {
+    const r = groundQuoteSpan(form, t, false);
+    if (r.status === 'none') continue;
+    // Edge punctuation, editorial brackets, link display and inner quote style are the writer's: the words themselves are grounded.
+    if (r.status === 'exact' || sameWords(r.replacement, form)) return { status: 'exact', spans: r.spans };
+    return r;
+  }
+  return groundQuoteSpan(inner, t, true);
+}
+
+function groundQuoteSpan(inner: string, t: GroundedTranscript, near: boolean): GroundResult {
   let crossed = false;
 
   // Rung 1: exact substring.
@@ -577,7 +660,8 @@ export function groundQuote(inner: string, t: GroundedTranscript): GroundResult 
   }
   if (exact.length) return { status: 'exact', spans: exact };
 
-  const q = normalizeForGrounding(inner);
+  const q = normalizeForGrounding(inner, { tolerant: t.tolerant });
+  const shown = (slice: string) => t.tolerant ? displayText(slice) : slice;
   if (q.norm.length === 0) return { status: 'none', reason: 'not_found' };
 
   // Rung 2: normalized whole-span match → map back to the original slice.
@@ -592,7 +676,7 @@ export function groundQuote(inner: string, t: GroundedTranscript): GroundResult 
   }
   if (normalized.length) {
     const [start, end] = normalized[0];
-    const replacement = t.content.slice(start, end);
+    const replacement = shown(t.content.slice(start, end));
     if (replacement.length === 0) return { status: 'none', reason: 'not_found' };
     return replacement === inner ? { status: 'exact', spans: normalized } : { status: 'normalized', replacement, spans: normalized };
   }
@@ -602,7 +686,7 @@ export function groundQuote(inner: string, t: GroundedTranscript): GroundResult 
   // overlap; accept a single clear winner ≥ floor, trimmed to the matched
   // tokens. Hard-bounded: total probes, trigrams (stride-sampled), quote size.
   const none: GroundResult = { status: 'none', reason: crossed ? 'crosses_speakers' : 'not_found' };
-  if (q.norm.length > MAX_NEAR_QUOTE_NORM_CHARS) return none;
+  if (!near || q.norm.length > MAX_NEAR_QUOTE_NORM_CHARS) return none;
   const qTokens = q.norm.split(' ').filter(w => w.length > 0);
   if (qTokens.length < 4) return none;
   const qBare = new Set(qTokens.map(w => w.replace(/[^\p{L}\p{N}]/gu, '')).filter(w => w.length > 0));
@@ -666,7 +750,7 @@ export function groundQuote(inner: string, t: GroundedTranscript): GroundResult 
   const innerTrim = inner.trim();
   if (!PUNCT_EDGE.test(innerTrim[0] ?? '')) while (a < b && PUNCT_EDGE.test(t.content[a])) a++;
   if (!PUNCT_EDGE.test(innerTrim[innerTrim.length - 1] ?? '')) while (b > a && PUNCT_EDGE.test(t.content[b - 1])) b--;
-  const replacement = t.content.slice(a, b).trim();
+  const replacement = shown(t.content.slice(a, b)).trim();
   if (replacement.length === 0) return none;
   if (normForGrounding(replacement).length > Math.ceil(q.norm.length * NEAR_MATCH_MAX_GROWTH)) return none;
   if (crossesTurn(t.turns, a, b)) return { status: 'none', reason: 'crosses_speakers' };
@@ -838,6 +922,55 @@ function groundAcross(inner: string, sources: GroundedSource[]): { result: Exclu
   return best ?? { result: { status: 'none', reason: crossed ? 'crosses_speakers' : 'not_found' } };
 }
 
+/**
+ * Quote grounding for dream patterns and concept narratives:
+ * `dream.quote_verify`, on unless set false (its held-out retest passed).
+ * Synthesis keeps its own switch, `dream.synthesize.quote_verify` (default on).
+ */
+export async function dreamQuoteVerifyEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
+  const raw = (await engine.getConfig('dream.quote_verify'))?.trim().toLowerCase();
+  return !(raw === 'false' || raw === '0' || raw === 'off' || raw === 'no');
+}
+
+export interface AnswerQuoteCheck {
+  /** The answer with near-match quotes repaired to the evidence's words and unverified quotes unquoted and marked. */
+  answer: string;
+  quote_check: { grounded: number; repaired: number; unverified: number };
+  unverified_quotes: Array<{ text: string; reason: 'quote_not_in_source' | 'quote_crosses_speakers' }>;
+}
+
+export const UNVERIFIED_QUOTE_MARK = '[unverified]';
+
+/**
+ * Span-level quote check for a live answer (`think`, `synthesize`): every
+ * quoted span is grounded against the evidence the answer was written from.
+ * Exact matches stay; normalized or near matches are replaced with the
+ * evidence's own words; a quote found nowhere loses its quotation marks and
+ * gains `[unverified]`, so no caller can present it as a quotation. Pure.
+ */
+export function groundAnswerQuotes(answer: string, sources: GroundedSource[]): AnswerQuoteCheck {
+  const { spans } = extractQuoteSpans(answer);
+  const edits: Array<{ start: number; end: number; text: string }> = [];
+  const out: AnswerQuoteCheck = { answer, quote_check: { grounded: 0, repaired: 0, unverified: 0 }, unverified_quotes: [] };
+  for (const sp of spans) {
+    const g = groundAcross(sp.inner, sources);
+    if (g.result.status === 'none') {
+      out.quote_check.unverified++;
+      out.unverified_quotes.push({ text: clip(sp.inner, 300), reason: g.result.reason === 'crosses_speakers' ? 'quote_crosses_speakers' : 'quote_not_in_source' });
+      edits.push({ start: sp.start, end: sp.end + 1, text: `${sp.inner} ${UNVERIFIED_QUOTE_MARK}` });
+    } else if (g.result.status === 'exact') {
+      out.quote_check.grounded++;
+    } else {
+      out.quote_check.repaired++;
+      edits.push({ start: sp.start + 1, end: sp.end, text: g.result.replacement.replace(/\s*\n\s*/g, ' ') });
+    }
+  }
+  let body = answer;
+  for (const e of edits.sort((a, b) => b.start - a.start)) body = body.slice(0, e.start) + e.text + body.slice(e.end);
+  out.answer = body;
+  return out;
+}
+
 function blank(s: string, ranges: Array<[number, number]>): string {
   let out = s;
   for (const [a, b] of ranges) out = out.slice(0, a) + ' '.repeat(b - a) + out.slice(b);
@@ -853,9 +986,11 @@ function clip(s: string, n = PROVENANCE_TEXT_CHARS): string {
  * Verify one body (compiled_truth or timeline) against its source
  * transcripts. Pure. With `priorNorm` (the normalized pre-run revision of a
  * page that already existed), only units absent from it are checked; every
- * other unit is left exactly as it was.
+ * other unit is left exactly as it was. `checks: 'quotes'` grounds quotes and
+ * their speaker attribution only (no number, date or decision checks), for
+ * writers whose prose legitimately derives numbers from its sources.
  */
-export function verifyBody(body: string, sources: GroundedSource[], opts: { priorNorm?: string } = {}): BodyVerification {
+export function verifyBody(body: string, sources: GroundedSource[], opts: { priorNorm?: string; checks?: 'all' | 'quotes' } = {}): BodyVerification {
   const { spans, unbalanced } = extractQuoteSpans(body);
   const masked = maskNonProse(body);
   const failures: Record<ClaimFailure, number> = { quote_not_in_source: 0, quote_crosses_speakers: 0, speaker_mismatch: 0, number_not_in_source: 0, decision_misattributed: 0 };
@@ -914,9 +1049,10 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
       });
     }
     const unquoted = blank(masked.slice(u.start, u.end), quoteRanges);
-    const numbers = unsupportedNumericClaims(unquoted, sources);
+    // Quotes-only mode (answers that legitimately compute numbers): no number or decision checks.
+    const numbers = opts.checks === 'quotes' ? [] : unsupportedNumericClaims(unquoted, sources);
     for (const n of numbers) fail('number_not_in_source', n);
-    if (numbers.length === 0) {
+    if (numbers.length === 0 && opts.checks !== 'quotes') {
       for (const n of misattributedDecisionClaims(unquoted, attribution, sources, [...mentioned.keys()])) {
         fail('decision_misattributed', `${[...mentioned.values()].join(', ')}: ${n} was stated only by another speaker`);
       }

@@ -17,7 +17,7 @@ export const v163: Migration = {
       CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx
         ON extract_atoms_page_state (source_incarnation, content_hash, page_id) WHERE tombstoned;
       CREATE INDEX IF NOT EXISTS extract_atoms_page_state_page_idx ON extract_atoms_page_state (page_id);
-      CREATE OR REPLACE FUNCTION gbrain_clear_atom_page_state() RETURNS trigger LANGUAGE plpgsql AS $fn$
+      CREATE OR REPLACE FUNCTION gbrain_clear_atom_page_state() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
       BEGIN
         IF NEW.deleted_at IS DISTINCT FROM OLD.deleted_at OR NEW.source_id IS DISTINCT FROM OLD.source_id THEN
           DELETE FROM extract_atoms_page_state WHERE page_id=OLD.id;

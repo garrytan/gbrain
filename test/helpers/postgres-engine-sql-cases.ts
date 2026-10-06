@@ -112,7 +112,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'getEmbeddingsByChunkIds': 'chunks', 'getChunksWithEmbeddings': 'chunks',
   // facts (incl. the ontology rows of the facts table)
   'insertFact': 'facts', 'expireFact': 'facts', 'insertFacts': 'facts', 'deleteFactsForPage': 'facts',
-  'listFactsByEntity': 'facts', 'listFactsSince': 'facts', 'listFactsBySession': 'facts', 'listSupersessions': 'facts',
+  'listFactsByEntity': 'facts', 'listFactsSince': 'facts', 'listFactsKeyset': 'facts', 'listFactsBySession': 'facts', 'listSupersessions': 'facts',
   'countUnconsolidatedFacts': 'facts', 'findCandidateDuplicates': 'facts', 'consolidateFact': 'facts',
   'findTrajectory': 'facts', 'getFactsHealth': 'facts', 'migrateFactsToCanonical': 'facts',
   'mergeOntologyFact': 'facts', 'getOntology': 'facts', 'discoverOntologyDimensions': 'facts', 'findOntologyConflicts': 'facts',
@@ -581,6 +581,11 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('listFactsByEntity', [
     ['default', (e) => e.listFactsByEntity(SRC, SLUG)],
     ['allFilters', (e) => e.listFactsByEntity(SRC, SLUG, { activeOnly: false, unconsolidatedOnly: true, kinds: ['fact'], visibility: ['world'], excludeAuditRows: true, grep: 'acme' })],
+  ]),
+  ...variants('listFactsKeyset', [
+    ['default', (e) => e.listFactsKeyset(SRC, null)],
+    ['strictTime', (e) => e.listFactsKeyset(SRC, { createdAt: '2026-08-10T12:00:00.000100Z', id: null }, { visibility: ['world'] })],
+    ['keyset', (e) => e.listFactsKeyset(SRC, { createdAt: '2026-08-10T12:00:00.000100Z', id: 7 }, { activeOnly: false, fingerprint: true, limit: 51 })],
   ]),
   ...variants('listFactsSince', [
     ['default', (e) => e.listFactsSince(SRC, EPOCH)],

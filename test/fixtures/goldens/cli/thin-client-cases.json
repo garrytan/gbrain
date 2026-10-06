@@ -611,6 +611,9 @@
         "                           or archived source is a hard error (exit 1).",
         "  --since YYYY-MM-DD       Start of temporal window",
         "  --until YYYY-MM-DD       End of temporal window",
+        "  --reference-date YYYY-MM-DD",
+        "                           Date the question's relative time words (\"last month\")",
+        "                           resolve against (default: today in brain.timezone)",
         "  --with-calibration       Inject the active calibration profile (anti-bias rewrite)",
         "  --calibration-holder <h> Holder whose calibration profile to use (default: self)",
         "  --json                   Output as JSON",
@@ -620,6 +623,9 @@
         "the synthesis page is persisted AND printed. If --save is given but no synthesis",
         "was produced (no LLM available, or empty result), nothing is saved and the command",
         "exits non-zero.",
+        "",
+        "Dates: the reader sees today's date in brain.timezone and each page's content",
+        "date; see docs/guides/time-aware-recall.md.",
         "",
         "Set ANTHROPIC_API_KEY (or run: gbrain config set anthropic_api_key ...) to run",
         "real synthesis. Without it AND without --save, the gather phase still runs and",
@@ -684,6 +690,16 @@
       "stderr": [
         "Error [requires_local_engine]: `gbrain edge-proposals` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
         "Fix: gbrain edge-proposals",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "core",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain core` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain core",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []

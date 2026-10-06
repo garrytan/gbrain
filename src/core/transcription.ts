@@ -8,6 +8,7 @@
 
 import { statSync, readFileSync, rmSync } from 'fs';
 import { basename, extname, join } from 'path';
+import { invokeAI } from './ai/invocation-guard.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -124,11 +125,12 @@ async function transcribeFile(
   formData.append('response_format', 'verbose_json');
   if (config.language) formData.append('language', config.language);
 
-  const response = await fetch(`${baseUrl}/audio/transcriptions`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}` },
-    body: formData,
-  });
+  const response = await invokeAI({ operation: 'transcription', kind: 'transcription', model: `${provider}:${model}` },
+    () => fetch(`${baseUrl}/audio/transcriptions`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+      body: formData,
+    }), () => null);
 
   if (!response.ok) {
     const errorText = await response.text();

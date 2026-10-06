@@ -12,14 +12,17 @@
  *     a call or constructor argument, or a `database_url`/`databaseUrl`
  *     property value. Code inside a `withEnv({ DATABASE_URL: ... })` callback
  *     supplies its own URL and is not an arm.
- *   - lane: a workflow step that runs with DATABASE_URL (step, job or workflow
- *     env, or exported in its script) and names the file; a test/e2e/ file that
- *     imports it (the registerPostgresTests wrappers); a tests/heavy/ script
- *     that names it (the heavy job runs with DATABASE_URL); or a row in
- *     scripts/e2e-backend-matrix.txt.
+ *   - lane: a row in test/postgres-unit-arms.txt (persistence-validation's
+ *     unit-postgres-arms job and the race hunt read it); a workflow step that
+ *     runs with DATABASE_URL (step, job or workflow env, or exported in its
+ *     script) and names the file; a test/e2e/ file that imports it (the
+ *     registerPostgresTests wrappers); a tests/heavy/ script that names it (the
+ *     heavy job runs with DATABASE_URL); or a row in scripts/e2e-backend-matrix.txt.
  *
  * An arm that is deliberately not run yet is an ALLOWLIST row naming its
  * reason and TODO; a row for a file that is laned, has no arm or is gone fails.
+ * A test/postgres-unit-arms.txt row that is malformed, duplicated, unsorted,
+ * names a missing file or a file with no gated arm fails too.
  *
  * test/fixtures/ is never scanned. Seam: GBRAIN_GUARD_ROOT (fixture tree root);
  * in a fixture tree `*.test.fixture.ts` files count as their `*.test.ts` names,
@@ -27,14 +30,14 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { safeLoad } from 'js-yaml';
+import { load } from 'js-yaml';
 import ts from 'typescript';
+import { ARMS_LIST, readArmsList } from './postgres-unit-arms.ts';
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
 const TEST_FILE = process.env.GBRAIN_GUARD_ROOT ? /\.test(\.fixture)?\.ts$/ : /\.test\.ts$/;
 const DOCS = 'docs/TESTING.md#coverage-responsibilities-before-consolidation';
-const LANE = '.github/workflows/persistence-validation.yml';
-const LANE_STEP = 'Require PostgreSQL arms of unit-lane suites';
+const LIST_DOCS = 'docs/TESTING.md#postgres-arm-lanes';
 
 /** Arms deliberately left out of every Postgres lane. Each row names its reason and TODO. */
 const ALLOWLIST: Record<string, string> = {
@@ -103,7 +106,7 @@ function underOwnDatabaseUrl(node: ts.Node): boolean {
 }
 
 /** First line of a Postgres arm in `path`, or null. */
-function postgresArm(path: string): { line: number; what: string } | null {
+export function postgresArm(path: string): { line: number; what: string } | null {
   const sf = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const line = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   const aliases = new Set<string>();
@@ -135,11 +138,12 @@ function postgresArm(path: string): { line: number; what: string } | null {
 }
 
 /** Test files a Postgres lane runs, with where each is named. */
-function postgresLanes(): Map<string, string> {
+export function postgresLanes(): Map<string, string> {
   const laned = new Map<string, string>();
   const add = (path: string, lane: string) => { if (!laned.has(path)) laned.set(path, lane); };
+  for (const path of readArmsList(ROOT).files) add(path, ARMS_LIST);
   for (const workflow of files(join(ROOT, '.github', 'workflows'), name => /\.ya?ml$/.test(name))) {
-    const doc = safeLoad(readFileSync(workflow, 'utf8')) as { env?: Record<string, unknown>; jobs?: Record<string, { env?: Record<string, unknown>; steps?: Array<{ name?: string; env?: Record<string, unknown>; run?: string }> }> } | undefined;
+    const doc = load(readFileSync(workflow, 'utf8')) as { env?: Record<string, unknown>; jobs?: Record<string, { env?: Record<string, unknown>; steps?: Array<{ name?: string; env?: Record<string, unknown>; run?: string }> }> } | undefined;
     for (const [jobName, job] of Object.entries(doc?.jobs ?? {})) for (const step of job.steps ?? []) {
       const run = String(step.run ?? '');
       if (!(step.env?.DATABASE_URL || job.env?.DATABASE_URL || doc?.env?.DATABASE_URL || /\bDATABASE_URL=/.test(run))) continue;
@@ -161,34 +165,61 @@ function postgresLanes(): Map<string, string> {
   return laned;
 }
 
-const laned = postgresLanes();
-const failures: string[] = [];
-const armed = new Set<string>();
-for (const abs of files(join(ROOT, 'test'), name => TEST_FILE.test(name))) {
-  const path = rel(abs);
-  if (path.startsWith('test/e2e/') || path.startsWith('test/fixtures/')) continue;
-  const arm = postgresArm(abs);
-  if (!arm) continue;
-  armed.add(path);
-  if (laned.has(path) || ALLOWLIST[path]) continue;
-  failures.push(`FAIL [postgres_arm_unlaned]: ${path}:${arm.line} gates a PostgreSQL arm on DATABASE_URL (${arm.what}) and no Postgres lane runs it\n`
-    + `  Why: the unit, serial and slow lanes unset DATABASE_URL, so this arm skips in every CI lane.\n`
-    + `  Fix: add ${path} to the "${LANE_STEP}" list in ${LANE} (or load it from a test/e2e/*-postgres.test.ts wrapper with registerPostgresTests)\n`
-    + `  Docs: ${DOCS}`);
+/** Every test file outside test/e2e/ and test/fixtures/ with a DATABASE_URL-gated arm, and the arm's first line. */
+export function armedFiles(): Map<string, { line: number; what: string }> {
+  const armed = new Map<string, { line: number; what: string }>();
+  for (const abs of files(join(ROOT, 'test'), name => TEST_FILE.test(name))) {
+    const path = rel(abs);
+    if (path.startsWith('test/e2e/') || path.startsWith('test/fixtures/')) continue;
+    const arm = postgresArm(abs);
+    if (arm) armed.set(path, arm);
+  }
+  return armed;
 }
-for (const [path, reason] of Object.entries(ALLOWLIST)) {
-  const problem = !armed.has(path) && !existsSync(join(ROOT, path)) ? 'names a missing file'
-    : !armed.has(path) ? 'names a file with no DATABASE_URL-gated arm'
-    : laned.has(path) ? `names a file a Postgres lane already runs (${laned.get(path)})` : null;
-  if (!problem) continue;
-  failures.push(`FAIL [postgres_arm_allowlist_stale]: the ALLOWLIST row for ${path} ${problem} (reason was: ${reason})\n`
-    + `  Why: a stale row would hide the next arm added to that path.\n`
-    + `  Fix: delete the ${path} row from ALLOWLIST in scripts/check-postgres-lane-coverage.ts\n`
-    + `  Docs: ${DOCS}`);
+
+function main(): number {
+  const laned = postgresLanes();
+  const armed = armedFiles();
+  const failures: string[] = [];
+  for (const [path, arm] of armed) {
+    if (laned.has(path) || ALLOWLIST[path]) continue;
+    failures.push(`FAIL [postgres_arm_unlaned]: ${path}:${arm.line} gates a PostgreSQL arm on DATABASE_URL (${arm.what}) and no Postgres lane runs it\n`
+      + `  Why: the unit, serial and slow lanes unset DATABASE_URL, so this arm skips in every CI lane.\n`
+      + `  Fix: add ${path} to ${ARMS_LIST} (one line, in sorted order), or load it from a test/e2e/*-postgres.test.ts wrapper with registerPostgresTests\n`
+      + `  Docs: ${DOCS}`);
+  }
+  const list = readArmsList(ROOT);
+  for (const error of list.errors) {
+    failures.push(`FAIL [postgres_arm_list_invalid]: ${error}\n`
+      + `  Why: unit-postgres-arms and the race hunt read every row; a bad row drops or duplicates an arm.\n`
+      + `  Fix: correct that line of ${ARMS_LIST}\n`
+      + `  Docs: ${LIST_DOCS}`);
+  }
+  for (const path of list.files) {
+    if (armed.has(path)) continue;
+    const problem = existsSync(join(ROOT, path)) ? 'names a file with no DATABASE_URL-gated arm' : 'names a missing file';
+    failures.push(`FAIL [postgres_arm_list_stale]: the ${ARMS_LIST} row ${path} ${problem}\n`
+      + `  Why: unit-postgres-arms would run it without any PostgreSQL arm (or fail on the missing path), so the row proves nothing.\n`
+      + `  Fix: delete the ${path} line from ${ARMS_LIST}\n`
+      + `  Docs: ${LIST_DOCS}`);
+  }
+  for (const [path, reason] of Object.entries(ALLOWLIST)) {
+    const problem = !armed.has(path) && !existsSync(join(ROOT, path)) ? 'names a missing file'
+      : !armed.has(path) ? 'names a file with no DATABASE_URL-gated arm'
+      : laned.has(path) ? `names a file a Postgres lane already runs (${laned.get(path)})` : null;
+    if (!problem) continue;
+    failures.push(`FAIL [postgres_arm_allowlist_stale]: the ALLOWLIST row for ${path} ${problem} (reason was: ${reason})\n`
+      + `  Why: a stale row would hide the next arm added to that path.\n`
+      + `  Fix: delete the ${path} row from ALLOWLIST in scripts/check-postgres-lane-coverage.ts\n`
+      + `  Docs: ${DOCS}`);
+  }
+  if (failures.length) {
+    console.error(failures.join('\n'));
+    console.error(`\n${failures.length} Postgres-arm lane problem(s).`);
+    return 1;
+  }
+  console.log(`postgres-lane-coverage: ${armed.size} test files with a DATABASE_URL-gated arm; ${armed.size - Object.keys(ALLOWLIST).length} run in a Postgres lane, ${Object.keys(ALLOWLIST).length} allowlisted.`);
+  return 0;
 }
-if (failures.length) {
-  console.error(failures.join('\n'));
-  console.error(`\n${failures.length} Postgres-arm lane problem(s).`);
-  process.exit(1);
-}
-console.log(`postgres-lane-coverage: ${armed.size} test files with a DATABASE_URL-gated arm; ${armed.size - Object.keys(ALLOWLIST).length} run in a Postgres lane, ${Object.keys(ALLOWLIST).length} allowlisted.`);
+
+if (import.meta.main) process.exit(main());

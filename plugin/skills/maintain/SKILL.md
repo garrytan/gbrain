@@ -36,6 +36,7 @@ tools:
   - add_link
   - search
 mutating: true
+when_to_use: "Use when the user asks: \"brain health\", \"check backlinks\", \"maintenance\", \"orphan pages\", \"stale pages\"."
 ---
 
 # Maintain Skill

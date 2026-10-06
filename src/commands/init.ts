@@ -1228,6 +1228,7 @@ export async function initPGLite(opts: {
     // disables embedding at runtime.
     if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
       delete config.embedding_disabled;
+      await engine.unsetConfig('embedding_disabled');
     }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
@@ -1242,6 +1243,7 @@ export async function initPGLite(opts: {
     preserveConversionConfig(false);
     saveConfig(config);
     if (freshContentDatabase) (await import('./migrations/fresh-install.ts')).recordFreshInstallMigrations();
+    if (freshContentDatabase) { const n = await import('../core/behavior-change-notice.ts'); n.stampFreshBrainBaseline(n.behaviorBrainKey(config)); }
     const contentReceipt = await setupSharedBrainContent({ engine, config, sourceId: await resolveSourceId(engine, undefined), remote: false, dryRun: false, logger: { info: console.error, warn: console.error, error: console.error } }, {
       ...opts.content, fresh: freshContentDatabase,
       ...(process.env.GBRAIN_IN_AGENT_SETUP === '1' && !opts.content?.root ? { root: join(dirname(configPath()), '..', 'memory') } : {}),
@@ -1565,6 +1567,7 @@ export async function initPostgresCore(opts: {
     // disables embedding at runtime.
     if (!opts.aiOpts?.noEmbedding && resolvedModel && resolvedDim) {
       delete config.embedding_disabled;
+      await engine.unsetConfig('embedding_disabled');
     }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
@@ -1578,6 +1581,7 @@ export async function initPostgresCore(opts: {
     preserveConversionConfig(false);
     saveConfig(config);
     if (freshContentDatabase) (await import('./migrations/fresh-install.ts')).recordFreshInstallMigrations();
+    if (freshContentDatabase) { const n = await import('../core/behavior-change-notice.ts'); n.stampFreshBrainBaseline(n.behaviorBrainKey(config)); }
     const contentReceipt = await setupSharedBrainContent({ engine, config, sourceId: await resolveSourceId(engine, undefined), remote: false, dryRun: false, logger: { info: console.error, warn: console.error, error: console.error } }, { ...opts.content, fresh: freshContentDatabase });
     if (!opts.jsonOutput) console.error(`[init] Content: ${contentReceipt.root ?? contentReceipt.repository_kind} (${contentReceipt.repository_kind}; ${contentReceipt.status}). ${contentReceipt.pending_actions.join(' ')}`);
     console.log('Config saved to ~/.gbrain/config.json');

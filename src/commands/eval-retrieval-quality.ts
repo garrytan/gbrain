@@ -24,7 +24,13 @@ import {
   type SearchFn,
 } from '../eval/retrieval-quality/harness.ts';
 
+const USAGE = 'Usage: gbrain eval retrieval-quality <fixture.jsonl> [--json] [--source <id>] [--ab-relational] [--decide <slot>=<off|on|shadow> ...] [--decide-provider <id>] [--decide-dataset <jsonl>]';
+
 export async function runEvalRetrievalQuality(engine: BrainEngine, argv: string[]): Promise<void> {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(USAGE);
+    return;
+  }
   // System One arm (`--decide`): read-only on the connected brain (src/eval/decide-eval-flags.ts).
   let args: string[];
   let decideRun: DecideEvalRun | null;
@@ -47,7 +53,7 @@ export async function runEvalRetrievalQuality(engine: BrainEngine, argv: string[
   const fixture = args.find(a => !a.startsWith('--') && a !== sourceId);
 
   if (!fixture) {
-    console.error('Usage: gbrain eval retrieval-quality <fixture.jsonl> [--json] [--source <id>] [--ab-relational] [--decide <slot>=<off|on|shadow> ...] [--decide-provider <id>] [--decide-dataset <jsonl>]');
+    console.error(USAGE);
     process.exit(2);
   }
 

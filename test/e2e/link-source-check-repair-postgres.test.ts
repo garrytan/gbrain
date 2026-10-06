@@ -54,6 +54,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (skip) return;
+  // Leave the canonical constraint for later files on the same database; the last case installs a 'BAD_TAG' variant.
+  await engine.executeRaw(`DELETE FROM links WHERE link_source = 'BAD_TAG'`);
+  await dropConstraint();
+  expect((await repairLinkSourceCheck(engine)).reason).toBe('restored');
+  expect((await checkLinkSourceCheck(engine)).drift).toBeNull();
   await teardownDB();
 });
 

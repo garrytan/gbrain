@@ -81,6 +81,12 @@ export interface FileDiagnostics {
    * drift — ingest must not freeze the watermark.
    */
   expectedEmpty?: boolean;
+  /**
+   * E-N4: the file yielded assistant turns but not one user turn. The usual
+   * cause is a host format change the parser no longer recognizes (#5163), so
+   * ingest reports it as drift and holds the watermark.
+   */
+  userTurnsMissing?: boolean;
 }
 
 export interface ParseSessionsOpts {

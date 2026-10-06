@@ -342,10 +342,13 @@ function axis(d: number): Float32Array {
 
   test('a short raw window holding stale rows escalates on the fresh count instead of stopping short', async () => {
     // 3,000 chunks along the e_3 arc; every 30th is type 'rare' (100 rows),
-    // the nearest 60 rare rows stale. hnsw.max_scan_tuples (2,000 on the
-    // first attempt) cuts the filtered walk short with mostly stale rows.
+    // the nearest 90 rare rows stale. hnsw.max_scan_tuples (2,000 on the
+    // first attempt) cuts the filtered walk short. How far the walk reaches
+    // varies with the randomized HNSW graph (a run reached 20 current rows
+    // when only the nearest 60 were stale), so the only current rows are the
+    // farthest 10: a short window holds fewer than 10 of them on any graph.
     await seedCluster('short-window', 3_000, [3, 4], 0.0002, i => ({
-      type: i % 30 === 0 ? 'rare' : 'note', hash: i % 30 === 0 && i / 30 < 60 ? 'stale' : 'current',
+      type: i % 30 === 0 ? 'rare' : 'note', hash: i % 30 === 0 && i / 30 < 90 ? 'stale' : 'current',
     }));
     await engine.executeRaw('SET enable_seqscan = off');
     await engine.executeRaw('SET enable_sort = off');
@@ -359,7 +362,7 @@ function axis(d: number): Float32Array {
       expect(first.candidatePool).toBeGreaterThan(first.eligiblePool!);
       expect(attempts.length).toBeGreaterThan(1);
       expect(hits).toHaveLength(10);
-      expect(hits.every(hit => Number(hit.slug.split('-').at(-1)) / 30 >= 60)).toBe(true);
+      expect(hits.every(hit => Number(hit.slug.split('-').at(-1)) / 30 >= 90)).toBe(true);
     } finally {
       await engine.executeRaw('RESET enable_seqscan');
       await engine.executeRaw('RESET enable_sort');

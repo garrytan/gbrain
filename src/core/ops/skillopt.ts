@@ -138,7 +138,7 @@ const run_skillopt: Operation = {
     epochs: { type: 'number', description: 'Default 4' },
     batch_size: { type: 'number', description: 'Default 8' },
     lr: { type: 'number', description: 'Default 4' },
-    max_cost_usd: { type: 'number', description: 'Default 5.00' },
+    max_cost_usd: { type: 'number', description: 'Default 5.00 (an unpriced model then warns and runs). When set, an unpriced model is refused with no_pricing. Remote callers must pass a positive value; 0 (uncapped) is host-only.' },
     reflect_max_tokens: { type: 'number', description: 'Optimizer output cap (positive integer, clamped to 256..32000). Default: skillopt.reflect_max_tokens config, else 32000 for thinking optimizers and 4096 otherwise.' },
     no_mutate: { type: 'boolean', description: 'Write proposed.md without replacing SKILL.md' },
     allow_mutate_bundled: { type: 'boolean', description: 'Required to mutate bundled skills' },
@@ -180,6 +180,12 @@ const run_skillopt: Operation = {
           `Remote callers can optimize only skills the brain host's operator allow-lists (skillopt.allowed_skills, deny-all by default); ask them to add '${skillName}', or have the host run the optimizer itself.`,
           { fix: hostFix(ctx, ['gbrain', 'skillopt', skillName], 'Runs the optimizer on the brain host, where no remote allowlist applies.', { consent: ['paid'] }) });
       }
+    }
+    const maxCostUsd = p.max_cost_usd;
+    if (ctx.remote !== false && maxCostUsd !== undefined && !(typeof maxCostUsd === 'number' && Number.isFinite(maxCostUsd) && maxCostUsd > 0)) {
+      throw invalidParam(ctx, 'run_skillopt', 'max_cost_usd',
+        'run_skillopt: max_cost_usd must be a positive number of USD for remote callers; 0 (uncapped) is a host-only setting',
+        { example: 5 });
     }
     const { clampRemoteReflectMaxTokens } = await import('../skillopt/output-cap.ts');
     let reflectMaxTokens: number | undefined;
@@ -269,7 +275,8 @@ const run_skillopt: Operation = {
       bootstrapReviewed: false,
       ...(heldOutPath ? { heldOutPath } : {}),
       json: true,
-      maxCostUsd: (p.max_cost_usd as number) ?? 5.0,
+      maxCostUsd: (maxCostUsd as number | undefined) ?? 5.0,
+      maxCostSource: maxCostUsd === undefined ? 'default' : 'user',
       maxRuntimeMin: 30,
       force: false,
     });

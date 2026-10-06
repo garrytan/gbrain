@@ -22,6 +22,7 @@ import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { expectGolden, expectNormalizerStable, defineNormalizer } from '../helpers/golden.ts';
 import {
   doctorJsonNormalizer,
+  expectSchemaLatestMatchesRegistry,
   makeDoctorHome,
   networkAttempts,
   runGbrain,
@@ -92,6 +93,7 @@ describeE2E('gbrain doctor --json golden (Postgres)', () => {
     const report = first.run.json as { engine?: string; checks?: Array<{ name: string; status: string }> } | null;
     expect(report?.engine).toBe('postgres');
     expect(report?.checks?.find((c) => c.name === 'connection')?.status).toBe('ok');
+    expectSchemaLatestMatchesRegistry(first.run);
     expectGolden('doctor/json-postgres-fresh', first, normalizer);
   }, 240_000);
 });

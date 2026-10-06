@@ -193,6 +193,7 @@ const HELP = `Usage:
   gbrain transcripts ingest              # discovery: show found session logs
   gbrain transcripts ingest --all        # import everything discovered
   gbrain transcripts status              # found vs imported gap table
+  gbrain transcripts recover codex       # restore user turns lost to #5163 (preview; --apply)
   gbrain transcripts recent [options]
 
 ingest — import dead session logs and chat exports as conversation pages
@@ -332,8 +333,14 @@ export function fmtSummary(r: TranscriptsIngestResult): string {
   if (r.redactions > 0) lines.push(`redactions: ${r.redactions} secrets/patterns redacted before write`);
   if (r.imperatives > 0) lines.push(`flagged: ${r.imperatives} agent-directed imperative(s) noted in frontmatter`);
   if (r.driftFiles > 0) {
+    const userless = r.files.filter((f) => f.userTurnsMissing).length;
+    const zero = r.driftFiles - userless;
+    const shapes = [
+      zero > 0 ? `${zero} parsed to zero sessions` : '',
+      userless > 0 ? `${userless} parsed to assistant turns with no user turns` : '',
+    ].filter(Boolean).join(', ');
     lines.push(
-      `DRIFT WARNING: ${r.driftFiles} file(s) parsed to zero sessions — the host ` +
+      `DRIFT WARNING: ${r.driftFiles} file(s) drifted (${shapes}) — the host ` +
         `format may have changed; see the adapter SPEC_TARGET runbook`,
     );
   }
@@ -596,10 +603,15 @@ export async function runTranscripts(engine: BrainEngine, args: string[]): Promi
     await runStatus(engine, args.slice(1));
     return;
   }
+  if (sub === 'recover') {
+    const { runTranscriptsRecover } = await import('./transcripts-recover.ts');
+    await runTranscriptsRecover(engine, args.slice(1));
+    return;
+  }
   if (sub !== 'recent') {
     if (sub !== '--help' && sub !== '-h' && args.includes('--json')) {
       const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status or recent.',
+      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status, recover or recent.',
         'Run `gbrain transcripts recent --json` to list recent transcripts, or `gbrain transcripts --help`.'), 'transcripts', { json: true });
     }
     console.log(HELP);

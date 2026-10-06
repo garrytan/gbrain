@@ -49,7 +49,7 @@ export const PAGE_STATE_SCHEMA_STATEMENTS = [
     slug TEXT NOT NULL,
     PRIMARY KEY (source_incarnation, slug)
   )`,
-  `CREATE OR REPLACE FUNCTION gbrain_advance_page_revision() RETURNS trigger LANGUAGE plpgsql AS $fn$
+  `CREATE OR REPLACE FUNCTION gbrain_advance_page_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
     BEGIN
       IF OLD.knowledge_revision IS NULL THEN
         NEW.knowledge_revision := COALESCE(NEW.knowledge_revision, gen_random_uuid());
@@ -78,7 +78,7 @@ export const PAGE_STATE_SCHEMA_STATEMENTS = [
   `DROP TRIGGER IF EXISTS pages_knowledge_revision ON pages`,
   `CREATE TRIGGER pages_knowledge_revision BEFORE UPDATE ON pages
     FOR EACH ROW EXECUTE FUNCTION gbrain_advance_page_revision()`,
-  `CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAGE plpgsql AS $fn$
+  `CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
     BEGIN
       IF TG_OP = 'UPDATE' AND (NEW.page_id, NEW.tag) IS NOT DISTINCT FROM (OLD.page_id, OLD.tag) THEN
         RETURN NULL;

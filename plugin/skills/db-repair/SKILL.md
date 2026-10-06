@@ -19,6 +19,7 @@ tools:
   - exec
 mutating: true
 brain_first: exempt
+when_to_use: "Use when the user asks: \"GBRAIN_DB_ACCESS\", \"gbrain database error\", \"gbrain connection refused\", \"cannot reach the brain database\", \"brain database is down\"."
 ---
 
 # GBrain DB Repair

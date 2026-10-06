@@ -82,6 +82,18 @@ gbrain transcripts status                    # found vs imported, per harness
 
 **Say to your agent:** *"Import my conversations from my chatgpt export at ~/Downloads/conversations.json"* — *"Archive my session transcripts"* — and later, *"When did I first discuss agent memory?"* (the archive answers origin questions with dated quotes).
 
+Codex sessions imported before gbrain read codex 0.153+ rollouts lost their
+user turns (#5163): the pages hold the assistant side only, and `--since last`
+never re-reads them. `gbrain transcripts recover codex` lists those sessions,
+re-reads the rollouts still on disk (`~/.codex/sessions` and the archived
+store, or the rollouts you name) and says which it can restore and which it
+cannot because the rollout is gone. `--apply` re-imports the recoverable ones
+in place; a rerun finds nothing to do. It extracts no facts and leaves the
+watermark alone; for facts from a restored session, run
+`gbrain transcripts ingest <rollout> --facts --max-cost-usd <n>`.
+
+**Say to your agent:** *"Restore the codex sessions that lost my side of the conversation"* (your agent runs the preview, shows you the counts, and applies after you agree).
+
 Or connect the account and skip the manual export entirely. `gbrain connectors`
 syncs your ChatGPT and Claude conversation history live, using your own browser
 session cookie — incrementally (a durable per-provider watermark, plus a

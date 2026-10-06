@@ -302,16 +302,17 @@ checkpoint resume, or DB-contention-aware pace mode.
 ## Version locations (single source of truth: `VERSION` file)
 
 Every release updates the required version stamps in the table below.
-Update TODOS only when filing new work, not to rewrite old entries. Keep these in sync. `/ship` enforces this via Step 12's idempotency check (VERSION vs
-package.json drift), but the canonical list lives here so future runs and
-the auto-update agent know where to look.
+`bun run release:restamp` rewrites all of them, renumbers the branch's own
+schema migrations after master's and runs the auto-derived regenerations;
+run it when the PR is next to merge ([how](docs/RELEASING.md#release-restamp)).
+Update TODOS only when filing new work. `/ship`'s Step 12 idempotency check
+catches VERSION vs package.json drift; the canonical list lives here.
 
 **Version format is mandatory: `MAJOR.MINOR.PATCH.MICRO` (four numeric
 segments, dot-separated, no leading `v`).** Every new release MUST use the
-4-segment form. The `.MICRO` slot is the dot-suffix follow-up channel: when
-a release ships its commit subject ahead of its VERSION bump (e.g. PR #795
-landing as `v0.31.4` without bumping the file), the corrective ship lands
-as `0.31.4.1` rather than churning the patch number to `0.31.5`. Suffixes
+4-segment form. The `.MICRO` slot is the dot-suffix follow-up channel: a
+release whose commit subject shipped ahead of its VERSION bump is corrected
+as `0.31.4.1`, not by churning the patch number to `0.31.5`. Suffixes
 like `-fixwave` are still allowed as needed (`0.31.1.1-fixwave`), but the
 four numeric segments are required first. Historical 3-segment versions
 (`0.31.3`, `0.22.1`) remain valid in `git log` and migration filenames

@@ -37,7 +37,8 @@ import { dirname, join, resolve } from 'node:path';
 import { corpusMarkdownFiles, generateScaleFixture, SCALE_SOURCES, scaleVector, writeScaleCorpus, type ScaleFixture } from './fixture.ts';
 import { runF4dChecks } from './f4d.ts';
 import {
-  BUDGET_MULTIPLIER, evaluateScaleGates, FIND_ORPHANS_PARAMS, HEADLINE_OP, HOT_TABLES, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS, orphansProblem, reproduceCommand, resultHits, verdictLines,
+  BUDGET_MULTIPLIER, evaluateScaleGates, FIND_ORPHANS_PARAMS, HEADLINE_OP, HOT_TABLES, importProgressPerFile, importRateBasis, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS,
+  orphansProblem, RATE_RATIO_MAX, rateMeasure, reproduceCommand, resultHits, TOTAL_VS_HALF_MAX, verdictLines,
   type DataCheck, type GatePolicy, type OpPlan, type OpResult, type PlanStatement, type ScaleReport,
 } from './gates.ts';
 
@@ -118,7 +119,6 @@ const { disposePersistenceConsumer } = await import('../../src/core/persistence/
 type Engine = Awaited<ReturnType<typeof createEngine>>;
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
-const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const silent = { info() {}, warn() {}, error() {} };
 
@@ -212,7 +212,7 @@ async function writeConfig(): Promise<void> {
   writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ ...engineConfig(), embedding_disabled: true }, null, 2) + '\n');
 }
 
-interface CliImport { perFileMs: number[]; result: Record<string, unknown>; wallMs: number }
+interface CliImport { perFileMs: number[]; perFileCpuMs: number[]; result: Record<string, unknown>; wallMs: number }
 /** Run the real `gbrain import` for one source; per-file cost comes from its JSON progress ticks (one per file at interval 0). */
 async function cliImport(sourceId: string): Promise<CliImport> {
   const sourceDir = join(corpusDir, sourceId);
@@ -236,18 +236,13 @@ async function cliImport(sourceId: string): Promise<CliImport> {
       + 'Its file listing skipped the rest (a .gitignore or hidden-path rule of an enclosing repository is the usual cause). '
       + `Fix: check \`git -C ${sourceDir} check-ignore -v .\`, or pass a --corpus-dir outside any repository.`);
   }
-  const elapsed: number[] = [];
-  for (const line of stderr.split('\n')) {
-    if (!line.startsWith('{')) continue;
-    const event = JSON.parse(line) as { event?: string; phase?: string; done?: number; elapsed_ms?: number };
-    if (event.event === 'tick' && event.phase === 'import.files' && typeof event.done === 'number') elapsed[event.done - 1] = event.elapsed_ms ?? 0;
+  const { wallMs: perFileMs, cpuMs: perFileCpuMs } = importProgressPerFile(stderr);
+  const usable = perFileMs.filter((ms, i) => Number.isFinite(ms) && Number.isFinite(perFileCpuMs[i])).length;
+  if (perFileMs.length !== totalFiles || usable !== totalFiles) {
+    throw new Error(`gbrain import of source ${sourceId} emitted ${usable} usable per-file progress ticks for `
+      + `${totalFiles} files; the rate gate needs one tick per file with elapsed_ms and cpu_ms (--progress-json --progress-interval 0).`);
   }
-  const perFileMs = Array.from(elapsed, (ms, i) => ms - (i > 0 ? elapsed[i - 1] ?? Number.NaN : 0));
-  if (perFileMs.length !== Number(JSON.parse(lastJson).total_files) || perFileMs.some(ms => !Number.isFinite(ms))) {
-    throw new Error(`gbrain import of source ${sourceId} emitted ${perFileMs.filter(Number.isFinite).length} usable per-file progress ticks for `
-      + `${String(JSON.parse(lastJson).total_files)} files; the rate gate needs one tick per file (--progress-json --progress-interval 0).`);
-  }
-  return { perFileMs, result: JSON.parse(lastJson) as Record<string, unknown>, wallMs };
+  return { perFileMs, perFileCpuMs, result: JSON.parse(lastJson) as Record<string, unknown>, wallMs };
 }
 
 async function brainSnapshot(engine: Engine): Promise<Record<string, string>> {
@@ -263,7 +258,6 @@ async function brainSnapshot(engine: Engine): Promise<Record<string, string>> {
 
 interface FullReport extends ScaleReport {
   headline: { metric: string; p50_ms: number };
-  import: ScaleReport['import'] & { files_ms: number; ms_at_half: number };
   planner: ScaleReport['planner'] & { tables_without_stats: string[] };
   [key: string]: unknown;
 }
@@ -295,6 +289,7 @@ async function main(): Promise<FullReport> {
 
   // Import.
   let perPage: number[] = [];
+  let perPageCpu: number[] = [];
   await timed('import_files', async () => {
     if (importMode === 'cli') {
       await closeEngine(engine);
@@ -305,21 +300,23 @@ async function main(): Promise<FullReport> {
           throw new Error(`gbrain import of source ${sourceId} imported ${String(run.result.imported)}/${expected} with ${String(run.result.errors)} errors: ${JSON.stringify(run.result).slice(0, 2000)}`);
         }
         perPage = perPage.concat(run.perFileMs);
+        perPageCpu = perPageCpu.concat(run.perFileCpuMs);
         console.log(`[scale] gbrain import --source ${sourceId}: ${expected} files in ${Math.round(run.wallMs)} ms wall`);
       }
       engine = await openEngine();
     } else {
       for (const page of fixture.pages) {
         const t = performance.now();
+        const cpu = process.threadCpuUsage();
         const result = await importFromContent(engine, page.slug, page.content, { sourceId: page.sourceId, noEmbed: true });
         if (result.status === 'error') throw new Error(`import failed for ${page.sourceId}:${page.slug}: ${result.error}`);
         perPage.push(performance.now() - t);
+        const used = process.threadCpuUsage(cpu);
+        perPageCpu.push((used.user + used.system) / 1000);
       }
     }
   });
-  const tenth = Math.max(1, Math.floor(perPage.length / 10));
-  const half = perPage.slice(0, Math.floor(perPage.length / 2)).reduce((a, b) => a + b, 0);
-  const filesMs = perPage.reduce((a, b) => a + b, 0);
+  const importRate = { wall: rateMeasure(perPage), cpu: rateMeasure(perPageCpu) };
 
   // Derived data, as a cycle would: links + timeline, facts and takes fences.
   const extract = await timed('extract', async () => {
@@ -537,11 +534,7 @@ async function main(): Promise<FullReport> {
     import_mode: importMode, sources: SCALE_SOURCES,
     runtime: { bun: Bun.version, platform: process.platform, arch: process.arch, cpus: navigator.hardwareConcurrency },
     policy: { planner_health: policy.enforcePlanner ? 'enforced' : 'report-only (PLANNER_HEALTH_ENFORCED=false)', ceilings: policy.enforceCeilings ? 'enforced' : 'report-only' },
-    import: {
-      files_ms: Math.round(filesMs), per_page_ms_first10: round1(avg(perPage.slice(0, tenth))), per_page_ms_last10: round1(avg(perPage.slice(-tenth))),
-      rate_ratio: Math.round((avg(perPage.slice(-tenth)) / avg(perPage.slice(0, tenth))) * 100) / 100,
-      ms_at_half: Math.round(half), total_vs_half: Math.round((filesMs / half) * 100) / 100,
-    },
+    import: importRate,
     extract,
     planner: { hot_table_stat_rows: statRows, hot_table_rows: tableRows, probed_after: probedAfter,
       tables_without_stats: HOT_TABLES.filter(t => tableRows[t]! > PLANNER_STATS_MIN_ROWS && statRows[t] === 0) },
@@ -567,8 +560,11 @@ try {
     console.log(`[scale] calibrated budgets (${BUDGET_MULTIPLIER}x p50) for ${report.engine}:${report.pages} written to ${BUDGETS_FILE}`);
   }
   console.log(`[scale] HEADLINE ${report.headline.metric}: ${report.headline.p50_ms} ms`);
-  const imp = report.import;
-  console.log(`[scale] import (${report.import_mode}) files ${imp.files_ms} ms; per-page first10 ${imp.per_page_ms_first10} ms, last10 ${imp.per_page_ms_last10} ms, ratio ${imp.rate_ratio} (gate <= 1.5); total/half ${imp.total_vs_half} (gate <= 2.5)`);
+  const gatedBasis = importRateBasis(report.engine);
+  for (const basis of ['cpu', 'wall'] as const) {
+    const imp = report.import[basis];
+    console.log(`[scale] import (${report.import_mode}, ${basis} time${basis === gatedBasis ? ', gated' : ', reported'}) files ${imp.total_ms} ms; per-page first10 ${imp.per_page_ms_first10} ms, last10 ${imp.per_page_ms_last10} ms, ratio ${imp.rate_ratio} (gate <= ${RATE_RATIO_MAX}); total/half ${imp.total_vs_half} (gate <= ${TOTAL_VS_HALF_MAX})`);
+  }
   console.log(`[scale] planner (after ${report.planner.probed_after}): tables above ${PLANNER_STATS_MIN_ROWS} rows without stats: ${report.planner.tables_without_stats.join(', ') || 'none'}`);
   for (const r of report.ops) {
     console.log(`[scale] ${r.known_answer === 'pass' ? 'PASS' : 'FAIL'} ${r.op}: p50 ${r.p50_ms} ms${r.plan?.worst_loops ? `, worst nested-loop inner loops ${r.plan.worst_loops.inner_loops}` : ''}${r.detail ? ` (${r.detail})` : ''}`);

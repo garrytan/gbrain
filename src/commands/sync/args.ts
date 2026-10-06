@@ -94,6 +94,11 @@ Options:
                        'gbrain config set sync.bulk false' or
                        GBRAIN_SYNC_BULK=0; tune with sync.bulk_size and
                        sync.bulk_max_txn_ms.
+  --lanes N            Managed Postgres sync: publish up to N bulk groups at
+                       once (1-8, default 6, capped by the connection pool).
+                       Pages still commit in file order. Persist with
+                       'gbrain config set sync.lanes N' or GBRAIN_SYNC_LANES.
+  --no-lanes           Same as --lanes 1: one bulk group at a time.
   --no-delegate        On a PGLite brain with a live 'gbrain serve', sync
                        normally delegates the run to the serve process over
                        its IPC socket (the lock owner does the work; embeds
@@ -183,6 +188,8 @@ export function parseSyncFlags(args: string[]) {
   const full = args.includes('--full');
   const noPull = args.includes('--no-pull');
   const noBulk = args.includes('--no-bulk');
+  const lanesAt = args.indexOf('--lanes');
+  const lanes = args.includes('--no-lanes') ? 1 : lanesAt === -1 ? undefined : intFlagValue(args[lanesAt + 1], '--lanes', { min: 1, max: 8, example: 4 });
   let noEmbed = resolveNoEmbed(args, loadConfig());
   const noExtract = args.includes('--no-extract'); // v0.42.7 #1696
   const skipFailed = args.includes('--skip-failed');
@@ -241,7 +248,7 @@ export function parseSyncFlags(args: string[]) {
     console.error(`--max-age cannot be combined with --force-break-lock (force skips all guards).`);
     process.exit(1);
   }
-  return { repoPath, watch, interval, dryRun, full, noPull, noBulk, noEmbed, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack, explicitProcessing, includeGitignored, workingTree, syncAll, missingPathMode, jsonOut, yesFlag, breakLock, forceBreakLock, maxAgeSeconds };
+  return { repoPath, watch, interval, dryRun, full, noPull, noBulk, lanes, noEmbed, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack, explicitProcessing, includeGitignored, workingTree, syncAll, missingPathMode, jsonOut, yesFlag, breakLock, forceBreakLock, maxAgeSeconds };
 }
 
 export type SyncFlags = ReturnType<typeof parseSyncFlags>;

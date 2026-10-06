@@ -28,10 +28,12 @@ import { operations, OperationError, type OperationContext } from '../src/core/o
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { prepareFileTarget } from '../src/core/persistence/page-prepare.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { drainManagedSync } from '../src/core/persistence/sync-drain.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { nativeLockCapability } from '../src/core/persistence/native-lock.ts';
 import { printManagedSyncNotes } from '../src/commands/sync-diagnostics.ts';
 import { performSync } from '../src/commands/sync/perform.ts';
+import type { SyncResult } from '../src/commands/sync.ts';
 import { loadSyncFailures } from '../src/core/sync-failure-ledger.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -63,6 +65,13 @@ async function addSource(engine: BrainEngine, root: string | null): Promise<stri
   const id = `c${randomUUID().replace(/-/g, '').slice(0, 20)}`;
   await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,\'{}\')', [id, root]);
   return id;
+}
+
+/** A sync result with its reason and the source's write requests, so a failed status assertion shows why. */
+async function syncState(engine: BrainEngine, sourceId: string, result: SyncResult) {
+  const requests = await engine.executeRaw<{ slug: string; state: string; blocked_reason: string | null }>(
+    'SELECT slug,state,blocked_reason FROM persistence_requests WHERE source_id=$1 ORDER BY created_at', [sourceId]);
+  return { status: result.status, reason: result.reason, drain: result.drain, requests };
 }
 
 function git(root: string, ...args: string[]): string {
@@ -181,8 +190,9 @@ describe('#5032 managed sync of committed colon files on Windows', () => {
       await claimWorktree(engine, sourceId, root);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
 
-      const result = await asWindows(() => performManagedSync(engine, { sourceId, noPull: true }));
-      expect(result.status).toBe('first_sync');
+      // A single managed pass returns partial/writer_pending when a page's write outlives its wait; the CLI drains.
+      const result = await asWindows(() => drainManagedSync(engine, { sourceId, noPull: true }, false));
+      expect(await syncState(engine, sourceId, result)).toMatchObject({ status: 'first_sync' });
       expect(result.fileRefusals).toEqual([{
         path: 'notes/calendar:abc.md', code: 'colon_slug_windows_write_through',
         message: "notes/calendar:abc.md has a ':' in its name, which Windows cannot store; sync skipped it.",
@@ -213,7 +223,7 @@ describe('#5032 managed sync of a rename away from a colon file on Windows', () 
       const sourceId = await addSource(engine, root);
       await claimWorktree(engine, sourceId, root);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-      expect((await performManagedSync(engine, { sourceId, noPull: true })).status).toBe('first_sync');
+      expect(await syncState(engine, sourceId, await drainManagedSync(engine, { sourceId, noPull: true }, false))).toMatchObject({ status: 'first_sync' });
       const [before] = await engine.executeRaw<{ id: number; slug: string }>(
         "SELECT id,slug FROM pages WHERE source_id=$1 AND source_path='notes/calendar:abc.md' AND deleted_at IS NULL", [sourceId]);
       expect(before).toBeDefined();

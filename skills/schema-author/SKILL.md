@@ -52,7 +52,7 @@ triggers:
   - "schema sync"
   - "schema author"
 brain_first: exempt
-writes_pages: []
+writes_pages: false
 ---
 
 # schema-author — evolve your schema pack

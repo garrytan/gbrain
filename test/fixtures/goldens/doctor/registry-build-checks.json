@@ -330,6 +330,14 @@
         "name": "embedding_migration_state"
       },
       {
+        "category": "ops",
+        "name": "chat_fallback_chain"
+      },
+      {
+        "category": "meta",
+        "name": "behavior_changes"
+      },
+      {
         "category": "brain",
         "name": "graph_coverage"
       },
@@ -579,6 +587,10 @@
       },
       {
         "category": "ops",
+        "name": "shared_skills_sources"
+      },
+      {
+        "category": "ops",
         "name": "backup_coverage"
       },
       {
@@ -608,6 +620,10 @@
       {
         "category": "ops",
         "name": "db_only_collector_collision"
+      },
+      {
+        "category": "brain",
+        "name": "git_convergence"
       },
       {
         "category": "ops",
@@ -652,6 +668,10 @@
       {
         "category": "meta",
         "name": "revision_backfill"
+      },
+      {
+        "category": "brain",
+        "name": "core_memory"
       },
       {
         "category": "ops",

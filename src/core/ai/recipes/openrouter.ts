@@ -194,6 +194,22 @@ export const openrouter: Recipe = {
   name: 'OpenRouter',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  // No shipped rate for these yet: they warn and run under a default cap; a
+  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  unpriced_models: [
+    'anthropic/claude-haiku-4.5',
+    'google/gemini-3-flash-preview',
+    'deepseek/deepseek-chat',
+    'openai/gpt-5.2',
+    'openai/gpt-5.2-chat',
+    'openai/gpt-5.5',
+    'anthropic/claude-sonnet-4.6',
+    'anthropic/claude-opus-4.7',
+    'cohere/rerank-v3.5',
+    'cohere/rerank-4-fast',
+    'cohere/rerank-4-pro',
+    'nvidia/llama-nemotron-rerank-vl-1b-v2:free',
+  ],
   base_url_default: 'https://openrouter.ai/api/v1',
   auth_env: {
     required: ['OPENROUTER_API_KEY'],

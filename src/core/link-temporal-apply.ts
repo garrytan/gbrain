@@ -4,7 +4,9 @@
  *
  * 1. stamp `assertion_tense` on the links rows this page owns;
  * 2. replace the page's derived `link_transitions` (producers timeline,
- *    explicit, frontmatter, dream; manual and inline rows are left alone);
+ *    explicit, frontmatter, dream, and inline when `inlineRanges` is on:
+ *    validity ranges on typed relation lines, core/link-effective.ts; manual
+ *    rows are left alone);
  * 3. refresh `link_relationships` for every relationship the page touched
  *    before or after the change.
  *
@@ -17,10 +19,11 @@ import { executeRawJsonb } from './sql-query.ts';
 import { deriveTemporalEvidence, rowKey, type TemporalEvidence } from './link-temporal-evidence.ts';
 import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
 import { temporalLinkTypes } from './link-validity.ts';
+import { inlineTransitions } from './link-effective.ts';
 
 type Tx = Pick<BrainEngine, 'executeRaw'>;
 
-const DERIVED_PRODUCERS = ['timeline', 'explicit', 'frontmatter', 'dream'];
+const DERIVED_PRODUCERS = ['timeline', 'explicit', 'frontmatter', 'dream', 'inline'];
 
 export interface TemporalApplyResult {
   transitions: number;
@@ -46,6 +49,7 @@ export async function applyTemporalEvidence(
   page: Pick<Page, 'id' | 'slug' | 'source_id' | 'compiled_truth' | 'timeline' | 'frontmatter'>,
   rows: readonly LinkBatchInput[],
   keysBefore: readonly RelationshipKey[],
+  opts: { inlineRanges?: boolean } = {},
 ): Promise<TemporalApplyResult> {
   const pageId = Number(page.id);
   const sourceId = page.source_id ?? 'default';
@@ -53,6 +57,10 @@ export async function applyTemporalEvidence(
     slug: page.slug, compiled_truth: page.compiled_truth ?? '', timeline: page.timeline ?? '',
     frontmatter: (page.frontmatter ?? {}) as Record<string, unknown>,
   }, rows.map(r => ({ from_slug: r.from_slug, to_slug: r.to_slug, link_type: r.link_type, link_source: r.link_source ?? 'markdown', origin_field: r.origin_field ?? null })));
+  const inline = opts.inlineRanges
+    ? inlineTransitions(page.slug, `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`, rows.filter(r => (r.link_source ?? 'markdown') !== 'frontmatter'))
+    : { transitions: [], unmatched: [] };
+  const transitions = [...evidence.transitions, ...inline.transitions];
 
   const tenseRows = rows.filter(r => evidence.tense.has(rowKey(r))).map(r => ({
     from_slug: r.from_slug, to_slug: r.to_slug, link_type: r.link_type ?? '', link_source: r.link_source ?? 'markdown',
@@ -74,7 +82,7 @@ export async function applyTemporalEvidence(
 
   await tx.executeRaw(`DELETE FROM link_transitions WHERE origin_page_id = $1 AND producer = ANY($2::text[])`, [pageId, DERIVED_PRODUCERS]);
   let inserted: RelationshipKey[] = [];
-  if (evidence.transitions.length) {
+  if (transitions.length) {
     inserted = await executeRawJsonb<RelationshipKey>(tx,
       `INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, date_precision, producer, origin_page_id, line_hash)
        SELECT $2, f.id, t.id, v.link_type, v.kind, v.occurred_on::date, v.date_precision, v.producer, $1, v.line_hash
@@ -84,9 +92,9 @@ export async function applyTemporalEvidence(
          JOIN pages t ON t.slug = v.to_slug AND t.source_id = $2 AND t.deleted_at IS NULL
        ON CONFLICT DO NOTHING
        RETURNING from_page_id, to_page_id, link_type`,
-      [pageId, sourceId], [{ rows: evidence.transitions }]);
+      [pageId, sourceId], [{ rows: transitions }]);
   }
-  const unmatched = [...evidence.unmatched];
+  const unmatched = [...evidence.unmatched, ...inline.unmatched];
   const explicitTargets = [...new Set(evidence.transitions.filter(t => t.producer === 'explicit' || t.producer === 'dream').map(t => t.to_slug))];
   if (explicitTargets.length) {
     const live = new Set((await tx.executeRaw<{ slug: string }>(

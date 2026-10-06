@@ -12,6 +12,7 @@ import { digest, sha256 } from './digest.ts';
 import { localHostId, persistenceHome } from './identity.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
+import { acquireShared, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
 import { readPhysicalRootStamp } from './physical-root-record.ts';
@@ -131,6 +132,17 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
  */
 export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal, engine?: BrainEngine): Promise<NativeLockHandle | null> {
   if (!binding.local_path || !binding.coordination_path) return null;
+  // #5984 lanes: an exclusive writer drains this process's lane lease first; while lanes still hold it the worktree is busy.
+  if (!await yieldLease(binding.coordination_path, waitMs, signal)) return null;
+  return lockWorktree(binding, waitMs, signal, engine);
+}
+/** #5984 lanes: database-only lane publications share one native lock in this process (worktree-lease.ts). */
+export async function acquireWorktreeShared(binding: WorktreeBinding, engine: BrainEngine): Promise<NativeLockHandle | null> {
+  if (!binding.local_path || !binding.coordination_path) return null;
+  return acquireShared(binding.coordination_path, () => lockWorktree(binding, 0, undefined, engine));
+}
+async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: AbortSignal | undefined, engine: BrainEngine | undefined): Promise<NativeLockHandle | null> {
+  if (!binding.coordination_path || !binding.local_path) return null;
   const lock = await (waitMs > 0 ? acquireNativeLock(binding.coordination_path, { timeoutMs: waitMs, signal })
     : tryAcquireNativeLock(binding.coordination_path));
   if (!lock) return null;

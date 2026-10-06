@@ -1,0 +1,131 @@
+{
+"total_count": 21,
+"jobs": [
+{
+"id": 111914482094,
+"name": "JSONB parity (#2339 regression guard)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914482103,
+"name": "Tier 1 backend matrix (direct + PgBouncer) 2/2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914482160,
+"name": "Tier 1 backend matrix (direct + PgBouncer) 1/2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914482263,
+"name": "Tier 1 (Mechanical)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914482719,
+"name": "prepare-e2e",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914483688,
+"name": "coverage-full-slow",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111914484064,
+"name": "coverage-full-serial",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111914484112,
+"name": "coverage-full-e2e",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111914484435,
+"name": "coverage-full-report",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111914485257,
+"name": "coverage-full-unit",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111914650722,
+"name": "Selected E2E (diff-relevant) 2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914650741,
+"name": "Selected E2E (diff-relevant) 5",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914650770,
+"name": "Selected E2E (diff-relevant) 1",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914650780,
+"name": "Selected E2E (diff-relevant) 3",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914650803,
+"name": "Selected E2E (diff-relevant) 8",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914650852,
+"name": "Selected E2E (diff-relevant) 4",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914650969,
+"name": "Selected E2E (diff-relevant) 6",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914650995,
+"name": "Selected E2E (diff-relevant) 7",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111914936918,
+"name": "Tier 2 (LLM Skills)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111922042682,
+"name": "e2e-status",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111922043400,
+"name": "executed-receipts",
+"conclusion": "success",
+"steps": []
+}
+]
+}

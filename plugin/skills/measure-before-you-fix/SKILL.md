@@ -20,6 +20,7 @@ mutating: false
 writes_pages: false
 writes_to: []
 upstream: measure-before-you-fix@fc834ee
+when_to_use: "Use when the user asks: \"keeps timing out\", \"ETIMEDOUT\", \"why is this data stale\", \"freshness alert\", \"wedged\"."
 ---
 
 # Measure Before You Fix

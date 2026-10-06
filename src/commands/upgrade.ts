@@ -193,13 +193,13 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   if (target && assessUpgradeOutcome(target, newVersion) === 'mismatch') {
     console.error(`Upgrade did not take effect: still running ${newVersion}, expected ${target}.`);
     console.error('Exact-tag Git installs stay pinned through `bun update`. Reinstall with:');
-    console.error(`  bun add -g github:garrytan/gbrain#v${target}`);
+    console.error(`  ${bunReinstallCommand(`#v${target}`)}`);
     recordUpgradeError({
       phase: 'verify-target',
       fromVersion: oldVersion,
       toVersion: target,
       error: `still running ${newVersion} after upgrade`,
-      hint: `bun add -g github:garrytan/gbrain#v${target}`,
+      hint: bunReinstallCommand(`#v${target}`),
     });
     setCliExitVerdict(1);
     return;
@@ -213,7 +213,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     if (pin) {
       const { pendingUpgradeVersion } = await import('../core/self-upgrade.ts');
       const latest = pendingUpgradeVersion(oldVersion);
-      const reinstall = latest ? `bun add -g github:garrytan/gbrain#v${latest}` : 'bun add -g github:garrytan/gbrain';
+      const reinstall = bunReinstallCommand(latest ? `#v${latest}` : '');
       console.error(`Upgrade did not take effect: still running ${newVersion}, because the global install is pinned to ${pin} and \`bun update\` keeps a pinned tag.`);
       console.error('Reinstall to move off the pin:');
       console.error(`  ${reinstall}`);
@@ -340,7 +340,7 @@ function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
   const detail = (run.stderr ?? '').trim().split('\n')[0];
   const back = r.method === 'bun-link' && r.repoRoot && r.previousSha
     ? `git -C ${r.repoRoot} checkout ${r.previousSha} && bun install`
-    : r.method === 'bun' ? `bun install -g github:${GBRAIN_GITHUB_REPO}#v${r.oldVersion}` : null;
+    : r.method === 'bun' ? bunReinstallCommand(`#v${r.oldVersion}`) : null;
   console.error(`gbrain ${newVersion || '(new version)'} was installed but does not start: \`gbrain --help\` failed (${why}).${detail ? `\n  ${detail}` : ''}`);
   console.error('Recovery:');
   console.error('  If it names an old Bun: bun upgrade, then gbrain post-upgrade');
@@ -401,6 +401,17 @@ export function resolveBunGlobalRoot(): string {
 
   const installRoot = findBunInstallRootFromArgv();
   return installRoot ?? defaultRoot;
+}
+
+/**
+ * #5034 / B-NEW-5: reinstall the global Bun package at `ref` by removing it
+ * first. An in-place `bun add -g` / `bun install --global` tag swap over an
+ * existing global install fails with DependencyLoop on Bun 1.3 and, on Bun
+ * 1.4, exits 0 without swapping while it corrupts the global package.json
+ * and bun.lock.
+ */
+export function bunReinstallCommand(ref: string): string {
+  return `bun remove -g gbrain && bun add -g github:${GBRAIN_GITHUB_REPO}${ref}`;
 }
 
 /**

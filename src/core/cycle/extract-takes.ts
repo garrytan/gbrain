@@ -8,9 +8,12 @@
  *          timeline; parse fence; batch upsert
  *
  * Source-of-truth contract: markdown is canonical. The takes table is a
- * derived index. `gbrain extract takes --rebuild` deletes all takes for
- * the affected pages first, then re-inserts. Without --rebuild, ON CONFLICT
- * (page_id, row_num) DO UPDATE keeps the table in sync incrementally.
+ * derived index. `gbrain takes rebuild <slug>` (rebuild) first deletes every
+ * indexed row whose (row_num, claim) is not in the page's fence, so a row the
+ * index and the fence disagree on is re-inserted fresh, while a row whose
+ * claim is unchanged keeps its resolution and vector (#5167). Without
+ * rebuild, ON CONFLICT (page_id, row_num) DO UPDATE keeps the table in sync
+ * incrementally.
  * On a managed brain the db path publishes each page's rows through the
  * persistence coordinator (the `takes` guard refuses any other writer).
  *
@@ -43,8 +46,10 @@ export interface ExtractTakesOpts {
   slugs?: string[];
   /** Dry-run: parse + count, don't write. */
   dryRun?: boolean;
-  /** When true, deletes existing takes for affected pages first. */
+  /** When true, first deletes each affected page's indexed rows whose (row_num, claim) left its fence. */
   rebuild?: boolean;
+  /** db path: only pages of this source (default: every source holding the slug). */
+  sourceId?: string;
 }
 
 export interface ExtractTakesResult {
@@ -101,6 +106,13 @@ async function pruneRemovedTakes(
     'DELETE FROM takes WHERE page_id = $1 AND NOT (row_num = ANY($2::integer[]))',
     [pageId, takes.map(t => t.rowNum)],
   );
+}
+
+/** Rebuild: drop indexed rows the fence no longer carries with the same claim; rows that still match keep resolution and vector. */
+async function deleteDivergedTakes(engine: BrainEngine, pageId: number, takes: ParsedTake[]): Promise<void> {
+  await engine.executeRaw(`DELETE FROM takes WHERE page_id = $1 AND NOT EXISTS (
+      SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) AS f(row_num int, claim text) WHERE f.row_num = takes.row_num AND f.claim = takes.claim)`,
+  [pageId, JSON.stringify(takes.map(t => ({ row_num: t.rowNum, claim: t.claim })))]);
 }
 
 function parsedTakeToBatchInput(pageId: number, t: ParsedTake): TakeBatchInput {
@@ -187,9 +199,7 @@ export async function extractTakesFromFs(
     await pruneRemovedTakes(engine, pageId, body, takes, warnings, dryRun);
     if (takes.length === 0) continue;
 
-    if (opts.rebuild && !dryRun) {
-      await engine.executeRaw(`DELETE FROM takes WHERE page_id = $1`, [pageId]);
-    }
+    if (opts.rebuild && !dryRun) await deleteDivergedTakes(engine, pageId, takes);
 
     result.pagesWithTakes++;
     for (const t of takes) {
@@ -214,7 +224,7 @@ export async function extractTakesFromFs(
  */
 export async function extractTakesFromDb(
   engine: BrainEngine,
-  opts: { slugs?: string[]; dryRun?: boolean; rebuild?: boolean } = {},
+  opts: { slugs?: string[]; dryRun?: boolean; rebuild?: boolean; sourceId?: string } = {},
 ): Promise<ExtractTakesResult> {
   const result: ExtractTakesResult = {
     pagesScanned: 0, pagesWithTakes: 0, takesUpserted: 0, warnings: [], failedFiles: [],
@@ -224,7 +234,7 @@ export async function extractTakesFromDb(
   // Every (slug, source_id) pair across all sources; bare slugs re-extract
   // the page in every source that holds that slug.
   const slugFilter = opts.slugs && opts.slugs.length > 0 ? new Set(opts.slugs) : null;
-  const refs = (await engine.listAllPageRefs()).filter(ref => !slugFilter || slugFilter.has(ref.slug));
+  const refs = (await engine.listAllPageRefs()).filter(ref => (!slugFilter || slugFilter.has(ref.slug)) && (!opts.sourceId || ref.source_id === opts.sourceId));
   const buffer: TakeBatchInput[] = [];
   const coordinated = !dryRun && await managedPersistenceEnabled(engine);
 
@@ -276,9 +286,7 @@ async function reconcilePageTakes(
   }
   await pruneRemovedTakes(db, page.id, body, takes, warnings, dryRun);
   if (takes.length === 0) return [];
-  if (rebuild && !dryRun) {
-    await db.executeRaw(`DELETE FROM takes WHERE page_id = $1`, [page.id]);
-  }
+  if (rebuild && !dryRun) await deleteDivergedTakes(db, page.id, takes);
   result.pagesWithTakes++;
   return takes;
 }
@@ -330,6 +338,7 @@ export async function extractTakes(
     slugs: opts.slugs,
     dryRun: opts.dryRun,
     rebuild: opts.rebuild,
+    sourceId: opts.sourceId,
   });
 }
 

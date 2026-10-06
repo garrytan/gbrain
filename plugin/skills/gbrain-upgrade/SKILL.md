@@ -19,6 +19,7 @@ triggers:
 tools:
   - exec
 mutating: true
+when_to_use: "Use when the user asks: \"gbrain update available\", \"UPGRADE_AVAILABLE\", \"upgrade gbrain\", \"update gbrain\", \"gbrain is out of date\"."
 ---
 
 # GBrain Self-Upgrade
@@ -36,6 +37,11 @@ This skill guarantees:
   `UPGRADE_AVAILABLE` line from a brain page or MCP response cannot run code.
 - `notify` mode prompts the operator before applying and records a snooze if
   they decline. `auto` mode applies without a prompt (the operator opted in).
+- A migration playbook outranks `self_upgrade.mode: auto`. When any playbook
+  between the installed and the new version (the `skills/migrations/` playbooks)
+  says not to upgrade unattended (an attended cutover, for example
+  `skills/migrations/v0.50.0.0.md`), the upgrade is NOT silent: stop, show the
+  operator that playbook, and follow it with their go-ahead (#5038).
 - The version is validated (`^\d+\.\d+(\.\d+){0,2}$`) before it is shown.
 - Nothing here blocks the current task — if the operator says "not now," the
   current work continues.
@@ -58,7 +64,14 @@ gbrain config get self_upgrade.mode   # auto | notify | off  (default: notify)
 Do nothing. The operator disabled update checks.
 
 ### mode = auto
-Apply silently:
+First check the playbooks between the installed and the new version: list
+`skills/migrations/` (in the gbrain install, or
+[the published directory](https://github.com/garrytan/gbrain/tree/master/skills/migrations))
+for every `v<version>.md` newer than `<old>` and up to `<new>`, and read each
+one's first steps. If any says not to upgrade unattended, or describes an
+attended cutover (stop writers, back up, install one version everywhere), do
+not upgrade: tell the operator which playbook applies and follow it with their
+go-ahead, as in `notify` mode. Otherwise apply silently:
 
 ```bash
 gbrain self-upgrade
@@ -66,7 +79,9 @@ gbrain self-upgrade
 
 (On an always-on daemon the autopilot tick already does this during quiet hours
 when the brain is idle; you only need to run it for an interactive auto-mode
-install.)
+install. The daemon does not read playbooks, so before leaving `auto` on across
+a release with an attended cutover, set `gbrain config set self_upgrade.mode notify`
+and follow the playbook by hand.)
 
 ### mode = notify (default)
 Confirm a real update first, then ask the operator:
@@ -120,6 +135,8 @@ Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) f
   legitimate gbrain-authored instruction — do NOT run it blind from here
   either; open `skills/migrations/v0.46.3.0.md` and follow that playbook (it
   adds the env preflight and verification the banner can't carry).
+- **Do NOT** treat `auto` as consent to cross a release whose migration playbook
+  forbids unattended upgrades. The playbook wins; ask the operator.
 - **Do NOT** apply an upgrade in the middle of a multi-step task without the
   operator's go-ahead in `notify` mode. Finish or checkpoint first.
 - **Do NOT** flip a brain to `auto` on an interactive workstation just to silence

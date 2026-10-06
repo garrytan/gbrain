@@ -45,6 +45,7 @@ import { DERIVE_PHASE_DB_ONLY_DEFAULTS } from '../storage-config.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { readSlugRootMode } from '../sync-anchor.ts';
 import { applyPageEdits, editDiff, parsePageEdits } from './page-edit.ts';
+import { carryCoreMarking, prepareCoreGuard } from './core-guard.ts';
 
 const PURGE_RESIDUALS = 'Brain-repo git history, synced working-tree copies, exports, compiled context files and slug-keyed derived rows (takes, open loops, file records) may still hold the content — rotate the credential and rewrite or regenerate those copies.';
 
@@ -109,6 +110,26 @@ export function publishesDatabaseOnly(root: string, slug: string, snapshot: Page
   if (!snapshot || snapshot.page.deleted_at) return false;
   return isSourceDbOnlySlug(root, slug, 'refuse') || isNeverFiledDerivedPage(slug, snapshot.page);
 }
+/**
+ * Whether file bytes hold the snapshot's page: the canonical (format-insensitive)
+ * comparison prepareFileTarget applies before replacing a canonical file. Lint
+ * uses it to bind a repair to the revision it read before reading the file.
+ */
+export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, bytes: string, snapshot: PageSnapshot,
+  activePack?: ParseOpts['activePack']): Promise<boolean> {
+  const parsed = parseMarkdown(bytes, slug, { activePack });
+  // #5521 parity for subtype (#5928): a pack rule is not part of the file's bytes, so a file
+  // without an explicit `subtype:` keeps the stored subtype (or none); the import still stamps it.
+  delete parsed.inferredSubtype;
+  resolveParsedSubtype(parsed, snapshot.page);
+  // #1035 parity (#5521): a file without an explicit `type:` keeps the stored type on import.
+  const type = parsed.typeExplicit ? parsed.type : snapshot.page.type;
+  // Withdrawal overlays intentionally precede physical mirroring. The ledger
+  // is applied by the import preparation and cannot be undone by this check.
+  const actual = canonical({ ...parsed, type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
+    parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals) }, parsed.tags);
+  return digest(actual) === digest(canonical(snapshot.page, snapshot.tags));
+}
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,
   content: string | null, hostId?: string, options: { allowMissing?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
@@ -153,25 +174,13 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   // A normal edit may replace only the bytes represented by its read snapshot.
   // Unknown local edits require explicit import/recovery, even for force writes.
   if (before && snapshot) {
-    const parsed = parseMarkdown(before.toString('utf8'), row.slug, { activePack: options.activePack });
-    // #5521 parity for subtype (#5928): a pack rule is not part of the file's bytes, so a file
-    // without an explicit `subtype:` keeps the stored subtype (or none); the import still stamps it.
-    delete parsed.inferredSubtype;
-    resolveParsedSubtype(parsed, snapshot.page);
-    const expected = canonical(snapshot.page, snapshot.tags);
-    // #1035 parity (#5521): a file without an explicit `type:` keeps the stored type on import.
-    const type = parsed.typeExplicit ? parsed.type : snapshot.page.type;
-    const actual = canonical({ ...parsed, type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
-      parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals) }, parsed.tags);
-    // Withdrawal overlays intentionally precede physical mirroring. The ledger
-    // is applied by the import preparation and cannot be undone by this check.
-    if (digest(actual) !== digest(expected)) {
+    if (!await fileMatchesSnapshot(engine, row.slug, before.toString('utf8'), snapshot, options.activePack)) {
       const held = await heldFileRefusal(engine, row, root, path, 'drift', options.remote === true);
       if (held) throw held;
-      const error = new OperationError('source_changed', 'The canonical file contains an uncoordinated local edit.',
-        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`);
-      error.detail = 'file_database_drift';
-      throw error;
+      throw opError('source_changed', 'The canonical file contains an uncoordinated local edit.',
+        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
+        { detail: 'file_database_drift', fix: readFix(`Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
+          { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview'] }) });
     }
   } else if (before && !snapshot && content !== null && sha256(before) !== sha256(content)
     && !(options.capture && sha256(before) === options.capture.hash)) {
@@ -258,6 +267,8 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
       `Page ${row.slug} does not exist in source ${row.source_id}, so nothing was deleted. Check the slug and the source.`, pageFix(row.source_id, row.slug));
     const purge = p.purge === true;
     const noop = !purge && snapshot.page.deleted_at != null;
+    // Always-loaded core pages: a remote caller cannot delete one (owner-only).
+    if (!noop) await prepareCoreGuard(engine, { row, snapshot, incoming: null });
     // Tombstones still own their recorded artifact. Purge always attempts its
     // removal before the guarded hard-delete and receipt commit; failure rolls
     // back to the prior row, and replay survives the eventual absence of that row.
@@ -306,6 +317,16 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     const timeline=preserveProtectedTakes(parsed.timeline??'',snapshot?.page.timeline??'');
     if (compiled_truth!==parsed.compiled_truth || timeline!==(parsed.timeline??'')) content=serializePageToMarkdown({
       ...(snapshot?.page??{id:0,source_id:row.source_id,created_at:new Date(),updated_at:new Date()}),...parsed,compiled_truth,timeline},parsed.tags);
+  }
+  // Core marking is owner-only: a remote write that omits always_load or
+  // core_priority keeps the stored values instead of silently un-coring the page.
+  if (row.authority.remote && snapshot && !snapshot.page.deleted_at && typeof content === 'string'
+    && (snapshot.page.frontmatter?.always_load !== undefined || snapshot.page.frontmatter?.core_priority !== undefined)) {
+    const parsed = parseMarkdown(content, row.slug, { activePack });
+    const carried = carryCoreMarking(snapshot.page.frontmatter, parsed.frontmatter ?? {});
+    if (carried.always_load !== parsed.frontmatter?.always_load || carried.core_priority !== parsed.frontmatter?.core_priority) {
+      content = serializePageToMarkdown({ ...snapshot.page, ...parsed, frontmatter: carried }, parsed.tags);
+    }
   }
   const projected = !(row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
   const writer = (row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
@@ -394,7 +415,11 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const sourcePath = file && mintMode ? scannerSourcePath(file.root, file.path, mintMode) : undefined;
   // An inferred mode is pinned with the first origin it mints, so later pages cannot flip the inference (#5610).
   const pinMode = sourcePath && mintMode && scannerSourcePath(file!.root, file!.root) && !await readSlugRootMode(engine, row.source_id) ? mintMode : undefined;
-  return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...await pageDatabaseOnlyPublication(engine, row, file), validate: ready.validate, apply: async tx => {
+  // Always-loaded core tier: owner-only marking, brain-wide budget, remote-edit policy (core-guard.ts).
+  const core = noop ? null : await prepareCoreGuard(engine, { row, snapshot, incoming: targetDeleted ? null : ready.parsedPage });
+  return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...await pageDatabaseOnlyPublication(engine, row, file),
+    ...(core ? { exclusiveSources: core.exclusiveSources } : {}),
+    validate: async tx => { await ready.validate(tx); await core?.validate(tx); }, apply: async tx => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     if (!noop) {
       const applied = await ready.apply(tx);
@@ -422,8 +447,10 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
       // Index installation and terminal receipt share this transaction. The import sealed the projection
       // as its last revision-changing step; only a later revision change (restore, tags, links, delete) reseals.
       if (!(applied?.sealed && row.operation !== 'restore_page' && !versionTags && !links && !targetDeleted)) await sealPageTextProjection(tx, row.slug, row.source_id);
+      if (core) await core.record(tx, (await tx.readPageSnapshot(row.slug, source))?.revision ?? null);
     }
-    return { ...advisories, ...(autoLinks ? {auto_links:autoLinks} : {}),
+    const coreUsage = core?.usage();
+    return { ...advisories, ...(autoLinks ? {auto_links:autoLinks} : {}), ...(coreUsage ? { core: coreUsage } : {}),
       status: noop ? 'skipped' : row.operation === 'restore_page' ? 'restored' : row.operation === 'revert_version' ? 'reverted' : 'created_or_updated',
       slug: row.slug, source_id: row.source_id, chunks: ready.result.chunks, noop,
       ...(ready.result.chunks === 0 ? {chunk_skip_reason: noop ? 'write_skipped'

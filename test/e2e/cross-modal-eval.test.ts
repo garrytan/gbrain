@@ -73,9 +73,9 @@ function makeChatStub(scoresBySlot: Record<string, number[]>) {
 
 describe('gbrain eval cross-modal — judge call shape (#4338 data boundary)', () => {
   test('callSlot sends EVALUATOR_SYSTEM_PROMPT as `system` and the data-bounded prompt as the user turn', async () => {
-    const seen: Array<{ system?: string; messages?: Array<{ role: string; content: string }> }> = [];
-    const chatStub = mock(async (opts: { model?: string; system?: string; messages?: Array<{ role: string; content: string }> }) => {
-      seen.push({ system: opts.system, messages: opts.messages });
+    const seen: Array<{ system?: string; messages?: Array<{ role: string; content: string }>; thinking?: string }> = [];
+    const chatStub = mock(async (opts: { model?: string; system?: string; messages?: Array<{ role: string; content: string }>; thinking?: string }) => {
+      seen.push({ system: opts.system, messages: opts.messages, thinking: opts.thinking });
       const model = opts.model ?? '';
       return {
         text: JSON.stringify({ scores: { goal: { score: 8 }, depth: { score: 8 } }, overall: 8, improvements: ['1. x'] }),
@@ -110,6 +110,8 @@ describe('gbrain eval cross-modal — judge call shape (#4338 data boundary)', (
       expect(call.messages![0]!.role).toBe('user');
       expect(call.messages![0]!.content).toContain('<task_to_grade>');
       expect(call.messages![0]!.content).toContain('<candidate_output>\nsample output content\n</candidate_output>');
+      // #5331: the judge turns thinking off so its JSON fits the output cap.
+      expect(call.thinking).toBe('off');
     }
   });
 });

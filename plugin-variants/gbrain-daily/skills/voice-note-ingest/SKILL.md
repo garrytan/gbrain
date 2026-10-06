@@ -19,6 +19,7 @@ writes_to:
   - companies/
   - ideas/
   - personal/
+when_to_use: "Use when the user asks: \"voice note\", \"ingest this voice memo\", \"transcribe and file\", \"voice note ingest\", \"save this audio note\"."
 ---
 
 # voice-note-ingest — Exact-Phrasing Voice Capture

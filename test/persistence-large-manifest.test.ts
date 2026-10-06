@@ -98,7 +98,7 @@ for (const backend of testBackends()) describe(`large worktree manifests (${back
   test('a 12k-file repository clones and reclones from a local bare repository', () => fixture(async home => {
     const bare = largeBareRepository(home, FILES);
     const target = join(home, 'cloned');
-    const clone = async (_url: string, stage: string) => { execFileSync('git', ['clone', '--quiet', bare, stage], { stdio: 'ignore' }); };
+    const clone = async (_url: string, stage: string) => { execFileSync('git', ['clone', '--quiet', bare, stage], { stdio: ['ignore', 'ignore', 'pipe'] }); };
     const principal = await topologyPrincipal(engine);
     const add = { operation: 'add' as const, sourceId: 'large-clone', path: target, remoteUrl: REMOTE, requestId: randomUUID() };
     expect(await runManagedSourceClone(engine, add, principal, add.requestId, { ...add, requestId: undefined, dryRun: undefined }, { clone }))
@@ -114,7 +114,7 @@ for (const backend of testBackends()) describe(`large worktree manifests (${back
   test('a legacy manifest with a per-file map past 1 MiB is accepted by reclone recovery and compacted', () => fixture(async home => {
     const bare = largeBareRepository(home, 20);
     const target = join(home, 'cloned');
-    const clone = async (_url: string, stage: string) => { execFileSync('git', ['clone', '--quiet', bare, stage], { stdio: 'ignore' }); };
+    const clone = async (_url: string, stage: string) => { execFileSync('git', ['clone', '--quiet', bare, stage], { stdio: ['ignore', 'ignore', 'pipe'] }); };
     const principal = await topologyPrincipal(engine);
     const add = { operation: 'add' as const, sourceId: 'legacy-clone', path: target, remoteUrl: REMOTE, requestId: randomUUID() };
     await runManagedSourceClone(engine, add, principal, add.requestId, { ...add, requestId: undefined, dryRun: undefined }, { clone });

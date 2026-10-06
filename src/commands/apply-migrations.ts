@@ -43,6 +43,7 @@ interface ApplyMigrationsArgs {
   dryRun: boolean;
   json: boolean;
   dbOnlyExport?: OrchestratorOpts['dbOnlyExport'];
+  acceptReviewedInventory?: OrchestratorOpts['acceptReviewedInventory'];
   yes: boolean;
   nonInteractive: boolean;
   mode?: 'always' | 'pain_triggered' | 'off';
@@ -79,6 +80,14 @@ function parseArgs(args: string[]): ApplyMigrationsArgs {
     exitCliError(usageError('DB-only export requires --content-root and exactly one explicit backup choice for a non-dry run.',
       'Example: gbrain apply-migrations --migration <version> --export-db-only --content-root <path> --backup-confirmed --dry-run --json'), COMMAND);
   }
+  const accepted: Record<string, string> = {};
+  args.forEach((arg, i) => {
+    if (arg !== '--accept-reviewed-inventory') return;
+    const match = /^([^=\s]+)=([a-f0-9]{64})$/.exec(args[i + 1] ?? '');
+    if (!match) exitCliError(usageError('--accept-reviewed-inventory takes <source-id>=<64-hex inventory digest>, copied from the migration\'s conflict message.',
+      'Example: gbrain apply-migrations --migration 0.53.0 --accept-reviewed-inventory default=<digest> --yes'), COMMAND);
+    accepted[match![1]] = match![2];
+  });
   if (mode && !['always', 'pain_triggered', 'off'].includes(mode)) {
     exitCliError(usageError(`Invalid --mode "${mode}". Allowed: always, pain_triggered, off.`,
       'Example: gbrain apply-migrations --yes --mode pain_triggered'), COMMAND);
@@ -90,6 +99,7 @@ function parseArgs(args: string[]): ApplyMigrationsArgs {
     dbOnlyExport: exporting ? { root: val('--content-root')!, sourceId: val('--export-source') ?? 'default',
       confirmQuiesced: has('--confirm-quiesced'),
       backup: has('--backup-confirmed') ? 'operator_verified' : has('--acknowledge-no-backup') ? 'acknowledged_unprotected' : undefined } : undefined,
+    ...(Object.keys(accepted).length ? { acceptReviewedInventory: accepted } : {}),
     yes: has('--yes'),
     nonInteractive: has('--non-interactive'),
     mode,
@@ -121,6 +131,10 @@ Usage:
     --confirm-quiesced                   Attest old writers and skill servers are stopped.
     --backup-confirmed                   Attest an operational backup was verified by you.
     --acknowledge-no-backup               Explicitly proceed without a verified backup.
+  gbrain apply-migrations --migration 0.53.0 --accept-reviewed-inventory <source>=<digest> --yes
+                                        Accept a skill-pack change the user reviewed; the
+                                        digest comes from the conflict message and stops
+                                        matching if the files change again. Repeatable.
   gbrain apply-migrations --list [--json]
                                          Show applied + pending migrations.
                                          pending_fresh_install = setup work a
@@ -387,6 +401,7 @@ function orchestratorOptsFrom(cli: ApplyMigrationsArgs, ownLeaseToken?: string):
     hostDir: cli.hostDir,
     noAutopilotInstall: cli.noAutopilotInstall,
     dbOnlyExport: cli.dbOnlyExport && { ...cli.dbOnlyExport, ownLeaseToken },
+    ...(cli.acceptReviewedInventory ? { acceptReviewedInventory: cli.acceptReviewedInventory } : {}),
   };
 }
 

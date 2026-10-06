@@ -25,7 +25,7 @@ export interface RegressionDelta {
   threshold: number;
   /** Human-readable summary line. */
   summary: string;
-  /** True if any 4-sha component differs between current and prior. */
+  /** True if any 4-sha component or the eval protocol differs between current and prior. */
   inputs_differ: boolean;
   /** Specific 4-sha diffs when inputs_differ. */
   input_diffs?: string[];
@@ -55,6 +55,9 @@ export function compareReceipts(
   }
   if (current.rubric_sha8 !== prior.rubric_sha8) {
     inputDiffs.push(`rubric_sha8 differs (${prior.rubric_sha8} → ${current.rubric_sha8})`);
+  }
+  if ((current.protocol_version ?? 1) !== (prior.protocol_version ?? 1)) {
+    inputDiffs.push(`protocol_version differs (${prior.protocol_version ?? 1} → ${current.protocol_version ?? 1})`);
   }
   const inputs_differ = inputDiffs.length > 0;
 

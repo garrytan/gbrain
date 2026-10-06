@@ -7,19 +7,20 @@
  */
 import { describe, expect, test } from 'bun:test';
 import {
-  CEILINGS_MS, evaluateScaleGates, RATE_MIN_PAGES, HEADLINE_OP, HOT_TABLES, KEY_PLAN_OPS, phaseLimitsMs, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS, resultHits, verdictLines,
-  type GatePolicy, type ScaleReport,
+  CEILINGS_MS, evaluateScaleGates, importProgressPerFile, RATE_MIN_PAGES, HEADLINE_OP, HOT_TABLES, KEY_PLAN_OPS, phaseLimitsMs, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS,
+  rateMeasure, resultHits, verdictLines, type GatePolicy, type RateMeasure, type ScaleReport,
 } from '../../scripts/scale/gates.ts';
 
 const ENFORCE: GatePolicy = { enforce: true, enforcePlanner: PLANNER_HEALTH_ENFORCED, enforceCeilings: false };
 const PLAN = { sql: 'SELECT 1', execution_ms: 1, inner_loops: 3, text: 'Result  (actual rows=1 loops=1)' };
+const STEADY: RateMeasure = { rate_ratio: 1.1, total_vs_half: 2.1, per_page_ms_first10: 10, per_page_ms_last10: 11, total_ms: 105_000, ms_at_half: 50_000 };
 
 function passingReport(): ScaleReport {
   const ops = ['get_health', 'list_pages', HEADLINE_OP, 'get_backlinks', 'find_orphans', 'query (hybrid, injected vector)']
     .map(op => ({ op, p50_ms: 10, runs_ms: [10, 10, 10, 10, 10], known_answer: 'pass' as const, plan: { statements: 1, slowest: PLAN, worst_loops: PLAN } }));
   return {
     engine: 'pglite', pages: 10_000, seed: 1, import_mode: 'cli',
-    import: { rate_ratio: 1.1, total_vs_half: 2.1, per_page_ms_first10: 10, per_page_ms_last10: 11 },
+    import: { wall: { ...STEADY }, cpu: { ...STEADY } },
     planner: { hot_table_stat_rows: Object.fromEntries(HOT_TABLES.map(t => [t, 3])), hot_table_rows: Object.fromEntries(HOT_TABLES.map(t => [t, 10_000])), probed_after: 'get_health' },
     ops,
     data: [{ check: 'noop_reimport_writes_nothing', status: 'pass' }],
@@ -101,13 +102,64 @@ describe('scale gates under --enforce', () => {
 
   test('import rate fails on either ratio: last-10% cost, or total vs the halfway mark', () => {
     const slowTail = passingReport();
-    slowTail.import = { ...slowTail.import, rate_ratio: 2.3, per_page_ms_last10: 23 };
+    slowTail.import.cpu = { ...STEADY, rate_ratio: 2.3, per_page_ms_last10: 23 };
     expect(evaluateScaleGates(slowTail, ENFORCE).failures.map(f => f.gate)).toEqual(['import_rate']);
     const slowHalf = passingReport();
-    slowHalf.import = { ...slowHalf.import, total_vs_half: 2.6 };
+    slowHalf.import.cpu = { ...STEADY, total_vs_half: 2.6 };
     expect(evaluateScaleGates(slowHalf, ENFORCE).failures.map(f => f.gate)).toEqual(['import_rate']);
     const tiny = { ...slowHalf, pages: RATE_MIN_PAGES - 1 };
     expect(evaluateScaleGates(tiny, ENFORCE)).toMatchObject({ exitCode: 0, reportOnlyBreaches: [expect.objectContaining({ gate: 'import_rate' })] });
+  });
+
+  // A shared CI host that takes the CPU away mid-import inflates wall time but not the import
+  // process's CPU time; a brain whose per-page work really grows raises both.
+  describe('import rate from the progress stream', () => {
+    const PAGES = 10_000;
+    function progressStream(perPage: (i: number) => { wall: number; cpu: number }): string {
+      let wall = 0;
+      let cpu = 0;
+      const lines = ['{"event":"start","phase":"import.files","total":10000,"ts":"t"}', 'a non-JSON warning line'];
+      for (let i = 0; i < PAGES; i++) {
+        const page = perPage(i);
+        wall += page.wall;
+        cpu += page.cpu;
+        lines.push(JSON.stringify({ event: 'tick', phase: 'import.files', done: i + 1, total: PAGES, elapsed_ms: wall, cpu_ms: cpu, ts: 't' }));
+      }
+      return lines.join('\n');
+    }
+    function importRateGate(engine: ScaleReport['engine'], stderr: string) {
+      const { wallMs, cpuMs } = importProgressPerFile(stderr);
+      const report = { ...passingReport(), engine, import: { wall: rateMeasure(wallMs), cpu: rateMeasure(cpuMs) } };
+      return evaluateScaleGates(report, ENFORCE).results.find(r => r.gate === 'import_rate')!;
+    }
+    const lastTenth = (i: number) => i >= PAGES * 0.9;
+
+    test('wall time spiking while CPU time stays flat passes on PGLite and still fails on Postgres', () => {
+      const stolen = progressStream(i => ({ wall: lastTenth(i) ? 13 : 5, cpu: 5 }));
+      const pglite = importRateGate('pglite', stolen);
+      expect(pglite.status).toBe('pass');
+      expect(pglite.message).toContain('import rate (cpu time): last 10% per-page cost 5 ms is 1x the first 10%');
+      expect(pglite.message).toContain('Not judged on pglite: wall time ratio 2.6');
+      const postgres = importRateGate('postgres', stolen);
+      expect(postgres.status).toBe('fail');
+      expect(postgres.message).toContain('import rate (wall time): last 10% per-page cost 13 ms is 2.6x the first 10%');
+    });
+
+    test('CPU time rising with the brain fails on both engines', () => {
+      const growing = progressStream(i => ({ wall: lastTenth(i) ? 13 : 5, cpu: lastTenth(i) ? 12 : 5 }));
+      expect(importRateGate('pglite', growing)).toMatchObject({ status: 'fail', enforced: true });
+      expect(importRateGate('postgres', growing)).toMatchObject({ status: 'fail', enforced: true });
+    });
+
+    test('a tick without cpu_ms, or a missing tick, leaves NaN for the harness to reject', () => {
+      const stream = progressStream(() => ({ wall: 5, cpu: 5 })).split('\n');
+      stream[5] = stream[5]!.replace(/,"cpu_ms":\d+/, '');
+      stream.splice(9, 1);
+      const { wallMs, cpuMs } = importProgressPerFile(stream.join('\n'));
+      expect(wallMs).toHaveLength(PAGES);
+      expect(Number.isNaN(cpuMs[3]!) && Number.isNaN(cpuMs[4]!)).toBe(true);
+      expect(wallMs.filter(ms => !Number.isFinite(ms))).toHaveLength(2);
+    });
   });
 
   test('a failed data check (no-op re-import wrote rows) exits 1 naming the check', () => {

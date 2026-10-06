@@ -47,6 +47,11 @@ describe('parseDateLoose', () => {
   test('invalid Date → null', () => {
     expect(parseDateLoose(new Date('not a date'))).toBeNull();
   });
+  test('chat-export "<time> on <day> <Month>, <year>" parses to the calendar day', () => {
+    expect(parseDateLoose('1:56 pm on 8 May, 2023')?.toISOString()).toBe('2023-05-08T00:00:00.000Z');
+    expect(parseDateLoose('10:04 am on March 3, 2024')?.toISOString()).toBe('2024-03-03T00:00:00.000Z');
+    expect(computeEffectiveDate({ slug: 'chat/x', frontmatter: { date: '1:56 pm on 8 May, 2023' }, updatedAt: new Date(), createdAt: new Date() }).source).toBe('date');
+  });
   test('unparseable string → null', () => {
     expect(parseDateLoose('tomorrow')).toBeNull();
     expect(parseDateLoose('garbage')).toBeNull();

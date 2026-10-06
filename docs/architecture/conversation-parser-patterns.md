@@ -137,11 +137,37 @@ formats:
 
 - `**Speaker** (09:15): text` uses `bold-paren-time`.
 - `**Speaker** (9:15 AM): text` uses `bold-paren-time-12h`.
-- `**Speaker:** text` uses `bold-name-no-time`. Its `repeat_speaker_min_turns: 3` structure gate returns no_match when three or more turns never repeat a speaker — a status note's `**Status:**`/`**Owner:**`/`**Next step:**` labels are not a conversation (gbrain-evals N12-1).
+- `**Speaker:** text` uses `bold-name-no-time`. Its `repeat_speaker_min_turns: 3` structure gate returns no_match when three or more turns never repeat a speaker — a status note's `**Status:**`/`**Owner:**`/`**Next step:**` labels are not a conversation (gbrain-evals N12-1). A bold label that is exactly a meeting-note metadata label (`METADATA_LABELS` in `builtins.ts`: Attendees, Date, Location, Summary, Agenda, Action items and similar, case-insensitive) is never a speaker, so `**Attendees:**` / `**Date:**` header lines on meeting notes are not turns.
 - `**Speaker** (2026-04-09 9:15 AM): text` uses `imessage-slack`.
 
 Keeping these examples in both `test_negative` and parser regression tests makes
 the non-shadowing contract executable.
+
+## Email threads
+
+`email-thread-heading` reads gbrain's Gmail thread page
+(`src/core/google/google-render.ts`): one `## <From> · YYYY-MM-DD HH:MM` heading
+per message, `## → <From> · …` for a sent message, the message body below it.
+The speaker is the From display name (the `<address>` and quotes are dropped;
+a bare address stays as is) and the heading time is UTC. Because each anchor
+carries its own date, other headings in an email body are message text, not
+folded speakers. extract-conversation-facts treats a thread as one
+conversation: unless the page sets `conversation_segment_gap_minutes`, the
+segment gap is the 7-day maximum instead of 30 minutes.
+
+## Meeting notes and undated pages
+
+On a brain without managed persistence, a meeting or email page that yields no
+speaker turns and has the shape of meeting notes or a calendar event
+(`looksLikeMeetingNotes`: a bold metadata label line, or an Attendees /
+Participants / Agenda / Action items section) is recorded as scanned, not
+extractable, when no LLM fallback is configured, and so is a one-message email
+thread (an email, not a conversation); they leave the backlog until the page
+changes. Other speaker-less pages, and these pages on a managed brain, stay
+retryable. A time-only parse on a page with no date would place every turn on
+1970-01-01; extract-conversation-facts records it as not extractable instead
+(adding a `date:` reopens it). The parser itself still reports those
+timestamps.
 
 ## Single-quoted speaker objects
 

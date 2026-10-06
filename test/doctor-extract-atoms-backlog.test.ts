@@ -193,6 +193,11 @@ async function seedCycledSource(id: string, lastFullCycleAt?: string): Promise<v
   );
 }
 
+/** #5028: stamp a source's last_extract_atoms_at (what stampExtractAtomsRun writes). */
+async function stampExtractAtoms(id: string, iso: string): Promise<void> {
+  await engine.updateSourceConfig(id, { last_extract_atoms_at: iso });
+}
+
 describe('computeExtractAtomsBacklogCheck — declared branch verifies a runner (#4576)', () => {
   beforeEach(() => {
     _resetPackCacheForTests();
@@ -230,10 +235,35 @@ describe('computeExtractAtomsBacklogCheck — declared branch verifies a runner 
   it('stays OK when a cycle completed recently (fresh evidence)', async () => {
     for (let i = 0; i < 11; i++) await seedArticle(`declared-fresh-${i}`);
     await seedCycledSource('vault', new Date(Date.now() - 3600_000).toISOString());
+    // #5028: the OK also needs the backlog source's own extract_atoms stamp;
+    // a fresh full-cycle stamp alone is the freshness-only false OK below.
+    await stampExtractAtoms('default', new Date(Date.now() - 3600_000).toISOString());
     const check = await withEnv(PACK_ENV, () => computeExtractAtomsBacklogCheck(engine));
     expect(check.status).toBe('ok');
     expect(check.message).toContain('active pack runs extract_atoms each cycle');
     expect((check.details as { pack_declares_phase: boolean }).pack_declares_phase).toBe(true);
+  });
+
+  it('WARNs when cycles run but extract_atoms itself has not run for the backlog source (#5028)', async () => {
+    for (let i = 0; i < 11; i++) await seedArticle(`declared-freshness-only-${i}`);
+    await seedCycledSource('vault', new Date(Date.now() - 3600_000).toISOString());
+    const check = await withEnv(PACK_ENV, () => computeExtractAtomsBacklogCheck(engine));
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('extract_atoms has not run in the last 48h for source(s) default');
+    expect(check.message).toContain('gbrain dream --phase extract_atoms --drain --source default');
+    const details = check.details as { cycle_evidence: string; phase_evidence: string; phase_stale_sources: Array<{ source_id: string; backlog: number; last_extract_atoms_at: string | null }> };
+    expect(details.cycle_evidence).toBe('fresh');
+    expect(details.phase_evidence).toBe('stale');
+    expect(details.phase_stale_sources).toEqual([{ source_id: 'default', backlog: 11, last_extract_atoms_at: null }]);
+  });
+
+  it('WARNs when the backlog source last ran extract_atoms outside the 48h window (#5028)', async () => {
+    for (let i = 0; i < 11; i++) await seedArticle(`declared-phase-stale-${i}`);
+    await seedCycledSource('vault', new Date(Date.now() - 3600_000).toISOString());
+    await stampExtractAtoms('default', new Date(Date.now() - 72 * 3600_000).toISOString());
+    const check = await withEnv(PACK_ENV, () => computeExtractAtomsBacklogCheck(engine));
+    expect(check.status).toBe('warn');
+    expect((check.details as { phase_evidence: string }).phase_evidence).toBe('stale');
   });
 
   it('stays OK below the warn threshold even with no cycle evidence', async () => {

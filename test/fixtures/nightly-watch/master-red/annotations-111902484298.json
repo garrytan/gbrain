@@ -1,0 +1,68 @@
+[
+ {
+  "annotation_level": "warning",
+  "path": ".github",
+  "title": "",
+  "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684, actions/checkout@11d5960a326750d5838078e36cf38b85af677262, actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "src/core/embed-facts.ts",
+  "title": "error: Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+  "message": "\n      at embedStaleFacts (/home/runner/work/gbrain/gbrain/src/core/embed-facts.ts:106:15)\n      at async <anonymous> (/home/runner/work/gbrain/gbrain/test/e2e/fact-embedding-backfill-parity.test.ts:232:28)"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "src/core/embed-facts.ts",
+  "title": "error: Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+  "message": "\n      at embedStaleFacts (/home/runner/work/gbrain/gbrain/src/core/embed-facts.ts:106:15)\n      at async <anonymous> (/home/runner/work/gbrain/gbrain/test/e2e/fact-embedding-backfill-parity.test.ts:213:28)"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "src/core/embed-facts.ts",
+  "title": "error: Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+  "message": "\n      at embedStaleFacts (/home/runner/work/gbrain/gbrain/src/core/embed-facts.ts:106:15)\n      at async <anonymous> (/home/runner/work/gbrain/gbrain/test/e2e/fact-embedding-backfill-parity.test.ts:199:28)"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "src/core/embed-facts.ts",
+  "title": "error: Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+  "message": "\n      at embedStaleFacts (/home/runner/work/gbrain/gbrain/src/core/embed-facts.ts:106:15)\n      at async <anonymous> (/home/runner/work/gbrain/gbrain/test/e2e/fact-embedding-backfill-parity.test.ts:162:28)"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "src/core/embed-facts.ts",
+  "title": "error: Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+  "message": "\n      at embedStaleFacts (/home/runner/work/gbrain/gbrain/src/core/embed-facts.ts:106:15)\n      at async <anonymous> (/home/runner/work/gbrain/gbrain/test/e2e/fact-embedding-backfill-parity.test.ts:152:28)"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "src/core/embed-facts.ts",
+  "title": "error: Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+  "message": "\n      at embedStaleFacts (/home/runner/work/gbrain/gbrain/src/core/embed-facts.ts:106:15)\n      at async <anonymous> (/home/runner/work/gbrain/gbrain/test/e2e/fact-embedding-backfill-parity.test.ts:143:28)"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "src/core/embed-facts.ts",
+  "title": "error: Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+  "message": "\n      at embedStaleFacts (/home/runner/work/gbrain/gbrain/src/core/embed-facts.ts:106:15)\n      at async <anonymous> (/home/runner/work/gbrain/gbrain/test/e2e/fact-embedding-backfill-parity.test.ts:131:28)"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "src/core/embed-facts.ts",
+  "title": "error: Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+  "message": "\n      at embedStaleFacts (/home/runner/work/gbrain/gbrain/src/core/embed-facts.ts:106:15)\n      at async <anonymous> (/home/runner/work/gbrain/gbrain/test/e2e/fact-embedding-backfill-parity.test.ts:120:27)"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "src/core/embed-facts.ts",
+  "title": "error: Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+  "message": "\n      at embedStaleFacts (/home/runner/work/gbrain/gbrain/src/core/embed-facts.ts:106:15)\n      at async <anonymous> (/home/runner/work/gbrain/gbrain/test/e2e/fact-embedding-backfill-parity.test.ts:98:27)"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "vendor/postgres/src/connection.js",
+  "title": "PostgresError: expected 8 dimensions, not 1536",
+  "message": "\n      at ErrorResponse (/home/runner/work/gbrain/gbrain/vendor/postgres/src/connection.js:833:30)\n      at handle (/home/runner/work/gbrain/gbrain/vendor/postgres/src/connection.js:503:7)\n      at data (/home/runner/work/gbrain/gbrain/vendor/postgres/src/connection.js:330:9)\n      at emit (node:events:100:22)\n      at addChunk (internal:streams/readable:267:47)\n      at readableAddChunkPushByteMode (internal:streams/readable:245:18)\n      at data (node:net:633:72)"
+ }
+]

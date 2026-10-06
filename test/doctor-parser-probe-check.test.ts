@@ -33,6 +33,18 @@ describe('computeConversationParserProbeHealthCheck', () => {
     expect(check.message).toContain('all pass');
   });
 
+  test('a skipped run (fixtures unreadable) → warn naming the skip and its reason, not ok (C-N6)', () => {
+    const check = computeConversationParserProbeHealthCheck(true, [
+      ev('skipped', 'fixture_unavailable: /$bunfs/root/all.jsonl is not readable'),
+    ]);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('latest: skipped (fixture_unavailable: /$bunfs/root/all.jsonl is not readable)');
+  });
+
+  test('enabled with no events no longer blames a source-checkout install (C-N6)', () => {
+    expect(computeConversationParserProbeHealthCheck(true, []).message).not.toContain('source-checkout');
+  });
+
   test('any non-pass outcome in the window → warn, latest surfaced with reason', () => {
     const check = computeConversationParserProbeHealthCheck(true, [
       ev('pass'),

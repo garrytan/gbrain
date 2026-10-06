@@ -26,6 +26,7 @@ writes_to:
   - deals/
   - concepts/
   - meetings/
+when_to_use: "Use when the user asks: \"any brain read/write/lookup/citation\"."
 ---
 
 # Brain Operations — The Ambient Context Layer

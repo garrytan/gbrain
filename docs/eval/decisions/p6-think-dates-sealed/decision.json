@@ -1,0 +1,85 @@
+{
+ "schema_version": 1,
+ "decision_id": "p6-think-dates-sealed",
+ "plan": "P6",
+ "title": "P6 R1 held-out: think date frame (current date + page content dates)",
+ "verdict_type": "quality",
+ "stage": "sealed",
+ "candidate": {
+  "gbrain": "github:garrytan/gbrain#2815a8368cb38d2bbc8bf23bf2c3d2ca34aa6756",
+  "config": {}
+ },
+ "baseline": {
+  "gbrain": "github:garrytan/gbrain#67c4ff27bd0a5a8a02ccb66cd663d3aa1daf9969",
+  "config": {}
+ },
+ "harness": {
+  "repo": "garrytan/gbrain-evals",
+  "ref": "p0-heldout-harness",
+  "sha": "cf270c2093d381f104715cd9db7331e6ffe890c8",
+  "reference_date": "question date (YYYY-MM-DD); for LoCoMo, which has no question date, the latest session date of the conversation (harness cf270c2), as in the development measurement",
+  "pin_note": "Corrected 2026-10-05 before any result was read: the first pin named 0dd5b75c, which lacks the LoCoMo latest-session-date fallback amendment 3 requires."
+ },
+ "sources": [
+  {
+   "id": "locomo-sealed-think",
+   "kind": "memory-qa",
+   "benchmark": "locomo",
+   "split": "sealed",
+   "embed": "real",
+   "limit": null,
+   "search_pins": {
+    "search.mode": "balanced",
+    "search.reranker.enabled": "false",
+    "search.autocut": "false"
+   },
+   "top_k": 10,
+   "id_field": "id",
+   "exclude_when": [],
+   "min_clusters": 7,
+   "comparisons": [
+    {
+     "id": "qa-score",
+     "metric": "qa_score",
+     "gate": "superiority",
+     "direction": "higher",
+     "min_effect": 0,
+     "cluster_by": "conversation",
+     "description": "judged answer correctness through production think"
+    },
+    {
+     "id": "recall-all-5",
+     "metric": "recall_all_at_5",
+     "gate": "exploratory",
+     "direction": "higher",
+     "cluster_by": "conversation"
+    },
+    {
+     "id": "qa-input-tokens",
+     "metric": "qa_input_tokens",
+     "gate": "exploratory",
+     "direction": "lower",
+     "cluster_by": "conversation"
+    }
+   ],
+   "estimate_usd": 50,
+   "qa": {
+    "mode": "think",
+    "runs": 1,
+    "sessions": 5
+   }
+  }
+ ],
+ "confirmation": {
+  "benchmark": "lme-m",
+  "split": "sealed",
+  "lane": "memory-qa think, same settings",
+  "role": "disclosed confirmation; LongMemEval-S questions were all used in development"
+ },
+ "alpha": 0.05,
+ "seed": 42,
+ "draws": 10000,
+ "budget_usd": 150,
+ "created_at": "2026-10-05T00:00:00Z",
+ "notes": "Preregistered in docs/eval/TIME_AWARE_RETRIEVAL_PREREG.md, amendment 3. Primary: judged answer correctness through production think on the seven sealed LoCoMo conversations (diagnostic per the split note: fewer than ten clusters). Default-on bar: paired interval excluding zero, no question category down by more than one question, think p95 latency within +20%."
+}

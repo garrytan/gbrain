@@ -83,6 +83,25 @@ function scrubErrorChain(err: unknown, redact: (text: string) => string): void {
   }
 }
 
+/** Model ids a provider renamed, mapped to the current id (B-N7: suggested on a 404). */
+const KNOWN_MODEL_RENAMES: Readonly<Record<string, string>> = {
+  'deepseek:deepseek-v4-flash': 'deepseek:deepseek-flash',
+};
+
+/**
+ * Recovery text for a provider 404 (`model_not_found`): the model id and
+ * provider from the call context (`chat(provider:model)`), the command that
+ * lists the configured routes, and a known rename when there is one.
+ */
+export function modelNotFoundFix(context: string | undefined): string {
+  const model = context?.match(/\(([^()\s]+:[^()\s]+)\)\s*$/)?.[1];
+  const provider = model?.slice(0, model.indexOf(':'));
+  const rename = model ? KNOWN_MODEL_RENAMES[model] : undefined;
+  return `Check the model id: ${model ? `the ${provider} provider does not serve ${model}` : 'the provider does not serve this model'}, or this key has no access to it. ` +
+    'Run `gbrain models` to see the configured model routes, then set a model the provider lists.' +
+    (rename ? ` ${model} was renamed: use ${rename}.` : '');
+}
+
 /**
  * `redact` scrubs upstream text before it becomes the message, and in the
  * wrapped error (#5137: the gateway passes its provider-key redactor, since
@@ -118,6 +137,7 @@ export function normalizeAIError(err: unknown, context?: string, redact?: (text:
       `${ctxPrefix}${msg}`,
       status === 401 || status === 403
         ? 'Check your API key is valid and has access to this model.'
+        : status === 404 ? modelNotFoundFix(context)
         : 'Check your model id + provider options match the provider API.',
       err,
     ));
@@ -132,12 +152,33 @@ export function normalizeAIError(err: unknown, context?: string, redact?: (text:
   return carryStatusFields(err, new AITransientError(`${ctxPrefix}${msg}`, err));
 }
 
+/**
+ * HTTP 400 bodies that are a content-policy refusal of the prompt rather than
+ * a malformed request: OpenAI's `invalid_prompt` usage-policy flag, OpenAI and
+ * Azure OpenAI `content_policy_violation` / `content_filter` (Azure's
+ * `ResponsibleAIPolicyViolation`), and DeepSeek's "Content Exists Risk".
+ */
+const CONTENT_POLICY_400_CODES = new Set(['invalid_prompt', 'content_policy_violation', 'content_filter', 'ResponsibleAIPolicyViolation']);
+
+function contentPolicy400Reason(responseBody: string): string | undefined {
+  let error: { code?: unknown; message?: unknown; innererror?: { code?: unknown } } | undefined;
+  try { error = JSON.parse(responseBody)?.error; } catch { return undefined; }
+  for (const code of [error?.innererror?.code, error?.code]) {
+    if (typeof code === 'string' && CONTENT_POLICY_400_CODES.has(code)) return code;
+  }
+  return error?.message === 'Content Exists Risk' ? 'content_exists_risk' : undefined;
+}
+
 /** A provider refusal tied to the prompt, even when the SDK wraps its response. */
 export function providerContentBlockReason(err: unknown): string | undefined {
   for (let depth = 0; depth < 8 && err != null; depth++) {
     try {
       if (typeof err !== 'object') break;
       const value = err as { responseBody?: unknown; statusCode?: unknown; status?: unknown; cause?: unknown };
+      if (typeof value.responseBody === 'string' && (value.statusCode === 400 || value.status === 400)) {
+        const reason = contentPolicy400Reason(value.responseBody);
+        if (reason) return reason;
+      }
       if (typeof value.responseBody === 'string' &&
           (value.statusCode == null || value.statusCode === 200) &&
           (value.status == null || value.status === 200)) {
@@ -160,7 +201,7 @@ export function providerContentBlockReason(err: unknown): string | undefined {
 }
 
 /** Whole-run LLM failure classes — see classifyGlobalLlmError. */
-export type GlobalLlmErrorClass = 'auth' | 'billing' | 'rate_limit';
+export type GlobalLlmErrorClass = 'auth' | 'billing' | 'rate_limit' | 'model_not_found';
 
 /**
  * Consecutive rate_limit-classified failures a cycle phase tolerates before
@@ -189,6 +230,10 @@ const BILLING_MESSAGE_RE =
 const AUTH_MESSAGE_RE =
   /authentication_error|permission_error|invalid (?:x-)?api[-_ ]?key|api key (?:is )?(?:invalid|expired|missing)|unauthorized/i;
 const RATE_MESSAGE_RE = /rate[-_ ]?limit(?:ed|_error)?\b|too many requests/i;
+// Provider 404 phrasings for an unknown or inaccessible model (OpenAI
+// `model_not_found` / "does not exist or you do not have access", Anthropic
+// `not_found_error`), for errors that carry no numeric 404.
+const MODEL_NOT_FOUND_MESSAGE_RE = /\bmodel_not_found\b|\bnot_found_error\b|does not exist or you do not have access/i;
 // Structured status forms only; a bare number in prose ("processed 429
 // pages") never matches either shape. The quoted-JSON form
 // (`"api_error_status":429`, the claude-cli result blob) cannot occur as free
@@ -239,15 +284,18 @@ export function isStructuredOutputRejection(err: unknown): boolean {
 function statusToClass(status: number): GlobalLlmErrorClass | null {
   if (status === 401 || status === 403) return 'auth';
   if (status === 402) return 'billing';
+  if (status === 404) return 'model_not_found';
   if (status === 429) return 'rate_limit';
   return null;
 }
 
 /**
- * Detect whole-run LLM failure conditions — auth, billing, rate limit — that
+ * Detect whole-run LLM failure conditions — auth, billing, rate limit, an
+ * unknown or inaccessible model (a 404, `model_not_found`, B-N7: labelled
+ * apart from auth so an operator does not debug a valid key) — that
  * make retrying the SAME call on the next item pointless: every remaining
  * page/take in a cycle phase would fail identically (#3044). Callers halt
- * their per-item loop on 'auth'/'billing' immediately and on 'rate_limit'
+ * their per-item loop on 'auth'/'billing'/'model_not_found' immediately and on 'rate_limit'
  * after RATE_LIMIT_HALT_STREAK consecutive hits, surfacing a phase-level
  * halt instead of accumulating one swallowed warning per item.
  *
@@ -287,6 +335,7 @@ export function classifyGlobalLlmError(err: unknown): GlobalLlmErrorClass | null
     const byStatus = statusToClass(status);
     if (byStatus) return byStatus;
   }
+  if (MODEL_NOT_FOUND_MESSAGE_RE.test(phraseText)) return 'model_not_found';
   // Config-level errors are whole-run by construction — a missing/invalid
   // key or an unknown model id fails identically on every call. The gateway
   // throws AIConfigError directly for missing keys ("OpenAI chat requires
@@ -313,6 +362,7 @@ export type GlobalLlmHaltDecision =
   | 'halt-auth'
   | 'halt-billing'
   | 'halt-rate_limit'
+  | 'halt-model_not_found'
   | 'continue';
 
 /** Map a halt decision back to its GlobalLlmErrorClass ('continue' → null). */
@@ -338,7 +388,7 @@ export interface GlobalLlmHaltTracker {
 
 /**
  * The one halt policy every cycle phase's per-item LLM loop applies (#3044):
- * auth/billing halt on the FIRST hit (a revoked key or exhausted spend limit
+ * auth/billing/model_not_found halt on the FIRST hit (a revoked key, a missing model or exhausted spend limit
  * is deterministic — every remaining item would fail identically); a bare
  * rate_limit halts only after RATE_LIMIT_HALT_STREAK consecutive hits (a
  * burst 429 can clear between items); everything else stays per-item.
@@ -352,7 +402,7 @@ export function createGlobalLlmHaltTracker(): GlobalLlmHaltTracker {
     observe(err, opts) {
       const cls = classifyGlobalLlmError(err);
       lastCls = cls;
-      if (cls === 'auth' || cls === 'billing') {
+      if (cls === 'auth' || cls === 'billing' || cls === 'model_not_found') {
         lastNote = `${cls} error is a whole-run condition`;
         return `halt-${cls}`;
       }

@@ -30,8 +30,11 @@ describe('autopilot auto-drain wiring', () => {
     expect(SRC).toContain('countExtractAtomsBacklog(engine, src.id)');
   });
 
-  test('gates on pack NOT declaring extract_atoms (the silent-backlog condition)', () => {
-    expect(SRC).toContain("packDeclaresPhase(engine, 'extract_atoms')");
+  // #5028 (D6): the pack-declaration gate was removed on the daemon path; a
+  // declaring pack does not make the daemon's cycles run extract_atoms.
+  // Behavior pinned by test/autopilot-auto-drain-declared-pack-5028.test.ts.
+  test('does not gate on the pack declaring extract_atoms (#5028)', () => {
+    expect(SRC).not.toContain("packDeclaresPhase(engine, 'extract_atoms')");
   });
 
   test('gates on the enabled flag and a daily spend cap (DECISION 3C)', () => {

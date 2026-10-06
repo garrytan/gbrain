@@ -25,6 +25,7 @@ writes_to:
   - companies/
   - sources/
 upstream: two-tier-extraction@fc834ee
+when_to_use: "Use when the user asks: \"two-tier extraction\", \"triage then deep read\", \"smart model routing\", \"cheap triage expensive analysis\", \"model escalation pattern\"."
 ---
 
 # Two-Tier Extraction

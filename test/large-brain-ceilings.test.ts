@@ -18,22 +18,18 @@
  * waiting an hour.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
-import { writeLargeWorktree } from './helpers/large-worktree.ts';
+import { commitFixtureRepository, writeLargeWorktree } from './helpers/large-worktree.ts';
 
 const LARGE_CHECKOUT_FILES = 20_000;
 const KEYS = { OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined, VOYAGE_API_KEY: undefined };
 
 function commitWorktree(root: string, files: number): void {
   writeLargeWorktree(root, files);
-  const git = (args: string[]) => execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args], { cwd: root, stdio: 'ignore' });
-  git(['init', '--quiet']);
-  git(['add', '-A']);
-  git(['commit', '--quiet', '-m', 'fixture']);
+  commitFixtureRepository(root);
 }
 
 let dir: string;

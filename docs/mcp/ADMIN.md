@@ -220,6 +220,35 @@ requests. Added scopes require a fresh token; refresh cannot widen the original
 token's scope ceiling. Native OAuth clients must reconnect and obtain fresh
 owner approval. TTL changes affect future tokens only.
 
+### Access-token lifetime
+
+An access token lives at most 90 days (7,776,000 seconds), whatever a
+client's stored lifetime or the server's `serve --http --token-ttl` says.
+`--token-ttl` and every grant editor accept 60 to 7,776,000 seconds; `serve`
+refuses anything else at startup.
+
+Upgrading to this release brings older settings inside that range once:
+
+- A stored client lifetime above 90 days becomes 90 days. One below 60 seconds
+  becomes 60 seconds, and a zero or negative one becomes the server default.
+  Each change bumps the client's grant revision and writes an audit row.
+- Access tokens already issued expire no later than 90 days after they were
+  issued. A token older than that stops working. No expiry is extended.
+  Refresh tokens and legacy bearer tokens are unchanged.
+
+`gbrain auth clients` marks each affected client (`token_lifetime_clamped` in
+`--json`). A client with a refresh token or machine credentials gets a new
+access token on its next refresh. A native OAuth client whose token has
+expired and whose refresh token is gone must reconnect and get owner approval
+again. Restart every running `gbrain serve --http` process after upgrading so
+it issues tokens under the new limit.
+
+When `whoami` reports `token_ttl_invalid`, the stored lifetime is outside the
+range and every grant change is refused until it is fixed. Add the
+`--token-ttl <APPROVED_TTL_SECONDS>` choice from its repair template, for
+example `gbrain auth rescope-client CLIENT_ID --token-ttl 7776000 --dry-run --json`,
+then apply the same flags without `--dry-run`.
+
 ## Dashboard API keys
 
 **Say to your agent:** *"Make a read-only API key for my notes app."* The
@@ -315,6 +344,18 @@ from `gbrain auth list`. The older commands stay as aliases:
 `--allowed-operations`, `--surface`, `--profile`, ...), which also pass through
 `auth rescope --client`, and `gbrain auth permissions <name>
 set-takes-holders <list>` is `auth rescope --token <name> --takes-holders <list>`.
+For a client, `--allowed-operations all` and `--operations all` are aliases:
+both store no operation snapshot and clear the profile.
+
+`gbrain auth clients` (text and `--json`) reports each client's operation
+snapshot in one of four states: `operations: "all"` with
+`includes_future_operations: true` when no snapshot is stored (scopes, surface
+and source limits still apply), `[]` (deny-all), an explicit list, or
+`"unavailable"` on a brain whose schema predates operation snapshots. A live
+client with no snapshot carries a `fix` that re-pins it:
+`gbrain auth rescope --client <client_id> --operations <op,...>` or
+`--profile <profile>`. A revoked client is marked `revoked` with its
+`revoked_at` time and gets no fix.
 
 ### One grant shape
 

@@ -5,7 +5,8 @@ import { opError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { loadConfig } from '../config.ts';
-import { readProjectionSnapshot, preparePageProjection, installPageProjection, installPageEmbeddings } from '../page-state/projections.ts';
+import { readProjectionSnapshot, preparePageProjection, installPageProjection, installPageEmbeddings, retryProjectionConflict } from '../page-state/projections.ts';
+import { PageRevisionConflictError } from '../page-state/types.ts';
 import { embedBatchWithBackoff } from '../embed-retry.ts';
 import { submissionAuthority } from './authority.ts';
 import { currentVerifiedLocalWriter, registerLocalWriter } from './identity.ts';
@@ -64,9 +65,17 @@ export async function reindexCodeProjection(engine: BrainEngine, slug: string, s
   } else if (!opts.force && snapshot.snapshot.page.text_projection_revision === snapshot.snapshot.revision) {
     result = { status: 'skipped', chunks: 0 };
   } else {
-    const projection = await preparePageProjection(snapshot);
-    await installPageProjection(engine, snapshot, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
-    result = { status: 'imported', chunks: projection.chunks.length };
+    // The loser of a race with another installer (the resident projection rebuild) re-reads and prepares again.
+    let attempt = 0;
+    result = await retryProjectionConflict(async () => {
+      const prepared = attempt++ === 0 ? snapshot : await readProjectionSnapshot(engine, slug, sourceId, { allowUnsealed: true });
+      if (!prepared || prepared.snapshot.revision !== snapshot.snapshot.revision || prepared.snapshot.page.id !== snapshot.snapshot.page.id
+        || prepared.snapshot.sourceIncarnation !== snapshot.snapshot.sourceIncarnation) throw new PageRevisionConflictError(snapshot.snapshot.revision, prepared?.snapshot.revision ?? null);
+      if (!opts.force && prepared.snapshot.page.text_projection_revision === prepared.snapshot.revision) return { status: 'skipped' as const, chunks: 0 };
+      const projection = await preparePageProjection(prepared);
+      await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
+      return { status: 'imported' as const, chunks: projection.chunks.length };
+    });
   }
   if (!opts.noEmbed && result.status === 'imported') {
     const prepared = await readProjectionSnapshot(engine, slug, sourceId);

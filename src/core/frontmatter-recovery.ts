@@ -15,7 +15,7 @@
  * rewritten, folded into or guessed; identity keys are never resolved from a
  * duplicate.
  */
-import { safeLoad } from 'js-yaml';
+import { load } from 'js-yaml';
 import { FRONTMATTER_SCHEMA } from './data-frontmatter.ts';
 
 /** Bump when a rule widens; older holds are re-screened. */
@@ -65,7 +65,7 @@ interface YamlFailure { reason: string; line: number | null; column: number | nu
 
 function loadBlock(text: string): { ok: true; data: unknown } | { ok: false; failure: YamlFailure } {
   try {
-    return { ok: true, data: safeLoad(text, { schema: FRONTMATTER_SCHEMA }) };
+    return { ok: true, data: load(text, { schema: FRONTMATTER_SCHEMA }) };
   } catch (error) {
     const e = error as { reason?: string; mark?: { line?: number; column?: number } };
     return { ok: false, failure: { reason: e.reason ?? 'malformed YAML', line: e.mark?.line ?? null, column: e.mark?.column ?? null } };

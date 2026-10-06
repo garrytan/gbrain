@@ -62,6 +62,9 @@ Options:
                            or archived source is a hard error (exit 1).
   --since YYYY-MM-DD       Start of temporal window
   --until YYYY-MM-DD       End of temporal window
+  --reference-date YYYY-MM-DD
+                           Date the question's relative time words ("last month")
+                           resolve against (default: today in brain.timezone)
   --with-calibration       Inject the active calibration profile (anti-bias rewrite)
   --calibration-holder <h> Holder whose calibration profile to use (default: self)
   --json                   Output as JSON
@@ -71,6 +74,9 @@ Without --save, the synthesis is printed to stdout and discarded. With --save,
 the synthesis page is persisted AND printed. If --save is given but no synthesis
 was produced (no LLM available, or empty result), nothing is saved and the command
 exits non-zero.
+
+Dates: the reader sees today's date in brain.timezone and each page's content
+date; see docs/guides/time-aware-recall.md.
 
 Set ANTHROPIC_API_KEY (or run: gbrain config set anthropic_api_key ...) to run
 real synthesis. Without it AND without --save, the gather phase still runs and
@@ -83,7 +89,7 @@ prints what would have been the input (exit 0).
   // #4508: --source and --calibration-holder were MISSING here — the flag and
   // its value joined the positional question, so `think "q" --source X`
   // echoed `# --source X q` and silently ignored the scope.
-  const flagNames = ['--anchor', '--rounds', '--model', '--since', '--until', '--source', '--calibration-holder'];
+  const flagNames = ['--anchor', '--rounds', '--model', '--since', '--until', '--source', '--calibration-holder', '--reference-date'];
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -106,6 +112,7 @@ prints what would have been the input (exit 0).
   const model = flagValue(args, '--model');
   const since = flagValue(args, '--since');
   const until = flagValue(args, '--until');
+  const referenceDate = flagValue(args, '--reference-date');
   // v0.36.1.0 (E1, D22) — anti-bias rewrite mode. Off by default (no
   // regression for existing think users). When on, the active calibration
   // profile gets injected per D22 placement (after retrieval, before question).
@@ -149,6 +156,7 @@ prints what would have been the input (exit 0).
     }
     const raw = await callRemoteTool(cfg!, 'think', {
       question, anchor, rounds, model, since, until,
+      ...(referenceDate ? { reference_date: referenceDate } : {}),
       // save/take intentionally NOT forwarded — server would ignore them;
       // we surface the intent above so users know what they lose.
     }, { timeoutMs: 180_000 });
@@ -184,6 +192,7 @@ prints what would have been the input (exit 0).
       }
       result = await runThink(engine, {
         question, anchor, rounds, save, take, model, since, until,
+        ...(referenceDate ? { referenceDate } : {}),
         // Fail-closed trust: local CLI must say so explicitly, or trajectory
         // injection degrades to visibility='world' rows.
         remote: false,

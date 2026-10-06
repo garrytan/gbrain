@@ -10,6 +10,7 @@ triggers:
   - "skillopt for"
 mutating: true
 brain_first: exempt
+when_to_use: "Use when the user asks: \"optimize this skill\", \"tune the skill against the benchmark\", \"make the skill better\", \"run skillopt\", \"skillopt for\"."
 ---
 
 # Skill Optimizer

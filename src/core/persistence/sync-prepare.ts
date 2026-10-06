@@ -38,7 +38,7 @@ import { frontmatterSlugConflictMessage } from './verb-errors.ts';
 import { CHUNKER_VERSION } from '../chunkers/code.ts';
 import { clearGitHold, countGitHolds, recordSyncImportProvenance } from './sync-holds.ts';
 import { VERSION } from '../../version.ts';
-import { windowPredecessor, windowPredecessorCommitted } from './sync-window.ts';
+import { windowPredecessor, windowPredecessorAllows } from './sync-window.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -245,7 +245,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
       const [configuredSource] = await tx.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 FOR SHARE', [row.source_id]);
       assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
       const held = await readSyncCursorFence(tx, p.cursorKey);
-      if (after && !await windowPredecessorCommitted(tx, row)) throw syncPublicationRefusal('revision_conflict', 'An earlier page of this sync did not commit.', row, p,
+      if (after && !await windowPredecessorAllows(tx, row)) throw syncPublicationRefusal('revision_conflict', 'An earlier page of this sync did not commit.', row, p,
         `Request ${row.request_id} was admitted ahead of request ${after} of the same sync run, which did not commit, so this page must not publish after it.`);
       const current = await getWorktreeBinding(tx, row.source_id);
       if (!current || String(current.owner_epoch) !== p.ownerEpoch) throw syncPublicationRefusal('owner_unavailable', 'The accepted sync owner epoch changed.', row, p,

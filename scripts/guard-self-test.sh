@@ -47,39 +47,62 @@ run_guard() {
   esac
 }
 
-while IFS=$'\t' read -r guard klass selftest _notes; do
-  case "$guard" in ''|'#'*) continue ;; esac
-  [ "$selftest" = "yes" ] || continue
-  tested=$((tested + 1))
-
+# One guard's bad/good cases; prints its result line and exits non-zero per failure.
+self_test_guard() {
+  local guard="$1" bad good guard_ok=1 variants=0 failed=0 bad_tree
   bad="$FIXTURES/$guard/bad"
   good="$FIXTURES/$guard/good"
   if [ ! -d "$bad" ] || [ ! -d "$good" ]; then
     echo "FAIL  $guard: manifest says selftest=yes but fixtures missing under $FIXTURES/$guard/{bad,good}"
-    failures=$((failures + 1))
-    continue
+    return 1
   fi
 
   # bad/ plus any bad-<variant>/ trees (e.g. one per refactor-wave-1 module
   # dir): each must fail ON ITS OWN, proving the guard scans that location.
-  guard_ok=1
-  variants=0
   for bad_tree in "$bad" "$FIXTURES/$guard"/bad-*; do
     [ -d "$bad_tree" ] || continue
     variants=$((variants + 1))
     if run_guard "$guard" "$bad_tree"; then
       echo "FAIL  $guard: did NOT flag the known-bad fixture $(basename "$bad_tree") — the guard is a no-op there (the check-no-double-retry class)"
-      failures=$((failures + 1))
+      failed=$((failed + 1))
       guard_ok=0
     fi
   done
   if ! run_guard "$guard" "$good"; then
     echo "FAIL  $guard: flagged the known-good fixture — false positive"
-    failures=$((failures + 1))
+    failed=$((failed + 1))
   elif [ "$guard_ok" = "1" ]; then
     echo "ok    $guard (bad→fail x$variants, good→pass)"
   fi
+  return "$failed"
+}
+
+# Guards are independent (each reads only its own fixture root), so run up to
+# GUARD_SELF_TEST_JOBS at once and print results in manifest order.
+JOBS="${GUARD_SELF_TEST_JOBS:-4}"
+OUT_DIR="$(mktemp -d)"
+trap 'rm -rf "$OUT_DIR"' EXIT
+guards=()
+while IFS=$'\t' read -r guard klass selftest _notes; do
+  case "$guard" in ''|'#'*) continue ;; esac
+  [ "$selftest" = "yes" ] || continue
+  guards+=("$guard")
 done < "$MANIFEST"
+pids=()
+for i in "${!guards[@]}"; do
+  if [ "${#pids[@]}" -ge "$JOBS" ]; then
+    wait "${pids[0]}"
+    pids=("${pids[@]:1}")
+  fi
+  ( self_test_guard "${guards[$i]}" > "$OUT_DIR/$i.out" 2>&1; echo $? > "$OUT_DIR/$i.rc" ) &
+  pids+=("$!")
+done
+wait
+for i in "${!guards[@]}"; do
+  tested=$((tested + 1))
+  cat "$OUT_DIR/$i.out"
+  failures=$((failures + $(cat "$OUT_DIR/$i.rc" 2>/dev/null || echo 1)))
+done
 
 # Manifest completeness: every scripts/check-* guard must have a manifest row
 # (new guards can't silently skip classification).

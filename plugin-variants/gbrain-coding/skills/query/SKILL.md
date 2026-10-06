@@ -28,6 +28,7 @@ tools:
   - traverse_graph
   - get_timeline
 mutating: false
+when_to_use: "Use when the user asks: \"what do we know about\", \"tell me about\", \"who is\", \"what happened\", \"search for\"."
 ---
 
 # Query Skill

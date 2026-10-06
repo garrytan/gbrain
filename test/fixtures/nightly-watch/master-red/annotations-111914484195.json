@@ -1,0 +1,26 @@
+[
+ {
+  "annotation_level": "warning",
+  "path": ".github",
+  "title": "",
+  "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11d5960a326750d5838078e36cf38b85af677262. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/"
+ },
+ {
+  "annotation_level": "failure",
+  "path": ".github",
+  "title": "",
+  "message": "Process completed with exit code 1."
+ },
+ {
+  "annotation_level": "failure",
+  "path": "test/pack-relation-direction-engine.test.ts",
+  "title": "",
+  "message": "PostgreSQL arm failed. Reproduce: DATABASE_URL=<pgvector test database> GBRAIN_TEST_ALLOW_DATABASE_URL=1 bun test --timeout=120000 test/pack-relation-direction-engine.test.ts"
+ },
+ {
+  "annotation_level": "failure",
+  "path": "src/core/page-state/projections.ts",
+  "title": "PageProjectionConflictError: The page projection changed during preparation. Read its current snapshot before retrying.",
+  "message": "\n      at <anonymous> (/home/runner/work/gbrain/gbrain/src/core/page-state/projections.ts:146:13)"
+ }
+]

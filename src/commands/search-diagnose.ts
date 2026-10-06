@@ -60,7 +60,10 @@ export async function runSearchDiagnose(engine: BrainEngine, args: string[]): Pr
   // Vector layer (skip if no embedding provider).
   let vector: LayerProbe;
   const { isAvailable, embedQuery } = await import('../core/ai/gateway.ts');
-  if (!isAvailable('embedding')) {
+  const { factEmbeddingDisabled } = await import('../core/embedding-disabled.ts');
+  if (await factEmbeddingDisabled(engine)) {
+    vector = { rank: null, score: null, top_slug: null, note: 'skipped — embeddings are off on this brain by choice (embedding_disabled); no query text was sent to a provider. `gbrain doctor --json` names the enable command if the user wants semantic search.' };
+  } else if (!isAvailable('embedding')) {
     vector = { rank: null, score: null, top_slug: null, note: 'skipped — no embedding provider configured' };
   } else {
     try {

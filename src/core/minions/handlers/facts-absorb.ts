@@ -1,6 +1,7 @@
 /**
  * `facts-absorb` Minion job handler (built-in; registered by registerBuiltinHandlers in src/commands/jobs.ts).
  */
+import { withAIAttribution } from '../../ai/invocation-guard.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionHandler } from '../types.ts';
 import { loadConfig, loadConfigWithEngine } from '../../config.ts';
@@ -45,7 +46,7 @@ export function factsAbsorbShouldRetry(
 export const FACTS_ABSORB_KEYLESS_RETRY_MS = 30 * 60_000;
 
 export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
-  return async (job) => {
+  const handle: MinionHandler = async (job) => {
     const slug = typeof job.data.slug === 'string' ? job.data.slug : '';
     if (!slug) throw new Error('facts-absorb job requires data.slug');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
@@ -121,4 +122,6 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
     }
     return result;
   };
+  return job => withAIAttribution({ effect: 'facts-absorb', job_id: job.id, job_name: job.name,
+    ...(typeof job.data.persistence_request_id === 'string' ? { request_id: job.data.persistence_request_id } : {}) }, () => handle(job));
 }

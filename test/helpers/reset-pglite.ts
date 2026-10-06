@@ -65,6 +65,22 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 // after a reset. Production never truncates the clock table.
 const PRESERVE_TABLES = new Set(['schema_version', 'page_generation_clock', 'persistence_brain']);
 
+// Conditions (over plpgsql variables `tables regclass[]` and `storage_bytes`)
+// under which a replica-role DELETE of `tables` would not match TRUNCATE:
+// TRUNCATE or always/replica triggers, always/replica rules, inheritance,
+// no superuser to set session_replication_role, or enough storage that dead
+// rows should be reclaimed by TRUNCATE instead.
+const DELETE_DIVERGES_FROM_TRUNCATE = `storage_bytes > 8 * 1024 * 1024 OR EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgrelid = ANY(tables)
+          AND ((tgtype::int & 32) <> 0 OR tgenabled IN ('A', 'R'))
+      ) OR EXISTS (
+        SELECT 1 FROM pg_rewrite WHERE ev_class = ANY(tables) AND ev_enabled IN ('A', 'R')
+      ) OR EXISTS (
+        SELECT 1 FROM pg_inherits WHERE inhrelid = ANY(tables) OR inhparent = ANY(tables)
+      ) OR NOT EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = current_user AND rolsuper
+      )`;
+
 export async function resetPgliteState(engine: PGLiteEngine): Promise<void> {
   await disposePersistenceConsumer(engine);
   await engine.executeRaw(`DO $reset$
@@ -83,20 +99,11 @@ export async function resetPgliteState(engine: PGLiteEngine): Promise<void> {
         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
           AND c.relname NOT IN (${[...PRESERVE_TABLES].map(t => `'${t}'`).join(', ')});
       IF targets IS NULL THEN RETURN; END IF;
-      IF storage_bytes > 8 * 1024 * 1024 OR EXISTS (
-        SELECT 1 FROM pg_trigger WHERE tgrelid = ANY(tables)
-          AND ((tgtype::int & 32) <> 0 OR tgenabled IN ('A', 'R'))
-      ) OR EXISTS (
-        SELECT 1 FROM pg_rewrite WHERE ev_class = ANY(tables) AND ev_enabled IN ('A', 'R')
-      ) OR EXISTS (
+      IF ${DELETE_DIVERGES_FROM_TRUNCATE} OR EXISTS (
         SELECT 1 FROM pg_constraint WHERE contype = 'f'
           AND confrelid = ANY(tables) AND NOT conrelid = ANY(tables)
       ) OR EXISTS (
-        SELECT 1 FROM pg_inherits WHERE inhrelid = ANY(tables) OR inhparent = ANY(tables)
-      ) OR EXISTS (
         SELECT 1 FROM pg_event_trigger WHERE evtenabled <> 'D'
-      ) OR NOT EXISTS (
-        SELECT 1 FROM pg_roles WHERE rolname = current_user AND rolsuper
       ) THEN
         EXECUTE 'TRUNCATE ' || targets || ' RESTART IDENTITY CASCADE';
       ELSE
@@ -179,4 +186,58 @@ export async function resetPgliteStateNarrow(
          ON CONFLICT (id) DO NOTHING`,
     );
   }
+}
+
+/**
+ * Same end state as `TRUNCATE <tables> CASCADE` (sequences continue): empties
+ * the named tables and every table that references them, transitively, by
+ * foreign key. Works on either engine.
+ *
+ * On Postgres, TRUNCATE gives every table and index in that closure new
+ * storage files, even when all of them are already empty. `pages` alone
+ * reaches 23 tables and over 100 indexes, so one call costs ~0.8 s on a
+ * container; a per-test reset built on it dominated embedding-recovery-parity's
+ * wall clock. There this deletes the closure's rows under replica role instead
+ * (~4 ms), and keeps TRUNCATE whenever DELETE could behave differently
+ * (DELETE_DIVERGES_FROM_TRUNCATE).
+ *
+ * Without an autovacuum launcher (PGLite) TRUNCATE is kept: nothing reclaims
+ * the deleted rows, and the stale page counts misled the planner enough to
+ * slow two later embedding-recovery tests from ~2 s to ~11 s, while TRUNCATE
+ * there is an in-memory operation. No ALTER SEQUENCE is issued, so event
+ * triggers see nothing on either path.
+ */
+export async function truncateCascade(engine: NarrowResetEngine, tables: string[]): Promise<void> {
+  if (tables.length === 0) throw new Error('truncateCascade: table list must be non-empty');
+  for (const t of tables) {
+    if (!TABLE_NAME_RE.test(t)) {
+      throw new Error(`truncateCascade: invalid table name ${JSON.stringify(t)} (must match ${TABLE_NAME_RE})`);
+    }
+  }
+  const quoted = tables.map(t => `"${t}"`).join(', ');
+  await engine.executeRaw(`DO $truncate$
+    DECLARE
+      tables regclass[];
+      storage_bytes bigint;
+      target regclass;
+      original_role text := current_setting('session_replication_role');
+    BEGIN
+      WITH RECURSIVE closure(oid) AS (
+        SELECT unnest(ARRAY[${tables.map(t => `'"${t}"'`).join(', ')}]::regclass[])::oid
+        UNION
+        SELECT c.conrelid FROM pg_constraint c JOIN closure ON c.confrelid = closure.oid WHERE c.contype = 'f'
+      )
+      SELECT array_agg(oid::regclass), sum(pg_total_relation_size(oid)) INTO tables, storage_bytes FROM closure;
+      IF ${DELETE_DIVERGES_FROM_TRUNCATE} OR NOT EXISTS (
+        SELECT 1 FROM pg_stat_activity WHERE backend_type = 'autovacuum launcher'
+      ) THEN
+        EXECUTE 'TRUNCATE ${quoted} CASCADE';
+      ELSE
+        PERFORM set_config('session_replication_role', 'replica', true);
+        FOREACH target IN ARRAY tables LOOP
+          EXECUTE format('DELETE FROM %s', target);
+        END LOOP;
+        PERFORM set_config('session_replication_role', original_role, true);
+      END IF;
+    END $truncate$`);
 }

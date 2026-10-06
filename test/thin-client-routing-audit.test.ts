@@ -86,7 +86,7 @@ describe('thin-client routing audit — ROUTE additions call the remote op', () 
     try {
       await thinClient(() => runForget(async () => { throw new Error('local engine opened'); },
         ['42', '--source', 'notes', '--request-id', requestId, '--json']));
-    } finally { final.mockRestore(); process.exitCode = priorExitCode ?? 0; }
+    } finally { final.mockRestore(); cliForceExit._resetCliExitVerdictForTests(); process.exitCode = priorExitCode ?? 0; }
     expect(calls).toEqual([]);
     const envelope = JSON.parse(docs.join(''));
     expect(envelope).toMatchObject({ code: 'invalid_params', fix: { argv: ['gbrain', 'forget', '42', '--request-id', requestId], next: 'run' } });

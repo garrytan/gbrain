@@ -2410,6 +2410,14 @@ export class PGLiteEngine implements BrainEngine {
     return factsImpl.listFactsSince(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, since, opts);
   }
 
+  async listFactsKeyset(
+    source_id: string,
+    after: { createdAt: string; id: number | null } | null,
+    opts?: FactListOpts,
+  ): Promise<FactRow[]> {
+    return factsImpl.listFactsKeyset(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, after, opts);
+  }
+
   async listFactsBySession(
     source_id: string,
     sessionId: string,

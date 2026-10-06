@@ -52,7 +52,8 @@ triggers:
   - "schema sync"
   - "schema author"
 brain_first: exempt
-writes_pages: []
+writes_pages: false
+when_to_use: "Use when the user asks: \"add a page type\", \"add a type to my schema\", \"my brain has untyped pages\", \"schema isn't matching my notes\", \"propose new types from my corpus\"."
 ---
 
 # schema-author — evolve your schema pack

@@ -26,6 +26,10 @@ import { parsePositiveInt } from '../core/skillopt/output-cap.ts';
 import { serializeError, StructuredAgentError } from '../core/errors.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RunReceipt, SkillOptOpts } from '../core/skillopt/types.ts';
+import { capNotice, mergeCapFlag, parseCapFlag, type CapFlag } from '../core/budget/cap-flag.ts';
+
+/** Per-run cost cap when no cap flag is passed (a `default` cap: unpriced models warn and run). */
+const DEFAULT_SKILLOPT_MAX_COST_USD = 5.0;
 
 interface ParsedFlags {
   skillName: string;
@@ -54,7 +58,12 @@ interface ParsedFlags {
   /** F11: optional held-out test set path. REQUIRED (non-empty) to mutate a bundled skill. */
   heldOutPath?: string;
   json: boolean;
+  /** 0 = uncapped (`--max-usd off`, `--no-max-cost`, legacy `--max-cost-usd 0`). */
   maxCostUsd: number;
+  /** `user` when a cap flag was passed, `default` for the $5 default (#5563). */
+  maxCostSource: 'user' | 'default';
+  /** The cap flag spelling the user typed, when any. */
+  maxCostFlag?: string;
   maxRuntimeMin: number;
   force: boolean;
   resumeRunId?: string;
@@ -87,6 +96,11 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
     process.stdout.write(SKILLOPT_HELP_TEXT);
     process.exit(0);
   }
+
+  if (parsed.maxCostFlag === '--max-cost-usd' && parsed.maxCostUsd === 0) {
+    process.stderr.write('gbrain skillopt: --max-cost-usd 0 is deprecated; it still means uncapped, but write --max-usd off.\n');
+  }
+  process.stderr.write(`[skillopt] ${capNotice({ usd: parsed.maxCostUsd > 0 ? parsed.maxCostUsd : null, source: parsed.maxCostSource, flag: parsed.maxCostFlag })}\n`);
 
   if (!engine) {
     process.stderr.write('gbrain skillopt: requires a configured brain (engine connection failed)\n');
@@ -125,6 +139,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         dryRun: parsed.dryRun,
         modelsStrict: parsed.modelsStrict,
         maxCostUsd: parsed.maxCostUsd,
+        maxCostSource: parsed.maxCostSource,
       });
       if (run.dry_run) exitDryRun(run.models_plan, run.strict, parsed.json, {});
       if (parsed.json) {
@@ -146,6 +161,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         engine,
         skillsDir,
         perSkillMaxCostUsd: parsed.maxCostUsd,
+        maxCostSource: parsed.maxCostSource === 'user' || parsed.brainWideMaxCostUsd !== undefined ? 'user' : 'default',
         brainWideMaxCostUsd: parsed.brainWideMaxCostUsd ?? 10.0,
         optimizerModel,
         targetModel,
@@ -209,6 +225,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         bootstrapReviewed: parsed.bootstrapReviewed,
         ...(parsed.heldOutPath ? { heldOutPath: parsed.heldOutPath } : {}),
         maxCostUsd: parsed.maxCostUsd,
+        maxCostSource: parsed.maxCostSource,
         maxRuntimeMin: parsed.maxRuntimeMin,
         force: parsed.force,
       });
@@ -265,6 +282,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
           ...(parsed.heldOutPath ? { heldOutPath: parsed.heldOutPath } : {}),
           bootstrapReviewed: parsed.bootstrapReviewed,
           maxCostUsd: parsed.maxCostUsd,
+          maxCostSource: parsed.maxCostSource,
           maxRuntimeMin: parsed.maxRuntimeMin,
           force: parsed.force,
         });
@@ -310,6 +328,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
     bootstrapReviewed: parsed.bootstrapReviewed,
     json: parsed.json,
     maxCostUsd: parsed.maxCostUsd,
+    maxCostSource: parsed.maxCostSource,
     maxRuntimeMin: parsed.maxRuntimeMin,
     force: parsed.force,
     ...(parsed.resumeRunId ? { resumeRunId: parsed.resumeRunId } : {}),
@@ -433,7 +452,7 @@ export function parseFlags(args: string[]): ParsedFlags {
   let allowMutateBundled = false;
   let heldOutPath: string | undefined;
   let json = false;
-  let maxCostUsd = 5.0;
+  let cap: CapFlag | undefined;
   let maxRuntimeMin = 30;
   let force = false;
   let resumeRunId: string | undefined;
@@ -486,11 +505,12 @@ export function parseFlags(args: string[]): ParsedFlags {
     if (a === '--allow-mutate-bundled') { allowMutateBundled = true; i += 1; continue; }
     if (a === '--held-out') { heldOutPath = args[++i]; i += 1; continue; }
     if (a === '--json') { json = true; i += 1; continue; }
-    // #3516: 0 is accepted and means UNCAPPED — pricing misses for unpriced
-    // model ids (openrouter:*, litellm:*) then warn-once instead of aborting
-    // the run with BudgetExhausted(no_pricing).
-    if (a === '--max-cost-usd') { maxCostUsd = mustNonNegFloat(args[++i], '--max-cost-usd'); i += 1; continue; }
-    if (a === '--no-max-cost') { maxCostUsd = 0; i += 1; continue; }
+    // D19: one shared parser. `--max-usd N|off` is canonical; the legacy
+    // `--max-cost-usd` keeps #3516's meaning for 0 (uncapped) and
+    // `--no-max-cost` is `--max-usd off`. Disagreeing cap flags are refused.
+    if (a === '--max-usd') { cap = mergeCapFlag(cap, parseCapFlag(a, args[++i])); i += 1; continue; }
+    if (a === '--max-cost-usd') { cap = mergeCapFlag(cap, parseCapFlag(a, args[++i], { zero: 'off' })); i += 1; continue; }
+    if (a === '--no-max-cost') { cap = mergeCapFlag(cap, { flag: a, usd: null }); i += 1; continue; }
     if (a === '--max-runtime-min') { maxRuntimeMin = mustInt(args[++i], '--max-runtime-min'); i += 1; continue; }
     if (a === '--force') { force = true; i += 1; continue; }
     if (a === '--resume') { resumeRunId = args[++i]; i += 1; continue; }
@@ -569,7 +589,9 @@ export function parseFlags(args: string[]): ParsedFlags {
     allowMutateBundled,
     ...(heldOutPath !== undefined ? { heldOutPath } : {}),
     json,
-    maxCostUsd,
+    maxCostUsd: cap === undefined ? DEFAULT_SKILLOPT_MAX_COST_USD : cap.usd ?? 0,
+    maxCostSource: cap === undefined ? 'default' : 'user',
+    ...(cap ? { maxCostFlag: cap.flag } : {}),
     maxRuntimeMin,
     force,
     ...(resumeRunId !== undefined ? { resumeRunId } : {}),
@@ -597,14 +619,6 @@ function mustFloat(v: string | undefined, flag: string): number {
   return n;
 }
 
-/** #3516: like mustFloat but 0 is allowed (0 = uncapped for --max-cost-usd). */
-function mustNonNegFloat(v: string | undefined, flag: string): number {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n < 0) {
-    throw new Error(`${flag} requires a non-negative number (got '${v}'; 0 disables the cap)`);
-  }
-  return n;
-}
 
 function handleErrorAndExit(err: unknown, json: boolean, exitCode: number): never {
   if (json) {

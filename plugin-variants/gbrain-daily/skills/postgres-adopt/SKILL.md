@@ -19,6 +19,7 @@ tools:
   - exec
 mutating: true
 brain_first: exempt
+when_to_use: "Use when the user asks: \"which gbrain engine\", \"pglite or postgres\", \"gbrain engine status\", \"upgrade to postgres\", \"switch gbrain to postgres\"."
 ---
 
 # Postgres Adopt

@@ -9,6 +9,9 @@ on:
   # prepare-e2e classifies the queued change from the compare API (base_sha...
   # head_sha). docs/RELEASING.md#merge-queue.
   merge_group:
+  # Event parity (docs/TESTING.md#event-parity): the concurrency suffix below only
+  # separates a full_corpus dispatch; the schedule-only full-corpus lanes are a
+  # named exception documented at the coverage pipeline.
   schedule:
     - cron: '0 6 * * *'  # Nightly at 6am UTC
   workflow_dispatch:
@@ -23,9 +26,11 @@ permissions:
 
 # Cancel a superseded run when a newer commit lands on the same PR/branch.
 # PR number for pull_request events (fork-safe), github.ref fallback for
-# push/scheduled runs.
+# push runs. Scheduled runs get their own `-nightly` group (as in test.yml):
+# sharing refs/heads/master with push runs let the next merge cancel the
+# nightly full corpus mid-shard (#6040).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -150,6 +155,10 @@ jobs:
           CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
           BASE_SHA: ${{ github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        # Named exception (docs/TESTING.md#event-parity): a doc-only pull request
+        # selects no E2E file; every push to master runs the whole corpus (no
+        # PR context, so ci-changed-files.sh fails closed) and the nightly
+        # schedule runs the full-corpus lanes.
         run: |
           if [ "$FULL_CORPUS" = "true" ]; then
             # Full-profile coverage carries the complete E2E corpus separately.
@@ -646,6 +655,10 @@ jobs:
   # job compares against the fullCorpus baseline and uploads the trend
   # artifact. PR runs never pay this cost; the full-profile gate on every job
   # below is load-bearing.
+  # Named exception (docs/TESTING.md#event-parity): the full-corpus coverage
+  # lanes and their e2e-status checks run on the nightly E2E schedule (and an
+  # explicit full_corpus dispatch); pull requests run every E2E file through
+  # Selected E2E instead.
   # ──────────────────────────────────────────────────────────────────────
   coverage-full-unit:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
@@ -687,6 +700,7 @@ jobs:
           overwrite: true
 
   coverage-full-serial:
+    # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
     runs-on: ubicloud-standard-8-ubuntu-2404
     timeout-minutes: 30
@@ -721,6 +735,7 @@ jobs:
           overwrite: true
 
   coverage-full-slow:
+    # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 35
@@ -756,6 +771,7 @@ jobs:
           overwrite: true
 
   coverage-full-e2e:
+    # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 60
@@ -859,8 +875,14 @@ jobs:
 
   coverage-full-report:
     needs: [coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
+    # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))
     runs-on: ubicloud-standard-4-ubuntu-2404
+    # actions + checks: the shard classifier reads this run's jobs and their annotations.
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -875,14 +897,23 @@ jobs:
         with:
           pattern: coverage-full-*
           path: ${{ runner.temp }}/coverage-artifacts
+      # A run cancelled by a newer run in its concurrency group or by a user
+      # reports its cancelled shards as cancelled (no coverage, not a test
+      # failure). A shard that failed or hit timeout-minutes in a run nobody
+      # cancelled stays a failure. cancelled() cannot tell (it is false in an
+      # always() job started after the cancel), so the script reads the shard
+      # jobs' annotations. docs/operations/verify-and-nightly-e2e.md#full-corpus-report-states
+      - name: Classify full E2E shards
+        id: shards
+        env:
+          FULL_E2E_RESULT: ${{ needs.coverage-full-e2e.result }}
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/classify-full-e2e-shards.ts
       - name: Merge full corpus
+        if: steps.shards.outputs.state == 'complete'
         env:
           COVERAGE_CORPUS: fullCorpus
         run: |
-          if [ "${{ needs.coverage-full-e2e.result }}" != "success" ]; then
-            echo "Full E2E did not succeed; refusing a complete report from prior-attempt artifacts"
-            exit 1
-          fi
           bun scripts/verify-nightly-e2e.ts "$RUNNER_TEMP/coverage-artifacts" 4 "$GITHUB_SHA"
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-full-merged/lcov.info" \
@@ -890,8 +921,10 @@ jobs:
             --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,serial,slow,e2e-1,e2e-2,e2e-3,e2e-4 \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
+        if: steps.shards.outputs.state == 'complete'
         run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-full-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"
       - name: Baseline gate (fullCorpus, like-for-like)
+        if: steps.shards.outputs.state == 'complete'
         # shell: bash → pipefail, so tee can't mask the gate's exit code.
         shell: bash
         env:
@@ -949,9 +982,26 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
           overwrite: true
+      # Versioned failure and execution manifest bound to this SHA, run and
+      # attempt; nightly-watch reads it to list every failing test and to
+      # prove a file ran and passed before it clears a master-red failure.
+      - name: Failure and execution manifest (nightly-watch evidence)
+        if: always()
+        run: bun scripts/ci-manifest.ts --receipts-dir "$RUNNER_TEMP/receipts" --out "$RUNNER_TEMP/ci-manifest.json" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Upload failure manifest
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ci-manifest
+          path: ${{ runner.temp }}/ci-manifest.json
+          retention-days: 30
+          if-no-files-found: warn
+          overwrite: true
 
   # The stable aggregate includes full-profile execution lanes when requested.
   # Coverage reporting itself remains advisory; failed tests never do.
+  # Named exception (docs/TESTING.md#event-parity): FULL_CORPUS adds the
+  # full-corpus lanes to the aggregate on the nightly schedule only.
   e2e-status:
     needs: [jsonb-parity, tier1, tier1-backend-matrix, tier2, prepare-e2e, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: always()

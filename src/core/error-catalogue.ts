@@ -37,6 +37,8 @@ export const ERROR_CATALOGUE = {
   legacy_job_authority: { code: 'permission_denied', docs: 'docs/guides/repair.md#legacy-job-authority' },
   preview_changed: { code: 'preview_changed', docs: 'docs/guides/repair.md#preview-changed' },
   projection_owner_resident: { code: 'projection_owner_resident', docs: 'docs/guides/repair.md#projection-owner-resident' },
+  file_removed_during_scan: { code: 'file_removed_during_scan', docs: 'docs/guides/repair.md#file-removed-during-scan' },
+  page_projection_conflict: { code: 'page_projection_conflict', docs: 'docs/guides/repair.md#page-projection-conflict' },
   explicit_kind_required: { code: 'explicit_kind_required', docs: 'docs/guides/repair.md#explicit-only-repair-kinds' },
   repair_kind_unavailable: { code: 'unavailable', docs: 'docs/guides/repair.md#explicit-only-repair-kinds' },
   colon_slug_windows_write_through: { code: 'colon_slug_windows_write_through', docs: 'docs/guides/write-refusals.md#colon_slug_windows_write_through' },

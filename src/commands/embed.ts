@@ -3,7 +3,8 @@ import { prepareEmbeddingProjections, countArchivedEmbeddingWork } from '../core
 import { embedStaleFacts, type EmbedFactsResult } from '../core/embed-facts.ts';
 import { embedTakesForStaleDrain, type EmbedTakesResult } from '../core/embed-takes.ts';
 import { parseFactEmbedArgs } from './embed-facts-delegate.ts';
-import { readProjectionSnapshot, installPageProjection, installPageEmbeddings } from '../core/page-state/projections.ts';
+import { readProjectionSnapshot, installPageProjection, installPageEmbeddings, PageProjectionConflictError, retryProjectionConflict } from '../core/page-state/projections.ts';
+import { projectionConflictLine } from '../core/agent-output.ts';
 import { PageRevisionConflictError } from '../core/page-state/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { currentEmbeddingSignature } from '../core/embedding.ts';
@@ -92,7 +93,7 @@ function recordFailure(result: EmbedResult, chunkCount: number, slug: string, e:
   result.failures += chunkCount;
   if (result.failure_samples.length < FAILURE_SAMPLE_CAP) {
     const fix = isEmbeddingZeroNormError(e) ? ` ${e.suggestionFor(slug)}` : '';
-    result.failure_samples.push(`${slug}: ${e instanceof Error ? e.message : String(e)}${fix}`);
+    result.failure_samples.push(`${slug}: ${projectionConflictLine(e, 'embed') ?? `${e instanceof Error ? e.message : String(e)}${fix}`}`);
   }
 }
 
@@ -872,12 +873,11 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
   // background block so we never queue a job that can only fail. stderr only;
   // stdout stays empty like every other embed outcome (embed has no JSON
   // result surface — do not invent one here).
-  if (isKeylessStaleRefusal(args, loadConfig()?.embedding_disabled)) {
-    process.stderr.write(
-      '[embed] Embeddings are disabled on this brain (keyless install). '
-      + 'Nothing to backfill; keyword search keeps working. '
-      + 'Enable later: set embedding_model via gbrain config, then re-run gbrain init with the force flag.\n',
-    );
+  const keylessConfig = loadConfig();
+  if (isKeylessStaleRefusal(args, keylessConfig?.embedding_disabled)) {
+    const enable = (await import('../core/readiness.ts')).embeddingEnablement(keylessConfig!).argv ?? ['gbrain', 'init', '--force', '--embedding-model', '<provider:model>'];
+    process.stderr.write('[embed] Embeddings are disabled on this brain (keyless install). Nothing to backfill; keyword search keeps working. '
+      + `Turn on semantic search (pages and facts are kept): ${(await import('../core/agent-output.ts')).shellQuote(enable)}\n`);
     return {
       embedded: 0, skipped: 0, would_embed: 0, total_chunks: 0,
       pages_processed: 0, failures: 0, failure_samples: [], dryRun: false,
@@ -1065,11 +1065,18 @@ async function embedPage(
     }
 
     if (inputs.length > 0) {
+      let attempt = 0;
       try {
-        await installPageProjection(engine, origin, inputs, { seal: true });
+        // Another installer (the resident projection rebuild) may seal this revision first: re-read and use its chunks.
+        await retryProjectionConflict(async () => {
+          const prepared = attempt++ === 0 ? origin : await readProjectionSnapshot(engine, slug, page.source_id, { allowUnsealed: true, requireLiveSource: true });
+          if (!prepared || prepared.snapshot.revision !== snapshot.revision || prepared.snapshot.page.id !== page.id
+            || prepared.snapshot.sourceIncarnation !== snapshot.sourceIncarnation) throw new PageRevisionConflictError(snapshot.revision, prepared?.snapshot.revision ?? null);
+          if (prepared.snapshot.page.text_projection_revision !== snapshot.revision || !prepared.chunks.length) await installPageProjection(engine, prepared, inputs, { seal: true });
+        });
       } catch (error) {
         if (!(error instanceof PageRevisionConflictError)) throw error;
-        recordFailure(result, 1, slug, EMBED_UNAVAILABLE_MESSAGE);
+        recordFailure(result, 1, slug, error instanceof PageProjectionConflictError ? error : EMBED_UNAVAILABLE_MESSAGE);
         return;
       }
       chunks = await engine.getChunks(slug, { sourceId: page.source_id });

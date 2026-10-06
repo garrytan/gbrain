@@ -481,12 +481,10 @@ describe('delta cursor lifecycle', () => {
     // The state READ degrades to null, never a throw.
     await expect(getSessionContextState(failing as never, 'default', null, 'outage')).resolves.toBeNull();
     const ctx = { ...ctxFor({ remote: false }), engine: failing } as OperationContext;
-    // First-wake path: cursor read + establish-write + GC all fail — the verb
-    // still answers with a complete payload.
-    const r1 = await call(del, ctx, { session_id: 'outage' });
-    expect(r1.protocol_version).toBe(1);
-    expect(r1.pages).toEqual([]);
-    expect(r1.since).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
+    // Session-state read failure with no explicit position: a failed read is
+    // NOT a first wake (contributor audit wave P0), so no cursor is
+    // initialized at now; the refusal is retryable and names the reason.
+    await expect(call(del, ctx, { session_id: 'outage' })).rejects.toMatchObject({ code: 'unavailable', reason: 'session_state' });
     // Full delta path: assembly reads run fine; the cursor-advance write fails
     // silently and the payload is still complete.
     const r2 = await call(del, ctx, { session_id: 'outage', since: '1970-01-01T00:00:00Z' });
@@ -799,13 +797,13 @@ describe('budget packing + drop footer', () => {
     await call(putPage, local, { slug: 'people/bob-example', content: '# Bob Example\n\nbody' });
     const entityBeforeRemember = (await engine.readPageSnapshot('people/bob-example', { sourceId: 'default' }))!;
     await new Promise((r) => setTimeout(r, 5));
-    const since = new Date().toISOString();
+    let since = new Date().toISOString();
     await new Promise((r) => setTimeout(r, 5));
     for (const s of ['kc-a', 'kc-b']) {
       await call(putPage, local, { slug: `notes/${s}`, content: `# ${s}\n\ncontent` });
     }
     await new Promise((r) => setTimeout(r, 5));
-    const mid = new Date().toISOString();
+    let mid = new Date().toISOString();
     await new Promise((r) => setTimeout(r, 5));
     for (let i = 0; i < 3; i++) {
       await call(remember, local, { fact: `kc-fact-${i} ${'z'.repeat(120)}`, provenance: 'test', visibility: 'world' });
@@ -825,6 +823,12 @@ describe('budget packing + drop footer', () => {
     expect(entityBeforeRemember.page.updated_at.getTime()).toBeLessThan(Date.parse(since));
     await engine.executeRaw('UPDATE pages SET updated_at = $1::timestamptz WHERE source_id = $2 AND slug = $3',
       [entityBeforeRemember.page.updated_at.toISOString(), 'default', 'people/bob-example']);
+    // delta never advances a cursor past now() - 2 s (commit-visibility lag),
+    // so age the whole fixture a minute to keep the keyset assertions exact.
+    await engine.executeRaw(`UPDATE pages SET updated_at = updated_at - interval '1 minute'`);
+    await engine.executeRaw(`UPDATE facts SET created_at = created_at - interval '1 minute'`);
+    since = new Date(Date.parse(since) - 60_000).toISOString();
+    mid = new Date(Date.parse(mid) - 60_000).toISOString();
     __resetHotMemoryCacheForTests();
     const full = await call(del, local, { since, entities: 'people/bob-example' });
     const pages = full.pages as Parameters<typeof renderPageLine>[0][];
@@ -833,7 +837,7 @@ describe('budget packing + drop footer', () => {
     expect((full.threads as unknown[]).length).toBeGreaterThan(0);
     // Unbudgeted: the cursor is the last delivered page, exactly as a
     // stateless page-only call would report it.
-    expect(full.next_cursor).toEqual({ since: pages[1].updated_at, slug: pages[1].slug });
+    expect(full.next_cursor).toMatchObject({ since: pages[1].updated_at, slug: pages[1].slug });
     // Budget = header + every thread line + the first page line + a sliver:
     // one page delivered, every fact dropped — the cursor is still that page.
     const reserved =
@@ -848,17 +852,22 @@ describe('budget packing + drop footer', () => {
     expect(r1.facts).toEqual([]);
     expect((r1.threads as unknown[]).length).toBe((full.threads as unknown[]).length);
     expect(r1.has_more).toBe(true);
-    expect(r1.next_cursor).toEqual({ since: pages[0].updated_at, slug: pages[0].slug });
+    expect(r1.next_cursor).toMatchObject({ since: pages[0].updated_at, slug: pages[0].slug });
     expect(estimateTokens(r1.text as string)).toBeLessThanOrEqual(r1.budget_tokens);
-    // Page-less wake: facts/threads delivered (and some facts dropped) leave
-    // the time cursor exactly where the caller put it.
+    // Page-less wake: facts/threads delivered and some facts dropped. The
+    // legacy time cursor moves to the delivered fact and stays strictly before
+    // the oldest dropped one, so an old client drains the rest instead of
+    // re-reading the same prefix (contributor audit wave P0).
     const oneFact = estimateTokens(renderFactLine((full.facts as Parameters<typeof renderFactLine>[0][])[0]) + '\n');
     const r2 = await call(del, local, { since: mid, entities: 'people/bob-example', budget_tokens: reserved + oneFact + 2 });
     expect(r2.pages).toEqual([]);
     expect((r2.facts as unknown[]).length).toBe(1);
     expect((r2.threads as unknown[]).length).toBe((full.threads as unknown[]).length);
     expect(r2.has_more).toBe(true);
-    expect(r2.next_cursor).toEqual({ since: mid, slug: '' });
+    expect(r2.next_cursor.slug).toBe('');
+    expect(r2.next_cursor.since > mid).toBe(true);
+    const r3 = await call(del, local, { since: r2.next_cursor.since, since_slug: r2.next_cursor.slug, entities: 'people/bob-example', budget_tokens: reserved + oneFact + 2 });
+    expect((r3.facts as Array<{ fact: string }>)[0].fact).not.toBe((r2.facts as Array<{ fact: string }>)[0].fact);
   });
 
   test('forced overflow: dropped_count > 0 and budget_used stays within budget_tokens (v0.45.7)', async () => {

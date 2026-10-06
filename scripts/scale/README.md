@@ -41,6 +41,18 @@ Exit codes: 0 when every enforced gate passes, or always without `--enforce`;
 1 when an enforced gate fails (each failure names the gate and op and prints
 its EXPLAIN; the JSON report and a `.explain.txt` land next to `--out`);
 2 on a usage error; 3 when the harness itself crashed (not a verdict).
+The import-rate gate compares the last 10% of pages' per-page cost with the
+first 10% (<= 1.5x) and the total import with the time at the halfway mark
+(<= 2.5x). The report and its JSON `import` section carry both bases for every
+engine: wall time (`elapsed_ms`) and the import process's main-thread CPU time
+(`cpu_ms`, user + system, from each progress tick; in-process timing under
+`--import-mode content`). PGLite is judged on CPU time: the database runs
+synchronously on the import's main thread, so that CPU time holds all of its
+work (and not the runtime's GC and JIT helper threads), while wall time
+also counts time a shared CI host gives the CPU to other tenants, which once
+failed a run with no code change. Postgres is judged on wall time, because the
+server's work never shows up in the import process's CPU time.
+
 Enforced under `--enforce`: import rate, known answers, no-op re-import,
 no duplicates across sources, the import phase timer, and the stats-dependent
 gates (`PLANNER_HEALTH_ENFORCED` in `scripts/scale/gates.ts`): the Nested Loop

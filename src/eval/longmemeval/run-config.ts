@@ -52,6 +52,10 @@ export interface RetrievalPins {
   eval_pool_depth?: number;
   /** System One arm (`--decide`): slots, provider, calibrations, thresholds, force_on, split. Present only when a slot is on or shadow. */
   decide?: Record<string, unknown>;
+  /** Eval-only fact-key / time-scope arms (retrieval-arms.ts). Present only when an arm is on. */
+  retrieval_arms?: Record<string, unknown>;
+  /** Per-chunk synopsis tier pins (model, prompt version, doc cap, max tokens). Present only when the resolved mode builds synopsis vectors. */
+  contextual_synopsis?: Record<string, unknown>;
 }
 
 /** Stable JSON: sorted keys at every level so key order can never move the hash. */
@@ -185,6 +189,7 @@ export function buildRunConfig(input: RunConfigInput): Record<string, unknown> {
     ...(p.search_pins && Object.keys(p.search_pins).length > 0 ? { search_pins: p.search_pins } : {}),
     ...(p.eval_pool_depth ? { eval_pool_depth: p.eval_pool_depth } : {}),
     ...(p.decide ? { decide: p.decide } : {}),
+    ...(p.contextual_synopsis ? { contextual_synopsis: p.contextual_synopsis } : {}),
     dataset_sha256: input.dataset_sha256,
     dataset_questions: input.dataset_questions,
     question_ids_file: input.question_ids_file,

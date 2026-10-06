@@ -19,6 +19,7 @@ triggers:
 tools:
   - shell
 mutating: true
+when_to_use: "Use when the user asks: \"soul audit\", \"customize agent\", \"who am I\", \"set up identity\", \"change my agent's personality\"."
 ---
 
 # Soul Audit — Agent Identity Builder (re-run / deepen surface)

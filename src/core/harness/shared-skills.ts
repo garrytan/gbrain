@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { createSharedSkillsAdapter, type SharedSkillsToolCaller } from '../shared-skills/adapter.ts';
 import { credentialAccessToken, type HarnessCredentials } from './credentials.ts';
-import { extractResultText } from '../connect-probe.ts';
+import { resultBodyText } from '../connect-probe.ts';
 import { OperationError } from '../ops/contract.ts';
 import { nativeSharedSkillsDirectory } from './native-router.ts';
 
@@ -39,7 +39,7 @@ export async function installSharedSkillsConnection(credentials: HarnessCredenti
           await client.connect(transport);
         }
         const result = await client.callTool({ name, arguments: params }, undefined, { timeout: 30_000 });
-        const text = extractResultText(result.content);
+        const text = resultBodyText(result.content);
         let data: any;
         try { data = JSON.parse(text); } catch {
           throw new OperationError('shared_skills_unsupported', 'The server does not expose the shared-skills protocol.',

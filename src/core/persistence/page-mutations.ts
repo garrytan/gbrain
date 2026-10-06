@@ -195,7 +195,7 @@ export async function preparePageAdmission(ctx: OperationContext,
       `Source ${sourceId} is archived or not registered, so nothing was written. Write to an active source (sources_list shows them).`);
   }
   let slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : '';
-  const intent = ['takes_add','takes_update','takes_supersede','takes_resolve'].includes(input.operation)
+  const intent = ['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(input.operation)
     ? await (await import('./takes-prepare.ts')).normalizeTakesIntent(ctx,p) : { ...p };
   delete intent.request_id;
   if (input.operation === 'put_page') await normalizeSubagentPageInput(ctx, intent);

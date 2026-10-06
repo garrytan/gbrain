@@ -134,6 +134,10 @@
         "name": "reranker_health"
       },
       {
+        "category": "ops",
+        "name": "chat_fallback_chain"
+      },
+      {
         "category": "brain",
         "name": "graph_signals_coverage"
       },

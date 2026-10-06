@@ -18,6 +18,7 @@ tools:
   - put_page
   - list_pages
 mutating: true
+when_to_use: "Use when the user asks: \"fix citations\", \"fix broken citations\", \"citation audit\", \"check citations\", \"citation fixer\"."
 ---
 
 # Citation Fixer Skill

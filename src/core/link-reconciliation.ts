@@ -5,6 +5,8 @@ import { fetchSource, isSourceFederated } from './sources-load.ts';
 import { parseMarkdown } from './markdown.ts';
 import { isValidSourceId } from './source-id.ts';
 import { buildSourceLocalReferenceIndex } from './source-local-reference-index.ts';
+import { collectWantedLinks, isWantedPagesEnabled } from './wanted-links.ts';
+import { lineGrammarOptions } from './line-grammar.ts';
 
 export interface LinkPageMetadata {
   slug: string;
@@ -72,6 +74,8 @@ export async function reconcileSourceLinks(
     const pages = await loadLinkPageMetadata(engine, sourceId);
     const index = new Map(pages.map(page => [page.slug, page]));
     const resolver = makeIndexedLinkResolver(pages, sourceId);
+    const wantedEnabled = await isWantedPagesEnabled(engine);
+    const lineGrammar = await lineGrammarOptions(engine);
     const remaining = pages.filter(page => !opts.afterSlug || page.slug > opts.afterSlug)
       .sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
     for (const metadata of remaining.slice(0, limit)) {
@@ -83,7 +87,7 @@ export async function reconcileSourceLinks(
       }
       const page = snapshot.page;
       const extracted = await extractPageLinks(page.slug, `${page.compiled_truth}\n${page.timeline}`, page.frontmatter,
-        page.type, resolver, { pack: opts.pack, globalBasename: opts.globalBasename,
+        page.type, resolver, { pack: opts.pack, globalBasename: opts.globalBasename, lineGrammar,
           targetType: (slug, source) => !source || source === sourceId ? index.get(slug)?.type : undefined });
       for (const ref of extracted.unresolved) {
         const target = unwrapWikilink(ref.name);
@@ -110,8 +114,12 @@ export async function reconcileSourceLinks(
         rows.push(resolvedLinkCandidate(candidate, page.slug, sourceId,
           { fromSlug: from, fromSourceId: sourceId, toSourceId: sourceId }));
       }
+      const wanted = wantedEnabled ? collectWantedLinks({ candidates: extracted.candidates, frontmatterUnresolved: extracted.unresolved,
+        originSourceId: sourceId, crossSourceAllowed: false, resolve: candidate =>
+          candidate.targetSourceId && candidate.targetSourceId !== sourceId ? { ok: false, reason: 'cross_source' }
+            : !index.has(candidate.targetSlug) ? { ok: false, reason: 'missing_target' } : { ok: true } }) : [];
       const written = await engine.replaceDerivedLinks({ slug: page.slug, sourceId,
-        expectedRevision: snapshot.revision, sourceIncarnation }, rows, { expectedEndpoints:
+        expectedRevision: snapshot.revision, sourceIncarnation }, rows, { wanted: { producers: ['body', 'frontmatter'], rows: wanted }, expectedEndpoints:
           [...new Set(rows.flatMap(row => [row.from_slug, row.to_slug]))].map(slug => ({ slug, sourceId,
             revision: index.get(slug)!.knowledge_revision })) });
       result.pagesProcessed++;

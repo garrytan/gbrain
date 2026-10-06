@@ -114,3 +114,19 @@ describe('compareReceipts — input drift detection', () => {
     expect(d.inputs_differ).toBe(true);
   });
 });
+
+describe('compareReceipts — eval protocol (#5325)', () => {
+  test('a protocol 2 run against a pre-protocol receipt is a dissimilar input', () => {
+    const prior = receipt({});
+    const current = { ...receipt({}), protocol_version: 2 };
+    const d = compareReceipts(current, prior);
+    expect(d.inputs_differ).toBe(true);
+    expect(d.input_diffs).toEqual(['protocol_version differs (1 → 2)']);
+    expect(d.regressed).toBe(false);
+  });
+
+  test('two protocol 2 receipts compare as similar inputs', () => {
+    const r = { ...receipt({}), protocol_version: 2 };
+    expect(compareReceipts(r, r).inputs_differ).toBe(false);
+  });
+});

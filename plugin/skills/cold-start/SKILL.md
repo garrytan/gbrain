@@ -37,6 +37,7 @@ writes_to:
   - media/
   - conversations/
   - sources/
+when_to_use: "Use when the user asks: \"cold start\", \"fill my brain\", \"bootstrap brain\", \"bootstrap my data\", \"import my data\"."
 ---
 
 # Cold Start — Day-One Brain Bootstrapping

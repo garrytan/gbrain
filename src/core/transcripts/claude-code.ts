@@ -228,6 +228,7 @@ export const claudeCodeAdapter: TranscriptAdapter = {
             ? 'no turn records in file (title/metadata-only, non-human text only, or all-subagent)'
             : 'no user or assistant turns in file'
           : undefined,
+      userTurnsMissing: r.turns.length > 0 && r.excludedUserLines === 0 && !r.turns.some((t) => t.role === 'user') ? true : undefined,
     };
   },
 };

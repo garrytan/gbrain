@@ -2,8 +2,10 @@ import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import { assertPageRevision } from './page-state/types.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
+import { replaceWantedLinks, type WantedLinksReplacement } from './wanted-links-store.ts';
 import { applyTemporalEvidence, relationshipKeysForOrigin } from './link-temporal-apply.ts';
 import { primeRelationSemantics } from './link-semantics-pack.ts';
+import { effectiveRangesEnabled } from './line-grammar.ts';
 
 export interface DerivedLinkOrigin {
   slug: string;
@@ -17,6 +19,8 @@ export interface DerivedLinkReplacementOptions {
   preserveExisting?: boolean;
   includeLegacyNullProducer?: boolean;
   expectedEndpoints?: Array<{ slug: string; sourceId: string; revision: string }>;
+  /** The origin's unresolved authored references, replaced in the same transaction (wanted pages). */
+  wanted?: WantedLinksReplacement;
 }
 
 export class DerivedLinkRepairRequiredError extends Error {
@@ -90,11 +94,12 @@ export async function replaceDerivedLinks(
       throw new Error('Derived link origin changed or was deleted');
     }
     const id = snapshot.page.id;
+    if (opts.wanted) await replaceWantedLinks(tx, { pageId: id, sourceId: origin.sourceId }, opts.wanted);
     // Temporal evidence (tense, dated transitions, relationship state) is part
     // of the same derived projection: captured before, replaced after.
     const temporalKeysBefore = await relationshipKeysForOrigin(tx, Number(id));
     const withTemporal = async (result: { created: number; removed: number }) => {
-      await applyTemporalEvidence(tx, snapshot.page, rows, temporalKeysBefore);
+      await applyTemporalEvidence(tx, snapshot.page, rows, temporalKeysBefore, { inlineRanges: await effectiveRangesEnabled(tx) });
       return result;
     };
     if (opts.includeFrontmatter !== false && !opts.preserveExisting) {

@@ -135,7 +135,7 @@ function referencesIn(text: string): RefHit[] {
 }
 
 /** Does a normalized link target point at `slug` (full path or unique basename form)? */
-function refersTo(target: string, slug: string): boolean {
+export function refersTo(target: string, slug: string): boolean {
   if (target === slug) return true;
   const base = slug.split('/').pop()!;
   return !target.includes('/') && target.toLowerCase() === base.toLowerCase();
@@ -179,7 +179,7 @@ function datedLines(content: string): DatedLine[] {
   return out;
 }
 
-const lineHash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 16);
+export const lineHash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 16);
 
 // ─── Derivation ──────────────────────────────────────────────────────────
 

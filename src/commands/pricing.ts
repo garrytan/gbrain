@@ -23,6 +23,8 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { parsePricingOverrides } from '../core/budget/budget-tracker.ts';
+import { isAllowedPricingOverrideKey } from '../core/budget/reservation-cost.ts';
+import { getRecipe } from '../core/ai/recipes/index.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 const KEY = 'pricing.overrides';
@@ -42,6 +44,12 @@ Embedding and reranker models take one --rate (USD per 1M tokens).
 Prices merge into the pricing.overrides config: other entries are kept.
 They win over gbrain's shipped price tables. A $0 rate is accepted with a
 warning: every call to that model then counts as free against all cost caps.
+
+A provider wildcard (<provider>:*) prices every model of a provider that
+bills by subscription, today only claude-cli:
+  gbrain pricing set 'claude-cli:*' --rate 0 --source <plan-url>
+An exact model entry still wins over the wildcard. Per-token API providers
+and a bare * are refused: one rate cannot be right for all their models.
 
 This command runs only on the brain host's local CLI. Agents connected over
 MCP cannot register prices; they ask the operator to run the command.
@@ -123,15 +131,32 @@ function fail(message: string): void {
   setCliExitVerdict(1);
 }
 
-function describeEntry(value: unknown): { input: number; output: number } | null {
+function describeEntry(model: string, value: unknown): { input: number; output: number } | null {
+  if (!isAllowedPricingOverrideKey(model)) return null;
   const parsed = parsePricingOverrides({ probe: value });
   return parsed?.probe ?? null;
+}
+
+/** The recipe models a `<provider>:*` key prices (empty for an exact model key). */
+export function wildcardMatches(key: string): string[] {
+  const k = normalize(key);
+  if (!k.endsWith(':*')) return [];
+  const recipe = getRecipe(k.slice(0, -2));
+  if (!recipe) return [];
+  const models = new Set<string>();
+  for (const tp of Object.values(recipe.touchpoints)) {
+    for (const m of (tp as { models?: string[] } | undefined)?.models ?? []) models.add(`${recipe.id}:${m}`);
+  }
+  return [...models];
 }
 
 async function runSet(engine: BrainEngine, args: string[]): Promise<void> {
   const model = args[0];
   if (!model || model.startsWith('--')) return fail('missing <model>. Usage: gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>');
   const has = (flag: string) => args.includes(flag);
+  if (!isAllowedPricingOverrideKey(model)) {
+    return fail(`"${model}" is not a model id gbrain can price. A provider wildcard (<provider>:*) is accepted only for providers that bill by subscription (claude-cli); register each model of a per-token provider separately.`);
+  }
   const req: PricingSetRequest = { model: model.trim() };
   if (has('--rate')) {
     if (has('--input') || has('--output')) return fail('use either --rate, or --input with --output, not both.');
@@ -176,6 +201,9 @@ async function runSet(engine: BrainEngine, args: string[]): Promise<void> {
   if (req.rate === 0 || (req.input === 0 && req.output === 0)) {
     console.error(`gbrain pricing: warning: ${normalize(req.model)} is registered at $0, so its calls count as free against every cost cap. Use $0 only for local or flat-rate routes.`);
   }
+  if (normalize(req.model).endsWith(':*')) {
+    console.error(`gbrain pricing: ${normalize(req.model)} is an operator assumption that prices every ${normalize(req.model).slice(0, -2)} model, including ones gbrain ships a rate for, so cost caps no longer use those shipped rates. An exact model entry still wins.`);
+  }
 }
 
 async function runList(engine: BrainEngine, args: string[]): Promise<void> {
@@ -186,7 +214,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
     return fail((err as Error).message);
   }
   const rows = Object.entries(current).map(([model, value]) => {
-    const priced = describeEntry(value);
+    const priced = describeEntry(model, value);
     const meta = value && typeof value === 'object' ? value as PricingEntry : {};
     return {
       model,
@@ -195,6 +223,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
       valid: priced !== null,
       source: meta.source ?? null,
       set_at: meta.set_at ?? null,
+      ...(model.trim().endsWith(':*') ? { matches: wildcardMatches(model) } : {}),
     };
   });
   if (args.includes('--json')) {
@@ -210,6 +239,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
     const rate = r.valid ? `input $${r.input}, output $${r.output}` : 'invalid entry, ignored by cost caps';
     const extra = [r.source && `source ${r.source}`, r.set_at && `set ${r.set_at}`].filter(Boolean).join('; ');
     console.log(`  ${r.model}: ${rate}${extra ? ` (${extra})` : ''}`);
+    if (r.valid && r.matches) console.log(`    provider wildcard, operator assumption; prices every ${r.model.trim().slice(0, -2)} model without an exact entry, e.g. ${r.matches.join(', ')}`);
   }
 }
 

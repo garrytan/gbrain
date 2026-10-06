@@ -129,6 +129,7 @@ CREATE TRIGGER bump_page_generation_clock_trg
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_pages_slug_basename ON pages (source_id, (regexp_replace(slug, '^.*/', '')));
 CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
   ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
@@ -197,6 +198,24 @@ CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
 CREATE OR REPLACE VIEW page_links AS
   SELECT id, from_page_id, to_page_id FROM links;
 
+
+CREATE TABLE IF NOT EXISTS wanted_links (
+  id               BIGSERIAL PRIMARY KEY,
+  origin_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  source_id        TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  producer         TEXT NOT NULL CHECK (producer IN ('body','frontmatter')),
+  ref_kind         TEXT NOT NULL CHECK (ref_kind IN ('slug','name')),
+  target_source_id TEXT NOT NULL,
+  target_ref       TEXT NOT NULL,
+  link_type        TEXT NOT NULL DEFAULT '',
+  context          TEXT NOT NULL DEFAULT '',
+  checked_at       TIMESTAMPTZ NOT NULL,
+  first_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT wanted_links_reference_unique
+    UNIQUE (origin_page_id, producer, ref_kind, target_source_id, target_ref)
+);
+CREATE INDEX IF NOT EXISTS wanted_links_target_idx ON wanted_links (target_source_id, target_ref);
+CREATE INDEX IF NOT EXISTS wanted_links_source_idx ON wanted_links (source_id);
 
 CREATE TABLE IF NOT EXISTS tags (
   id      SERIAL PRIMARY KEY,
@@ -484,6 +503,9 @@ CREATE TABLE IF NOT EXISTS session_context_state (
   checkpoint_manifest JSONB NOT NULL DEFAULT '[]'::jsonb,
   last_wake_at        TIMESTAMPTZ,
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  facts_cursor_at     TIMESTAMPTZ,
+  facts_cursor_id     BIGINT,
+  degraded_wakes      INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (source_id, client_id, session_id)
 );
 CREATE INDEX IF NOT EXISTS session_context_state_updated_idx
@@ -1088,7 +1110,7 @@ CREATE TABLE IF NOT EXISTS page_write_guards (
     slug TEXT NOT NULL,
     PRIMARY KEY (source_incarnation, slug)
   );
-CREATE OR REPLACE FUNCTION gbrain_advance_page_revision() RETURNS trigger LANGUAGE plpgsql AS \$fn\$
+CREATE OR REPLACE FUNCTION gbrain_advance_page_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$fn\$
     BEGIN
       IF OLD.knowledge_revision IS NULL THEN
         NEW.knowledge_revision := COALESCE(NEW.knowledge_revision, gen_random_uuid());
@@ -1117,7 +1139,7 @@ CREATE OR REPLACE FUNCTION gbrain_advance_page_revision() RETURNS trigger LANGUA
 DROP TRIGGER IF EXISTS pages_knowledge_revision ON pages;
 CREATE TRIGGER pages_knowledge_revision BEFORE UPDATE ON pages
     FOR EACH ROW EXECUTE FUNCTION gbrain_advance_page_revision();
-CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAGE plpgsql AS \$fn\$
+CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$fn\$
     BEGIN
       IF TG_OP = 'UPDATE' AND (NEW.page_id, NEW.tag) IS NOT DISTINCT FROM (OLD.page_id, OLD.tag) THEN
         RETURN NULL;
@@ -1292,7 +1314,7 @@ CREATE TABLE IF NOT EXISTS persistence_effects (
     UNIQUE(request_id,kind)
   );
 
-CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql AS \$fn\$
+CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$fn\$
 DECLARE target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM persistence_brain WHERE singleton=1 AND enabled) THEN
@@ -1374,7 +1396,7 @@ CREATE TABLE IF NOT EXISTS page_projection_jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY(source_incarnation,slug)
   );
-CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql AS \$fn\$
+CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$fn\$
     DECLARE incarnation UUID;
     BEGIN
       IF TG_OP='DELETE' THEN
@@ -1573,13 +1595,13 @@ CREATE TABLE IF NOT EXISTS persistence_writer_protocols (
     registered_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY(worktree_id,host_id)
   );
-CREATE OR REPLACE FUNCTION gbrain_require_persistence_protocol(required integer) RETURNS void LANGUAGE plpgsql AS \$\$
+CREATE OR REPLACE FUNCTION gbrain_require_persistence_protocol(required integer) RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$\$
   BEGIN
     IF required >= 2 AND COALESCE(current_setting('gbrain.persistence_protocol',true),'') <> '2' THEN
       RAISE EXCEPTION 'writer_upgrade_required: this mutation requires persistence protocol 2' USING ERRCODE='42501';
     END IF;
   END \$\$;
-CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGUAGE plpgsql AS \$\$
+CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$\$
   DECLARE target text; version integer; floor integer; active boolean; record jsonb;
   BEGIN
     IF TG_OP='DELETE' THEN target:=OLD.target_kind; version:=OLD.protocol_version;
@@ -1619,7 +1641,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGU
 DROP TRIGGER IF EXISTS gbrain_request_protocol ON persistence_requests;
 CREATE TRIGGER gbrain_request_protocol BEFORE INSERT OR UPDATE OR DELETE ON persistence_requests
     FOR EACH ROW EXECUTE FUNCTION gbrain_guard_request_protocol();
-CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUAGE plpgsql AS \$\$
+CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$\$
   DECLARE floor integer;
   BEGIN
     SELECT writer_protocol_floor INTO floor FROM persistence_brain WHERE singleton=1 FOR SHARE;
@@ -1630,7 +1652,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUA
 DROP TRIGGER IF EXISTS gbrain_effect_protocol ON persistence_effects;
 CREATE TRIGGER gbrain_effect_protocol BEFORE INSERT OR UPDATE OR DELETE ON persistence_effects
     FOR EACH ROW EXECUTE FUNCTION gbrain_guard_effect_protocol();
-CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LANGUAGE plpgsql AS \$\$
+CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$\$
   BEGIN
     IF NEW.writer_protocol_floor<OLD.writer_protocol_floor THEN
       RAISE EXCEPTION 'writer_upgrade_required: the protocol floor cannot be lowered' USING ERRCODE='42501';
@@ -1653,7 +1675,7 @@ CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LA
 DROP TRIGGER IF EXISTS gbrain_protocol_activation ON persistence_brain;
 CREATE TRIGGER gbrain_protocol_activation BEFORE UPDATE ON persistence_brain
     FOR EACH ROW EXECUTE FUNCTION gbrain_guard_protocol_activation();
-CREATE OR REPLACE FUNCTION gbrain_guard_skill_publication() RETURNS trigger LANGUAGE plpgsql AS \$\$
+CREATE OR REPLACE FUNCTION gbrain_guard_skill_publication() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$\$
   DECLARE permitted jsonb;
   BEGIN
     PERFORM gbrain_require_persistence_protocol(2);
@@ -1679,7 +1701,7 @@ CREATE TRIGGER gbrain_skill_publication BEFORE INSERT OR UPDATE OR DELETE ON sha
 DROP TRIGGER IF EXISTS gbrain_skill_publication ON shared_skill_revisions;
 CREATE TRIGGER gbrain_skill_publication BEFORE INSERT OR UPDATE OR DELETE ON shared_skill_revisions
       FOR EACH ROW EXECUTE FUNCTION gbrain_guard_skill_publication();
-CREATE OR REPLACE FUNCTION gbrain_lease_shared_skill_delivery() RETURNS trigger LANGUAGE plpgsql AS \$\$
+CREATE OR REPLACE FUNCTION gbrain_lease_shared_skill_delivery() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$\$
   DECLARE item text; found_revision shared_skill_revisions%ROWTYPE; brain text;
   BEGIN
     SELECT brain_id::text INTO brain FROM persistence_brain WHERE singleton=1;
@@ -1861,6 +1883,49 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 
+CREATE TABLE IF NOT EXISTS decide_review_queue (
+  kind            TEXT NOT NULL,
+  source_id       TEXT NOT NULL,
+  a_ref           TEXT NOT NULL,
+  b_ref           TEXT NOT NULL DEFAULT '*',
+  evidence        TEXT,
+  reason          TEXT NOT NULL DEFAULT 'queued',
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, source_id, a_ref, b_ref)
+);
+CREATE TABLE IF NOT EXISTS decide_review_proposals (
+  id               BIGSERIAL PRIMARY KEY,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  kind             TEXT NOT NULL,
+  source_id        TEXT NOT NULL,
+  sweep_id         TEXT NOT NULL,
+  a_ref            TEXT NOT NULL,
+  b_ref            TEXT NOT NULL,
+  subject          TEXT NOT NULL DEFAULT '*',
+  visibility       TEXT,
+  p_action         REAL NOT NULL,
+  threshold        REAL,
+  model_resolved   TEXT,
+  question_version TEXT,
+  status           TEXT NOT NULL DEFAULT 'pending',
+  decided_at       TIMESTAMPTZ,
+  receipt          TEXT,
+  UNIQUE (kind, source_id, a_ref, b_ref, subject)
+);
+CREATE INDEX IF NOT EXISTS decide_review_proposals_status_idx ON decide_review_proposals (status, created_at);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_review_queue ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE decide_review_proposals ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
 -- gbrain facts relink attempts and journal (#5836).
 CREATE TABLE IF NOT EXISTS fact_relink_attempts (
   source_id       TEXT NOT NULL,
@@ -1961,6 +2026,26 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 CREATE SEQUENCE IF NOT EXISTS graph_generation_seq;
+
+-- Always-loaded core memory: remote-edit notices.
+CREATE TABLE IF NOT EXISTS core_edit_notices (
+  id              BIGSERIAL PRIMARY KEY,
+  source_id       TEXT NOT NULL,
+  slug            TEXT NOT NULL,
+  page_id         BIGINT,
+  revision        TEXT,
+  base_revision   TEXT,
+  base_text       TEXT,
+  actor           TEXT NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  acked_at        TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS core_edit_notices_pending_idx ON core_edit_notices (source_id, slug, id) WHERE acked_at IS NULL;
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE core_edit_notices ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
 
 
 

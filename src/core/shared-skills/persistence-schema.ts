@@ -11,13 +11,13 @@ export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
     registered_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY(worktree_id,host_id)
   )`,
-  `CREATE OR REPLACE FUNCTION gbrain_require_persistence_protocol(required integer) RETURNS void LANGUAGE plpgsql AS $$
+  `CREATE OR REPLACE FUNCTION gbrain_require_persistence_protocol(required integer) RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   BEGIN
     IF required >= 2 AND COALESCE(current_setting('gbrain.persistence_protocol',true),'') <> '2' THEN
       RAISE EXCEPTION 'writer_upgrade_required: this mutation requires persistence protocol 2' USING ERRCODE='42501';
     END IF;
   END $$`,
-  `CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGUAGE plpgsql AS $$
+  `CREATE OR REPLACE FUNCTION gbrain_guard_request_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   DECLARE target text; version integer; floor integer; active boolean; record jsonb;
   BEGIN
     IF TG_OP='DELETE' THEN target:=OLD.target_kind; version:=OLD.protocol_version;
@@ -57,7 +57,7 @@ export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
   `DROP TRIGGER IF EXISTS gbrain_request_protocol ON persistence_requests`,
   `CREATE TRIGGER gbrain_request_protocol BEFORE INSERT OR UPDATE OR DELETE ON persistence_requests
     FOR EACH ROW EXECUTE FUNCTION gbrain_guard_request_protocol()`,
-  `CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUAGE plpgsql AS $$
+  `CREATE OR REPLACE FUNCTION gbrain_guard_effect_protocol() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   DECLARE floor integer;
   BEGIN
     SELECT writer_protocol_floor INTO floor FROM persistence_brain WHERE singleton=1 FOR SHARE;
@@ -68,7 +68,7 @@ export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
   `DROP TRIGGER IF EXISTS gbrain_effect_protocol ON persistence_effects`,
   `CREATE TRIGGER gbrain_effect_protocol BEFORE INSERT OR UPDATE OR DELETE ON persistence_effects
     FOR EACH ROW EXECUTE FUNCTION gbrain_guard_effect_protocol()`,
-  `CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LANGUAGE plpgsql AS $$
+  `CREATE OR REPLACE FUNCTION gbrain_guard_protocol_activation() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   BEGIN
     IF NEW.writer_protocol_floor<OLD.writer_protocol_floor THEN
       RAISE EXCEPTION 'writer_upgrade_required: the protocol floor cannot be lowered' USING ERRCODE='42501';
@@ -91,7 +91,7 @@ export const SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS: readonly string[] = [
   `DROP TRIGGER IF EXISTS gbrain_protocol_activation ON persistence_brain`,
   `CREATE TRIGGER gbrain_protocol_activation BEFORE UPDATE ON persistence_brain
     FOR EACH ROW EXECUTE FUNCTION gbrain_guard_protocol_activation()`,
-  `CREATE OR REPLACE FUNCTION gbrain_guard_skill_publication() RETURNS trigger LANGUAGE plpgsql AS $$
+  `CREATE OR REPLACE FUNCTION gbrain_guard_skill_publication() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
   DECLARE permitted jsonb;
   BEGIN
     PERFORM gbrain_require_persistence_protocol(2);

@@ -115,7 +115,8 @@ export async function writeSingleFact(
   let embedding: Float32Array | null = null;
   let embeddingModel: string | null = null;
   let degradedDedup = false;
-  if (isAvailable('embedding')) {
+  const { factEmbeddingDisabled } = await import('../embedding-disabled.ts');
+  if (!await factEmbeddingDisabled(engine) && isAvailable('embedding')) {
     try {
       embeddingModel = getEmbeddingModel();
       embedding = await embedOne(factText, { embeddingModel, inputType: 'document' });

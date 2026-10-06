@@ -12,6 +12,8 @@
  * resolver. Type lists reach SQL bound as `text[]`, never interpolated.
  *
  * Off switches: `auto_link=false` (global) or `mentions.auto_link=false`.
+ * `mentions.exclude_slugs` keeps named pages out of the gazetteer entirely
+ * (#5829: an entity whose name is also a common word).
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -32,6 +34,8 @@ export interface MentionPolicy {
   typeRemoves: string[];
   /** Names never linked (`mentions.ignore`), matched case-insensitively. */
   ignore: string[];
+  /** Page slugs that get no gazetteer entry, by title or alias (`mentions.exclude_slugs`, #5829). */
+  excludeSlugs: string[];
 }
 
 const FALSE_VALUES = new Set(['false', '0', 'no', 'off']);
@@ -52,9 +56,10 @@ export function parseNameList(value: unknown): string[] {
 }
 
 export async function readMentionPolicy(engine: Pick<BrainEngine, 'getConfig'>): Promise<MentionPolicy> {
-  const [global, own, types, ignore] = await Promise.all([
+  const [global, own, types, ignore, excludeSlugs] = await Promise.all([
     engine.getConfig('auto_link'), engine.getConfig('mentions.auto_link'),
     engine.getConfig('mentions.entity_types'), engine.getConfig('mentions.ignore'),
+    engine.getConfig('mentions.exclude_slugs'),
   ]);
   const typeAdds: string[] = [];
   const typeRemoves: string[] = [];
@@ -63,7 +68,8 @@ export async function readMentionPolicy(engine: Pick<BrainEngine, 'getConfig'>):
     else typeAdds.push(entry.replace(/^\+/, '').trim());
   }
   const disabledBy = isOff(global) ? 'auto_link' : isOff(own) ? 'mentions.auto_link' : null;
-  return { enabled: disabledBy === null, disabledBy, typeAdds: typeAdds.filter(Boolean), typeRemoves: typeRemoves.filter(Boolean), ignore: parseNameList(ignore) };
+  return { enabled: disabledBy === null, disabledBy, typeAdds: typeAdds.filter(Boolean), typeRemoves: typeRemoves.filter(Boolean), ignore: parseNameList(ignore),
+    excludeSlugs: parseNameList(excludeSlugs) };
 }
 
 /** Linkable entity types for one pack (null = no pack resolved), sorted. */

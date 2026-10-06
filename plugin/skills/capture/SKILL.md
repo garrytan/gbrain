@@ -8,8 +8,10 @@ triggers:
   - "ingest this into my brain"
   - "drop this in the inbox"
   - "save to brain"
-writes_pages:
-  - "inbox/*"
+writes_pages: true
+writes_to:
+  - inbox/
+when_to_use: "Use when the user asks: \"capture this\", \"save this thought\", \"remember this\", \"ingest this into my brain\", \"drop this in the inbox\"."
 ---
 
 # capture — the single ingestion entrypoint

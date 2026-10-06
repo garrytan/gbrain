@@ -1,0 +1,143 @@
+{
+"total_count": 21,
+"jobs": [
+{
+"id": 111902483748,
+"name": "prepare-e2e",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902483888,
+"name": "JSONB parity (#2339 regression guard)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902483904,
+"name": "Tier 1 backend matrix (direct + PgBouncer) 1/2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902484180,
+"name": "Tier 1 (Mechanical)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902484298,
+"name": "Tier 1 backend matrix (direct + PgBouncer) 2/2",
+"conclusion": "failure",
+"steps": [
+{
+"number": 9,
+"name": "Run backend matrix (direct Postgres, then PgBouncer)",
+"conclusion": "failure"
+}
+]
+},
+{
+"id": 111902484906,
+"name": "coverage-full-e2e",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111902485457,
+"name": "coverage-full-slow",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111902486720,
+"name": "coverage-full-report",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111902520670,
+"name": "coverage-full-unit",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111902545650,
+"name": "coverage-full-serial",
+"conclusion": "skipped",
+"steps": []
+},
+{
+"id": 111902658547,
+"name": "Selected E2E (diff-relevant) 3",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902658552,
+"name": "Selected E2E (diff-relevant) 5",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902658576,
+"name": "Selected E2E (diff-relevant) 4",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902658581,
+"name": "Selected E2E (diff-relevant) 2",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902658583,
+"name": "Selected E2E (diff-relevant) 6",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902658614,
+"name": "Selected E2E (diff-relevant) 8",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902658615,
+"name": "Selected E2E (diff-relevant) 7",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902658764,
+"name": "Selected E2E (diff-relevant) 1",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111902982972,
+"name": "Tier 2 (LLM Skills)",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111909670138,
+"name": "executed-receipts",
+"conclusion": "success",
+"steps": []
+},
+{
+"id": 111909670183,
+"name": "e2e-status",
+"conclusion": "failure",
+"steps": [
+{
+"number": 3,
+"name": "Aggregate result",
+"conclusion": "failure"
+}
+]
+}
+]
+}

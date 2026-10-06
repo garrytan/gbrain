@@ -76,6 +76,7 @@ import { applyDelegatedData, guardDelegatedTools } from '../delegated-tools.ts';
 import { withDelegatedSpend } from '../delegated-spend.ts';
 import { invokeAI, sdkInvocationUsage, hasAIInvocationGuard } from '../../ai/invocation-guard.ts';
 import { chatInvocation } from '../../ai/guarded-generation.ts';
+import { resolveChatPerTurnTimeoutMs } from '../handler-timeouts.ts';
 
 // ── Defaults ────────────────────────────────────────────────
 
@@ -432,6 +433,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       await engine.getConfig('agent.max_output_tokens').catch(() => null),
       model,
     );
+    const turnTimeoutMs = resolveChatPerTurnTimeoutMs(await engine.getConfig('ai.chat.per_turn_timeout_ms').catch(() => null));
     // v0.41 Approach C: systemPrompt is now built AFTER toolDefs (a few
     // lines below) so the renderer can splice a tool-usage preamble
     // listing each available tool's usage_hint. The renderer is
@@ -553,6 +555,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           data,
           model,
           maxOutputTokens,
+          turnTimeoutMs,
           putPageTool: oneshotTools.find(t => t.name === 'brain_put_page'),
           leaseKey: gatewayLeaseKey,
           maxConcurrent,
@@ -578,6 +581,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         toolDefs,
         maxTurns,
         maxOutputTokens,
+        turnTimeoutMs,
         leaseKey: gatewayLeaseKey,
         maxConcurrent,
         leaseTtlMs,
@@ -1148,6 +1152,8 @@ interface GatewayRunArgs {
   maxTurns: number;
   /** #2778: per-turn output-token cap (resolved by resolveMaxOutputTokens). */
   maxOutputTokens: number;
+  /** `ai.chat.per_turn_timeout_ms`: each turn's chat backstop (#4921). */
+  turnTimeoutMs: number;
   /**
    * #4194/CDX-7 — per-turn rate-lease parameters. Pre-fix the gateway path
    * made provider calls with no lease at all (the legacy loop's acquisition
@@ -1176,7 +1182,7 @@ interface GatewayRunArgs {
  * reconciler sees both shapes uniformly.
  */
 async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResult> {
-  const { engine, ctx, data, model, systemPrompt, toolDefs, maxTurns, maxOutputTokens, leaseKey, maxConcurrent, leaseTtlMs } = args;
+  const { engine, ctx, data, model, systemPrompt, toolDefs, maxTurns, maxOutputTokens, turnTimeoutMs, leaseKey, maxConcurrent, leaseTtlMs } = args;
 
   // Map ToolDef → ChatToolDef (gateway shape). The gateway's chat() bridges
   // this to provider-specific tool definitions via the Vercel AI SDK.
@@ -1316,6 +1322,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     maxTurns,
     maxTokens: maxOutputTokens,
     abortSignal: ctx.signal,
+    turnTimeoutMs,
     cacheSystem,
     // #4194/CDX-7: every provider round-trip holds a rate-lease slot (worker
     // parity with the legacy loop's per-turn acquisition). Lease-full throws

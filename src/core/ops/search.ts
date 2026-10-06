@@ -504,6 +504,15 @@ const RECENCY_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'], 
 
 const SNIPPET_CHARS_PARAM_DESCRIPTION = 'Max chars per chunk_text (0 = full).';
 
+/** The query op's image branch embed; a brain that opted out of embedding refuses before the image reaches a provider. */
+async function embedSearchImage(ctx: OperationContext, data: string, mime: string): Promise<Float32Array> {
+  const { assertBrainEmbeddingEnabled } = await import('../embedding-dim-check.ts');
+  await assertBrainEmbeddingEnabled(ctx.engine, ctx.config);
+  const { embedMultimodal } = await import('../ai/gateway.ts');
+  const [vec] = await embedMultimodal([{ kind: 'image_base64', data, mime }]);
+  return vec;
+}
+
 /**
  * #3800: resolve the effective snippet cap for one call. Explicit
  * `snippet_chars` param wins (0 = full text); else subagent callers
@@ -763,10 +772,7 @@ const query: Operation = {
       const imageMeta: HybridSearchMeta = {
         vector_enabled: true, expansion_applied: false, detail_resolved: null, degraded: [],
       };
-      const { embedMultimodal } = await import('../ai/gateway.ts');
-      const [vec] = await embedMultimodal([
-        { kind: 'image_base64', data: imageData, mime: imageMime },
-      ]);
+      const vec = await embedSearchImage(ctx, imageData, imageMime);
       // v0.34.1 (#861 F2 — 6th leak surface): the image path bypasses
       // hybridSearch and calls searchVector directly, so it needs its
       // own thread of the source scope. Pre-fix, this branch leaked

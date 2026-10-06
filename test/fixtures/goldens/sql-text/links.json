@@ -401,6 +401,22 @@
           {
             "lane": "tx",
             "params": [
+              "string"
+            ],
+            "sql": "SELECT value FROM config WHERE key = $1",
+            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT value FROM config WHERE key = $1",
+            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
+          },
+          {
+            "lane": "tx",
+            "params": [
               "object",
               "number",
               "number"

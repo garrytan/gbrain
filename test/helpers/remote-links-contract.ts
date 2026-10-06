@@ -20,7 +20,7 @@ import { withEnv } from './with-env.ts';
  * test and the PostgreSQL E2E wrapper. Each scenario owns its own source and
  * OAuth client, so scenarios can share one database.
  */
-export const remoteLinksCases = ['links', 'other_producers', 'confined', 'config_off', 'superseded', 'restart', 'revoked', 'trusted_local', 'reconcile'] as const;
+export const remoteLinksCases = ['links', 'other_producers', 'confined', 'config_off', 'superseded', 'restart', 'revoked', 'trusted_local', 'reconcile', 'wanted'] as const;
 export type RemoteLinksCase = typeof remoteLinksCases[number];
 
 const config = { engine: 'pglite' as const, embedding_disabled: true };
@@ -98,6 +98,28 @@ export async function exerciseRemoteLinks(engine: BrainEngine, scenario: RemoteL
           ['people/bob-example', 'cross_source'], ['people/ghost-example', 'missing'], ['people/secret-example', 'not_visible']]));
         expect((await publicEffectsForRequest(engine, row.id)).find(e => e.kind === 'links')).toEqual({ kind: 'links', state: 'committed', added: 2, removed: 0 });
         expect(await engine.executeRaw("SELECT 1 FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 AND l.link_type<>'mentions'", [sourceId])).toEqual([]);
+        return;
+      }
+
+      if (scenario === 'wanted') {
+        const wanted = () => engine.executeRaw<{ target_ref: string; producer: string; link_type: string }>(`SELECT w.target_ref,w.producer,w.link_type
+          FROM wanted_links w JOIN pages p ON p.id=w.origin_page_id WHERE p.source_id=$1 AND p.slug='notes/example' ORDER BY w.target_ref`, [sourceId]);
+        await engine.setConfig('wanted_pages.remote', 'false');
+        await write(MENTIONS(sourceId));
+        await runLinks();
+        expect(await wanted()).toEqual([]); // turned off: nothing recorded
+        await engine.executeRaw("DELETE FROM config WHERE key='wanted_pages.remote'"); // default on
+        try {
+          await write(`${MENTIONS(sourceId)}\nAnother paragraph.\n`);
+          await runLinks();
+          // Only the missing same-source target: not the private, cross-source, frontmatter or timeline ones.
+          expect(await wanted()).toEqual([{ target_ref: 'people/ghost-example', producer: 'body', link_type: 'mentions' }]);
+          await write('---\ntype: note\ntitle: Remote example\n---\n\nOnly [[companies/acme-example]] now.\n');
+          await runLinks();
+          expect(await wanted()).toEqual([]);
+        } finally {
+          await engine.executeRaw("DELETE FROM config WHERE key='wanted_pages.remote'");
+        }
         return;
       }
 

@@ -13,6 +13,7 @@ mutating: true
 writes_pages: true
 writes_to:
   - concepts/
+when_to_use: "Use when the user asks: \"verify this academic claim\", \"check this study\", \"academic verify\", \"validate citation\", \"is this study real\"."
 ---
 
 # academic-verify — Trace Claims to Source Data

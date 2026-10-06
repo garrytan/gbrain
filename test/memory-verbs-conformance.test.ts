@@ -228,6 +228,14 @@ describe('remember — contract behavior', () => {
     expect(body.protocol_version).toBe(1);
   });
 
+  it('an argument-less remember (a tool call cut off at the output limit) stays invalid_params and says so', async () => {
+    const { isError, body } = await callRemote('remember', {});
+    expect(isError).toBe(true);
+    expect(body.error).toBe('invalid_params');
+    expect(body.suggestion).toContain('output-token limit');
+    expect(body.suggestion).toContain('items');
+  });
+
   it('rejects ISO-8601 duration ttl (P30D) with a self-correcting suggestion', async () => {
     const { isError, body } = await callRemote('remember', {
       fact: 'ttl trap', provenance: 'test', ttl: 'P30D',

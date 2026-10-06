@@ -35,6 +35,7 @@ upstream: company-brainify@fc834ee
 # skill edits IN PLACE — it does not create new pages there, except the
 # deletion-log entry under daily/ required by data-loss-gate Step 4.
 brain_first: true
+when_to_use: "Use when the user asks: \"company brain\", \"team brain\", \"brainify\", \"sanitize the brain\", \"share my brain with the team\"."
 ---
 
 # company-brainify — Personal → Team-Brain Sanitization

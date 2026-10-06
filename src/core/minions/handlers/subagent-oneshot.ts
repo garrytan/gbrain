@@ -205,6 +205,12 @@ export interface OneshotArgs {
   data: SubagentHandlerData;
   model: string;
   maxOutputTokens: number;
+  /**
+   * `ai.chat.per_turn_timeout_ms` (#4921): with a job deadline the call's
+   * sub-budget is min(this, a quarter of the time left); without one it
+   * stays 5 min. Unset keeps the 5-min ceiling.
+   */
+  turnTimeoutMs?: number;
   /** The deferEmbeds-enabled brain_put_page ToolDef (same executor as the loop). */
   putPageTool: ToolDef | undefined;
   leaseKey: string;
@@ -212,7 +218,7 @@ export interface OneshotArgs {
   leaseTtlMs: number;
   /** Test seam (extract-atoms pattern). */
   _chat?: typeof gatewayChat;
-  /** Test seam: override the OV-9 sub-budget (default min(5min, deadline/4)). */
+  /** Test seam: override the OV-9 sub-budget (default min(turnTimeoutMs, deadline/4)). */
   _budgetMs?: number;
 }
 
@@ -345,7 +351,7 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
 
   // ── Single provider call under a rate lease + sub-budget (OV-9) ─────────
   const budgetMs = args._budgetMs ?? (ctx.deadlineAtMs
-    ? Math.min(ONESHOT_CALL_BUDGET_MS, Math.max(30_000, Math.floor((ctx.deadlineAtMs - Date.now()) / 4)))
+    ? Math.min(args.turnTimeoutMs ?? ONESHOT_CALL_BUDGET_MS, Math.max(30_000, Math.floor((ctx.deadlineAtMs - Date.now()) / 4)))
     : ONESHOT_CALL_BUDGET_MS);
   // Lease TTL must OUTLIVE the call it guards: the sub-budget hard-bounds
   // the call (AbortSignal.timeout below), so ttl = budget + slack. With the
@@ -374,6 +380,7 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
       messages: [{ role: 'user', content: data.prompt }],
       maxTokens: args.maxOutputTokens,
       abortSignal: callSignal,
+      timeoutMs: budgetMs,
       // cacheSystem marks the system block as a cache breakpoint. Note:
       // ONESHOT_SYSTEM alone is under Anthropic's ~1024-token cache minimum,
       // so cross-job prefix hits only materialize on providers/models with a

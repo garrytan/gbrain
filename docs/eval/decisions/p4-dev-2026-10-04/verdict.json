@@ -1,0 +1,167 @@
+{
+  "decision_id": "p4-dev-2026-10-04",
+  "plan": "P4",
+  "stage": "dev",
+  "eligible_for_default": false,
+  "eligibility_note": "Dev verdicts come from development data and never set a default. A held-out verdict comes from the custodian after a committed preregistration.",
+  "verdict_type": "quality",
+  "overall": "pass",
+  "decided_at": "2026-10-04T21:33:47.436Z",
+  "sources": [
+    {
+      "source": "lme-s-dev",
+      "verdict": "pass",
+      "arms": {
+        "baseline": {
+          "package": "gbrain",
+          "declared_pin": "github:garrytan/gbrain#739e5cc89ca43b9b9351f0f203c7b12a7c0c571c",
+          "declared_sha": "739e5cc89ca43b9b9351f0f203c7b12a7c0c571c",
+          "version": "0.60.48.0",
+          "package_sha256": "fab1c3142270c58c8357f2298bb3f7bf9b59a1062f5954684e95bd1d1cc11c01",
+          "loaded_git_head": "6622a119e40ea09a7719233046aca24741863ed2"
+        },
+        "candidate": {
+          "package": "gbrain",
+          "declared_pin": "github:garrytan/gbrain#739e5cc89ca43b9b9351f0f203c7b12a7c0c571c",
+          "declared_sha": "739e5cc89ca43b9b9351f0f203c7b12a7c0c571c",
+          "version": "0.60.48.0",
+          "package_sha256": "8832a6436f679c7b25a8c3a6f8ef01d2d670e95620e176064722664be47030f4",
+          "loaded_git_head": "d9a1f62d09ebd134afd9467849fbcb12f921ae62"
+        }
+      },
+      "family": {
+        "family_id": "p4-dev-2026-10-04:lme-s-dev",
+        "verdict": "pass",
+        "reasons": [],
+        "alpha": 0.05,
+        "holm_family": [
+          "recall-all-5"
+        ],
+        "comparisons": [
+          {
+            "id": "recall-all-5",
+            "metric": "recall_all_at_5",
+            "gate": "noninferiority",
+            "status": "pass",
+            "reasons": [],
+            "n_pairs": 470,
+            "n_clusters": 470,
+            "n_excluded": 30,
+            "stats": {
+              "n_pairs": 470,
+              "n_clusters": 470,
+              "mean_a": 0.9276595744680851,
+              "mean_b": 0.9276595744680851,
+              "delta": 0,
+              "se_cluster": 0,
+              "se_iid": 0,
+              "design_effect": null,
+              "effective_n": null,
+              "ci95": [
+                0,
+                0
+              ],
+              "p_two_sided": 1,
+              "p_greater": 1,
+              "p_less": 1,
+              "p_method": "degenerate"
+            },
+            "mcnemar": {
+              "losses": 0,
+              "wins": 0,
+              "both_pass": 436,
+              "both_fail": 34,
+              "discordant": 0,
+              "p_two_sided": 1
+            },
+            "power": {
+              "alpha": 0.05,
+              "power": 0.8,
+              "mde": null,
+              "min_one_sided_discordant": 6,
+              "note": "no paired variation was observed, so the detectable effect cannot be estimated from this data; an exact McNemar test needs at least 6 wins with zero losses to reach 0.05"
+            },
+            "direction": "higher",
+            "p_holm": 0,
+            "tolerance": 0.01,
+            "p_noninferiority": 0
+          },
+          {
+            "id": "ndcg-10",
+            "metric": "ndcg_at_10",
+            "gate": "exploratory",
+            "status": "report_only",
+            "reasons": [],
+            "n_pairs": 470,
+            "n_clusters": 470,
+            "n_excluded": 30,
+            "stats": {
+              "n_pairs": 470,
+              "n_clusters": 470,
+              "mean_a": 0.9427586261708026,
+              "mean_b": 0.9429414225547724,
+              "delta": 0.00018279638396968153,
+              "se_cluster": 0.00017120160644384274,
+              "se_iid": 0.00017120160644384274,
+              "design_effect": 1,
+              "effective_n": 470,
+              "ci95": [
+                0,
+                0.0005363995995389641
+              ],
+              "p_two_sided": 0.49755024497550243,
+              "p_greater": 0.24497550244975502,
+              "p_less": 1,
+              "p_method": "monte-carlo-sign-flip"
+            },
+            "power": {
+              "alpha": 0.05,
+              "power": 0.8,
+              "mde": 0.0004796358900558992,
+              "min_one_sided_discordant": null,
+              "note": "with 470 pairs in 470 clusters, a two-sided 0.05 test has 80% power for an absolute change of about 0.0005; the observed delta is below that size, so a null result here is not evidence of no effect"
+            },
+            "direction": "higher"
+          },
+          {
+            "id": "latency",
+            "metric": "latency_ms",
+            "gate": "exploratory",
+            "status": "report_only",
+            "reasons": [],
+            "n_pairs": 470,
+            "n_clusters": 470,
+            "n_excluded": 30,
+            "stats": {
+              "n_pairs": 470,
+              "n_clusters": 470,
+              "mean_a": 255.12574468085114,
+              "mean_b": 253.26340425531913,
+              "delta": -1.8623404255319163,
+              "se_cluster": 6.61462501509369,
+              "se_iid": 6.614625015093689,
+              "design_effect": 1.0000000000000004,
+              "effective_n": 469.9999999999998,
+              "ci95": [
+                -14.603829787234046,
+                11.156595744680834
+              ],
+              "p_two_sided": 0.784021597840216,
+              "p_greater": 0.6031396860313969,
+              "p_less": 0.396960303969603,
+              "p_method": "monte-carlo-sign-flip"
+            },
+            "power": {
+              "alpha": 0.05,
+              "power": 0.8,
+              "mde": 18.531435670500866,
+              "min_one_sided_discordant": null,
+              "note": "with 470 pairs in 470 clusters, a two-sided 0.05 test has 80% power for an absolute change of about 18.5314; the observed delta is below that size, so a null result here is not evidence of no effect"
+            },
+            "direction": "lower"
+          }
+        ]
+      }
+    }
+  ]
+}

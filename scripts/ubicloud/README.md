@@ -4,8 +4,43 @@
 instead of one Docker host. It packs the working tree once (tracked files,
 untracked files that are not ignored, and `.git`) and streams it to every VM, so
 uncommitted edits are tested. `scripts/ubicloud/ubi-runner.sh` creates and
-destroys the VMs; every VM is destroyed on exit, including Ctrl-C, and any
-`ubirun-*` VM older than 12 hours is garbage-collected by the next run.
+destroys the VMs.
+
+## Ownership and teardown
+
+Every VM is named `ubirun-<owner>-<epoch>-<suffix>`. The owner is `UBI_OWNER`
+(lowercased, letters and digits only, at most 12 characters, starting with a
+letter) or a random per-machine id kept in the runner's state directory. Set
+`UBI_OWNER` to your thread code (`UBI_OWNER=gbra41 bun run ci:ubicloud`) so
+everyone can see whose VMs hold the quota. Ubicloud names allow 63 characters
+of `[a-z0-9-]`, so a full name stays under 40.
+
+Each name is recorded before its create request is sent: the runner writes
+the VM's state directory first, and `ci-ubicloud.ts` appends the name to
+`.context/ci-ubicloud/<run>/vms.txt`. On every exit, including Ctrl-C,
+SIGTERM, SIGQUIT and SIGHUP (a dropped terminal or a cancelled background
+operation), an `up` still talking to the API finishes the request and destroys
+its own VM; further signals are ignored until teardown ends. Then every recorded name gets `down`, which destroys the VM and polls
+until it is confirmed gone. A create whose answer never arrived is waited out
+for `UBI_CREATE_GRACE` seconds (default 180) before the VM counts as never
+created. `down` gives up after `UBI_DOWN_TIMEOUT` seconds (default 900) and
+prints the command to rerun.
+
+Nothing sweeps stale VMs unless you ask. With `UBI_GC_HOURS` set to a positive
+number, each `up` first destroys the caller's own VMs older than that many
+hours. An operator runs the same sweep with `ubi-runner.sh gc HOURS`. Neither
+ever destroys another owner's VM, an untagged legacy `ubirun-<epoch>-*` VM, or a
+VM the runner did not name. Use `down NAME` for those after checking who owns
+them.
+
+A machine that goes to sleep kills the run outright, with no signal, so
+teardown can't run: on Capy, run `ci:ubicloud` as a watched background
+operation so the machine stays awake. After any interrupted run, check
+`list --mine` and reap leftovers with `down NAME` (or `gc HOURS`, which only
+destroys your own VMs older than HOURS).
+
+`ubi-runner.sh list --mine` lists your VMs. `ubi-runner.sh usage` prints VMs
+and vCPUs per owner across the project, which shows who holds the shared quota.
 
 Each VM runs `scripts/ubicloud/setup-ci-vm.sh`: the pinned Bun from
 `docker-compose.ci.yml`, the runner container's test prerequisites plus Node,
@@ -45,9 +80,15 @@ Defaults are four `standard-16` VMs (64 vCPUs) in `eu-central-h1` with 8 slots
 each, one per two vCPUs (`--vms`, `--size`, `--slots`, `--location`). The
 Ubicloud project's vCPU quota (256) is shared with pull-request CI, so the
 default leaves room for about two concurrent PR runs; the former default of
-ten VMs took 160 vCPUs and queued PR jobs for up to 28 minutes. A VM that the
+ten VMs took 160 vCPUs and queued PR jobs for up to 28 minutes. In a
+multi-lane wave, each lane runs `ci:ubicloud:diff` or its targeted suites, and
+only the integrator runs the full gate; four lanes each running the full gate
+take 256 vCPUs, the whole quota. A VM that the
 quota refuses fails to provision and the run continues on the VMs that did
-start, so a busy project shrinks the fleet instead of failing. Pass `--vms 10`
+start, so a busy project shrinks the fleet instead of failing. The runner
+prints the refusal (needed, used and maximum vCPUs) with the project's VMs
+and vCPUs per owner; used vCPUs beyond that table are other usage, such as
+managed GitHub runners. Pass `--vms 10`
 only when the quota is idle. Slow-lane items run `test/export-scale.slow.test.ts`
 at the pull-request scale (`GBRAIN_TEST_EXPORT_SCALE_PAGES=10001`). `--lanes` runs a
 subset, `--keep` leaves the VMs up for debugging, and `--diff` follows

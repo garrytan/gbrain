@@ -21,6 +21,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import type { Effect } from '../../../core/agent-output.ts';
@@ -37,6 +38,7 @@ import { classifyBrainAudience } from '../../../core/facts/writeback-audience.ts
 import { readVerbUsage } from '../../../core/verbs/usage-log.ts';
 import { readClientOpUsage } from '../../../core/mcp-usage.ts';
 import { readHeartbeatTail } from '../../../core/context/hook-heartbeat.ts';
+import { CORPUS_UNINGESTED_RETENTION_FACTOR, corpusBacklog } from '../../../core/context/corpus-segments.ts';
 import { readHarnessReceiptState } from '../../../core/bootstrap/format.ts';
 import { mutedFirstRunDecisionsNotice } from '../../../core/onboard/mcp-onboarding.ts';
 import {
@@ -52,6 +54,13 @@ import {
 export const MEMORY_WRITEBACK_CHECK_NAME = 'memory_writeback';
 
 const COUNTER_WINDOW_DAYS = 7;
+/**
+ * #5557: share of finished serve-side harvests (ok + error; a busy-writer
+ * re-queue is not finished) that fails before the check warns, judged on at
+ * least this many harvests.
+ */
+const HARVEST_FAILURE_WARN_SHARE = 0.2;
+const HARVEST_FAILURE_MIN_FINISHED = 10;
 
 /** Every path an ambient block could live at: the receipt's recorded
  * `instructions` targets UNION the two canonical install paths — an
@@ -92,6 +101,29 @@ async function remoteFactReaders(engine: BrainEngine): Promise<string[]> {
     if (clients.length) readers.push(`${clients.length} HTTP MCP client(s) active in 30d`);
   } catch { /* pre-OAuth brain: no request log */ }
   return readers;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * E-N1: corpus turn files nothing has extracted yet. Retention keeps them up
+ * to CORPUS_UNINGESTED_RETENTION_FACTOR x `corpus_retention_days`; once one is
+ * past plain retention it is on its way to deletion, so the check says so.
+ * Records `details.corpus_backlog`; returns the warning text or null.
+ */
+async function corpusBacklogProblem(engine: BrainEngine, fileCfg: ReturnType<typeof loadConfig>, details: Record<string, unknown>): Promise<string | null> {
+  const synth = fileCfg?.dream?.synthesize as Record<string, unknown> | undefined;
+  const configured = (await engine.getConfig('dream.synthesize.session_corpus_dir').catch(() => null)) ?? synth?.session_corpus_dir;
+  const dir = typeof configured === 'string' && isAbsolute(configured) ? configured : join(resolveGbrainHome(), 'transcripts', 'corpus');
+  const days = typeof synth?.corpus_retention_days === 'number' && synth.corpus_retention_days > 0 ? synth.corpus_retention_days : 30;
+  const now = Date.now();
+  const backlog = corpusBacklog(dir, days * DAY_MS, now);
+  const oldestDays = backlog.oldestPendingMtimeMs === null ? null : Math.floor((now - backlog.oldestPendingMtimeMs) / DAY_MS);
+  const purgeDays = days * CORPUS_UNINGESTED_RETENTION_FACTOR;
+  details.corpus_backlog = { pending: backlog.pending, oldest_pending_days: oldestDays, past_retention: backlog.pastRetention, retention_days: days, deleted_after_days: purgeDays };
+  if (backlog.pastRetention === 0) return null;
+  return `${backlog.pastRetention} of ${backlog.pending} captured session file(s) are older than the ${days}-day corpus retention and were never extracted `
+    + `(oldest ${oldestDays}d); they are deleted at ${purgeDays}d. Extract them now: gbrain sweep --once --budget-ms 600000`;
 }
 
 export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Promise<Check> {
@@ -203,6 +235,8 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
     }
 
     const problems: string[] = [];
+    const corpusProblem = await corpusBacklogProblem(engine, fileCfg, details).catch(() => null);
+    if (corpusProblem) problems.push(corpusProblem);
     if (!wb.ttl_valid) {
       problems.push(`memory.auto_writeback_transient_ttl is invalid — using '${wb.transient_ttl}'`);
     }
@@ -314,7 +348,18 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
         // flush_skip_* = the turn IS banked; only the prompt-harvest enqueue
         // was declined (cap/queue policy) — the sweep extracts it later.
         turns_banked: bank.filter((e) => e.reason === 'wb_scheduled' || e.reason === 'wb_banked' || e.reason?.startsWith('flush_skip_')).length,
+        last_ok_at: harvest.filter((e) => e.outcome === 'ok').map((e) => e.ts).sort().at(-1) ?? null,
       };
+      const failures = harvest.filter((e) => e.outcome === 'error');
+      const finished = failures.length + harvest.filter((e) => e.outcome === 'ok').length;
+      if (finished >= HARVEST_FAILURE_MIN_FINISHED && failures.length / finished > HARVEST_FAILURE_WARN_SHARE) {
+        const counts = new Map<string, number>();
+        for (const e of failures) counts.set(e.reason ?? 'error', (counts.get(e.reason ?? 'error') ?? 0) + 1);
+        const [topReason, topN] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]!;
+        problems.push(`${failures.length}/${finished} writeback harvests failed in ${COUNTER_WINDOW_DAYS}d (top: ${topReason} x${topN}); `
+          + 'failed turns wait for the next serve sweep or corpus drain; clear them now with gbrain sweep --once --budget-ms 600000; '
+          + 'serve\'s stderr names the first failure of each reason');
+      }
     } catch { /* heartbeat unreadable — counters stay absent */ }
 
     const mutedDecisions = await mutedFirstRunDecisionsNotice(engine).catch(() => null);

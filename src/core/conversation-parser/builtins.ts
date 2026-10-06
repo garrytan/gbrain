@@ -69,6 +69,37 @@ const speakerObjectRegex = new RegExp(
   'u',
 );
 
+/**
+ * Bold labels that open meeting-note metadata lines (`**Date:** …`), never a
+ * speaker turn. bold-name-no-time rejects a label that is exactly one of
+ * these (case-insensitive). Labels that double as speaker roles in interview
+ * and panel transcripts (Host, Guest, Facilitator) are deliberately absent.
+ */
+export const METADATA_LABELS: readonly string[] = [
+  'attendees?', 'participants?', 'present', 'absent', 'invitees?',
+  'date', 'time', 'when', 'where', 'location', 'venue', 'duration',
+  'summary', 'agenda', 'notes?', 'subject', 'title', 'topics?', 'purpose',
+  'organi[sz]er', 'recording', 'transcript', 'meeting',
+  'action items?', 'next steps?', 'decisions?', 'key points?', 'takeaways?', 'outcomes?',
+  'status', 'owner', 'tags?', 'links?', 'source', 'type', 'context', 'background',
+];
+
+const METADATA_LINE = new RegExp(`^\\*\\*(?:${METADATA_LABELS.join('|')})\\s*:\\*\\*`, 'i');
+const METADATA_SECTION = /^#{1,3}\s+(?:attendees|participants|agenda|action items)\s*$/i;
+
+/**
+ * #5025: whether a page that produced no speaker turns has the shape of
+ * meeting notes or a calendar event (a bold metadata label line such as
+ * `**Attendees:**`, or an Attendees / Participants / Agenda / Action items
+ * section) rather than a transcript in a format the parser does not know.
+ */
+export function looksLikeMeetingNotes(body: string): boolean {
+  return body.split(/\r?\n/).some((line) => {
+    const t = line.trim();
+    return METADATA_LINE.test(t) || METADATA_SECTION.test(t);
+  });
+}
+
 export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   // -------------------------------------------------------------------
   // INLINE-DATE patterns (date in every line; less ambiguous; tried first).
@@ -473,6 +504,12 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     // shape so that disabling telegram-bracket yields an honest
     // no_match instead of capturing speaker="[18:37] Name" at midnight.
     //
+    // METADATA LABELS (#5025 / N2): meeting notes open with
+    // `**Attendees:** …` / `**Date:** …` header lines. Those labels are
+    // never speakers, so the second lookahead rejects a bold label that is
+    // exactly one of METADATA_LABELS; a prose meeting page then has no
+    // anchor at all instead of two "turns" by Attendees and Date.
+    //
     // BROAD-REGEX GUARD (score_full_body): `**Label:** text` is a
     // common prose idiom (`**Note:**`, `**Owner:**`). A notes page
     // with a few bold labels clustered in its first 10 lines would
@@ -483,7 +520,7 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     origin: 'builtin',
     // Matches: **Speaker Name:** message text  (colon INSIDE bold,
     // speaker must not start with `[` — see lookahead rationale above).
-    regex: /^\*\*(?!\[)(.+?):\*\*\s*(.*)$/,
+    regex: new RegExp(`^\\*\\*(?!\\[)(?!(?:${METADATA_LABELS.join('|')})\\s*:\\*\\*)(.+?):\\*\\*\\s*(.*)$`, 'i'),
     captures: {
       speaker_group: 1,
       text_group: 2,
@@ -515,6 +552,10 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
       // — the `(?!\[)` lookahead rejects it so disabling
       // telegram-bracket yields no_match, not speaker="[18:37] Alice":
       '**[18:37] \u{1f464} Alice:** hello',
+      // Meeting-note metadata labels are never speakers (#5025 / N2):
+      '**Attendees:** Alice Example, Bob Example',
+      '**Date:** 2026-09-07',
+      '**Action items:** ship the draft',
     ],
     source_doc:
       'Circleback / Granola / Zoom meeting-transcript export shape: `**Speaker:** text` with no per-line timestamp',
@@ -853,6 +894,44 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     ],
     source_doc:
       'gbrain nightly transcript ingest: compiled_truth bodies use markdown headings per turn',
+  },
+  {
+    // gbrain's Gmail thread page (src/core/google/google-render.ts): one
+    // `## <From> · YYYY-MM-DD HH:MM` heading per message (`## → <From> · …`
+    // for a sent message), the body below it. The time is UTC (the
+    // renderer slices an ISO instant). The speaker is the From display
+    // name; speaker_clean drops the `<address>` and surrounding quotes.
+    // The ` · date time` suffix keeps ordinary `## Section` headings out.
+    id: 'email-thread-heading',
+    origin: 'builtin',
+    regex: /^##\s+(?:→\s+)?(\S.*?)\s+·\s+(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s*()$/u,
+    captures: {
+      speaker_group: 1,
+      date_group: 2,
+      hour_group: 3,
+      minute_group: 4,
+      text_group: 5,
+    },
+    date_source: 'inline',
+    time_format: '24h',
+    timezone_policy: 'inline_utc',
+    multi_line: true,
+    score_continuations_as_body: true,
+    score_continuations_max_preamble_lines: 2,
+    quick_reject: /^##\s.*\s·\s\d{4}-\d{2}-\d{2}\s/u,
+    speaker_clean: /^[^\p{L}\p{N}]+|["']?\s*<[^>]*>\s*$|["']$/gu,
+    test_positive: [
+      '## Alice Example <alice@example.com> · 2026-09-07 12:21',
+      '## → Bob Example <bob@example.com> · 2026-09-07 14:05',
+      '## alice@example.com · 2026-09-08 09:10',
+    ],
+    test_negative: [
+      '## Summary',
+      '## Alice Example · yesterday',
+      '# Alice Example <alice@example.com> · 2026-09-07 12:21',
+      '## Alice Example <alice@example.com> · 2026-09-07 12:21 extra words',
+    ],
+    source_doc: 'gbrain Gmail thread render (src/core/google/google-render.ts renderThreadPage)',
   },
   {
     id: 'python-dict-utterance',

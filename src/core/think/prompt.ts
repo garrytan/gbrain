@@ -35,6 +35,12 @@ export interface ThinkSystemPromptOpts {
    * message via buildThinkUserMessage.calibration.
    */
   withCalibration?: boolean;
+  /**
+   * True when the user message carries a `Current date:` line. Adds the
+   * date-reading rules; the date itself stays out of the system prompt so
+   * the system text is stable across days (prompt caching).
+   */
+  currentDate?: boolean;
 }
 
 export const THINK_SYSTEM_PROMPT_BASE = `You are gbrain's synthesis engine. You answer questions by reasoning across the user's personal knowledge brain. Your inputs are wrapped in structural tags:
@@ -84,6 +90,9 @@ export function buildThinkSystemPrompt(opts: ThinkSystemPromptOpts = {}): string
   }
   if (opts.willSave) {
     lines.push(`\nThis synthesis will be persisted as a brain page. Aim for completeness — cover the Answer and any Conflicts thoroughly, and list every missing piece in the structured "gaps" array.`);
+  }
+  if (opts.currentDate) {
+    lines.push(`\nDates: the user message gives the current date. A <page date="YYYY-MM-DD"> attribute is the date that page's content is about or was written. Resolve relative time words in a page ("yesterday", "last week", "two months ago") against that page's date, and relative time words in the question against the current date. A page without a date attribute has no known content date.`);
   }
   if (opts.withCalibration) {
     lines.push(
@@ -165,8 +174,13 @@ export function buildThinkUserMessage(opts: {
    * (so we don't cue the model that we tried).
    */
   trajectoryBlock?: string;
+  /** `Current date: …` line placed immediately before the question. */
+  currentDate?: string;
 }): string {
   const parts: string[] = [];
+  const questionLines = opts.currentDate
+    ? [`Current date: ${opts.currentDate}`, `Question: ${opts.question}`]
+    : [`Question: ${opts.question}`];
   const hasTrajectory = typeof opts.trajectoryBlock === 'string' && opts.trajectoryBlock.length > 0;
 
   if (opts.calibration) {
@@ -192,7 +206,7 @@ export function buildThinkUserMessage(opts: {
       parts.push(opts.trajectoryBlock as string);
     }
     parts.push('');
-    parts.push(`Question: ${opts.question}`);
+    parts.push(...questionLines);
     parts.push('');
     parts.push('Respond with a single JSON object matching the schema. No prose outside JSON.');
     return parts.join('\n');
@@ -200,7 +214,7 @@ export function buildThinkUserMessage(opts: {
 
   // Default path (v0.28-vintage with v0.40.2.0 trajectory slot between
   // retrieval and the output instruction).
-  parts.push(`Question: ${opts.question}`);
+  parts.push(...questionLines);
   parts.push('');
   parts.push('<pages>');
   parts.push(opts.pagesBlock || '(no page hits)');

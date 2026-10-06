@@ -1778,6 +1778,39 @@
         ],
         "flagOnScopes": []
       },
+      "listFactsKeyset#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listFactsKeyset#keyset": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listFactsKeyset#strictTime": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFactsSince#allFilters": {
         "flagOffLanes": [
           "pool"
@@ -3403,6 +3436,7 @@
         "listEvalCaptureFailures": "none",
         "listFactsByEntity": "none",
         "listFactsBySession": "none",
+        "listFactsKeyset": "none",
         "listFactsSince": "none",
         "listFilesForPage": "none",
         "listLinkSources": "direct",

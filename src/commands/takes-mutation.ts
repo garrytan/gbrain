@@ -16,18 +16,19 @@ import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 
-const names = ['add', 'update', 'supersede', 'resolve'] as const;
+const names = ['add', 'update', 'supersede', 'resolve', 'remove'] as const;
 export type TakesMutation = typeof names[number];
 export function isTakesMutation(value: string): value is TakesMutation { return (names as readonly string[]).includes(value); }
 const USAGE_FIX = readFix('Prints every gbrain takes form with its flags.', { argv: ['gbrain', 'takes', '--help'] });
 const invalid = (message: string, suggestion: string, fix: Action = USAGE_FIX) => opError('invalid_params', message, suggestion, { fix });
 const REQUIRED_USAGE: Record<TakesMutation, string> = {
   add: '--claim "..." --kind fact|take|bet|hunch --who HOLDER', update: '--row N', supersede: '--row N --claim "..."', resolve: '--row N --quality correct|incorrect|partial',
+  remove: '--row N',
 };
 
 export function parseTakesMutation(args: string[]): { operation: `takes_${TakesMutation}`; params: Record<string, unknown>; sourceId?: string; json: boolean } {
   const [sub, slug, ...rest] = args;
-  if (!isTakesMutation(sub) || !slug || slug.startsWith('-')) throw invalid('Usage: gbrain takes add|update|supersede|resolve <slug> [options].',
+  if (!isTakesMutation(sub) || !slug || slug.startsWith('-')) throw invalid('Usage: gbrain takes add|update|supersede|resolve|remove <slug> [options].',
     isTakesMutation(sub) ? `Name the page slug right after takes ${sub}: gbrain takes ${sub} people/alice-example ${REQUIRED_USAGE[sub]}.`
       : 'Start with the mutation and the page slug, e.g. gbrain takes add people/alice-example --claim "..." --kind take --who alice-example.');
   const params: Record<string, unknown> = { slug };
@@ -65,6 +66,7 @@ export function parseTakesMutation(args: string[]): { operation: `takes_${TakesM
   const allowed = sub === 'add' ? ['claim', 'kind', 'holder', 'weight', 'source', 'since']
     : sub === 'update' ? ['row_num', 'weight', 'source', 'since']
     : sub === 'supersede' ? ['row_num', 'claim', 'kind', 'holder', 'weight', 'source', 'since']
+    : sub === 'remove' ? ['row_num']
     : ['row_num', 'quality', 'outcome', 'evidence', 'source', 'value', 'unit', 'resolved_by'];
   const flagOf = (key: string) => Object.keys(fields).find(flag => fields[flag] === key) ?? `--${key}`;
   for (const key of Object.keys(params)) if (![...common, ...allowed].includes(key)) throw invalid(`${key} is not supported by takes ${sub}.`,
@@ -106,6 +108,8 @@ export async function runTakesMutation(engine: BrainEngine | (() => Promise<Brai
     const config = configOverride ?? loadConfig(), cli = getCliOptions();
     let result: Record<string, unknown>;
     if (isThinClient(config)) {
+      if (operation === 'takes_remove') throw invalid('takes remove runs only on the brain host.',
+        'Run gbrain takes remove on the brain host; a remote connection cannot remove takes.');
       if (args.some(arg => arg === '--outcome' || arg.startsWith('--outcome='))) console.error('[deprecated] --outcome is the v0.28 alias for --quality. Prefer --quality correct|incorrect|partial in new scripts.');
       if (cli.brain || parsed.sourceId || params.local_dir !== undefined) throw invalid('--brain, --source-id, and --dir require a local brain host; the remote credential selects its source.',
         'Drop --brain, --source-id and --dir on this thin client: the remote connection\'s credential selects the brain and source.',
@@ -139,6 +143,7 @@ export async function runTakesMutation(engine: BrainEngine | (() => Promise<Brai
       if (operation === 'takes_add') console.log(`Added take #${row} to ${params.slug}.`);
       else if (operation === 'takes_update') console.log(`Updated take #${row} on ${params.slug}.`);
       else if (operation === 'takes_supersede') console.log(`Superseded #${result.old_row} → new #${result.new_row} on ${params.slug}.`);
+      else if (operation === 'takes_remove') console.log(`Removed take #${row} from ${params.slug}.`);
       else console.log(`Resolved take #${row} on ${params.slug}: quality=${params.quality}.`);
     }
   } catch (error) {

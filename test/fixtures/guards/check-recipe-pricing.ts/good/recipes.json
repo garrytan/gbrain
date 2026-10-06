@@ -1,0 +1,4 @@
+[
+  { "id": "openai", "touchpoints": { "chat": { "models": ["gpt-5.5"] }, "embedding": { "models": ["text-embedding-3-small"] } } },
+  { "id": "groq", "unpriced_models": ["llama-3.1-8b-instant"], "touchpoints": { "chat": { "models": ["llama-3.1-8b-instant"] } } }
+]

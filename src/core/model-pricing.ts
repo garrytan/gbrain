@@ -165,9 +165,16 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // `deepseek-chat` was retired by DeepSeek 2026-07-24 (#1255); kept so
   // historical usage/audit rows still price. New calls use the v4 names.
   'deepseek:deepseek-chat':               { input:  0.14, output:  0.28 },
-  // DeepSeek v4 (verified 2026-07-27 at api-docs.deepseek.com): cache-miss rates.
-  'deepseek:deepseek-v4-flash':           { input:  0.14, output:  0.28 },
-  'deepseek:deepseek-v4-pro':             { input:  0.435, output: 0.87 },
+  // DeepSeek (verified 2026-10-05 at https://api-docs.deepseek.com/quick_start/pricing):
+  // PEAK cache-miss rates, an upper bound. DeepSeek bills half these rates
+  // off-peak (outside 01:00-04:00 and 06:00-10:00 UTC on weekdays); a static
+  // row cannot know the hour and a cap must bound the worst case, so caps
+  // and estimates use peak. `deepseek-flash` (DeepSeek-V4.1-Flash) is the
+  // current name; the legacy `deepseek-v4-flash` is served by the same model
+  // and billed at the Flash price, so the pair stays in lockstep.
+  'deepseek:deepseek-flash':              { input:  0.30, output:  1.20 },
+  'deepseek:deepseek-v4-flash':           { input:  0.30, output:  1.20 },
+  'deepseek:deepseek-v4-pro':             { input:  1.32, output:  3.96 },
   // ── Z.ai / GLM (via LiteLLM proxy) ───────────────────────────────────
   // GLM-5.2 from Z.ai: $1.40/M input, $4.40/M output (verified 2026-08-16
   // against OpenRouter provider listings — z.ai's own direct rates).
@@ -175,7 +182,7 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
 
   // ── OpenRouter (router-prefixed, own catalogue rate) ────────────────────
   // Static entries pulled from OpenRouter's published `/api/v1/models`
-  // catalogue (verified 2026-08-17), NOT aliased to the inner vendor's
+  // catalogue (verified 2026-08-17; re-checked 2026-10-05), NOT aliased to the inner vendor's
   // direct rate — a router bills its own spread, and canonicalLookup's
   // nested-id miss (see doc comment below) exists precisely to stop a
   // router-prefixed id from silently matching the vendor's key instead.
@@ -189,10 +196,11 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // live; see PR discussion on gbrain#3848 for why a dynamic fetch/cache
   // didn't merge (default-on network behavior, new pricing-source surface).
   //
-  // deepseek/deepseek-v4-flash-0731 matches deepseek:deepseek-v4-flash
-  // above to the cent — OpenRouter passing DeepSeek through at vendor
-  // rate, not a coincidence worth losing to an alias shortcut.
-  'openrouter:deepseek/deepseek-v4-flash-0731': { input: 0.14,  output: 0.28 },
+  // deepseek/deepseek-v4-flash-0731 re-verified 2026-10-05 against the
+  // catalogue's own rate ($0.0152 in / $1.28 out), which no longer matches
+  // the vendor row above: a router row is read from the router, never
+  // copied from the vendor.
+  'openrouter:deepseek/deepseek-v4-flash-0731': { input: 0.0152, output: 1.28 },
   'openrouter:qwen/qwen3.7-flash':              { input: 0.03,  output: 0.13 },
   'openrouter:qwen/qwen3.6-plus':               { input: 0.325, output: 1.95 },
 };

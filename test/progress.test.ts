@@ -145,7 +145,25 @@ describe('progress reporter', () => {
     expect(events[1]).toMatchObject({ event: 'tick', phase: 'doctor.jsonb_integrity', done: 1, total: 4 });
     expect(events[1].pct).toBe(25);
     expect(typeof events[1].elapsed_ms).toBe('number');
+    expect(typeof events[1].cpu_ms).toBe('number');
     expect(events[events.length - 1]).toMatchObject({ event: 'finish', phase: 'doctor.jsonb_integrity' });
+  });
+
+  test('json tick cpu_ms counts CPU work since the phase started, not time spent waiting', async () => {
+    const { stream, read } = sink(false);
+    const p = createProgress({ mode: 'json', stream, minIntervalMs: 0, minItems: 1 });
+    p.start('import.files', 3);
+    const cpuMs = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
+    const spinUntil = cpuMs() + 60;
+    while (cpuMs() < spinUntil) { /* burn 60 ms of CPU */ }
+    p.tick(1);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    p.tick(1);
+    p.finish();
+    const [, worked, waited] = parseJsonl(read()) as Array<{ cpu_ms: number; elapsed_ms: number }>;
+    expect(worked.cpu_ms).toBeGreaterThanOrEqual(60);
+    expect(waited.elapsed_ms - worked.elapsed_ms).toBeGreaterThanOrEqual(190);
+    expect(waited.cpu_ms - worked.cpu_ms).toBeLessThan(100);
   });
 
   test('quiet mode emits nothing', () => {

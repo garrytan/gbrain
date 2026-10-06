@@ -193,6 +193,7 @@ export class ChildWorkerSupervisor {
   private readonly tiniPath: string;
   private _crashCount = 0;
   private _lastExitCode: number | null = null;
+  private _lastExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
   private _cleanRestartTimestamps: number[] = [];
   /** Sliding window of RSS-watchdog exit timestamps (issue #1678). Separate
    *  from crashCount so the >5-min stable-run reset can't defeat the breaker. */
@@ -223,6 +224,12 @@ export class ChildWorkerSupervisor {
   }
   get crashCount(): number {
     return this._crashCount;
+  }
+  /** #5062: how the most recent child exited, recorded on the shutdown path
+   *  too, so a composer can tell a clean drain (code 0) from a forced or
+   *  failed stop. */
+  get lastExit(): { code: number | null; signal: NodeJS.Signals | null } | null {
+    return this._lastExit;
   }
   get configurationBlocked(): boolean {
     if (this.opts.processingState?.blocked) this.markConfigurationBlocked();
@@ -585,6 +592,7 @@ export class ChildWorkerSupervisor {
         settled = true;
         cleanup();
         this._child = null;
+        this._lastExit = { code, signal };
 
         if (code === WORKER_EXIT_CONFIGURATION) {
           this.opts.processingState?.workerExited();

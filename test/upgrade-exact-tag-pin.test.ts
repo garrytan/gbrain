@@ -14,7 +14,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 
-import { bunGlobalExactTagPin } from '../src/commands/upgrade.ts';
+import { bunGlobalExactTagPin, bunReinstallCommand } from '../src/commands/upgrade.ts';
 import { VERSION } from '../src/version.ts';
 
 const REPO = resolve(import.meta.dir, '..');
@@ -67,16 +67,22 @@ describe('#5311 bare upgrade on an exact-tag pin', () => {
       expect(r.exitCode).toBe(1);
       expect(r.stderr).toContain('Upgrade did not take effect');
       expect(r.stderr).toContain(`pinned to github:garrytan/gbrain#v${VERSION}`);
-      expect(r.stderr).toContain('bun add -g github:garrytan/gbrain');
+      // #5034 / B-NEW-5: remove before add; an in-place global tag swap fails (Bun 1.3) or silently corrupts the lock (Bun 1.4).
+      expect(r.stderr).toContain('bun remove -g gbrain && bun add -g github:garrytan/gbrain');
       expect(readFileSync(join(r.home, 'bun-calls.log'), 'utf-8')).toContain('update gbrain');
       // No false "just upgraded" breadcrumb for an upgrade that never happened.
       expect(existsSync(join(r.home, '.gbrain', 'just-upgraded-from'))).toBe(false);
       const errors = readFileSync(join(r.home, '.gbrain', 'upgrade-errors.jsonl'), 'utf-8').trim().split('\n').map(l => JSON.parse(l));
-      expect(errors.some(e => e.phase === 'verify-pin' && e.hint.startsWith('bun add -g github:garrytan/gbrain'))).toBe(true);
+      expect(errors.some(e => e.phase === 'verify-pin' && e.hint.startsWith('bun remove -g gbrain && bun add -g github:garrytan/gbrain'))).toBe(true);
     } finally {
       rmSync(r.home, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test('every reinstall hint removes the global package before adding the tag (#5034, B-NEW-5)', () => {
+    expect(bunReinstallCommand('#v0.60.1.0')).toBe('bun remove -g gbrain && bun add -g github:garrytan/gbrain#v0.60.1.0');
+    expect(bunReinstallCommand('')).toBe('bun remove -g gbrain && bun add -g github:garrytan/gbrain');
+  });
 
   test('an unpinned install that is already current still succeeds', async () => {
     const r = await runBareUpgrade('github:garrytan/gbrain', VERSION);

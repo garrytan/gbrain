@@ -344,6 +344,23 @@ export interface Recipe {
   tier: 'native' | 'openai-compat';
   /** Maps to the gateway's implementation switch. */
   implementation: Implementation;
+  /**
+   * How the provider bills. `subscription`: calls draw on a flat-rate plan
+   * (claude-cli), so the operator may price every model of the provider at
+   * once with a `<provider>:*` key in `pricing.overrides`. Unset means per
+   * token, where a provider wildcard is refused (one rate cannot be right
+   * for every model of a per-token API).
+   */
+  billing?: 'subscription';
+  /**
+   * Model ids this recipe lists in a touchpoint that gbrain ships no price
+   * for. They run under a default cost cap with a warning; a cap the user
+   * set refuses them with the no_pricing guidance until the operator
+   * registers a rate (`gbrain pricing set`). `bun run check:recipe-pricing`
+   * requires every listed model to be priced or named here, and fails on a
+   * stale entry (now priced, or no longer listed).
+   */
+  unpriced_models?: string[];
   /** For openai-compatible tier: default base URL. May be overridden by env or wizard. */
   base_url_default?: string;
   /** Env var name(s) for auth; first is required, rest are optional. */
@@ -498,6 +515,8 @@ export interface AIGatewayConfig {
    * Judge, critic and eval call sites opt out with `allowFallback: false`.
    */
   chat_fallback_chain?: string[];
+  /** `false` keeps outage fallback but never sends a refused request to the next chain entry. Default true. */
+  chat_fallback_on_refusal?: boolean;
   /** Optional per-provider base URL override (openai-compatible variants). */
   base_urls?: Record<string, string>;
   /** Optional chat providerOptions overrides keyed by recipe id or "recipe:modelId". */

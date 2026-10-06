@@ -6,7 +6,7 @@ export const GUARDED_TABLES = ['pages', 'tags', 'slug_aliases', 'page_aliases', 
 const sqlList = (names: string[]) => names.map(name => `'${name}'`).join(',');
 /** The guard function alone: replacing it takes no table lock (v197). */
 export const MANAGED_WRITER_GUARD_FUNCTION_SQL = `
-CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql AS $fn$
+CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
 DECLARE target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM persistence_brain WHERE singleton=1 AND enabled) THEN

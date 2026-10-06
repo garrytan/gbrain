@@ -1,0 +1,180 @@
+name: Stress
+
+# Repeated-run lanes, both driven by `bun run test:stress` (scripts/stress/run.ts)
+# and planned and reported by scripts/stress/gate.ts. test.yml calls this
+# workflow twice:
+#   - stress-changed-tests (mode gate): every event, inside test-status. On
+#     pull_request and merge_group it runs every added or modified test file,
+#     plus direct importers of changed test/helpers/ files (fan-in rule), 10
+#     times each; elsewhere it succeeds with "not a PR event". A dispatch with
+#     stress_files or stress_base/stress_head runs it for real as a diagnostic.
+#   - race-hunt (mode race-hunt): the nightly Test schedule and a race_hunt
+#     dispatch only, outside test-status. Every file in test/postgres-unit-arms.txt
+#     10 times against Postgres.
+# Every database iteration gets a fresh database (CREATE DATABASE … TEMPLATE).
+# Shard jobs record results and exit 0 on test failures; the result job alone
+# decides, so a known failure with a trusted exemption can pass while any
+# other failure, a missing receipt or a failed plan fails it.
+# Docs: docs/TESTING.md#stress-gate, docs/TESTING.md#race-hunt.
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        required: true
+      stress_files:
+        type: string
+        default: ''
+      stress_base:
+        type: string
+        default: ''
+      stress_head:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Stress plan
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 10
+    outputs:
+      run: ${{ steps.plan.outputs.run }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      # Full history: the gate diffs against the merge base, the race hunt
+      # reads which helpers changed on master since the last night.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # Dispatch inputs reach the planner through env only; it validates every
+      # path and ref before use. Named exception (docs/TESTING.md#event-parity):
+      # the gate plans work only for pull_request, merge_group and a stress
+      # dispatch; push and nightly runs execute every file in the full suite.
+      - name: Plan
+        id: plan
+        env:
+          MODE: ${{ inputs.mode }}
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          STRESS_FILES: ${{ inputs.stress_files }}
+          STRESS_BASE: ${{ inputs.stress_base }}
+          STRESS_HEAD: ${{ inputs.stress_head }}
+        run: bun scripts/stress/gate.ts plan --mode "$MODE"
+      - name: Upload plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stress-plan-${{ inputs.mode }}
+          path: ${{ runner.temp }}/stress-plan/plan.json
+          retention-days: 14
+          overwrite: true
+
+  shards:
+    name: ${{ inputs.mode == 'gate' && 'Stress shard' || 'Race hunt shard' }} ${{ matrix.shard }}
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    # Gate shards are planned under 25 minutes and race-hunt shards under 55;
+    # the margin covers checkout, install and the snapshot build.
+    timeout-minutes: ${{ fromJSON(inputs.mode == 'gate' && '35' || '65') }}
+    strategy:
+      fail-fast: false
+      # Bounded so a large fix-wave PR queues its shards instead of starving
+      # every other job of the shared runner quota.
+      max-parallel: 12
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: gbrain_test
+          POSTGRES_PASSWORD: gbrain_test
+          POSTGRES_DB: gbrain_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U gbrain_test -d gbrain_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+      - run: bun install --frozen-lockfile
+      # Exit 1 means a test failed and the manifest says which; the result job
+      # decides. Exit 2 (setup error) or a signal fails the shard, and the
+      # result job reports its iterations as missing.
+      - name: Run planned iterations
+        shell: bash
+        env:
+          GBRAIN_STRESS_ADMIN_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          STRESS_WORK: ${{ matrix.work }}
+        run: |
+          rc=0
+          bun run test:stress --postgres --work "$STRESS_WORK" --out "$RUNNER_TEMP/stress" || rc=$?
+          [ "$rc" -le 1 ]
+      - name: Upload manifest and receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stress-${{ inputs.mode }}-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/stress
+          retention-days: 14
+          if-no-files-found: warn
+          overwrite: true
+
+  result:
+    name: ${{ inputs.mode == 'gate' && 'stress-changed-tests result' || 'race-hunt result' }}
+    needs: [plan, shards]
+    if: always()
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Download plan
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: stress-plan-${{ inputs.mode }}
+          path: ${{ runner.temp }}/plan
+      - name: Download shard manifests
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: stress-${{ inputs.mode }}-shard-*
+          path: ${{ runner.temp }}/manifests
+      # Event parity: GATE_SINCE only dates exemptions (docs/TESTING.md#event-parity).
+      - name: Decide
+        env:
+          MODE: ${{ inputs.mode }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          SHARDS_RESULT: ${{ needs.shards.result }}
+          GH_TOKEN: ${{ github.token }}
+          GATE_SINCE: ${{ github.event.pull_request.created_at || github.event.merge_group.head_commit.timestamp }}
+        run: bun scripts/stress/gate.ts report --mode "$MODE" --plan "$RUNNER_TEMP/plan/plan.json" --manifests "$RUNNER_TEMP/manifests"

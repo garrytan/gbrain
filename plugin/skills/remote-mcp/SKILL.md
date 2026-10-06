@@ -27,6 +27,7 @@ mutating: true
 # exempt: this skill changes host networking/service state and never answers
 # a knowledge question, so there is nothing to look up in the brain first.
 brain_first: exempt
+when_to_use: "Use when the user asks: \"use my brain over mcp\", \"serve my brain over mcp\", \"expose my brain over mcp\", \"gbrain mcp server\", \"remote mcp access to my brain\"."
 ---
 
 # Remote MCP — use your brain from anywhere

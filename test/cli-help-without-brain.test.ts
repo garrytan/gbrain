@@ -51,6 +51,8 @@ const HELP_WITHOUT_BRAIN = [
   'brainstorm', 'lsd', 'migrate', 'pages', 'pricing', 'whoknows',
   // Agent operator gate fixes: embed's usage (incl. its consent flags) prints before the engine.
   'embed',
+  // Core memory: runCore prints its usage for --help before reading the engine.
+  'core',
 ];
 
 /**

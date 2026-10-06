@@ -34,14 +34,12 @@ import {
   type JudgePromptInput,
 } from './judge.ts';
 import type { LongMemEvalQuestion } from './adapter.ts';
+import { parseCapFlag } from '../../core/budget/cap-flag.ts';
 
 /** `--max-usd N|off`: `off` disables the cap (and lets an unpriced judge run). */
 export function parseMaxUsd(flag: string, v: string): number | null {
-  const s = v.trim().toLowerCase();
-  if (s === 'off' || s === 'none' || s === 'unlimited') return null;
-  const n = Number(s);
-  if (!Number.isFinite(n) || n < 0) throw new Error(`${flag} must be a non-negative number of USD or 'off' (got: ${v})`);
-  return n;
+  // D19 shared parser; 0 keeps its meaning here, a $0 judge cap.
+  return parseCapFlag(flag, v, { zero: 'cap' }).usd;
 }
 
 /** This run's reader pins (the hash's reader half for live rows). */

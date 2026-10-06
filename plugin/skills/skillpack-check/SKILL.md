@@ -19,6 +19,7 @@ triggers:
 tools:
   - shell
 mutating: false
+when_to_use: "Use when the user asks: \"skillpack check\", \"is gbrain healthy\", \"gbrain health\", \"check the brain\", \"is the brain working\"."
 ---
 
 # Skillpack Check

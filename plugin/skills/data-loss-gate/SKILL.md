@@ -27,6 +27,7 @@ upstream: data-loss-gate@fc834ee
 # check backlinks / graph dependencies (get_backlinks, graph) so the card's
 # "what we'd lose" section is grounded in the actual target, not guesses.
 brain_first: true
+when_to_use: "Use when the user asks: \"bulk delete\", \"wipe the\", \"rm -rf\", \"purge the\", \"truncate\"."
 ---
 
 # Data Loss Gate — Confirmation Before Destructive Operations

@@ -40,6 +40,7 @@ import { WORKTREE_REFRESH_SCHEMA_SQL } from '../src/core/persistence/worktree-re
 import { SHARED_SKILLS_SCHEMA_SQL } from '../src/core/shared-skills/schema-all.ts';
 import { DECIDE_SCHEMA_SQL } from '../src/core/ai/decide/schema.ts';
 import { FACT_RELINK_SCHEMA_SQL } from '../src/core/facts/relink-schema.ts';
+import { CORE_EDIT_NOTICES_SCHEMA_SQL } from '../src/core/core-memory-schema.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 export const SCHEMA_SQL_PATH = 'src/schema.sql';
@@ -97,6 +98,7 @@ export const FRAGMENTS: readonly Fragment[] = [
   { source: 'src/core/ai/decide/schema.ts', expr: 'DECIDE_SCHEMA_SQL', postgres: DECIDE_SCHEMA_SQL, pglite: DECIDE_SCHEMA_SQL },
   { source: 'src/core/facts/relink-schema.ts', expr: 'FACT_RELINK_SCHEMA_SQL', postgres: FACT_RELINK_SCHEMA_SQL, pglite: FACT_RELINK_SCHEMA_SQL },
   { source: 'src/core/link-temporal-schema.ts', expr: 'LINK_TEMPORAL_SCHEMA_SQL', postgres: LINK_TEMPORAL_SCHEMA_SQL, pglite: LINK_TEMPORAL_SCHEMA_SQL },
+  { source: 'src/core/core-memory-schema.ts', expr: 'CORE_EDIT_NOTICES_SCHEMA_SQL', postgres: CORE_EDIT_NOTICES_SCHEMA_SQL, pglite: CORE_EDIT_NOTICES_SCHEMA_SQL },
 ];
 
 const fragmentLabel = (f: Fragment) => `${f.source} (${f.expr})`;
@@ -422,7 +424,7 @@ export const PGLITE_RULES: readonly Rule[] = [
 
 /** DO blocks outside fragment regions are opaque, so each is classified by content hash. */
 export const PGLITE_DO_BLOCKS: Readonly<Record<string, { keep: boolean; reason: string }>> = {
-  d4724194ea02: { keep: false, reason: 'schema.sql RLS enablement block: PGLite has no role system (the shared-skills fragment keeps its own block)' },
+  '28b8b384fc62': { keep: false, reason: 'schema.sql RLS enablement block: PGLite has no role system (the shared-skills fragment keeps its own block)' },
 };
 
 interface Addition {

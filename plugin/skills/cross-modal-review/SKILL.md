@@ -19,6 +19,7 @@ tools:
   - query
   - get_page
 mutating: false
+when_to_use: "Use when the user asks: \"second opinion\", \"cross-modal review\", \"double check this\", \"get another perspective\", \"challenge this code\"."
 ---
 
 # Cross-Modal Review

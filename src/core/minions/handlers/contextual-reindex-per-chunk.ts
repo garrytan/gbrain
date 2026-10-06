@@ -104,7 +104,7 @@ export interface MakeContextualReindexHandlerOpts {
 }
 
 export async function resolveContextualSynopsisModel(
-  engine: BrainEngine,
+  engine: BrainEngine | null,
   explicitModel?: string,
 ): Promise<string> {
   return resolveModel(engine, {

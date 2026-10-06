@@ -38,7 +38,7 @@ import { isPathContained } from '../path-confine.ts';
 import type { ConfineTranscriptResult, ParsedTranscript, ToolCallRecord } from './claude-code-jsonl.ts';
 import { capToolCallInput, TRANSCRIPT_HARD_CAP_BYTES, TRANSCRIPT_MAX_BYTES_DEFAULT } from './claude-code-jsonl.ts';
 import type { WindowTurn } from '../context/entity-salience.ts';
-import { mapCodexLine } from './codex.ts';
+import { isRepeatedCodexUserTurn, mapCodexLine } from './codex.ts';
 
 /** Head window kept on over-budget reads: session_meta is byte 0 of a rollout
  * and carries the identity a pure tail read would lose (codex.ts rationale). */
@@ -174,6 +174,7 @@ export function parseCodexHookTranscript(
         if (!cwd && mapped.cwd) cwd = mapped.cwd;
         break;
       case 'user':
+        if (isRepeatedCodexUserTurn(turns.at(-1), mapped.message.text)) break;
         genuineUserTurnIndexes.push(turns.length);
         turns.push({ role: mapped.message.role, text: mapped.message.text });
         break;

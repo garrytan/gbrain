@@ -44,6 +44,8 @@ jobs:
     # label. Works for all three trigger types (labeled, synchronize, reopened)
     # because `contains(labels.*.name, ...)` reads the live label set, not the
     # event payload's `label.name` (which is only populated for `labeled`).
+    # Named exception (docs/TESTING.md#event-parity): label-gated on pull requests;
+    # the nightly Heavy Tests schedule and manual dispatch always run it.
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'heavy-tests')
@@ -140,6 +142,8 @@ jobs:
   # the PR shard matrix.
   real-agent-e2e:
     name: Real-agent door e2e (live claude + codex when keyed)
+    # Named exception (docs/TESTING.md#event-parity): label-gated on pull requests;
+    # the nightly Heavy Tests schedule and manual dispatch always run it.
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
@@ -250,6 +254,8 @@ jobs:
   # empty ANTHROPIC_API_KEY secret is a visible, tracked skip (Preconditions).
   hermes-door:
     name: Hermes door e2e (credentialed, real binary, loud-fail)
+    # Named exception (docs/TESTING.md#event-parity): label-gated on pull requests;
+    # the nightly Heavy Tests schedule and manual dispatch always run it.
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
@@ -483,6 +489,8 @@ jobs:
   # stays deterministic while the canary tracks what users actually run.
   grok-door:
     name: Grok door e2e (real binary, keyless-first)
+    # Named exception with a recorded decision (docs/TESTING.md#event-parity): no
+    # covering scheduled run until the XAI_API_KEY secret exists (posture above).
     if: |
       (github.event_name == 'pull_request' &&
         contains(github.event.pull_request.labels.*.name, 'real-agent-e2e')) ||
@@ -721,6 +729,8 @@ jobs:
   # weight.
   plugin-doors:
     name: Plugin doors (codex + claude, install tier)
+    # Named exception (docs/TESTING.md#event-parity): label-gated on pull requests;
+    # the nightly Heavy Tests schedule and manual dispatch always run it.
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'heavy-tests')
@@ -797,6 +807,8 @@ jobs:
   #
   opencode-door:
     name: opencode door e2e (${{ matrix.lane }})
+    # Named exception (docs/TESTING.md#event-parity): label-gated on pull requests;
+    # the nightly Heavy Tests schedule and manual dispatch always run it.
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
@@ -1024,6 +1036,8 @@ jobs:
   # (OPENCODE-CLI-PIN.md §Pin-refresh cadence), never a gate.
   opencode-door-canary:
     name: opencode door canary (latest, keyless, non-gating)
+    # Named exception (docs/TESTING.md#event-parity): a schedule-only, non-gating
+    # canary of the latest opencode; the pinned door lane above is the gate.
     if: github.event_name == 'schedule'
     runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 20

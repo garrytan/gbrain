@@ -43,7 +43,7 @@ export const GIT_HOLD_ESCALATE_MIN_SCREENED = 40;
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
-export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression';
+export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression' | 'managed_image_sync_unsupported';
 export type GitHoldReason = InvalidFrontmatterReason | 'rename_source_changed';
 
 export interface GitHoldMeta {
@@ -119,15 +119,20 @@ async function lockSummary(tx: Exec, sourceId: string, incarnation: string): Pro
   return Number(row?.count ?? 0);
 }
 
-/** `count` is every hold; `stale` the holds of files whose page exists (the rest are missing pages). */
-async function adjustSummary(tx: Exec, sourceId: string, incarnation: string, delta: number, staleDelta: number): Promise<void> {
+/**
+ * `count` is every hold; `stale` the holds of files whose page exists (the rest are missing pages);
+ * `images` the #5493 unsupported-image holds, which never escalate.
+ */
+async function adjustSummary(tx: Exec, sourceId: string, incarnation: string, delta: number, staleDelta: number, imageDelta: number): Promise<void> {
   await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0)||jsonb_build_object(
       'count',GREATEST(0,COALESCE((completed_keys->0->>'count')::int,0)+$3::int),
-      'stale',GREATEST(0,COALESCE((completed_keys->0->>'stale')::int,0)+$4::int))),updated_at=now() WHERE op=$1 AND fingerprint=$2`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), delta, staleDelta]);
+      'stale',GREATEST(0,COALESCE((completed_keys->0->>'stale')::int,0)+$4::int),
+      'images',GREATEST(0,COALESCE((completed_keys->0->>'images')::int,0)+$5::int))),updated_at=now() WHERE op=$1 AND fingerprint=$2`,
+  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), delta, staleDelta, imageDelta]);
 }
 
 const staleWeight = (record: Pick<GitHoldRecord, 'page_id'> | null) => record && record.page_id !== null ? 1 : 0;
+const imageWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'managed_image_sync_unsupported' ? 1 : 0;
 
 async function readRow(tx: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
   const [row] = await tx.executeRaw<{ record: GitHoldRecord }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
@@ -151,10 +156,12 @@ export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
   [GIT_HOLD_OP, gitHoldFingerprint(input.source_id, input.incarnation, input.path), JSON.stringify([record])]);
   if (existing) {
-    if (staleWeight(input) !== staleWeight(existing)) await adjustSummary(tx, input.source_id, input.incarnation, 0, staleWeight(input) - staleWeight(existing));
+    if (staleWeight(input) !== staleWeight(existing) || imageWeight(input) !== imageWeight(existing)) {
+      await adjustSummary(tx, input.source_id, input.incarnation, 0, staleWeight(input) - staleWeight(existing), imageWeight(input) - imageWeight(existing));
+    }
     return 'updated';
   }
-  await adjustSummary(tx, input.source_id, input.incarnation, 1, staleWeight(input));
+  await adjustSummary(tx, input.source_id, input.incarnation, 1, staleWeight(input), imageWeight(input));
   return 'inserted';
 }
 
@@ -170,12 +177,21 @@ export async function clearGitHold(tx: Exec, input: { sourceId: string; incarnat
   const existing = await readRow(tx, input.sourceId, input.incarnation, input.path);
   if (!existing || existing.observed_at > input.observedAt) return false;
   await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);
-  await adjustSummary(tx, input.sourceId, input.incarnation, -1, -staleWeight(existing));
+  await adjustSummary(tx, input.sourceId, input.incarnation, -1, -staleWeight(existing), -imageWeight(existing));
   return true;
 }
 
 export async function readGitHold(engine: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
   return readRow(engine, sourceId, incarnation, path);
+}
+
+/** #5493: unsupported-image holds per source's current incarnation (sources with none are absent); they never escalate. */
+export async function readGitImageHoldCounts(engine: Exec, sourceIds: string[]): Promise<Map<string, number>> {
+  if (!sourceIds.length) return new Map();
+  const rows = await engine.executeRaw<{ source_id: string; images: number | string }>(`SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
+    FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
+    WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
+  return new Map(rows.map(row => [row.source_id, Number(row.images)]));
 }
 
 /** Outstanding holds of the source's current incarnation (one indexed read). */
@@ -244,6 +260,11 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
       return { argv: ['gbrain', 'config', 'get', 'content_sanity'], consent: [], actor: 'user', requires_exclusive: false,
         user_message: `${record.path} was rejected by the content-sanity gate because junk_disposition is reject. Remove the matched junk from the file, or decide whether to switch junk_disposition back to quarantine.`,
         why: 'The operator chose to reject junk; changing that setting is a user decision. Editing the file and committing clears the hold on the next sync.' };
+    case 'managed_image_sync_unsupported':
+      return { argv: ['gbrain', 'config', 'get', 'sync.exclude'], consent: [], actor: 'user', requires_exclusive: false,
+        user_message: `Managed sync does not import images yet, so ${record.path} is held and the rest of source ${source} keeps syncing. Keeping images held is fine; to stop holding them, leave images out of the source with sync.exclude or turn off multimodal embedding.`,
+        why: 'Whether images stay in the source is the user\'s call. The hold clears when the file is deleted or excluded, and a held image is re-screened when it changes or on gbrain sources retry-held.',
+        verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'parser_regression':
       return { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'user', requires_exclusive: false,
         user_message: `gbrain refuses ${record.path}, whose exact bytes imported under an earlier version. This is a gbrain bug: report it with the gbrain version, the file and the code, then upgrade or pin the last good version.`,
@@ -434,10 +455,14 @@ export function recoveredReport(sourceId: string, recovered: { count: number; sa
 export async function buildHoldReport(engine: Exec, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
   policy: SyncHoldPolicy; screened: number; pendingScreen?: boolean }): Promise<Pick<import('../../commands/sync.ts').SyncResult,
   'held' | 'held_count' | 'holds_outstanding' | 'holds_escalated' | 'holds_truncated' | 'holds_pending_screen' | 'holds_fix'>> {
-  const outstanding = await countGitHolds(engine, input.sourceId, input.incarnation);
+  const [summary] = await engine.executeRaw<{ count: number | string; images: number | string }>(`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
+      COALESCE((completed_keys->0->>'images')::int,0) AS images FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
+  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(input.sourceId, input.incarnation)]);
+  const outstanding = Number(summary?.count ?? 0);
   const runHolds = (await readGitSourceHolds(engine, { sourceIds: [input.sourceId], runId: input.runId }))[0]?.holds ?? [];
   if (!outstanding && !runHolds.length) return {};
-  const escalated = holdsEscalated(input.policy, outstanding, { held: runHolds.length, screened: input.screened });
+  const escalated = holdsEscalated(input.policy, outstanding - Number(summary?.images ?? 0),
+    { held: runHolds.filter(hold => !imageWeight(hold)).length, screened: input.screened });
   const repair = ['gbrain', 'repair', 'frontmatter', '--source', input.sourceId];
   const verify = { argv: ['gbrain', 'sources', 'status', input.sourceId, '--json'] };
   if (input.remote) return { held_count: runHolds.length, holds_fix: { argv: repair, consent: [], actor: 'host_admin', requires_exclusive: false, verify,

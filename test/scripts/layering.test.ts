@@ -1,7 +1,9 @@
 /**
  * T-G9 (refactor wave 1, EO10): scripts/check-layering.ts keeps
  * src/core/engine-sql/ from importing an engine façade and
- * src/core/schema-migrations/ from importing migrate.ts, in every import form.
+ * src/core/schema-migrations/ from importing migrate.ts, and the write commit
+ * path in src/core/persistence/ from importing the model gateway, in every
+ * import form.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
@@ -45,6 +47,12 @@ describe('check-layering.ts', () => {
     const r = run({ 'src/core/schema-migrations/nested/v1.ts': "import { MIGRATIONS } from '../../migrate.ts';\n" });
     expect(r.code).toBe(1);
     expect(r.out).toContain('imports src/core/migrate.ts');
+  });
+
+  test('persistence: importing the model gateway fails', () => {
+    const r = run({ 'src/core/persistence/page-prepare.ts': "export const f = () => import('../ai/gateway.ts');\n" });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('imports src/core/ai/gateway.ts');
   });
 
   test('allowed edges pass: engine.ts types, sql-query.ts, sibling helpers, packages', () => {

@@ -1,0 +1,93 @@
+{
+ "schema": "gbrain-ci-manifest/v1",
+ "workflow": "",
+ "event": "",
+ "sha": "67c4ff27bd0a5a8a02ccb66cd663d3aa1daf9969",
+ "run_id": 37354832141,
+ "run_attempt": 1,
+ "complete": true,
+ "problems": [],
+ "files": [
+  {
+   "file": "test/e2e/embedding-recovery-parity.test.ts",
+   "lane": "backend-matrix",
+   "arm": "pgbouncer",
+   "executed": 155,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/embedding-recovery-parity.test.ts",
+   "lane": "backend-matrix",
+   "arm": "postgres-direct",
+   "executed": 155,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "lane": "backend-matrix",
+   "arm": "pgbouncer",
+   "executed": 44,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "lane": "backend-matrix",
+   "arm": "postgres-direct",
+   "executed": 44,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/fact-vector-repair-parity.test.ts",
+   "lane": "backend-matrix",
+   "arm": "pgbouncer",
+   "executed": 18,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/fact-vector-repair-parity.test.ts",
+   "lane": "backend-matrix",
+   "arm": "postgres-direct",
+   "executed": 18,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/fact-withdrawal-scope-postgres.test.ts",
+   "lane": "e2e",
+   "arm": "",
+   "executed": 1,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/legacy-fact-extraction-dedup-postgres.test.ts",
+   "lane": "e2e",
+   "arm": "",
+   "executed": 1,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/loops-close-fact-postgres.test.ts",
+   "lane": "e2e",
+   "arm": "",
+   "executed": 10,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/mechanical.test.ts",
+   "lane": "tier1",
+   "arm": "",
+   "executed": 77,
+   "failed": 0,
+   "skipped": 0
+  }
+ ],
+ "failures": []
+}

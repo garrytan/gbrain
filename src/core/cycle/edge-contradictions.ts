@@ -166,6 +166,7 @@ export async function defaultEdgeJudge(input: Parameters<EdgeJudgeFn>[0]): Promi
     messages: [{ role: 'user', content: buildEdgeJudgePrompt(input.subject, input.relationships) }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
     maxTokens: input.maxOutputTokens ?? JUDGE_MAX_OUTPUT_TOKENS,
+    allowFallback: false,
   });
   return parseEdgeJudgeOutput(result.text, input.relationships.length);
 }

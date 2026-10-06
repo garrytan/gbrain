@@ -163,6 +163,7 @@ const MATRIX: Row[] = [
   { name: 'get_chunks', mode: 'isolated', args: { slug: 'notes/beta-note' } },
   { name: 'get_ingest_log', mode: 'isolated', args: { limit: 50 } },
   { name: 'find_orphans', mode: 'isolated', args: {} },
+  { name: 'wanted_pages', mode: 'isolated', args: {} },
   { name: 'takes_list', mode: 'isolated', args: { limit: 50 } },
   { name: 'takes_search', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
   { name: 'get_recent_salience', mode: 'isolated', args: { limit: 50 } },
@@ -251,6 +252,10 @@ beforeAll(async () => {
     await engine.addTag(`notes/${name}-note`, `${name}-topic`, { sourceId: src });
     await engine.addTag(`people/${name}-person`, `${name}-topic`, { sourceId: src });
     await engine.addLink(`notes/${name}-note`, `people/${name}-person`, `${MARK} ctx`, 'mentions', 'markdown', undefined, undefined, { fromSourceId: src, toSourceId: src });
+    // Wanted page: an unresolved link from the note to a missing marker-named target.
+    await engine.executeRaw(`INSERT INTO wanted_links (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, checked_at)
+      SELECT id, $1, 'body', 'slug', $1, $2, now() FROM pages WHERE slug = $3 AND source_id = $1`,
+    [src, `people/${name}-missing-${MARK.toLowerCase()}`, `notes/${name}-note`]);
     await engine.createVersion(`notes/${name}-note`, { sourceId: src });
     await engine.putRawData(`notes/${name}-note`, 'crm', { owner: MARK }, { sourceId: src });
     await engine.logIngest({

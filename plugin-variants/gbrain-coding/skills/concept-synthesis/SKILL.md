@@ -16,6 +16,7 @@ mutating: true
 writes_pages: true
 writes_to:
   - concepts/
+when_to_use: "Use when the user asks: \"concept synthesis\", \"synthesize my concepts\", \"find patterns across my notes\", \"build my intellectual map\", \"trace idea evolution\"."
 ---
 
 # concept-synthesis — From Raw Stubs to Intellectual Map

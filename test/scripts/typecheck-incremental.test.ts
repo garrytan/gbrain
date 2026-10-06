@@ -6,7 +6,12 @@ import { dirname, join, resolve } from 'node:path';
 import pkg from '../../package.json';
 
 const tsc = resolve(import.meta.dir, '../../node_modules/typescript/bin/tsc');
-const [command, ...args] = pkg.scripts.typecheck.split(/\s+/);
+const [command, heapFlag, tscPath, ...args] = pkg.scripts.typecheck.split(/\s+/);
+// tsc peaks near 3.5 GB of heap on this repo (--extendedDiagnostics "Memory
+// used"); Node's default limit is about 2 GB on an 8 GB host, so the
+// 2-vCPU/8 GB runner aborted typecheck on heap exhaustion. The script owns
+// its ceiling instead of each workflow's NODE_OPTIONS.
+const HEAP_MB_FLOOR = 4096;
 const roots: string[] = [];
 
 afterEach(() => {
@@ -31,9 +36,16 @@ function fixture(source = 'export const answer: number = 42;\n', strict = true) 
   return root;
 }
 
+test('typecheck runs tsc under node with an explicit heap ceiling above its measured peak', () => {
+  expect(command).toBe('node');
+  expect(tscPath).toBe('node_modules/typescript/bin/tsc');
+  const heapMb = Number(/^--max-old-space-size=(\d+)$/.exec(heapFlag ?? '')?.[1]);
+  expect(heapMb).toBeGreaterThanOrEqual(HEAP_MB_FLOOR);
+});
+
 function check(root: string) {
-  expect(command).toBe('tsc');
-  const result = spawnSync(Bun.which('node') ?? process.execPath, [tsc, ...args], { cwd: root, encoding: 'utf8', timeout: 30_000 });
+  expect(command).toBe('node');
+  const result = spawnSync(Bun.which('node') ?? process.execPath, [heapFlag!, tsc, ...args], { cwd: root, encoding: 'utf8', timeout: 30_000 });
   expect(result.error).toBeUndefined();
   expect(result.signal).toBeNull();
   expect(existsSync(join(root, 'node_modules/.cache/gbrain-typecheck.tsbuildinfo'))).toBe(true);

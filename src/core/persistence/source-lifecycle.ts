@@ -197,7 +197,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         `Claim '${input.sourceId}' at the local_path the command in fix reports, or move it to the new directory with gbrain sources set-path ${input.sourceId}; nothing was claimed.`,{fix:sourcesListFix()});
     const expired=input.expiredOnly?await tx.executeRaw(`SELECT id FROM sources WHERE id=$1 AND ${EXPIRED_ARCHIVE_SQL}`,[input.sourceId]):null;
     const noop=expired?.length===0 || input.operation==='archive'&&source?.archived || input.operation==='restore'&&!source?.archived
-      || input.operation==='claim'&&!!currentBinding || input.operation==='rebind'&&sameBinding;
+      || ['claim','rebind'].includes(input.operation)&&sameBinding&&!!source?.local_path&&nativeFilesystemPath(source.local_path)===nativeFilesystemPath(root!.source);
     if(noop){
       await lockTopologyPrincipal(tx,principal);
       return topologyReceipt(await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source!.incarnation,worktrees},

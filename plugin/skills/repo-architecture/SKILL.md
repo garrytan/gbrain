@@ -14,6 +14,7 @@ tools:
   - get_page
   - list_pages
 mutating: false
+when_to_use: "Use when the user asks: \"where does this go\", \"filing rules\", \"create new page\", \"which directory\"."
 ---
 
 # Repo Architecture — Filing Rules

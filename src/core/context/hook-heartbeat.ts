@@ -40,6 +40,11 @@ export interface HookHeartbeatEntry {
    * slugs/fact text [S3#7].
    */
   segment?: string;
+  /** Always-loaded core: chars and revision delivered by session-start (counts/digests only). */
+  core_chars?: number;
+  core_revision?: string;
+  /** Context-pressure notice: the fill percent when the notice fired (number only). */
+  pressure_pct?: number;
   /** Cathedral 5 — checkpoint-harvest fact counters (counts only) [S3#7].
    * The ambient-writeback lane (`event: 'writeback'`) reports the same
    * counters plus `superseded` — these are PERSISTED results from the
@@ -71,7 +76,7 @@ export interface HookHeartbeatEntry {
 export const HEARTBEAT_ALLOWED_KEYS = [
   'ts', 'event', 'outcome', 'reason', 'duration_ms', 'turns', 'bytes', 'redactions',
   'segment', 'inserted', 'duplicate', 'superseded', 'near_duplicate', 'links', 'flush',
-  'pattern', 'fingerprint', 'hint',
+  'pattern', 'fingerprint', 'hint', 'core_chars', 'core_revision', 'pressure_pct',
 ] as const;
 
 /**

@@ -13,6 +13,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
+import { poolLongHoldCapacity, type BudgetPool } from '../pool-budget.ts';
 import { admitWriteGroupInTransaction } from './journal.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
 import { wouldWaiveEntry, type WaiverCursor, type WaiverEntry } from './sync-waivers.ts';
@@ -20,11 +21,19 @@ import type { WriteRequest } from './model.ts';
 import type { SyncIntent } from './sync-prepare.ts';
 import type { SyncAuthority } from './sync-authority.ts';
 
-export interface BulkSettings { enabled: boolean; reason: string | null; size: number; maxTxnMs: number }
+export interface BulkSettings { enabled: boolean; reason: string | null; size: number; maxTxnMs: number;
+  /** #5984 lanes: groups published at once (1 = one at a time), and why it is lower than asked when it is. */
+  lanes?: number; lanesReason?: string | null;
+  /** The drain's lane run (set by the drain when lanes > 1); lane groups carry it as `intent.lane`. */
+  laneRun?: string }
 export interface BulkReport { enabled: boolean; reason: string | null; groups: number; grouped_pages: number; largest_group: number }
 
 /** Flag > env > config > default (on), as for the other sync knobs (DX-A8). */
-export async function resolveBulkSettings(engine: BrainEngine, noBulk: boolean | undefined): Promise<BulkSettings> {
+export async function resolveBulkSettings(engine: BrainEngine, noBulk: boolean | undefined, lanesFlag?: number): Promise<BulkSettings> {
+  const bulk = await resolveGrouping(engine, noBulk);
+  return { ...bulk, ...await resolveLanes(engine, bulk, lanesFlag) };
+}
+async function resolveGrouping(engine: BrainEngine, noBulk: boolean | undefined): Promise<BulkSettings> {
   const env = process.env.GBRAIN_SYNC_BULK;
   const configured = await engine.getConfig('sync.bulk').catch(() => null);
   const size = await whole(engine, 'GBRAIN_SYNC_BULK_SIZE', 'sync.bulk_size', 16, 1, 64);
@@ -34,6 +43,22 @@ export async function resolveBulkSettings(engine: BrainEngine, noBulk: boolean |
   if (reason) return { enabled: false, reason, size, maxTxnMs };
   if (engine.kind !== 'postgres') return { enabled: false, reason: 'PGLite publishes without network round trips; bulk applies to Postgres', size, maxTxnMs };
   return { enabled: true, reason: null, size, maxTxnMs };
+}
+/**
+ * #5984 lanes: `--lanes N` / `--no-lanes` > `GBRAIN_SYNC_LANES` > `sync.lanes` > 6, then clamped to what the
+ * connection pool can hold at once (its long-hold capacity minus 3 for the sync loop, one foreground write and
+ * the consumer's control work). Lanes need bulk groups.
+ */
+async function resolveLanes(engine: BrainEngine, bulk: BulkSettings, flag: number | undefined): Promise<{ lanes: number; lanesReason: string | null }> {
+  if (!bulk.enabled) return { lanes: 1, lanesReason: `bulk groups are off (${bulk.reason})` };
+  if (flag !== undefined && (!Number.isInteger(flag) || flag < 1 || flag > 8)) throw new OperationError('invalid_params', `--lanes must be a whole number from 1 to 8; got ${flag}.`,
+    'Pass --lanes 6 (the default), or --no-lanes to publish one group at a time.');
+  const asked = flag ?? await whole(engine, 'GBRAIN_SYNC_LANES', 'sync.lanes', 6, 1, 8);
+  if (asked === 1) return { lanes: 1, lanesReason: flag === 1 ? 'disabled by --no-lanes' : 'disabled by sync.lanes=1 (or GBRAIN_SYNC_LANES=1)' };
+  const pool = (engine as BrainEngine & { sql?: BudgetPool }).sql;
+  const capacity = pool ? poolLongHoldCapacity(pool) - 3 : 1;
+  if (capacity >= asked) return { lanes: asked, lanesReason: null };
+  return { lanes: Math.max(1, capacity), lanesReason: `the connection pool holds ${capacity + 3} long transactions; raise GBRAIN_POOL_SIZE for more lanes` };
 }
 async function whole(engine: BrainEngine, env: string, key: string, fallback: number, min: number, max: number): Promise<number> {
   const raw = process.env[env] ? Number(process.env[env]) : await engine.getConfig(key).then(v => v == null ? undefined : Number(v)).catch(() => undefined);

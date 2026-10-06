@@ -395,7 +395,7 @@ export function computeConversationParserProbeHealthCheck(
     return {
       name,
       status: 'ok',
-      message: 'enabled but no probe events in the last 7 days (next run by autopilot; fixtures require a source-checkout install).',
+      message: 'enabled but no probe events in the last 7 days (next run by autopilot).',
     };
   }
   const bad = events.filter(e => e.outcome !== 'pass');
@@ -416,9 +416,68 @@ export function computeConversationParserProbeHealthCheck(
   };
 }
 
+/** Panel fields of a probe audit row, read as untrusted JSON (absent on rows written before #5506). */
+interface ProbeJudgePanelFields {
+  judge_models?: unknown;
+  judge_scored_questions?: unknown;
+  distinct_judge_models?: unknown;
+  distinct_judge_providers?: unknown;
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * The latest run's judge panel, appended to the OK and the WARN message.
+ * A slot (A, B, C in slot order) that scored no question is named; among
+ * the slots that scored, a model holding two or more gets the remedy
+ * (three different models in the slot keys), and fewer than three
+ * providers get the not-cross-modal information. Empty for an event with
+ * missing or malformed panel fields, so its message stays as before; a row
+ * without valid per-slot scored counts treats every slot as having scored.
+ */
+function judgePanelNote(event: ProbeJudgePanelFields): string {
+  const models = event.judge_models;
+  const distinctModels = event.distinct_judge_models;
+  const distinctProviders = event.distinct_judge_providers;
+  if (!Array.isArray(models) || models.length === 0) return '';
+  if (!models.every((m: unknown): m is string => typeof m === 'string')) return '';
+  if (!isCount(distinctModels) || !isCount(distinctProviders)) return '';
+  const counts = event.judge_scored_questions;
+  const scored: number[] | null =
+    Array.isArray(counts) && counts.length === models.length && counts.every(isCount) ? counts : null;
+  const judged = (i: number): boolean => scored === null || scored[i]! > 0;
+  const silent = models
+    .map((m, i) => (judged(i) ? '' : ` Slot ${String.fromCharCode(65 + i)} (${m}) scored no question, so it did not judge.`))
+    .join('');
+  const panel =
+    ` Latest judge panel (slot order): ${models.join(', ')}; ` +
+    `${plural(distinctModels, 'distinct model')} from ${plural(distinctProviders, 'provider')}.${silent}`;
+  const judgedModels = models.filter((_, i) => judged(i));
+  const shared = judgedModels.filter((m: string, i: number) => judgedModels.indexOf(m) !== i);
+  if (shared.length > 0) {
+    return (
+      panel +
+      ` ${[...new Set(shared)].join(' and ')} holds more than one slot, so its votes count more than once. ` +
+      `Next step: set models.eval.cross_modal.slot_a, slot_b and slot_c to three different models ` +
+      `(gbrain config set models.eval.cross_modal.slot_a <model>; one provider is enough, ` +
+      `for example three claude-cli models).`
+    );
+  }
+  if (distinctProviders < 3) {
+    return panel + ` Fewer than 3 providers judged, so the panel is not cross-modal (information only).`;
+  }
+  return panel;
+}
+
 export function computeNightlyQualityProbeHealthCheck(
   probeEnabled: boolean,
-  events: ReadonlyArray<{ outcome: string; ts: string; detail?: string }>,
+  events: ReadonlyArray<{ outcome: string; ts: string; detail?: string } & ProbeJudgePanelFields>,
 ): Check {
   const name = 'nightly_quality_probe_health';
   if (!probeEnabled && events.length === 0) {
@@ -443,6 +502,7 @@ export function computeNightlyQualityProbeHealthCheck(
   const bad = events.filter(e => e.outcome !== 'pass');
   const latest = events[events.length - 1]!;
   if (bad.length > 0) {
+    const skipped = events.filter(e => e.outcome === 'skipped').length;
     const counts =
       `pass=${events.filter(e => e.outcome === 'pass').length} ` +
       `fail=${events.filter(e => e.outcome === 'fail').length} ` +
@@ -450,17 +510,18 @@ export function computeNightlyQualityProbeHealthCheck(
       `inconclusive=${events.filter(e => e.outcome === 'inconclusive').length} ` +
       `budget=${events.filter(e => e.outcome === 'budget_exceeded').length} ` +
       `no_embed_key=${events.filter(e => e.outcome === 'no_embedding_key').length} ` +
-      `rate_limited=${events.filter(e => e.outcome === 'rate_limited').length}`;
+      `rate_limited=${events.filter(e => e.outcome === 'rate_limited').length}` +
+      (skipped > 0 ? ` skipped=${skipped}` : '');
     return {
       name,
       status: 'warn',
-      message: `${bad.length} non-PASS run${bad.length === 1 ? '' : 's'} in last 7d (${counts}). Latest: ${latest.outcome} at ${latest.ts}${latest.detail ? ` (${latest.detail})` : ''}.`,
+      message: `${bad.length} non-PASS run${bad.length === 1 ? '' : 's'} in last 7d (${counts}). Latest: ${latest.outcome} at ${latest.ts}${latest.detail ? ` (${latest.detail})` : ''}.${judgePanelNote(latest)}`,
     };
   }
   return {
     name,
     status: 'ok',
-    message: `${events.length} PASS run${events.length === 1 ? '' : 's'} in last 7d. Latest: ${latest.ts}.`,
+    message: `${events.length} PASS run${events.length === 1 ? '' : 's'} in last 7d. Latest: ${latest.ts}.${judgePanelNote(latest)}`,
   };
 }
 

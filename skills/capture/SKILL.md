@@ -8,8 +8,9 @@ triggers:
   - "ingest this into my brain"
   - "drop this in the inbox"
   - "save to brain"
-writes_pages:
-  - "inbox/*"
+writes_pages: true
+writes_to:
+  - inbox/
 ---
 
 # capture — the single ingestion entrypoint

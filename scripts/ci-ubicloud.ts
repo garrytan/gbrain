@@ -30,11 +30,17 @@
  * from (scripts/ubicloud/schedule.ts); items run through the same wrappers
  * ci:local uses (scripts/ubicloud/ci-item.sh). Durations of every run are
  * merged into .context/ci-ubicloud/weights.json, which weights the next run.
- * All VMs are destroyed on exit, including Ctrl-C.
+ *
+ * VMs are named ubirun-<owner>-<epoch>-ciNN<hex> (owner: UBI_OWNER or the
+ * runner's per-machine id). Each name is appended to <run>/vms.txt before its
+ * create request is sent. On exit, including SIGINT, SIGTERM, SIGHUP (a
+ * dropped terminal, a cancelled background operation) and SIGQUIT, in-flight
+ * `up` calls are allowed to finish (they destroy their own VM), then every
+ * recorded name is destroyed and polled until it is confirmed gone.
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { createReadStream, createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, createReadStream, createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -133,13 +139,13 @@ function sh(cmd: string, args: string[]): string {
 }
 const lines = (text: string) => text.split(/\s+/).map((l) => l.trim()).filter(Boolean);
 
-const children = new Set<ReturnType<typeof spawn>>();
+const children = new Map<ReturnType<typeof spawn>, string>();
 
 /** Run the runner script; stdout goes to `out` (a path) or is returned. */
 function runner(args: string[], opts: { out?: string; input?: string; timeoutMs?: number } = {}): Promise<{ code: number; stdout: string }> {
   return new Promise((resolvePromise) => {
     const child = spawn("bash", [RUNNER, ...args], { cwd: ROOT, stdio: ["pipe", "pipe", "pipe"] });
-    children.add(child);
+    children.set(child, args[0]!);
     let stdout = "";
     let stderr = "";
     const sink = opts.out ? createWriteStream(opts.out) : null;
@@ -166,7 +172,7 @@ const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 interface Vm {
   name: string;
   state: "provisioning" | "setup" | "ready" | "failed" | "destroyed";
-  created: boolean;
+  requested: boolean;
   infraErrors: number;
   setupMs?: number;
   busySlots: number;
@@ -239,35 +245,49 @@ async function main() {
     ?? "1.4.2";
 
   // ── Teardown on every exit path ──────────────────────────────────────────
+  const owner = sh("bash", [RUNNER, "owner"]).trim();
+  const ledger = join(runDir, "vms.txt");
   const vms: Vm[] = Array.from({ length: opts.vms }, (_, i) => ({
-    name: `ubirun-${Math.floor(Date.now() / 1000)}-ci${String(i + 1).padStart(2, "0")}${Math.random().toString(16).slice(2, 6)}`,
+    name: `ubirun-${owner}-${Math.floor(Date.now() / 1000)}-ci${String(i + 1).padStart(2, "0")}${Math.random().toString(16).slice(2, 6)}`,
     state: "provisioning",
-    created: false,
+    requested: false,
     infraErrors: 0,
     busySlots: 0,
     heavy: 0,
   }));
-  let tornDown = false;
-  const teardown = async () => {
-    if (tornDown) return;
-    tornDown = true;
-    for (const child of children) child.kill("SIGKILL");
+  // Memoized: the signal handler and main's finally must await the same
+  // teardown, or main exits while its `down` calls are still running.
+  let tornDown: Promise<void> | null = null;
+  const teardown = () => (tornDown ??= destroyAll());
+  const destroyAll = async () => {
+    // An `up` gets SIGTERM, records its create answer and destroys its own VM;
+    // waiting for it means no create request is in flight when `down` runs.
+    const ups = [...children].filter(([, sub]) => sub === "up").map(([child]) => child);
+    for (const [child, sub] of children) child.kill(sub === "up" ? "SIGTERM" : "SIGKILL");
+    await Promise.all(ups.map((child) => new Promise((done) => (child.exitCode !== null || child.signalCode !== null ? done(null) : child.once("exit", done)))));
     rmSync(tarball, { force: true });
-    const live = vms.filter((vm) => vm.state !== "destroyed");
+    const live = vms.filter((vm) => vm.requested && vm.state !== "destroyed");
     if (opts.keep) {
       log(`--keep: leaving ${live.map((vm) => vm.name).join(" ")} running; destroy with: scripts/ubicloud/ubi-runner.sh down NAME`);
       return;
     }
-    log(`destroying ${live.length} VM(s)`);
+    log(`destroying ${live.length} VM(s): ${live.map((vm) => vm.name).join(" ")}`);
     await Promise.all(live.map(async (vm) => {
-      // A VM whose create call may be in flight is looked up by name.
-      const r = await runner(["down", vm.name]);
-      if (r.code === 0 || !vm.created || /not found/.test(r.stdout)) vm.state = "destroyed";
-      else console.error(`ci-ubicloud: WARNING failed to destroy ${vm.name}; run: scripts/ubicloud/ubi-runner.sh down ${vm.name}`);
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        if ((await runner(["down", vm.name, "-l", opts.location])).code === 0) {
+          vm.state = "destroyed";
+          return;
+        }
+      }
+      console.error(`ci-ubicloud: WARNING could not confirm ${vm.name} is gone; run: scripts/ubicloud/ubi-runner.sh down ${vm.name} -l ${opts.location}`);
     }));
+    const left = live.filter((vm) => vm.state !== "destroyed").length;
+    log(left ? `teardown left ${left} VM(s) unconfirmed (names in ${ledger})` : `teardown confirmed ${live.length} VM(s) gone`);
   };
   let interrupted = false;
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  // After SIGHUP the terminal may be gone: a failed log write must not abort teardown.
+  for (const stream of [process.stdout, process.stderr]) stream.on("error", () => {});
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const) {
     process.on(signal, () => {
       if (interrupted) return;
       interrupted = true;
@@ -360,11 +380,17 @@ async function main() {
   const vmLifecycle = async (vm: Vm, index: number) => {
     const started = Date.now();
     const setupLog = join(runDir, "logs", `setup-${vm.name}.log`);
+    if (tornDown) return;
+    vm.requested = true;
+    appendFileSync(ledger, `${vm.name} ${opts.location}\n`);
     const up = await runner(["up", "-n", vm.name, "-s", opts.size, "-l", opts.location], { out: setupLog });
-    vm.created = true;
+    if (tornDown) return;
     if (up.code !== 0) {
       vm.state = "failed";
-      log(`VM ${index + 1} failed to provision (see ${setupLog}): ${readFileSync(setupLog, "utf8").trim().split("\n").slice(-2).join(" | ")}`);
+      const setupText = readFileSync(setupLog, "utf8").trim();
+      const quota = setupText.indexOf("ubi-runner: quota refused");
+      if (quota >= 0) log(`VM ${index + 1} refused by the Ubicloud vCPU quota; the run continues on the VMs that started:\n${setupText.slice(quota)}`);
+      else log(`VM ${index + 1} failed to provision (see ${setupLog}): ${setupText.split("\n").slice(-2).join(" | ")}`);
       return;
     }
     vm.state = "setup";

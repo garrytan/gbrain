@@ -12,7 +12,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { loadImportSanityConfig, type ImportSanityConfig } from '../import-screen.ts';
 import { RECOVERY_VERSION } from '../markdown.ts';
 import { slugConflictHoldMessage } from '../import-file.ts';
-import { resolveSlugForPath } from '../sync.ts';
+import { isImageFilePath, resolveSlugForPath } from '../sync.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { VERSION } from '../../version.ts';
 import { sha256 } from './digest.ts';
@@ -53,6 +53,17 @@ function heldEntry(entry: SyncEntry, slug: string, pageId: number | null, refusa
     meta: { ...(refusal.reason ? { reason: refusal.reason } : {}), ...(refusal.key ? { key: refusal.key } : {}), ...(refusal.line !== undefined ? { line: refusal.line } : {}),
       recovery_version: RECOVERY_VERSION, ...(blob ? { blob_oid: blob.oid } : {}), ...(entry.working ? { working: true } : {}),
       ...(entry.renameFrom ?? entry.renameHeld ? { rename_from: entry.renameFrom ?? entry.renameHeld } : {}) } };
+}
+
+/**
+ * #5493: managed sync has no image importer, so an image import is held as
+ * incomplete coverage instead of refusing the run. The hold names the pinned
+ * blob (or the working-tree bytes), so discovery re-screens it when the file
+ * changes, leaves the source, or `sources retry-held` asks.
+ */
+export function managedImageHold(entry: SyncEntry, content: string | null, blob: TreeBlob | null | undefined): HeldEntry {
+  return heldEntry(entry, entry.slug!, entry.pageId ?? null, { code: 'managed_image_sync_unsupported',
+    message: `${entry.path} is an image, which managed sync does not import yet; the rest of the source synced.` }, content, blob);
 }
 
 export interface FrozenImportScreen {
@@ -121,6 +132,12 @@ export async function dryRunScreen(engine: BrainEngine, discovery: SyncDiscovery
   for (const entry of entries) {
     try {
       const blob = entry.working ? null : blobs.get(syncGitPath(discovery, entry.path)) ?? null;
+      if (isImageFilePath(entry.path)) {
+        const hold = managedImageHold(entry, blob ? null : readSyncFile(discovery.root, entry.path)?.toString('utf8') ?? null, blob);
+        held.push(gitHoldItem({ version: 1, source_id: discovery.sourceId, incarnation: discovery.incarnation, ...hold,
+          observed_at: observed, held_at: observed, updated_at: observed, run_id: null, mode: 'managed' }));
+        continue;
+      }
       let bytes: Buffer | null = null, oversize: { size: number | null } | undefined;
       try { bytes = readSyncFile(discovery.root, entry.path); } catch (error) { if (!isSyncReadBound(error)) throw error; oversize = { size: null }; }
       if (blob && blob.size > SYNC_READ_BOUND) oversize = { size: blob.size };

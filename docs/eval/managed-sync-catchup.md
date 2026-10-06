@@ -687,3 +687,51 @@ the window group's members while the current group publishes (prepare is
 read-only and its results are re-validated in the publication
 transaction); at the measured costs that would remove about 2.5 s of the
 15 s cycle, for roughly 33 to 35 pages/min.
+
+## Parallel lanes (150 pages/min plan, Phase 2)
+
+Up to six bulk groups of one draining managed sync publish at once, each in
+its own transaction on its own connection, and commit in manifest order
+(`src/core/persistence/sync-lanes.ts`, `worktree-lease.ts`). The drain keeps
+twice the lane count of groups admitted ahead. Same host and bench as the
+tables above; the 57 ms `cli` rows ran on 1,500 files (time-boxed at 10 min)
+so the steady state is visible past the startup, and the 10k row ran for
+15 min.
+
+**Steady state** is pages committed between the first and the last group
+commit of the run, from the SQL trace. **Wall** is the bench's committed pages
+over the whole run, including about 80 s of startup (discovery and the 34
+already-deleted files handled one at a time before any group forms).
+
+| Row, 57 ms | Steady state | Wall | Lanes in use (seconds at 1 / 2 / 3 / 4 / 5 / 6) |
+|---|---|---|---|
+| v0.60.58.0 (one group at a time), 500 files | 28.8 to 30.9 | 28.8 | n/a |
+| 4 lanes, 1,500 files | 137.9 | 115.8 | 57 / 60 / 76 / 286 / - / - |
+| 6 lanes, 1,500 files | 149.9 | 123.9 | 49 / 70 / 132 / 83 / 48 / 88 |
+| 6 lanes (default), 10k files, 300-word pages, 300 receipts | **152.8** | **137.4**, full backlog about 1.2 h | 99 / 123 / 169 / 120 / 80 / 166 |
+| 6 lanes, ~0 ms, 500 files | | 740.6 (master on this host: 527) | |
+
+| Foreground `put_page` at 57 ms, a write every second | Idle p50 / p95 | During catch-up p50 / p95 | Failures |
+|---|---|---|---|
+| v0.60.58.0 | 12.4 / 14.9 s | 11.6 / 15.1 s | 0 |
+| 6 lanes | 11.8 / 14.1 s | 11.3 / 15.8 s | 0 |
+
+The idle figure comes from 5 writes per run, so single-run p95 values carry
+about ±1 s of noise. Catch-up while a write arrives every second runs at 4.5
+pages/min (v0.60.58.0: 4.4): nothing is admitted ahead while foreground writes
+are recent.
+
+A group of about 14 pages takes 19.8 s to publish (p50) whether or not other
+lanes run, so lanes add throughput without slowing a group. Three things
+first had to change for lanes to overlap at all, each found in a trace:
+publication validation refused a lane group whose predecessor had not
+committed yet, waiting lanes and a lease that stopped taking holders after
+its turn deadlocked until the 60 s order timeout, and a lane whose
+predecessor's admission had failed was cancelled instead of released. The
+lane tests and the failure probes in `test/managed-sync-lanes.test.ts` pin
+all three.
+
+What is left between the steady state and the wall figure is the startup:
+discovery and already-deleted files run one at a time before the first
+group. At 57 ms that is about 80 s for this corpus, which is why the wall
+rate of a short backlog stays below 150 even when the lanes run at it.

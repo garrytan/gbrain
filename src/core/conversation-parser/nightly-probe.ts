@@ -43,7 +43,8 @@ export type ProbeOutcome =
   | 'rate_limited'
   | 'budget_exceeded'
   | 'adversarial_false_positive'
-  | 'no_embedding_key';
+  | 'no_embedding_key'
+  | 'skipped';
 
 export interface NightlyProbeResult {
   outcome: ProbeOutcome;
@@ -145,8 +146,10 @@ export async function runConversationParserNightlyProbe(
   if (!existsSync(fixturePath) || !existsSync(adversarialPath)) {
     return {
       ...baseResult,
-      outcome: 'fail',
-      reason: `fixture path missing: ${!existsSync(fixturePath) ? fixturePath : adversarialPath}`,
+      outcome: 'skipped',
+      reason:
+        `fixture_unavailable: ${!existsSync(fixturePath) ? fixturePath : adversarialPath} is not readable, ` +
+        'so the probe gave no parser signal. Reinstall gbrain (bun install -g github:garrytan/gbrain) and run gbrain doctor.',
     };
   }
 

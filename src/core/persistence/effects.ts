@@ -1,3 +1,4 @@
+import { withAIAttribution } from '../ai/invocation-guard.ts';
 import { randomUUID } from 'node:crypto';
 import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targets.ts';
 import { existsSync, statSync } from 'node:fs';
@@ -516,9 +517,10 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
       effect = await upgradeWithdrawalEffect(engine, effect, opts.hostId);
       if (effect.kind === 'withdrawal-mirror') await mirrorPage(engine, effect, binding, opts, attempt);
       else if (effect.kind === 'git') await gitPage(engine, effect, binding, opts, attempt, hardened);
-      else if (effect.kind === 'facts-backstop') await dispatchFactsBackstopEffect(engine, effect, opts.hostId);
-      else if (effect.kind === 'links') await runLinksEffect(engine, effect, opts.hostId);
-      else await embedPage(engine, config, effect, opts);
+      else await withAIAttribution({ request_id: effect.request_id, effect: effect.kind }, () => effect.kind === 'facts-backstop'
+        ? dispatchFactsBackstopEffect(engine, effect, opts.hostId)
+        : effect.kind === 'links' ? runLinksEffect(engine, effect, opts.hostId)
+          : embedPage(engine, config, effect, opts));
     } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target); }
     finally { await lock?.release(); }
   };

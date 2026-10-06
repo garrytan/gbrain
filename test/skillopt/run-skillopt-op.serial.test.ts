@@ -208,3 +208,30 @@ describe('run_skillopt reflect_max_tokens (#5584)', () => {
     expect(runSkillOptCalls.length).toBe(1);
   });
 });
+
+describe('run_skillopt max_cost_usd for remote callers', () => {
+  beforeEach(async () => {
+    await engine.setConfig('skillopt.allowed_skills', JSON.stringify(['test-skill']));
+  });
+
+  test('remote 0, negative, non-finite or non-number → invalid_params, no run (never uncapped spend)', async () => {
+    for (const bad of [0, -1, Number.POSITIVE_INFINITY, Number.NaN, '0']) {
+      await expectCode(run_skillopt.handler(ctxOf({ remote: true }), { skill_name: 'test-skill', max_cost_usd: bad }), 'invalid_params');
+    }
+    expect(runSkillOptCalls.length).toBe(0);
+  });
+
+  test('remote positive cap passes through as a user cap; absent stays the $5 default cap', async () => {
+    await run_skillopt.handler(ctxOf({ remote: true }), { skill_name: 'test-skill', max_cost_usd: 2.5 });
+    await run_skillopt.handler(ctxOf({ remote: true }), { skill_name: 'test-skill' });
+    expect(runSkillOptCalls.map((c) => {
+      const o = c as { maxCostUsd?: number; maxCostSource?: string };
+      return [o.maxCostUsd, o.maxCostSource];
+    })).toEqual([[2.5, 'user'], [5, 'default']]);
+  });
+
+  test('local CLI caller keeps 0 = uncapped semantics', async () => {
+    await run_skillopt.handler(ctxOf({ remote: false }), { skill_name: 'test-skill', max_cost_usd: 0 });
+    expect((runSkillOptCalls[0] as { maxCostUsd?: number }).maxCostUsd).toBe(0);
+  });
+});

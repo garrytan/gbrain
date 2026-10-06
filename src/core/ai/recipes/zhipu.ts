@@ -30,6 +30,17 @@ export const zhipu: Recipe = {
   name: 'Zhipu AI (智谱AI BigModel)',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  // No shipped rate for these yet: they warn and run under a default cap; a
+  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  unpriced_models: [
+    'glm-5.3',
+    'glm-5.3-flash',
+    'glm-5.1',
+    'glm-4.6',
+    'glm-4.5',
+    'embedding-3',
+    'embedding-2',
+  ],
   base_url_default: 'https://open.bigmodel.cn/api/paas/v4',
   auth_env: {
     required: ['ZHIPUAI_API_KEY'],

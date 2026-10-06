@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 202,
+    "count": 209,
     "gaps": [
       17,
       18,
@@ -11,12 +11,17 @@
       "ALIAS_TABLES": "cddd37c636af42d862c08ca7754a57dfe9d12576b769fa8f74a5f02c803f67a0",
       "FACT_RELINK_TABLE_SQL": "1fdde4b99d0077365274096f294be64a992961c7b4544af794224de238b03630",
       "FACT_UNLINKED_INDEX_SQL": "87dcf23c3fa570d93bfb214b6bbb024faa9ff9bff227aa78869a29580be03298",
+      "ISSUANCE_CLOCK_SLACK_SECONDS": "8f36c80392df6f9b9c754826289b63969d9d41ca8955213291e4413d614dce35",
       "PERSISTENCE_DATABASE_PENDING_INDEX_SQL": "6e0f618be33d037454933ea4dea11438413d45aef35d3bd4f33e89624d6e199e",
       "PERSISTENCE_EFFECT_PARKED_INDEX_SQL": "0107863883415378d7c0dce7a0cbd5311c2c5a59fc0f81917cc8b767fd235cf2",
       "PERSISTENCE_SYNC_RUN_INDEXES": "e1b12613c5fd2facb850e6857b0bddcf49b2478ec258fa226fe15e71e55df9c1",
-      "buildIndexOnline": "c3c076436d7a1d161b94862125cafb9d3ba14d06e296a6379d6149452610285c",
+      "TOKEN_TTL_MAX_SECONDS": "f4a45bec6ec0bacc859dc57732ceb76cec7eb72f242b5a6c89d47190d0525ab4",
+      "TOKEN_TTL_MIN_SECONDS": "441d8ce6bd21f753de90abd3013eaa9992a469ea60c590f1005533618199aa25",
+      "buildIndexOnline": "ed5378b90f24f7d662e02865cf73af4248e348002661f8fbfd8ee1087c60a3e5",
+      "clampOAuthTokenTtls": "b1e94ea8f5b3c3870a56b0f6d00d0a274c2e9dcad912b828848aec250732645f",
       "dropInvalidConcurrentIndex": "6864d844b7dfb2fbecdd0fb9c73e06248473376feb794b3fe58f036c70d2d44c",
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
+      "grantFromRow": "2d0603bb0f964d7e45e04aa76bac54cd4f6f63c91a8d9f028b60b4792bc1695e",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
       "migrateConnectorCheckpoints": "e0403022a56559556c82a9fa1e90d928f36e1d09c7db570e1d788a87d2dc9521",
       "migrateLegacyTokens": "6e4abe3670127e7a495b56ecbf9f5789edd3a7362d45704656c2210a85b27f4c",
@@ -27,9 +32,10 @@
       "repairLegacyTimelineSourceRows": "405d4ae158482c020b029b93aff1ae4ac6854e6948cafaf82dbef473e6e5552e",
       "seedConnectorDispatchAttempts": "2395a3995a6bf78776d37e72ce79b0dd15f6c6fa7f81c40612a744cb74ab01a5",
       "slugifyPath": "401dbca23580865d8b168dd8d84db4a6c708c6610d7cb61abafc7d0ee9809063",
+      "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "59d9ccfea1c53384d8607874a51209a9c2dfd51b2b85a2cb6269fa4120faf1f3"
     },
-    "latest": 207,
+    "latest": 214,
     "records": [
       {
         "handler": {
@@ -2184,8 +2190,8 @@
         "idempotent": true,
         "name": "durable_fact_withdrawals",
         "sql": {
-          "length": 2953,
-          "sha256": "8bd0ad30991b16d6d79bbad9d8029d6c820c3ea98e27c9d26912b97a5d2f45ec"
+          "length": 3221,
+          "sha256": "e9e527dac29fc5b4fe57f9aba168b5aab56726d725b25ec089794f5221d8b01e"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2210,8 +2216,8 @@
         "idempotent": true,
         "name": "canonical_page_revisions_and_guards",
         "sql": {
-          "length": 4650,
-          "sha256": "37f44616fc2a02dfaf6888c456b0bb2fc5f1ca8474fc48e147e903d981ff3b88"
+          "length": 4724,
+          "sha256": "c04f8117c2e6c7b9d3c3328acd27f56aa0c2eeddcc32843bec7caf0fb5f9a29b"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2223,8 +2229,8 @@
         "idempotent": true,
         "name": "durable_concurrent_persistence",
         "sql": {
-          "length": 10148,
-          "sha256": "ef80a3b5175372ceeceedaa599641e6313bb8998e28719372f9a1cb11e548abc"
+          "length": 10185,
+          "sha256": "5c29e2ba0eed52dbab814e8bb2e99eda48c9ccd26f4d97f2274adc5c1712a8b7"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2249,8 +2255,8 @@
         "idempotent": true,
         "name": "verified_text_projection_activation",
         "sql": {
-          "length": 2508,
-          "sha256": "7c741ba1dc5f01d9db5d73fcbd6963eed0b2d834f76b68ff372421972b408120"
+          "length": 2545,
+          "sha256": "0ce686d328e43d51c806c62161ceafaf6724957fa1652a7b9855b3a4b9c0547f"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2262,8 +2268,8 @@
         "idempotent": true,
         "name": "preserve_sanitized_page_search_vectors",
         "sql": {
-          "length": 2072,
-          "sha256": "dbb1c7a4af028676a924488f30377b18798421011d70d1f81fd75b86f1dd5e6f"
+          "length": 2109,
+          "sha256": "a03fa150bbe0f7a5414bbc15b644f4bc67ba1bbef1e16081f7b293de6f1968a4"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2288,8 +2294,8 @@
         "idempotent": true,
         "name": "managed_alias_and_source_checkpoint_guards",
         "sql": {
-          "length": 5299,
-          "sha256": "dc17c52129cc4504c716a29e84ccb0dbbaaf973b2359e522b226a69e7e872baf"
+          "length": 5336,
+          "sha256": "0791cfc72706a9fad3c32e54842d1aa1238a57172425e552134517421223c675"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2397,8 +2403,8 @@
         "idempotent": true,
         "name": "derived_atom_page_scan_state",
         "sql": {
-          "length": 2972,
-          "sha256": "c59f17705f05816558b945b3804e74d98b58651965f927762bd61ffebaafeb31"
+          "length": 3009,
+          "sha256": "e2bf98ab12a9b9cb899413a1fff66c3432d63875ac338845d7f5dc094fc00cc8"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2410,8 +2416,8 @@
         "idempotent": true,
         "name": "shared_brain_skills_and_membership",
         "sql": {
-          "length": 15695,
-          "sha256": "3168321cdca10d59e24f4fc105e97b7f538683381b984d6a973685e8612ae4cb"
+          "length": 15917,
+          "sha256": "6d54ba001944603fd35abe6d6f355f106322a4e0dda206cfd93622fc1493e4aa"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2447,8 +2453,8 @@
         "idempotent": true,
         "name": "fact_embedding_identity",
         "sql": {
-          "length": 5444,
-          "sha256": "afc6dc24ee5a44d7bc4629b9b02b7eb0193265c2d03456dce0590d28b9481ea3"
+          "length": 5481,
+          "sha256": "a9418ca9a8c10990b77eddc16e2e38eee1ba77d53e802936247c94eccadacff7"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2486,8 +2492,8 @@
         "idempotent": true,
         "name": "fact_withdrawal_subject",
         "sql": {
-          "length": 2925,
-          "sha256": "2d559ed32643667b67951398b74ee218e8b5d98ed86f15a909dd13d2d56aa4db"
+          "length": 3193,
+          "sha256": "d6d5fdfcea9c4deae6debb67760cbf7c29b1747c62dce3ad721ea93e73972dc1"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2570,8 +2576,8 @@
         "idempotent": true,
         "name": "fact_withdrawal_normalized_fingerprint",
         "sql": {
-          "length": 3669,
-          "sha256": "8f7b91c2274b3e5b5d6e387e3efd6bfb57635c184b16741cca4aba6a172d705c"
+          "length": 3937,
+          "sha256": "68db3dc02333d00847d9d8ce4c47d484b5a67cbbf5ce619eba8b6a263eb07663"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2846,8 +2852,8 @@
         "idempotent": true,
         "name": "take_embedding_identity",
         "sql": {
-          "length": 5444,
-          "sha256": "ece0222a3769627f4da004eaea23104a715e1d19a702412d9c6fa2fb747656a5"
+          "length": 5481,
+          "sha256": "98409b6776bdc98d65db3bff2afce7adb9ecb34bab5ddf8bd364e528ee4f4eea"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2859,8 +2865,8 @@
         "idempotent": true,
         "name": "f1_write_attribution",
         "sql": {
-          "length": 14141,
-          "sha256": "84a871cf72f406995b8596058c0943fa261db4532c0a0bc0cb10b443ce224bb9"
+          "length": 14289,
+          "sha256": "7ea729556506f9d73682f50fb7c26950a61cc3b60ab82d3d2fcbd4252956fb9f"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2903,8 +2909,8 @@
         },
         "sqlFor": {
           "pglite": {
-            "length": 3815,
-            "sha256": "665c078e7bb26f924eb846aa0a737fba16239519ab0237cd8f5d948ce3af062b"
+            "length": 3852,
+            "sha256": "12712ae984d1cf181addbcaf34f60df16fc0dd8f09f886652c576105688f1bf2"
           },
           "postgres": "absent"
         },
@@ -2917,8 +2923,8 @@
         "idempotent": true,
         "name": "managed_guard_null_source_fallback",
         "sql": {
-          "length": 4801,
-          "sha256": "37663cf40c990e0d7c8f0b4a88f561b12b376df6c49a9dc073ef3f555fe459e8"
+          "length": 4838,
+          "sha256": "d42aecea4f34cc10bdc8201268a284c353d71e389d423c4891a4953a26eaf3c0"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2930,8 +2936,8 @@
         "idempotent": true,
         "name": "publication_failure_detail",
         "sql": {
-          "length": 4892,
-          "sha256": "12aed519e77f91a5e04a0bbc00d425773178a5c1b84d46dca37509ee3adf26eb"
+          "length": 4929,
+          "sha256": "7eed76362cdf4a94019b53229c4fa56c88be9aea371db497d6614ea5eba3cd7a"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2975,8 +2981,8 @@
         "idempotent": true,
         "name": "persistence_graduation",
         "sql": {
-          "length": 1498,
-          "sha256": "79590a9d55a008e72d52b9b2482a4071b0b0736bac505bdfebf8d23a5ff7b098"
+          "length": 1535,
+          "sha256": "3ff1ed891459e532fd88d88b3f71b30d8bc24c1402608935108c6304899da997"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -3068,6 +3074,110 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 207
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "delta_per_arm_cursor",
+        "sql": {
+          "length": 449,
+          "sha256": "7ffafdab8ee63691d5fc45ad459540579285f21ad929e022a79100006e2e11e5"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 208
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "page_facts_reconcile",
+        "sql": {
+          "length": 588,
+          "sha256": "f29640b05b0676eaa08c2bb65e8bfd1525021b8548848247761233d8b309b93a"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 209
+      },
+      {
+        "handler": {
+          "form": "identifier",
+          "helpers": [
+            "ISSUANCE_CLOCK_SLACK_SECONDS",
+            "TOKEN_TTL_MAX_SECONDS",
+            "TOKEN_TTL_MIN_SECONDS",
+            "clampOAuthTokenTtls",
+            "grantFromRow",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "sqlQueryForEngine"
+          ],
+          "sha256": "76aab609fde72769fdac91a4ae5cca12d693bcc4eda22ce76ce253b7439926bb"
+        },
+        "idempotent": true,
+        "name": "clamp_oauth_token_ttl",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 210
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "function_search_path",
+        "sql": {
+          "length": 1861,
+          "sha256": "5370a8f6ef1ca8787e677af523927605c2fa1de61674efd5b006a5673fbb1eca"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 211
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "decide_review_proposals",
+        "sql": {
+          "length": 1700,
+          "sha256": "8a20d8dac7096056bb53512bcb34316d15d44582b7d9b0f4f6fff3891c9daac3"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 212
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "core_edit_notices",
+        "sql": {
+          "length": 721,
+          "sha256": "d025431d38cc094b0f5ea0b852fa2a8c288a67c10c61cdb5a16c72bee8e7dd1f"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 213
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "wanted_links",
+        "sql": {
+          "length": 1422,
+          "sha256": "9f86606532990d1946206c23c7dcb0134bfbde881c5a63653b442d355d6042d8"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 214
       }
     ],
     "versions": [
@@ -3272,7 +3382,14 @@
       204,
       205,
       206,
-      207
+      207,
+      208,
+      209,
+      210,
+      211,
+      212,
+      213,
+      214
     ]
   },
   "normalizer": "migrations-record-v1"

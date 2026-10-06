@@ -136,6 +136,12 @@
       "description": "Format-prefixed parent for media-by-source-format ingest. Subdirectories like media/x/{handle}/ hold X/Twitter archives, media/audio/ holds podcast/voice captures. The format-prefix lives only when the content is sui generis to the source format AND lacks a clean primary-subject directory. Prefer subject-by-subject filing; fall through to media/ only when the source format IS the unifying frame."
     },
     {
+      "kind": "inbox",
+      "directory": "inbox/",
+      "examples": ["captured thoughts", "pasted snippets awaiting filing"],
+      "description": "Raw captured content awaiting filing; `gbrain capture` writes here. Move a page to its primary-subject directory once it is understood."
+    },
+    {
       "kind": "conversation",
       "directory": "conversations/",
       "examples": ["conversations/chatgpt/{thread-slug}.md", "conversations/claude/{thread-slug}.md"],

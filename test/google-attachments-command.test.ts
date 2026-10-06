@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { parseGoogleAttachmentsArgs } from '../src/commands/google-attachments.ts';
 import { parseGoogleSourceConfig } from '../src/core/google/google-source.ts';
 import { withConnectorSync } from '../src/core/persistence/connector-sync.ts';
-import { createConnectorFixture, options } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, settleConnectorWrites } from './helpers/connector-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { join } from 'node:path';
@@ -28,6 +28,7 @@ test('command JSON preview and apply expose truthful scope and progress without 
     await withConnectorSync(engine, f.id, 'google', parseGoogleSourceConfig(config, f.dir), options, async managed => {
       for (let n = 1; n <= 2; n++) await managed!.importMarkdown(`emails/2026/09/thread-${n}.md`, `---\ntype: email\ntitle: Synthetic command\naccount: reader@example.com\nthread_id: thread${n}\nmessage_ids: [message000000000${n}]\n---\nRetained body.\n`);
     });
+    await settleConnectorWrites(engine, f.id);
     let database: Record<string, unknown> = { engine: 'pglite', database_path: join(home, 'database') };
     if (engine.kind === 'postgres') {
       const [row] = await engine.executeRaw<{ name: string }>('SELECT current_database() AS name');

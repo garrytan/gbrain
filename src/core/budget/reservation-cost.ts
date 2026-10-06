@@ -11,6 +11,7 @@ import { canonicalLookup } from '../model-pricing.ts';
 import { lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { resolveRecipe } from '../ai/model-resolver.ts';
+import { getRecipe } from '../ai/recipes/index.ts';
 
 export type BudgetKind = 'chat' | 'embed' | 'rerank' | 'decide';
 
@@ -39,15 +40,42 @@ export function canonicalPricingKey(modelId: string): string {
 }
 
 /**
+ * Whether `key` may stand in `pricing.overrides`. A model id always may. A
+ * provider wildcard (`claude-cli:*`) may only for a provider whose recipe
+ * bills by subscription: one rate is honest for every model of a flat-rate
+ * plan and wrong for every model of a per-token API. A bare `*` never may.
+ */
+export function isAllowedPricingOverrideKey(key: string): boolean {
+  const k = key.trim().toLowerCase();
+  if (!k.includes('*')) return k.length > 0;
+  if (!k.endsWith(':*') || k.slice(0, -2).includes('*')) return false;
+  return getRecipe(k.slice(0, -2))?.billing === 'subscription';
+}
+
+/** Where a price came from: an operator model override, an operator provider wildcard, or the shipped tables. */
+export type PricingSource = 'override' | 'provider_wildcard' | 'table';
+
+function overrideWithSource(modelId: string, overrides?: PricingOverrides): { pricing: ModelPricing; source: PricingSource } | null {
+  if (!overrides) return null;
+  const raw = modelId.trim().toLowerCase();
+  const key = canonicalPricingKey(modelId.trim()).toLowerCase();
+  const exact = overrides[raw] ?? overrides[key];
+  if (exact) return { pricing: exact, source: 'override' };
+  const provider = splitProviderModelId(key).provider;
+  const wildcard = provider ? overrides[`${provider}:*`] : undefined;
+  return wildcard ? { pricing: wildcard, source: 'provider_wildcard' } : null;
+}
+
+/**
  * Override lookup (keys normalized to lowercase at parse time): the raw key
  * first, then the recipe-canonical key — an override written against the
  * dated id must also price the alias the operator configured, or the alias
  * silently bills at list price while the table lookup below resolves it.
+ * Then the provider wildcard (`claude-cli:*`), which parsePricingOverrides
+ * admits only for subscription-billed providers: exact > wildcard > tables.
  */
 export function overrideFor(modelId: string, overrides?: PricingOverrides): ModelPricing | null {
-  if (!overrides) return null;
-  const raw = modelId.trim().toLowerCase();
-  return overrides[raw] ?? overrides[canonicalPricingKey(modelId.trim()).toLowerCase()] ?? null;
+  return overrideWithSource(modelId, overrides)?.pricing ?? null;
 }
 
 /**
@@ -168,7 +196,24 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
  * caller silently does no work.
  */
 export function isModelPriceable(modelId: string, kind: BudgetKind, overrides?: PricingOverrides): boolean {
-  return overrideFor(modelId, overrides) !== null || lookupPricing(modelId, kind) !== null;
+  return priceFor(modelId, kind, overrides) !== null;
+}
+
+/**
+ * The one price resolver: operator overrides (exact model, then provider
+ * wildcard), then the shipped tables (aliases, the claude-cli → Anthropic
+ * sibling, canonical rows, free local providers). `null` means unpriced;
+ * each caller keeps its own miss policy.
+ */
+export function priceFor(
+  modelId: string,
+  kind: BudgetKind,
+  overrides?: PricingOverrides,
+): { pricing: ModelPricing; source: PricingSource } | null {
+  const override = overrideWithSource(modelId, overrides);
+  if (override) return override;
+  const table = lookupPricing(modelId, kind);
+  return table ? { pricing: table, source: 'table' } : null;
 }
 
 export function usageCostUsd(
@@ -181,7 +226,7 @@ export function usageCostUsd(
   // #4312: operator overrides win — the operator owns their bill (negotiated
   // rates, proxy routes the shipped tables can't know about). Missing both →
   // null, and the TX2 fail-closed contract in reserve() still applies.
-  const p = overrideFor(modelId, overrides) ?? lookupPricing(modelId, kind);
+  const p = priceFor(modelId, kind, overrides)?.pricing;
   if (!p) return null;
   return (inputTokens / 1_000_000) * p.input + (outputTokens / 1_000_000) * p.output;
 }
@@ -199,4 +244,19 @@ export function reservationCostUsd(
   overrides?: PricingOverrides,
 ): number | null {
   return usageCostUsd(modelId, inputTokens, maxOutputTokens, kind, overrides);
+}
+
+/**
+ * D3: providers whose rows carry the PEAK rate of a time-of-day price
+ * (DeepSeek bills half off-peak). A cap must bound the worst case, so caps
+ * and estimates use peak; this labels an estimate so the overstatement is
+ * never silent. Router rows (`openrouter:deepseek/...`) are the router's own
+ * flat rate and are not labelled.
+ */
+const PEAK_RATE_PROVIDERS: ReadonlySet<string> = new Set(['deepseek']);
+
+/** The label an estimate carries when any of its models prices at a peak row, else ''. */
+export function peakRateNote(models: Array<string | null | undefined>): string {
+  const peak = models.some((m) => PEAK_RATE_PROVIDERS.has(splitProviderModelId(m).provider ?? ''));
+  return peak ? ' (DeepSeek at peak rates, an upper bound; off-peak bills half)' : '';
 }

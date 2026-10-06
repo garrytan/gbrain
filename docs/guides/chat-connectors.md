@@ -34,6 +34,11 @@ gbrain config set connectors.chatgpt.auto_sync true
 gbrain autopilot --install
 ```
 
+A usage error (no provider, an unknown provider, or `--source` without a
+value) exits 2 with an `invalid_params` error; under `--json` it is one
+envelope whose `fix` is the corrected command (`gbrain connectors sync --help`
+prints the usage).
+
 `gbrain connectors status` shows credential provenance/expiry and sync state
 (never the secret). `gbrain connectors logout <provider>` removes a credential.
 

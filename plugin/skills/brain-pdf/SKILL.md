@@ -8,6 +8,7 @@ triggers:
   - "convert brain page to pdf"
   - "publish this page as pdf"
   - "export brain page"
+when_to_use: "Use when the user asks: \"make pdf from brain\", \"brain pdf\", \"convert brain page to pdf\", \"publish this page as pdf\", \"export brain page\"."
 ---
 
 # brain-pdf — Render a Brain Page to Publication-Quality PDF

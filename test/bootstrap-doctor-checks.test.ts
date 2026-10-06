@@ -354,6 +354,17 @@ describe('bootstrap_push_health', () => {
     expect(c?.message).toContain('last push ok');
   }, T);
 
+  test('fresh successful push but the workspace is AHEAD of origin → warn, never ok (#5063)', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace({ ahead: true });
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: new Date().toISOString(), ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('1 commit(s) not on origin');
+    expect(c?.message).toContain(ws);
+  }, T);
+
   test('last push FAILED → warn naming the reason (regardless of age)', async () => {
     const { parent, home } = makeHome();
     writePushStatus(home, JSON.stringify({ ts: new Date().toISOString(), ok: false, reason: 'push_failed' }));

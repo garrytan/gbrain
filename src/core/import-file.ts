@@ -17,11 +17,10 @@ import { detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { installPageEmbeddings, installPageProjection, preparePageProjection, projectionBelowSafeFence, queuePageProjection, readProjectionSnapshot, resealSafeChunks,
   sealPageTextProjection, stampEmbeddingInputs, embeddingWriteTarget, embeddingInputContext, type ProjectionSnapshot } from './page-state/projections.ts';
-import { embeddingInputHash } from './embedding-input-hash.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { hasProtectedBody, safeChunksFilter } from './search/safe-chunks.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
-import { planEmbeddingReuse } from './embed-reuse.ts';
+import { canReuseMarkdownVector, planEmbeddingReuse } from './embed-reuse.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 // #3374 — import-path embeds ride the shared retry loop (429 retry-after +
@@ -765,10 +764,7 @@ export async function importFromContent(
     // Reuse is keyed on chunk source + text, so a stored chunk's current-input
     // hash is the hash its matching new chunk would record.
     const stored = (await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true, requireSafeChunks: true }))
-      .filter(chunk => {
-        const hash = recorded.get(chunk.chunk_index);
-        return hash == null ? tier === 'none' && chunk.model === target.provenanceModel : hash === embeddingInputHash(provenance, tier, chunk);
-      });
+      .filter(chunk => canReuseMarkdownVector(recorded.get(chunk.chunk_index), existing.contextual_retrieval_mode, tier, provenance, chunk));
     for (const [i, matched] of planEmbeddingReuse(stored, chunks, c => `${c.chunk_source}\0${c.chunk_text}`).reuse) {
       chunks[i].embedding = matched.embedding as Float32Array;
       chunks[i].token_count = matched.token_count ?? undefined;
@@ -827,7 +823,7 @@ export async function importFromContent(
   let persistedProjection: ProjectionSnapshot | null = null;
   const [timeZone, mentionPolicy] = await Promise.all([loadBrainTimeZone(engine), readMentionPolicy(engine).catch(() => null)]);
   const applyPrepared = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
-    if (!opts.coordinated) await assertImportBase(tx, slug, txOpts.sourceId, existing);
+    if (!opts.coordinated) await assertImportBase(tx, slug, txOpts.sourceId, existing, reused.size > 0);
     await assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug);
     if (existing) await tx.createVersion(slug, preimage ? { ...txOpts, preimage } : txOpts);
 

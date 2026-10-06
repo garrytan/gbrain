@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# CI guard (#1647 / #171): every trigger function in the canonical schema base
-# files MUST pin `SET search_path`. Without it, an unqualified reference inside
-# the function body resolves through the caller's search_path, so a same-named
-# object in a user-controlled schema could shadow it. Migration v120 ALTERs
-# existing brains; this guard keeps fresh-install function definitions correct
-# so a NEW trigger function can't reintroduce the gap. Mirrors the
-# check-jsonb-pattern.sh guard philosophy (a written rule caused the disease;
-# a guard cures it).
+# CI guard (#1647 / #171 / #5190): every plpgsql function gbrain defines MUST
+# pin `SET search_path`. Without it, an unqualified reference inside the
+# function body resolves through the caller's search_path, so a same-named
+# object in a user-controlled schema could shadow it. Migrations v120 and the
+# #5190 search_path migration ALTER existing brains; this guard keeps every
+# definition source correct so a new or re-applied function can't reintroduce
+# the gap.
 #
-# Scope: schema base files only (src/schema.sql, src/core/pglite-schema.ts).
-# Historical migration bodies in migrate.ts are append-only and not rescanned;
-# the runtime doctor probe (pg_proc.proconfig) covers the live post-migration
-# state on real brains.
+# Scope: every .ts and .sql file under src/ (schema.sql, the generated
+# schemas and the TS schema modules), except src/core/schema-migrations/,
+# whose historical bodies are append-only. A header is matched whatever its
+# argument list and however it is spread over lines, up to its `AS $tag$`.
+# LANGUAGE sql functions are exempt: they stay inlinable (an index expression
+# may use them), so they schema-qualify their built-ins instead. Migration-only
+# functions are covered at runtime by test/fact-fingerprint-search-path.test.ts,
+# which checks pg_proc.proconfig after a fresh migrate.
 #
 # Usage: scripts/check-search-path.sh
-# Exit:  0 when all trigger functions pin search_path, 1 otherwise.
+# Exit:  0 when every plpgsql function pins search_path, 1 otherwise.
 
 set -euo pipefail
 
@@ -23,30 +26,33 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 ROOT="${GBRAIN_GUARD_ROOT:-$ROOT}"
 cd "$ROOT"
 
-# Refactor wave 1 generates the PGLite bootstrap template into
-# pglite-schema.generated.ts; it is a schema base file from its first commit.
-FILES=""
-for f in src/schema.sql src/core/pglite-schema.ts src/core/pglite-schema.generated.ts src/core/schema-embedded.generated.ts; do
-  [ -f "$f" ] && FILES="$FILES $f"
-done
-if [ -z "$FILES" ]; then
-  echo "ERROR: no schema base files found under $ROOT"
+if [ ! -d src ]; then
+  echo "ERROR: no src/ directory under $ROOT"
   exit 1
 fi
 
-# A hardened header reads `... RETURNS trigger SET search_path = ... AS $tag$`.
-# An UNHARDENED one reads `... RETURNS trigger AS $tag$` — match that form and
-# (belt-and-suspenders) drop any line that already mentions search_path.
-BAD="$(grep -nEi 'CREATE OR REPLACE FUNCTION [a-z_]+\(\) RETURNS trigger AS ' $FILES 2>/dev/null | grep -vi 'search_path' || true)"
+FILES="$(find src -type f \( -name '*.ts' -o -name '*.sql' \) -not -path 'src/core/schema-migrations/*' | sort)"
+
+# perl reads each file whole, finds every CREATE [OR REPLACE] FUNCTION header up
+# to its AS $tag$, skips LANGUAGE sql, and reports headers with no search_path.
+BAD="$(printf '%s\n' "$FILES" | xargs perl -0777 -ne '
+  while (/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([\w."]+)\s*\((.*?)\)\s+RETURNS\s+(.*?)\bAS\s+\$(\w*)\$/gis) {
+    my ($name, $rest, $start) = ($1, $3, $-[0]);
+    next if $rest =~ /\bLANGUAGE\s+sql\b/i;
+    next if $rest =~ /search_path/i;
+    my $line = 1 + (substr($_, 0, $start) =~ tr/\n//);
+    print "$ARGV:$line: $name\n";
+  }
+' 2>/dev/null || true)"
 
 if [ -n "$BAD" ]; then
-  echo "ERROR: trigger function(s) missing SET search_path in schema base files:"
+  echo "ERROR: plpgsql function(s) missing SET search_path:"
   echo "$BAD"
   echo
   echo "Add 'SET search_path = pg_catalog, public' to the function header, e.g.:"
-  echo "  CREATE OR REPLACE FUNCTION foo() RETURNS trigger SET search_path = pg_catalog, public AS \$\$"
-  echo "See #1647 / #171."
+  echo "  CREATE OR REPLACE FUNCTION foo() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$fn\$"
+  echo "See #1647 / #171 / #5190."
   exit 1
 fi
 
-echo "OK: all trigger functions in schema base files pin search_path"
+echo "OK: every plpgsql function definition under src/ pins search_path"

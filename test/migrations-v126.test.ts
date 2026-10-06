@@ -99,6 +99,9 @@ describe('migration v126 — session_context_state', () => {
     expect(Object.keys(byName).sort()).toEqual([
       'checkpoint_manifest', // cathedral 5 — added by migration v132
       'client_id',
+      'degraded_wakes', // delta per-arm cursor — added by migration v208
+      'facts_cursor_at', // v208
+      'facts_cursor_id', // v208
       'last_wake_at',
       'session_id',
       'source_id',
@@ -116,7 +119,7 @@ describe('migration v126 — session_context_state', () => {
     expect(byName.checkpoint_manifest.column_default).toContain('[]');
     expect(byName.last_wake_at.data_type).toBe('timestamp with time zone');
     expect(byName.updated_at.data_type).toBe('timestamp with time zone');
-    // last_wake_at is the only nullable column (no wake yet).
+    // last_wake_at and the v208 facts keyset are the only nullable columns (no wake yet).
     expect(byName.source_id.is_nullable).toBe('NO');
     expect(byName.client_id.is_nullable).toBe('NO');
     expect(byName.session_id.is_nullable).toBe('NO');
@@ -130,6 +133,12 @@ describe('migration v126 — session_context_state', () => {
     expect(byName.standing_entities.column_default).toContain('[]');
     expect(byName.surfaced_slugs.column_default).toContain('[]');
     expect(byName.updated_at.column_default).toContain('now()');
+    expect(byName.facts_cursor_at.data_type).toBe('timestamp with time zone');
+    expect(byName.facts_cursor_at.is_nullable).toBe('YES');
+    expect(byName.facts_cursor_id.data_type).toBe('bigint');
+    expect(byName.degraded_wakes.data_type).toBe('integer');
+    expect(byName.degraded_wakes.is_nullable).toBe('NO');
+    expect(byName.degraded_wakes.column_default).toContain('0');
   });
 
   test('composite PK is (source_id, client_id, session_id) in that order', async () => {
@@ -218,7 +227,7 @@ describe('migration v126 — session_context_state', () => {
     // must match exactly — a divergence means migrate.ts drifted from
     // src/schema.sql / pglite-schema.ts.
     const fresh = await captureShape();
-    expect(fresh.columns.length).toBe(8); // 7 (v126) + checkpoint_manifest (v132)
+    expect(fresh.columns.length).toBe(11); // 7 (v126) + checkpoint_manifest (v132) + facts_cursor_at/_id, degraded_wakes (v208)
 
     await engine.executeRaw(`DROP TABLE IF EXISTS session_context_state`);
     await engine.setConfig('version', '125');

@@ -20,6 +20,7 @@ writes_to:
   - concepts/
   - meetings/
   - sources/
+when_to_use: "Use when the user asks: \"ingest this\", \"save this to brain\", \"process this meeting\"."
 ---
 
 # Ingest Skill
@@ -34,7 +35,7 @@ Ingest meetings, articles, media, documents, and conversations into the brain.
 - Every entity mention creates a back-link from the entity's page to the page mentioning them (Iron Law).
 - Raw sources are preserved for provenance via `gbrain files upload-raw` with automatic size routing.
 - State sections are rewritten with current best understanding, never appended to.
-- Entity detection fires on every inbound message; notable entities get pages or updates.
+- After the user's explicit automatic-capture opt-in (see `skills/signal-detector/SKILL.md`), entity detection fires on every substantive inbound message; notable entities get pages or updates. Without that opt-in, capture only what the user asks to save.
 - Notability gate before any new entity page: existing pages are updated, and a NEW page is
   created only for a notable entity and only with meaningful content from web search or
   existing brain context — no stubs. A non-notable mention stays an inline reference on the
@@ -71,15 +72,19 @@ Every fact written to a brain page must carry an inline `[Source: ...]` citation
 5. **Back-link all entities.** Update EVERY mentioned entity's page with a back-link to this page (Iron Law).
 6. **Timeline merge.** The same event appears on ALL mentioned entities' timelines. If Alice met Bob at Acme Corp, the event goes on Alice's page, Bob's page, and Acme Corp's page.
 
-## Entity Detection on Every Message
+## Entity Detection on Every Message (after opt-in)
 
-Production agents should detect entity mentions on EVERY inbound message. This is
-the signal detection loop that makes the brain compound over time.
+Automatic capture is off by default. Once the user has explicitly opted in to
+automatic capture for this brain (the stored choice `skills/signal-detector/SKILL.md`
+checks before writing), production agents detect entity mentions on every
+substantive inbound message. This is the signal detection loop that makes the
+brain compound over time. Without the opt-in, write only what the user asks to save.
 
 ### Protocol
 
 1. **Scan the message** for entity mentions: people, companies, concepts, original
-   thinking. Fire on every message (no exceptions unless purely operational).
+   thinking. With the opt-in recorded, fire on every substantive message (skip
+   purely operational ones and honor narrower per-message instructions).
 2. **For each entity detected:**
    - `gbrain search "name"` -- does a page already exist?
    - **If yes:** load context with `gbrain get <slug>`. Use the compiled truth to

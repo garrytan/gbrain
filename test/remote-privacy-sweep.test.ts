@@ -264,6 +264,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   sources_list: 'ok',
   sources_status: 'ok',
   find_orphans: 'ok',
+  wanted_pages: 'ok',
   find_contradictions: 'ok',
   find_experts: 'ok',
   find_trajectory: 'ok',

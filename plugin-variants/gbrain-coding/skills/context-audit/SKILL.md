@@ -27,6 +27,7 @@ tools:
 mutating: false
 writes_pages: false
 upstream: context-audit@fc834ee
+when_to_use: "Use when the user asks: \"context audit\", \"context diet\", \"system prompt audit\", \"prompt compression\", \"reduce context size\"."
 ---
 
 # context-audit — Token Hygiene for the Always-Loaded Context Stack

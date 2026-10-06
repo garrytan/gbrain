@@ -17,6 +17,7 @@ triggers:
   - "which directory does this go"
   - "which directory does this page go"
 mutating: false
+when_to_use: "Use when the user asks: \"where does this brain page go\", \"file this in the brain\", \"brain taxonomist\", \"taxonomy check\", \"refile brain page\"."
 ---
 
 # brain-taxonomist

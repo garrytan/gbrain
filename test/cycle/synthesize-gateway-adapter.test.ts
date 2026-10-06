@@ -17,6 +17,8 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import {
   __setChatTransportForTests,
+  __setGenerateTextTransportForTests,
+  configureGateway,
   resetGateway,
   type ChatResult,
 } from '../../src/core/ai/gateway.ts';
@@ -27,6 +29,7 @@ import type { DiscoveredTranscript } from '../../src/core/cycle/transcript-disco
 
 afterEach(() => {
   __setChatTransportForTests(null);
+  __setGenerateTextTransportForTests(null);
   resetGateway();
 });
 
@@ -171,8 +174,8 @@ describe('JudgeClient.create — gateway routing + shape adapter', () => {
       expect(receivedSystem).toBe('judge system prompt');
       // Gateway model gets the anthropic: prefix normalized
       expect(receivedModel).toBe('anthropic:claude-haiku-4-5-20251001');
-      // The thinking-disable pin is DeepSeek-only; other providers must not
-      // receive call-scoped provider options from the judge.
+      // The judge asks for `thinking: 'off'`, not provider options: the
+      // per-route mapping happens inside chat() (thinking-off.ts).
       expect(receivedProviderOptions).toBeUndefined();
       // Anthropic.Message shape returned
       expect(result.content?.[0]?.type).toBe('text');
@@ -180,71 +183,44 @@ describe('JudgeClient.create — gateway routing + shape adapter', () => {
     });
   });
 
-  test('A3b: DeepSeek verdict judge disables thinking for its own call only', async () => {
-    // DeepSeek v4 models think by default and bill reasoning as OUTPUT tokens
-    // against max_tokens (recipe thinking_by_default, gbrain#4172). The triage
-    // judge wants the plain JSON verdict, so it pins thinking off per-call via
-    // ChatOpts.providerOptions instead of burning budget on reasoning.
-    // No DEEPSEEK_API_KEY needed: non-anthropic construction skips the key
-    // probe (A9) and the transport is stubbed.
-    const judge = makeJudgeClient('deepseek:deepseek-v4-flash');
+  /** Provider options the judge's call hands the AI SDK (after per-route `thinking: 'off'` mapping). */
+  async function judgeSdkProviderOptions(model: string): Promise<Record<string, any> | undefined> {
+    configureGateway({ chat_model: model, env: { DEEPSEEK_API_KEY: 'fake-deepseek', OPENROUTER_API_KEY: 'fake-openrouter' } });
+    let captured: Record<string, any> | undefined;
+    __setGenerateTextTransportForTests((async (args: any) => {
+      captured = args.providerOptions;
+      return { content: [{ type: 'text', text: WORTH_PROCESSING_JSON }], finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 20 } };
+    }) as any);
+    const judge = makeJudgeClient(model);
     expect(judge).not.toBeNull();
-
-    let receivedProviderOptions: Record<string, Record<string, unknown>> | undefined;
-    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
-      receivedProviderOptions = opts.providerOptions;
-      return {
-        text: WORTH_PROCESSING_JSON,
-        blocks: [],
-        stopReason: 'end',
-        usage: { input_tokens: 10, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
-        model: 'deepseek:deepseek-v4-flash',
-        providerId: 'deepseek',
-      };
-    });
-
     await judge!.create({
-      model: 'deepseek:deepseek-v4-flash',
+      model,
       max_tokens: 1024,
       system: 'judge system prompt',
       messages: [{ role: 'user', content: 'judge this' }],
     });
+    return captured;
+  }
 
-    expect(receivedProviderOptions).toEqual({
+  test('A3b: DeepSeek verdict judge disables thinking for its own call only', async () => {
+    // DeepSeek v4 models think by default and bill reasoning as OUTPUT tokens
+    // against max_tokens (recipe thinking_by_default, gbrain#4172). The triage
+    // judge wants the plain JSON verdict, so it turns thinking off per call
+    // (ChatOpts.thinking 'off', #5331), which reaches the SDK as DeepSeek's knob.
+    // No DEEPSEEK_API_KEY needed: non-anthropic construction skips the key
+    // probe (A9) and the transport is stubbed.
+    expect(await judgeSdkProviderOptions('deepseek:deepseek-v4-flash')).toEqual({
       deepseek: { thinking: { type: 'disabled' } },
     });
   });
 
   test('A3c: OpenRouter DeepSeek verdict judge disables thinking for its own call only', async () => {
     // Same contract as A3b for the OpenRouter-hosted DeepSeek routes (#4758):
-    // the recipe declares thinking_by_default for `deepseek/…`, so the judge
-    // pins thinking off per-call under the openrouter providerOptions
-    // namespace (the openai-compatible adapter spreads
-    // providerOptions[recipe.id] into the wire body).
-    const judge = makeJudgeClient('openrouter:deepseek/deepseek-v4-flash-0731');
-    expect(judge).not.toBeNull();
-
-    let receivedProviderOptions: Record<string, Record<string, unknown>> | undefined;
-    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
-      receivedProviderOptions = opts.providerOptions;
-      return {
-        text: WORTH_PROCESSING_JSON,
-        blocks: [],
-        stopReason: 'end',
-        usage: { input_tokens: 10, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
-        model: 'openrouter:deepseek/deepseek-v4-flash-0731',
-        providerId: 'openrouter',
-      };
-    });
-
-    await judge!.create({
-      model: 'openrouter:deepseek/deepseek-v4-flash-0731',
-      max_tokens: 1024,
-      system: 'judge system prompt',
-      messages: [{ role: 'user', content: 'judge this' }],
-    });
-
-    expect(receivedProviderOptions).toEqual({
+    // the recipe declares thinking_by_default for `deepseek/…`, so the switch
+    // lands under the openrouter providerOptions namespace (the
+    // openai-compatible adapter spreads providerOptions[recipe.id] into the
+    // wire body).
+    expect(await judgeSdkProviderOptions('openrouter:deepseek/deepseek-v4-flash-0731')).toEqual({
       openrouter: { thinking: { type: 'disabled' } },
     });
   });
@@ -252,30 +228,7 @@ describe('JudgeClient.create — gateway routing + shape adapter', () => {
   test('A3d: OpenRouter non-DeepSeek routes receive no thinking pin', async () => {
     // The pin is family-scoped: an anthropic/ route via OR must not get a
     // DeepSeek-shaped `thinking` knob sprayed into its wire body.
-    const judge = makeJudgeClient('openrouter:anthropic/claude-haiku-4.5');
-    expect(judge).not.toBeNull();
-
-    let receivedProviderOptions: Record<string, Record<string, unknown>> | undefined;
-    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
-      receivedProviderOptions = opts.providerOptions;
-      return {
-        text: WORTH_PROCESSING_JSON,
-        blocks: [],
-        stopReason: 'end',
-        usage: { input_tokens: 10, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
-        model: 'openrouter:anthropic/claude-haiku-4.5',
-        providerId: 'openrouter',
-      };
-    });
-
-    await judge!.create({
-      model: 'openrouter:anthropic/claude-haiku-4.5',
-      max_tokens: 1024,
-      system: 'judge system prompt',
-      messages: [{ role: 'user', content: 'judge this' }],
-    });
-
-    expect(receivedProviderOptions).toBeUndefined();
+    expect(await judgeSdkProviderOptions('openrouter:anthropic/claude-haiku-4.5')).toBeUndefined();
   });
 
   test('A4: ChatResult.text → Anthropic.Message.content[0].text mapping', async () => {

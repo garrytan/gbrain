@@ -7,7 +7,7 @@ import { stableJson } from '../persistence/digest.ts';
 import { assertPageRevision, type PageSnapshot } from './types.ts';
 
 /** Imported bytes are prepared outside transactions; publication still needs CAS. */
-export async function assertImportBase(tx: BrainEngine, slug: string, sourceId: string, existing: Page | null): Promise<void> {
+export async function assertImportBase(tx: BrainEngine, slug: string, sourceId: string, existing: Page | null, reusedEmbeddings = false): Promise<void> {
   await tx.lockPageKeys([{ sourceId, slug }]);
   const current = await tx.getPage(slug, { sourceId, includeDeleted: true });
   if ((current?.id ?? null) !== (existing?.id ?? null)) {
@@ -16,6 +16,11 @@ export async function assertImportBase(tx: BrainEngine, slug: string, sourceId: 
       { fix: readFix(`Shows which page holds ${slug} now and its revision.`, { argv: ['gbrain', 'get', '--source', sourceId, '--', slug], mcp: { tool: 'get_page', arguments: { slug, source_id: sourceId } } }) });
   }
   assertPageRevision(current ? { revision: current.knowledge_revision! } : null, existing ? { expectedRevision: existing.knowledge_revision } : {});
+  if (reusedEmbeddings && (current?.contextual_retrieval_mode ?? null) !== (existing?.contextual_retrieval_mode ?? null)) {
+    throw opError('revision_conflict', 'The contextual retrieval mode changed while this import prepared reusable embeddings; nothing was written.',
+      `Page ${slug} in source ${sourceId} changed embedding mode without changing its canonical revision. Read the current page, then retry the import so it builds vectors for that mode.`,
+      { fix: readFix('Reads the current page before retrying the import.', { argv: ['gbrain', 'get', '--source', sourceId, '--', slug], mcp: { tool: 'get_page', arguments: { slug, source_id: sourceId } } }) });
+  }
 }
 const canonicalFields = (p: Page | ParsedPage) => ({ type: p.type, title: p.title, compiled_truth: p.compiled_truth,
   timeline: p.timeline ?? '', frontmatter: p.frontmatter });

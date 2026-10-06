@@ -842,11 +842,14 @@ describe('session-end', () => {
     expect(readdirSync(corpusDir).filter((f) => f.includes('.tmp-'))).toEqual([]);
   });
 
-  test('retention prune: corpus files past the default 30d window are removed [G15]', async () => {
+  test('retention prune: extracted corpus files past the default 30d window are removed [G15]', async () => {
     const corpusDir = join(home(), 'transcripts', 'corpus');
     mkdirSync(corpusDir, { recursive: true });
     const oldFile = join(corpusDir, 'ancient.txt');
     writeFileSync(oldFile, 'old corpus\n');
+    // E-N1 (D16): only an extracted file goes at plain retention; an
+    // unextracted one is kept to 3x (test/corpus-retention-uningested.serial.test.ts).
+    writeFileSync(oldFile + '.ingested', '{}\n');
     const old = (Date.now() - 40 * 24 * 3600 * 1000) / 1000;
     utimesSync(oldFile, old, old);
     const freshFile = join(corpusDir, 'fresh.txt');

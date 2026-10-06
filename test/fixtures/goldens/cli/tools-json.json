@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 203001,
-    "stdoutSha256": "1c7a6e9584099345f3d0f2ef2756bce55121ef709144cc7e60a78ec9ee6c6e0d",
+    "stdoutBytes": 206369,
+    "stdoutSha256": "31180231d7f950ef195484b02a63bf6ef62c92914934dc36d25e24fa78e50544",
     "toolNames": [
       "remember",
       "entity",
@@ -40,6 +40,7 @@
       "get_backlinks",
       "list_link_sources",
       "traverse_graph",
+      "wanted_pages",
       "add_timeline_entry",
       "get_timeline",
       "get_stats",
@@ -102,6 +103,7 @@
       "takes_update",
       "takes_resolve",
       "takes_supersede",
+      "takes_remove",
       "whoami",
       "sources_add",
       "sources_list",
@@ -166,7 +168,7 @@
     ],
     "tools": [
       {
-        "description": "MEMORY VERB (v1): save one fact; provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.",
+        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -174,11 +176,13 @@
         "parameters": {
           "entity": "string?",
           "expected_revision": "string?",
-          "fact": "string",
+          "fact": "string?",
           "force": "boolean?",
           "infer_entity": "boolean?",
+          "items": "array?",
           "kind": "string?",
-          "provenance": "string",
+          "provenance": "string?",
+          "replaces": "string?",
           "request_id": "string?",
           "source_id": "string?",
           "ttl": "string?",
@@ -188,7 +192,7 @@
         "schema": {
           "properties": {
             "entity": {
-              "description": "Who or what it is about (name or slug).",
+              "description": "Subject (name or slug).",
               "type": "string"
             },
             "expected_revision": {
@@ -207,6 +211,13 @@
               "description": "Default true.",
               "type": "boolean"
             },
+            "items": {
+              "description": "≤20 facts: [{fact, provenance}]",
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
             "kind": {
               "description": "Default fact.",
               "enum": [
@@ -219,7 +230,11 @@
               "type": "string"
             },
             "provenance": {
-              "description": "Where the fact came from (max 500 chars).",
+              "description": "Fact source (max 500 chars).",
+              "type": "string"
+            },
+            "replaces": {
+              "description": "fact_id this fact replaces (same entity).",
               "type": "string"
             },
             "request_id": {
@@ -243,10 +258,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "fact",
-            "provenance"
-          ],
+          "required": [],
           "type": "object"
         },
         "scope": "write"
@@ -318,7 +330,8 @@
         "parameters": {
           "id": "string",
           "reason": "string?",
-          "request_id": "string?"
+          "request_id": "string?",
+          "semantic_review": "boolean?"
         },
         "required_scopes": [],
         "schema": {
@@ -334,6 +347,10 @@
             "request_id": {
               "description": "UUID; retry with it on timeout.",
               "type": "string"
+            },
+            "semantic_review": {
+              "description": "false: skip overnight rewording review.",
+              "type": "boolean"
             }
           },
           "required": [
@@ -1890,6 +1907,43 @@
           "required": [
             "slug"
           ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Link targets that have no page yet, most-referenced first: each was written as a link but its page does not exist, so no edge exists. Use to find entities worth a page (enrichment) or typo links to fix. The edge appears on its own once the page is created.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "wanted_pages",
+        "parameters": {
+          "count_only": "boolean?",
+          "limit": "number?",
+          "offset": "number?",
+          "source_id": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "count_only": {
+              "description": "Return the total with no rows.",
+              "type": "boolean"
+            },
+            "limit": {
+              "description": "Rows per page (default 50, max 100).",
+              "type": "number"
+            },
+            "offset": {
+              "description": "Skip the first N targets.",
+              "type": "number"
+            },
+            "source_id": {
+              "description": "Only targets referenced from this source (must be inside your source grant).",
+              "type": "string"
+            }
+          },
+          "required": [],
           "type": "object"
         },
         "scope": "read"
@@ -3812,6 +3866,7 @@
           "anchor": "string?",
           "model": "string?",
           "question": "string",
+          "reference_date": "string?",
           "rounds": "number?",
           "save": "boolean?",
           "since": "string?",
@@ -3831,6 +3886,10 @@
             },
             "question": {
               "description": "The question to think about",
+              "type": "string"
+            },
+            "reference_date": {
+              "description": "YYYY-MM-DD the question's relative time words resolve against (default: today in brain.timezone).",
               "type": "string"
             },
             "rounds": {
@@ -4197,6 +4256,46 @@
             "slug",
             "row_num",
             "claim"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Remove one take row from a page's takes fence and the takes table together. Local-only. Other rows keep their numbers. Refuses a resolved row, a row another row cites as \"superseded by\" it, and a row whose database copy disagrees with the fence (run `gbrain takes rebuild <slug>` first). CLI: `gbrain takes remove <slug> --row N`.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": true,
+        "name": "takes_remove",
+        "parameters": {
+          "local_dir": "string?",
+          "request_id": "string?",
+          "row_num": "number",
+          "slug": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "local_dir": {
+              "description": "Trusted CLI directory hint; must equal the registered source root.",
+              "type": "string"
+            },
+            "request_id": {
+              "description": "UUID; retry with it on timeout.",
+              "type": "string"
+            },
+            "row_num": {
+              "description": "Take row number to remove (from takes_list).",
+              "type": "number"
+            },
+            "slug": {
+              "description": "Page slug.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "row_num"
           ],
           "type": "object"
         },
@@ -5367,14 +5466,14 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "description": "MEMORY VERB (v1): core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "context_pack",
         "parameters": {
           "budget_tokens": "number?",
-          "entities": "string",
+          "entities": "string?",
           "include_private": "boolean?",
           "session_id": "string?",
           "since": "string?"
@@ -5403,21 +5502,20 @@
               "type": "string"
             }
           },
-          "required": [
-            "entities"
-          ],
+          "required": [],
           "type": "object"
         },
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): what changed since a time (pages, facts, thread events), zero LLM. Keep a cursor with session_id, or pass since.",
+        "description": "MEMORY VERB (v1): pages, facts, thread events changed since a cursor, zero LLM. Pass session_id, cursor or since.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "delta",
         "parameters": {
           "budget_tokens": "number?",
+          "cursor": "string?",
           "entities": "string?",
           "include_private": "boolean?",
           "session_id": "string?",
@@ -5431,8 +5529,12 @@
               "description": "Token budget; pages pack first.",
               "type": "number"
             },
+            "cursor": {
+              "description": "next_cursor.cursor (exact).",
+              "type": "string"
+            },
             "entities": {
-              "description": "Entity scope for thread events (max 8).",
+              "description": "Entities for thread events (max 8).",
               "type": "string"
             },
             "include_private": {
@@ -5440,15 +5542,15 @@
               "type": "boolean"
             },
             "session_id": {
-              "description": "Opaque session id; keeps a cursor.",
+              "description": "Session id; keeps a cursor.",
               "type": "string"
             },
             "since": {
-              "description": "ISO 8601 cursor (or use session_id).",
+              "description": "ISO 8601 start time.",
               "type": "string"
             },
             "since_slug": {
-              "description": "next_cursor.slug from the previous response.",
+              "description": "Legacy: next_cursor.slug.",
               "type": "string"
             }
           },
@@ -6208,7 +6310,7 @@
               "type": "number"
             },
             "max_cost_usd": {
-              "description": "Default 5.00",
+              "description": "Default 5.00 (an unpriced model then warns and runs). When set, an unpriced model is refused with no_pricing. Remote callers must pass a positive value; 0 (uncapped) is host-only.",
               "type": "number"
             },
             "no_mutate": {

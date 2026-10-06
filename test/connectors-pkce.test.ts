@@ -36,32 +36,37 @@ describe('PKCE', () => {
     expect(url.searchParams.get('code_challenge')).toBe('CHAL');
     expect(url.searchParams.get('state')).toBe('STATE');
     expect(url.searchParams.get('client_id')).toBe('app_test');
+    expect(url.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:1455/callback');
   });
 });
+
+function startFlow(expectedState: string, timeoutMs: number) {
+  let reportPort!: (port: number) => void;
+  const port = new Promise<number>((resolve) => { reportPort = resolve; });
+  const flow = runLoopbackFlow(CFG, 'https://auth.example.com/authorize', expectedState, {
+    portOverride: 0,
+    onListen: reportPort,
+    timeoutMs,
+    log: () => {},
+  });
+  return { flow, port };
+}
 
 describe('loopback flow (ephemeral port)', () => {
   test('resolves the code when the redirect carries a matching state', async () => {
     const state = generateState();
-    const port = 45219; // fixed high port for the test redirect
-    const cfg = { ...CFG, redirectPort: port };
-    const flow = runLoopbackFlow(cfg, 'https://auth.example.com/authorize', state, {
-      timeoutMs: 5000,
-      log: () => {},
-    });
-    // Simulate the browser redirect after a short delay.
-    await new Promise((r) => setTimeout(r, 150));
-    await fetch(`http://127.0.0.1:${port}/callback?code=THE_CODE&state=${encodeURIComponent(state)}`).catch(() => {});
+    const { flow, port } = startFlow(state, 5000);
+    const bound = await port;
+    expect(bound).toBeGreaterThan(0);
+    expect(bound).not.toBe(CFG.redirectPort);
+    const res = await fetch(`http://127.0.0.1:${bound}/callback?code=THE_CODE&state=${encodeURIComponent(state)}`);
+    expect(res.status).toBe(200);
     const { code } = await flow;
     expect(code).toBe('THE_CODE');
   });
 
   test('rejects on state mismatch (CSRF guard)', async () => {
-    const port = 45220;
-    const cfg = { ...CFG, redirectPort: port };
-    const flow = runLoopbackFlow(cfg, 'https://auth.example.com/authorize', 'EXPECTED', {
-      timeoutMs: 5000,
-      log: () => {},
-    });
+    const { flow, port } = startFlow('EXPECTED', 5000);
     // Attach the rejection handler synchronously at creation so the reject
     // (which fires as soon as the mismatched callback lands) is never a
     // momentarily-unhandled rejection.
@@ -69,17 +74,15 @@ describe('loopback flow (ephemeral port)', () => {
       () => { throw new Error('flow should not have resolved'); },
       (e: unknown) => e,
     );
-    await new Promise((r) => setTimeout(r, 150));
-    await fetch(`http://127.0.0.1:${port}/callback?code=x&state=WRONG`).catch(() => {});
+    const res = await fetch(`http://127.0.0.1:${await port}/callback?code=x&state=WRONG`);
+    expect(res.status).toBe(400);
     const err = await captured;
     expect(String(err)).toMatch(/state mismatch/i);
   });
 
   test('times out when no callback arrives', async () => {
-    const port = 45221;
-    const cfg = { ...CFG, redirectPort: port };
-    await expect(
-      runLoopbackFlow(cfg, 'https://auth.example.com/authorize', 'S', { timeoutMs: 200, log: () => {} }),
-    ).rejects.toThrow(/timed out/i);
+    const { flow, port } = startFlow('S', 200);
+    expect(await port).toBeGreaterThan(0);
+    await expect(flow).rejects.toThrow(/timed out/i);
   });
 });

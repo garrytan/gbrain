@@ -47,7 +47,6 @@ import { bodyWriteChunkVersion } from './search/safe-chunks.ts';
 
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, readdirSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
-import { randomBytes } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
 import {
@@ -57,6 +56,7 @@ import {
   type WriteThroughResult,
 } from './write-through.ts';
 import { withPageLock } from './page-lock.ts';
+import { atomicStagingPath } from './atomic-write.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from './minions/source-filesystem.ts';
 import { findTimelineSplitIndex } from './markdown.ts';
@@ -372,7 +372,7 @@ export async function writeTimelineEntryThrough(
 
         // Atomic write: unique temp sibling + rename (writePageThrough's
         // convention). Clean the temp up on failure — never leak a stray.
-        const tmpPath = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+        const tmpPath = atomicStagingPath(filePath);
         try {
           assertSourceFilesystemActive();
           writeFileSync(tmpPath, afterText, 'utf8');

@@ -315,7 +315,7 @@ for (const backend of testBackends()) {
           writeFileSync(join(root, 'TODOS.md'), '# Todos\n\n- keep the mirror pullable\n');
           mkdirSync(join(root, 'journal'));
           for (const day of ['2026-09-29', '2026-09-30']) writeFileSync(join(root, 'journal', `${day}.md`), `# ${day}\n\nA journal entry without frontmatter.\n`);
-          git('init', '-q'); commit('upstream');
+          git('init', '-q'); git('config', 'gc.auto', '0'); git('config', 'maintenance.auto', 'false'); commit('upstream');
           const tracked = () => git('status', '--porcelain', '--untracked-files=no');
 
           await registerLocalWriter(engine, 'cli');

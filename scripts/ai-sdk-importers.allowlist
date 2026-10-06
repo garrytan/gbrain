@@ -1,0 +1,6 @@
+# Files allowed to import a provider SDK as a runtime value. Shrink-only.
+# Each routes its provider calls through invokeAI (src/core/ai/invocation-guard.ts).
+src/core/ai/gateway.ts
+src/core/minions/handlers/subagent.ts
+# Eval harness embedding cache (not a write path); its calls are not observed.
+src/eval/shared/embed-cache.ts

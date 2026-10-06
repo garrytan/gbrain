@@ -466,9 +466,9 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
   const packRevision = randomUUID();
   let prunedRevisions = 0;
   const totalBytes = Buffer.byteLength(manifestContent) + [...changedFiles.values()].reduce((sum, file) => sum + (file?.size ?? 0), 0) + Object.values(intent.extra_files).reduce((sum, content) => sum + Buffer.byteLength(content), 0);
-  if (totalBytes > SHARED_SKILL_LIMITS.bundleBytes || changedFiles.size + Object.keys(intent.extra_files).length + 1 > SHARED_SKILL_LIMITS.files) {
+  if (totalBytes > SHARED_SKILL_LIMITS.bundleBytes || changedFiles.size + Object.keys(intent.extra_files).length + 1 > SHARED_SKILL_LIMITS.packFiles) {
     throw opError('invalid_params', 'The complete canonical publication exceeds the file-set bound.',
-      `Request ${row.request_id} would write ${changedFiles.size + Object.keys(intent.extra_files).length + 1} files and ${totalBytes} bytes; one publication may write at most ${SHARED_SKILL_LIMITS.files} files and ${SHARED_SKILL_LIMITS.bundleBytes} bytes. Split the shared-conventions edit into smaller changes and resubmit each with a new request_id.`);
+      `Request ${row.request_id} would write ${changedFiles.size + Object.keys(intent.extra_files).length + 1} files and ${totalBytes} bytes; one publication may write at most ${SHARED_SKILL_LIMITS.packFiles} files and ${SHARED_SKILL_LIMITS.bundleBytes} bytes. Split the shared-conventions edit into smaller changes and resubmit each with a new request_id.`);
   }
   return {
     target: 'skill_bundle', sourceExclusive: true, observedRevision: intent.expected_revision,

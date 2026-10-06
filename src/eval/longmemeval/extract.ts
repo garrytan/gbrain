@@ -127,6 +127,19 @@ export function getCacheStats(): CacheStats {
   return { hits: cacheHits, misses: cacheMisses, size: cache.size };
 }
 
+/**
+ * The `methodology_note` disclosure stamped on routed rows and printed at
+ * run end ("gbrain + <extractor>-preprocess", not "gbrain alone"). It names
+ * the extractor that ran: a Haiku model keeps the published
+ * `extractor=haiku-preprocess-full-haystack-v1` byte for byte, any other
+ * model is named by its resolved id.
+ */
+export function trajectoryMethodologyNote(extractorModel: string): string {
+  const modelId = extractorModel.slice(extractorModel.indexOf(':') + 1);
+  const name = /haiku/i.test(modelId) ? 'haiku' : extractorModel;
+  return `extractor=${name}-preprocess-full-haystack-v1`;
+}
+
 const EXTRACTOR_SYSTEM_PROMPT = `You extract typed claims and events from a single chat-session transcript.
 
 Output a JSON array of records. Each record has these fields:

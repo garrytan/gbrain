@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "decision_id": "p6-think-notes",
+  "plan": "P6",
+  "title": "P6 R2: notes-first reading in think (notes on vs off, same build with the date frame)",
+  "verdict_type": "quality",
+  "stage": "dev",
+  "candidate": {
+    "gbrain": "/workspace/gbrain@0cba0ec9c35612d8652bcdaf55dbdb4f55d32c39",
+    "config": {
+      "think.reading_notes": "on"
+    }
+  },
+  "baseline": {
+    "gbrain": "/workspace/gbrain@0cba0ec9c35612d8652bcdaf55dbdb4f55d32c39",
+    "config": {
+      "think.reading_notes": "off"
+    }
+  },
+  "sources": [
+    {
+      "id": "lme-s-dev-think",
+      "kind": "memory-qa",
+      "benchmark": "lme-s",
+      "split": "dev",
+      "embed": "real",
+      "limit": 150,
+      "search_pins": {
+        "search.mode": "balanced",
+        "search.reranker.enabled": "false",
+        "search.autocut": "false"
+      },
+      "top_k": 10,
+      "id_field": "id",
+      "exclude_when": [],
+      "min_clusters": 10,
+      "comparisons": [
+        {
+          "id": "qa-score",
+          "metric": "qa_score",
+          "gate": "superiority",
+          "direction": "higher",
+          "min_effect": 0,
+          "cluster_by": "conversation",
+          "description": "judged answer correctness through production think"
+        },
+        {
+          "id": "recall-all-5",
+          "metric": "recall_all_at_5",
+          "gate": "exploratory",
+          "direction": "higher",
+          "cluster_by": "conversation"
+        },
+        {
+          "id": "qa-input-tokens",
+          "metric": "qa_input_tokens",
+          "gate": "exploratory",
+          "direction": "lower",
+          "cluster_by": "conversation"
+        }
+      ],
+      "estimate_usd": 48,
+      "qa": {
+        "mode": "think",
+        "runs": 1,
+        "sessions": 5
+      }
+    },
+    {
+      "id": "locomo-dev-think",
+      "kind": "memory-qa",
+      "benchmark": "locomo",
+      "split": "dev",
+      "embed": "real",
+      "limit": null,
+      "search_pins": {
+        "search.mode": "balanced",
+        "search.reranker.enabled": "false",
+        "search.autocut": "false"
+      },
+      "top_k": 10,
+      "id_field": "id",
+      "exclude_when": [],
+      "min_clusters": 3,
+      "comparisons": [
+        {
+          "id": "qa-score",
+          "metric": "qa_score",
+          "gate": "superiority",
+          "direction": "higher",
+          "min_effect": 0,
+          "cluster_by": "conversation",
+          "description": "judged answer correctness through production think"
+        },
+        {
+          "id": "recall-all-5",
+          "metric": "recall_all_at_5",
+          "gate": "exploratory",
+          "direction": "higher",
+          "cluster_by": "conversation"
+        },
+        {
+          "id": "qa-input-tokens",
+          "metric": "qa_input_tokens",
+          "gate": "exploratory",
+          "direction": "lower",
+          "cluster_by": "conversation"
+        }
+      ],
+      "estimate_usd": 25,
+      "qa": {
+        "mode": "think",
+        "runs": 1,
+        "sessions": 5
+      }
+    }
+  ],
+  "alpha": 0.05,
+  "seed": 42,
+  "draws": 10000,
+  "budget_usd": 100,
+  "created_at": "2026-10-05T00:48:03.645Z",
+  "notes": "R2 isolates notes-first reading: the same build (date frame on) with think.reading_notes on vs off."
+}

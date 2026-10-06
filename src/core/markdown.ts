@@ -1,5 +1,5 @@
 import { dataFrontmatter as matter, FrontmatterLanguageError } from './data-frontmatter.ts';
-import { safeLoad as yamlSafeLoad } from 'js-yaml';
+import { load as yamlLoad } from 'js-yaml';
 import type { Page, PageType } from './types.ts';
 import { resolveSlugForPath, slugifyPath } from './sync.ts';
 import {
@@ -673,7 +673,7 @@ function collectValidationErrors(
     // genuinely broken. Parse the value to disambiguate.
     let isValidYaml = false;
     try {
-      yamlSafeLoad(value);
+      yamlLoad(value);
       isValidYaml = true;
     } catch {
       // YAML parse failed — line is genuinely broken
@@ -698,7 +698,7 @@ function collectValidationErrors(
   let detectedYamlParseError = looksLikeFrontmatter ? ctx.yamlParseError : null;
   if (!detectedYamlParseError && looksLikeFrontmatter) {
     try {
-      yamlSafeLoad(fmBody);
+      yamlLoad(fmBody);
     } catch (e) {
       detectedYamlParseError = e as Error;
     }
@@ -752,7 +752,7 @@ function collectValidationErrors(
 /** Where js-yaml refuses a raw block: its reason phrase and the file line and column. */
 function yamlFailureLocation(block: string, lineOffset: number): { reason: string; line: number; column: number } | null {
   try {
-    yamlSafeLoad(block);
+    yamlLoad(block);
     return null;
   } catch (e) {
     const err = e as { reason?: string; mark?: { line?: number; column?: number } };

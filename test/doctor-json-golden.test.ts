@@ -23,6 +23,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { expectGolden, expectNormalizerStable, defineNormalizer } from './helpers/golden.ts';
 import {
   doctorJsonNormalizer,
+  expectSchemaLatestMatchesRegistry,
   makeDoctorHome,
   networkAttempts,
   patchConfig,
@@ -89,6 +90,8 @@ describe('gbrain doctor --json goldens (PGLite + early stops)', () => {
     expect(c.fresh.json).not.toBeNull();
     expect(c.fast.json).not.toBeNull();
     expect(c.degraded.json).not.toBeNull();
+    expectSchemaLatestMatchesRegistry(c.fresh);
+    expectSchemaLatestMatchesRegistry(c.degraded);
     expectGolden('doctor/json-pglite-fresh', c.fresh, DOCTOR_JSON);
     expectGolden('doctor/json-pglite-fast', c.fast, DOCTOR_JSON);
     expectGolden('doctor/json-pglite-degraded', c.degraded, DOCTOR_JSON);

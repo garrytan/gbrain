@@ -1,21 +1,46 @@
 name: Nightly watch
 
-# Keeps one `nightly-red` issue per scheduled workflow (scripts/nightly-issue.ts;
-# owner and 24-hour response: docs/RELEASING.md#nightly-red-issues). Opens it on
-# a red scheduled run, updates it while red, reopens it on a flap, and closes
-# it only when a later scheduled run is green and every previously failing job
-# executed. Cells listed in .github/nightly-known-red.tsv keep the issue open
-# with the `known-red` label instead of counting as green.
+# Two incident tracks (scripts/nightly-issue.ts; owner, response times and
+# labels: docs/RELEASING.md#nightly-red-issues, #master-red-issues and
+# docs/ci-red-runbook.md#ci-issue-labels):
 #
-# Security: runs only for scheduled runs of this repository, checks out the
-# default branch (never the triggering run's code), passes every event field
-# through env (no expression interpolation inside run:), and holds only
-# issues: write, actions: read and checks: read (for error annotations).
+# - Scheduled runs of every watched workflow keep one `nightly-red` issue per
+#   workflow: open on red, update while red, reopen on a flap, close only when
+#   a later scheduled run is green with complete evidence and every
+#   previously failing job executed. Cells listed in
+#   .github/nightly-known-red.tsv keep the issue open with the `known-red`
+#   label instead of counting as green.
+# - Push-to-master runs of Test and E2E Tests (the allowlist below and in
+#   scripts/lib/master-red.ts) keep one `master-red` issue per workflow with
+#   the suspect range (last green push SHA -> first red SHA + merged PRs).
+#   Every watch reconciles every unevaluated completed push run in
+#   (run_number, run_attempt) order, so a dropped pending watch loses nothing.
+#
+# Triggers: `branches: [master]` drops every pull-request completion before a
+# run is created. The job guard then admits scheduled runs and push runs of
+# the allowlisted workflows whose head branch is master, from this repository
+# only (the head repository check keeps a fork branch named master out).
+# Push runs of other watched workflows on master still create a skipped
+# watch run (no trigger-level event filter exists); CI health counts them.
+#
+# Serialization: `resolve` turns every entry path (automatic or dispatch)
+# into its target workflow id and state track (schedule or push; a replay
+# writes the push track). `watch` queues on one group per repository +
+# workflow + track (never cancelled), so a dispatch and an automatic watch of
+# the same target cannot race; the script also re-reads the issue before it
+# writes and retries when it moved. A newer queued watch may replace an older
+# pending one; reconciliation covers the dropped run.
+#
+# Security: checks out the default branch (never the triggering run's code),
+# passes every event field through env (no expression interpolation inside
+# run:), and holds only issues: write plus read scopes (actions, checks,
+# contents for compare, pull-requests for commit-to-PR lookups).
 #
 # Every workflow with a schedule trigger must be listed below
-# (test/scripts/nightly-issue.test.ts enforces it). A new workflow file can
-# only be dispatched from the default branch, so `run_id` dispatch is for
-# post-merge checks: gh workflow run nightly-watch.yml -f run_id=<scheduled run id>
+# (test/scripts/nightly-issue.test.ts enforces it). Dispatch is for
+# post-merge checks:
+#   gh workflow run nightly-watch.yml -f run_id=<scheduled or push-to-master run id>
+#   gh workflow run nightly-watch.yml -f run_id=<E2E dispatch run id> -f replay_issue=<master-red issue>
 
 on:
   workflow_run:
@@ -29,12 +54,18 @@ on:
       - OSV-Scanner
       - CI health
     types: [completed]
+    branches: [master]
   workflow_dispatch:
     inputs:
       run_id:
-        description: Scheduled run id to evaluate
+        description: Scheduled or push-to-master run id to evaluate
         required: true
         type: string
+      replay_issue:
+        description: Open master-red issue an E2E Tests dispatch run on master replays (optional)
+        required: false
+        type: string
+        default: ''
       dry_run:
         description: Print the issue it would write instead of writing it
         type: boolean
@@ -42,21 +73,67 @@ on:
 
 permissions: {}
 
-# One group per watched workflow, queued (never cancelled), so two runs of the
-# same workflow cannot race on its issue.
-concurrency:
-  group: nightly-watch-${{ github.event.workflow_run.workflow_id || inputs.run_id }}
-  cancel-in-progress: false
-
 jobs:
-  watch:
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'schedule' && github.event.workflow_run.head_repository.full_name == github.repository)
+  resolve:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.head_repository.full_name == github.repository &&
+       (github.event.workflow_run.event == 'schedule' ||
+        (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'master' &&
+         contains(fromJSON('["Test","E2E Tests"]'), github.event.workflow_run.name))))
     runs-on: ubicloud-standard-2-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      workflow_id: ${{ steps.target.outputs.workflow_id }}
+      track: ${{ steps.target.outputs.track }}
+      run_id: ${{ steps.target.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.2
+      - id: target
+        name: Resolve the target workflow and track
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          REPLAY_ISSUE: ${{ inputs.replay_issue }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::run_id '$RUN_ID' is not a numeric run id. Why: nightly-watch reads one workflow run. Fix: gh workflow run nightly-watch.yml -f run_id=<id from gh run list>. Docs: docs/RELEASING.md#master-red-issues"
+            exit 1
+          fi
+          if [ -n "$REPLAY_ISSUE" ] && ! [[ "$REPLAY_ISSUE" =~ ^[0-9]+$ ]]; then
+            echo "::error::replay_issue '$REPLAY_ISSUE' is not an issue number. Fix: pass the number of the open master-red issue. Docs: docs/RELEASING.md#master-red-issues"
+            exit 1
+          fi
+          args=(--run-id "$RUN_ID" --repo "$GITHUB_REPOSITORY" --resolve)
+          [ -z "$REPLAY_ISSUE" ] || args+=(--replay-issue "$REPLAY_ISSUE")
+          bun scripts/nightly-issue.ts "${args[@]}" | tee "$RUNNER_TEMP/target.txt"
+          grep -E '^(workflow_id=[0-9]+|track=(schedule|push|refused))$' "$RUNNER_TEMP/target.txt" >> "$GITHUB_OUTPUT"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+  watch:
+    needs: resolve
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 15
+    # One queue per repository + target workflow + track; queued, never cancelled.
+    concurrency:
+      group: nightly-watch-${{ github.repository }}-${{ needs.resolve.outputs.workflow_id }}-${{ needs.resolve.outputs.track }}
+      cancel-in-progress: false
     permissions:
       issues: write
       actions: read
       checks: read
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
@@ -68,11 +145,15 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.2
-      - name: Upsert the nightly-red issue
+      - name: Upsert the nightly-red or master-red issue
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          RUN_ID: ${{ needs.resolve.outputs.run_id }}
+          REPLAY_ISSUE: ${{ inputs.replay_issue }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: |
-          # shellcheck disable=SC2086 # DRY_RUN is empty or one flag
-          bun scripts/nightly-issue.ts --run-id "$RUN_ID" --repo "$GITHUB_REPOSITORY" $DRY_RUN
+          set -euo pipefail
+          args=(--run-id "$RUN_ID" --repo "$GITHUB_REPOSITORY")
+          [ -z "$REPLAY_ISSUE" ] || args+=(--replay-issue "$REPLAY_ISSUE")
+          [ -z "$DRY_RUN" ] || args+=("$DRY_RUN")
+          bun scripts/nightly-issue.ts "${args[@]}"

@@ -98,7 +98,7 @@ export interface SensitivityScanConfig {
 // ── Path-shape family (ported from check-no-pii-in-agent-voice.sh) ──────────
 
 /** Hardcoded private filesystem prefixes. Extend as new deployment shapes emerge. */
-const PATH_SHAPE_RES: readonly RegExp[] = [
+export const PATH_SHAPE_RES: readonly RegExp[] = [
   /\/data\/\.openclaw\//g,
   /\/private\/[a-z0-9_-]+\/workspace\//g,
 ];

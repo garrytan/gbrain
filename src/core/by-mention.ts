@@ -26,7 +26,8 @@
  *  - Ignore-list applied at gazetteer-build time, not match time. Built-in
  *    ambiguous tokens (Apple, Amazon, Square, Stripe, Box) are dropped from
  *    the gazetteer only when no corresponding entity page exists: a page the
- *    user created is trusted. `mentions.ignore` names are dropped always.
+ *    user created is trusted. `mentions.ignore` names are dropped always;
+ *    pages listed in `mentions.exclude_slugs` get no entry at all (#5829).
  */
 
 import { createHash } from 'crypto';
@@ -110,7 +111,7 @@ export function hashGazetteer(gazetteer: Gazetteer): string {
     for (const e of bucket) entries.push(`${e.source_id}\0${e.slug}\0${e.title}\0${e.tokens.join(' ')}\0${e.matchText ?? ''}${e.caseTokens ? `\0${e.caseTokens.join(' ')}` : ''}`);
   }
   // Matching semantics are part of the resume identity, not just DB contents.
-  return createHash('sha256').update('hangul-boundaries-v1\n').update(entries.sort().join('\n')).digest('hex').slice(0, 8);
+  return createHash('sha256').update('hangul-boundaries-v2\n').update(entries.sort().join('\n')).digest('hex').slice(0, 8);
 }
 
 /** One row of the saved entry set the mention pass diffs (mention_gazetteer_entries). */
@@ -152,16 +153,11 @@ export interface DroppedName {
   slug: string;
   name: string;
   origin: GazetteerOrigin;
-  reason: 'below_min_length' | 'generic_token' | 'alias_collision' | 'ambiguous_first_word' | 'ignored' | 'title_wins';
+  reason: 'below_min_length' | 'generic_token' | 'alias_collision' | 'ambiguous_first_word' | 'ignored' | 'excluded_slug' | 'title_wins';
 }
 
 export interface BuildGazetteerOpts {
-  /**
-   * Optional user-supplied additional ignore-list entries (case-sensitive
-   * raw title match). Merged with DEFAULT_IGNORE_LIST.
-   */
-  extraIgnore?: string[];
-  /** Mention policy (types, `mentions.ignore`); read from config when absent. */
+  /** Mention policy (types, `mentions.ignore`, `mentions.exclude_slugs`); read from config when absent. */
   policy?: MentionPolicy;
   /**
    * Authoritative build for the mention pass: a pack that fails to resolve or
@@ -462,7 +458,8 @@ export function tokenizeTitle(title: string): string[] {
  * name in the source is dropped (an ambiguous first word never links alone).
  * Ignore-list applied per CK12: built-in ambiguous tokens dropped unless
  * the user has explicitly created the corresponding page; `mentions.ignore`
- * names always drop.
+ * names always drop; a page in `mentions.exclude_slugs` contributes neither
+ * its title nor its aliases.
  *
  * Returned gazetteer is keyed by lowercase first token; entries with the
  * same first token co-exist in the same bucket (e.g. "Acme" + "Acme Corp").
@@ -490,14 +487,9 @@ export async function buildGazetteer(
     [allTypes],
   )).filter(r => linkable(r.source_id, r.type));
 
-  // Pre-build the existing-title Set so the ignore-list rule can check
-  // "does this name already correspond to a real page?" in O(1).
-  const existingTitles = new Set<string>();
-  for (const r of rows) {
-    if (r.title) existingTitles.add(r.title);
-  }
-  const ignoreSet = new Set<string>([...DEFAULT_IGNORE_LIST, ...(opts.extraIgnore ?? [])]);
+  const ignoreSet = new Set<string>(DEFAULT_IGNORE_LIST);
   const userIgnore = new Set(policy.ignore.map(n => tokenizeTitle(n).join(' ')).filter(Boolean));
+  const excludedSlugs = new Set(policy.excludeSlugs);
 
   const gazetteer: Gazetteer = new Map();
   const add = (entry: GazetteerEntry) => {
@@ -519,15 +511,14 @@ export async function buildGazetteer(
     if (!row.title) continue;
     const src = row.source_id ?? 'default';
     const base = { source_id: src, slug: row.slug, name: row.title, origin: 'title' as const };
+    if (excludedSlugs.has(row.slug)) { drop({ ...base, reason: 'excluded_slug' }); continue; }
     if (!hasCJK(row.title) && row.title.length < MIN_NAME_LENGTH) { drop({ ...base, reason: 'below_min_length' }); continue; }
     if (hasCJK(row.title) && cjkCharCount(row.title) < MIN_CJK_NAME_LENGTH) { drop({ ...base, reason: 'below_min_length' }); continue; }
-    // NOTE (v0.46.15, deliberately preserved): for TITLES this condition is
-    // intentionally vacuous — every row here IS a real page, so an
-    // ignore-listed name the user explicitly created a page for is always
-    // allowed (documented CK12 policy). The ignore list bites only via
-    // opts.extraIgnore names that have no page, and — with real teeth — on
-    // the ALIAS entries below, which are not user-created pages.
-    if (ignoreSet.has(row.title) && !existingTitles.has(row.title)) { drop({ ...base, reason: 'ignored' }); continue; }
+    // CK12 policy: an ignore-listed name the user explicitly created a page
+    // for is always allowed, so DEFAULT_IGNORE_LIST never drops a TITLE
+    // (every row here is a real page); it bites on the ALIAS entries below,
+    // which are not user-created pages. `mentions.ignore` and
+    // `mentions.exclude_slugs` are the operator's levers for titles.
 
     const tokens = tokenizeTitle(row.title);
     if (tokens.length === 0) continue;
@@ -621,6 +612,7 @@ export async function buildGazetteer(
     const base = { source_id: src, slug: a.slug, name: written, origin };
     const claim = claims.get(`${src} ${alias}`)!;
     if (rank(a.origin) > claim.rank) continue;
+    if (excludedSlugs.has(a.slug)) { drop({ ...base, reason: 'excluded_slug' }); continue; }
     if (claim.slugs.size > 1) { drop({ ...base, reason: 'alias_collision' }); continue; }
     if (alias.length < MIN_NAME_LENGTH && !hasCJK(alias)) { drop({ ...base, reason: 'below_min_length' }); continue; }
     if (hasCJK(alias) && cjkCharCount(alias) < MIN_CJK_NAME_LENGTH) { drop({ ...base, reason: 'below_min_length' }); continue; }
@@ -666,10 +658,23 @@ function caseTokensOf(name: string): string[] {
 // Body-text scanner (pure)
 // ============================================================
 
+/** Suffixes that may attach to a Hangul name: an optional title or honorific,
+ * then up to two particles or copula forms (지원씨는, 지원에게서, 지원이었다).
+ * Any other attached Hangul continues a longer word (지원하는, 지원금), which
+ * was 99% of 1,041 word-internal matches on a Korean corpus while this suffix
+ * set kept 65 of 74 real name mentions (docs/designs/hangul-mention-boundaries.md).
+ */
+const HANGUL_NAME_TITLES = '씨 님 오빠 언니 누나 선배 후배 선생님 선생 교수 대표 사장 회장 팀장 부장 과장 이사 의원 기자 작가 감독 측';
+const HANGUL_NAME_PARTICLES = '이 가 은 는 을 를 의 에 에게 에게서 한테 한테서 께 께서 와 과 랑 이랑 도 만 로 으로 로서 으로서 로부터 으로부터 에서 부터 까지 처럼 보다 마저 조차 뿐 밖에 이나 이든 이라도 라도 이여 이며 이고 이다 입니다 이에요 예요 이었다 였다 이었던 였던 이라는 라는 이라고 라고 이란 이야 야 아';
+const hangulAlternation = (words: string) => `(?:${words.split(' ').sort((a, b) => b.length - a.length).join('|')})`;
+const HANGUL_NAME_SUFFIX_RE = new RegExp(
+  `^${hangulAlternation(HANGUL_NAME_TITLES)}?${hangulAlternation(HANGUL_NAME_PARTICLES)}{0,2}(?![가-힣])`, 'u',
+);
+
 /** Korean uses word spaces; Han/Kana retain character-substring matching.
  * Validate each candidate before maximal-munch selection so an invalid longer
- * phrase does not consume a valid shorter name. Do not require an end boundary:
- * Korean particles attach directly to names (지원은, 지원에게).
+ * phrase does not consume a valid shorter name. The name must start a word and
+ * end at a non-Hangul character or an attached name suffix (above).
  */
 function hasHangulMatchBoundary(
   text: string, tokens: ScannedToken[], start: number, entry: GazetteerEntry,
@@ -678,9 +683,10 @@ function hasHangulMatchBoundary(
   const first = tokens[start]!;
   if (first.offset > 0 && /[가-힣]/u.test(text[first.offset - 1]!)) return false;
   const last = tokens[start + entry.tokens.length - 1]!;
-  const actual = text.slice(first.offset, last.offset + last.length).replace(/\s+/gu, ' ');
+  const end = last.offset + last.length;
+  const actual = text.slice(first.offset, end).replace(/\s+/gu, ' ');
   const expected = (entry.matchText ?? entry.tokens.join('')).trim().replace(/\s+/gu, ' ');
-  return actual === expected;
+  return actual === expected && HANGUL_NAME_SUFFIX_RE.test(text.slice(end, end + 12));
 }
 
 /**

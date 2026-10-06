@@ -1,0 +1,208 @@
+{
+ "schema": "gbrain-ci-manifest/v1",
+ "workflow": "",
+ "event": "",
+ "sha": "17c5765ba425a724ba92c6563c3b81562c83025e",
+ "run_id": 37351182593,
+ "run_attempt": 1,
+ "complete": false,
+ "problems": [
+  "lane backend-matrix: test/e2e/embedding-recovery-parity.test.ts [postgres-direct] has no valid receipt from any attempt (receipts-tier1-backend-matrix-2/backend-matrix--s2of2-f4-direct--primary [primary, exit 124]: no JUnit report)"
+ ],
+ "files": [
+  {
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "lane": "backend-matrix",
+   "arm": "postgres-direct",
+   "executed": 44,
+   "failed": 17,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/fact-vector-repair-parity.test.ts",
+   "lane": "backend-matrix",
+   "arm": "pgbouncer",
+   "executed": 18,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/fact-vector-repair-parity.test.ts",
+   "lane": "backend-matrix",
+   "arm": "postgres-direct",
+   "executed": 18,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/fact-withdrawal-scope-postgres.test.ts",
+   "lane": "e2e",
+   "arm": "",
+   "executed": 1,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/legacy-fact-extraction-dedup-postgres.test.ts",
+   "lane": "e2e",
+   "arm": "",
+   "executed": 1,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/loops-close-fact-postgres.test.ts",
+   "lane": "e2e",
+   "arm": "",
+   "executed": 10,
+   "failed": 0,
+   "skipped": 0
+  },
+  {
+   "file": "test/e2e/mechanical.test.ts",
+   "lane": "tier1",
+   "arm": "",
+   "executed": 77,
+   "failed": 0,
+   "skipped": 0
+  }
+ ],
+ "failures": [
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > a zero budget cannot admit a paid request for an empty legacy fact",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > abort after provider response installs nothing",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > an engine off-switch changed during provider work prevents installation",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > an incomplete provider result writes no partial batch",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > BIGSERIAL fact IDs retain exact identity and JSON-safe results",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > bounded runs bank progress, restart from remaining nulls, and are idempotent",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > concurrent text and visibility edits never receive a stale vector",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > cost cap rejects before any provider request",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > managed repair refuses installing a vector after the model changes",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > managed repair updates only physical vectors and preserves canonical rows and guards",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > missing valid provider usage retains a conservative reported charge",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > preview is read-only and scoped; null active facts only, with zero provider calls",
+   "arm": "postgres-direct",
+   "signature": "expected N dimensions, not N",
+   "message": "expected 8 dimensions, not 1536"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > provider failure samples redact connection credentials and bearer tokens",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > source incarnation changes prevent installing vectors into a new identity",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > stops after a failed batch and resumes without re-embedding completed facts",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > unexpected billed usage cannot silently exceed the cap on the final batch",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  },
+  {
+   "lane": "backend-matrix",
+   "file": "test/e2e/fact-embedding-backfill-parity.test.ts",
+   "test": "postgres explicit fact embedding backfill > withdrawals recorded during embedding remain unembedded",
+   "arm": "postgres-direct",
+   "signature": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first",
+   "message": "Facts embedding dimensions differ from the configured model; inspect migrate embeddings --status first"
+  }
+ ]
+}

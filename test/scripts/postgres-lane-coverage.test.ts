@@ -40,7 +40,7 @@ describe('check-postgres-lane-coverage.ts', () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain('FAIL [postgres_arm_unlaned]: test/arm.test.ts:');
     expect(r.out).toContain('Why: the unit, serial and slow lanes unset DATABASE_URL, so this arm skips in every CI lane.');
-    expect(r.out).toContain('Fix: add test/arm.test.ts to the "Require PostgreSQL arms of unit-lane suites" list in .github/workflows/persistence-validation.yml');
+    expect(r.out).toContain('Fix: add test/arm.test.ts to test/postgres-unit-arms.txt (one line, in sorted order), or load it from a test/e2e/*-postgres.test.ts wrapper with registerPostgresTests');
     expect(r.out).toContain('Docs: docs/TESTING.md#coverage-responsibilities-before-consolidation');
   });
 
@@ -61,6 +61,32 @@ describe('check-postgres-lane-coverage.ts', () => {
     });
     expect(r.code, r.out).toBe(0);
     expect(r.out).toContain('4 test files with a DATABASE_URL-gated arm; 3 run in a Postgres lane, 1 allowlisted.');
+  });
+
+  test('a test/postgres-unit-arms.txt row is a Postgres lane', () => {
+    const arm = ALLOWLISTED['test/export-scale.slow.test.ts'];
+    const r = run({ 'test/listed.test.ts': arm, 'test/postgres-unit-arms.txt': '# comment\ntest/listed.test.ts\n' });
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain('2 test files with a DATABASE_URL-gated arm; 1 run in a Postgres lane, 1 allowlisted.');
+  });
+
+  test('a list row for a missing file or a file with no gated arm is stale and names the line to delete', () => {
+    const r = run({ 'test/plain.test.ts': "test('pglite only', () => {});\n", 'test/postgres-unit-arms.txt': 'test/gone.test.ts\ntest/plain.test.ts\n' });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('FAIL [postgres_arm_list_stale]: the test/postgres-unit-arms.txt row test/gone.test.ts names a missing file');
+    expect(r.out).toContain('FAIL [postgres_arm_list_stale]: the test/postgres-unit-arms.txt row test/plain.test.ts names a file with no DATABASE_URL-gated arm');
+    expect(r.out).toContain('Fix: delete the test/plain.test.ts line from test/postgres-unit-arms.txt');
+    expect(r.out).toContain('Docs: docs/TESTING.md#postgres-arm-lanes');
+  });
+
+  test('duplicate, unsorted and malformed list rows fail with their line numbers', () => {
+    const arm = ALLOWLISTED['test/export-scale.slow.test.ts'];
+    const r = run({ 'test/a.test.ts': arm, 'test/b.test.ts': arm,
+      'test/postgres-unit-arms.txt': 'test/b.test.ts\ntest/a.test.ts\ntest/a.test.ts\nsrc/not-a-test.ts\n' });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('FAIL [postgres_arm_list_invalid]: test/postgres-unit-arms.txt:2: test/a.test.ts is out of sorted order');
+    expect(r.out).toContain('FAIL [postgres_arm_list_invalid]: test/postgres-unit-arms.txt:3: test/a.test.ts is listed twice');
+    expect(r.out).toContain('FAIL [postgres_arm_list_invalid]: test/postgres-unit-arms.txt:4: "src/not-a-test.ts" is not a repo-relative test/…/*.test.ts path');
   });
 
   test('save-and-restore reads, assertions and a self-supplied DATABASE_URL are not arms', () => {
@@ -86,7 +112,9 @@ describe('check-postgres-lane-coverage.ts', () => {
     expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
   });
 
-  test('the docs anchor the guard prints exists', () => {
-    expect(readFileSync(join(REPO, 'docs', 'TESTING.md'), 'utf8')).toContain('### Coverage responsibilities before consolidation');
+  test('the docs anchors the guard prints exist', () => {
+    const docs = readFileSync(join(REPO, 'docs', 'TESTING.md'), 'utf8');
+    expect(docs).toContain('### Coverage responsibilities before consolidation');
+    expect(docs).toContain('#### Postgres-arm lanes');
   });
 });

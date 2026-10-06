@@ -26,6 +26,7 @@ upstream: brain-link-on-commit@fc834ee + brain-link-report@fc834ee
 # existence check against the user's own hosted git remote (link
 # verification, not data retrieval). Declarative opt-out.
 brain_first: exempt
+when_to_use: "Use when the user asks: \"give me the link\", \"where is the page\", \"why does this link 404\", \"brain link discipline\", \"rewrite subagent paths\"."
 ---
 
 # brain-link-discipline — The Link Is Part of the Deliverable

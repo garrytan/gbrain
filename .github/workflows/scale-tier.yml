@@ -41,6 +41,7 @@ permissions:
 
 # A label other than scale-tier gets its own group, so labelling a pull
 # request never cancels a scale run already in progress.
+# Event parity (docs/TESTING.md#event-parity): the suffixes only separate runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'schedule' && '-nightly' || '' }}${{ github.event.action == 'labeled' && github.event.label.name != 'scale-tier' && format('-label-{0}', github.run_id) || '' }}
   cancel-in-progress: true
@@ -60,6 +61,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           sparse-checkout: scripts/scale
+      # Event parity: Bun is needed only by the schedule's trend planner below.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         if: github.event_name == 'schedule'
         with:
@@ -82,6 +84,9 @@ jobs:
           paths='^(src/core/engine-sql/|src/core/search/|src/core/import-file\.ts$|src/commands/import\.ts$|src/commands/sync/|src/core/sync[^/]*\.ts$|src/core/persistence/sync-[^/]*\.ts$|src/commands/doctor/|src/core/pglite-engine\.ts$|src/core/postgres-engine\.ts$|src/schema\.sql$|src/core/schema-migrations/|scripts/scale/|\.github/workflows/scale-tier\.yml$)'
           run=false
           pages='[10000]'
+          # Named exception (docs/TESTING.md#event-parity): pull requests run 10k pages
+          # only when they touch the paths above or carry the label; the nightly
+          # Scale tier schedule covers 10k-50k on both engines.
           case "$EVENT" in
             workflow_dispatch)
               if ! [[ "$PAGES_INPUT" =~ ^[0-9]+$ ]] || [ "$PAGES_INPUT" -lt 20 ]; then

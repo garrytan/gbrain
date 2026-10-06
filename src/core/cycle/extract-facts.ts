@@ -72,6 +72,14 @@ import { isAborted } from '../abort-check.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { acquirePageLock } from '../page-lock.ts';
+import {
+  lockReconcileRevision,
+  selectFactsReconcileDrain,
+  settleFactsReconcile,
+  FACTS_DRAIN_BUDGET_MS,
+  type FactsReconcileDrainOpts,
+  type FactsReconcileOutcome,
+} from '../facts/reconcile-watermark.ts';
 
 interface ExistingPageFact {
   id: number | string;
@@ -327,6 +335,12 @@ export interface ExtractFactsOpts {
   signal?: AbortSignal;
   /** Override the shared page-lock directory for deterministic tests. */
   pageLockRoot?: string;
+  /**
+   * #5151: with an explicit slug list on an unmanaged brain, also reconcile
+   * a bounded batch of pages whose facts watermark is behind the page
+   * (src/core/facts/reconcile-watermark.ts). The dream cycle sets it.
+   */
+  drain?: FactsReconcileDrainOpts;
 }
 
 export interface ExtractFactsResult {
@@ -621,17 +635,28 @@ export async function runExtractFacts(
   if (phantomResult.touched_canonicals.length > 0 || fencedSlugs.length > 0) {
     slugs = Array.from(new Set([...slugs, ...phantomResult.touched_canonicals, ...fencedSlugs]));
   }
+  const watermark = !managed && !opts.dryRun;
+  const explicit = new Set(slugs);
+  if (watermark && opts.drain && opts.slugs !== undefined) {
+    slugs = Array.from(new Set([...slugs, ...await selectFactsReconcileDrain(engine, sourceId, opts.drain)]));
+  }
+  const drainDeadline = Date.now() + (opts.drain?.budgetMs ?? FACTS_DRAIN_BUDGET_MS);
 
   // ── Reconcile each page ───────────────────────────────────────
   // Each page reconciles independently: 'stop' ends the walk (cancellation),
-  // 'next' moves on. A thrown error is isolated to its page below.
-  const reconcilePage = async (slug: string): Promise<'next' | 'stop'> => {
+  // every other outcome moves on. A thrown error is isolated to its page
+  // below. For the watermark, 'unchanged' is a complete no-op still to be
+  // stamped and 'complete' was stamped inside the write transaction.
+  type PageOutcome = FactsReconcileOutcome | 'unchanged' | 'skipped' | 'stop';
+  let revision: string | null | undefined;
+  const reconcilePage = async (slug: string): Promise<PageOutcome> => {
     const page = await engine.getPage(slug, { sourceId });
     if (!page) {
       // Slug listed but not in DB — skip silently. The next cycle
       // will pick it up if it exists.
-      return 'next';
+      return 'skipped';
     }
+    revision = page.knowledge_revision ?? null;
 
     const body = page.compiled_truth ?? '';
     const parsed = parseFactsFence(body);
@@ -643,7 +668,7 @@ export async function runExtractFacts(
       // could still recover. That partial result is not authoritative: using
       // it for reconciliation would interpret skipped rows as deletions.
       // Preserve this page's existing index and continue with other pages.
-      return 'next';
+      return 'invalid';
     }
 
     // #3625: splitBody() puts everything below the timeline sentinel into
@@ -673,7 +698,7 @@ export async function runExtractFacts(
         `Move the fence above the sentinel and re-save — leaving it in place ` +
         `preserves the existing indexed facts but they will not update.`,
       );
-      return 'next';
+      return 'invalid';
     }
 
     if (parsed.facts.length > 0) result.pagesWithFacts += 1;
@@ -689,7 +714,7 @@ export async function runExtractFacts(
     const extracted = extractFactsFromFenceText(parsed.facts, slug, sourceId, { pageEffectiveDate })
       .filter(f => !duplicates.has(f.row_num));
 
-    if (opts.dryRun) return 'next';
+    if (opts.dryRun) return 'skipped';
 
     // Reconcile by row number, the fence's own unique identity (the parser
     // refuses duplicate row numbers). A DB row whose (row_num, claim) is still
@@ -723,7 +748,7 @@ export async function runExtractFacts(
         const stored = matched.get(f.row_num)!.superseded_by;
         return resolveSupersession(f, byRow, chain, slug).superseded_by === (stored == null ? null : Number(stored));
       });
-      if (inSync) return 'next';
+      if (inSync) return 'unchanged';
     }
 
     // v0.35.4 (D-CDX-3) — batch-embed new rows before insert so
@@ -787,6 +812,7 @@ export async function runExtractFacts(
       try {
         return await transact([slug], async tx => {
           opts.signal?.throwIfAborted();
+          if (watermark && !await lockReconcileRevision(tx, sourceId, slug, page.knowledge_revision ?? null)) return null;
           const current = await tx.getPage(slug, { sourceId });
           if (!current || current.compiled_truth !== page.compiled_truth || current.timeline !== page.timeline) return null;
           for (const fact of expireInPlace) {
@@ -824,6 +850,7 @@ export async function runExtractFacts(
           const linked = await syncSupersession(tx, sourceId, slug, extracted, chain, insertedRows);
           opts.signal?.throwIfAborted();
           const updated = new Set([...updates.map(f => f.row_num), ...linked.changed.filter(row => !insertedRows.has(row))]);
+          if (watermark && !deferInserts) await settleFactsReconcile(tx, sourceId, slug, 'complete', page.knowledge_revision ?? null);
           return { inserted: inserted.inserted, updated: updated.size, warnings: linked.warnings };
         });
       } catch (error) {
@@ -841,13 +868,13 @@ export async function runExtractFacts(
         if (isAborted(opts.signal)) return null;
         return apply();
       }, opts, result.warnings);
-    if (!outcome) return 'next';
+    if (!outcome) return isAborted(opts.signal) ? 'cancelled' : 'deferred';
     result.factsInserted += outcome.inserted;
     result.factsUpdated += outcome.updated;
     result.factsDeleted += detach.length + expireInPlace.length;
     // resolveSupersededByRow prefixes each message with the slug + row.
     for (const w of outcome.warnings) result.warnings.push(w);
-    return 'next';
+    return deferInserts ? 'deferred' : 'complete';
   };
 
   for (const slug of slugs) {
@@ -855,9 +882,13 @@ export async function runExtractFacts(
     // independent delete-then-insert commit, so breaking leaves a consistent
     // partial state; the receipt/rollup below still runs with partial counts.
     if (isAborted(opts.signal)) break;
+    // Drained pages follow the explicit ones, so the drain budget ends the walk.
+    if (!explicit.has(slug) && Date.now() > drainDeadline) break;
     result.pagesScanned += 1;
+    revision = undefined;
+    let outcome: PageOutcome;
     try {
-      if (await reconcilePage(slug) === 'stop') break;
+      outcome = await reconcilePage(slug);
     } catch (error) {
       if (isAborted(opts.signal)) throw error;
       // One page the database rejects (CHECK/FK violation, malformed input the
@@ -865,7 +896,15 @@ export async function runExtractFacts(
       // Its transaction rolled back, so the existing index is preserved.
       result.pagesFailed += 1;
       result.warnings.push(`${slug}: FACTS_RECONCILE_FAILED: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`);
+      outcome = 'deferred';
     }
+    if (watermark && outcome !== 'complete' && outcome !== 'skipped') {
+      const settled = outcome === 'unchanged' ? 'complete' : outcome === 'stop' ? 'cancelled' : outcome;
+      await settleFactsReconcile(engine, sourceId, slug, settled, revision).catch((error: unknown) => {
+        result.warnings.push(`${slug}: facts reconcile watermark not recorded: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+    if (outcome === 'stop') break;
   }
 
   // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic

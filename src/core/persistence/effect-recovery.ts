@@ -105,7 +105,7 @@ export async function recoverEffectPublication(engine: BrainEngine, effect: Pers
     `Every publication slot of the writer pool is busy, so mirror recovery for source ${effect.source_id} has not started; the worker tries again once a slot frees. Nothing needs resubmitting.`,
     { fix: effectStatusFix(effect) });
   try {
-    if (effect.recovery && !effect.recovery.staging) await upgradeRecoveryStaging(engine, 'persistence_effects', effect.id, effect.worktree_id!, 'forward');
+    if (effect.recovery) await upgradeRecoveryStaging(engine, 'persistence_effects', effect.id, effect.worktree_id!, 'forward');
     await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
     const binding = await guardEffectSource(tx, effect, hostId);

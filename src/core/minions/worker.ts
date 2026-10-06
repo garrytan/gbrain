@@ -86,6 +86,7 @@ export const INFRASTRUCTURE_ABORT_REASONS = new Set<string>([
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
+import { releaseUndrainedClaims, settleShutdownInterruptedJob } from './worker-shutdown.ts';
 import { readFileSync } from 'fs';
 
 /**
@@ -235,6 +236,7 @@ export class MinionWorker extends EventEmitter {
   private jobsCompleted = 0;
   /** Idempotency latch for gracefulShutdown — per-job and periodic check sites can race. */
   private gracefulShutdownFired = false;
+  drainForced = false; // #5062: the shutdown drain expired and running claims were handed back (`jobs work` exits 17)
   /**
    * Set true when the RSS watchdog (not a normal SIGTERM) initiated the
    * drain. The CLI handler (src/commands/jobs.ts case 'work') reads this
@@ -540,13 +542,7 @@ export class MinionWorker extends EventEmitter {
     // `ctx.shutdownSignal` (currently: shell handler) can run their own cleanup
     // BEFORE the 30s cleanup race expires. Non-shell handlers ignore shutdown
     // and keep running — they get the full 30s window.
-    const shutdown = () => {
-      console.log('Minion worker shutting down...');
-      this.running = false;
-      if (!this.shutdownAbort.signal.aborted) {
-        this.shutdownAbort.abort(new Error('shutdown'));
-      }
-    };
+    const shutdown = () => this.requestShutdown();
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
 
@@ -948,6 +944,7 @@ export class MinionWorker extends EventEmitter {
           new Promise(resolve => setTimeout(resolve, 30000)),
         ]);
         if (this.configurationError) await this.drainConfiguration();
+        else if (this.shutdownAbort.signal.aborted) this.drainForced = await releaseUndrainedClaims(this.engine, this.executions.values(), this.opts.jobIsolation === 'process');
       }
 
       // The worker does NOT disconnect the engine: it doesn't own the
@@ -1042,6 +1039,13 @@ export class MinionWorker extends EventEmitter {
     } catch (e) {
       console.error(`handleQuietHoursDefer error for job ${job.id}:`, e instanceof Error ? e.message : String(e));
     }
+  }
+
+  /** #5062: signal-driven shutdown entry (SIGTERM/SIGINT, or the `jobs work` signal owner). Idempotent. */
+  requestShutdown(): void {
+    if (this.running) console.log('Minion worker shutting down...');
+    this.running = false;
+    if (!this.shutdownAbort.signal.aborted) this.shutdownAbort.abort(new Error('shutdown'));
   }
 
   /** Stop the worker gracefully. */
@@ -1636,12 +1640,8 @@ export class MinionWorker extends EventEmitter {
         }
         return;
       }
-      if (err instanceof ChildWorkerShutdownError) {
-        console.log(
-          `Job ${job.id} (${job.name}) released after worker shutdown (${errorText}); ` +
-          `stall detector will requeue (no attempt burned)`,
-        );
-        return;
+      if (err instanceof ChildWorkerShutdownError || (!isolated && this.shutdownAbort.signal.aborted && !abort.signal.aborted)) {
+        return settleShutdownInterruptedJob(this.engine, job, lockToken, errorText, !(err instanceof ChildWorkerShutdownError) || err.executionStopped === true);
       }
       if (err instanceof ChildNotClaimedError) {
         // The child proved the claim is gone (reclaimed/cancelled before the

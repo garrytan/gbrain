@@ -88,7 +88,8 @@ re-check, and a "Next step for the agent" block plus a JSON block.
   A matching cell keeps the issue open with the `known-red` label; a new failure in
   the same job opens a new incident; a passed review-by date asks for a fix again.
 - **Closing:** nightly-watch closes the issue only when a later scheduled run is
-  green and every previously failing job executed. A skipped job never closes it.
+  green with complete evidence and every previously failing job executed. A
+  skipped job never closes it.
 - **Re-check after a fix:** `gh workflow run <workflow>.yml --ref master`, then
   `gh workflow run nightly-watch.yml -f run_id=<that scheduled run id>` to preview
   (`-f dry_run=true`) or apply the issue update.
@@ -96,6 +97,26 @@ re-check, and a "Next step for the agent" block plus a JSON block.
   `bun.lock`, `admin/bun.lock`, `patches/` or a package.json dependency field, or
   carry the `dependency-audit` label; pushes and the nightly run always block, so a
   new upstream advisory shows up as one red nightly instead of every open PR.
+
+## Master-red issues
+
+nightly-watch keeps one `master-red` issue per workflow (`Master red: Test`,
+`Master red: E2E Tests`) for push-to-master runs; scheduled runs stay in
+`nightly-red`. The body names each failing job, every failing test file with
+its `bun run test:stress` reproduce line, and the suspect range (last green
+push SHA, first red SHA, merged PRs). Labels, close rules and recovery steps:
+[CI red runbook](ci-red-runbook.md#ci-issue-labels).
+
+- **Owner:** the agent on release duty owns every open `master-red` issue, as
+  for `nightly-red`; Garry is the escalation for owner-only actions.
+- **First response within 1 hour:** a comment or a linked repair PR. CI health
+  measures it; nothing enforces it.
+- **Response:** a repair PR whose body says `Fixes #<issue>`. Known-red rows
+  never apply to push runs. A master-red repair PR is fast-tracked when Garry
+  asks.
+- **Closing:** nightly-watch closes the issue on a green push run where every
+  previously failing job (E2E Tests: every failing test file) ran and passed
+  with complete evidence. Without a merged repair PR it opens `flake` issues.
 
 ## Merge queue
 
@@ -127,8 +148,8 @@ in the plan file at `~/.claude/plans/`, not in the CHANGELOG. One unified entry
 per branch, covering what the branch added vs the base branch.
 
 **Never edit a CHANGELOG entry that already landed on master.** If master has
-v0.18.2 and your branch adds features, bump to the next version (v0.19.0, not
-editing master's v0.18.2). When merging master into your branch, master may
+v0.18.2.0 and your branch adds features, bump to the next PATCH version
+(v0.18.3.0, never MINOR) instead of editing master's v0.18.2.0. When merging master into your branch, master may
 bring new CHANGELOG entries above yours — push your entry above master's
 latest and verify:
 
@@ -159,6 +180,80 @@ If any answer is no, fix it before continuing.
 - Numbers that mean something to the user: TTHW, commands that timed out before, detection counts.
 - Upgrade instructions: `gbrain upgrade` + any manual step if needed.
 - Credit to external contributors when a community PR was incorporated.
+
+## Release restamp
+
+`bun run release:restamp` makes a branch next-to-merge in one command. Run it
+when your PR is next in the merge line, not earlier: the merge coordinator
+merges one PR at a time, so restamping at that moment allocates the version
+and migration numbers without races. Preview first with `--dry-run`, which
+prints every planned edit, predicted merge conflict, migration renumbering
+and the commit it would make, and changes nothing.
+
+**Say to your agent:** *"Restamp this branch onto master, it's next to merge."*
+
+1. Refuses a dirty working tree (commit or `git stash -u` first) and a
+   failed fetch (offline: `git fetch origin master`, then rerun).
+2. Captures the branch's CHANGELOG entry (the sections above the newest entry
+   it shares with master; one entry per branch) and its migration inventory.
+3. Merges `origin/master` with a merge commit. Version-only hunks in the stamp
+   files, `CHANGELOG.md` and generated files (migration registry,
+   `migrations/records.json`, `llms*.txt`, plugin trees, the template repo,
+   `bun.lock`) resolve mechanically; any other conflict stops with the file
+   list.
+4. Sets VERSION to master's `MAJOR.MINOR.(PATCH+1).0` and rewrites every
+   required row of the CLAUDE.md "Version locations" table: VERSION,
+   `package.json`, the three plugin manifests, the BOOTSTRAP runbook stamp,
+   the CHANGELOG entry (re-stamped on top of master's entries with today's
+   date), and branch-added TODOS lines naming the old version.
+5. Renumbers the branch's own schema migrations (files `origin/master` does
+   not have) consecutively from master's latest + 1, in their original order.
+   It changes only the filename, the `export const v<NNN>` name and the
+   `version:` literal, and proves the rest of the file is token-identical.
+   Published migrations are never renumbered or edited; a branch file whose
+   payload matches a migration master already published under another number
+   (squash-merged or cherry-picked) stops with the `git rm` fix.
+6. Regenerates the migration registry, `migrations/records.json` (when the
+   branch has migrations), `bun.lock`, the bootstrap template repo and
+   everything `bun run regen:all` covers.
+7. Lists every line the branch added that still names an old migration number
+   (`v209`, `v209-name`, `migration 209`, `schema_version ... 209`,
+   `version: 209`) and stops: such a line may mean the moved migration or the
+   published one that now owns the number, so it is never rewritten. Edit each
+   line (an edited line is not listed again), or pass `--accept-references`
+   with `--continue` when a line means the published migration.
+8. Runs the drift checks (version stamps and CHANGELOG agree, bootstrap
+   stamp, plugin tree, template repo, migration registry and order), commits
+   once as `v<new> chore(release): restamp onto master v<master>`, and prints
+   the old-to-new migration mapping with the collision-recovery steps, the
+   golden-regeneration reason for the PR body, the PR title and
+   `bun run verify`.
+
+Every stop prints what happened, why, and the fix, saves its state, and ends
+with `bun run release:restamp --continue` (after you fix it) or `--abort`
+(back to the pre-run commit). `--no-commit` leaves the restamp edits staged.
+A second run with nothing to change commits nothing. It renumbers source
+only and never touches a database: if you applied an old number locally,
+follow "Collision recovery" in [TESTING.md](TESTING.md#schema-migration-registry)
+(disposable DB: rebuild and replay; retained data: explicit `schema_version`
+reconciliation).
+
+**Why stamps are not derived at build time.** Several readers take the
+version from committed files with no build step: `bun install -g
+github:garrytan/gbrain` installs from source, `gbrain bootstrap status`
+compares the BOOTSTRAP runbook stamp with the installed binary, the plugin
+manifests and generated trees are published as committed, and `release.yml`
+fires on a VERSION change. A build-time value would leave those copies
+wrong, so the files stay stamped and one command rewrites them.
+
+**Why migration IDs stay sequential.** A brain records one integer,
+`schema_version`, and the runner applies every migration above it in order.
+A migration numbered at or below master's latest is skipped forever on
+current brains, which `check:schema-migration-order` rejects. Unordered IDs
+(timestamps, hashes) would need a per-migration applied-set table and a
+bookkeeping migration for every existing brain. Renumbering at merge time,
+serialized by the merge coordinator, keeps the counter correct with no
+schema change. Build on `release:restamp` rather than a second restamp tool.
 
 ## CHANGELOG voice + release-summary format
 
@@ -444,10 +539,27 @@ already-published bad binaries; an affected release needs its own explicitly
 approved recovery and asset verification. The template and plugin publishing
 jobs pin the same Bun version.
 
+### Release CI gate
+
+The `ci-gate` job (`scripts/release-gate.ts`) holds build, publication and the
+`latest-stable` move until the push-to-master runs of Test and E2E Tests both
+succeed on the release commit.
+
+- **Failed run:** nothing is published and the job fails with the run and the
+  master-red issue. After master is green again, publish the current VERSION
+  with `gh workflow run release.yml --ref master`.
+- **Run cancelled by a newer push:** the gate follows the next master commit.
+  If it contains the release commit and carries the same VERSION, that commit
+  is gated and published. If VERSION moved on, this version is skipped and the
+  newer VERSION's release run publishes.
+- **Backfill:** `gh workflow run release.yml --ref master` gates and publishes
+  master HEAD's VERSION. Other refs are refused.
+- The gate waits up to 110 minutes, then fails with the backfill command.
+
 ### The `latest-stable` tag
 
 The **final step of the release job** force-advances the `latest-stable` tag to
-the release commit (`git push origin "+${GITHUB_SHA}:refs/tags/latest-stable"`).
+the gated release commit (`git push origin "+${RELEASE_SHA}:refs/tags/latest-stable"`).
 `latest-stable` is the single sanctioned distribution ref: the README paste
 block, the `BOOTSTRAP_FOR_AGENTS.md` fetch URL, and
 `bun install -g github:garrytan/gbrain#latest-stable` all reference it
@@ -537,7 +649,13 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
    or manually re-implement the best fixes from each PR. Do NOT merge PR branches directly —
    read the diff, understand the fix, and write it yourself if needed.
 4. **Test the wave** — verify with `bun test && bun run test:e2e` (full E2E lifecycle).
-   Every fix in the wave must have test coverage.
+   Every fix in the wave must have test coverage. Run
+   `bun run audit:contributors <base>..<collector-head> --prs <manifest>` to re-prove,
+   per merged change and per open PR (trial-merged), that its tests fail with its product
+   hunks reversed; the tool pins the PR heads into `prs.pinned.json` so a rerun tests the
+   same code, and its Markdown table keeps mechanical results apart from your verdicts
+   (see [Contributor audit](TESTING.md#contributor-audit)). Paste the table into the wave
+   PR body.
 5. **Security review** — run `bun run wave-security-scan <base>..<collector-head>` over the
    collector branch (the repeatable mechanical sweep). It ALARMS on newly-introduced
    obfuscation/eval in code, secrets found by gitleaks **with the test/skills allowlist
@@ -549,7 +667,11 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
    this. It is a net, not a proof — a human still reads the diffs.
 6. **Close with context** — every closed PR gets a comment explaining why and what (if
    anything) supersedes it. Contributors did real work; respect that with clear communication
-   and thank them.
+   and thank them. In the wave PR body, put each folded-in contributor PR on a
+   `Supersedes #N` line and each fixed issue on a `Fixes #N` line: when the wave merges,
+   the [fix-wave closeout](#fix-wave-closeout) closes those PRs with a thank-you comment and
+   GitHub closes the issues. Write `Addresses #N` or `Refs #N` for anything only partly
+   done, so it stays open. Close declined or duplicate PRs by hand, with the reason.
 7. **Ship as one PR** — single PR to master with all attributions preserved via
    `Co-Authored-By:` trailers. Include a summary of what merged and what closed.
 
@@ -558,6 +680,70 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
   promotional material (README intro, CHANGELOG voice, skill templates).
 - Never auto-merge PRs that remove YC references or "neutralize" the founder perspective.
 - Preserve contributor attribution in commit messages.
+
+### Fix-wave gate
+
+`.github/workflows/fix-wave-gate.yml` (job `contributor-gate`) fails every PR into
+master unless its head repository is `garrytan/gbrain` or the `maintainer-override`
+label counts. Only maintainers can push to `garrytan/gbrain`, so GBRA thread PRs
+(`capy/*`) and `garrytan/*` branches pass; fork PRs fail whatever their branch is
+called. When a contributor PR opens, a second job posts one comment with the same
+text as the failure: the work is welcome and the PR stays open, it lands through a
+fix wave with credit (`Contributed by @handle` plus a `Co-Authored-By:` trailer), and
+CONTRIBUTING.md "Where does my change go?" explains where changes belong.
+
+The workflow uses `pull_request_target`, so the workflow and
+`scripts/fix-wave-gate.ts` always come from the default branch: a PR that edits
+either cannot change its own result. It reads only the event payload and the PR
+timeline, never PR code, with `permissions: {}` at the top, `pull-requests: read`
+for the gate and `pull-requests: write` only for the comment job. A null head
+repository (deleted fork) fails closed. The check re-runs on `opened`, `edited`,
+`reopened`, `synchronize`, `labeled` and `unlabeled`.
+
+**`maintainer-override` label.** Who: a human on `MAINTAINERS` in
+`scripts/fix-wave-gate.ts` (starts as `garrytan`; changing it is a reviewed PR to
+master). When: only for a PR a maintainer has decided may land from its fork, such as
+a fix wave a maintainer opened from a fork; record the reason in a PR comment. How it
+is checked: the label counts only when the most recent `labeled` timeline event for it
+was made by an allowlisted `User`; bots (`capy-ai[bot]`, `github-actions[bot]`, any
+`[bot]` login) never qualify, and removing the label fails the PR again. Audit: the run
+log prints a `notice` naming who applied the label, when, and the timeline event id,
+and the step summary repeats it.
+
+**Turning it on (repository settings, maintainer only).** The guard is active only
+after this step; until then the check is advisory. Settings → Rules → Rulesets (or
+Settings → Branches → the `master` protection rule) → Require status checks to pass →
+add `contributor-gate` with GitHub Actions as the source → save. The check must have
+run once on any PR before GitHub offers it in the picker.
+
+**Residual risk.** A same-repo branch (`capy/*` or `garrytan/*`) that carries
+contributor commits passes by design. Keeping contributor work inside a revised fix
+wave on those branches stays a policy rule, enforced by review, not by this check.
+
+### Fix-wave closeout
+
+`.github/workflows/fix-wave-closeout.yml` (job `close-superseded`) runs when a PR
+into master closes. If it merged and its head repository is `garrytan/gbrain`,
+`scripts/fix-wave-closeout.ts` reads the merged PR's body and closes every open pull
+request named on a `Supersedes #N` line (`Supersedes #5085`, `- Supersedes #5089,
+#5096 and #5107`, `**Supersedes:** #5113`). Only the list right after the keyword
+counts, so `Supersedes #5140, which conflicts with #5000` closes #5140 alone. Each
+closed PR gets one comment, keyed by `<!-- fix-wave-closeout -->`, that thanks the
+contributor, links the wave, and says the work landed with credit when the wave body
+contains `Contributed by @<their handle>`. Numbers that are issues or already-closed
+PRs are skipped. A failed close is a warning in the run log, and the step summary
+lists every number with what happened to it. One run closes at most 50 PRs.
+
+Issues need nothing extra: `Fixes #N` in the same body closes them through GitHub.
+Before this workflow, contributor PRs stayed open after their wave merged, which is
+most of why the open-PR count grew. To preview a body locally without writing
+anything, save the event payload and run
+`bun scripts/fix-wave-closeout.ts --event <payload.json> --dry-run`.
+
+Like the gate, it uses `pull_request_target`: the workflow and script come from the
+default branch, it sparse-checks-out only the script, and it never checks out or
+runs PR code. Permissions are `{}` at the top and `contents: read` plus
+`pull-requests: write` for the one job.
 
 ## Checking out PRs from garrytan-agents
 

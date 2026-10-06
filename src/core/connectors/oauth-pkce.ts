@@ -61,8 +61,10 @@ function stateMatches(expected: string, got: string | null): boolean {
 export interface LoopbackOpts {
   /** Print the URL instead of opening a browser (SSH/headless). */
   openBrowser?: boolean;
-  /** Override the redirect port (tests use an ephemeral port). */
+  /** Override the listen port; 0 asks the OS for a free one (tests). */
   portOverride?: number;
+  /** Called once the listener is bound, with the port it actually bound. */
+  onListen?: (port: number) => void;
   timeoutMs?: number;
   signal?: AbortSignal;
   /** Injected opener (tests). Default: no-op (the URL is printed regardless). */
@@ -134,7 +136,9 @@ export async function runLoopbackFlow(
               'another flow may be using it; close it or use the cookie lane',
           ),
         );
+        return;
       }
+      opts.onListen?.(server!.port);
     });
 
     if (opts.openBrowser && opts.openUrl) opts.openUrl(authorizeUrl);

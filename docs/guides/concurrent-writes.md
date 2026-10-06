@@ -221,6 +221,69 @@ accepted output replays without
 another model call. Not every legacy maintenance writer runs on the managed path; see
 [supported managed work and explicit repair](../architecture/topologies.md#supported-managed-work-and-explicit-repair).
 
+### Lint repairs waiting on a managed brain
+
+The maintenance cycle's lint phase repairs fixable page problems (an LLM
+preamble, a wrapping code fence, a missing `created` date) through the
+coordinator, the same guarded write `put_page` uses. Lint reads each page's
+revision before the file bytes it repairs, checks those bytes against that
+revision with the coordinator's own comparison (formatting differences do not
+count), and submits against it. A file that disagrees with its database copy is
+never rewritten from either side: the page becomes a `managed-write-pending`
+issue, the rest of the run continues, and the lint phase ends at `warn`.
+
+**Prerequisites:** a managed brain (persistence enabled) whose source has an
+active canonical owner on this host, and a trusted local CLI registration.
+
+**Run:**
+
+```bash
+gbrain dream --phase lint --source workspace --json \
+  | jq '.phases[] | select(.phase == "lint") | .details'
+```
+
+**Expected result:** `fix_pending` counts the waiting repairs and `pending`
+lists up to 50 of them. Each carries a stable `code`, a `reason`, the refusal's
+own `fix` and a link to this section:
+
+```json
+{
+  "issues": 4, "fixed": 2, "fix_pending": 1, "lint_fix": true, "write_path": "coordinator",
+  "pending": [{
+    "file": "people/alice-example.md", "rule": "managed-write-pending", "fixable": false,
+    "code": "managed_write_pending", "reason": "file_database_drift",
+    "fix": { "argv": ["gbrain", "sources", "reconcile", "workspace", "people/alice-example", "--brain", "host", "--preview"], "next": "run" }
+  }]
+}
+```
+
+| `reason` | Cause | Next step |
+| --- | --- | --- |
+| `file_database_drift` | The file was edited outside a coordinated write, or it is older than the database copy. | Run the `fix` (a reconcile preview), then resolve and apply it as described in [Repair a file/database disagreement](#repair-a-filedatabase-disagreement). |
+| `held_file` | Sync holds the file because it cannot import it. | Run the hold repair in `fix` (for example `gbrain repair frontmatter --source workspace`), as in [held files](repair.md#held-files). |
+| `canonical_file_missing` | The file was removed while lint ran. | Recover the file or import the deletion; reconciliation does not restore missing files. |
+| `revision_changed` | Another write published the page while lint ran. | Nothing; the next cycle lints the current revision. `fix` reads the page as it is now. |
+| `not_indexed` | The file is not an indexed page of the source (a README or a stray file). | Nothing; lint never rewrites unindexed files on a managed brain. |
+
+Never answer a pending repair with `gbrain sync`: when the database copy is the
+newer one, a sync imports the older file over it.
+
+**Failure example:** a source without an active canonical owner on this host
+fails the whole phase before any page is read: `status: "fail"` with
+`error.code: "owner_unavailable"`. `gbrain sources writer status --source
+workspace --json` names the owner host; run the cycle there. A pending repair is not a failure: the phase stays at
+`warn` and every other page is still repaired.
+
+**Verify:** after the reconcile apply commits, rerun the command above. The page
+is gone from `pending`, `fix_pending` is 0, and the phase reports `ok` once
+every fixable issue is repaired.
+
+**Turn repairs off:** `cycle.lint_fix` (default `true`) controls whether the
+cycle's lint phase repairs anything. `gbrain config set cycle.lint_fix false`
+makes it report-only on any brain (`details.lint_fix: false`, phase `warn`
+while issues remain); `gbrain config set cycle.lint_fix true` turns repairs
+back on. An explicit `gbrain lint <dir> --fix` is not affected.
+
 ### Roll back safely
 
 Stop submitting new reconciliation requests first. Keep a compatible upgraded
@@ -422,7 +485,10 @@ in-word dots, so "C++", "C#", ".NET" and "Node.js" stay distinct from
 end of the claim follows it. Rows recorded before v174 keep their exact fingerprint and keep
 matching; v174 adds a folded row wherever a fact row still holds the claim text
 and expires active facts that became matching. A paraphrase with different
-words is a different claim.
+words is a different claim to the ledger: `forget` returns its close
+rewordings as `similar_active` for the agent to confirm with the user, and
+the optional overnight withdrawal review proposes the ones it judges to
+restate the claim for the owner to accept (`gbrain decide proposals list`).
 
 Already queued source-wide effects are converted using the same bounded exact
 discovery and retain their individual progress cursors. An over-capacity or

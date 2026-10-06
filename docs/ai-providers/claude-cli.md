@@ -135,7 +135,7 @@ above.
 | Multimodal | Not supported over the subprocess path. File/image message parts are rendered as a `[file <mediaType>]` text stub, not sent as actual content. |
 | Prompt caching | The recipe declares `supports_prompt_cache: true`: Claude Code caches prompt prefixes itself on every `--print` run (Anthropic's Claude Code docs put `-p` runs in the main-conversation TTL bucket — one hour on a subscription, five minutes on an API key). gbrain cannot place `cache_control` breakpoints on this path — the adapter renders messages to stdin text and ignores `providerOptions` — so caching is automatic rather than gateway-driven, and `doctor`'s `subagent_capability` does not grade a claude-cli subagent tier `degraded:no_caching`. `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens` (next row). |
 | Usage / token counts | Reported `usage.input_tokens` / `usage.output_tokens` are read straight from the CLI's `--output-format json` envelope (`result.usage?.input_tokens` / `output_tokens`); gbrain does not independently count tokens for this path. The envelope's `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens`, so cache reads are counted in gbrain's usage accounting; `cache_creation_input_tokens` is not surfaced (the AI SDK's usage shape has no corresponding field). |
-| Cost figures | The recipe declares `cost_per_1m_input_usd: 3.0` / `cost_per_1m_output_usd: 15.0` — the same Sonnet-class figures the `anthropic` recipe declares (`price_last_verified: 2026-06-17`) — purely so gbrain's budget ledger has a number to attribute per call. Neither the recipe nor the adapter code checks what you're actually billed; treat these as the ledger's nominal per-call number, not a verified charge. The `--max-usd` / `--max-cost` budget gate does not read them either: it prices `claude-cli:<model>` at the nominal Anthropic rate for that model, and a short alias (`claude-cli:haiku`) prices identically to the dated id it resolves to; `pricing.overrides` forces $0 or a real rate for any `claude-cli:*` string. |
+| Cost figures | The recipe declares `cost_per_1m_input_usd: 3.0` / `cost_per_1m_output_usd: 15.0` — the same Sonnet-class figures the `anthropic` recipe declares (`price_last_verified: 2026-06-17`) — purely so gbrain's budget ledger has a number to attribute per call. Neither the recipe nor the adapter code checks what you're actually billed; treat these as the ledger's nominal per-call number, not a verified charge. The `--max-usd` / `--max-cost` budget gate does not read them either: it prices `claude-cli:<model>` at the nominal Anthropic rate for that model, and a short alias (`claude-cli:haiku`) prices identically to the dated id it resolves to; `pricing.overrides` forces $0 or a real rate for any `claude-cli:*` string, and on a subscription one line prices every claude-cli model: `gbrain pricing set 'claude-cli:*' --rate 0` (an exact model entry still wins; at $0 no cap limits claude-cli calls). |
 | User-level CLAUDE.md | `~/.claude/CLAUDE.md` still loads on every call (see above) — only the working directory changes (see "What actually happens on a call" for exactly what that directory is and isn't). |
 
 ## Doctor probe timeout: per-recipe, 30s for claude-cli
@@ -163,29 +163,24 @@ investigating directly (run the same model via `gbrain models doctor
 
 When the Claude subscription's usage window is used up, the CLI reports
 `claude-cli API error 429: You've hit your session limit · resets <time>`.
-Set `chat_fallback_chain` and `gateway.chat()` retries the same call on the
-next model in the chain instead of failing it:
+`chat_fallback_chain` retries the same call on the next model in the chain
+instead of failing it:
 
 ```bash
 gbrain config set chat_fallback_chain "anthropic:claude-sonnet-4-6"
-# per process, comma-separated: GBRAIN_CHAT_FALLBACK_CHAIN="anthropic:claude-sonnet-4-6,openai:gpt-4o-mini"
+gbrain doctor --only chat_fallback_chain --json
 ```
 
 **Say to your agent:** *"When my Claude subscription runs out, fall back to an API model instead of failing."*
 
-- Entries run in order after the call's own model, on a provider error (the
-  429 above, an outage, a timeout, a rejected key) or a refusal, with one
-  `[ai.gateway]` line per hop on stderr. A budget refusal or your own cancel
-  stops the chain; when every entry fails, the claude-cli error is the one
-  reported.
-- A fallback call is billed per token by the entry's provider. Budget caps
-  price each attempt by the model that actually ran.
-- Judges, critics and evals, the `models doctor` / `providers test` probes,
-  `decide()`, `think --model` and `auto_think` keep their own model and fail
-  as before.
-- A synthesize triage verdict or concept narrative a fallback model wrote is
-  used for that run but not cached: the next cycle redoes it on the
-  configured model.
+The [chat fallback guide](../guides/chat-fallback.md) covers the chain for
+every provider: prerequisites, the env / `config.json` / database planes and
+their precedence, refusal fallback and `chat_fallback_on_refusal`, the doctor
+check, removal and hosted brains. Two points are specific to `claude-cli`:
+
+- The subscription limit arrives as a provider error (`apiErrorStatus` 429),
+  so the chain treats it like any outage; when every entry fails, the
+  claude-cli error is the one reported.
 - Every call still tries the claude-cli model first, so during the limit
   window each call pays one failed CLI spawn before the fallback runs.
 

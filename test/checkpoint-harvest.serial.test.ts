@@ -8,7 +8,8 @@
  *
  * Serial: real PGLite engine + module-global harvest queue + GBRAIN_HOME env.
  */
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -25,6 +26,7 @@ import {
   __drainCheckpointHarvestForTests,
   __resetCheckpointHarvestForTests,
   HARVEST_RECEIPT_SUFFIX,
+  __setWriterBusyRetryDelaysForTests,
   scheduleCheckpointHarvest,
   shutdownCheckpointHarvest,
   WRITEBACK_SESSION_CAP,
@@ -35,6 +37,8 @@ import { getCheckpointManifest } from '../src/core/context/session-state.ts';
 import { makeContextPackIpcHandler } from '../src/mcp/context-pack-handler.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { readHeartbeatTail } from '../src/core/context/hook-heartbeat.ts';
+import { acquireWorktree, claimWorktree, getWorktreeBinding, MANAGED_WRITER_PROBE_WAIT_MS, type WorktreeBinding } from '../src/core/persistence/ownership.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 const KEYED: CapabilityReport = {
   embeddings: { available: false },
@@ -776,4 +780,175 @@ describe('serve-lane self-capture skip (#5820)', () => {
     expect(prompts.length).toBeGreaterThan(0);
     expect(JSON.parse(readFileSync(join(corpusDir, banked.flushCorpusFile! + CORPUS_INGESTED_SUFFIX), 'utf8')).lane).toBe('writeback');
   });
+});
+
+// ── canonical writer busy past the preflight wait (#5557) ──────────────────
+describe('canonical writer busy past the preflight wait (#5557)', () => {
+  const COFFEE_TURN = 'I prefer dark roast coffee and I want it on every order.';
+  const releases: Array<() => Promise<void>> = [];
+  afterEach(async () => {
+    for (const release of releases.splice(0)) await release();
+    __setWriterBusyRetryDelaysForTests(null);
+    await disposePersistenceConsumer(engine);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+  });
+
+  /** A managed source owned by this host, its worktree lock free. */
+  async function managedSource(): Promise<{ sourceId: string; binding: WorktreeBinding }> {
+    const sourceId = `wb-busy-${randomUUID().slice(0, 8)}`;
+    const root = mkdtempSync(join(homeDir, 'root-'));
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+    await claimWorktree(engine, sourceId, root);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    return { sourceId, binding: (await getWorktreeBinding(engine, sourceId))! };
+  }
+
+  /** Takes the worktree lock, as a Git effect's commit and push do, until the returned release runs. */
+  async function takeWriter(binding: WorktreeBinding): Promise<() => Promise<void>> {
+    const lock = await acquireWorktree(binding, 0, undefined, engine);
+    expect(lock).not.toBeNull();
+    const release = () => lock!.release();
+    releases.push(release);
+    return release;
+  }
+
+  async function bankTurn(sessionId: string, turn: string): Promise<string> {
+    const gated = gateWritebackTurn(turn);
+    if (!gated.ok) throw new Error(`fixture turn gated: ${gated.reason}`);
+    return (await bankWritebackTurn(corpusDir, sessionId, gated.normalized, gated.hash24)).flushCorpusFile!;
+  }
+
+  const scheduleWb = (sourceId: string, sessionId: string, file: string) =>
+    scheduleCheckpointHarvest({ engine, sourceId, sessionId, corpusDir, file, capabilities: KEYED, lane: 'writeback' });
+
+  async function untilHeartbeat(event: string): Promise<void> {
+    while (!(await readHeartbeatTail(10)).some((e) => e.event === event)) await new Promise((r) => setTimeout(r, 25));
+  }
+
+  /** Captures console.error lines while `run` executes. */
+  async function stderrDuring(run: () => Promise<void>): Promise<string[]> {
+    const lines: string[] = [];
+    const spy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); });
+    try {
+      await run();
+    } finally {
+      spy.mockRestore();
+    }
+    return lines;
+  }
+
+  test('a turn refused while the writer is busy is re-queued and extracted once the writer frees', async () => {
+    await engine.setConfig('memory.auto_writeback', 'salient');
+    const prompts = recordingChatStub();
+    __setWriterBusyRetryDelaysForTests([200]);
+    const { sourceId, binding } = await managedSource();
+    const file = await bankTurn('sess-busy-recover', COFFEE_TURN);
+    const release = await takeWriter(binding);
+    scheduleWb(sourceId, 'sess-busy-recover', file);
+    await untilHeartbeat('writeback');
+    await release();
+    await __drainCheckpointHarvestForTests();
+
+    const hb = (await readHeartbeatTail(10)).filter((e) => e.event === 'writeback');
+    expect(hb.map((e) => [e.outcome, e.reason ?? null])).toEqual([['degraded', 'writer_busy_requeued'], ['ok', null]]);
+    expect(hb[1]?.inserted).toBe(1);
+    expect(prompts.length).toBe(1);
+    expect(existsSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX))).toBe(true);
+    const rows = await engine.executeRaw<{ source_session: string }>(`SELECT source_session FROM facts WHERE source = 'hook:writeback'`);
+    expect(rows.map((r) => r.source_session)).toEqual(['sess-busy-recover']);
+  }, 30_000);
+
+  test('a writer still busy after the last retry ends as an error that keeps its code, logged once per code; the turns stay for the sweep', async () => {
+    await engine.setConfig('memory.auto_writeback', 'salient');
+    const prompts = recordingChatStub();
+    __setWriterBusyRetryDelaysForTests([50]);
+    const { sourceId, binding } = await managedSource();
+    const files = [
+      await bankTurn('sess-busy-a', COFFEE_TURN),
+      await bankTurn('sess-busy-b', 'I decided to move the weekly review to Thursday mornings.'),
+    ];
+    const release = await takeWriter(binding);
+    const errors = await stderrDuring(async () => {
+      scheduleWb(sourceId, 'sess-busy-a', files[0]!);
+      scheduleWb(sourceId, 'sess-busy-b', files[1]!);
+      await __drainCheckpointHarvestForTests();
+    });
+    await release();
+
+    const hb = (await readHeartbeatTail(10)).filter((e) => e.event === 'writeback');
+    expect(hb.filter((e) => e.outcome === 'degraded').map((e) => e.reason)).toEqual(['writer_busy_requeued', 'writer_busy_requeued']);
+    expect(hb.filter((e) => e.outcome === 'error').map((e) => e.reason))
+      .toEqual(['operationerror:writer_lock_unavailable', 'operationerror:writer_lock_unavailable']);
+    expect(errors.filter((line) => line.includes('operationerror:writer_lock_unavailable')).length).toBe(1);
+    expect(prompts).toEqual([]);
+    for (const file of files) {
+      expect(existsSync(join(corpusDir, file))).toBe(true);
+      expect(existsSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX))).toBe(false);
+    }
+  }, 30_000);
+
+  test('a compact segment refused while the writer is busy is not re-queued: the error stands for the sweep', async () => {
+    const prompts = recordingChatStub();
+    __setWriterBusyRetryDelaysForTests([50]);
+    const { sourceId, binding } = await managedSource();
+    const seg = bankSegment('sess-busy-compact', `User: ${COFFEE_TURN}\n`);
+    const release = await takeWriter(binding);
+    scheduleCheckpointHarvest({ engine, sourceId, sessionId: 'sess-busy-compact', corpusDir, file: seg.file, capabilities: KEYED });
+    await __drainCheckpointHarvestForTests();
+    await release();
+
+    const hb = (await readHeartbeatTail(10)).filter((e) => e.event === 'checkpoint-harvest');
+    expect(hb.map((e) => [e.outcome, e.reason ?? null])).toEqual([['error', 'operationerror:writer_lock_unavailable']]);
+    expect(prompts).toEqual([]);
+    expect(existsSync(join(corpusDir, seg.file))).toBe(true);
+    expect(existsSync(join(corpusDir, seg.file + CORPUS_INGESTED_SUFFIX))).toBe(false);
+  }, 30_000);
+
+  test('an extraction failure keeps its reason; each distinct reason reaches stderr once', async () => {
+    await engine.setConfig('memory.auto_writeback', 'salient');
+    __setChatTransportForTests(async (): Promise<ChatResult> => { throw new Error('synthetic provider outage'); });
+    __setWriterBusyRetryDelaysForTests([]);
+    const { sourceId, binding } = await managedSource();
+    const extractionFailure = await bankTurn('sess-fail-provider', COFFEE_TURN);
+    const busyFailure = await bankTurn('sess-fail-busy', 'I decided to move the weekly review to Thursday mornings.');
+    const errors = await stderrDuring(async () => {
+      scheduleWb('default', 'sess-fail-provider', extractionFailure);
+      await __drainCheckpointHarvestForTests();
+      const release = await takeWriter(binding);
+      scheduleWb(sourceId, 'sess-fail-busy', busyFailure);
+      await __drainCheckpointHarvestForTests();
+      await release();
+    });
+
+    const hb = (await readHeartbeatTail(10)).filter((e) => e.event === 'writeback');
+    expect(hb.map((e) => [e.outcome, e.reason])).toEqual([
+      ['error', 'factsextractionerror:provider_error'],
+      ['error', 'operationerror:writer_lock_unavailable'],
+    ]);
+    const harvestLines = errors.filter((line) => line.startsWith('[checkpoint-harvest]'));
+    expect(harvestLines.length).toBe(2);
+    expect(harvestLines[0]).toContain('(factsextractionerror:provider_error)');
+    expect(harvestLines[1]).toContain('(operationerror:writer_lock_unavailable)');
+  }, 30_000);
+
+  test('a pending retry dedups a re-scheduled turn; shutdown drops the retry and nothing runs after it', async () => {
+    await engine.setConfig('memory.auto_writeback', 'salient');
+    const prompts = recordingChatStub();
+    __setWriterBusyRetryDelaysForTests([60_000]);
+    const { sourceId, binding } = await managedSource();
+    const file = await bankTurn('sess-busy-shutdown', COFFEE_TURN);
+    await takeWriter(binding);
+    scheduleWb(sourceId, 'sess-busy-shutdown', file);
+    await untilHeartbeat('writeback');
+    expect(scheduleWb(sourceId, 'sess-busy-shutdown', file)).toEqual({ status: 'skipped', reason: 'already_queued' });
+    const started = performance.now();
+    await shutdownCheckpointHarvest();
+    await __drainCheckpointHarvestForTests();
+    expect(performance.now() - started).toBeLessThan(1000);
+    const hb = (await readHeartbeatTail(10)).filter((e) => e.event === 'writeback');
+    expect(hb.map((e) => e.reason)).toEqual(['writer_busy_requeued']);
+    expect(prompts).toEqual([]);
+    expect(existsSync(join(corpusDir, file))).toBe(true);
+  }, 30_000);
 });

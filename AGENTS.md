@@ -210,10 +210,12 @@ seconds (gitleaks plus the doc checks) and runs the full gate otherwise. Require
 (Docker Desktop / OrbStack / Colima) and `gitleaks` (`brew install gitleaks`).
 
 Fastest path, with a Ubicloud token (`UBICLOUD_API_KEY` or
-`UBICLOUD_API_TOKEN`): `bun run ci:ubicloud` runs the same gate across ten
+`UBICLOUD_API_TOKEN`): `bun run ci:ubicloud` runs the same gate across four
 ephemeral VMs in about five minutes, uncommitted edits included
 (`ci:ubicloud:diff` for the doc-only fast path). See "Ubicloud fan-out" in
-[`docs/TESTING.md`](./docs/TESTING.md).
+[`docs/TESTING.md`](./docs/TESTING.md). Set `UBI_OWNER` to your thread code. In a
+multi-lane wave, lanes run `ci:ubicloud:diff` or targeted suites; only the
+integrator runs the full gate.
 
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
 up the test Postgres container, run `bun run test:e2e`, tear it down).

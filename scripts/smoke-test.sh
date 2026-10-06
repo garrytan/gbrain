@@ -104,8 +104,9 @@ if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ]; then
   ENGINE_KIND=$(printf '%s\n' "$ENGINE_JSON" | sed -n 's/.*"effective_engine": *"\([a-z]*\)".*/\1/p' | head -1)
   ENGINE_SRC=$(printf '%s\n' "$ENGINE_JSON" | sed -n 's/.*"db_url_source": *"\([^"]*\)".*/\1/p' | head -1)
   [ -n "$ENGINE_KIND" ] && echo "  engine: $ENGINE_KIND (${ENGINE_SRC:-no url})"
-  if [ -z "$DB_URL" ] && [ "$ENGINE_KIND" != "pglite" ]; then
-    fail "GBrain database — no DATABASE_URL or GBRAIN_DATABASE_URL (and the engine is not pglite)"
+  # #5063: a URL from the config file (engine status db_url_source) is as valid as one from the environment.
+  if [ -z "$DB_URL" ] && [ "$ENGINE_KIND" != "pglite" ] && [ -z "$ENGINE_SRC" ]; then
+    fail "GBrain database — no DATABASE_URL, GBRAIN_DATABASE_URL or configured database URL (and the engine is not pglite)"
   else
     run_doctor_json() { DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" timeout 30 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" doctor --json 2>/dev/null; }
     DOCTOR_JSON=$(run_doctor_json)
@@ -187,12 +188,20 @@ else
   skip "OpenClaw gateway — not responding (may not be running yet)"
 fi
 
-# ── 7. Embedding API key ─────────────────────────────────
+# ── 7. Embedding provider ────────────────────────────────
+# #5063: the configured provider decides (ollama and other keyless providers
+# need no OPENAI/VOYAGE key), so trust doctor's embedding_provider verdict when
+# section 3 read it; fall back to the raw keys only without a doctor report.
+EMBED_STATUS=$(printf '%s\n' "${DOCTOR_JSON:-}" | sed -n 's/.*"name": *"embedding_provider", *"status": *"\([a-z]*\)".*/\1/p' | head -1)
 EMBED_KEY="${OPENAI_API_KEY:-${VOYAGE_API_KEY:-}}"
-if [ -n "$EMBED_KEY" ]; then
+if [ "$EMBED_STATUS" = "fail" ]; then
+  fail "Embedding provider — doctor embedding_provider failed (run: gbrain doctor --only embedding_provider)"
+elif [ -n "$EMBED_STATUS" ]; then
+  pass "Embedding provider (doctor embedding_provider: $EMBED_STATUS)"
+elif [ -n "$EMBED_KEY" ]; then
   pass "Embedding API key set"
 else
-  fail "Embedding API key — neither OPENAI_API_KEY nor VOYAGE_API_KEY is set"
+  fail "Embedding provider — no doctor report and neither OPENAI_API_KEY nor VOYAGE_API_KEY is set"
 fi
 
 # ── 8. Brain repo (if configured) ────────────────────────

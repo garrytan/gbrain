@@ -63,6 +63,8 @@ async function runSyncFreshness(ctx: DoctorContext): Promise<Check[]> {
     checks.push(await checkSyncFreshness(engine, { localOnly: true }));
     const contentWrites = await (await import('./canonical-content.ts')).checkCanonicalContentWrites(engine);
     if (contentWrites) checks.push(contentWrites);
+    const sharedSkills = await (await import('./shared-skills.ts')).checkSharedSkillsSources(engine);
+    if (sharedSkills) checks.push(sharedSkills);
     // Monthly backup-coverage check (same D4 trust stance as sync_freshness:
     // localOnly:true probes git; the remote path stays a cache-only reader).
     progress.heartbeat('backup_coverage');
@@ -103,6 +105,7 @@ export const syncFreshnessEntry: DoctorEntry = {
   emits: [
     'sync_freshness',
     'canonical_content_writes',
+    'shared_skills_sources',
     'backup_coverage',
     'sync_consolidation',
     'links_extraction_lag',

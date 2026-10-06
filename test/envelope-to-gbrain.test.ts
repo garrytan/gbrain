@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // The same parser gbrain uses to ingest frontmatter (src/core/markdown.ts), so
 // the injection test asserts against the real consumer rather than a substring.
-import { safeLoad as yamlSafeLoad } from 'js-yaml';
+import { load as yamlLoad } from 'js-yaml';
 // F5 asserts against gbrain's REAL consumers, not against a copy of their
 // regexes: `parseConversation` is what decides whether an imported page yields
 // any conversation-facts at all, and `parseMarkdown`/`serializeMarkdown` are
@@ -80,7 +80,7 @@ function frontmatterBlock(page: string): string {
 }
 
 function frontmatterOf(page: string): Record<string, unknown> {
-  return (yamlSafeLoad(frontmatterBlock(page)) ?? {}) as Record<string, unknown>;
+  return (yamlLoad(frontmatterBlock(page)) ?? {}) as Record<string, unknown>;
 }
 
 function bodyOf(page: string): string {

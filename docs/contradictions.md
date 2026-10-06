@@ -131,7 +131,9 @@ inspect findings without re-running the probe.
 
 ## Cost model
 
-Default judge is `claude-haiku-4-5` at ~$1/Mtok in, $5/Mtok out. With
+The judge resolves `--judge` > `models.eval.contradictions_judge` > the utility
+model tier > `GBRAIN_CONTRADICTIONS_JUDGE_MODEL`; the figures below assume a
+small model such as `claude-haiku-4-5` at ~$1/Mtok in, $5/Mtok out. With
 the default truncation at 1500 chars per pair (`--max-pair-chars`), ~500 input + 80 output
 tokens per judge call. Budget cap defaults to $5 in TTY / $1 non-TTY.
 

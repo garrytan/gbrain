@@ -33,20 +33,26 @@ import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } f
 // so they land in the retrieval surface (content_chunks + embeddings) where
 // source-boost's 1.3× 'concepts/' weighting can actually reach them.
 import { importFromContent } from '../import-file.ts';
-import { serializeMarkdown } from '../markdown.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
+import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
+import { loadPricingOverrides } from '../budget/budget-tracker.ts';
+import { pricingSetCommand } from '../budget/no-pricing.ts';
 import { createHash } from 'node:crypto';
 import { slugifySegment } from '../sync.ts';
 import { validatePageSlug } from '../ops/context.ts';
 import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
-import { addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishManagedConcept } from './concept-publication.ts';
+import { derivedWriteThrough } from './derived-write-through.ts';
+import {
+  addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcept, stripFenceSections,
+} from './concept-publication.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
-// Canonical-miss policy — mirrors skillopt/preflight.ts's lookupPrice:
-// assume Sonnet-tier pricing for models absent from CANONICAL_PRICING.
-// Conservative and non-throwing; keeps the budget gate effective (and
-// matches this file's pre-canonical behavior) instead of letting an
+// Miss policy for the shared resolver (`priceFor`: operator overrides, the
+// claude-cli → Anthropic sibling, canonical rows): assume Sonnet-tier
+// pricing for a model nothing prices, and name it in the phase details
+// (`pricing_fallback_models`) plus one stderr line. Conservative and
+// non-throwing; keeps this default budget effective instead of letting an
 // unpriced model run unmetered. The rates are DERIVED from the canonical
 // table (never hand-copied — CLAUDE.md invariant); the literal pair only
 // fires if the Sonnet key itself ever leaves the table.
@@ -54,6 +60,17 @@ const FALLBACK_PRICING: ModelPricing = canonicalLookup('anthropic:claude-sonnet-
   input: 3.0,
   output: 15.0,
 };
+/** The rate a narrative call meters at: the shared resolver, else the Sonnet fallback, naming each fallback model once. */
+function narrativePricing(model: string, overrides: PricingOverrides | undefined, fallbackModels: Set<string>, budgetUsd: number): ModelPricing {
+  const priced = priceFor(model, 'chat', overrides);
+  if (priced) return priced.pricing;
+  if (!fallbackModels.has(model)) {
+    fallbackModels.add(model);
+    console.error(`[synthesize_concepts] ${model} has no pricing; metering it at Sonnet-tier rates against the $${budgetUsd.toFixed(2)} phase budget. To meter its real price, look it up and register it: ${pricingSetCommand(model, 'chat')}`);
+  }
+  return FALLBACK_PRICING;
+}
+
 const TIER_T1_MIN = 10;
 const TIER_T2_MIN = 5;
 const TIER_T3_MIN = 2;
@@ -293,6 +310,7 @@ export async function runPhaseSynthesizeConcepts(
   // maintenance authority before any model spend so a missing canonical owner
   // fails fast; null on an unmanaged brain.
   const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId ?? 'default', opts.brainDir);
+  const conceptFiles = await derivedWriteThrough(engine, 'synthesize_concepts', opts.sourceId ?? 'default', { managed: maintenance !== null, dryRun: opts.dryRun ?? false });
   // Managed publication outcomes, kept out of `failures` (LLM fallback). A
   // deferred concept moved under a concurrent writer and is retried next run;
   // a held concept cannot be republished without losing canonical material.
@@ -300,7 +318,10 @@ export async function runPhaseSynthesizeConcepts(
   const publicationHeld: Array<{ concept: string; reason: string }> = [];
   const skippedHumanOwned: string[] = [];
   const skippedUnchanged: string[] = [];
+  const rehashed: string[] = [];
   const keptExistingNarrative: string[] = [];
+  const pricingOverrides = await loadPricingOverrides(engine);
+  const pricingFallbackModels = new Set<string>();
   for (const group of atomGroups) {
     const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
@@ -311,25 +332,36 @@ export async function runPhaseSynthesizeConcepts(
       skippedHumanOwned.push(conceptSlug);
       continue;
     }
-    // The narrative is a function of the member atoms, their strictest
+    // The narrative is a function of the member atoms' narrative (their
+    // `## Facts` / `## Takes` sections excluded, D-N3), their strictest
     // visibility and the model. When none changed and the page holds a real
     // narrative, there is nothing to spend or rewrite; a fallback page is retried,
     // and so is one a chat_fallback_chain model wrote (hashed under that model).
-    const hashFor = (model: string): string => createHash('sha256')
-      .update(JSON.stringify([model, group.visibility, group.atomSlugs.map((s, i) => [s, group.atomTitles[i], group.atomBodies[i]])
+    const hashOf = (model: string, bodies: string[]): string => createHash('sha256')
+      .update(JSON.stringify([model, group.visibility, group.atomSlugs.map((s, i) => [s, group.atomTitles[i], bodies[i]])
         .sort((a, b) => a[0].localeCompare(b[0]))]))
       .digest('hex').slice(0, 16);
+    const narrativeBodies = group.atomBodies.map(stripFenceSections);
+    const hashFor = (model: string): string => hashOf(model, narrativeBodies);
     const memberHash = hashFor(synthModel);
     const priorMode = existing?.frontmatter?.synthesis_mode;
-    if (existing?.frontmatter?.member_hash === memberHash && (priorMode === 'llm' || priorMode === 'deterministic_tier')) {
+    const realNarrative = priorMode === 'llm' || priorMode === 'deterministic_tier';
+    if (existing?.frontmatter?.member_hash === memberHash && realNarrative) {
       skippedUnchanged.push(conceptSlug);
       continue;
     }
-    tierCounts[group.tier]++;
+    // A page hashed by the pre-D-N3 formula (full atom bodies) whose inputs are
+    // provably unchanged keeps its narrative: only the hash is rewritten, no spend.
+    const grandfathered = realNarrative && existing?.frontmatter?.member_hash === hashOf(synthModel, group.atomBodies);
+    if (!grandfathered) tierCounts[group.tier]++;
     let narrative: string;
-    let synthesisMode: ConceptSynthesisMode;
+    let synthesisMode: ConceptSynthesisMode, unverifiedClaims: UnverifiedClaim[] = [];
     let fallbackWriter: string | undefined;
-    if (group.tier === 'T1' || group.tier === 'T2') {
+    if (grandfathered) {
+      narrative = stripFenceSections(existing!.compiled_truth);
+      synthesisMode = priorMode as ConceptSynthesisMode;
+      rehashed.push(conceptSlug);
+    } else if (group.tier === 'T1' || group.tier === 'T2') {
       if (estimatedSpendUsd >= budgetCap) {
         narrative = deterministicNarrative(group);
         synthesisMode = 'budget_fallback';
@@ -345,7 +377,7 @@ export async function runPhaseSynthesizeConcepts(
                   `Concept slug: ${group.conceptSlug}\n` +
                   `${group.atomTitles.length} atoms reference this concept.\n\n` +
                   `Sample atom titles:\n${group.atomTitles.slice(0, 10).map((t) => `  - ${t}`).join('\n')}\n\n` +
-                  `Sample atom bodies:\n${group.atomBodies
+                  `Sample atom bodies:\n${narrativeBodies
                     .slice(0, 5)
                     .map((b, i) => `${i + 1}. ${b.slice(0, 500)}`)
                     .join('\n\n')}`,
@@ -358,17 +390,14 @@ export async function runPhaseSynthesizeConcepts(
           // refresh rate.
           await maybeYield();
           llmHalt.reset();
-          // Price from the model that actually answered, through the one
-          // canonical chat-pricing table (CLAUDE.md invariant). Canonical
-          // miss → Sonnet-tier FALLBACK_PRICING (see constant above).
-          const pricing = canonicalLookup(result.model) ?? FALLBACK_PRICING;
+          const pricing = narrativePricing(result.model, pricingOverrides, pricingFallbackModels, budgetCap);
           estimatedSpendUsd +=
             (result.usage.input_tokens * pricing.input +
               result.usage.output_tokens * pricing.output) /
             1_000_000;
           const text = result.text.trim();
           if (text) {
-            narrative = text;
+            ({ narrative, unverified: unverifiedClaims } = await groundConceptNarrative(engine, text, group));
             synthesisMode = 'llm';
             if (result.fallbackFrom) fallbackWriter = result.model;
           } else {
@@ -408,17 +437,16 @@ export async function runPhaseSynthesizeConcepts(
       keptExistingNarrative.push(conceptSlug);
       continue;
     }
-    synthesisModeCounts[synthesisMode]++;
+    if (!grandfathered) synthesisModeCounts[synthesisMode]++;
 
     if (!opts.dryRun) {
-      const title = conceptSlug.slice('concepts/'.length);
       // #5525: tighten-only — a concept already private stays private.
       const prior = await engine.getPage(conceptSlug, { sourceId: opts.sourceId ?? 'default' });
       const visibility = strictestVisibility([group.visibility, prior?.frontmatter?.visibility === 'private' ? 'private' : 'world']);
       // #2163: serialize to markdown and import via the canonical pipeline so
       // the page is chunked (+ embedded when a provider is configured) —
       // mirrors put_page's isAvailable('embedding') → noEmbed gate.
-      const synthesizedAt = new Date().toISOString();
+      const synthesizedAt = grandfathered ? String(existing!.frontmatter.synthesized_at ?? new Date().toISOString()) : new Date().toISOString();
       const synthesized = (pageVisibility: Visibility) => ({
         tier: group.tier,
         mention_count: group.atomTitles.length,
@@ -427,30 +455,32 @@ export async function runPhaseSynthesizeConcepts(
         member_hash: fallbackWriter ? hashFor(fallbackWriter) : memberHash,
         synthesized_at: synthesizedAt,
         synthesized_by: 'synthesize_concepts-v0.41',
-        visibility: pageVisibility,
+        visibility: pageVisibility, ...(unverifiedClaims.length ? { unverified_claims: unverifiedClaims.map(c => ({ ...c, sources: ['member atoms'], detected_at: synthesizedAt.slice(0, 10) })) } : {}),
       });
       // Each managed publication is bound to the revision the narrative was
       // synthesized from, then to the previous publication's result.
       let conceptRevision = existingSnapshot?.revision ?? null;
+      // Unmanaged: the narrative the page held when synthesis started; a
+      // different narrative under the page lock defers the concept (D-N3).
+      let baseline = existing?.compiled_truth ?? '';
       const publish = async (pageVisibility: Visibility): Promise<void> => {
         if (maintenance) {
           conceptRevision = await publishManagedConcept(engine, maintenance, conceptSlug, synthesized(pageVisibility), narrative,
             conceptRevision, opts.brainDir);
           return;
         }
-        await importFromContent(engine, conceptSlug, serializeMarkdown(synthesized(pageVisibility), narrative, '',
-          { type: 'concept', title: title.replace(/-/g, ' '), tags: [] }), {
-          noEmbed: !isAvailable('embedding'),
-          // #4416: target the cycle's resolved source, not the 'default' literal.
-          sourceId: opts.sourceId,
-        });
+        // #4416: target the cycle's resolved source, not the 'default' literal.
+        baseline = await publishClassicConcept(engine, conceptSlug, opts.sourceId ?? 'default', synthesized(pageVisibility), narrative,
+          baseline, { writeThrough: conceptFiles !== null, importPage: (markdown) => importFromContent(engine, conceptSlug, markdown, {
+            noEmbed: !isAvailable('embedding'), sourceId: opts.sourceId,
+          }) });
       };
-      // A managed publication that lost a revision race or would lose canonical
+      // A publication that lost a revision race or would lose canonical
       // material is recorded and skipped; any other error stops the phase.
       const publishOrRecord = async (pageVisibility: Visibility): Promise<boolean> => {
         try { await publish(pageVisibility); return true; } catch (err) {
           const code = (err as { code?: unknown }).code;
-          if (!maintenance || typeof code !== 'string') throw err;
+          if (typeof code !== 'string') throw err;
           const reason = `${code}: ${(err as Error).message}`;
           if (CONCEPT_DEFERRAL_CODES.has(code)) publicationDeferred.push({ concept: group.conceptSlug, reason });
           else if (CONCEPT_HOLD_CODES.has(code)) publicationHeld.push({ concept: group.conceptSlug, reason });
@@ -562,6 +592,7 @@ export async function runPhaseSynthesizeConcepts(
       (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : '') +
       (skippedHumanOwned.length > 0 ? ` (${skippedHumanOwned.length} human-owned page(s) left untouched)` : '') +
       (skippedUnchanged.length > 0 ? ` (${skippedUnchanged.length} unchanged)` : '') +
+      (rehashed.length > 0 ? ` (${rehashed.length} rehashed without synthesis)` : '') +
       (keptExistingNarrative.length > 0 ? ` (${keptExistingNarrative.length} existing narrative(s) kept)` : '') +
       (publicationDeferred.length > 0 ? ` (${publicationDeferred.length} publication(s) deferred: page changed, retried next run)` : '') +
       (publicationHeld.length > 0 ? ` (${publicationHeld.length} publication(s) held: existing page needs import/repair)` : ''),
@@ -575,12 +606,14 @@ export async function runPhaseSynthesizeConcepts(
       link_warnings: linkWarnings,
       skipped_human_owned: skippedHumanOwned,
       skipped_unchanged: skippedUnchanged,
+      rehashed,
       kept_existing_narrative: keptExistingNarrative,
       publication_deferred: publicationDeferred,
       publication_held: publicationHeld,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
+      pricing_fallback_models: [...pricingFallbackModels],
       dry_run: opts.dryRun ?? false,
     },
   };
@@ -618,4 +651,23 @@ function deterministicNarrative(group: AtomGroup): string {
       .map((t) => `  - ${t}`)
       .join('\n')}`
   );
+}
+
+/**
+ * Ground the narrative's quoted spans against the atom titles and bodies the
+ * prompt carried (quotes only: a concept narrative may count or compare).
+ * A claim unit with an unverified quote is removed from the narrative and
+ * kept in frontmatter `unverified_claims`. Kill switch: dream.quote_verify (default on).
+ */
+type UnverifiedClaim = { text: string; reason: string; detail: string };
+async function groundConceptNarrative(engine: BrainEngine, narrative: string, group: { atomTitles: string[]; atomBodies: string[] }):
+  Promise<{ narrative: string; unverified: UnverifiedClaim[] }> {
+  const { ALL_CLAIMS_QUARANTINED_BODY, dreamQuoteVerifyEnabled, groundSource, verifyBody } = await import('./synthesize-verify.ts');
+  if (!await dreamQuoteVerifyEnabled(engine)) return { narrative, unverified: [] };
+  const sources = [
+    groundSource('concept-atom-titles', group.atomTitles.slice(0, 10).join('\n'), { tolerant: true }),
+    ...group.atomBodies.slice(0, 5).map((b, i) => groundSource(`concept-atom-${i + 1}`, b.slice(0, 500), { tolerant: true })),
+  ];
+  const v = verifyBody(narrative, sources, { checks: 'quotes' });
+  return { narrative: v.body.trim() || ALL_CLAIMS_QUARANTINED_BODY, unverified: v.quarantined };
 }

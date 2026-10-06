@@ -25,6 +25,10 @@ export const WORKER_EXIT_RSS_WATCHDOG = 12;
 
 export const WORKER_EXIT_CONFIGURATION = 16;
 
+/** #5062: the shutdown drain timed out; claims still running were handed back
+ *  to the queue. The worker stopped, but it did not drain. */
+export const WORKER_EXIT_DRAIN_FORCED = 17;
+
 // --- `gbrain jobs run-child` exit codes (issue #5 process isolation) -------
 //
 // The parent (child-job-runner.ts) classifies a child by RESULT-FILE PRESENCE

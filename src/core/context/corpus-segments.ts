@@ -487,6 +487,75 @@ export async function decideCorpusMode(
 }
 
 /**
+ * E-N1: a corpus `.txt` with no `.ingested` sidecar holds turns nothing has
+ * extracted yet (an HTTP serve with no sweep, a refused harvest). Retention
+ * removes it only at this multiple of the configured retention, and doctor
+ * `memory_writeback` warns while it waits.
+ */
+export const CORPUS_UNINGESTED_RETENTION_FACTOR = 3;
+/** Completion sidecar suffix (sweep.ts CORPUS_INGESTED_SUFFIX; duplicated to stay engine-free). */
+const INGESTED_SUFFIX = '.ingested';
+
+export interface CorpusBacklog {
+  /** `.txt` files with no `.ingested` sidecar. */
+  pending: number;
+  /** mtime of the oldest pending file, or null with none pending. */
+  oldestPendingMtimeMs: number | null;
+  /** Pending files older than retention: kept only by the un-ingested rule, deleted at the ceiling. */
+  pastRetention: number;
+}
+
+/** Count corpus turn files still waiting for extraction. Missing dir = empty backlog; never throws. */
+export function corpusBacklog(dir: string, retentionMs: number, now = Date.now()): CorpusBacklog {
+  const backlog: CorpusBacklog = { pending: 0, oldestPendingMtimeMs: null, pastRetention: 0 };
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return backlog;
+  }
+  const present = new Set(names);
+  for (const name of names) {
+    if (!name.endsWith('.txt') || present.has(name + INGESTED_SUFFIX)) continue;
+    let mtimeMs: number;
+    try {
+      mtimeMs = statSync(join(dir, name)).mtimeMs;
+    } catch {
+      continue;
+    }
+    backlog.pending++;
+    if (backlog.oldestPendingMtimeMs === null || mtimeMs < backlog.oldestPendingMtimeMs) backlog.oldestPendingMtimeMs = mtimeMs;
+    if (mtimeMs < now - retentionMs) backlog.pastRetention++;
+  }
+  return backlog;
+}
+
+/**
+ * Retention GC for corpus turn files: an extracted file (`.ingested`
+ * sidecar present) goes at `retentionMs`; one nothing has extracted stays
+ * until `CORPUS_UNINGESTED_RETENTION_FACTOR` x `retentionMs` (E-N1).
+ * Best-effort per file; never throws.
+ */
+export function gcCorpusTurnFiles(dir: string, retentionMs: number, now = Date.now()): void {
+  try {
+    const names = readdirSync(dir);
+    const present = new Set(names);
+    for (const name of names) {
+      if (!name.endsWith('.txt')) continue;
+      const ageLimit = present.has(name + INGESTED_SUFFIX) ? retentionMs : retentionMs * CORPUS_UNINGESTED_RETENTION_FACTOR;
+      const p = join(dir, name);
+      try {
+        if (statSync(p).mtimeMs < now - ageLimit) rmSync(p, { force: true });
+      } catch {
+        /* per-file best effort */
+      }
+    }
+  } catch {
+    /* GC never breaks the caller */
+  }
+}
+
+/**
  * GC companion for the corpus dir (extends the hook's `.txt`-only GC): remove
  * ledgers past the retention window, ORPHANED sidecars whose base `.txt` is
  * gone (previously they lived forever), and a session's seat sidecar once no

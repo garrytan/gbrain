@@ -40,6 +40,7 @@ import type { OperationContext } from '../core/operations.ts';
 import { configureGatewayIfUninitialized, isAvailable, chat, getChatModel, withBudgetTracker } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason, type NoPricingGuidance } from '../core/budget/budget-tracker.ts';
 import { noPricingSteps } from '../core/budget/no-pricing.ts';
+import { CapFlagError, mergeCapFlag, parseCapFlag, type CapFlag } from '../core/budget/cap-flag.ts';
 import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../core/search/internal-breadth.ts';
@@ -729,6 +730,7 @@ function parseDurationDays(raw: string): number | undefined {
 
 export function parseArgs(args: string[]): ParsedArgs {
   const out: ParsedArgs = {};
+  let cap: CapFlag | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--help' || a === '-h') { out.help = true; continue; }
@@ -776,15 +778,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       continue;
     }
     if (a === '--max-usd' || a === '--max-cost-usd') {
-      const raw = args[++i] ?? '';
-      // v0.42.42.0 (#2139): off/unlimited/none → run uncapped (Infinity sentinel;
-      // mapped to "no BudgetTracker ceiling" in runEnrichCore). Spend still ledgered.
-      if (['off', 'unlimited', 'none'].includes(raw.trim().toLowerCase())) {
-        out.maxCostUsd = Infinity;
-      } else {
-        const n = parseFloat(raw);
-        if (Number.isFinite(n) && n > 0) out.maxCostUsd = n;
+      // D19 shared parser. v0.42.42.0 (#2139): off/unlimited/none → run
+      // uncapped (Infinity sentinel; mapped to "no BudgetTracker ceiling" in
+      // runEnrichCore). Spend still ledgered. A malformed, 0 or conflicting
+      // value is refused before any paid call instead of silently ignored.
+      try {
+        cap = mergeCapFlag(cap, parseCapFlag(a, args[++i]));
+      } catch (e) {
+        if (!(e instanceof CapFlagError)) throw e;
+        out.error = e.message;
+        return out;
       }
+      out.maxCostUsd = cap.usd ?? Infinity;
       continue;
     }
     if (a === '--min-context') {

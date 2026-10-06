@@ -20,8 +20,8 @@ import { assertSafeE2eDatabaseUrl } from '../../test/helpers/db-guard.ts';
 import postgres from '#postgres';
 import { prepareTopology } from './history-fixture.ts';
 import { installLockOrderTrace, lockOrderReport } from './lock-order.ts';
-import { executeOp, type OpDescriptor, type OpObservation, type World } from './ops.ts';
-import { KNOWN_DEFERRALS, ReferenceModel, retryingRead, SAFETY_CLASSES, type Violation } from './model.ts';
+import { executeOp, retryingRead, SessionDrops, type OpDescriptor, type OpObservation, type World } from './ops.ts';
+import { KNOWN_DEFERRALS, ReferenceModel, SAFETY_CLASSES, type Violation } from './model.ts';
 import type { Schedule } from './generator.ts';
 import { pageBody } from './generator.ts';
 import { descriptor } from './ops.ts';
@@ -43,7 +43,7 @@ export async function drain(engine: BrainEngine, world: World, timeoutMs = 60_00
   startPersistenceConsumer(engine, world.config).wake();
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const [row] = await retryingRead(() => engine.executeRaw<{ n: number }>(`SELECT
+    const [row] = await retryingRead(world, () => engine.executeRaw<{ n: number }>(`SELECT
       (SELECT count(*) FROM persistence_requests WHERE state IN ('queued','running','recovering'))
       + (SELECT count(*) FROM persistence_effects WHERE (state IN ('queued','running') AND next_attempt_at <= now() + interval '30 seconds') OR recovery IS NOT NULL) AS n`));
     if (Number(row.n) === 0) return true;
@@ -216,7 +216,7 @@ async function stubFactsProviders(): Promise<void> {
 
 /** Run the queued facts-absorb job through its registered handler, as a worker does after claiming it. */
 async function runAbsorbJob(engine: BrainEngine, attempts: number): Promise<unknown> {
-  const [job] = await retryingRead(() => engine.executeRaw<{ id: number; data: Record<string, unknown> }>("SELECT id,data FROM minion_jobs WHERE name='facts-absorb' ORDER BY id LIMIT 1"));
+  const [job] = await retryingRead({}, () => engine.executeRaw<{ id: number; data: Record<string, unknown> }>("SELECT id,data FROM minion_jobs WHERE name='facts-absorb' ORDER BY id LIMIT 1"));
   if (!job) throw new Error('facts_absorb_kill: no facts-absorb job was queued');
   const { MinionWorker } = await import('../../src/core/minions/worker.ts');
   const { registerBuiltinHandlers } = await import('../../src/commands/jobs.ts');
@@ -250,7 +250,7 @@ async function processFault(config: RobotConfig, world: World, model: ReferenceM
     await runSteps(world, model, config.schedule);
     const deadline = Date.now() + 30_000;
     let stuck = await gitEffects();
-    while (Date.now() < deadline && stuck.some(e => e.state === 'running' || !e.error_code)) { await Bun.sleep(250); stuck = await gitEffects(); }
+    while (Date.now() < deadline && stuck.some(e => e.state === 'running' || !typedGitErrors.has(e.error_code ?? ''))) { await Bun.sleep(250); stuck = await gitEffects(); }
     for (const e of stuck) if (!e.error_code || !typedGitErrors.has(e.error_code)) {
       model.violate({ class: 'wedge', detail: `stale index.lock: git effect ${e.id} is ${e.state} without a typed error (${e.error_code})` });
     }
@@ -279,7 +279,7 @@ async function processFault(config: RobotConfig, world: World, model: ReferenceM
       args: { slug: ABSORB_SLUG, content: `---\ntype: meeting\ntitle: Robot review\n---\n\n${body}\n` } });
     if (put.status !== 'committed') throw new Error(`facts_absorb_kill: the meeting page did not commit (${put.code})`);
     const deadline = Date.now() + 30_000;
-    while (!(await retryingRead(() => engine.executeRaw("SELECT 1 FROM minion_jobs WHERE name='facts-absorb'"))).length) {
+    while (!(await retryingRead(world, () => engine.executeRaw("SELECT 1 FROM minion_jobs WHERE name='facts-absorb'"))).length) {
       if (Date.now() > deadline) throw new Error('facts_absorb_kill: the facts-backstop effect never queued a facts-absorb job');
       await Bun.sleep(100);
     }
@@ -287,14 +287,15 @@ async function processFault(config: RobotConfig, world: World, model: ReferenceM
     await checkAbsorbedOnce(model, 'facts_absorb_kill (no crash reached)');
   } else if (config.process === 'pooler_disconnect') {
     // Every 400 ms the server drops every other session of this database, as a pooler or failover does.
+    // Each round is recorded, so harness reads retry only the closes this fault caused.
     const admin = postgres(config.directUrl!, { max: 1, onnotice() {} });
+    const drops = world.sessionDrops = new SessionDrops();
     let stop = false; let dropped = 0;
     const dropping = (async () => {
       while (!stop) {
         await Bun.sleep(400);
-        const rows = await admin.unsafe(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-          WHERE datname=current_database() AND pid<>pg_backend_pid()`).catch(() => []);
-        dropped += rows.length;
+        dropped += await drops.inject(() => admin.unsafe(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+          WHERE datname=current_database() AND pid<>pg_backend_pid()`).then(rows => rows.length));
       }
     })();
     try { await runSteps(world, model, config.schedule); }

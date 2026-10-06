@@ -23,6 +23,7 @@ writes_to:
   - people/
   - companies/
 upstream: resolve-before-asking@fc834ee
+when_to_use: "Use when the user asks: \"resolve before asking\", \"before asking the user\", \"unidentified contact\", \"unknown relationship\", \"should I ask who\"."
 ---
 
 # Resolve Before Asking — Exhaust the Brain Before Bothering the User

@@ -26,6 +26,20 @@ saved facts do not expire just because they describe a temporary situation.
 `forget` withdraws a fact from active recall, not from all source material,
 history, or private backups. See [ambient writeback](ambient-writeback.md).
 
+## What a write costs
+
+Saving text or a fact never waits on a generative model: a write is
+acknowledged and keyword-queryable without one. Embeddings are the configured
+feature (`remember` embeds before saving to detect near-duplicates; pages embed
+just after the save). With default settings each saved page of an
+extraction-eligible type (note, meeting, email and similar) also gets one facts
+extraction call after it is saved; it runs as a queued job, is attributed to the
+write that caused it, and stops with `gbrain config set facts.extraction_enabled
+false`. Image OCR, when turned on (`embedding_image_ocr`), runs before the save.
+Set `GBRAIN_AI_CALL_LOG=<path>` to record every model call a process makes (kind,
+model, tokens, duration, and the write request, job or cycle phase it served; no
+prompt or response text).
+
 ## Page writes and the graph are separate outcomes
 
 | Write path | Graph behavior |

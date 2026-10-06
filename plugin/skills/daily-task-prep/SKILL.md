@@ -16,6 +16,7 @@ tools:
   - list_pages
   - get_timeline
 mutating: false
+when_to_use: "Use when the user asks: \"morning prep\", \"prepare for today\", \"what's on my plate\", \"day prep\"."
 ---
 
 # Daily Task Prep

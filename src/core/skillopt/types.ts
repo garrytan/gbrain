@@ -205,6 +205,11 @@ export interface SkillOptOpts {
    *  misses then warn-once instead of hard-failing, so unpriced model ids
    *  (openrouter:*, litellm:*) can run. */
   maxCostUsd: number;
+  /** Where a positive `maxCostUsd` came from (#5563). `user` (a cap flag; the
+   *  value when unset, so legacy callers and queued jobs keep failing closed)
+   *  refuses an unpriced model with the no_pricing guidance; `default` (no
+   *  flag, the $5 default) warns and runs it while metering priced calls. */
+  maxCostSource?: 'user' | 'default';
   maxRuntimeMin: number;
   force: boolean;
   resumeRunId?: string;

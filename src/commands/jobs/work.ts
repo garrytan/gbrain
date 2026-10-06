@@ -4,7 +4,8 @@ import { applyNiceness, formatNice } from '../../core/minions/niceness.ts';
 import { resolveChildCliInvocation } from '../../core/minions/job-isolation.ts';
 import { checkWorkerStartup, reportWorkerConfiguration, reportWorkerReady, reportWorkerStarting } from '../jobs-readiness.ts';
 import { LocalConfigurationError, isLocalConfigurationError } from '../../core/minions/configuration-error.ts';
-import { WORKER_EXIT_CONFIGURATION, WORKER_EXIT_RSS_WATCHDOG } from '../../core/minions/worker-exit-codes.ts';
+import { WORKER_EXIT_CONFIGURATION, WORKER_EXIT_DRAIN_FORCED, WORKER_EXIT_RSS_WATCHDOG } from '../../core/minions/worker-exit-codes.ts';
+import { registerSignalOwner } from '../../core/process-cleanup.ts';
 import { MinionWorker, type UnhealthyReason } from '../../core/minions/worker.ts';
 import type { MinionQueue } from '../../core/minions/queue.ts';
 import type { BrainEngine } from '../../core/engine.ts';
@@ -243,12 +244,17 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
   });
   process.on('exit', () => unregisterWorker());
 
+  // #5062: own SIGTERM/SIGHUP/broken-pipe so the generic CLI cleanup pass
+  // cannot exit(143) ahead of the drain and orphan in-flight jobs.
+  const releaseSignalOwner = registerSignalOwner('jobs-work', () => worker.requestShutdown());
+
   try {
     reportWorkerStarting('worker_startup');
     worker.once('ready', () => reportWorkerReady(childIdentity));
     await worker.start();
   } finally {
     unregisterWorker();
+    releaseSignalOwner();
     if (worker.configurationError) {
       const releases = worker.configurationReleaseResults;
       const unconfirmed = releases.filter(result => result.outcome === 'unconfirmed').length;
@@ -283,6 +289,12 @@ export async function runJobsWork({ args, engine, queue }: JobsCommandContext): 
     // alive past natural exit (issue #1678, Codex #7).
     if (worker.rssWatchdogTriggered) {
       process.exit(WORKER_EXIT_RSS_WATCHDOG);
+    }
+    // #5062: claims were handed back while their handlers still ran; exit
+    // now (a running handler would otherwise keep the process alive) with a
+    // code that says the drain did not complete.
+    if (worker.drainForced) {
+      process.exit(WORKER_EXIT_DRAIN_FORCED);
     }
   }
 }

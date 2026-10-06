@@ -70,9 +70,10 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
       return (await import('../transcripts.ts')).listRecentTranscripts(engine, { days: typeof p.days === 'number' ? p.days : undefined,
         summary: typeof p.summary === 'boolean' ? p.summary : undefined, limit: typeof p.limit === 'number' ? p.limit : undefined });
     }
+    const localCliLocalOnly = !verified.remote && verified.principal.kind === 'local_cli' && request.operation === 'takes_remove';
     const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
     const result = await dispatchToolCall(engine, request.operation, params, {
-      config, remote: verified.remote, transport: verified.remote ? 'stdio' : undefined, sourceId, auth,
+      config, remote: verified.remote, transport: verified.remote || localSkillAdministration || localCliLocalOnly ? 'stdio' : undefined, sourceId, auth,
       ...(writeWaitMs !== undefined ? { writeWaitMs } : {}),
       ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),
     });

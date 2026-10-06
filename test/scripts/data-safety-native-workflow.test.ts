@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { safeLoad } from 'js-yaml';
+import { load } from 'js-yaml';
 
 type Step = {
   name?: string;
@@ -13,7 +13,7 @@ type Step = {
   env?: Record<string, string>;
   'continue-on-error'?: boolean;
 };
-const workflow = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/native-locks.yml'), 'utf8')) as {
+const workflow = load(readFileSync(join(import.meta.dir, '../../.github/workflows/native-locks.yml'), 'utf8')) as {
   jobs: {
     native: { steps: Step[]; strategy: { matrix: { target: string[]; bun: string[] } } };
     'windows-backup-console': { steps: Step[]; 'runs-on': string; 'timeout-minutes': number;
@@ -155,7 +155,7 @@ describe('data-safety native CI coverage', () => {
   });
 
   for (const exitCode of [0, 1]) test(`read diagnostics run with PostgreSQL and retain test failure (${exitCode})`, () => {
-    const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
+    const persistence = load(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
       jobs: { 'deployment-matrix': { steps: Step[] } };
     };
     const step = persistence.jobs['deployment-matrix'].steps.find(entry => entry.name === 'Require PostgreSQL lifecycle, projection and recovery contracts');
@@ -173,7 +173,7 @@ describe('data-safety native CI coverage', () => {
   });
 
   for (const exitCode of [0, 1]) test(`read latency is advisory without swallowing invalid workloads (${exitCode})`, () => {
-    const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
+    const persistence = load(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
       jobs: { 'read-performance': { steps: Step[]; 'continue-on-error'?: boolean } };
     };
     const job = persistence.jobs['read-performance'];
@@ -193,7 +193,7 @@ describe('data-safety native CI coverage', () => {
   });
 
   test('publication and sync safety suites run in separate PostgreSQL-bearing CI processes', () => {
-    const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
+    const persistence = load(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
       jobs: { 'deployment-matrix': { steps: Step[] } };
     };
     const step = persistence.jobs['deployment-matrix'].steps.find(entry => entry.name === 'Require data-safety on PostgreSQL');
@@ -212,7 +212,7 @@ describe('data-safety native CI coverage', () => {
   });
 
   test('pull requests and merge-queue runs run a 2,500-write persistence soak while master keeps the full 10,000-write gate', () => {
-    const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
+    const persistence = load(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
       jobs: { invariants: { steps: Step[] } };
     };
     const step = persistence.jobs.invariants.steps.find(entry => entry.run?.includes('scripts/persistence/validate.ts'));
@@ -232,7 +232,7 @@ describe('data-safety native CI coverage', () => {
   });
 
   test('the crash robot runs beside the soak: 150 s on pull requests, 600 s elsewhere, Postgres through PgBouncer', () => {
-    const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
+    const persistence = load(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
       jobs: { 'crash-robot': { steps: Step[]; services: Record<string, { env?: Record<string, string> }> } };
     };
     const job = persistence.jobs['crash-robot'];

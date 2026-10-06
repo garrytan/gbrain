@@ -72,7 +72,8 @@ export const SLOT_SPECS: Readonly<Record<DecideSlot, SlotSpec>> = {
     failDirection: 'keep the mechanical verification result', wired: true,
   },
   conflict: {
-    slot: 'conflict', lane: 'background', questionKind: 'choice', harmful: false, thresholded: true, callSites: ['sweep'],
+    slot: 'conflict', lane: 'background', questionKind: 'choice', harmful: false, thresholded: true,
+    callSites: ['sweep', 'review_withdraw', 'review_duplicate_page', 'review_duplicate_entity'],
     egressClasses: ['facts'], shadowSample: 1, whatIfReproducible: false, questionVersion: 1,
     failDirection: 'no proposal; the fact stays as written', wired: true,
   },

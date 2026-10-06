@@ -34,6 +34,7 @@ import { probeModel } from '../../src/commands/models.ts';
 import { defaultDriftJudge } from '../../src/core/cycle/drift.ts';
 import { makeJudgeClient } from '../../src/core/cycle/synthesize.ts';
 import { runJudge } from '../../src/eval/shared/judge-runner.ts';
+import { defaultEdgeJudge } from '../../src/core/cycle/edge-contradictions.ts';
 
 const PRIMARY = 'claude-cli:claude-sonnet-4-6';
 const FALLBACK = 'openai:gpt-5.6-luna';
@@ -276,6 +277,10 @@ describe('toolLoop() and judge flows with chat_fallback_chain (#5490)', () => {
       run: () => runJudge({ client: chat, model: PRIMARY, prompt: 'synthetic', maxTokens: 16, temperature: 0, parse: () => 'yes' as never, retries: 0 }),
     },
     {
+      name: 'edge_contradictions judge (apply mode is certified per model)',
+      run: () => defaultEdgeJudge({ subject: { slug: 'people/alice-example', title: 'Alice Example' }, relationships: [], modelHint: PRIMARY }),
+    },
+    {
       name: 'contradiction eval judge',
       run: () => judgeContradiction({
         query: 'synthetic query',
@@ -358,5 +363,120 @@ describe('chain sources and budget refusals (#5490)', () => {
     expect(err).toBeInstanceOf(BudgetExhausted);
     expect(attempts).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('fallback safety audit (fix wave 9 lane B, #6012)', () => {
+  const OPENAI_PRIMARY = 'openai:gpt-5.6-luna';
+  const DEEPSEEK_FALLBACK = 'deepseek:deepseek-v4-flash';
+
+  /** An AI SDK APICallError-shaped 400 whose body is the provider's content-policy refusal. */
+  const contentPolicy400 = (body: unknown) => Object.assign(new Error('Bad Request'), {
+    statusCode: 400,
+    responseBody: JSON.stringify(body),
+  });
+
+  test.each([
+    {
+      name: 'OpenAI invalid_prompt (usage-policy flag)',
+      body: { error: { message: 'Invalid prompt: your prompt was flagged as potentially violating our usage policy.', type: 'invalid_request_error', param: null, code: 'invalid_prompt' } },
+    },
+    {
+      name: 'Azure OpenAI content_filter',
+      body: { error: { message: "The response was filtered due to the prompt triggering Azure OpenAI's content management policy.", param: 'prompt', code: 'content_filter', status: 400, innererror: { code: 'ResponsibleAIPolicyViolation' } } },
+    },
+    {
+      name: 'DeepSeek Content Exists Risk',
+      body: { error: { message: 'Content Exists Risk', type: 'invalid_request_error', param: null, code: 'invalid_request_error' } },
+    },
+  ])('with chat_fallback_on_refusal false, a $name 400 is not sent to the next model', async ({ body }) => {
+    configureGateway({ chat_model: OPENAI_PRIMARY, chat_fallback_chain: [DEEPSEEK_FALLBACK], chat_fallback_on_refusal: false, env: ENV });
+    __setGenerateTextTransportForTests((async (args: any) => {
+      attempts.push(args.model.modelId);
+      throw contentPolicy400(body);
+    }) as any);
+
+    const err = await chat({ model: OPENAI_PRIMARY, messages: [{ role: 'user', content: 'hello' }] }).catch(e => e);
+
+    expect(attempts).toEqual(['gpt-5.6-luna']);
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  test('an ordinary 400 (context length) still falls back', async () => {
+    configureGateway({ chat_model: OPENAI_PRIMARY, chat_fallback_chain: [DEEPSEEK_FALLBACK], chat_fallback_on_refusal: false, env: ENV });
+    __setGenerateTextTransportForTests((async (args: any) => {
+      attempts.push(args.model.modelId);
+      if (args.model.modelId === 'gpt-5.6-luna') {
+        throw contentPolicy400({ error: { message: 'This model maximum context length is 128000 tokens.', type: 'invalid_request_error', code: 'context_length_exceeded' } });
+      }
+      return { content: [{ type: 'text', text: 'ok' }], finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1 } };
+    }) as any);
+
+    const result = await chat({ model: OPENAI_PRIMARY, messages: [{ role: 'user', content: 'hello' }] });
+
+    expect(attempts).toEqual(['gpt-5.6-luna', 'deepseek-v4-flash']);
+    expect(result.model).toBe(DEEPSEEK_FALLBACK);
+  });
+
+  test("a cancel that lands while the primary refuses stops the walk and returns the refusal", async () => {
+    configureGateway({ chat_model: PRIMARY, chat_fallback_chain: [FALLBACK], env: ENV });
+    const controller = new AbortController();
+    __setGenerateTextTransportForTests((async (args: any) => {
+      attempts.push(args.model.modelId);
+      controller.abort();
+      return {
+        content: [{ type: 'text', text: '' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        providerMetadata: { anthropic: { stopReason: 'refusal' } },
+      };
+    }) as any);
+
+    const result = await ask({ abortSignal: controller.signal });
+
+    expect(attempts).toEqual(['claude-sonnet-4-6']);
+    expect(result.model).toBe(PRIMARY);
+    expect(result.stopReason).toBe('refusal');
+  });
+
+  test('an unpriced chain entry under an explicit cap is refused with no_pricing guidance, never called', async () => {
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      chat_fallback_chain: ['deepseek:deepseek-unpriced-example'],
+      env: { ...ENV, ANTHROPIC_API_KEY: 'fake-anthropic' },
+    });
+    installTransport({ 'claude-sonnet-4-6': 'outage' });
+    const tracker = new BudgetTracker({ label: 'chat-fallback-unpriced', maxCostUsd: 5, auditPath: '/dev/null' });
+
+    const err = await withBudgetTracker(tracker, () => chat({
+      model: 'anthropic:claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'hello' }],
+      maxTokens: 256,
+    })).catch(e => e);
+
+    expect(attempts).toEqual(['claude-sonnet-4-6']);
+    expect(err).toBeInstanceOf(BudgetExhausted);
+    expect(err.reason).toBe('no_pricing');
+    expect(err.modelId).toBe('deepseek:deepseek-unpriced-example');
+    expect(String(err.message)).toContain('gbrain pricing set');
+  });
+
+  test('an unpriced chain entry under a default cap warns and runs', async () => {
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      chat_fallback_chain: ['deepseek:deepseek-unpriced-example'],
+      env: { ...ENV, ANTHROPIC_API_KEY: 'fake-anthropic' },
+    });
+    installTransport({ 'claude-sonnet-4-6': 'outage' });
+    const tracker = new BudgetTracker({ label: 'chat-fallback-default-cap', maxCostUsd: 5, capSource: 'default', auditPath: '/dev/null' });
+
+    const result = await withBudgetTracker(tracker, () => chat({
+      model: 'anthropic:claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'hello' }],
+      maxTokens: 256,
+    }));
+
+    expect(attempts).toEqual(['claude-sonnet-4-6', 'deepseek-unpriced-example']);
+    expect(result.model).toBe('deepseek:deepseek-unpriced-example');
   });
 });

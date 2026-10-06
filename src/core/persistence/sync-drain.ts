@@ -11,6 +11,7 @@
  * ends in one outcome (`synced`, `resumable`, `blocked`) carried on
  * `SyncResult.drain`; the CLI turns it into the exit code and `next`.
  */
+import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -50,7 +51,9 @@ export interface DrainReport {
   /** DX-A5: whether pages were published in bulk groups, and why not when they were not. */
   bulk?: { enabled: boolean; reason: string | null; groups: number; grouped_pages: number; largest_group: number;
     /** #5984 admit-ahead: groups admitted while the previous group was still publishing. */
-    admitted_ahead: number };
+    admitted_ahead: number;
+    /** #5984 lanes: groups published at once, as asked and as in effect at the end, and why fewer. */
+    lanes: { configured: number; effective: number; reason: string | null; step_down: string | null; overlapped_groups: number; fallbacks: number } };
 }
 
 const TERMINAL_STATUSES = new Set(['synced', 'first_sync', 'up_to_date', 'dry_run']);
@@ -147,7 +150,7 @@ export interface DrainInput {
   /** Throttled progress lines on stderr (CLI). */
   announce?: boolean;
   /** Publication mode for the report and the start line. */
-  bulk?: { enabled: boolean; reason: string | null };
+  bulk?: { enabled: boolean; reason: string | null; lanes?: number; lanesReason?: string | null };
   /** Test seams: the no-progress window, the pause after a pending write and the transient backoff base. */
   stallMs?: number;
   pauseMs?: number;
@@ -161,6 +164,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
   const signal = coop.signal && input.signal ? AbortSignal.any([input.signal, coop.signal]) : coop.signal ?? input.signal;
   let passes = 0, attempt = 0, readFailures = 0, refreshWaitedMs = 0, written = 0, waived = 0, index = 0, total: number | null = null;
   let announcedStart = false, lastLine = 0, groups = 0, groupedPages = 0, largestGroup = 0, admittedAhead = 0;
+  let lanes: { effective: number; stepDown: string | null; overlapped: number; fallbacks: number } | null = null;
   let stall: { key: string; since: number; passes: number } | null = null;
   const remaining = () => total === null ? null : Math.max(0, total - index);
   const onProgress: NonNullable<SyncOpts['onProgress']> = event => {
@@ -173,7 +177,8 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
         + (input.bulk?.enabled ? 'publishing in bulk groups (each page keeps its own request).' : `one write request per page${input.bulk?.reason ? ` (bulk off: ${input.bulk.reason})` : ''}.`));
     }
     if (event.phase === 'managed_sync.group' && typeof event.group === 'number') { groups++; groupedPages += event.group; largestGroup = Math.max(largestGroup, event.group); }
-    if (event.phase === 'managed_sync.group_ahead') admittedAhead++;
+    if (event.phase === 'managed_sync.group_ahead') admittedAhead += typeof event.group === 'number' ? 1 : 0;
+    if (event.phase === 'managed_sync.lanes' && event.lanes) lanes = { effective: event.lanes.effective, stepDown: event.lanes.stepDown, overlapped: event.lanes.overlapped, fallbacks: event.lanes.fallbacks };
     if (event.phase !== 'managed_sync.page_committed') return;
     if (event.waived) waived++; else written++;
     noteForwardProgress();
@@ -190,7 +195,8 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     if (stopReason === 'deadline' && continues(result)) result = { ...result, reason: 'timeout' };
     return { ...result, drain: { outcome, ...(stopReason ? { stop_reason: stopReason } : {}), passes, processed: written + waived, written, waived,
       remaining: left, ...drainEstimate(left, written + waived, Date.now() - startedAt),
-      ...(input.bulk ? { bulk: { ...input.bulk, groups, grouped_pages: groupedPages, largest_group: largestGroup, admitted_ahead: admittedAhead } } : {}), ...extra } };
+      ...(input.bulk ? { bulk: { enabled: input.bulk.enabled, reason: input.bulk.reason, groups, grouped_pages: groupedPages, largest_group: largestGroup, admitted_ahead: admittedAhead,
+        lanes: { configured: input.bulk.lanes ?? 1, effective: lanes?.effective ?? input.bulk.lanes ?? 1, reason: input.bulk.lanesReason ?? null, step_down: lanes?.stepDown ?? null, overlapped_groups: lanes?.overlapped ?? 0, fallbacks: lanes?.fallbacks ?? 0 } } } : {}), ...extra } };
   };
   try {
     for (;;) {
@@ -286,9 +292,21 @@ export async function drainManagedSync(engine: BrainEngine, opts: SyncOpts, anno
   const { performManagedSync } = await import('./sync-run.ts');
   const { resolveBulkSettings } = await import('./sync-group.ts');
   const drainStartedAt = opts.drainStartedAt ?? Date.now();
-  const bulk = await resolveBulkSettings(engine, opts.noBulk);
-  return runDrain({ signal: opts.signal, onProgress: opts.onProgress, probe: engineStallProbe(engine), announce, bulk: { enabled: bulk.enabled, reason: bulk.reason },
-    pass: (signal, onProgress) => performManagedSync(engine, { ...opts, signal, onProgress, drainStartedAt, ...(bulk.enabled ? { bulk } : {}) }) });
+  const bulk = await resolveBulkSettings(engine, opts.noBulk, opts.lanes);
+  // #5984 lanes: one lane run per drain; its groups carry the id and this process claims them out of FIFO order.
+  const laneRun = bulk.enabled && (bulk.lanes ?? 1) > 1 ? randomUUID() : undefined;
+  const { closeLaneRun } = await import('./sync-lanes.ts');
+  try {
+    return await runDrain({ signal: opts.signal, onProgress: opts.onProgress, probe: engineStallProbe(engine), announce,
+      bulk: { enabled: bulk.enabled, reason: bulk.reason, lanes: bulk.lanes ?? 1, lanesReason: bulk.lanesReason ?? null },
+      pass: (signal, onProgress) => performManagedSync(engine, { ...opts, signal, onProgress, drainStartedAt, ...(bulk.enabled ? { bulk: { ...bulk, laneRun } } : {}) }) });
+  } finally {
+    if (laneRun) {
+      await closeLaneRun(laneRun);
+      const { cancelOrphanedLaneRows } = await import('./sync-window.ts');
+      await cancelOrphanedLaneRows(engine, laneRun).catch(() => undefined);
+    }
+  }
 }
 
 export interface DrainNext {

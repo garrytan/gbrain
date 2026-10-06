@@ -21,6 +21,7 @@ writes_to:
   - people/
   - companies/
   - concepts/
+when_to_use: "Use when the user asks: \"every substantive inbound message after automatic-capture opt-in\"."
 ---
 
 # Signal Detector — Ambient Brain Capture

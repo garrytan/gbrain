@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -31,7 +31,7 @@ let hostId: string;
 let home: string;
 let closePostgres: (() => Promise<void>) | undefined;
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-staging-tests-'));
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-staging-tests-')));
   await withEnv({ GBRAIN_HOME: home }, async () => {
     hostId = localHostId();
     const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); engines.push(engine);
@@ -40,7 +40,7 @@ beforeAll(async () => {
     }
     for (const engine of engines) {
       const cases: Fixture[] = [];
-      for (let i = 0; i < 9; i++) {
+      for (let i = 0; i < 12; i++) {
         const sourceId = `staging-case-${i}`;
         const root = join(home, `${engine.kind}-${i}`); mkdirSync(root);
         const path = join(root, 'page.md'); writeFileSync(path, 'original');
@@ -274,6 +274,78 @@ test('withdrawal mirror staging preserves unexpected bytes and only finishes for
       expect(readFileSync(f.path, 'utf8')).toBe(after); expect(temporaryFiles(f)).toEqual([]); expect(await bytes(f)).toBe(0);
       expect((await f.engine.readPageSnapshot('page', { sourceId: f.sourceId }))!.revision).toBe(snapshot.revision);
       expect((await getWriteRequestById(f.engine, row.id))!.state).toBe('committed');
+    } finally { await lock!.release(); }
+  }
+}));
+
+test('journaled long target name commits file and page and releases recovery accounting (#5861)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const cases of fixtures) {
+    const f = cases[9];
+    f.path = join(f.root, 'm'.repeat(212) + '.md');
+    writeFileSync(f.path, 'original');
+    const { row, prepared } = await accepted(f);
+    const done = await publishMutation(f.engine, row, prepared, hostId);
+    expect(done.state).toBe('committed');
+    expect(readFileSync(f.path, 'utf8')).toBe('replacement');
+    expect((await f.engine.readPageSnapshot('page', { sourceId: f.sourceId }))!.page.compiled_truth).toBe('replacement');
+    expect(temporaryFiles(f)).toEqual([]);
+    expect(await bytes(f)).toBe(0);
+    expect((await getWriteRequestById(f.engine, row.id))!.recovery).toBeNull();
+  }
+}));
+
+test('populated legacy deletion journal reserves a short restoration stage before restoring (#5861)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const cases of fixtures) {
+    const f = cases[10];
+    f.path = join(f.root, 'm'.repeat(212) + '.md');
+    writeFileSync(f.path, 'original');
+    const { row } = await accepted(f);
+    const legacy = `${f.path}.tmp.${randomUUID()}`;
+    await prepareRecovery(f.engine, row, { version: 1, path: f.path, root: f.root,
+      before: Buffer.from('original').toString('base64'), beforeHash: sha256('original'), afterHash: null,
+      mode: 0o600, ownerEpoch: String(f.binding.owner_epoch), attempt: row.execution_token!,
+      staging: { restoration: { path: legacy, hash: sha256('original'), bytes: 8 } } }, 8192);
+    unlinkSync(f.path);
+    let durableStage = false;
+    const recovered = await recoverPublication(f.engine, row.id, hostId, false, undefined, false, {
+      fileBoundary: (name, current) => {
+        if (name !== 'before_restore') return;
+        expect(current.recovery!.staging!.restoration!.path).not.toBe(legacy);
+        durableStage = true;
+      },
+    });
+    expect(durableStage).toBe(true); expect(recovered.state).toBe('queued'); expect(recovered.recovery).toBeNull();
+    expect(readFileSync(f.path, 'utf8')).toBe('original'); expect(temporaryFiles(f)).toEqual([]); expect(await bytes(f)).toBe(0);
+    await f.engine.transaction(tx => completeWrite(tx, recovered, 'cancelled', {}));
+  }
+}));
+
+test('populated legacy withdrawal journal reserves a short stage and finishes only forward (#5861)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const cases of fixtures) {
+    const f = cases[11];
+    f.path = join(f.root, 'm'.repeat(212) + '.md'); writeFileSync(f.path, 'original');
+    const { row } = await accepted(f);
+    await f.engine.transaction(tx => withCoordinatedWrite(tx, [f.sourceId], () => tx.putPage('page',
+      { type: 'note', title: 'Withdrawn example', compiled_truth: 'Current sanitized content.', frontmatter: {} }, { sourceId: f.sourceId }), TEST_WRITE_ATTRIBUTION));
+    const snapshot = (await f.engine.readPageSnapshot('page', { sourceId: f.sourceId }))!;
+    await f.engine.transaction(tx => completeWrite(tx, row, 'committed', { revision: snapshot.revision }));
+    const [effect] = await f.engine.executeRaw<PersistenceEffect>(`INSERT INTO persistence_effects
+      (request_id,kind,revision,data,source_id,source_incarnation,worktree_id,state,execution_token)
+      VALUES($1::uuid,'withdrawal-mirror',$2::uuid,'{"source_scan":true}',$3,$4::uuid,$5::uuid,'running',$6::uuid) RETURNING *`,
+    [row.id, snapshot.revision, f.sourceId, f.binding.source_incarnation, f.binding.worktree_id, randomUUID()]);
+    const after = serializePageToMarkdown(snapshot.page, snapshot.tags);
+    const legacy = `${f.path}.tmp.${randomUUID()}`;
+    const record: EffectRecovery = { version: 1, kind: 'withdrawal-mirror', path: f.path, root: f.root,
+      beforeHash: sha256('original'), afterHash: sha256(after), after: Buffer.from(after).toString('base64'), mode: 0o600,
+      ownerEpoch: String(f.binding.owner_epoch), pageId: snapshot.page.id, sourceIncarnation: snapshot.sourceIncarnation,
+      slug: 'page', revision: snapshot.revision, staging: { publication: { path: legacy, hash: sha256(after), bytes: Buffer.byteLength(after) } } };
+    const lock = await acquireWorktree(f.binding); expect(lock).not.toBeNull();
+    try {
+      await reserveEffectRecovery(f.engine, effect, record, 8192, hostId);
+      const [retry] = await f.engine.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1', [effect.id]);
+      await recoverEffectPublication(f.engine, retry, hostId);
+      expect(readFileSync(f.path, 'utf8')).toBe(after); expect(temporaryFiles(f)).toEqual([]); expect(await bytes(f)).toBe(0);
+      expect((await f.engine.readPageSnapshot('page', { sourceId: f.sourceId }))!.revision).toBe(snapshot.revision);
     } finally { await lock!.release(); }
   }
 }));

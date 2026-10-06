@@ -34,6 +34,8 @@ import { resolve } from 'path';
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
+import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
+import { loadConfig } from '../core/config.ts';
 
 interface ReindexOpts {
   /** Cap total pages reindexed. Useful for triage runs on huge brains. */
@@ -89,7 +91,10 @@ USAGE
 TARGETS (exactly one required)
   --markdown        Re-chunk markdown pages whose chunker_version lags the
                     current chunker (or whose contextual-retrieval state is
-                    unset when embedding is on).
+                    unset when embedding is on). On a managed brain it
+                    runs gbrain repair safe-chunks (and contextual-mode
+                    unless --no-embed) instead: no page writes; --type is
+                    refused there.
   --multimodal      Re-embed image/PDF chunks through the multimodal
                     embedding pipeline (Voyage batches).
   --aliases         Backfill the free-text alias layer (page_aliases) for
@@ -365,6 +370,8 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
     return { pending, pendingAfter: pending, reindexed: 0, skipped: 0, failed: 0, dryRun: true, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type };
   }
 
+  if (await managedPersistenceEnabled(engine)) return reindexManaged(engine, opts, type, pending);
+
   const reporter = createProgress(cliOptsToProgressOptions(getCliOptions()));
   reporter.start('reindex.markdown', target);
 
@@ -493,4 +500,53 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
   }
 
   return result;
+}
+
+/**
+ * #5377: a managed brain cannot re-import through the legacy writer, so the
+ * sweep delegates to the projection repairs: `safe-chunks` re-seals every page
+ * chunked before the current chunker and `contextual-mode` stamps pages imported
+ * without a contextual mode (skipped under --no-embed, which does not count
+ * them as pending). Neither writes a page revision, journal request or
+ * canonical file. `--type` cannot narrow those repairs, so it is refused with
+ * the repair commands instead.
+ */
+async function reindexManaged(engine: BrainEngine, opts: ReindexOpts, type: string | null, pending: number): Promise<ReindexResult> {
+  const base = { pending, dryRun: false, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type };
+  const repairs = opts.noEmbed ? ['safe-chunks'] : ['safe-chunks', 'contextual-mode'];
+  const redirect = repairs.map(kind => `gbrain repair ${kind} --apply${opts.noEmbed ? ' --no-embed' : ''}`).join(' && ');
+  if (type) {
+    const error = `--type cannot narrow a managed reindex; re-chunk every drifted page with: ${redirect}`;
+    if (opts.json) process.stdout.write(JSON.stringify({ error, delegated_to: repairs }) + '\n');
+    else process.stderr.write(`[reindex] ${error}\n`);
+    setCliExitVerdict(2);
+    return { ...base, pendingAfter: pending, reindexed: 0, skipped: 0, failed: 0 };
+  }
+  const { contextualModeRepair } = await import('../core/repair/contextual-mode.ts');
+  const { safeChunksRepair } = await import('../core/repair/safe-chunks.ts');
+  const { resolveRepairScope, runRepair } = await import('../core/repair/core.ts');
+  const ctx = { engine, config: loadConfig() ?? { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+    logger: { info: (msg: string) => process.stderr.write(`${msg}\n`), warn: (msg: string) => process.stderr.write(`${msg}\n`), error: (msg: string) => process.stderr.write(`${msg}\n`) } };
+  const scope = await resolveRepairScope(engine);
+  const stopped: string[] = [];
+  let unsupported = 0;
+  for (const handler of opts.noEmbed ? [safeChunksRepair] : [safeChunksRepair, contextualModeRepair]) {
+    const run = await runRepair(ctx as Parameters<typeof runRepair>[0], handler, scope, { apply: true, limit: opts.limit, embed: !opts.noEmbed });
+    if (run.stopped) stopped.push(run.stopped.message);
+    unsupported += Object.values(run.residuals).reduce((sum, count) => sum + count, 0);
+  }
+  if (pending > 0) await refreshProjectionStatistics(engine);
+  const pendingAfter = await countPending(engine, type, !!opts.noEmbed);
+  const reindexed = Math.max(0, pending - pendingAfter);
+  if (stopped.length) setCliExitVerdict(1);
+  if (opts.json) {
+    process.stdout.write(JSON.stringify({ pending, pending_after: pendingAfter, reindexed, skipped: 0, failed: 0, chunker_version: MARKDOWN_CHUNKER_VERSION, type,
+      delegated_to: repairs, ...(unsupported ? { unsupported_pages: unsupported } : {}), ...(stopped.length ? { stopped } : {}) }) + '\n');
+  } else {
+    process.stderr.write(`[reindex] Managed brain: re-chunked through ${repairs.map(kind => `gbrain repair ${kind}`).join(' and ')} (no page writes). `
+      + `reindexed=${reindexed} pending_before=${pending} pending_after=${pendingAfter}\n`);
+    if (unsupported) process.stderr.write(`[reindex] ${unsupported} page(s) the projection repairs cannot rebuild (code without a source path, or another page kind) are left for their importer.\n`);
+    for (const message of stopped) process.stderr.write(`[reindex] ${message}\n`);
+  }
+  return { ...base, pendingAfter, reindexed, skipped: 0, failed: 0 };
 }

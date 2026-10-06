@@ -202,3 +202,35 @@ describe('CLI strict + dry-run contract', () => {
     });
   });
 });
+
+describe('#5563 the cap source reaches runSkillOpt on every path', () => {
+  test('no cap flag is a default cap (unpriced models warn and run); a cap flag is a user cap', async () => {
+    await withEnv(ENV, async () => {
+      const none = await viaCli();
+      expect(none.maxCostUsd).toBe(5);
+      expect(none.maxCostSource).toBe('default');
+      const set = await viaCli(['--max-usd', '2']);
+      expect(set.maxCostUsd).toBe(2);
+      expect(set.maxCostSource).toBe('user');
+      const off = await viaCli(['--max-usd', 'off']);
+      expect(off.maxCostUsd).toBe(0);
+      expect((await viaMcp()).maxCostSource).toBe('default');
+    });
+  });
+
+  test('the background job carries the source; legacy job data without it stays a user cap', async () => {
+    await withEnv(ENV, async () => {
+      expect((await viaJob()).maxCostSource).toBe('user');
+      captured = [];
+      const data = buildSkillOptJobData({
+        skillsDir, skillName: SKILL, benchmarkPath: path.join(skillsDir, SKILL, 'skillopt-benchmark.jsonl'),
+        epochs: 1, batchSize: 2, lr: 4, lrSchedule: 'constant', split: [4, 1, 5], mode: 'patch', dryRun: false,
+        noMutate: false, allowMutateBundled: false, bootstrapReviewed: false, maxCostUsd: 5, maxCostSource: 'default', maxRuntimeMin: 30, force: false,
+        models: await resolveSkillOptModels(engine, {}), modelFlags: {}, modelsStrict: false,
+      });
+      expect(data.max_cost_source).toBe('default');
+      await runSkillOptJob(engine, JSON.parse(JSON.stringify(data)));
+      expect(captured[0]!.maxCostSource).toBe('default');
+    });
+  });
+});

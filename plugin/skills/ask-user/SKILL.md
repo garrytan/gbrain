@@ -11,6 +11,7 @@ triggers:
   - "ask before proceeding"
   - "choice gate"
   - "user decision"
+when_to_use: "Use when the user asks: \"present options\", \"ask before proceeding\", \"choice gate\", \"user decision\"."
 ---
 
 # Ask User — Choice Gate Pattern

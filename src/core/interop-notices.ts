@@ -78,7 +78,7 @@ function embeddingsFix(cfg: GBrainConfig | null | undefined, transport: 'stdio' 
 /** One `degraded_recall` notice for the recall-affecting stages of this call; null when none applies. */
 export function degradedRecallNotice(
   stages: ReadonlyArray<{ stage?: string; reason?: string } | string>,
-  opts: { config?: GBrainConfig | null; transport: 'stdio' | 'http' | 'cli' },
+  opts: { config?: GBrainConfig | null; transport: 'stdio' | 'http' | 'cli'; optedOut?: boolean },
 ): Notice | null {
   const names = [...new Set(stages
     .map(s => (typeof s === 'string' ? { stage: s } : s))
@@ -87,9 +87,10 @@ export function degradedRecallNotice(
   if (names.length === 0) return null;
   const guidance = names.map(n => DEGRADED_STAGE_GUIDANCE[n]);
   const fixKind: StageFix = guidance.some(g => g.fix === 'embeddings') ? 'embeddings' : guidance.some(g => g.fix === 'doctor') ? 'doctor' : null;
-  const emb = fixKind === 'embeddings' ? embeddingsFix(opts.config, opts.transport) : undefined;
+  const byChoice = opts.optedOut || stages.some(s => typeof s !== 'string' && s.reason === 'embedding_disabled');
+  const emb = fixKind === 'embeddings' ? (byChoice ? { byChoice: true } as { fix?: Action; byChoice: boolean } : embeddingsFix(opts.config, opts.transport)) : undefined;
   const fix = emb ? emb.fix : fixKind === 'doctor' ? doctorFix('Doctor names the failing retrieval dependency and its fix.') : undefined;
-  const choice = emb?.byChoice ? ' This brain was set up keyword-only by the user\'s choice; mention it only if the user asks why something was not found.' : '';
+  const choice = emb?.byChoice ? ' This brain was set up keyword-only by the user\'s choice; mention it only if the user asks why something was not found. No query text was sent to an embedding provider. If the user wants semantic search, `gbrain doctor --json` names the enable command; turning it on needs their consent.' : '';
   return {
     code: 'degraded_recall',
     kind: 'degraded',
@@ -193,7 +194,23 @@ export function degradedDedupNotice(cfg?: GBrainConfig | null): Notice {
 
 // ── dispatch producer ──────────────────────────────────────────────────────
 
-const VECTOR_FALLBACK_WARNINGS: ReadonlySet<string> = new Set(['QUESTION_EMBED_FAILED']);
+/** think's warning when the brain opted out of embedding and the question was never embedded. */
+export const QUESTION_EMBED_OPTED_OUT = 'QUESTION_EMBED_SKIPPED_EMBEDDING_DISABLED';
+/** recall's `search_degraded` when the brain opted out of embedding. */
+export const RECALL_KEYWORD_ONLY_OPTED_OUT = 'keyword_only_embedding_disabled';
+const VECTOR_FALLBACK_WARNINGS: ReadonlySet<string> = new Set(['QUESTION_EMBED_FAILED', QUESTION_EMBED_OPTED_OUT]);
+
+/** Did this call run keyword-only because the brain opted out of embedding (not a missing or failing provider)? */
+export function embeddingOptedOutFor(op: string, result: unknown, meta: Record<string, unknown>): boolean {
+  const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>;
+  if (op === 'search' || op === 'query') {
+    const retrieval = meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
+    return (retrieval?.degraded ?? []).some(d => d.reason === 'embedding_disabled');
+  }
+  if (op === 'recall') return r.search_degraded === RECALL_KEYWORD_ONLY_OPTED_OUT;
+  if (op === 'think') return Array.isArray(r.warnings) && r.warnings.includes(QUESTION_EMBED_OPTED_OUT);
+  return false;
+}
 
 /** Recall-affecting stages of one successful call, from its result and the handler-emitted `retrieval` meta. */
 export function recallStagesFor(op: string, result: unknown, meta: Record<string, unknown>, cfg?: GBrainConfig | null): string[] {
@@ -223,7 +240,7 @@ export function recallInteropNotices(
 ): Notice[] {
   try {
     const out: Notice[] = [];
-    const degraded = degradedRecallNotice(recallStagesFor(op, result, meta, opts.config), opts);
+    const degraded = degradedRecallNotice(recallStagesFor(op, result, meta, opts.config), { ...opts, optedOut: embeddingOptedOutFor(op, result, meta) });
     if (degraded) out.push(degraded);
     const narrowed = opts.transport === 'stdio' ? sourceBindingNarrowedNotice(op, params, result, opts.binding) : null;
     if (narrowed) out.push(narrowed);

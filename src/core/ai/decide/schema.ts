@@ -147,4 +147,48 @@ ${rls('decide_proposals')}
 ${rls('decide_sweep_deferred')}
 `;
 
-export const DECIDE_SCHEMA_SQL = `${DECIDE_RECEIPTS_SCHEMA_SQL}${DECIDE_CALIBRATIONS_SCHEMA_SQL}${DECIDE_PROPOSALS_SCHEMA_SQL}`;
+/**
+ * The ambiguous-band review lane: decide_review_queue holds durable review work
+ * (a withdrawn fact to compare against its neighbours, or a candidate pair
+ * another subsystem enqueued); decide_review_proposals holds owner-reviewed
+ * outcomes per kind (withdraw | duplicate_page | duplicate_entity). Separate
+ * from decide_proposals so a binary that predates review kinds never reads them.
+ */
+export const DECIDE_REVIEW_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS decide_review_queue (
+  kind            TEXT NOT NULL,
+  source_id       TEXT NOT NULL,
+  a_ref           TEXT NOT NULL,
+  b_ref           TEXT NOT NULL DEFAULT '*',
+  evidence        TEXT,
+  reason          TEXT NOT NULL DEFAULT 'queued',
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, source_id, a_ref, b_ref)
+);
+CREATE TABLE IF NOT EXISTS decide_review_proposals (
+  id               BIGSERIAL PRIMARY KEY,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  kind             TEXT NOT NULL,
+  source_id        TEXT NOT NULL,
+  sweep_id         TEXT NOT NULL,
+  a_ref            TEXT NOT NULL,
+  b_ref            TEXT NOT NULL,
+  subject          TEXT NOT NULL DEFAULT '*',
+  visibility       TEXT,
+  p_action         REAL NOT NULL,
+  threshold        REAL,
+  model_resolved   TEXT,
+  question_version TEXT,
+  status           TEXT NOT NULL DEFAULT 'pending',
+  decided_at       TIMESTAMPTZ,
+  receipt          TEXT,
+  UNIQUE (kind, source_id, a_ref, b_ref, subject)
+);
+CREATE INDEX IF NOT EXISTS decide_review_proposals_status_idx ON decide_review_proposals (status, created_at);
+${rls('decide_review_queue')}
+${rls('decide_review_proposals')}
+`;
+
+export const DECIDE_SCHEMA_SQL = `${DECIDE_RECEIPTS_SCHEMA_SQL}${DECIDE_CALIBRATIONS_SCHEMA_SQL}${DECIDE_PROPOSALS_SCHEMA_SQL}${DECIDE_REVIEW_SCHEMA_SQL}`;

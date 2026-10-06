@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { credentialAccessToken, type HarnessCredentials } from './credentials.ts';
-import { extractResultText } from '../connect-probe.ts';
+import { resultBodyText } from '../connect-probe.ts';
 import { shellQuote } from '../mcp-registration.ts';
 
 export interface VerificationStage { name: string; status: 'passed' | 'failed' | 'unverified' | 'not_requested'; reason?: string }
@@ -18,7 +18,7 @@ async function createPeer(c: HarnessCredentials, signal: AbortSignal, timeout: n
     call: async (name, args) => {
       const result = await client.callTool({ name, arguments: args }, undefined, { signal, timeout });
       if (result.isError) throw new Error('tool_error');
-      return JSON.parse(extractResultText(result.content));
+      return JSON.parse(resultBodyText(result.content));
     },
     readCapabilities: async () => {
       const result = await client.readResource({ uri: 'gbrain://capabilities' }, { signal, timeout });

@@ -28,6 +28,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { Subprocess } from 'bun';
+import { freePort } from './helpers/serve-http.ts';
 
 const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 
@@ -37,11 +38,6 @@ interface ServeProc {
   home: string;
   bootstrapToken: string;
   cleanup: () => Promise<void>;
-}
-
-function pickPort(): number {
-  // High-random port. Collision is unlikely; test reruns get fresh ports.
-  return 31000 + Math.floor(Math.random() * 4000);
 }
 
 async function spawnServer(): Promise<ServeProc> {
@@ -61,7 +57,7 @@ async function spawnServer(): Promise<ServeProc> {
   // out of the startup banner (and the banner stays predictable across
   // future formatting tweaks).
   const bootstrapToken = 'test-bootstrap-token-aaaaaaaaaaaaaaaaaa'; // 41 chars
-  const port = pickPort();
+  const port = await freePort();
 
   // CRITICAL: cwd is the tmpdir, NOT the repo. This forces serve-http to
   // fall into the embedded-manifest branch because cwd/admin/dist does
@@ -100,7 +96,7 @@ async function spawnServer(): Promise<ServeProc> {
   // is allowed to drift; a /health probe is the contract that matters.
   const deadline = Date.now() + 30_000;
   let ready = false;
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && proc.exitCode === null) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/health`, {
         signal: AbortSignal.timeout(2000),
@@ -135,7 +131,7 @@ async function spawnServer(): Promise<ServeProc> {
     await cleanup();
     const stderrText = await new Response(proc.stderr).text().catch(() => '');
     throw new Error(
-      `serve --http never became ready on port ${port} after 30s. stderr: ${stderrText.slice(0, 2000)}`,
+      `serve --http never became ready on port ${port} (exit code ${proc.exitCode}). stderr: ${stderrText.slice(0, 2000)}`,
     );
   }
 

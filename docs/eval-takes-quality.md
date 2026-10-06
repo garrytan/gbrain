@@ -65,7 +65,12 @@ receipt file from disk and re-renders it. The other modes need the brain.
   "cost_usd": 1.85,
   "improvements": ["..."],
   "errors": [],
-  "verdictMessage": "PASS: every dim mean >=7 and min >=5 ..."
+  "verdictMessage": "PASS: every dim mean >=7 and min >=5 ...",
+  "protocol_version": 2,
+  "correction_selection_rule": "corrected_if_valid",
+  "corrections": [
+    { "cycle": 0, "modelId": "google:gemini-2.5-flash", "first_error": "incomplete_scores: missing dim(s) [accuracy]", "corrected": "valid" }
+  ]
 }
 ```
 
@@ -87,6 +92,20 @@ receipt file from disk and re-renders it. The other modes need the brain.
 - `verdict` — `pass` if every dim mean >= 7 AND every dim min across
   contributing models >= 5; `fail` otherwise; `inconclusive` if fewer than
   2/3 models contributed complete scores.
+- `protocol_version` — the eval protocol (absent on older receipts, read as
+  1). Protocol 2 runs every judge with thinking off (so a judge-sized output
+  cap is not spent on reasoning) and re-asks a malformed slot once. `regress`
+  lists a protocol change among the dissimilar inputs.
+- `corrections` — one entry per slot whose reply was malformed: unparseable
+  (`parse_failed`, including an empty reply) or missing a dimension
+  (`incomplete_scores`). The same model gets the same sample once more with
+  the validator's error appended. `first_error` is the first attempt's
+  failure; `corrected` is `valid`, `invalid` (with `corrected_error`), or
+  `null` when the correction was not sent (`skipped_reason`: `budget` when the
+  cap could not cover it, `aborted`). Under `correction_selection_rule:
+  corrected_if_valid` a corrected reply replaces the first attempt only when
+  it validates. Provider errors and valid low scores are never re-asked.
+  Correction calls count toward `cost_usd` and the budget cap.
 - `cost_usd` — sum of per-call cost via `pricing.ts` (a rate registered with
   `gbrain pricing set`, else the canonical table). An unpriced model with
   `--budget-usd` set refuses with `no_pricing` before any call fires; its fix
@@ -144,7 +163,7 @@ gbrain eval takes-quality regress --against .ci/takes-quality-baseline.json \
 The threshold is the per-dim-mean drop counting as regression. Default 0.5.
 Regress reuses the **same** model panel + slug prefix + source as the prior
 receipt for an apples-to-apples compare. Diffs in `corpus_sha8` /
-`prompt_sha8` / `rubric_sha8` are surfaced as informational warnings (the
+`prompt_sha8` / `rubric_sha8` / `protocol_version` are surfaced as informational warnings (the
 runner doesn't refuse — that's the caller's call).
 
 ## Contract stability

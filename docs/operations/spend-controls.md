@@ -107,6 +107,25 @@ unclaimable; cancel them first (`gbrain jobs cancel --group <id>`).
 The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to mean
 "no limit", so no sentinel value like `100000` is needed.
 
+On the command line, `--max-usd off` is the canonical way to run uncapped.
+`brainstorm`, `lsd`, `skillopt`, `enrich`, `onboard` and `eval longmemeval`
+parse their cap flag through one parser (`src/core/budget/cap-flag.ts`), so
+the rules match everywhere:
+
+| Command | Canonical | Legacy spellings still accepted |
+|---|---|---|
+| `brainstorm`, `lsd` | `--max-usd N\|off` | `--max-cost N\|off` |
+| `skillopt` | `--max-usd N\|off` | `--max-cost-usd N` (`0` = uncapped, deprecated), `--no-max-cost` |
+| `enrich` | `--max-usd N\|off` | `--max-cost-usd N\|off` |
+| `onboard`, `eval longmemeval` | `--max-usd N\|off` | none |
+
+A malformed value, a bare `0` (ambiguous: free or uncapped?) and two cap flags
+that disagree are refused before any paid call. `eval longmemeval --max-usd 0`
+keeps its meaning, a $0 judge cap. Runtime, call and token bounds stay in
+force when the USD cap is off. `brainstorm`, `lsd` and `skillopt` print one
+line naming the cap, its source and how to remove it, e.g.
+`cap: $5.00 (default; change it with --max-usd <usd>, remove it with --max-usd off)`.
+
 - `0` is **not** "off". On `sync.cost_gate_min_usd`, `0` means "block on any nonzero
   spend" (a real choice). On the backfill caps, `0` falls back to the default — and on
   `embed.backfill_max_usd` specifically, any present-but-invalid value (`0`, a
@@ -312,6 +331,23 @@ always works. Proxy routes hit the explicit-cap refusal by design: a LiteLLM
 endpoint can front a paid provider, so `litellm:*` models are deliberately
 absent from both the pricing tables and the free-local sets.
 
+`brainstorm` / `lsd` and `skillopt` follow the same rule. With no cap flag the
+$5 default is a default cap: an unpriced model warns and runs, priced calls
+in the same run stay metered, and brainstorm's estimate, mid-run and pre-judge
+checks count the unpriced model at Sonnet rates so an oversized run still
+stops. With `--max-usd N` a run that would call an unpriced chat, judge or
+embedding model is refused before any work (skillopt: before any spend, in the
+preflight). The skillopt preflight never invents a rate: an unpriced model
+shows `Est. cost: unpriced (...)`. `brainstorm_health` in `gbrain doctor`
+names an unpriced brainstorm chat or judge model.
+
+Shipped rates are list rates. DeepSeek bills half its peak rate off-peak;
+gbrain's DeepSeek rows are the peak rate so caps bound the worst case, and
+estimates that use them say `(DeepSeek at peak rates, an upper bound)`.
+
+Every model a recipe lists is either priced or declared in the recipe's
+`unpriced_models`; `bun run check:recipe-pricing` enforces it in CI.
+
 ### Registering a model price
 
 The `no_pricing` refusal tells the agent what to do: look up the provider's
@@ -363,7 +399,18 @@ gbrain config set pricing.overrides \
 
 Semantics:
 
-- Keys are full `provider:model` strings (case-insensitive, exact match).
+- Keys are full `provider:model` strings (case-insensitive, exact match). An
+  override keyed by a model alias also prices the id the provider serves for it.
+- **Provider wildcard (subscription providers only).** `<provider>:*` prices
+  every model of a provider whose recipe bills by subscription, today only
+  `claude-cli`: `gbrain pricing set 'claude-cli:*' --rate 0`. Precedence is
+  exact model entry, then the wildcard, then the shipped tables. This is a
+  cap bypass by design: at $0 every claude-cli call counts as free against
+  every cap, including models gbrain ships a rate for. It is an operator
+  assumption, labelled as such by `gbrain pricing list`, which also names the
+  models the wildcard prices. A bare `*` and a wildcard on a per-token API
+  provider (`openai:*`) are refused by `pricing set` and ignored if written
+  into the config directly.
 - Overrides win over shipped tables — you own your bill (negotiated rates,
   markup-charging proxies).
 - Models with neither a table row nor an override stay fail-closed under a cap.

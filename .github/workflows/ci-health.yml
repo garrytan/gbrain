@@ -1,11 +1,16 @@
 name: CI health
 
-# Weekly CI health report (scripts/ci-health-report.ts): first-attempt pass
-# rate of same-repository PR runs, the test files with the most failure
-# annotations, shard spread with the weights miner command, new serial files
-# and nightly-watch's own status, upserted as one `ci-health` issue per week.
-# Reads runs, jobs and check-run annotations only (no logs, no fork runs or
-# artifacts). nightly-watch watches this workflow like any scheduled one.
+# CI health report (scripts/ci-health-report.ts; docs/ci-red-runbook.md#ci-health-report):
+# first-attempt pass rate of same-repository PR runs and push-to-master runs,
+# the exit criteria (met / missed / indeterminate), stress-gate failures,
+# failure classes, cancellation and completion coverage, master-red time to
+# first response, the nightly-watch residual, the test files with the most
+# failure annotations, shard spread with the weights miner command, new serial
+# files and nightly-watch's own status. Weekly on schedule; a dispatch with
+# since/until reports an explicit acceptance window (the day-8 check after a
+# wave merges) and opens a follow-up issue when a target is missed. Reads
+# runs, jobs, check-run annotations and issues only (no logs, no fork runs
+# or artifacts). nightly-watch watches this workflow like any scheduled one.
 
 on:
   schedule:
@@ -16,6 +21,14 @@ on:
         description: Print the report instead of writing the issue
         type: boolean
         default: true
+      since:
+        description: Window start, YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ (UTC); empty = the last 7 days
+        type: string
+        default: ''
+      until:
+        description: Window end (inclusive day or timestamp, UTC); empty = now
+        type: string
+        default: ''
 
 permissions: {}
 
@@ -45,6 +58,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+          SINCE: ${{ inputs.since }}
+          UNTIL: ${{ inputs.until }}
         run: |
-          # shellcheck disable=SC2086 # DRY_RUN is empty or one flag
-          bun scripts/ci-health-report.ts --repo "$GITHUB_REPOSITORY" $DRY_RUN
+          set -euo pipefail
+          args=(--repo "$GITHUB_REPOSITORY")
+          [ -z "$SINCE" ] || args+=(--since "$SINCE")
+          [ -z "$UNTIL" ] || args+=(--until "$UNTIL")
+          [ -z "$DRY_RUN" ] || args+=("$DRY_RUN")
+          bun scripts/ci-health-report.ts "${args[@]}"

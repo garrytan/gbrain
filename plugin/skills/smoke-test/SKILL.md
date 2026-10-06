@@ -17,6 +17,7 @@ tools:
   - exec
   - read
 mutating: true
+when_to_use: "Use when the user asks: \"smoke test\", \"run smoke tests\", \"container restart check\", \"health check\", \"did the restart break anything\"."
 ---
 
 # Smoke Test Skillpack

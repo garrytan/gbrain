@@ -43,7 +43,7 @@ routing policy; this guide is the cost rationale behind it.
 | Task Type | Recommended Model | Why |
 |-----------|------------------|-----|
 | Main session / complex instructions | Opus-class (default) | Best reasoning and instruction following |
-| Research / synthesis / analysis | DeepSeek V3 or equivalent | 25-40x cheaper, strong on exploratory work |
+| Research / synthesis / analysis | DeepSeek Flash or equivalent | about 7-17x cheaper than Anthropic Sonnet 5.5 to Opus 5.5 at peak rates, strong on exploratory work |
 | Structured output / long context | Large context model (Qwen, Gemini) | 200K+ context, reliable JSON output |
 | Fast lightweight sub-agents | Fast inference model (Groq) | 500 tok/s, cheap, good for quick tasks |
 | Deep reasoning (use sparingly) | Reasoning model (DeepSeek-R1, o3) | Best for hard problems, expensive |

@@ -18,6 +18,7 @@
  * concurrency + dropping under load.
  */
 
+import { currentAIAttribution, withAIAttribution, type AIAttribution } from '../ai/invocation-guard.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 
 export interface FactsQueueCounters {
@@ -46,6 +47,8 @@ interface QueueEntry {
   job: FactsJob;
   sessionId: string;
   enqueuedAt: number;
+  /** Model calls the job makes are attributed to whoever enqueued it. */
+  attribution: AIAttribution;
 }
 
 export class FactsQueue {
@@ -100,7 +103,7 @@ export class FactsQueue {
       this.pending.shift();
       this.counters.dropped_overflow += 1;
     }
-    this.pending.push({ job, sessionId, enqueuedAt: Date.now() });
+    this.pending.push({ job, sessionId, enqueuedAt: Date.now(), attribution: { ...currentAIAttribution(), effect: 'facts-queue' } });
     this.counters.enqueued += 1;
     // Non-blocking pump: schedule on microtask so callers stay sync.
     queueMicrotask(() => { void this.pump(); });
@@ -214,7 +217,7 @@ export class FactsQueue {
 
   private async runEntry(entry: QueueEntry): Promise<void> {
     try {
-      await entry.job(this.internalAbort.signal);
+      await withAIAttribution(entry.attribution, () => entry.job(this.internalAbort.signal));
       this.counters.completed += 1;
     } catch (err) {
       // Don't propagate; caller sees nothing — the queue surface is fire-and-

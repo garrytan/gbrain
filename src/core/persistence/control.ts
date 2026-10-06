@@ -3,6 +3,7 @@ import { opError, OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest } from './authority.ts';
 import { completeWrite, getWriteRequest, lockCounters } from './journal.ts';
 import { isTerminal, principalKey, type Principal, type WriteRequest } from './model.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 
 export async function listWriteRequests(engine: BrainEngine, principal: Principal,
   opts: { sourceId: string; before?: string; limit?: number; slugPrefixes?: string[]; operations?: string[]; slugAllowList?: string[];
@@ -48,6 +49,7 @@ export async function cancelWriteRequest(engine: BrainEngine, principal: Princip
   const row = await getWriteRequest(engine, principal, requestId);
   if (!row) return null;
   return engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
     await authorizeStoredRequest(tx, row, true);
     await lockCounters(tx, ['brain', principalKey(principal), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])]);
     const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);

@@ -13,6 +13,14 @@ export const moonshot: Recipe = {
   name: 'Moonshot AI / Kimi',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  // No shipped rate for these yet: they warn and run under a default cap; a
+  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  unpriced_models: [
+    'kimi-k2.7-code',
+    'kimi-k2.7-code-highspeed',
+    'kimi-k2.6',
+    'kimi-k2.5',
+  ],
   base_url_default: 'https://api.moonshot.ai/v1',
   auth_env: {
     required: ['MOONSHOT_API_KEY'],

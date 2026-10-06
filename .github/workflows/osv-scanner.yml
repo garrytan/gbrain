@@ -7,6 +7,9 @@ name: OSV-Scanner
 # so the workflow stays read-only (no security-events: write).
 
 on:
+  # Named exception (docs/TESTING.md#event-parity): pull requests scan only when a
+  # dependency manifest changes; the weekly schedule scans every run, and
+  # test.yml's dependency-audit covers every pull request.
   pull_request:
     branches: [master]
     paths:

@@ -42,7 +42,7 @@ import { printCuratedHelp } from './cli/help/render.ts';
 import { curatedFlagError } from './cli/help/validate.ts';
 import { cliCommandOf, exitCliError, exitOnRepairFailed, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli/cli-error.ts';
 import type { Notice } from './core/agent-output.ts';
-import { opError } from './core/ops/contract.ts';
+import { opError, opOwnsSource } from './core/ops/contract.ts';
 import { opParamValue } from './cli/op-param-values.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
@@ -154,7 +154,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   // D3: post-connect records whose handler answers --help before the engine; run through the table.
   advisor: true, anomalies: true, feedback: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
   founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
-  brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true,
+  brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true,
 };
 
 /** Returns true when the command's own help was printed. */
@@ -650,7 +650,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     let ctx: Awaited<ReturnType<typeof makeContext>>;
     try {
       ctx = await withTimeout(
-        makeContext(engine, params),
+        makeContext(engine, params, op),
         wallclockMs,
         `gbrain ${command}: context`,
       );
@@ -1205,7 +1205,7 @@ export function applyThinClientSourceScope(
   params: Record<string, unknown>,
   cwd?: string,
 ): AmbientSourceBinding | null {
-  if ('source' in op.params) return null; // the op owns --source; not a scope flag
+  if (opOwnsSource(op)) return null;
   assertSingleSourceScopeFlag(op, params);
   const explicit = typeof params.source === 'string' && params.source.length > 0
     ? (params.source as string)
@@ -1409,7 +1409,7 @@ export const __testing = {
   main,
 };
 
-export async function makeContext(engine: BrainEngine, params: Record<string, unknown>): Promise<OperationContext> {
+export async function makeContext(engine: BrainEngine, params: Record<string, unknown>, op?: Pick<Operation, 'params'>): Promise<OperationContext> {
   // v0.31.8 (D11): resolve sourceId via the canonical 6-tier chain. Honors
   // --source / GBRAIN_SOURCE / .gbrain-source / path-match / brain default /
   // 'default'. Wrapped in try/catch so a doctor / single-source brain that
@@ -1425,7 +1425,8 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   let sourceImplicit = true;
   // params.source is set when a CLI flag was parsed for the op (rare; most
   // CLI ops don't take --source). Falls through to env/dotfile/path-match.
-  const explicit = (params.source as string | undefined) ?? null;
+  // An op that owns `source` (opOwnsSource) receives it as its own param.
+  const explicit = op && opOwnsSource(op) ? null : (params.source as string | undefined) ?? null;
   const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError } = await import('./core/source-resolver.ts');
   try {
     const resolved = await resolveSourceWithTier(engine, explicit);
@@ -2008,7 +2009,7 @@ async function routeCliOnlyBeforeTable(command: string, args: string[]): Promise
   }
 
   // Local deferred connections must not bypass the remote installation route.
-  if (command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve'].includes(args[0]) && !hasHelpFlag(args)) {
+  if (command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove'].includes(args[0]) && !hasHelpFlag(args)) {
     const { runDeferredPersistenceCommand } = await import('./commands/persistence-delegate.ts');
     await runDeferredPersistenceCommand(command, args, connectEngine);
     return true;
@@ -2313,9 +2314,13 @@ async function routeEngineFreeHelp(command: string, args: string[]): Promise<boo
   // takes-quality replay / whoknows) so each sub's own usage keeps winning;
   // every remaining `eval … --help` form prints the full subcommand usage
   // instead of the old one-line stub (or a "No brain configured" error).
+  // D-N1: a named subcommand (`eval replay --help`) gets its own usage. The
+  // sub always sees `--help` as its first argument, the form every sub's
+  // usage branch answers before it touches the engine.
   if (command === 'eval' && (args.includes('--help') || args.includes('-h'))) {
-    const { runEvalCommand } = await import('./commands/eval.ts');
-    await runEvalCommand(null as never, ['--help']);
+    const sub = args[0] !== undefined && !args[0].startsWith('-') ? args[0] : undefined;
+    const { run } = await import('./cli/commands/eval.ts');
+    await run(null as never, sub ? [sub, '--help'] : ['--help']);
     return true;
   }
 
@@ -2879,6 +2884,16 @@ async function completeEngineStartup(engine: BrainEngine): Promise<void> {
   } catch {
     // Non-fatal. Pre-v39 brains may not have a usable config table yet.
   }
+
+  // The one-time behavior-change disclosure on the CLI channel (stderr). `serve`
+  // delivers it per MCP channel; `doctor` reads it without marking it shown.
+  if (dispatchedCommand !== 'serve' && dispatchedCommand !== 'doctor') {
+    try {
+      const { takeLocalBehaviorNotice } = await import('./core/behavior-change-notice.ts');
+      const notice = await takeLocalBehaviorNotice(engine, 'cli', { cfg: MERGED_CONFIG_BY_ENGINE.get(engine) ?? config });
+      if (notice) writeCliNotice(notice);
+    } catch { /* a disclosure never breaks a command */ }
+  }
 }
 
 /** CLI-only usage examples appended to `gbrain <command> --help`. */
@@ -3041,6 +3056,7 @@ OPEN LOOPS (Gmail/Calendar/Contacts connector — v0.47)
   google connect|status|disconnect   Connect/inspect/remove a Google account (idempotent; --json)
   waiting [--top N] [--json]         Who is waiting on you, what you promised, context to respond
   loops list|show|done|drop|mute     Inspect and manage open loops (mute sender <email>)
+  core list|show|status|add|remove   Always-loaded core memory (also diff|ack|init|suggest)
   creds list|remove|export|import    Generic credential vault (redacted output; encrypted bundles)
 
 BRAIN (capture / ideate / explore — v0.37/v0.38)
@@ -3114,7 +3130,7 @@ ADMIN
                                      On --http this is the per-client CEILING.
     --access read-only|full          stdio: list and dispatch only read operations
   serve --http [--port N]            HTTP MCP server with OAuth 2.1
-    --token-ttl N                    Access token TTL in seconds (default: 3600)
+    --token-ttl N                    Access token TTL in seconds, 60-7776000 (default: 3600)
     --enable-dcr                     Enable Dynamic Client Registration (DCR clients default to authorization_code)
     --enable-dcr-insecure            Also allow the consent-bypassing client_credentials grant on DCR (implies --enable-dcr)
     --public-url URL                 Public issuer URL (required behind proxy/tunnel)

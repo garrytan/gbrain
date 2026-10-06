@@ -12,6 +12,8 @@
  *   src/core/schema-migrations/**  imports no src/core/migrate.ts; shared
  *                                  helpers live in schema-migrations/helpers.ts
  *                                  and the Migration type in schema-migrations/types.ts
+ *   src/core/persistence/**        imports no src/core/ai/gateway.ts: the write
+ *                                  commit path makes no generative model call
  *
  * Every import form counts, type-only included: static import/export-from,
  * dynamic import() and require() with a literal relative specifier.
@@ -41,6 +43,11 @@ const RULES: Rule[] = [
     dir: 'src/core/schema-migrations',
     banned: ['src/core/migrate.ts'],
     fix: 'import shared helpers from ./helpers.ts and the Migration type from ./types.ts',
+  },
+  {
+    dir: 'src/core/persistence',
+    banned: ['src/core/ai/gateway.ts'],
+    fix: 'the write commit path never calls a generative model: embed through src/core/embedding.ts, and queue derived model work as an effect or job',
   },
 ];
 
@@ -91,7 +98,7 @@ for (const rule of RULES) {
 
 if (violations.length) {
   for (const v of violations) console.error(v);
-  console.error('Why:  engine-sql/ and schema-migrations/ are loaded BY the engines and migrate.ts; an import back up is an ESM cycle (TDZ at load).');
+  console.error('Why:  engine-sql/ and schema-migrations/ are loaded BY the engines and migrate.ts (an import back up is an ESM cycle, TDZ at load); persistence/ is the write commit path, which stays free of generative model calls.');
   console.error(`See:  ${ANCHOR}`);
   console.error(`check-layering: ${violations.length} violation(s)`);
   process.exit(1);

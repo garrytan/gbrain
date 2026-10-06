@@ -14,8 +14,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { runEvalCrossModal, runWithLimit, type BatchSummary } from '../src/commands/eval-cross-modal.ts';
-import type { RunEvalResult } from '../src/core/cross-modal-eval/runner.ts';
-import type { AggregateResult } from '../src/core/cross-modal-eval/aggregate.ts';
+import { DEFAULT_SLOTS, type RunEvalOpts, type RunEvalResult } from '../src/core/cross-modal-eval/runner.ts';
+import { aggregate, type AggregateResult, type SlotResult } from '../src/core/cross-modal-eval/aggregate.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -468,5 +468,183 @@ describe('codex CDX-1 + CDX-2 — denominator-bypass defenses', () => {
     } finally {
       rmSync(fixturePath, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. #5506: the summary and stderr name the judge panel; per-judge scores
+// stay slot-indexed. Scores go through the real aggregate(), so the verdict
+// and exit code are exactly what the same scores produce without the panel.
+// ---------------------------------------------------------------------------
+
+interface ScoredQuestion {
+  /** Per dimension, one score per slot; null: that slot returned no score for it. */
+  scores: Record<string, Array<number | null>>;
+  /** Slot positions whose judge call errored. */
+  erroredSlots?: number[];
+}
+
+function makeScoredRunEval(questions: ScoredQuestion[]) {
+  let i = 0;
+  return async (opts: RunEvalOpts): Promise<RunEvalResult> => {
+    const q = questions[i++ % questions.length]!;
+    const slotResults: SlotResult[] = (opts.slots ?? []).map((slot, idx) => {
+      if (q.erroredSlots?.includes(idx)) return { ok: false, modelId: slot.model, error: 'stub judge timeout' };
+      const scores: Record<string, { score: number }> = {};
+      for (const [dim, perSlot] of Object.entries(q.scores)) {
+        const score = perSlot[idx];
+        if (typeof score === 'number') scores[dim.toUpperCase()] = { score };
+      }
+      return { ok: true, modelId: slot.model, parsed: { scores, improvements: [] } };
+    });
+    const agg = aggregate({ slots: slotResults });
+    return {
+      finalAggregate: agg,
+      cycles: [{
+        schema_version: 1,
+        cycle: 1,
+        task: opts.task,
+        output_sha8: 'stub0000',
+        slug: opts.slug ?? 'stub',
+        timestamp: '2026-10-02T11:14:26Z',
+        dimensions: opts.dimensions ?? [],
+        // The receipt's id is the provider's first letter; scores must be
+        // read by position, never by this id.
+        slots: slotResults.map(s => ({
+          id: s.modelId.split(':')[0]!.toUpperCase().slice(0, 1),
+          model: s.modelId,
+          ok: s.ok,
+          error: s.ok ? undefined : s.error,
+          parsed: s.ok ? s.parsed : undefined,
+        })),
+        aggregate: agg,
+        receipt_path: '/tmp/fake-receipt.json',
+      }],
+      finalReceiptPath: '/tmp/fake-receipt.json',
+    };
+  };
+}
+
+async function runScoredBatch(slotModels: string[], questions: ScoredQuestion[]) {
+  const fixturePath = writeBatchFixture(questions.map((_, i) => ({
+    question_id: `q${i + 1}`, question: `question ${i + 1}?`, hypothesis: `answer ${i + 1}`,
+  })));
+  const summaryPath = join(mkdtempSync(join(tmpdir(), 'cm-summary-')), 'summary.json');
+  const stderr: string[] = [];
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderr.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const exit = await runEvalCrossModal(
+      ['--batch', fixturePath, '--output', summaryPath, '--cycles', '1', '--max-usd', '1000',
+       '--slot-a-model', slotModels[0]!, '--slot-b-model', slotModels[1]!, '--slot-c-model', slotModels[2]!],
+      { runEval: makeScoredRunEval(questions) },
+    );
+    const summary = JSON.parse(readFileSync(summaryPath, 'utf8')) as BatchSummary;
+    return { exit, summary, stderr: stderr.join('') };
+  } finally {
+    process.stderr.write = originalWrite;
+    rmSync(fixturePath, { recursive: true, force: true });
+    rmSync(summaryPath, { force: true });
+  }
+}
+
+// The production night: directness 6,7,6 fails on its mean while
+// correctness is 10,10,10; a second question passes.
+const DIRECTNESS_FAIL: ScoredQuestion = { scores: { directness: [6, 7, 6], correctness: [10, 10, 10] } };
+const ALL_PASS: ScoredQuestion = { scores: { directness: [8, 9, 8], correctness: [10, 10, 10] } };
+
+describe('#5506: batch judge panel', () => {
+  const SONNET = 'anthropic:claude-sonnet-4-6';
+  const OPUS = 'anthropic:claude-opus-4-7';
+  const ALL_SCORED = { directness: [6, 7, 6], correctness: [10, 10, 10] };
+  const PANEL_CASES = [
+    {
+      name: 'slots A and C on one model (the production panel)',
+      slots: [SONNET, OPUS, SONNET],
+      panel: { distinct_models: 2, distinct_providers: 1, slot_scored_questions: [2, 2, 2] },
+      sharedLine: `[eval cross-modal batch] judge ${SONNET} holds slots A, C, so its votes count more than once.\n`,
+      notCrossModal: true,
+    },
+    {
+      name: 'three different claude-cli models',
+      slots: ['claude-cli:claude-opus-5-5', 'claude-cli:claude-sonnet-5', 'claude-cli:claude-haiku-4-5-20251001'],
+      panel: { distinct_models: 3, distinct_providers: 1, slot_scored_questions: [2, 2, 2] },
+      notCrossModal: true,
+    },
+    {
+      name: 'three different models from two providers',
+      slots: ['claude-cli:claude-opus-5-5', SONNET, OPUS],
+      panel: { distinct_models: 3, distinct_providers: 2, slot_scored_questions: [2, 2, 2] },
+      notCrossModal: true,
+    },
+    {
+      name: 'the default three-provider panel',
+      slots: DEFAULT_SLOTS.map(s => s.model),
+      panel: { distinct_models: 3, distinct_providers: 3, slot_scored_questions: [2, 2, 2] },
+      notCrossModal: false,
+    },
+    {
+      // Slot B errors on every question: two providers judged, not three.
+      name: 'the default panel with a slot that scored no question',
+      slots: DEFAULT_SLOTS.map(s => s.model),
+      erroredSlots: [1],
+      panel: { distinct_models: 2, distinct_providers: 2, slot_scored_questions: [2, 0, 2] },
+      silentLine: `[eval cross-modal batch] judge ${DEFAULT_SLOTS[1]!.model} in slot B scored no question, so it did not judge.\n`,
+      notCrossModal: true,
+      slotScores: { directness: [6, null, 6], correctness: [10, null, 10] },
+    },
+    {
+      // Slot C shares slot A's model but never scored, so no vote counts twice.
+      name: 'a shared model whose second slot scored no question',
+      slots: [SONNET, OPUS, SONNET],
+      erroredSlots: [2],
+      panel: { distinct_models: 2, distinct_providers: 1, slot_scored_questions: [2, 2, 0] },
+      silentLine: `[eval cross-modal batch] judge ${SONNET} in slot C scored no question, so it did not judge.\n`,
+      notCrossModal: true,
+      slotScores: { directness: [6, 7, null], correctness: [10, 10, null] },
+    },
+  ];
+
+  test.each(PANEL_CASES)('$name', async ({ slots, erroredSlots, panel, sharedLine, silentLine, notCrossModal, slotScores }) => {
+    const { exit, summary, stderr } = await runScoredBatch(
+      slots,
+      [DIRECTNESS_FAIL, ALL_PASS].map(q => ({ ...q, erroredSlots })),
+    );
+    // Verdict and exit code are the aggregate's, whatever the panel.
+    expect(exit).toBe(1);
+    expect(summary.verdict).toBe('fail');
+    expect(summary.slots.map(s => s.model)).toEqual(slots);
+    expect(summary.panel).toEqual(panel);
+    expect(stderr).toContain(
+      `(total 2) distinct_judge_models=${panel.distinct_models} distinct_judge_providers=${panel.distinct_providers}\n`,
+    );
+    if (sharedLine) expect(stderr).toContain(sharedLine);
+    else expect(stderr).not.toContain('so its votes count more than once');
+    if (silentLine) expect(stderr).toContain(silentLine);
+    else expect(stderr).not.toContain('scored no question');
+    expect(stderr.includes('fewer than 3 providers judged, so this panel is not cross-modal.')).toBe(notCrossModal);
+    expect(summary.per_question[0]!.slot_scores).toEqual(slotScores ?? ALL_SCORED);
+  });
+
+  test('a slot that errored or gave no score holds null at its position, never shifting a vote', async () => {
+    const { exit, summary } = await runScoredBatch(
+      ['anthropic:claude-sonnet-4-6', 'anthropic:claude-opus-4-7', 'anthropic:claude-sonnet-4-6'],
+      [
+        // B errored: the aggregate keeps [6, 5] for directness.
+        { scores: { directness: [6, 9, 5], correctness: [10, 10, 10] }, erroredSlots: [1] },
+        // C answered but gave no directness score.
+        { scores: { directness: [6, 6, null], correctness: [10, 10, 10] } },
+      ],
+    );
+    expect(exit).toBe(1);
+    // B missed one question and still judged the other.
+    expect(summary.panel.slot_scored_questions).toEqual([2, 1, 2]);
+    const [q1, q2] = summary.per_question;
+    expect((q1!.final_aggregate as AggregateResult).dimensions.directness!.scores).toEqual([6, 5]);
+    expect(q1!.slot_scores).toEqual({ directness: [6, null, 5], correctness: [10, null, 10] });
+    expect(q2!.slot_scores).toEqual({ directness: [6, 6, null], correctness: [10, 10, 10] });
   });
 });

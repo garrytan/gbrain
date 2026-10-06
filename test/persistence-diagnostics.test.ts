@@ -131,3 +131,13 @@ test('admin diagnostics account for queued work and configured limits without ex
     expect(JSON.stringify(status)).not.toContain('execution_token');
   }
 });
+
+test('writer status labels the answering process consumer instead of reporting it as brain ingress (C-NEW-4)', async () => {
+  for (const engine of engines) {
+    await disposePersistenceConsumer(engine);
+    const diagnostics = await readWriterDiagnostics(engine) as Record<string, unknown> & { local_process_ingress: { state: string; scope: string } };
+    expect(diagnostics.ingress).toBeUndefined();
+    expect(diagnostics.local_process_ingress.state).toBe('not_running');
+    expect(diagnostics.local_process_ingress.scope).toContain('another process may own');
+  }
+});

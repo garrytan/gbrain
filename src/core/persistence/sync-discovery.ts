@@ -8,7 +8,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { buildDetachedWorkingTreeManifest, computeSyncDelta } from '../sync-delta.ts';
-import { isSyncable, isCodeFilePath, matchesAnyGlob, resolveSlugForPath } from '../sync.ts';
+import { isSyncable, isCodeFilePath, isImageFilePath, matchesAnyGlob, resolveSlugForPath } from '../sync.ts';
 import { resolveSlugRootMode } from '../sync-anchor.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -314,7 +314,8 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     }
   }
   const selected = [...entries.values()].sort((a, b) => a.action.localeCompare(b.action) || a.path.localeCompare(b.path));
-  const unsupported = selected.find(e => !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path));
+  // #5493: an image import is held at freeze (managed_image_sync_unsupported); an image deletion needs no importer.
+  const unsupported = selected.find(e => e.action === 'import' && !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path) && (company || !isImageFilePath(e.path)));
   if (unsupported) throw opError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.',
     `Managed sync of ${sourceId} imports only Markdown and code files, and this run selected others (for example ${unsupported.path}). Exclude them with --exclude or the sync.exclude config, then run gbrain sync --no-pull --source ${sourceId}.`);
   if (selected.length > 100_000 || Buffer.byteLength(JSON.stringify(selected)) > 16 * 1024 ** 2) throw opError('request_too_large', 'Sync discovery exceeds the bounded cursor size.',

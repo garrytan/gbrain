@@ -66,8 +66,10 @@ export const contractCases = [
   'loops_extract_run',
   'loops_close',
   'cycle_extract',
+  'cycle_extract_loops_race',
   'cycle_extract_facts',
   'extract_conversation_facts',
+  'extract_conversation_facts_thread',
   'facts_absorb',
   'atom_drain_opted_out',
   'atom_drain_default_on',
@@ -152,6 +154,8 @@ const CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 const FAKE_ENV = { ANTHROPIC_API_KEY: 'sk-ant-contract-fake', OPENAI_API_KEY: 'sk-contract-fake', VOYAGE_API_KEY: undefined };
 const THREAD_ID = '17aa00000000c001';
 const MESSAGE_ID = '18c2f4a9b3d20001';
+const REPLY_ID = '18c2f4a9b3d20002';
+const REPLY_BODY = 'Sure, I will send the quarterly plan on Thursday with the finance appendix attached to the first draft.';
 const EMAIL_BODY = [
   'Hi, can you send me the quarterly plan by Friday? I will review it on Monday.',
   '',
@@ -441,9 +445,12 @@ async function connectorSource(brain: ContractBrain): Promise<CaseState> {
 }
 
 /** The managed Gmail sweep with the autopilot sync defaults (noExtract: true, as the sync handler sets it). */
-async function gmailSweep(state: CaseState) {
+async function gmailSweep(state: CaseState, opts: { reply?: boolean } = {}) {
   const cfg = parseGoogleSourceConfig({ ...googleConfig, g_services: 'gmail', g_history_days: 7 }, state.dir);
   const sent = Date.now() - 3 * 3600_000;
+  const reply = opts.reply ? [{ id: REPLY_ID, threadId: THREAD_ID, labelIds: ['SENT'], internalDate: String(sent + 3600_000),
+    payload: { mimeType: 'text/plain', headers: [{ name: 'From', value: `Owner Example <${cfg.account}>` }, { name: 'To', value: 'Alice Example <alice@example.invalid>' },
+      { name: 'Subject', value: 'Re: Quarterly plan' }], body: { data: b64url(REPLY_BODY) } } }] : [];
   let listed = false;
   const fetcher = async (url: string) => {
     const u = new URL(url);
@@ -458,7 +465,7 @@ async function gmailSweep(state: CaseState) {
     if (/\/users\/me\/threads\/[^/]+$/.test(u.pathname)) {
       return json({ id: THREAD_ID, messages: [{ id: MESSAGE_ID, threadId: THREAD_ID, labelIds: ['INBOX'], internalDate: String(sent),
         payload: { mimeType: 'text/plain', headers: [{ name: 'From', value: 'Alice Example <alice@example.invalid>' }, { name: 'To', value: cfg.account },
-          { name: 'Subject', value: 'Quarterly plan' }], body: { data: b64url(EMAIL_BODY) } } }] });
+          { name: 'Subject', value: 'Quarterly plan' }], body: { data: b64url(EMAIL_BODY) } } }, ...reply] });
     }
     return json({ error: { message: `unexpected fixture route ${u.pathname}` } }, 400);
   };
@@ -565,6 +572,34 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     expect(links).toHaveLength(1);
   },
 
+  /**
+   * #5961 bound: a loops_extract the sweep queued can republish a page after
+   * the extract phase stamped it (eventual consistency, no lock between the
+   * two). Worst-case order: the cycle stamps every page, then the competing
+   * job republishes people/alice-example, which reads stale again; the next
+   * cycle re-extracts it, so staleness is bounded by one cycle.
+   */
+  async cycle_extract_loops_race(state) {
+    await gmailSweep(state);
+    const { engine } = state.brain;
+    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
+    await engine.executeRaw("UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1", [state.sourceId]);
+    const cycle = async () => {
+      const [job] = await runJobs(engine, [{ name: 'autopilot-cycle', data: { source_id: state.sourceId, phases: ['extract'] } }], 120_000);
+      requireCompleted([job]);
+      const extract = (job.result as { report?: { phases?: Array<{ phase: string; status: string }> } }).report?.phases?.find(p => p.phase === 'extract');
+      expect(extract?.status).toBe('ok');
+    };
+    await cycle();
+    expect(await staleCount(state)).toBe(0);
+    const competing = await extractLoops(state);
+    expect(competing.result).toMatchObject({ status: 'extracted', commitments: 1 });
+    expect(await staleCount(state)).toBeGreaterThan(0);
+    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
+    await cycle();
+    expect(await staleCount(state)).toBe(0);
+  },
+
   async cycle_extract_facts(state) {
     await gmailSweep(state);
     const [job] = await runJobs(state.brain.engine, [{ name: 'autopilot-cycle', data: { source_id: state.sourceId, phases: ['extract_facts'] } }], 120_000);
@@ -578,6 +613,21 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     await gmailSweep(state);
     const [job] = await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId } }]);
     requireCompleted([job]);
+  },
+
+  /**
+   * #5025: a multi-message Gmail thread parses into turns. Replacing a page's
+   * conversation facts has no persistence request, so on a managed brain the
+   * page is skipped without writing and stays retryable.
+   */
+  async extract_conversation_facts_thread(state) {
+    await gmailSweep(state, { reply: true });
+    // The sweep queued loops_extract (priority 5). Left waiting, this case's worker can
+    // claim it once the facts job finishes, and its commitment fact is a facts write.
+    await state.brain.engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
+    const [job] = await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId } }]);
+    requireCompleted([job]);
+    expect((await changesSince(state)).filter(c => c.tbl === 'facts')).toEqual([]);
   },
 
   async facts_absorb(state) {
@@ -674,6 +724,11 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
   async embed_backfill(state) {
     await gmailSweep(state);
     const { engine } = state.brain;
+    // The sweep queued loops_extract (priority 5). Left waiting, the embed-backfill worker
+    // can claim it once embed-backfill finishes; its commitment fact republishes
+    // people/alice-example as a new chunk whose embedding effect has not run when the
+    // count below is read.
+    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
     if (engine.kind === 'pglite') {
       // PGLite has no persistent worker surface: the queue refuses the job up
       // front and names the inline command, which this lane then runs.
@@ -776,7 +831,7 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
 };
 
 const ATOM_CASES: ReadonlySet<ContractCase> = new Set(['atom_drain_opted_out', 'atom_drain_default_on', 'atom_dispatch']);
-const FACTS_CASES: ReadonlySet<ContractCase> = new Set(['cycle_extract_facts', 'extract_conversation_facts', 'facts_absorb']);
+const FACTS_CASES: ReadonlySet<ContractCase> = new Set(['cycle_extract_facts', 'extract_conversation_facts', 'extract_conversation_facts_thread', 'facts_absorb']);
 
 async function runCase(brain: ContractBrain, id: ContractCase): Promise<void> {
   const { model, dimensions } = brain.embedding;

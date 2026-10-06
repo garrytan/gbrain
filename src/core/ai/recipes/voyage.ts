@@ -23,6 +23,11 @@ export const voyage: Recipe = {
   name: 'Voyage AI',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  // No shipped rate for these yet: they warn and run under a default cap; a
+  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  unpriced_models: [
+    'voyage-4-nano',
+  ],
   base_url_default: 'https://api.voyageai.com/v1',
   auth_env: {
     required: ['VOYAGE_API_KEY'],

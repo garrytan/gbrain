@@ -30,6 +30,7 @@ tools:
 mutating: true
 writes_pages: false
 upstream: fact-check@fc834ee
+when_to_use: "Use when the user asks: \"fact check\", \"fact-check\", \"verify the facts\", \"check the claims\", \"is this accurate\"."
 ---
 
 # Fact-Check — Claim-by-Claim Verification Before Anything Ships

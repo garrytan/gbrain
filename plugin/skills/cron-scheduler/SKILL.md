@@ -14,6 +14,7 @@ tools:
   - get_page
   - put_page
 mutating: true
+when_to_use: "Use when the user asks: \"schedule a job\", \"cron\", \"quiet hours\", \"what jobs are running\"."
 ---
 
 # Cron Scheduler

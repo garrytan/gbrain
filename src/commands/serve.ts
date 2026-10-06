@@ -5,6 +5,7 @@ export { serveFailFastRequested, writeServeFailFastEnvelope } from '../core/serv
 import { isEngineDegraded as isEngineDegradedForServe } from '../core/degraded-marker.ts';
 import { startMcpServer, stdioRpcsInFlightCount, resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
+import { parseTokenTtl } from './auth.ts';
 import { RESIDENT_POOL_FLOOR } from '../core/pg-access-classify.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import { startFactsDrainScheduler, type FactsDrainScheduler, type FactsDrainSchedulerOpts } from '../core/facts/drain-scheduler.ts';
@@ -141,6 +142,8 @@ export interface ServeOptions {
   runServeHttp?: (typeof import('./serve-http.ts'))['runServeHttp'];
   /** `--http` recovery from status-only mode: the listener the status server already bound (serve-http-status.ts). */
   adoptServer?: import('./serve-http-listen.ts').AdoptableServer;
+  // Test seam (X8): replaces armCorpusDrain on the --http lane.
+  armCorpusDrain?: (typeof import('../core/sweep.ts'))['armCorpusDrain'];
   // Test seam (#4281): replaces installLoopStallWatchdog.
   installStallWatchdog?: (o: LoopStallWatchdogOpts) => WatchdogHandle;
   // Test seam (#4281) for the loop-stall threshold in ms; 0 = off. Defaults
@@ -272,7 +275,7 @@ export async function runServe(
     const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || 3131 : 3131;
 
     const ttlIdx = args.indexOf('--token-ttl');
-    const tokenTtl = ttlIdx >= 0 ? parseInt(args[ttlIdx + 1]) || 3600 : 3600;
+    const tokenTtl = ttlIdx >= 0 ? parseTokenTtl(args[ttlIdx + 1] ?? '', 'Omit the flag for the 3600-second default.') : 3600;
 
     // #1353: --enable-dcr-insecure opts into the consent-bypassing
     // client_credentials grant on the DCR path. It implies --enable-dcr (you
@@ -338,10 +341,17 @@ export async function runServe(
       }
     }
 
+    // X8 (D18): the HTTP serve's corpus drain — a stdio serve sweeps on idle,
+    // `--http` never did, so refused harvests and session-end corpus files
+    // waited for a hand-run sweep and then for retention GC.
+    const { armCorpusDrain } = await import('../core/sweep.ts');
+    const corpusDrain = (opts.armCorpusDrain ?? armCorpusDrain)(engine, { sourceId: process.env.GBRAIN_SOURCE || undefined });
+
     try {
       await runHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface, adoptServer: opts.adoptServer });
     } finally {
       stallWatchdog?.dispose();
+      corpusDrain?.cancel();
     }
 
     await finishHttpServe(engine, opts);

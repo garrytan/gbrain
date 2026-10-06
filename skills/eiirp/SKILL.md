@@ -73,7 +73,7 @@ distinct_from:
   - name: skillify
     reason: "skillify is the meta-skill for turning a feature into a tested skill. EIIRP calls skillify when Phase 5 identifies a reusable pattern."
   - name: signal-detector
-    reason: "signal-detector ambiently captures the USER's ideas + entity mentions on every inbound message. EIIRP's auto-fire gate files the AGENT's own deliverable analysis at reply time. Both are always-on; they watch opposite directions of the conversation."
+    reason: "signal-detector (after explicit automatic-capture opt-in) ambiently captures the USER's ideas + entity mentions on every inbound message. EIIRP's auto-fire gate files the AGENT's own deliverable analysis at reply time. signal-detector runs only after the user's explicit automatic-capture opt-in; EIIRP's gate is always-on. They watch opposite directions of the conversation."
   - name: meeting-ingestion
     reason: "meeting-ingestion (like idea-ingest, media-ingest, voice-note-ingest, book-mirror) is a dedicated pipeline with its own brain-write logic. The auto-fire gate EXEMPTS dedicated-pipeline content — it never double-files."
 ---

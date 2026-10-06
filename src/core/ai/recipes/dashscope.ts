@@ -17,6 +17,12 @@ export const dashscope: Recipe = {
   name: 'Alibaba DashScope (灵积)',
   tier: 'openai-compat',
   implementation: 'openai-compatible',
+  // No shipped rate for these yet: they warn and run under a default cap; a
+  // user cap refuses them until `gbrain pricing set` registers one (X1 guard).
+  unpriced_models: [
+    'text-embedding-v3',
+    'text-embedding-v2',
+  ],
   base_url_default: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   auth_env: {
     required: ['DASHSCOPE_API_KEY'],

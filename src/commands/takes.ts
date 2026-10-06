@@ -9,6 +9,8 @@
  *   takes update <slug> --row N ...flags   — update mutable fields
  *   takes supersede <slug> --row N ...     — strikethrough old + append new
  *   takes resolve <slug> --row N --outcome true|false [--value N --unit u]
+ *   takes remove <slug> --row N            — remove one row (fence + DB)
+ *   takes rebuild <slug> [--source-id id]  — rebuild one page's takes index from its fence
  *
  * Markdown is canonical. The four direct mutation commands use the same
  * durable takes_* operations as MCP, via takes-mutation.ts. This dispatcher
@@ -24,7 +26,7 @@ import {
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { resolveOwnerHolder } from '../core/owner-holder.ts';
 import { embedStaleTakes } from '../core/embed-takes.ts';
-import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
+import { assertBrainEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { loadConfig } from '../core/config.ts';
 import { embedQuery } from '../core/embedding.ts';
 import {
@@ -177,7 +179,7 @@ async function cmdSearch(engine: BrainEngine, args: string[]): Promise<void> {
   const limit = parseInt(flagValue(args, '--limit') ?? '30', 10);
   let hits;
   if (semantic) {
-    assertEmbeddingEnabled(loadConfig());
+    await assertBrainEmbeddingEnabled(engine, loadConfig());
     const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
     validateEmbeddingCreds();
     const queryEmbedding = await embedQuery(query);
@@ -210,7 +212,7 @@ async function cmdEmbed(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   if (!dryRun) {
-    assertEmbeddingEnabled(loadConfig());
+    await assertBrainEmbeddingEnabled(engine, loadConfig());
     const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
     validateEmbeddingCreds();
   }
@@ -381,13 +383,29 @@ async function cmdPropose(engine: BrainEngine, args: string[], sourceId: string)
     configValue: await engine.getConfig('emotional_weight.user_holder'),
   });
 
+  const editFlags = ['--claim', '--weight', '--who', '--kind'].filter(flag => flagPresent(args, flag));
+  if (editFlags.length && acceptRaw === undefined) {
+    console.error(`Error: ${editFlags.join(', ')} edit a proposal only together with --accept <id>.`);
+    process.exit(1);
+  }
   if (acceptRaw !== undefined) {
     const id = parseId(acceptRaw, '--accept');
     const dirArg = flagValue(args, '--dir');
+    const weightRaw = flagValue(args, '--weight');
+    const weight = weightRaw === undefined ? undefined : Number(weightRaw);
+    if (weight !== undefined && (!Number.isFinite(weight) || weight < 0 || weight > 1)) {
+      console.error(`Invalid --weight "${weightRaw}". Expected a number from 0 to 1.`);
+      process.exit(1);
+    }
+    const kind = flagValue(args, '--kind');
+    if (kind !== undefined && !['fact', 'take', 'bet', 'hunch'].includes(kind)) {
+      console.error(`Invalid --kind "${kind}". Expected fact, take, bet or hunch.`);
+      process.exit(1);
+    }
     const brainDir = await resolveBrainDir(engine, dirArg ?? null);
     try {
       const { proposal, rowNum } = await acceptProposal({ engine, brainDir, sourceId, actedBy, config: loadConfig() ?? { engine: 'pglite' },
-        ...(dirArg ? { localDir: resolvePath(dirArg) } : {}) }, id);
+        ...(dirArg ? { localDir: resolvePath(dirArg) } : {}) }, id, { claim: flagValue(args, '--claim'), weight, holder: flagValue(args, '--who'), kind });
       console.log(`Accepted proposal #${id} → take #${rowNum} on ${proposal.page_slug}.`);
     } catch (err) {
       if (err instanceof TakeProposalError) {
@@ -465,9 +483,13 @@ Subcommands:
                        [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]
                                           Record bet resolution (immutable, v0.30.0)
                                           Back-compat: --outcome true|false (deprecated alias)
+  takes remove <slug> --row N             Remove one take row from the fence and the DB (other row numbers stay)
+  takes rebuild <slug> [--source-id <id>] [--json]
+                                          Rebuild one page's takes index from its canonical fence
   takes propose [--limit N] [--json]      List pending LLM-proposed takes (propose_takes queue)
-  takes propose --accept <id> [--dir <path>]
-                                          Promote a proposal into the page's takes fence
+  takes propose --accept <id> [--dir <path>] [--claim "..."] [--weight 0.6] [--who <holder>] [--kind <k>]
+                                          Promote a proposal into the page's takes fence (source take_proposals#<id>;
+                                          edits mark it "(edited)" and the queue keeps the original text)
   takes propose --reject <id>             Dismiss a proposal
   takes scorecard [<holder>] [--domain <prefix>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
                                           Aggregate calibration scorecard (v0.30.0)
@@ -496,7 +518,9 @@ Common flags:
     case 'add':
     case 'update':
     case 'supersede':
-    case 'resolve': { const { runTakesMutation } = await import('./takes-mutation.ts'); return runTakesMutation(engine, args); }
+    case 'resolve':
+    case 'remove': { const { runTakesMutation } = await import('./takes-mutation.ts'); return runTakesMutation(engine, args); }
+    case 'rebuild':     return cmdRebuild(engine, rest);
     // #2411: `takes propose` used to fall through to the slug path and print
     // "No takes on propose." — the LLM proposal queue had no drain surface.
     case 'propose':     return cmdPropose(engine, rest, await resolveTakesSourceId(engine));
@@ -508,6 +532,32 @@ Common flags:
       // No subcommand keyword → treat first arg as <slug> for the list path.
       return cmdList(engine, args);
   }
+}
+
+/**
+ * #5167: `gbrain takes rebuild <slug> [--source-id <id>]` rebuilds one page's
+ * takes index from the canonical fence its page holds (trusted local CLI).
+ * Rows whose number and claim still match keep their resolution and vector;
+ * rows the index and the fence disagree on are re-inserted from the fence.
+ */
+async function cmdRebuild(engine: BrainEngine, rest: string[]): Promise<void> {
+  const slug = rest[0];
+  if (!slug || slug.startsWith('-')) {
+    process.stderr.write('Usage: gbrain takes rebuild <slug> [--source-id <id>] [--json]\n');
+    process.exit(1);
+  }
+  const sourceId = await resolveSourceId(engine, flagValue(rest, '--source-id') ?? null);
+  const { extractTakes } = await import('../core/cycle/extract-takes.ts');
+  const result = await extractTakes(engine, { source: 'db', slugs: [slug], sourceId, rebuild: true });
+  if (flagPresent(rest, '--json')) {
+    process.stdout.write(`${JSON.stringify({ slug, source_id: sourceId, ...result }, null, 2)}\n`);
+  } else if (result.pagesScanned === 0) {
+    process.stderr.write(`No page ${slug} in source ${sourceId}.\n`);
+  } else {
+    for (const warning of result.warnings) process.stderr.write(`[takes rebuild] ${warning}\n`);
+    console.log(`Rebuilt ${result.takesUpserted} take row(s) on ${slug} from its takes fence.`);
+  }
+  if (result.pagesScanned === 0 || result.warnings.length) process.exit(1);
 }
 
 /**

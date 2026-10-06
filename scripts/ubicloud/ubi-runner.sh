@@ -13,10 +13,24 @@
 # optional setup script and the command, copies requested artifacts back, and
 # destroys the VM on every exit path. Exits with the command's status.
 # Needs only bash, curl, python3, ssh, ssh-keygen, and tar locally, so it works
-# from dev boxes, containers, and cloud sandboxes. VMs are named
-# ubirun-<epoch>-<hex>; every `up` first destroys ubirun-* VMs older than
-# UBI_GC_HOURS (default 12) so an interrupted client cannot leak one for long.
-set -euo pipefail
+# from dev boxes, containers, and cloud sandboxes.
+#
+# Ownership: VMs are named ubirun-<owner>-<epoch>-<suffix>. <owner> is UBI_OWNER
+# (lowercased, letters and digits only, at most 12 characters, starting with a
+# letter) or a random per-machine id kept in $STATE_ROOT/owner-id. Ubicloud names
+# allow 63 characters of [a-z0-9-], so a full name stays under 40.
+#
+# Teardown: `up` records each VM's state (location, create status) before it
+# sends the create request, and `down` destroys and polls until the VM is
+# confirmed gone or provably never existed, waiting out a create that may still
+# be in flight. An interrupted `up` or `run` (EXIT, INT, TERM, HUP, QUIT) runs
+# that `down`; further signals are ignored until it finishes. A create refused
+# for vCPU quota prints the project's usage per owner.
+#
+# Stale-VM sweeps are off by default. With UBI_GC_HOURS set to a positive
+# number, every `up` first destroys this owner's VMs older than that; `gc HOURS`
+# runs the same sweep on demand. Neither ever touches another owner's VMs.
+set -Eeuo pipefail
 # Keep heredoc bodies on temp files, not the pipe window (test/heredoc-pipe-deadlock.test.ts).
 BASH_COMPAT=50
 
@@ -24,26 +38,80 @@ API="${UBICLOUD_API_URL:-https://api.ubicloud.com}"
 STATE_ROOT="${UBI_RUNNER_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ubi-runner}"
 DEFAULT_SIZE="${UBI_SIZE:-standard-16}"
 DEFAULT_LOCATION="${UBI_LOCATION:-eu-central-h1}"
-GC_HOURS="${UBI_GC_HOURS:-12}"
+GC_HOURS="${UBI_GC_HOURS:-0}"
+API_TIMEOUT="${UBI_API_TIMEOUT:-120}"
+CREATE_GRACE="${UBI_CREATE_GRACE:-180}"
+DOWN_TIMEOUT="${UBI_DOWN_TIMEOUT:-900}"
+POLL="${UBI_POLL_SECONDS:-5}"
 PREFIX="ubirun"
 
 die() { echo "ubi-runner: $*" >&2; exit 1; }
 log() { echo "ubi-runner: $*" >&2; }
 
+# Bash 5.2 can lose a signal trap: when the signal lands just before the shell
+# parses a $(...), the trap runs inside that parse, fails to parse itself
+# ("trap: line 2: unexpected EOF while looking for matching `)'") and the shell
+# exits 2 without running it (fixed in bash 5.3). The EXIT trap still runs.
+# The only other exit 2 here is a failed command, which sets FAILED through
+# the ERR trap, so finish reports an exit 2 without FAILED as the signal's 130.
+FAILED=""
+trap 'FAILED=1' ERR
+
+# finish STATUS NAME: EXIT handler of `up` and `run`. Destroys NAME unless it
+# is empty, then exits with STATUS.
+finish() {
+  local rc=$1
+  [ "$rc" != 2 ] || [ -n "$FAILED" ] || rc=130
+  [ -z "$2" ] || cmd_down "$2" || log "WARNING: failed to destroy $2; run: $0 down $2"
+  exit "$rc"
+}
+
 for bin in curl python3 ssh ssh-keygen tar; do
   command -v "$bin" >/dev/null || die "$bin is required"
 done
 UBICLOUD_API_KEY="${UBICLOUD_API_KEY:-${UBICLOUD_API_TOKEN:-}}"
-[ -n "${UBICLOUD_API_KEY:-}" ] || die "UBICLOUD_API_KEY is not set (create a token under your Ubicloud project's Tokens page)"
+[[ "$GC_HOURS" =~ ^[0-9]+$ ]] || die "UBI_GC_HOURS must be a whole number of hours (unset or 0 disables the sweep)"
+
+owner_id() {
+  local raw=${UBI_OWNER:-} file="$STATE_ROOT/owner-id" tmp
+  if [ -z "$raw" ]; then
+    if [ ! -s "$file" ]; then
+      mkdir -p "$STATE_ROOT"
+      tmp="$file.$$"
+      echo "m$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')" >"$tmp"
+      mv -n "$tmp" "$file"
+      rm -f "$tmp"
+    fi
+    raw=$(cat "$file")
+  fi
+  raw=$(printf %s "$raw" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+  [ -n "$raw" ] || die "UBI_OWNER must contain letters or digits"
+  [[ "$raw" =~ ^[a-z] ]] || raw="u$raw"
+  echo "${raw:0:12}"
+}
+OWNER=$(owner_id)
+
+# api OUT ARGS...: send one Ubicloud CLI command, write the body to OUT, and
+# print the HTTP status (000 when no response arrived).
+api() {
+  local out=$1 code
+  shift
+  code=$(python3 -c 'import json,sys; print(json.dumps({"argv": sys.argv[1:]}))' "$@" \
+    | curl -sS -o "$out" -w '%{http_code}' --max-time "$API_TIMEOUT" -X POST \
+        -H "Authorization: Bearer $UBICLOUD_API_KEY" \
+        -H 'Accept: text/plain' -H 'Content-Type: application/json' \
+        -H 'X-Ubi-Version: 1.0.0' --data @- "$API/cli") || true
+  echo "${code:-000}"
+}
 
 cli() {
   local out code
   out=$(mktemp)
-  code=$(python3 -c 'import json,sys; print(json.dumps({"argv": sys.argv[1:]}))' "$@" \
-    | curl -sS -o "$out" -w '%{http_code}' -X POST \
-        -H "Authorization: Bearer $UBICLOUD_API_KEY" \
-        -H 'Accept: text/plain' -H 'Content-Type: application/json' \
-        -H 'X-Ubi-Version: 1.0.0' --data @- "$API/cli") || { rm -f "$out"; die "request failed: ubi $*"; }
+  code=$(api "$out" "$@")
+  if [ "$code" = 000 ]; then
+    rm -f "$out"
+    die "request failed: ubi $*"
+  fi
   if [ "$code" != 200 ]; then
     cat "$out" >&2
     rm -f "$out"
@@ -79,25 +147,75 @@ remote() {
   ssh $(ssh_opts) "ubi@$IP" "umask 022; $*"
 }
 
-cmd_gc() {
-  local hours=${1:-$GC_HOURS} now loc name ts
-  [ "$hours" -gt 0 ] || return 0
-  now=$(date +%s)
+# vm_rows: "location name owner" for every VM in the project; owner is
+# "-" for untagged ubirun-<epoch>-* names and "." for VMs this runner did not name.
+vm_rows() {
   cli vm list -N -f location,name | while read -r loc name; do
-    [[ "$name" =~ ^${PREFIX}-([0-9]{10})- ]] || continue
-    ts=${BASH_REMATCH[1]}
-    if [ $(( (now - ts) / 3600 )) -ge "$hours" ]; then
-      log "destroying stale $loc/$name (older than ${hours}h)"
-      cli vm "$loc/$name" destroy -f >/dev/null || log "failed to destroy $loc/$name"
-      rm -rf "$(state_dir "$name")"
+    if [[ "$name" =~ ^${PREFIX}-([a-z][a-z0-9]{0,11})-[0-9]{10}- ]]; then
+      echo "$loc $name ${BASH_REMATCH[1]}"
+    elif [[ "$name" =~ ^${PREFIX}-[0-9]{10}- ]]; then
+      echo "$loc $name -"
+    else
+      echo "$loc $name ."
     fi
   done
 }
 
-write_state() {
-  printf 'NAME=%q\nLOCATION=%q\nSIZE=%q\nIP=%q\n' "$1" "$2" "$3" "$4" >"$(state_dir "$1")/env"
+cmd_gc() {
+  local hours=${1:-$GC_HOURS} now loc name owner
+  if ! [[ "$hours" =~ ^[0-9]+$ ]] || [ "$hours" -eq 0 ]; then die "gc: give HOURS > 0 (or set UBI_GC_HOURS)"; fi
+  now=$(date +%s)
+  vm_rows | while read -r loc name owner; do
+    [ "$owner" = "$OWNER" ] || continue
+    [[ "$name" =~ -([0-9]{10})- ]] || continue
+    if [ $(( (now - BASH_REMATCH[1]) / 3600 )) -ge "$hours" ]; then
+      log "destroying stale $loc/$name (owner $OWNER, older than ${hours}h)"
+      cmd_down "$name" -l "$loc" || log "failed to destroy $loc/$name"
+    fi
+  done
 }
 
+cmd_list() {
+  case ${1:-} in
+    "") cli vm list ;;
+    --mine) vm_rows | awk -v o="$OWNER" '$3==o {print $1 "  " $2}' ;;
+    *) die "list: unknown option $1 (use --mine)" ;;
+  esac
+}
+
+# usage: VMs and vCPUs per owner, from each VM's size (standard-16 = 16 vCPUs).
+cmd_usage() {
+  local tmp loc name owner i=0
+  tmp=$(mktemp -d)
+  while read -r loc name owner; do
+    i=$(( i + 1 ))
+    cli vm "$loc/$name" show 2>/dev/null | sed -n "s/^size: /$owner /p" >"$tmp/$i" &
+    [ $(( i % 8 )) -ne 0 ] || wait
+  done < <(vm_rows)
+  wait
+  cat "$tmp"/* 2>/dev/null | awk -v me="$OWNER" '
+    { n = $2; sub(/^.*-/, "", n); o = $1 == "-" ? "(untagged)" : $1 == "." ? "(other)" : $1
+      vms[o]++; cpu[o] += n; total += n; count++ }
+    END {
+      printf "%-14s %4s %6s\n", "OWNER", "VMS", "VCPUS"
+      for (o in cpu) printf "%-14s %4d %6d%s\n", o, vms[o], cpu[o], o == me ? "  (you)" : "" | "sort -k3,3nr"
+      close("sort -k3,3nr")
+      printf "%-14s %4d %6d\n", "total", count, total
+    }'
+  rm -rf "$tmp"
+}
+
+write_state() {
+  printf 'NAME=%q\nLOCATION=%q\nSIZE=%q\nIP=%q\nCREATED=%q\nCREATE_AT=%q\nCREATE_PID=%q\n' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$$" >"$(state_dir "$1")/env"
+}
+
+new_name() { echo "$PREFIX-$OWNER-$(date +%s)-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"; }
+
+valid_name() { [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; }
+
+UP_NAME=""
+UP_READY=""
 cmd_up() {
   local size=$DEFAULT_SIZE location=$DEFAULT_LOCATION name="" storage="" image=ubuntu-noble
   while [ $# -gt 0 ]; do
@@ -110,10 +228,13 @@ cmd_up() {
       *) die "up: unknown option $1" ;;
     esac
   done
-  [ -n "$name" ] || name="$PREFIX-$(date +%s)-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-  cmd_gc "$GC_HOURS" || log "stale-VM cleanup failed; continuing"
+  [ -n "$name" ] || name=$(new_name)
+  valid_name "$name" || die "invalid VM name '$name' (Ubicloud allows 1-63 of a-z, 0-9 and '-', starting and ending with a letter or digit)"
+  if [ "$GC_HOURS" -gt 0 ]; then
+    cmd_gc "$GC_HOURS" || log "stale-VM cleanup failed; continuing"
+  fi
 
-  local dir
+  local dir create_at
   dir=$(state_dir "$name")
   mkdir -p "$dir"
   chmod 700 "$dir"
@@ -122,9 +243,30 @@ cmd_up() {
   local args=(vm "$location/$name" create -s "$size" -b "$image")
   [ -z "$storage" ] || args+=(-S "$storage")
   args+=("$(cat "$dir/key.pub")")
+  create_at=$(date +%s)
+  write_state "$name" "$location" "$size" "" unknown "$create_at"
+  UP_NAME=$name
   log "creating $location/$name ($size)"
-  cli "${args[@]}" >/dev/null || { rm -rf "$dir"; die "create failed"; }
-  write_state "$name" "$location" "$size" ""
+  # Hold signals until the create answer is recorded, so teardown knows
+  # whether the VM exists instead of waiting out UBI_CREATE_GRACE.
+  local interrupted="" created=yes refusal need used max
+  trap 'interrupted=1' INT TERM HUP QUIT
+  cli "${args[@]}" >/dev/null 2>"$dir/create.err" || created=no
+  write_state "$name" "$location" "$size" "" "$created" "$create_at"
+  trap 'exit 130' INT TERM HUP QUIT
+  [ -z "$interrupted" ] || exit 130
+  if [ "$created" = no ]; then
+    refusal=$(sed -n 's/.*Requested vCPU count: \([0-9]*\), currently used vCPU count: \([0-9]*\), maximum allowed vCPU count: \([0-9]*\).*/\1 \2 \3/p' "$dir/create.err")
+    if [ -z "$refusal" ]; then
+      cat "$dir/create.err" >&2
+      die "create failed"
+    fi
+    read -r need used max <<<"$refusal"
+    log "quota refused $location/$name ($size): it needs $need vCPUs and the project already uses $used of $max"
+    log "VMs in the project by owner (the rest of the used count is other usage, such as managed GitHub runners):"
+    cmd_usage >&2 || true
+    die "create failed: vCPU quota exhausted; wait for running VMs to finish, or use fewer or smaller VMs (ci:ubicloud --vms N)"
+  fi
 
   local deadline=$(( $(date +%s) + 600 )) show state ip
   while :; do
@@ -132,39 +274,85 @@ cmd_up() {
     state=$(sed -n 's/^state: //p' <<<"$show")
     ip=$(sed -n 's/^ip4: //p' <<<"$show")
     [ "$state" = running ] && [ -n "$ip" ] && break
-    [ "$(date +%s)" -lt "$deadline" ] || { cmd_down "$name"; die "VM did not reach running in 10 minutes (last state: ${state:-unknown})"; }
-    sleep 5
+    [ "$(date +%s)" -lt "$deadline" ] || die "VM did not reach running in 10 minutes (last state: ${state:-unknown})"
+    sleep "$POLL"
   done
-  write_state "$name" "$location" "$size" "$ip"
+  write_state "$name" "$location" "$size" "$ip" yes "$create_at"
 
   load "$name"
   deadline=$(( $(date +%s) + 300 ))
   # shellcheck disable=SC2046
   until ssh $(ssh_opts) "ubi@$IP" true 2>/dev/null; do
-    [ "$(date +%s)" -lt "$deadline" ] || { cmd_down "$name"; die "SSH did not come up on $IP"; }
-    sleep 5
+    [ "$(date +%s)" -lt "$deadline" ] || die "SSH did not come up on $IP"
+    sleep "$POLL"
   done
   remote "$name" 'cloud-init status --wait >/dev/null 2>&1 || true'
+  UP_READY=1
   log "ready: $name ($IP)"
   echo "$name"
 }
 
+# down NAME [-l LOCATION]: destroy NAME and return 0 only once it is confirmed
+# gone or never existed. While this machine's create request for NAME may
+# still be in flight (its `up` process is alive, or the create was sent less
+# than UBI_CREATE_GRACE seconds ago with no answer), "not found" is not final.
 cmd_down() {
-  local name=$1 dir loc
+  local name=${1:-} loc="" dir
+  [ -n "$name" ] || die "down: missing NAME"
+  shift
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -l|--location) loc=$2; shift 2 ;;
+      *) die "down: unknown option $1" ;;
+    esac
+  done
+  valid_name "$name" || die "invalid VM name '$name'"
   dir=$(state_dir "$name")
+  local CREATED=none CREATE_AT=0 CREATE_PID="" IP="" LOCATION="" KEY=""
   if [ -f "$dir/env" ]; then
     load "$name"
     loc=$LOCATION
-  else
-    loc=$(cli vm list -N -f location,name | awk -v n="$name" '$2==n {print $1}')
-    [ -n "$loc" ] || die "VM '$name' not found"
+    if [ -S "$dir/ctl" ] && [ -n "$IP" ]; then
+      # shellcheck disable=SC2046
+      ssh $(ssh_opts) -O exit "ubi@$IP" >/dev/null 2>&1 || true
+    fi
   fi
-  if [ -S "$dir/ctl" ]; then
-    # shellcheck disable=SC2046
-    ssh $(ssh_opts) -O exit "ubi@$IP" >/dev/null 2>&1 || true
-  fi
-  cli vm "$loc/$name" destroy -f >/dev/null && log "destroyed $loc/$name"
-  rm -rf "$dir"
+
+  local deadline=$(( $(date +%s) + DOWN_TIMEOUT )) seen=0 asked=0 out code now
+  out=$(mktemp)
+  while :; do
+    now=$(date +%s)
+    if [ -z "$loc" ]; then
+      loc=$(vm_rows 2>/dev/null | awk -v n="$name" '$2==n {print $1}') || loc=""
+      code=404
+      [ -z "$loc" ] || code=$(api "$out" vm "$loc/$name" show)
+    else
+      code=$(api "$out" vm "$loc/$name" show)
+    fi
+    if [ "$code" = 200 ]; then
+      seen=1
+      if [ $(( now - asked )) -ge 60 ]; then
+        api "$out" vm "$loc/$name" destroy -f >/dev/null
+        asked=$now
+        log "destroy requested: $loc/$name"
+      fi
+    elif [ "$code" = 404 ]; then
+      if [ "$seen" = 1 ] || [ "$CREATED" != unknown ] || { [ $(( now - CREATE_AT )) -ge "$CREATE_GRACE" ] \
+        && { [ "$CREATE_PID" = "$$" ] || ! kill -0 "$CREATE_PID" 2>/dev/null; }; }; then
+        rm -f "$out"
+        rm -rf "$dir"
+        if [ "$seen" = 1 ]; then log "destroyed ${loc:-?}/$name"; else log "gone: ${loc:-?}/$name (never existed or already destroyed)"; fi
+        return 0
+      fi
+      log "waiting for an in-flight create of $name to resolve"
+    fi
+    if [ "$now" -ge "$deadline" ]; then
+      rm -f "$out"
+      log "WARNING: could not confirm ${loc:-?}/$name is gone after ${DOWN_TIMEOUT}s; rerun: $0 down $name"
+      return 1
+    fi
+    sleep "$POLL"
+  done
 }
 
 # pack SRC: write a gzipped checkout tarball to stdout (tracked + untracked
@@ -230,13 +418,20 @@ cmd_run() {
   src=$(cd "$src" && pwd)
   [ -n "$dest" ] || dest="work/$(basename "$src")"
 
-  RUN_VM=$(cmd_up ${up_args[@]+"${up_args[@]}"})
-  local name=$RUN_VM
+  local i name=""
+  for (( i = 0; i < ${#up_args[@]}; i += 2 )); do
+    case ${up_args[i]} in -n|--name) name=${up_args[i+1]} ;; esac
+  done
+  [ -n "$name" ] || { name=$(new_name); up_args+=(-n "$name"); }
+  RUN_VM=$name
+  # Armed before the create request: an interrupted `up` still destroys its VM.
+  # A second signal must not cut teardown short, so the EXIT handler ignores them.
+  trap 'rc=$?; trap "" INT TERM HUP QUIT; finish "$rc" "$RUN_VM"' EXIT
+  trap 'exit 130' INT TERM HUP QUIT
+  cmd_up "${up_args[@]}" >/dev/null
   if [ "$keep" = 1 ]; then
+    RUN_VM=""
     log "--keep: leaving $name running; destroy with: $0 down $name"
-  else
-    trap 'cmd_down "$RUN_VM" || log "WARNING: failed to destroy $RUN_VM; run: $0 down $RUN_VM"' EXIT
-    trap 'exit 130' INT TERM
   fi
 
   local e
@@ -280,20 +475,32 @@ usage: ubi-runner.sh <command> [args]
   unpack NAME DEST       extract a tarball from stdin into DEST on the VM
   pull NAME REMOTE_GLOB LOCAL_DIR
                          copy matching remote entries into LOCAL_DIR
-  down NAME              destroy the VM
-  list                   list all VMs in the project
-  gc [HOURS]             destroy $PREFIX-* VMs older than HOURS (default $GC_HOURS)
+  down NAME [-l LOC]     destroy the VM; returns once it is confirmed gone or never existed
+  list [--mine]          list all VMs in the project, or only this owner's
+  usage                  VMs and vCPUs per owner across the project
+  owner                  print this caller's owner tag ($OWNER)
+  gc HOURS               destroy this owner's VMs older than HOURS (never other owners')
   cli ARGS...            raw Ubicloud CLI passthrough (e.g. cli vm list)
 
+VMs are named $PREFIX-<owner>-<epoch>-<suffix>; set UBI_OWNER (e.g. your thread
+code) to tag them, otherwise a per-machine id is used.
 defaults: size=$DEFAULT_SIZE location=$DEFAULT_LOCATION (env UBI_SIZE, UBI_LOCATION)
+env: UBI_GC_HOURS (unset/0: no sweep on up), UBI_CREATE_GRACE (${CREATE_GRACE}s),
+     UBI_DOWN_TIMEOUT (${DOWN_TIMEOUT}s), UBI_API_TIMEOUT (${API_TIMEOUT}s)
 EOF
 }
 
 cmd=${1:-help}
 [ $# -eq 0 ] || shift
 case $cmd in
+  owner|pack|help|-h|--help) ;;
+  *) [ -n "${UBICLOUD_API_KEY:-}" ] || die "UBICLOUD_API_KEY is not set (create a token under your Ubicloud project's Tokens page)" ;;
+esac
+case $cmd in
   run) cmd_run "$@" ;;
-  up) cmd_up "$@" ;;
+  up) trap 'rc=$?; trap "" INT TERM HUP QUIT; [ -z "$UP_READY" ] || UP_NAME=""; finish "$rc" "$UP_NAME"' EXIT
+      trap 'exit 130' INT TERM HUP QUIT
+      cmd_up "$@" ;;
   ssh) name=$1; shift; load "$name"
        # shellcheck disable=SC2046
        if [ $# -eq 0 ]; then exec ssh -t $(ssh_opts) "ubi@$IP"; else remote "$name" "bash -lc $(printf %q "$*")"; fi ;;
@@ -302,7 +509,9 @@ case $cmd in
   unpack) cmd_unpack "$@" ;;
   pull) cmd_pull "$@" ;;
   down) cmd_down "$@" ;;
-  list) cli vm list ;;
+  list) cmd_list "$@" ;;
+  usage) cmd_usage ;;
+  owner) echo "$OWNER" ;;
   gc) cmd_gc "$@" ;;
   cli) cli "$@" ;;
   help|-h|--help) usage ;;

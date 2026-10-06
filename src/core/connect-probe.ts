@@ -75,6 +75,16 @@ export function extractResultText(content: unknown): string {
     .join('\n');
 }
 
+/**
+ * The structured body of a tool result: content[0] only. Servers append notice
+ * blocks (`[gbrain notice ...]`) after it, so joining every block (as
+ * extractResultText does for display) is not parseable JSON.
+ */
+export function resultBodyText(content: unknown): string {
+  const first = Array.isArray(content) ? content[0] as { text?: unknown } | undefined : undefined;
+  return typeof first?.text === 'string' ? first.text : '';
+}
+
 const DEFAULT_DEPS: ProbeDeps = {
   connectAndCall: async (mcpUrl, token, signal) => {
     const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {

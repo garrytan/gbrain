@@ -3,12 +3,12 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { safeLoad } from 'js-yaml';
+import { load } from 'js-yaml';
 
 const root = join(import.meta.dir, '..', '..');
 type Job = { needs?: string | string[]; if?: string; steps: Array<{ name?: string; run?: string; uses?: string; env?: Record<string, string> }> };
 type Workflow = { on: Record<string, { paths?: string[] }>; jobs: Record<string, Job> };
-const loadWorkflow = (name: string) => safeLoad(readFileSync(join(root, '.github/workflows', name), 'utf8')) as Workflow;
+const loadWorkflow = (name: string) => load(readFileSync(join(root, '.github/workflows', name), 'utf8')) as Workflow;
 const unit = loadWorkflow('test.yml');
 const e2e = loadWorkflow('e2e.yml');
 
@@ -37,7 +37,7 @@ describe('CI execution evidence', () => {
     }
     for (const name of ['gitleaks', 'verify']) {
       expect(unit.jobs[name].needs).toBeUndefined();
-      expect(unit.jobs[name].if).toBe("${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}");
+      expect(unit.jobs[name].if).toBe("${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}");
     }
     expect(e2e.jobs.tier2.needs).toBe('jsonb-parity');
     expect(e2e.jobs.tier2.if).toBeUndefined();
@@ -50,11 +50,11 @@ describe('CI execution evidence', () => {
   });
 
   test('unit aggregate rejects failed, cancelled or skipped required jobs', () => {
-    expect(unit.jobs['test-status'].if).toBe("${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}");
+    expect(unit.jobs['test-status'].if).toBe("${{ always() && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}");
     expect(unit.jobs['test-status'].needs).toEqual([
       'gitleaks', 'security-regressions', 'dependency-audit', 'verify', 'serial-tests',
       'slow-entity-resolve-perf', 'slow-brainbench-e2e', 'brainbench', 'test', 'native-locks', 'persistence-validation',
-      'admin-browser', 'shared-skills-compatibility',
+      'admin-browser', 'shared-skills-compatibility', 'stress-changed-tests',
     ]);
     expect(aggregate(unit, 'test-status', 'pull_request', {})).toBe(0);
     for (const job of unit.jobs['test-status'].needs as string[]) {

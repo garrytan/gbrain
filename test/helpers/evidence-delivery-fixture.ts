@@ -71,7 +71,7 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
   });
   const prompts: string[] = [];
   await runThink(engine, {
-    question: 'ocelot pricing', remote: false,
+    question: 'ocelot pricing', remote: false, referenceDate: '2026-01-15',
     client: { create: async (params: { messages: unknown[] }) => {
       prompts.push(JSON.stringify(params.messages));
       return { content: [{ type: 'text', text: '{"answer":"ok","citations":[],"gaps":[]}' }], usage: { input_tokens: 1, output_tokens: 1 } };

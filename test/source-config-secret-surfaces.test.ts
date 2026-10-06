@@ -12,6 +12,7 @@
  * `sources webhook rotate`, must print the NEW secret exactly once.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -106,6 +107,8 @@ async function captureCli(fn: () => Promise<unknown>): Promise<string> {
   } finally {
     console.log = saved.log; console.error = saved.error; console.warn = saved.warn; console.info = saved.info;
     (process as { exit: unknown }).exit = saved.exit;
+    _resetCliExitVerdictForTests();
+    process.exitCode = 0;
   }
   return lines.join('\n');
 }

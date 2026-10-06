@@ -89,7 +89,7 @@ describe('CLI dispatch shape (master AST)', () => {
     const shape = await expectNormalizerStable(extractCliDispatch, astNormalizer);
     expect(shape.sets.CLI_ONLY).toEqual([...CLI_ONLY].sort());
     expect(shape.sets.THIN_CLIENT_REFUSED_COMMANDS).toEqual([...THIN_CLIENT_REFUSED_COMMANDS].sort());
-    expect(shape.switchCases.length).toBe(65);
+    expect(shape.switchCases.length).toBe(66);
     expect(Object.keys(shape.commands).length).toBeGreaterThanOrEqual(shape.sets.CLI_ONLY.length);
   });
 

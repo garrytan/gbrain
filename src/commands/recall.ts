@@ -37,6 +37,7 @@ import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from '../core/mcp-client.ts';
 import { readCursor, writeCursor } from '../core/recall-cursor-state.ts';
 import { resolveSourceId, resolveSourceIdEngineFree, SourceTargetError } from '../core/source-resolver.ts';
+import { usageError } from '../cli/cli-error.ts';
 
 // Same kebab-case shape gate the source-resolver applies. v0.32: applied
 // locally on thin-client where the canonical resolver's assertSourceExists
@@ -128,8 +129,14 @@ function parseFlags(args: string[]): ParsedFlags {
     if (a === '--limit') {
       const raw = args[++i] ?? '';
       if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1) {
-        process.stderr.write(`Error: --limit must be a positive safe integer (got "${raw}").\n`);
-        process.exit(2);
+        const message = `--limit must be a positive safe integer (got "${raw}").`;
+        // Agent contract v1: invalid_params (exit 2 through renderCliError, the envelope under --json).
+        const valueGiven = i < args.length && !raw.startsWith('--');
+        const argv = ['gbrain', 'recall', ...args.slice(0, i), '50', ...args.slice(valueGiven ? i + 1 : i)];
+        throw usageError(message, 'Pass a positive integer, e.g. --limit 50.', {
+          why: '--limit caps how many facts recall returns, so it must be a whole number of at least 1.',
+          fix: { argv, consent: [], actor: 'agent', why: 'The same recall with a valid --limit.', requires_exclusive: false },
+        });
       }
       out.limit = Number(raw); continue;
     }
@@ -892,7 +899,7 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
     const delegated = await maybeDelegateLocalOperation('forget', params, cfg, {
       brain: cli.brain, source, timeoutMs: cli.timeoutMs ?? undefined,
     });
-    let result: { id: string; expired: boolean };
+    let result: { id: string; expired: boolean; similar_active?: { candidates?: Array<{ fact_id: string; similarity: number }>; next?: string } };
     if (delegated.handled) result = delegated.result as typeof result;
     else {
       const connected = typeof engine === 'function' ? await engine() : engine;
@@ -902,7 +909,17 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
         dryRun: false, sourceId, logger: { info: console.log, warn: console.warn, error: console.error } }, params) as typeof result;
     }
     if (json) console.log(JSON.stringify(result, null, 2));
-    else process.stdout.write(result.expired ? `Forgot fact id=${id}\n` : `Fact id=${id} was already withdrawn\n`);
+    else {
+      process.stdout.write(result.expired ? `Forgot fact id=${id}\n` : `Fact id=${id} was already withdrawn\n`);
+      const similar = result.similar_active;
+      if (similar?.candidates?.length) {
+        process.stdout.write(`Close matches still active: ${similar.candidates.map(c => `#${c.fact_id} (${c.similarity})`).join(', ')}\n`);
+      }
+      if (similar?.next) {
+        const { agentBlock } = await import('../core/agent-markers.ts');
+        process.stderr.write(agentBlock({ next: similar.next }));
+      }
+    }
   } catch (error) {
     if (await reportPersistenceCliError(error, json)) return;
     throw error;

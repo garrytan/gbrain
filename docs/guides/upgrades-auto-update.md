@@ -105,7 +105,7 @@ the startup Bun check, unlike `--version`). If the new release does not
 start, the upgrade exits non-zero and prints recovery: `bun upgrade`, then
 `gbrain post-upgrade`; or return to the previous release with
 `git -C <clone> checkout <previous sha> && bun install` (bun-link) or
-`bun install -g github:garrytan/gbrain#v<previous>` (package). Nothing is
+`bun remove -g gbrain && bun add -g github:garrytan/gbrain#v<previous>` (package; an in-place tag swap fails or silently corrupts the global lock on current Bun, #5034). Nothing is
 rolled back automatically, and the autopilot channel records that version as
 failed.
 

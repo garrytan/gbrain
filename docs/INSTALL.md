@@ -113,7 +113,7 @@ chat providers need an explicit `models.*` pin. With neither key, they stay off
 calmly and memory comes from agent-authored `## Facts` fences and the
 `remember` verb.
 
-For the autopilot daemon specifically, keys and process-level env (`NODE_EXTRA_CA_CERTS`, proxy vars, custom base URLs) belong in `~/.gbrain/env` — a 0600 file created by `gbrain autopilot --install` and sourced by the daemon wrapper (interactive shell rc files never reach daemon shells; the path honors `GBRAIN_HOME`). Re-run `gbrain autopilot --install` after editing it so the daemon reloads.
+For the autopilot daemon specifically, keys and process-level env (`NODE_EXTRA_CA_CERTS`, proxy vars, custom base URLs) belong in `~/.gbrain/env` — a 0600 file created by `gbrain autopilot --install` and sourced by the daemon wrapper (interactive shell rc files never reach daemon shells; the path honors `GBRAIN_HOME`). Re-run `gbrain autopilot --install` after editing it so the daemon reloads. To keep a key off disk, use your secret manager there: the file is sourced by bash at every daemon start, so a line like `VOYAGE_API_KEY="$(doppler secrets get VOYAGE_API_KEY --plain)"` (or `op read`, `security find-generic-password -w`, `pass show`) fetches the value at start-up and never writes it (#5196). The command must work non-interactively in the daemon's environment.
 
 To change an existing brain's embedding provider, follow the explicit-consent playbook at [`skills/migrations/v0.46.3.0.md`](../skills/migrations/v0.46.3.0.md), with the full reference in [`docs/guides/embedding-migration.md`](guides/embedding-migration.md). Preview the work and cost before approving a migration; do not repoint existing vectors at a different model.
 

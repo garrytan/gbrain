@@ -19,18 +19,12 @@ import type { BrainEngine } from '../core/engine.ts';
 import { computeRemediationPlan, runRemediation } from '../core/remediation/index.ts';
 import { runAllOnboardChecks } from '../core/onboard/checks.ts';
 import { buildOnboardReport, renderHuman } from '../core/onboard/render.ts';
+import { CapFlagError, mergeCapFlag, parseCapFlag, type CapFlag } from '../core/budget/cap-flag.ts';
 
 function parseInt10(args: string[], flag: string): number | null {
   const i = args.indexOf(flag);
   if (i === -1 || i === args.length - 1) return null;
   const v = parseInt(args[i + 1] ?? '', 10);
-  return isNaN(v) ? null : v;
-}
-
-function parseFloat10(args: string[], flag: string): number | null {
-  const i = args.indexOf(flag);
-  if (i === -1 || i === args.length - 1) return null;
-  const v = parseFloat(args[i + 1] ?? '');
   return isNaN(v) ? null : v;
 }
 
@@ -49,11 +43,20 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
   // stays undefined, which runRemediation already treats as no ceiling (skips the
   // est-cost refusal + BudgetTracker runs uncapped); `maxUsdOff` lifts the
   // missing-cap refusal below. Spend is still ledgered.
-  const maxUsdIdx = args.indexOf('--max-usd');
-  const maxUsdVal = maxUsdIdx >= 0 ? (args[maxUsdIdx + 1] ?? '').trim().toLowerCase() : '';
-  const maxUsdOff = ['off', 'unlimited', 'none'].includes(maxUsdVal);
-  const maxUsdRaw = parseFloat10(args, '--max-usd');
-  const maxUsd = maxUsdRaw === null ? undefined : maxUsdRaw;
+  // D19 shared parser: a malformed, 0 or conflicting --max-usd is refused
+  // before any plan or paid call instead of silently dropping the cap.
+  let cap: CapFlag | undefined;
+  try {
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--max-usd') cap = mergeCapFlag(cap, parseCapFlag('--max-usd', args[i + 1]));
+    }
+  } catch (e) {
+    if (!(e instanceof CapFlagError)) throw e;
+    process.stderr.write(`gbrain onboard: ${e.message}\n`);
+    process.exit(2);
+  }
+  const maxUsdOff = cap?.usd === null;
+  const maxUsd = cap?.usd ?? undefined;
 
   // --history shows the impact log directly; no plan computation.
   if (history) {

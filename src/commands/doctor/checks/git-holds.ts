@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
-import { gitHoldFix, readGitHoldListing, readSyncHoldPolicy } from '../../../core/persistence/sync-holds.ts';
+import { gitHoldFix, readGitHoldListing, readGitImageHoldCounts, readSyncHoldPolicy } from '../../../core/persistence/sync-holds.ts';
 import { readHeldCoverage } from '../../../core/persistence/held-reads.ts';
 import { agentFix } from '../check-fix.ts';
 import { isContentRefusal } from '../../../core/import-screen.ts';
@@ -15,14 +15,16 @@ const SAMPLE_PATHS = 5;
  * step (the check is host-only, so paths never reach a remote caller), and the
  * inspect and repair commands; fails once a source carries more holds than
  * `sync.hold_escalate_count`, the same count rule that escalates a sync result.
+ * Unsupported-image holds (#5493) are listed but never escalate.
  */
 export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
     const [coverage, policy] = await Promise.all([readHeldCoverage(engine, sourceIds ? { sourceIds } : {}), readSyncHoldPolicy(engine)]);
     const listing = new Map((await readGitHoldListing(engine, coverage.map(source => source.source_id), SAMPLE_PATHS)).map(entry => [entry.sourceId, entry.holds]));
+    const images = await readGitImageHoldCounts(engine, coverage.map(source => source.source_id));
     const sources = coverage.map(source => ({ source_id: source.source_id, held: source.missing + source.stale, stale: source.stale, missing: source.missing,
       first: (listing.get(source.source_id) ?? []).map(hold => ({ path: hold.path, code: hold.code, ...(hold.meta.reason ? { reason: hold.meta.reason } : {}), why: gitHoldFix(hold).why })),
-      escalated: source.missing + source.stale > policy.escalateCount,
+      escalated: source.missing + source.stale - (images.get(source.source_id) ?? 0) > policy.escalateCount,
       status: `gbrain sources status ${source.source_id}`, repair: `gbrain repair frontmatter --source ${source.source_id}` }));
     const held = sources.reduce((sum, source) => sum + source.held, 0);
     const details = { held, source_ids: sources.map(source => source.source_id), sources, escalate_count: policy.escalateCount,

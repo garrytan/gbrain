@@ -33,6 +33,57 @@ export const RATE_RATIO_MAX = 1.5;
 /** Below this size per-process warmup dominates the per-page cost, so the rate gate is reported but not enforced. */
 export const RATE_MIN_PAGES = 1000;
 export const TOTAL_VS_HALF_MAX = 2.5;
+
+/** One timing basis of the import: per-page cost of the first and last 10%, and total vs the halfway mark. */
+export interface RateMeasure {
+  per_page_ms_first10: number;
+  per_page_ms_last10: number;
+  rate_ratio: number;
+  total_ms: number;
+  ms_at_half: number;
+  total_vs_half: number;
+}
+
+/**
+ * Per-file wall and CPU milliseconds from `gbrain import --progress-json --progress-interval 0`
+ * stderr: one `import.files` tick per file, each with cumulative `elapsed_ms` and `cpu_ms`.
+ * A file without a tick, or a tick without a field, yields NaN for the caller to reject.
+ */
+export function importProgressPerFile(stderr: string): { wallMs: number[]; cpuMs: number[] } {
+  const wall: number[] = [];
+  const cpu: number[] = [];
+  for (const line of stderr.split('\n')) {
+    if (!line.startsWith('{')) continue;
+    const event = JSON.parse(line) as { event?: string; phase?: string; done?: number; elapsed_ms?: number; cpu_ms?: number };
+    if (event.event !== 'tick' || event.phase !== 'import.files' || typeof event.done !== 'number') continue;
+    wall[event.done - 1] = event.elapsed_ms ?? Number.NaN;
+    cpu[event.done - 1] = event.cpu_ms ?? Number.NaN;
+  }
+  const perFile = (cumulative: number[]) => Array.from(cumulative, (ms, i) => (ms ?? Number.NaN) - (i > 0 ? cumulative[i - 1] ?? Number.NaN : 0));
+  return { wallMs: perFile(wall), cpuMs: perFile(cpu) };
+}
+
+export function rateMeasure(perPageMs: number[]): RateMeasure {
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+  const tenth = Math.max(1, Math.floor(perPageMs.length / 10));
+  const first = sum(perPageMs.slice(0, tenth)) / tenth;
+  const last = sum(perPageMs.slice(-tenth)) / tenth;
+  const half = sum(perPageMs.slice(0, Math.floor(perPageMs.length / 2)));
+  const total = sum(perPageMs);
+  const round = (n: number, places: number) => Math.round(n * 10 ** places) / 10 ** places;
+  return { per_page_ms_first10: round(first, 1), per_page_ms_last10: round(last, 1), rate_ratio: round(last / first, 2),
+    total_ms: Math.round(total), ms_at_half: Math.round(half), total_vs_half: round(total / half, 2) };
+}
+
+/**
+ * The timing basis the import-rate gate judges. PGLite runs on the import process's main thread, so
+ * that thread's CPU time holds all the import's work and none of the time a shared host takes the CPU away, which
+ * inflates wall time on CI runners. Postgres does its work in the server, outside that process's
+ * CPU time, so it keeps wall time.
+ */
+export function importRateBasis(engine: ScaleReport['engine']): 'cpu' | 'wall' {
+  return engine === 'pglite' ? 'cpu' : 'wall';
+}
 export const LOOPS_PER_PAGE_MAX = 10;
 export const HOT_TABLES = ['pages', 'links', 'content_chunks', 'timeline_entries', 'facts', 'takes'] as const;
 /**
@@ -76,7 +127,8 @@ export interface ScaleReport {
   pages: number;
   seed: number;
   import_mode: 'cli' | 'content';
-  import: { rate_ratio: number; total_vs_half: number; per_page_ms_first10: number; per_page_ms_last10: number };
+  /** Both timing bases, reported for every engine; `importRateBasis` picks the one the gate judges. */
+  import: { wall: RateMeasure; cpu: RateMeasure };
   /**
    * Read after the first timed op (`probed_after`), not right after import: F4b analyzes on the
    * first planner-sensitive read by design. `hot_table_rows` is each table's row count.
@@ -116,10 +168,13 @@ export function evaluateScaleGates(report: ScaleReport, policy: GatePolicy): Gat
   const add = (gate: string, ok: boolean, enforced: boolean, message: string, explain?: string) =>
     results.push({ gate, status: ok ? 'pass' : 'fail', enforced, message, ...(explain && !ok ? { explain } : {}) });
 
-  const { rate_ratio, total_vs_half, per_page_ms_first10, per_page_ms_last10 } = report.import;
+  const basis = importRateBasis(report.engine);
+  const other = basis === 'cpu' ? 'wall' : 'cpu';
+  const { rate_ratio, total_vs_half, per_page_ms_first10, per_page_ms_last10 } = report.import[basis];
   add('import_rate', rate_ratio <= RATE_RATIO_MAX && total_vs_half <= TOTAL_VS_HALF_MAX, report.pages >= RATE_MIN_PAGES,
-    `import rate: last 10% per-page cost ${per_page_ms_last10} ms is ${rate_ratio}x the first 10% (${per_page_ms_first10} ms; gate <= ${RATE_RATIO_MAX}); `
+    `import rate (${basis} time): last 10% per-page cost ${per_page_ms_last10} ms is ${rate_ratio}x the first 10% (${per_page_ms_first10} ms; gate <= ${RATE_RATIO_MAX}); `
     + `total import time is ${total_vs_half}x the time at the halfway mark (gate <= ${TOTAL_VS_HALF_MAX}). `
+    + `Not judged on ${report.engine}: ${other} time ratio ${report.import[other].rate_ratio}, total/half ${report.import[other].total_vs_half}. `
     + `A rising per-page cost means import slows as the brain grows, usually stale planner statistics during import. Reproduce: ${repro}`);
 
   const { hot_table_stat_rows: statRows, hot_table_rows: tableRows, probed_after: probedAfter } = report.planner;

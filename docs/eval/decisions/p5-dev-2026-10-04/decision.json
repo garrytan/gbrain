@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "decision_id": "p5-dev-2026-10-04",
+  "plan": "P5",
+  "title": "P5 dev comparison",
+  "verdict_type": "quality",
+  "stage": "dev",
+  "candidate": {
+    "gbrain": "/workspace/gbrain@21befeb5b7274b23e872261aa924ee46f63a0d20",
+    "config": {
+      "line_grammar.enabled": "true",
+      "wanted_pages.enabled": "true",
+      "put_page.similar_pages": "true"
+    }
+  },
+  "baseline": {
+    "gbrain": "/workspace/gbrain@6622a119e40ea09a7719233046aca24741863ed2",
+    "config": {}
+  },
+  "sources": [
+    {
+      "id": "n4-entity-resolution",
+      "kind": "category",
+      "category": "n4-entity-resolution",
+      "script": "eval/runner/n4-entity-resolution.ts",
+      "args": [
+        "--seed",
+        "1"
+      ],
+      "paid": false,
+      "comparisons": [
+        {
+          "id": "n4-correct",
+          "metric": "resolver_correct",
+          "gate": "noninferiority",
+          "direction": "higher",
+          "tolerance": 0.01,
+          "cluster_by": "family"
+        },
+        {
+          "id": "n4-no-new-wrong-merge",
+          "metric": "resolver_wrong",
+          "gate": "exact",
+          "assertion": {
+            "kind": "no_item_regression",
+            "direction": "lower"
+          },
+          "cluster_by": "family"
+        }
+      ],
+      "rows_path": "data.rows",
+      "id_field": "id",
+      "min_clusters": 5,
+      "derive": [
+        {
+          "field": "resolver_correct",
+          "from": "resolver.outcome",
+          "equals": "correct"
+        },
+        {
+          "field": "resolver_wrong",
+          "from": "resolver.outcome",
+          "equals": "wrong"
+        }
+      ]
+    },
+    {
+      "id": "lme-s-dev",
+      "kind": "memory-qa",
+      "benchmark": "lme-s",
+      "split": "dev",
+      "embed": "real",
+      "limit": null,
+      "search_pins": {
+        "search.mode": "balanced",
+        "search.reranker.enabled": "false",
+        "search.autocut": "false"
+      },
+      "top_k": 10,
+      "id_field": "id",
+      "exclude_when": [
+        "abstention=true"
+      ],
+      "min_clusters": 10,
+      "comparisons": [
+        {
+          "id": "recall-all-5",
+          "metric": "recall_all_at_5",
+          "gate": "noninferiority",
+          "direction": "higher",
+          "tolerance": 0.01,
+          "cluster_by": "conversation",
+          "description": "guardrail: strict recall does not drop by more than one point"
+        },
+        {
+          "id": "ndcg-10",
+          "metric": "ndcg_at_10",
+          "gate": "exploratory",
+          "direction": "higher",
+          "cluster_by": "conversation"
+        },
+        {
+          "id": "latency",
+          "metric": "latency_ms",
+          "gate": "exploratory",
+          "direction": "lower",
+          "cluster_by": "conversation"
+        }
+      ],
+      "estimate_usd": 24
+    }
+  ],
+  "alpha": 0.05,
+  "seed": 42,
+  "draws": 10000,
+  "budget_usd": 24,
+  "created_at": "2026-10-04T20:34:16.055Z",
+  "notes": "Human-typable fact/link line grammar, wanted pages, duplicate nudge: entity resolution and LME-S as guardrails. Typed-edge accuracy (type-accuracy.ts) cannot measure an overlay build yet; add a grammar category for the primary."
+}

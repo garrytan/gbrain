@@ -71,7 +71,7 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (row.operation === 'loops_close' && row.intent?.kind === 'retire_loop_fact') return (await import('./loop-fact-retirement.ts')).prepareLoopFactRetirement(e, row, cfg);
   if (row.operation === 'decide_proposal') return (await import('../facts/proposal-supersede.ts')).prepareProposalMutation(e, row, cfg);
   if (row.operation === 'relink_facts') return (await import('../facts/relink-publish.ts')).prepareRelinkMutation(e, row, cfg);
-  if (['takes_add','takes_update','takes_supersede','takes_resolve'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
+  if (['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
   if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal);
   throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
@@ -121,6 +121,11 @@ function discardStoppedService(engine: BrainEngine, service: Service): void {
 }
 export function foregroundWriteCompletions(engine: BrainEngine, worktreeId: string): number {
   return services.get(engine)?.consumer.foregroundCompletions(worktreeId) ?? 0;
+}
+/** The config this process's consumer prepares writes with (its first caller's); undefined when none is running. */
+export function persistenceConsumerConfig(engine: BrainEngine): GBrainConfig | undefined {
+  const service = services.get(engine);
+  return service && !service.stopping ? service.consumer.config : undefined;
 }
 export function persistenceConsumerStatus(engine: BrainEngine) {
   const service = services.get(engine);

@@ -55,8 +55,10 @@ export interface SkillMetadata {
   writes_pages: boolean;
   mutating: boolean;
   file_policy: Array<Pick<SharedSkillFile, 'file_class' | 'audience'>>;
+  /** #5150: false when the SKILL.md declared no `tools`, so readers inherit the caller's brain tools; absent on revisions published before it was recorded. */
+  tools_declared?: boolean;
 }
-export interface SharedSkillSummary extends SharedSkillKey, Omit<SkillMetadata, 'file_policy'> {
+export interface SharedSkillSummary extends SharedSkillKey, Omit<SkillMetadata, 'file_policy' | 'tools_declared'> {
   qualified_id: string;
   revision: string;
   policy_epoch: string;
@@ -99,6 +101,12 @@ export interface StoredSkillRevision {
   deleted: boolean;
   policy_epoch: string;
 }
-export const SHARED_SKILL_LIMITS = Object.freeze({ files: 64, fileBytes: 1024 * 1024,
+/**
+ * `files` bounds one skill's declared files. `packFiles` bounds one canonical
+ * publication (adoption writes one SKILL.md per declared skill plus
+ * skillpack.json); it equals the persistence bundle bound
+ * (`BUNDLE_FILE_LIMITS.files`) that the journal enforces on every bundle (#5476).
+ */
+export const SHARED_SKILL_LIMITS = Object.freeze({ files: 64, packFiles: 128, fileBytes: 1024 * 1024,
   skillMdBytes: 256 * 1024, bundleBytes: 4 * 1024 * 1024, closureDepth: 12,
   pageSize: 100, catalogSkills: 10_000 });

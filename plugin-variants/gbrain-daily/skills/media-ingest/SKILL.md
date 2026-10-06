@@ -32,6 +32,7 @@ writes_to:
   - companies/
   - sources/
 upstream: media-ingest@fc834ee
+when_to_use: "Use when the user asks: \"watch this video\", \"process this YouTube link\", \"ingest this PDF\", \"save this podcast\", \"process this book\"."
 ---
 
 # Media Ingest Skill

@@ -328,7 +328,8 @@ export interface SyncOpts {
    * `sync_status` IPC polls read. Absent for direct CLI runs (stderr
    * breadcrumbs already cover that surface).
    */
-  onProgress?: (p: { phase: string; bankedFiles?: number; total?: number; waived?: boolean; group?: number }) => void;
+  onProgress?: (p: { phase: string; bankedFiles?: number; total?: number; waived?: boolean; group?: number;
+    /** #5984 lanes (phase `managed_sync.lanes`). */ lanes?: { effective: number; stepDown: string | null; overlapped: number; fallbacks: number } }) => void;
   /**
    * #5984: managed sync only. Re-enter the single-pass managed sync until the
    * cursor is done, the caller's signal/deadline stops it, or it is blocked
@@ -339,6 +340,7 @@ export interface SyncOpts {
   /** #5984: wall-clock ms the current drain started; managed cursors measure their rate from it. */
   drainStartedAt?: number;
   /** #5984: `--no-bulk`; and the drain's resolved bulk settings (internal; absent = one request per pass step). */ noBulk?: boolean; bulk?: import('../core/persistence/sync-group.ts').BulkSettings;
+  /** #5984 lanes: `--lanes N` (1..8) or `--no-lanes` (1). */ lanes?: number;
 }
 
 // The git-plumbing cluster (git(), discoverGitRoot, createSyncBaselineCommit,

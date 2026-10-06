@@ -14,6 +14,7 @@ tools:
   - add_timeline_entry
   - search
 mutating: true
+when_to_use: "Use when the user asks: \"set up webhook\", \"process webhook event\", \"transform this event\"."
 ---
 
 # Webhook Transforms

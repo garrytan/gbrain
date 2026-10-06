@@ -66,6 +66,7 @@ import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat, withBudgetTracker, isAvailable } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { importFromContent } from '../import-file.ts';
+import { derivedWriteThrough } from './derived-write-through.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { truncateUtf8 } from '../text-safe.ts';
 import { corpusTextForExtraction } from '../context/corpus-segments.ts';
@@ -691,6 +692,7 @@ export async function runPhaseExtractAtoms(
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
   const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait);
+  const atomFiles = await derivedWriteThrough(engine, 'extract_atoms', sourceId, { managed: managed !== null, dryRun: opts.dryRun ?? false });
   const writeRequests: WriteReceipt[] = [];
 
   // 1a. Get transcripts (test seam OR production discovery).
@@ -1318,8 +1320,9 @@ export async function runPhaseExtractAtoms(
         // C-14: atoms are keyed by LLM-chosen titles, which drift between
         // extractions. Once this extraction is complete, retire the atoms an
         // earlier extraction of the same source produced that this one did not.
-        await retireStaleAtoms(engine, sourceId, item.kind === 'page'
+        const retired = await retireStaleAtoms(engine, sourceId, item.kind === 'page'
           ? { key: 'source_slug', value: item.slug } : { key: 'source_path', value: item.filePath }, hash16, importedSlugs);
+        await atomFiles?.(importedSlugs, retired);
         if (item.kind === 'page') {
           await stampAtomsScanHash(item);
         }
@@ -1658,7 +1661,7 @@ async function retireStaleAtoms(
   origin: { key: 'source_slug' | 'source_path'; value: string },
   hash16: string,
   currentSlugs: string[],
-): Promise<void> {
+): Promise<string[]> {
   try {
     const rows = await engine.executeRaw<{ slug: string }>(
       `SELECT slug FROM pages
@@ -1672,8 +1675,10 @@ async function retireStaleAtoms(
     );
     const stale = rows.map(r => r.slug);
     for (let i = 0; i < stale.length; i += 500) await maintenanceTransaction(engine, tx => tx.softDeletePages(stale.slice(i, i + 500), { sourceId }));
+    return stale;
   } catch (err) {
     console.error(`[extract_atoms] stale atom cleanup failed for ${origin.value} (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    return [];
   }
 }
 

@@ -44,6 +44,7 @@ import { REGISTRATION_SURFACE } from '../src/core/mcp-registration.ts';
 import { operations } from '../src/core/operations.ts';
 import { cliEquivalent } from '../src/core/ops/cli-equivalent.ts';
 import { parseSkillFrontmatter } from '../src/core/skill-frontmatter.ts';
+import { FAILSAFE_SCHEMA, load } from 'js-yaml';
 // Personas: the SINGLE validation implementation (the harness-bridge CLI
 // imports the same module), so CLI errors and CI errors match by construction.
 import { loadPersonas, type PersonaDef } from '../src/core/skillpack/personas.ts';
@@ -182,15 +183,43 @@ function surfaceNote(gaps: readonly string[]): string {
   ].join('\n');
 }
 
-/** Copy one bundled skill; append the surface note to its SKILL.md when it has gaps. */
+/** Claude Code's skill listing caps description + when_to_use at this many characters per skill. */
+const SKILL_LISTING_CHARS = 1536;
+const WHEN_TO_USE_TRIGGERS = 5;
+
+/**
+ * #5858: Claude Code lists a skill by `name`, `description` and `when_to_use`
+ * only, so `triggers:` never reached the model. Each plugin-lane SKILL.md
+ * that declares triggers and no `when_to_use` gets one built from its first
+ * triggers, kept inside the listing cap. Source skills stay unchanged.
+ */
+function withWhenToUse(text: string): string {
+  const fm = parseSkillFrontmatter(text);
+  const triggers = (fm?.triggers ?? []).filter(t => t.trim());
+  if (!fm || triggers.length === 0 || /^when_to_use:/m.test(fm.raw)) return text;
+  let description = '';
+  try {
+    const data: unknown = load(fm.raw, { schema: FAILSAFE_SCHEMA });
+    if (data && typeof data === 'object' && typeof (data as { description?: unknown }).description === 'string') description = (data as { description: string }).description;
+  } catch { return text; }
+  const room = SKILL_LISTING_CHARS - description.length - 1;
+  let picked = triggers.slice(0, WHEN_TO_USE_TRIGGERS);
+  const render = (list: string[]) => `Use when the user asks: ${list.map(t => `"${t.trim()}"`).join(', ')}.`;
+  while (picked.length > 1 && render(picked).length > room) picked = picked.slice(0, -1);
+  if (render(picked).length > room) return text;
+  const close = text.indexOf('\n---', 4);
+  return `${text.slice(0, close)}\nwhen_to_use: ${JSON.stringify(render(picked))}${text.slice(close)}`;
+}
+
+/** Copy one bundled skill; add `when_to_use` and append the surface note to its SKILL.md when it has gaps. */
 function copySkill(slug: string, destSkillsDir: string): void {
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   cpSync(join(ROOT, 'skills', slug), join(destSkillsDir, slug), { recursive: true });
-  const gaps = starterGaps(slug);
-  if (gaps.length === 0) return;
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- build-time generator; slug comes from this repository's own plugin definition
   const skillMd = join(destSkillsDir, slug, 'SKILL.md');
-  writeFileSync(skillMd, readFileSync(skillMd, 'utf8').replace(/\n*$/, '\n') + surfaceNote(gaps));
+  const gaps = starterGaps(slug);
+  const text = withWhenToUse(readFileSync(skillMd, 'utf8'));
+  writeFileSync(skillMd, gaps.length === 0 ? text : text.replace(/\n*$/, '\n') + surfaceNote(gaps));
 }
 
 if (writeGaps) {

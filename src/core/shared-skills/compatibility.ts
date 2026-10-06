@@ -25,7 +25,7 @@ export async function listLegacySharedSkills(ctx: OperationContext, section?: st
   const skills = (await allSkills(ctx)).filter(() => !section || section === 'Published skills').map(skill => {
     const tools = skill.requirements.filter(r => r.startsWith('tool:')).map(r => r.slice(5));
     return { name: skill.name, description: skill.description, section: 'Published skills', triggers: skill.triggers, tools,
-      usable_tools: tools.filter(t => access.includes(t)), unavailable_tools: tools.filter(t => !access.includes(t)), writes_pages: skill.writes_pages, mutating: skill.mutating };
+      usable_tools: skill.usable_tools, unavailable_tools: skill.unavailable_tools, writes_pages: skill.writes_pages, mutating: skill.mutating };
   });
   return { schema_version: 1, skills_dir_source: 'config', count: skills.length, skills,
     instructions: { summary: SKILL_CATALOG_INSTRUCTIONS.summary, how_to_use: [...SKILL_CATALOG_INSTRUCTIONS.how_to_use], available_brain_tools: access, fetch_op: 'get_skill' } };
@@ -42,7 +42,7 @@ export async function getLegacySharedSkill(ctx: OperationContext, name: unknown,
   const access = await sharedSkillToolAccess(ctx);
   return { schema_version: 1, name: skill.name, frontmatter: { name: skill.name, description: skill.description, triggers: skill.triggers,
     tools, writes_pages: fm?.writes_pages ?? false, mutating: fm?.mutating ?? false }, body: skill.body,
-    usable_tools: tools.filter(t => access.includes(t)), unavailable_tools: tools.filter(t => !access.includes(t)),
+    usable_tools: skill.usable_tools, unavailable_tools: skill.unavailable_tools,
     client_guidance: { nature: SKILL_CLIENT_GUIDANCE.nature, protocol: [...SKILL_CLIENT_GUIDANCE.protocol], available_brain_tools: access, mutating: fm?.mutating ?? false } };
 }
 export async function listLegacySharedPacks(ctx: OperationContext): Promise<ResidentPackResult> {

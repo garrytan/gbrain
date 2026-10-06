@@ -63,7 +63,7 @@ export function assertManagedFilesystemWrite(path: string): void {
   if (!managed || hasFilesystemPublication(path)) return;
   // #5279: name the root, its source and the evidence, so a stray ownership file is findable.
   const error = new OperationError('writer_coordinator_required',
-    `This file belongs to the managed canonical worktree ${managed.root}${managed.sourceId ? ` (source ${managed.sourceId})` : ''}.`,
+    `This path belongs to the managed canonical worktree ${managed.root}${managed.sourceId ? ` (source ${managed.sourceId})` : ''}.`,
     'Submit the change through the persistence coordinator; check the root with gbrain sources writer status.');
   error.detail = `root=${managed.root} source=${managed.sourceId ?? 'unknown'} evidence=${managed.evidence}`;
   throw error;

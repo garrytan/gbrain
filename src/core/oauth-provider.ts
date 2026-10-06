@@ -37,7 +37,7 @@ import {
   dcrScopeViolation,
 } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
-import { authSourcesFromGrant, grantFromRow, normalizeGrantBrain, intersectGrantedScopes, type GrantPatch } from './grants/model.ts';
+import { TOKEN_TTL_MAX_SECONDS, authSourcesFromGrant, grantFromRow, normalizeGrantBrain, intersectGrantedScopes, type GrantPatch } from './grants/model.ts';
 import { assertValidSlugPrefixes, pgArray } from './grants/encoding.ts';
 import { rescopeOAuthClient, type RescopeClientOptions, type RescopeClientResult } from './grants/rescope.ts';
 import { grantValidationContext, validateClientGrant, insertClientGrant, assertGrantPatch } from './grants/service.ts';
@@ -566,8 +566,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // token TTL — never a fixed permissive ceiling — so a self-registering
     // client cannot elect a longer-lived token than the server default
     // unless the admin explicitly configured a wider window.
-    const dcrTtlMin = options.dcrTtlMinSeconds ?? DEFAULT_DCR_TTL_MIN_SECONDS;
-    const dcrTtlMax = options.dcrTtlMaxSeconds ?? Math.max(this.tokenTtl, dcrTtlMin);
+    const dcrTtlMin = Math.min(options.dcrTtlMinSeconds ?? DEFAULT_DCR_TTL_MIN_SECONDS, TOKEN_TTL_MAX_SECONDS);
+    const dcrTtlMax = Math.min(options.dcrTtlMaxSeconds ?? Math.max(this.tokenTtl, dcrTtlMin), TOKEN_TTL_MAX_SECONDS);
     this._clientsStore = new GBrainClientsStore(
       this.sql,
       options.allowClientCredentialsDcr === true,
@@ -869,6 +869,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         grantRevision: Number(row.grant_revision ?? 0),
         grantProfile: typeof row.grant_profile === 'string' ? row.grant_profile : null,
         grantRepairReasons: Array.isArray(row.grant_repair_reasons) ? row.grant_repair_reasons as string[] : [],
+        tokenTtlSeconds: currentGrant.token_ttl == null ? null : Number(currentGrant.token_ttl),
         boundTools: Array.isArray(row.bound_tools) ? row.bound_tools as string[] : null,
         boundSourceId: typeof row.bound_source_id === 'string' ? row.bound_source_id : null,
         boundBrainId: typeof row.bound_brain_id === 'string' ? row.bound_brain_id : null,

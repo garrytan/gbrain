@@ -27,6 +27,7 @@ writes_to:
   - people/
   - concepts/
   - sources/
+when_to_use: "Use when the user asks: \"shares a link or URL\", \"read this\", \"save this\", \"think about this\", \"put this in brain\"."
 ---
 
 # Idea Ingest Skill

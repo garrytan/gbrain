@@ -30,6 +30,8 @@ log's absolute path. A failing `bun run verify` keeps each failed check's log
 and prints it. In CI, each red job's step summary lists the failing tests with a
 `bun test … -t` reproduce command.
 
+**Red CI on master:** [CI red runbook](ci-red-runbook.md).
+
 | File suffix or location | Lane | Command | Runs in PR CI |
 |---|---|---|---|
 | `*.test.ts` | unit (parallel shards) | `bun run test` | yes, 8 weighted shards |
@@ -76,20 +78,15 @@ the decision rule is critical path first, vCPU-minutes second.
 `test/scripts/ci-runner-routing.test.ts` pins capacity and platform routing;
 `.github/actionlint.yaml` declares the exact custom runner labels.
 
-### Pull request, master and nightly scope
+### Event parity
 
 Every test file runs on every push to master, on the nightly schedule and on
-manual dispatch. Pull requests and merge-queue runs (`merge_group`, which use
-the PR profile) run a narrower matrix of the same files:
-
-| Lane | Pull request | Push to master, nightly, manual |
-| --- | --- | --- |
-| Security regressions | Linux, macOS and Windows on Bun 1.4.2 | Also Bun 1.4.0 |
-| Persistence read latency, deployment matrix, soak, reconciliation crashes | Bun 1.4.2 | Bun 1.4.0 and 1.4.2 |
-| Persistence soak size | 2,500 writes | 10,000 writes |
-| Native writer locks, native paths changed | Every target on Bun 1.4.2, musl, both Windows probes, OpenClaw | Every target, musl and Windows probe on Bun 1.4.0 and 1.4.2, OpenClaw |
-| Native writer locks, other changes | `linux-x64-glibc / Bun 1.4.2` smoke cell (full native step list) | Same as above |
-| `test/export-scale.slow.test.ts` | 10,001 pages | 100,001 pages |
+manual dispatch, and pull requests and merge-queue runs (`merge_group`) run
+every Bun-version cell too. Each narrower PR behavior is a named exception
+whose comment names the scheduled run that covers it
+(`test/scripts/ci-pr-scope.test.ts` fails on an unclassified one). Table,
+dependency-audit rule and cost: [docs/ci-event-parity.md](ci-event-parity.md). Required checks stay keyed on
+the `test-status` and `e2e-status` aggregators.
 
 The `changes` job classifies a pull request's changed files with
 `scripts/ci-native-scope.sh`: native lock sources, the native toolchain, IPC,
@@ -275,15 +272,21 @@ only where a Postgres lane names it. Those lanes are: a workflow step that
 runs with `DATABASE_URL` and names the file, a `test/e2e/` wrapper that
 imports it (`registerPostgresTests`), a `tests/heavy/` script that names it,
 or a row in `scripts/e2e-backend-matrix.txt`. Unit-lane files with no other
-Postgres owner run in `persistence-validation.yml`'s `unit-postgres-arms` job
-(two shards against a pgvector service, newest Bun on PRs, both supported
-versions elsewhere). Each file runs in its own Bun process, so a failing file
-cannot leak environment or global state into later files, and each failure
-prints an `::error file=…` line with its reproduce command.
-`bun run check:postgres-lanes` (in `verify`) fails on every arm with no lane.
-An arm deliberately left out is an `ALLOWLIST` row in
+Postgres owner are listed in `test/postgres-unit-arms.txt`, read by
+`persistence-validation.yml`'s `unit-postgres-arms` job (one Bun process per
+file), the [race hunt](#race-hunt) and the lane guard.
+`bun run check:postgres-lanes` (in `verify`) fails on every arm with no lane
+and on a bad list row. An arm deliberately left out is an `ALLOWLIST` row in
 `scripts/check-postgres-lane-coverage.ts` naming its reason and TODO; a row
 for a file that is laned, has no arm or is gone fails.
+### Stress gate
+
+`stress-changed-tests` (in `test-status`) runs each touched test file 10x on fresh databases; local twin `bun run test:stress`. Details: [scripts/stress/README.md](../scripts/stress/README.md).
+
+### Race hunt
+
+Nightly: every listed Postgres arm 10x ([details](../scripts/stress/README.md#race-hunt)).
+
 ### Scale tier
 
 The gate shape and cadence are defined once, by O-CEO-16 (with O-ENG-16 and
@@ -291,7 +294,9 @@ O-CEO-9) in the Foundations 1 plan; `scripts/scale/gates.ts` and
 `.github/workflows/scale-tier.yml` implement it. This section says how to run it.
 
 How to run it, what it measures, exit codes, the watchdog and the large-brain
-ceilings: [scripts/scale/README.md](../scripts/scale/README.md).
+ceilings: [scripts/scale/README.md](../scripts/scale/README.md). The import-rate
+gate times PGLite by the import process's CPU time and Postgres by wall time;
+the README says why.
 
 ### Authoring gate
 
@@ -316,6 +321,42 @@ the wrong field, and needs no seam.
 Bad: a test that reads `src/commands/remote.ts` and asserts it contains
 `job.status`. It passes when the loop is broken in a way that keeps the token,
 fails on a harmless rename, and duplicates the behavioral test above.
+
+### Contributor audit
+
+`bun run audit:contributors <base>..<head> [--prs <manifest>] [--json]`
+(`scripts/contributor-audit.ts`) re-proves discrimination for every
+first-parent commit in the range and for each PR head in `--prs`, trial-merged
+onto `<head>`. In an isolated worktree of `<head>` it runs the change's test
+files, one Bun process per file as the unit loop does (green baseline required), reverses only that change's product hunks
+(`git diff M^1 M -- <product files> | git apply -R`; tests and docs stay),
+reruns, restores, checks the tree is identical and re-verifies green. Hunks
+that no longer apply at `<head>` are audited at the merge commit itself.
+
+Results use the helper's vocabulary (`discriminates`, `does_not_discriminate`,
+`vacuous_failure`) plus `setup_failed`, `conflict` and `not_audited`, with a
+reason. Human verdicts (`accept`, `rework`, `reject`, `not_yet_proven`) live in
+a separate `--verdicts` file and print in their own column. It also runs
+`wave-security-scan` (range and each PR) and `check:postgres-lanes` (head and
+each trial merge) from the trusted checkout; `--skip-security` and
+`--skip-lanes` opt out.
+
+Preflight checks Bun against `engines.bun`, the refs, gitleaks and python3,
+and a `--postgres` database (which must be test-shaped). PR heads are pinned
+into `<run-dir>/prs.pinned.json`; state and per-step logs live in the run dir
+(default `.git/contributor-audit/<base>-<head>/`), so `--resume` skips finished
+cases and refuses when refs or pins differ. `--step-timeout` (default 900s)
+bounds each step. Exit: 0 clean, 1 needs a human look, 2 usage or preflight
+refusal (an agent-contract envelope), 130 interrupted.
+
+Untrusted code (install with `--ignore-scripts`, tests) runs under `env -i`
+with an allowlist: temporary `HOME` and `GBRAIN_HOME`, no credential files,
+`DATABASE_URL` and `GBRAIN_DATABASE_URL` empty unless `--postgres` is given,
+`bun --no-env-file`. For stronger isolation, run the unit audit on an
+ephemeral Ubicloud VM with outbound network blocked after `bun install`
+(optional). First run: `bun scripts/contributor-audit-fixture.ts <dir>` builds
+an offline range covering each result. Tests:
+`test/scripts/contributor-audit.test.ts`.
 
 ### Retiring a test
 
@@ -368,7 +409,7 @@ Test command tiers, each with a clear scope:
 | Command | What it runs | Wallclock | When to use |
 |---|---|---|---|
 | `bun run test` | Parallel unit loop (`scripts/run-unit-parallel.sh`): weighted shards (CPU-detected, 4 by default, at most 8; CI uses 8), then the serial pass. Excludes `*.slow.test.ts` and `test/e2e/*`; no typecheck. Builds the PGLite schema snapshot first and exports `GBRAIN_PGLITE_SNAPSHOT` (opt out: `GBRAIN_NO_SNAPSHOT=1`). Caps total concurrency to available memory at `GBRAIN_TEST_MEM_PER_FILE_MB` (default 1536) per slot, shedding intra-shard width before shards. Shards that fail with the WASM out-of-memory signature or are killed externally get one serial rescue pass: phantoms go green with an `oom_rescued` note, real failures stay red. Knobs: `GBRAIN_TEST_NO_MEM_ADAPT=1`, `GBRAIN_TEST_NO_OOM_FALLBACK=1`, `GBRAIN_TEST_MAX_CONCURRENCY` (default 4), `GBRAIN_TEST_SHARD_TIMEOUT` / `GBRAIN_TEST_SHARD_KILL_AFTER`, `--shards N` / `--max-concurrency N` / `--dry-run`. | a few minutes on a laptop | Inner edit loop. Default. |
-| `bun run verify` | CI's authoritative pre-test gate set, fanned out by `scripts/run-verify-parallel.sh` through a bounded worker pool (default `detect_cpus`; override `GBRAIN_VERIFY_MAX_PARALLEL`) with the heavy checks ordered first (typecheck, the two compile-embed checks, admin build, fuzz bundles, guard self-tests, whole-tree greps). `check:eval-chronicle` and `check:eval-canary` are deliberately NOT in the battery (their test-file twins `test/eval-chronicle.test.ts` and `test/eval-canary.test.ts` run the identical evals in the unit matrix, and CI's verify job and matrix always run together — the package scripts stay for on-demand runs, so `verify`-only local callers should know both evals ride the unit lane instead). The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~50s (pool-bounded; longest check dominates) | Before pushing; before `/ship`. |
+| `bun run verify` | CI's authoritative pre-test gate set, fanned out by `scripts/run-verify-parallel.sh` through a bounded worker pool (default `detect_cpus`; override `GBRAIN_VERIFY_MAX_PARALLEL`) with the heavy checks ordered first (typecheck, the two compile-embed checks, admin build, fuzz bundles, whole-tree greps), then the self-timed `SOLO_CHECKS` alone ([why](operations/verify-and-nightly-e2e.md#verify-solo-checks)). Two evals ride the unit lane instead ([why](operations/verify-and-nightly-e2e.md#evals-in-the-unit-lane)). The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~65-85s | Before pushing; before `/ship`. |
 | `bun run test:full` | `verify && bun run test && bun run test:slow && [smart e2e]`. Smart e2e runs only when `DATABASE_URL` is set and propagates its failure; otherwise it prints a skip notice to stderr. Use `ci:local` to provision the databases and require PgBouncer execution. | ~3-5min depending on slow + e2e | Pre-merge sanity, before opening a PR. |
 | `bun run ci:local` | Independent host gitleaks scans, then frozen dependencies, guards/typecheck, the complete serial and slow lanes, and four unit/E2E shards inside Docker. Each E2E shard has its own pgvector database; selected PgBouncer tests must execute against the transaction-mode pooler. Unit, serial, and slow lanes have database URL overrides unset. Any failed stage fails the command. Complete shard logs survive container teardown under `.context/ci-local-shards/`. `ci:local:diff` runs only gitleaks and the doc checks on a doc-only diff and the full gate otherwise; `--no-shard` runs unit/E2E sequentially. Doc-only diffs still require successful gitleaks scans. | Depends on the full corpus | Full local gate before shipping. |
 | `bun run ci:ubicloud` | The `ci:local` lanes (gitleaks, guards/typecheck, serial, slow, unit, all E2E with required PgBouncer execution) fanned out across ephemeral Ubicloud VMs from one heaviest-first work queue; `ci:ubicloud:diff` takes the same doc-only fast path as `ci:local:diff`. Needs `UBICLOUD_API_KEY` or `UBICLOUD_API_TOKEN`, no local Docker. See "Ubicloud fan-out" below. | ~5 min (floor: the longest single file) | Full gate before shipping when a Ubicloud token is available. |
@@ -396,7 +437,7 @@ array in `scripts/run-verify-parallel.sh` is the single execution list
 `check:no-legacy-getconnection`). The guard REGISTRY is `scripts/guards-manifest.tsv` (see "Guard registry and
 self-test" below).
 
-`bun run typecheck` uses TypeScript's native incremental analysis in
+`bun run typecheck` ([heap ceiling](operations/verify-and-nightly-e2e.md#typecheck-heap)) uses TypeScript's native incremental analysis in
 `node_modules/.cache/gbrain-typecheck.tsbuildinfo`. Every invocation still runs
 the compiler; source, root-file, configuration and dependency changes invalidate
 the affected analysis, and cached diagnostics remain failures. The cache is local
@@ -413,6 +454,18 @@ too; build the admin app on the host when updating its committed bundle.
 `scripts/ci-ubicloud.ts` runs the `ci:local` gate (uncommitted edits included) on ephemeral Ubicloud VMs
 from one heaviest-first work queue; every VM is destroyed on exit. VM setup, scheduling, weights, quota
 and flags are in [scripts/ubicloud/README.md](../scripts/ubicloud/README.md).
+
+VMs are named `ubirun-<owner>-<epoch>-<suffix>`; set `UBI_OWNER` to your thread
+code. Teardown destroys every VM the run asked for, including creates still in
+flight, and stale-VM sweeps run only with `UBI_GC_HOURS` set and only on your
+own VMs. `scripts/ubicloud/ubi-runner.sh usage` shows vCPUs by owner.
+A sleeping machine kills the run with no signal, so teardown never runs: on Capy, run
+`ci:ubicloud` as a watched background operation. After any interrupted run, check
+`ubi-runner.sh list --mine` and reap leftovers with `down NAME` (or `gc HOURS`, own VMs only).
+
+The project quota is 256 vCPUs, shared with PR CI, and one full gate takes 64.
+In a multi-lane wave, lanes run `ci:ubicloud:diff` or targeted suites (`bun
+test <files>`, `--lanes`); only the integrator runs the full gate.
 
 ### E2E backend matrix
 
@@ -758,7 +811,9 @@ Two guards run in `bun run verify`:
 Collision recovery: an unapplied branch migration is renumbered (`git mv`, edit
 `version`, regenerate); one already applied to a disposable dev DB means rebuilding
 that DB and replaying; one applied to retained data needs explicit `schema_version`
-reconciliation, never just a counter edit. Pinned by
+reconciliation, never just a counter edit. `bun run release:restamp` does the
+renumbering at merge time and prints the old-to-new mapping with these steps
+([RELEASING.md](RELEASING.md#release-restamp)). Pinned by
 `test/scripts/build-schema-migrations.test.ts` and `test/migrations-golden.test.ts`.
 
 ### Schema generator freshness
@@ -784,7 +839,9 @@ guards are exempt-with-reason, not fixture-tested).
 `bun run verify`) proves every `selftest=yes` scanner CAN fail: it runs each
 one against known-bad (must exit non-zero) and known-good (must pass) fixture
 trees under `test/fixtures/guards/<guard>/{bad,good}/` via the
-`GBRAIN_GUARD_ROOT` env seam, and enforces manifest completeness — a new
+`GBRAIN_GUARD_ROOT` env seam (guards run 4 at a time, `GUARD_SELF_TEST_JOBS`
+overrides; results print in manifest order; the whole pass must finish inside
+its 30 s budget), and enforces manifest completeness — a new
 `scripts/check-*` script that isn't registered in the manifest fails the
 build. A guard whose pattern rots into a permanently-green no-op fails CI
 instead of masquerading as coverage.
@@ -805,17 +862,30 @@ of every script, workflow, helper and doc that names a split file is
 #### Layering guard
 
 `scripts/check-layering.ts` (`bun run check:layering`, in `bun run verify`)
-parses every file under `src/core/engine-sql/` and `src/core/schema-migrations/`
-and fails on any import, type-only included, of an engine façade
-(`pglite-engine.ts`, `postgres-engine.ts`, `engine-factory.ts`) from
-engine-sql, or of `src/core/migrate.ts` from schema-migrations. Those
-directories are loaded by the engines and by `migrate.ts`, so an import back
-up is an ESM cycle that can fail with a temporal-dead-zone error at module
-load. Take the executor as a parameter and import types from
-`src/core/engine.ts`; migration helpers live in `schema-migrations/helpers.ts`
-and the `Migration` type in `schema-migrations/types.ts`. Fixtures:
+parses every file under `src/core/engine-sql/`, `src/core/schema-migrations/`
+and `src/core/persistence/` and fails on any import, type-only included, of an
+engine façade (`pglite-engine.ts`, `postgres-engine.ts`, `engine-factory.ts`)
+from engine-sql, of `src/core/migrate.ts` from schema-migrations, or of
+`src/core/ai/gateway.ts` from persistence. The first two directories are loaded
+by the engines and by `migrate.ts`, so an import back up is an ESM cycle that
+can fail with a temporal-dead-zone error at module load. Take the executor as a
+parameter and import types from `src/core/engine.ts`; migration helpers live in
+`schema-migrations/helpers.ts` and the `Migration` type in
+`schema-migrations/types.ts`; persistence embeds via `src/core/embedding.ts`. Fixtures:
 `test/fixtures/guards/check-layering.ts/`; forms are driven in
 `test/scripts/layering.test.ts`.
+
+#### Write-path model guards
+
+`scripts/check-ai-sdk-importers.ts` (in `bun run verify`) fails when a file
+outside `scripts/ai-sdk-importers.allowlist` imports a provider SDK (`ai`,
+`@ai-sdk/*`, `@anthropic-ai/sdk`, `openai`) as a value, so every model call
+goes through `invokeAI`. Each mutating op has a
+write-inference class (`src/core/ops/write-inference.ts`).
+`test/write-path-zero-llm.serial.test.ts` asserts no generative call before
+commit and only attributed facts extraction after it.
+`test/write-path-no-egress.serial.test.ts`: keyless CLI writes open no
+connection. Helper: `test/helpers/ai-tripwire.ts`.
 
 #### Durable-flush guard
 
@@ -1238,6 +1308,8 @@ artifacts, duplicates, wrong commits, omitted or repeated files, failures and
 cancellations cannot report complete execution, and the report refuses to
 publish without that evidence. Receipts prove file execution, not every
 optional assertion within a file.
+
+Shard cancellation versus failure in `coverage-full-report`: [full-corpus report states](operations/verify-and-nightly-e2e.md#full-corpus-report-states).
 
 **Merge** (`scripts/merge-lcov.ts`) sums DA hits per file and line across the
 input directories, normalizes paths, and emits a merged lcov plus a summary

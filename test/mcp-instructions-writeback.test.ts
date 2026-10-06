@@ -19,6 +19,7 @@ import { GBRAIN_MCP_INSTRUCTIONS, buildMcpInstructions } from '../src/mcp/instru
 import { contractFor } from './helpers/instructions-parity.ts';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
+import { emptyHome, withEnv } from './helpers/with-env.ts';
 
 const BASE_OPTS = {
   mode: 'salient' as const,
@@ -121,7 +122,11 @@ describe('legacy bearer transport serves the shared builder output (parity)', ()
   let stop: (() => void) | null = null;
   afterAll(() => stop?.());
 
-  test('enabled config → initialize carries base+section; config blip → last-known-good bundle; fresh engine off → base', async () => {
+  // The transport reads the process config (loadConfig) for its readiness tail. In a Postgres lane DATABASE_URL alone
+  // yields an env-derived config, so the tail ("Setup now …") appeared and parity broke whenever DATABASE_URL was set.
+  // This fake engine has no process config: pin that, independent of the lane's environment.
+  test('enabled config → initialize carries base+section; config blip → last-known-good bundle; fresh engine off → base', () =>
+    withEnv({ DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_HOME: emptyHome() }, async () => {
     const rows = new Map<string, string>([
       ['memory.auto_writeback', 'salient'],
       ['memory.auto_writeback_transient_ttl', '12h'],
@@ -180,5 +185,5 @@ describe('legacy bearer transport serves the shared builder output (parity)', ()
     // (never base, never a mixed default) — OV2-8/F3 on a live transport.
     dbHealthy = false;
     expect(await init()).toBe(expected);
-  });
+  }));
 });

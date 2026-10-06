@@ -23,9 +23,11 @@ import { runRepair, resolveRepairScope } from '../src/core/repair/core.ts';
 import { contextualModeRepair } from '../src/core/repair/contextual-mode.ts';
 import { checkContextualRetrievalCoverage } from '../src/commands/doctor/checks/calibration.ts';
 import { titleTierCorpusGeneration } from '../src/core/contextual-retrieval-service.ts';
+import { reembedPageWithContextualRetrieval } from '../src/core/contextual-retrieval-service.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { queuePageProjection, rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 
 const DIMS = 1536;
 const MODEL = 'openai:text-embedding-3-large';
@@ -78,6 +80,61 @@ for (const kind of testBackends()) describe(`#5621 gbrain repair contextual-mode
       WHERE p.source_id=$1 AND p.slug=$2 ORDER BY c.chunk_index`, [source, slug]));
   const run = async (apply: boolean, embed = true) => runRepair(ctx(), contextualModeRepair, await resolveRepairScope(engine),
     { apply, embed, embeddingModel: MODEL });
+
+  test('re-import does not turn an unverified title vector into verified raw provenance', async () => {
+    const source = `transition-${kind}`, slug = 'notes/mode-transition';
+    await engine.executeRaw('INSERT INTO sources(id,name,contextual_retrieval_mode) VALUES ($1,$1,$2)', [source, 'title']);
+    const content = body('Mode Transition Example');
+    await importFromContent(engine, slug, content, { sourceId: source });
+    await engine.executeRaw(`UPDATE content_chunks SET embedding_input_hash=NULL WHERE page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2)`, [source, slug]);
+    await engine.executeRaw("UPDATE sources SET contextual_retrieval_mode='none' WHERE id=$1", [source]);
+    inputs = [];
+    await importFromContent(engine, slug, content.replace('type: note', 'type: note\ntags: [regression]'), { sourceId: source });
+    const after = await vectors(source, slug);
+    expect(inputs).toHaveLength(1);
+    const chunks = await engine.getChunks(slug, { sourceId: source });
+    expect(inputs[0]).toEqual(chunks.map(chunk => chunk.chunk_text));
+    expect(after.every(row => row.v !== null && row.h !== null)).toBe(true);
+    await queuePageProjection(engine, source, slug, 'regression');
+    await rebuildPendingPageProjections(engine, 10);
+    expect(await vectors(source, slug)).toEqual(after);
+  });
+
+  test('repair records proof for grandfathered raw vectors before an explicit none rebuild', async () => {
+    const slug = 'notes/legacy-raw-repair';
+    await legacyPage('off', slug, 'Legacy Raw Example');
+    await engine.executeRaw(`UPDATE content_chunks SET embedding_input_hash=NULL WHERE page_id=(SELECT id FROM pages WHERE source_id='off' AND slug=$1)`, [slug]);
+    const before = await vectors('off', slug);
+    expect(before.every(row => row.v !== null && row.h === null)).toBe(true);
+    inputs = [];
+    await run(true, false);
+    const stamped = await vectors('off', slug);
+    expect((await page('off', slug)).mode).toBe('none');
+    expect(stamped.map(row => row.v)).toEqual(before.map(row => row.v));
+    expect(stamped.every(row => row.h !== null)).toBe(true);
+    expect(inputs).toHaveLength(0);
+    await queuePageProjection(engine, 'off', slug, 'regression');
+    await rebuildPendingPageProjections(engine, 10);
+    expect(await vectors('off', slug)).toEqual(stamped);
+  });
+
+  test('contextual reindex stamps grandfathered raw vectors when resolving a NULL mode to none', async () => {
+    const slug = 'notes/legacy-raw-reindex';
+    await legacyPage('off', slug, 'Legacy Reindex Example');
+    await engine.executeRaw(`UPDATE content_chunks SET embedding_input_hash=NULL WHERE page_id=(SELECT id FROM pages WHERE source_id='off' AND slug=$1)`, [slug]);
+    const before = await vectors('off', slug);
+    inputs = [];
+    expect(await reembedPageWithContextualRetrieval({ engine, pageSlug: slug, sourceId: 'off', globalMode: 'none' }))
+      .toMatchObject({ kind: 'skipped', reason: 'mode_none' });
+    const stamped = await vectors('off', slug);
+    expect((await page('off', slug)).mode).toBe('none');
+    expect(stamped.map(row => row.v)).toEqual(before.map(row => row.v));
+    expect(stamped.every(row => row.h !== null)).toBe(true);
+    expect(inputs).toHaveLength(0);
+    await queuePageProjection(engine, 'off', slug, 'regression');
+    await rebuildPendingPageProjections(engine, 10);
+    expect(await vectors('off', slug)).toEqual(stamped);
+  });
 
   test('stamps like a fresh import; unchanged inputs queue no re-embed, changed inputs re-embed once; a second run changes nothing', async () => {
     await legacyPage('plain', 'notes/raw-embedded', 'Raw Embedded Example');

@@ -1,0 +1,245 @@
+{
+  "decision_id": "p5-dev-2026-10-04",
+  "plan": "P5",
+  "stage": "dev",
+  "eligible_for_default": false,
+  "eligibility_note": "Dev verdicts come from development data and never set a default. A held-out verdict comes from the custodian after a committed preregistration.",
+  "verdict_type": "quality",
+  "overall": "pass",
+  "decided_at": "2026-10-04T21:21:01.761Z",
+  "sources": [
+    {
+      "source": "n4-entity-resolution",
+      "verdict": "pass",
+      "arms": {
+        "baseline": "0.60.48.0",
+        "candidate": "0.60.48.0"
+      },
+      "family": {
+        "family_id": "p5-dev-2026-10-04:n4-entity-resolution",
+        "verdict": "pass",
+        "reasons": [],
+        "alpha": 0.05,
+        "holm_family": [
+          "n4-correct"
+        ],
+        "comparisons": [
+          {
+            "id": "n4-correct",
+            "metric": "resolver_correct",
+            "gate": "noninferiority",
+            "status": "pass",
+            "reasons": [
+              "McNemar treats items as independent; the clustered sign-flip p-value is the primary test here"
+            ],
+            "n_pairs": 136,
+            "n_clusters": 10,
+            "n_excluded": 8,
+            "stats": {
+              "n_pairs": 136,
+              "n_clusters": 10,
+              "mean_a": 0.6176470588235294,
+              "mean_b": 0.6176470588235294,
+              "delta": 0,
+              "se_cluster": 0,
+              "se_iid": 0,
+              "design_effect": null,
+              "effective_n": null,
+              "ci95": [
+                0,
+                0
+              ],
+              "p_two_sided": 1,
+              "p_greater": 1,
+              "p_less": 1,
+              "p_method": "degenerate"
+            },
+            "mcnemar": {
+              "losses": 0,
+              "wins": 0,
+              "both_pass": 84,
+              "both_fail": 52,
+              "discordant": 0,
+              "p_two_sided": 1
+            },
+            "power": {
+              "alpha": 0.05,
+              "power": 0.8,
+              "mde": null,
+              "min_one_sided_discordant": 6,
+              "note": "no paired variation was observed, so the detectable effect cannot be estimated from this data; an exact McNemar test needs at least 6 wins with zero losses to reach 0.05"
+            },
+            "direction": "higher",
+            "p_holm": 0,
+            "tolerance": 0.01,
+            "p_noninferiority": 0
+          },
+          {
+            "id": "n4-no-new-wrong-merge",
+            "metric": "resolver_wrong",
+            "gate": "exact",
+            "status": "pass",
+            "reasons": [],
+            "n_pairs": 136,
+            "n_excluded": 8
+          }
+        ]
+      }
+    },
+    {
+      "source": "lme-s-dev",
+      "verdict": "pass",
+      "arms": {
+        "baseline": {
+          "package": "gbrain",
+          "declared_pin": "github:garrytan/gbrain#739e5cc89ca43b9b9351f0f203c7b12a7c0c571c",
+          "declared_sha": "739e5cc89ca43b9b9351f0f203c7b12a7c0c571c",
+          "version": "0.60.48.0",
+          "package_sha256": "fab1c3142270c58c8357f2298bb3f7bf9b59a1062f5954684e95bd1d1cc11c01",
+          "loaded_git_head": "6622a119e40ea09a7719233046aca24741863ed2"
+        },
+        "candidate": {
+          "package": "gbrain",
+          "declared_pin": "github:garrytan/gbrain#739e5cc89ca43b9b9351f0f203c7b12a7c0c571c",
+          "declared_sha": "739e5cc89ca43b9b9351f0f203c7b12a7c0c571c",
+          "version": "0.60.48.0",
+          "package_sha256": "dc928b2f8037a2f91fdb81c53ebd3cf04d49d772c400c64f865685733f89b871",
+          "loaded_git_head": "21befeb5b7274b23e872261aa924ee46f63a0d20"
+        }
+      },
+      "family": {
+        "family_id": "p5-dev-2026-10-04:lme-s-dev",
+        "verdict": "pass",
+        "reasons": [],
+        "alpha": 0.05,
+        "holm_family": [
+          "recall-all-5"
+        ],
+        "comparisons": [
+          {
+            "id": "recall-all-5",
+            "metric": "recall_all_at_5",
+            "gate": "noninferiority",
+            "status": "pass",
+            "reasons": [],
+            "n_pairs": 470,
+            "n_clusters": 470,
+            "n_excluded": 30,
+            "stats": {
+              "n_pairs": 470,
+              "n_clusters": 470,
+              "mean_a": 0.9276595744680851,
+              "mean_b": 0.9276595744680851,
+              "delta": 0,
+              "se_cluster": 0,
+              "se_iid": 0,
+              "design_effect": null,
+              "effective_n": null,
+              "ci95": [
+                0,
+                0
+              ],
+              "p_two_sided": 1,
+              "p_greater": 1,
+              "p_less": 1,
+              "p_method": "degenerate"
+            },
+            "mcnemar": {
+              "losses": 0,
+              "wins": 0,
+              "both_pass": 436,
+              "both_fail": 34,
+              "discordant": 0,
+              "p_two_sided": 1
+            },
+            "power": {
+              "alpha": 0.05,
+              "power": 0.8,
+              "mde": null,
+              "min_one_sided_discordant": 6,
+              "note": "no paired variation was observed, so the detectable effect cannot be estimated from this data; an exact McNemar test needs at least 6 wins with zero losses to reach 0.05"
+            },
+            "direction": "higher",
+            "p_holm": 0,
+            "tolerance": 0.01,
+            "p_noninferiority": 0
+          },
+          {
+            "id": "ndcg-10",
+            "metric": "ndcg_at_10",
+            "gate": "exploratory",
+            "status": "report_only",
+            "reasons": [],
+            "n_pairs": 470,
+            "n_clusters": 470,
+            "n_excluded": 30,
+            "stats": {
+              "n_pairs": 470,
+              "n_clusters": 470,
+              "mean_a": 0.9429414225547724,
+              "mean_b": 0.9429414225547724,
+              "delta": 0,
+              "se_cluster": 0,
+              "se_iid": 0,
+              "design_effect": null,
+              "effective_n": null,
+              "ci95": [
+                0,
+                0
+              ],
+              "p_two_sided": 1,
+              "p_greater": 1,
+              "p_less": 1,
+              "p_method": "degenerate"
+            },
+            "power": {
+              "alpha": 0.05,
+              "power": 0.8,
+              "mde": null,
+              "min_one_sided_discordant": null,
+              "note": "no paired variation was observed, so the detectable effect cannot be estimated from this data"
+            },
+            "direction": "higher"
+          },
+          {
+            "id": "latency",
+            "metric": "latency_ms",
+            "gate": "exploratory",
+            "status": "report_only",
+            "reasons": [],
+            "n_pairs": 470,
+            "n_clusters": 470,
+            "n_excluded": 30,
+            "stats": {
+              "n_pairs": 470,
+              "n_clusters": 470,
+              "mean_a": 168.39638297872347,
+              "mean_b": 60.65531914893618,
+              "delta": -107.74106382978722,
+              "se_cluster": 7.4406033018910875,
+              "se_iid": 7.4406033018910875,
+              "design_effect": 1,
+              "effective_n": 470,
+              "ci95": [
+                -123.35680851063823,
+                -93.61531914893625
+              ],
+              "p_two_sided": 0.00009999000099990002,
+              "p_greater": 1,
+              "p_less": 0.00009999000099990002,
+              "p_method": "monte-carlo-sign-flip"
+            },
+            "power": {
+              "alpha": 0.05,
+              "power": 0.8,
+              "mde": 20.845484229880867,
+              "min_one_sided_discordant": null,
+              "note": "with 470 pairs in 470 clusters, a two-sided 0.05 test has 80% power for an absolute change of about 20.8455; the observed delta is at least that size"
+            },
+            "direction": "lower"
+          }
+        ]
+      }
+    }
+  ]
+}

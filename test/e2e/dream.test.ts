@@ -48,11 +48,18 @@ function makeGitRepo(): string {
   return dir;
 }
 
+// runDream exits 1 when a phase fails. In-process that would end the bun test
+// process with no assertion and no JUnit report, so the exit becomes a thrown
+// error carrying the captured report instead.
 function captureLog<T>(fn: () => Promise<T>): Promise<{ result: T; output: string }> {
   return new Promise(async (resolve, reject) => {
     const lines: string[] = [];
     const origLog = console.log;
+    const origExit = process.exit;
     console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => {
+      throw new Error(`runDream called process.exit(${code}); captured output:\n${lines.join('\n').slice(0, 4000)}`);
+    }) as typeof process.exit;
     try {
       const result = await fn();
       resolve({ result, output: lines.join('\n') });
@@ -60,6 +67,7 @@ function captureLog<T>(fn: () => Promise<T>): Promise<{ result: T; output: strin
       reject(e);
     } finally {
       console.log = origLog;
+      process.exit = origExit;
     }
   });
 }
@@ -67,15 +75,23 @@ function captureLog<T>(fn: () => Promise<T>): Promise<{ result: T; output: strin
 describeE2E('E2E: gbrain dream CLI against real Postgres', () => {
   let repo: string;
 
+  // The gateway below carries no Anthropic key, but the e2e runner keeps the
+  // ambient one (nightly CI sets it). LLM phases probe hasAnthropicKey(), which
+  // reads process.env first, so they would start and then fail at chat time
+  // against this gateway. Drop it so they skip, as on a keyless brain.
+  const ambientAnthropicKey = process.env.ANTHROPIC_API_KEY;
+
   beforeAll(async () => {
     await setupLegacyEmbeddingDB();
     // embedBatch is mocked above, but the embed phase's credential preflight
     // reads the gateway env, and a failed phase now exits 1 (agent operator E4).
     configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: { OPENAI_API_KEY: 'placeholder-key-embed-is-mocked' } });
+    delete process.env.ANTHROPIC_API_KEY;
     repo = makeGitRepo();
   }, 30_000);
 
   afterAll(async () => {
+    if (ambientAnthropicKey !== undefined) process.env.ANTHROPIC_API_KEY = ambientAnthropicKey;
     await teardownDB();
     if (repo) rmSync(repo, { recursive: true, force: true });
   });

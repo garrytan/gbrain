@@ -32,6 +32,7 @@ import {
   insertProposal, maxFactId, proposedPairs, setSweepWatermark, type ConflictCandidateRow, type SweepFact,
 } from './proposals-store.ts';
 import { writeReceipts } from './receipts.ts';
+import { requeueWithdrawnAnchorsNear, reviewKindEnabled, runReviewLanes } from './review-lane.ts';
 import { flushDecideWrites, hmacRef, listCalibrations, receiptSalt, recentResolvedModels } from './store.ts';
 import { DecideError, type DecideQuestion, type DecideResult } from './types.ts';
 
@@ -102,6 +103,8 @@ interface SweepContext {
   result: ConflictSweepResult;
   receipts: Promise<void>[];
   signal?: AbortSignal;
+  /** Withdrawal review is on: a swept fact re-queues withdrawn claims it may restate. */
+  reviewWithdraw: boolean;
 }
 
 const factQuestion: DecideQuestion = { id: 'conflict:fact', kind: 'choice', instructions: CONFLICT_INSTRUCTIONS, options: { ...CONFLICT_OPTIONS } };
@@ -227,6 +230,7 @@ async function sweepFact(ctx: SweepContext, fact: SweepFact, retry: boolean): Pr
     result.deferred++;
     return true;
   }
+  if (ctx.reviewWithdraw) await requeueWithdrawnAnchorsNear(engine, fact.source_id, fact.id);
   const candidates = await candidatesFor(ctx, fact);
   if (candidates.length === 0) {
     if (retry) await clearDeferred(engine, fact.source_id, fact.id);
@@ -279,6 +283,7 @@ export async function runConflictSweep(engine: BrainEngine, opts: ConflictSweepO
   const ctx: SweepContext = {
     engine, cfg, policy, floor: proposalFloor(snapshot, policy.thresholdSource === 'override' ? undefined : policy.calibration?.proposal_floor), sweepId: result.sweep_id, sourceId, salt: await receiptSalt(engine),
     judged: new Set(), pairIndex: 0, deadlineMs: opts.deadlineMs ?? SWEEP_REQUEST_DEADLINE_MS, now, result, receipts: [], signal: opts.signal,
+    reviewWithdraw: reviewKindEnabled(snapshot, 'withdraw'),
   };
   const max = opts.maxFacts ?? SWEEP_MAX_FACTS;
   let going = true;
@@ -315,9 +320,11 @@ export async function conflictSweepTail(engine: BrainEngine, sourceId: string, s
   if (cfg.slots.conflict.mode === 'off') return undefined;
   try {
     const r = await runConflictSweep(engine, { sourceId, signal });
+    const review = await runReviewLanes(engine, sourceId, signal).catch((err) => [{ error: err instanceof Error ? err.message : String(err) }]);
     return {
       sweep_id: r.sweep_id, effective: r.effective, ...(r.inactive ? { inactive: r.inactive } : {}), facts: r.facts, duplicates: r.duplicates,
       proposals: r.proposals, independents: r.independents, skipped: r.skipped, deferred: r.deferred,
+      ...(review ? { review } : {}),
     };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };

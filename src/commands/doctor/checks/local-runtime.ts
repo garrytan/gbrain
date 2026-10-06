@@ -8,7 +8,8 @@
  */
 
 import { loadCompletedMigrations } from '../../../core/preferences.ts';
-import { isFreshInstallStamp } from '../../../core/migration-ledger.ts';
+import { indexCompletedEntries, isFreshInstallStamp, migrationLedgerSummary, trailingPartialCount } from '../../../core/migration-ledger.ts';
+import { VERSION } from '../../../version.ts';
 import { pendingFreshInstallCheck } from './pending-fresh-install.ts';
 import { compareVersions } from '../../migrations/index.ts';
 import { bootstrapDoctorChecks } from '../bootstrap-checks.ts';
@@ -140,9 +141,14 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     const completedVersions = Array.from(byVersion.entries())
       .filter(([, s]) => s.ran)
       .map(([v]) => v);
+    // A trailing `retry` marker (apply-migrations --force-retry) makes the
+    // version pending again, as statusForVersion and get_health read it: it
+    // is reported below as not run yet, never as still wedged.
+    const history = indexCompletedEntries(completed);
     const stuck = Array.from(byVersion.entries())
       .filter(([v, s]) => {
         if (!s.partial || s.complete) return false;
+        if (history.get(v)?.at(-1)?.status === 'retry') return false;
         // Forward-progress override: if any version >= v has completed, the
         // partial is stale. compareVersions returns 1 when first arg is newer.
         const supersededBy = completedVersions.find(cv => compareVersions(cv, v) >= 0);
@@ -161,11 +167,16 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     // that won't unstick them.
     const wedged: string[] = [];
     for (const v of stuck) {
-      const partialCount = completed.filter(
-        e => e.version === v && e.status === 'partial',
-      ).length;
+      const partialCount = trailingPartialCount(history.get(v) ?? []);
       if (partialCount >= 3) wedged.push(v);
     }
+    // Registered host migrations get_health lists as `pending` (no ledger
+    // entry, or reset by a retry marker) that a NEWER migration already ran
+    // past were skipped, not merely not reached yet. Versions above the newest
+    // run are the next apply-migrations' ordinary work and stay quiet here.
+    const newestRun = completedVersions.reduce<string | null>((a, v) => (a === null || compareVersions(v, a) > 0 ? v : a), null);
+    const pending = completed.length === 0 ? [] : migrationLedgerSummary(VERSION).pending.filter(v =>
+      (newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry');
 
     if (wedged.length > 0) {
       // The wedged set is a STRICT subset of the stuck set, so a wedged
@@ -183,6 +194,13 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
         name: 'minions_migration',
         status: 'fail',
         message: `MINIONS HALF-INSTALLED (partial migration: ${stuck.join(', ')}). Run: gbrain apply-migrations --yes`,
+      });
+    } else if (pending.length > 0) {
+      checks.push({
+        name: 'minions_migration',
+        status: 'warn',
+        message: `${pending.length} host migration(s) not run yet: ${pending.join(', ')}. Run: gbrain apply-migrations --yes`,
+        details: { pending },
       });
     } else {
       const setup = pendingFreshInstallCheck();

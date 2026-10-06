@@ -13,7 +13,7 @@ import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 import { belowSafeChunkFence } from '../search/safe-chunks.ts';
-import { acceptedEmbeddingInputHashes, embeddingInputHash, isContextualMode, plainEmbeddingTier, synopsisBodyHash,
+import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
 
 /**
@@ -42,12 +42,29 @@ export interface ProjectionSnapshot {
   pageKind: PageKind;
 }
 
+export type ProjectionConflictField = 'text_projection_revision' | 'chunk_digest' | 'indexing_context';
+
 /** Canonical state can stay unchanged while another worker replaces its projection. */
 export class PageProjectionConflictError extends PageRevisionConflictError {
-  constructor(expected: string, current: string) {
+  constructor(expected: string, current: string, readonly changed: readonly ProjectionConflictField[], readonly slug: string, readonly sourceId: string) {
     super(expected, current);
     this.name = 'PageProjectionConflictError';
-    this.message = 'The page projection changed during preparation. Read its current snapshot before retrying.';
+    this.message = `The search projection of ${slug} (source ${sourceId}) changed during preparation (${changed.join(', ')}) at the same page revision; nothing was installed. Re-read its current snapshot before retrying.`;
+  }
+}
+
+/**
+ * The loser of a concurrent projection installation re-reads and prepares
+ * again: `attempt` must capture a fresh snapshot on every call. At most three
+ * retries with jitter, so two reinstalling writers cannot livelock; the last
+ * conflict is rethrown (`page_projection_conflict` on the wire).
+ */
+export async function retryProjectionConflict<T>(attempt: () => Promise<T>, random: () => number = Math.random): Promise<T> {
+  for (let retry = 0; ; retry++) {
+    try { return await attempt(); } catch (error) {
+      if (!(error instanceof PageProjectionConflictError) || retry === 3) throw error;
+      await new Promise(resolve => setTimeout(resolve, Math.floor(random() * 20 * (retry + 1))));
+    }
   }
 }
 
@@ -140,11 +157,12 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     // getChunks omits vector payloads but includes identity, text/source, metadata
     // and embedding completion state. A newer installation must not be deleted,
     // even when its canonical revision stayed the same.
-    if (current!.page.text_projection_revision !== snapshot.page.text_projection_revision
-      || digest(stored) !== digest(prepared.chunks)
-      || context.key !== prepared.indexingContext) {
-      throw new PageProjectionConflictError(snapshot.revision, current!.revision);
-    }
+    const changed: ProjectionConflictField[] = [
+      ...(current!.page.text_projection_revision !== snapshot.page.text_projection_revision ? ['text_projection_revision' as const] : []),
+      ...(digest(stored) !== digest(prepared.chunks) ? ['chunk_digest' as const] : []),
+      ...(context.key !== prepared.indexingContext ? ['indexing_context' as const] : []),
+    ];
+    if (changed.length) throw new PageProjectionConflictError(snapshot.revision, current!.revision, changed, slug, sourceId);
     if (opts.seal && opts.preserveEmbeddings) {
       const byIndex = new Map(chunks.map(chunk => [chunk.chunk_index, chunk]));
       const identity = (chunk: ChunkInput | Chunk) => [chunk.chunk_text, chunk.chunk_source,
@@ -158,13 +176,15 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
       await tx.executeRaw(`DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))`, [snapshot.page.id, matching]);
       // #5553: keep a vector only when its recorded embedding input equals the
       // input the current page would produce. A chunk with no record is kept
-      // only where that input is its raw text; on a contextual page it is
+      // only in the pre-contextual NULL mode; explicit none may have inherited
+      // an old title vector, so its missing proof cannot authorize retention.
+      // On a contextual page it is
       // nulled once and stamped by its re-embed.
       const mode = current!.page.contextual_retrieval_mode;
       const provenance = embeddingInputContext(context, current!.page.title, context.corpusGeneration, chunks);
       const recorded = await tx.executeRaw<{ id: number; chunk_index: number; embedding_input_hash: string | null }>(
         'SELECT id,chunk_index,embedding_input_hash FROM content_chunks WHERE page_id=$1', [snapshot.page.id]);
-      const currentInput = recorded.filter(row => row.embedding_input_hash === null ? !isContextualMode(mode)
+      const currentInput = recorded.filter(row => row.embedding_input_hash === null ? mode == null
         : acceptedEmbeddingInputHashes(provenance, mode, byIndex.get(Number(row.chunk_index))!).includes(row.embedding_input_hash)).map(row => Number(row.id));
       await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(context.column.name)}=NULL,
         embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL WHERE page_id=$1 AND

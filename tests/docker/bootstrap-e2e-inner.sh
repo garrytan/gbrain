@@ -253,7 +253,12 @@ printf '%s\n' "$codex_out" | grep -Fq "verified targeting this workspace" \
   || fail "codex MCP registration was not verified as targeting this workspace"
 [ -f "$WS/.claude/settings.local.json" ] && fail "codex path must not write Claude hooks"
 grep -Fq "GBRAIN_SOURCE=" "$GB_CODEX_STATE" || fail "codex registration did not bind GBRAIN_SOURCE"
-grep -Fq "serve --surface full" "$GB_CODEX_STATE" || fail "codex registration did not pin the full op surface"
+# Every stdio registration gbrain writes pins REGISTRATION_SURFACE
+# (src/core/mcp-registration.ts); test/check-bootstrap-guards.test.ts keeps
+# this literal equal to it so a surface change fails on the PR, not nightly.
+EXPECTED_SURFACE=starter
+grep -Fq "serve --surface $EXPECTED_SURFACE" "$GB_CODEX_STATE" \
+  || fail "codex registration did not pin the registration surface '$EXPECTED_SURFACE' (registered: $(cat "$GB_CODEX_STATE")). Why: bootstrap hooks builds the serve argv from stdioServeArgv/REGISTRATION_SURFACE in src/core/mcp-registration.ts. Next: if REGISTRATION_SURFACE changed on purpose, update EXPECTED_SURFACE here; otherwise fix registerCodexMcp in src/core/bootstrap/hooks.ts, then run bash tests/docker/bootstrap-e2e.sh"
 
 # ── opencode door: direct-writer registration, NO binary at all ─────────────
 # The opencode lane needs no CLI (the JSONC writer is the registration), so
@@ -263,7 +268,7 @@ grep -Fq "serve --surface full" "$GB_CODEX_STATE" || fail "codex registration di
 # below prove the sharing-safe inversion: user-global is the DEFAULT, not
 # an echo of a recorded 'project' choice (WS has one; #4293). Asserts:
 # user-global default scope, the entry shape (absolute binary,
-# GBRAIN_SOURCE bound, full surface), and no Claude hooks written.
+# GBRAIN_SOURCE bound, a pinned surface), and no Claude hooks written.
 step "opencode MCP registration (direct JSONC writer, no binary)"
 export XDG_CONFIG_HOME="$SCRATCH/xdg-config"
 opencode_out="$(gbrain bootstrap hooks --workspace "$WS2" --harness opencode --gbrain-bin "$FAKE_GBRAIN" 2>&1)"

@@ -10,6 +10,7 @@ import { REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_LINK_SOURCE, type PersistenceEffe
 import { guardEffectSource } from './effect-recovery.ts';
 import type { SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { excludesPrivateWrites } from './page-visibility.ts';
+import { isRemoteWantedPagesEnabled, replaceWantedLinks } from '../wanted-links.ts';
 
 /** `mcp.remote_auto_links`: unset is on; false/0/no/off (any case) turns the remote `links` effect off. */
 export async function isRemoteAutoLinksEnabled(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
@@ -113,6 +114,13 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
       link_source: REMOTE_MENTION_LINK_SOURCE, link_kind: 'plain', origin_slug: live.page.slug, origin_source_id: sourceId }));
     if (obsolete.length) await tx.executeRaw('DELETE FROM links WHERE id=ANY($1::bigint[])', [obsolete]);
     const added = additions.length ? await tx.addLinksBatch(additions, { auditSite: 'addLinksBatch' }) : 0;
+    // Wanted pages: a missing mention target is recorded so the edge appears once that page is written (core/wanted-links.ts).
+    if (await isRemoteWantedPagesEnabled(tx)) {
+      await replaceWantedLinks(tx, { pageId: Number(live.page.id), sourceId }, { producers: ['body'], rows: skipped
+        .filter(target => target.reason === 'missing')
+        .map(target => ({ producer: 'body', ref_kind: 'slug', target_source_id: sourceId, target_ref: target.slug,
+          link_type: 'mentions', context: (targets.get(target.slug) ?? '').slice(0, 240) })) });
+    }
     await completeEffect(tx, effect, { links: 'committed', added, removed: obsolete.length, skipped_targets: skipped.slice(0, SKIPPED_TARGET_LIMIT),
       ...(skipped.length > SKIPPED_TARGET_LIMIT ? { skipped_target_count: skipped.length } : {}) });
   });

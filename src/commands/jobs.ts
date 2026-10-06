@@ -212,8 +212,12 @@ USAGE
       status       Read PID file + audit log, report running / last_start
                    / crashes_24h / max_crashes_exceeded as JSON or human.
                    Exits 0 if running, 1 if not.
-      stop         Send SIGTERM to the supervisor, wait up to 40s for
-                   graceful drain, report outcome. Exits 0 on clean stop.
+      stop         Send SIGTERM to the supervisor, wait up to 45s for
+                   graceful drain, report outcome (--queue names the
+                   queue lock to verify when the audit log cannot).
+                   Exits 0 only on a verified drain: the supervisor's own
+                   stopped row says drained, its workers are gone and its
+                   lock is released; otherwise exits 1 naming the check.
 
     EXIT CODES (start)
       0  clean shutdown (SIGTERM/SIGINT received, worker drained)

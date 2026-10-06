@@ -60,6 +60,8 @@ gbrain schema use <pack> # activate a pack (writes ~/.gbrain/config.json)
 which takes precedence over the file setting written by `gbrain schema use`.
 Use `gbrain config unset schema_pack` to remove that database override, then
 `gbrain schema active` to confirm the resolved pack and its selection tier.
+`gbrain config get schema_pack` and `gbrain config show` report the same
+resolved pack and name its tier.
 
 Authoring + discovery verbs:
 
