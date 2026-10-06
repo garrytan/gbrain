@@ -241,31 +241,52 @@ const extraction_review: Operation = {
         const title = typeof page.title === 'string' ? page.title.trim() : '';
         const aliases = [...new Set(title ? [...declared, title] : declared)];
 
-        // Frontmatter-only flip via a targeted JSONB merge — NOT putPage,
-        // whose upsert would reset non-carried columns (page_kind →
-        // 'markdown', content_hash, …) for a change that only touches
-        // frontmatter keys. provenance stays 'auto-extracted' as the audit
-        // trail of HOW the page came to exist; status → 'verified' records
-        // the owner's call. jsonb_build_object binds as text; the alias array
-        // binds through $5::text::jsonb (text in, cast parses) — the
-        // sanctioned positional form, never JSON.stringify into a bare
-        // ::jsonb. Identical on both engines. Both the status flip and the
-        // alias-index write happen in the SAME maintenance transaction: the
-        // stub has no file on disk (importFromContent wrote it straight to
+        // ONE COMMIT for both writes, same shape as the alias projection in
+        // import-file.ts ("Alias projection and readback share the page
+        // commit"). Split across two transactions, either half could land
+        // alone, and BOTH orderings are wrong in their own way:
+        //   flip-then-index — a verified page with no alias row. Invisible to
+        //     tryAliasExact, and unfixable through this surface, because
+        //     isUnverifiedExtraction gates the branch: a `verified` page
+        //     reports `not_unverified` forever.
+        //   index-then-flip — converges on retry, but leaks the other way: an
+        //     UNVERIFIED page whose name already votes in tryAliasExact,
+        //     exact-lookup and hybrid search. That is exactly what the
+        //     quarantine gate exists to prevent.
+        // Sharing the commit removes both, and makes the order inside
+        // irrelevant. A failure leaves the page fully quarantined, so
+        // re-running the SAME command converges; a throw mid-batch leaves
+        // earlier slugs cleanly promoted and the rest untouched.
+        //
+        // The stub has no file on disk (importFromContent wrote it straight to
         // the DB from generated markdown), so no later sync re-import would
-        // project a missed alias write for us, and a crash between the two
-        // writes must not leave a verified stub with no alias claimed.
-        await maintenanceTransaction(ctx.engine, async tx => {
+        // project the alias for us — the index write has to happen right here.
+        // Skip it when there is nothing to claim: setPageAliases with an empty
+        // set is a DELETE with no INSERT, which would wipe rows the page
+        // already had (unreachable for a stub, which always has a title, but
+        // the branch is reachable in principle).
+        //
+        // Frontmatter merge — NOT putPage, whose upsert would reset
+        // non-carried columns (page_kind → 'markdown', content_hash, …) for a
+        // change that only touches frontmatter keys. provenance stays
+        // 'auto-extracted' as the audit trail of HOW the page came to exist;
+        // status → 'verified' records the owner's call. The patch binds
+        // through $1::text::jsonb (text in, the cast parses it) — the
+        // sanctioned positional form, never JSON.stringify into a bare
+        // ::jsonb. Identical on both engines.
+        const patch: Record<string, unknown> = { [EXTRACTION_STATUS_KEY]: STATUS_VERIFIED };
+        if (aliases.length) patch.aliases = aliases;
+        await maintenanceTransaction(ctx.engine, async (tx) => {
+          if (aliases.length) {
+            await tx.setPageAliases(slug, page.source_id, normalizeAliasList(aliases));
+          }
           await tx.executeRaw(
             `UPDATE pages
-             SET frontmatter = COALESCE(frontmatter, '{}'::jsonb)
-                               || jsonb_build_object($1::text, $2::text)
-                               || jsonb_build_object('aliases', $5::text::jsonb),
+             SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || $1::text::jsonb,
                  updated_at = now()
-             WHERE slug = $3 AND source_id = $4`,
-            [EXTRACTION_STATUS_KEY, STATUS_VERIFIED, slug, page.source_id, JSON.stringify(aliases)],
+             WHERE slug = $2 AND source_id = $3`,
+            [JSON.stringify(patch), slug, page.source_id],
           );
-          await tx.setPageAliases(slug, page.source_id, normalizeAliasList(aliases));
         });
         results.push({ slug, status: 'promoted' });
       } else {

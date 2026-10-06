@@ -8,6 +8,7 @@ import { normalizeBasename } from '../src/core/link-extraction.ts';
 import { normalizeAlias } from '../src/core/search/alias-normalize.ts';
 import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { isUnverifiedExtraction } from '../src/core/extraction-review.ts';
 
 /**
  * Pins ADR-0001 (the Cyrillic й/ё slug-fold design decision; see the PR
@@ -128,6 +129,33 @@ describe('ADR-0001 consequence: enrichEntity merges the two spellings', () => {
     sourceId: 'default',
   } as OperationContext);
 
+  /**
+   * An engine whose `fail` methods reject, re-wrapped through `transaction` so
+   * the injection still fires on the tx-scoped engine. Without that re-wrap a
+   * test would go green the moment the writes move inside a transaction — the
+   * real engine would be handed to the callback and nothing would fail.
+   */
+  const failingEngine = (fail: (key: string, sql?: string) => boolean): typeof engine => {
+    const wrap = (target: typeof engine): typeof engine => new Proxy(target, {
+      get(t, key, recv) {
+        const name = String(key);
+        if (name === 'transaction') {
+          return (fn: (tx: typeof engine) => Promise<unknown>) =>
+            (Reflect.get(t, key, recv) as Function).call(t, (tx: typeof engine) => fn(wrap(tx)));
+        }
+        if (name === 'executeRaw') {
+          return (sql: string, ...rest: unknown[]) => fail(name, sql)
+            ? Promise.reject(new Error(`injected failure: ${name}`))
+            : (Reflect.get(t, key, recv) as Function).call(t, sql, ...rest);
+        }
+        if (fail(name)) return () => Promise.reject(new Error(`injected failure: ${name}`));
+        const v = Reflect.get(t, key, recv);
+        return typeof v === 'function' ? v.bind(t) : v;
+      },
+    }) as typeof engine;
+    return wrap(engine);
+  };
+
   const mention = (entityName: string, entityType: 'person' | 'company') => ({
     entityName,
     entityType,
@@ -203,6 +231,81 @@ describe('ADR-0001 consequence: enrichEntity merges the two spellings', () => {
     const second = await enrichEntity(engine, mention('Петр Иванов', 'person'), { trusted: false });
     expect(second.action).toBe('updated');
     expect(second.slug).toBe(stub.slug);
+  });
+
+  test('a failed index write leaves the page retryable, not half-promoted', async () => {
+    // Both writes share one commit, so a failed index write rolls the status
+    // flip back with it. That matters because the flip is what closes the
+    // door: isUnverifiedExtraction gates the branch, so a page left reading
+    // `verified` would report `not_unverified` forever — unfixable through
+    // this surface, and silently missing from tryAliasExact.
+    const stub = await enrichEntity(engine, mention('Игорь Волков', 'person'), { trusted: false });
+
+    const failing = failingEngine((key) => key === 'setPageAliases');
+
+    await expect(
+      extraction_review.handler({ ...reviewCtx(), engine: failing }, { action: 'promote', slugs: [stub.slug] }),
+    ).rejects.toThrow();
+
+    // Still quarantined => the same command fixes it.
+    const mid = await engine.getPage(stub.slug);
+    expect(isUnverifiedExtraction(mid!.frontmatter)).toBe(true);
+
+    const out = (await extraction_review.handler(reviewCtx(), {
+      action: 'promote', slugs: [stub.slug],
+    })) as { results: Array<{ slug: string; status: string }> };
+    expect(out.results).toEqual([{ slug: stub.slug, status: 'promoted' }]);
+    const hits = (await engine.resolveAliases([normalizeAlias('Игорь Волков')], { sourceId: 'default' }))
+      .get(normalizeAlias('Игорь Волков')) ?? [];
+    expect(hits.map((h) => h.slug)).toContain(stub.slug);
+  });
+
+  test('a failed status flip does not leak an unverified name into the shared index', async () => {
+    // The mirror of the test above. Index-then-flip converges on retry, but as
+    // two separate transactions it could still commit the alias and fail the
+    // flip — leaving an UNVERIFIED page whose name already votes in
+    // tryAliasExact, exact-lookup and hybrid search. That is precisely the
+    // leak the quarantine gate exists to prevent, so the pair has to share one
+    // commit (same shape as import-file.ts's alias projection).
+
+    const stub = await enrichEntity(engine, mention('Сергей Новиков', 'person'), { trusted: false });
+
+    const failing = failingEngine((key, sql) => key === 'executeRaw' && /UPDATE\s+pages/i.test(sql ?? ''));
+
+    await expect(
+      extraction_review.handler({ ...reviewCtx(), engine: failing }, { action: 'promote', slugs: [stub.slug] }),
+    ).rejects.toThrow();
+
+    const after = await engine.getPage(stub.slug);
+    expect(isUnverifiedExtraction(after!.frontmatter)).toBe(true);
+
+    // The load-bearing assertion: still quarantined => still silent.
+    const leaked = (await engine.resolveAliases([normalizeAlias('Сергей Новиков')], { sourceId: 'default' }))
+      .get(normalizeAlias('Сергей Новиков')) ?? [];
+    expect(leaked).toHaveLength(0);
+  });
+
+  test('an empty alias set never reaches the index as a bare DELETE', async () => {
+    // Unreachable for an extraction stub (it always has a title), but the
+    // branch exists: aliases=[] would write `aliases: []` and run
+    // setPageAliases(slug, src, []) — a DELETE with no INSERT, wiping rows
+    // that were already there.
+    const stub = await enrichEntity(engine, mention('Мария Козлова', 'person'), { trusted: false });
+    const page = await engine.getPage(stub.slug);
+    await engine.setPageAliases(stub.slug, 'default', [normalizeAlias('Прежний')]);
+    await engine.putPage(stub.slug, {
+      title: '',
+      type: 'person',
+      compiled_truth: page!.compiled_truth ?? '',
+      timeline: '',
+      frontmatter: page!.frontmatter,
+    });
+
+    await extraction_review.handler(reviewCtx(), { action: 'promote', slugs: [stub.slug] });
+
+    const kept = (await engine.resolveAliases([normalizeAlias('Прежний')], { sourceId: 'default' }))
+      .get(normalizeAlias('Прежний')) ?? [];
+    expect(kept.map((h) => h.slug)).toContain(stub.slug);
   });
 
   test('promotion does not clobber aliases the owner already declared', async () => {
