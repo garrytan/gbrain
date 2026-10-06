@@ -440,6 +440,23 @@ describe('ADR-0001 upgrade: alias rows written before the yo fold are re-keyed',
     expect(await rows()).toEqual(after);
   });
 
+  test('the migration runs on a brain with managed-writer enforcement enabled', async () => {
+    // page_aliases carries the managed-writer trigger (v156): once an operator
+    // enables enforcement, a write without a coordinator grant is refused. A
+    // schema migration re-keying rows must not stop the upgrade there.
+    await engine.executeRaw(`DELETE FROM page_aliases`);
+    await engine.executeRaw(
+      `INSERT INTO page_aliases (source_id, alias_norm, slug) VALUES ('default', 'пётр иванов', 'people/a')`,
+    );
+    await engine.executeRaw(`UPDATE persistence_brain SET enabled = true WHERE singleton = 1`);
+    try {
+      await engine.runMigration(migration.version, migration.sql);
+    } finally {
+      await engine.executeRaw(`UPDATE persistence_brain SET enabled = false WHERE singleton = 1`);
+    }
+    expect(await rows()).toEqual(['people/a=петр иванов']);
+  });
+
   test('the migration SQL re-keys a pre-fold row to exactly what normalizeAlias computes', async () => {
     // A pre-fold row is NFKC + lowercase (+ trim/collapse) without the two
     // Cyrillic folds. The SQL twin must land on normalizeAlias's key, or the

@@ -216,6 +216,7 @@ import { v212 } from './v212-decide-review-proposals.ts';
 import { v213 } from './v213-core-edit-notices.ts';
 import { v214 } from './v214-wanted-links.ts';
 import { v215 } from './v215-facts-attributed-to.ts';
+import { v216 } from './v216-page-aliases-cyrillic-fold.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -430,4 +431,5 @@ export const MIGRATIONS: Migration[] = [
   v213,
   v214,
   v215,
+  v216,
 ];
