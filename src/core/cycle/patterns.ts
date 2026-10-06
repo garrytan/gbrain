@@ -367,8 +367,7 @@ export async function runPhasePatterns(
     const reverseWriteCount = maintenance ? (finalizedRefs.length ? await verifyMaintenanceOutputs(engine, maintenance, finalizedRefs) : 0)
       : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
-    const details = { ...patternOutputDetails(reflections.length, finalizedRefs.length, reverseWriteCount, outcome, job.id, deferredSlugs.size),
-      ...(quoteVerify ? { quote_verify: quoteVerify } : {}) };
+    const details = patternOutputDetails(reflections.length, finalizedRefs.length, reverseWriteCount, outcome, job.id, deferredSlugs.size, quoteVerify);
 
     // #2782: the phase status must reflect the child outcome. Pre-fix this
     // returned status:ok even when the subagent timed out (e.g. no
@@ -444,9 +443,11 @@ export async function runPhasePatterns(
 // ── Config ────────────────────────────────────────────────────────────
 
 function patternOutputDetails(reflections: number, finalized: number, reverseWrites: number,
-  outcome: MinionJobStatus | 'timeout', jobId: number, deferred: number) {
+  outcome: MinionJobStatus | 'timeout', jobId: number, deferred: number,
+  quoteVerify: { pages: number; quarantined: number; repaired: number } | null) {
   return { reflections_considered: reflections, patterns_written: finalized,
-    reverse_write_count: reverseWrites, child_outcome: outcome, job_id: jobId, publish_deferred: deferred };
+    reverse_write_count: reverseWrites, child_outcome: outcome, job_id: jobId, publish_deferred: deferred,
+    ...(quoteVerify ? { quote_verify: quoteVerify } : {}) };
 }
 
 interface PatternsConfig {
