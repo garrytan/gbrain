@@ -7,15 +7,21 @@
  * - a Claude Code registration (~/.claude.json) whose argv starts a real
  *   `gbrain serve --surface verbs` → the smoke spawns it and runs initialize +
  *   tools/list + recall → ok, reason wired_running / smoke_passed;
- * - a live `gbrain serve` already holding the brain lock → ok without spawning;
+ * - a live `gbrain serve` already holding the brain lock → ok without spawning
+ *   (doctor runs only after that serve answers the MCP handshake, which it does
+ *   after taking the lock; polling earlier let doctor's own smoke serve win the
+ *   lock and leave the live serve in status-only mode);
  * - a registration whose binary does not exist → warn with a fix or reason;
  * - doctor seeds nothing: the brain holds no pages afterwards.
  *
  * Serial: spawns `gbrain serve` subprocesses against one PGLite brain.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { peekLock } from '../src/core/pglite-lock.ts';
 import { makeDoctorHome, runGbrain, type DoctorHome } from './helpers/doctor-json-golden.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -65,24 +71,29 @@ describe('doctor --only harness_wiring', () => {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
     Object.assign(env, { HOME: h.home, GBRAIN_HOME: h.home, GBRAIN_SKIP_STARTUP_HOOKS: '1' });
-    const serve = Bun.spawn([process.execPath, '--no-env-file', CLI, 'serve', '--surface', 'verbs'], { env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--no-env-file', CLI, 'serve', '--surface', 'verbs'], env, stderr: 'pipe' });
+    let serveStderr = '';
+    transport.stderr?.on('data', (chunk) => { serveStderr += String(chunk); });
+    const client = new Client({ name: 'doctor-harness-smoke-live-serve', version: '1' }, { capabilities: {} });
     try {
-      const deadline = Date.now() + 30_000;
-      const lockDir = join(h.home, '.gbrain', 'brain.pglite');
-      while (Date.now() < deadline) {
-        const status = await runGbrain(h, ['doctor', '--only', 'harness_wiring', '--json']);
-        const check = harnessCheck(status);
-        const reason = (check.details as Record<string, unknown>)?.reason;
-        if (reason === 'wired_running' && !(check.details as Record<string, unknown>).smoke) {
-          expect(String(check.message)).toContain('holds this brain');
-          return;
-        }
-        await Bun.sleep(500);
-      }
-      throw new Error(`the live serve never showed as the lock owner (lock dir exists: ${existsSync(lockDir)})`);
+      await client.connect(transport);
+      const dataDir = join(h.home, '.gbrain', 'brain.pglite');
+      const owner = peekLock(dataDir);
+      const run = await runGbrain(h, ['doctor', '--only', 'harness_wiring', '--json']);
+      const check = harnessCheck(run);
+      const lockFile = join(dataDir, '.gbrain-lock', 'lock');
+      const diagnostics = [
+        `live serve pid ${transport.pid}; observed owner ${JSON.stringify(owner)}`,
+        `lock record: ${existsSync(lockFile) ? readFileSync(lockFile, 'utf8') : '(missing)'}`,
+        `doctor stderr: ${run.stderr}`,
+        `serve stderr: ${serveStderr}`,
+      ].join('\n');
+      expect(owner, diagnostics).toMatchObject({ held: true, isServe: true, pid: transport.pid });
+      expect(check, diagnostics).toMatchObject({ status: 'ok', details: { reason: 'wired_running' } });
+      expect(check.details, diagnostics).not.toHaveProperty('smoke');
+      expect(String(check.message), diagnostics).toContain('holds this brain');
     } finally {
-      serve.kill();
-      await serve.exited;
+      await client.close().catch(() => {});
     }
   }, 90_000);
 
