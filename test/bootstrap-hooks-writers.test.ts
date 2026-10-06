@@ -17,6 +17,7 @@ import {
   registerClaudeMcp,
   registerCodexMcp,
   removeClaudeHooks,
+  removeClaudeHooksAt,
   writeClaudeHooks,
   writeCommittedClaudeHooks,
 } from '../src/core/bootstrap/hooks.ts';
@@ -26,6 +27,7 @@ import {
   CLAUDE_HOOK_EVENTS,
   CODEX_SPEC_ID,
   GBRAIN_HOOK_MARKER_KEY,
+  GBRAIN_HARNESS_MARKER_VALUE,
   GBRAIN_HOOK_MARKER_VALUE,
   TARGETS,
 } from '../src/core/bootstrap/host-specs.ts';
@@ -74,6 +76,50 @@ describe('host-specs [ENG-7]', () => {
     expect(TARGETS[CODEX_SPEC_ID].status).toBe('verified');
     expect(TARGETS[CODEX_SPEC_ID].note).toContain('TOML');
     expect(TARGETS[CODEX_SPEC_ID].note).toContain('http_headers');
+  });
+});
+
+describe('harness removal ownership diagnostics', () => {
+  // Pins mixed ownership and shell token shapes at the file-writer boundary;
+  // intact-marker orchestration coverage misses this. No production seam.
+  test.each([
+    'env GBRAIN_HOOK_LANE=harness /opt/gbrain hook compact',
+    "env 'GBRAIN_HOOK_LANE=harness' '/path with spaces/gbrain' hook compact",
+    'env "GBRAIN_HOOK_LANE=harness" /opt/gbrain hook compact',
+  ])('warns without deleting an unmarked command: %s', (command) => {
+    const dir = ws();
+    const path = join(dir, 'settings.json');
+    const unmarked = { type: 'command', command };
+    const ours = { type: 'command', command: 'old command', _gbrain: GBRAIN_HARNESS_MARKER_VALUE };
+    const foreign = { type: 'command', command, _gbrain: GBRAIN_HOOK_MARKER_VALUE };
+    const settings = { hooks: { PreCompact: [{ matcher: 'keep', hooks: [ours, unmarked, foreign] }] }, theme: 'dark' };
+    const original = JSON.stringify(settings);
+    writeFileSync(path, original);
+    const r = removeClaudeHooksAt(path, GBRAIN_HARNESS_MARKER_VALUE);
+    expect(r.removed).toBe(1);
+    expect(r.notes.join('\n')).toMatch(/WARNING.*PreCompact.*ownership marker.*manually/);
+    expect(readFileSync(r.backupPath!, 'utf8')).toBe(original);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      hooks: { PreCompact: [{ matcher: 'keep', hooks: [unmarked, foreign] }] }, theme: 'dark',
+    });
+  });
+
+  test('different lanes, marked workspace hooks and metadata lookalikes do not block removal', () => {
+    const dir = ws();
+    const path = join(dir, 'settings.json');
+    const settings = { hooks: { Stop: [{ hooks: [
+      { type: 'command', command: 'env GBRAIN_HOOK_LANE=harness-other gbrain hook stop' },
+      { type: 'command', command: 'env XGBRAIN_HOOK_LANE=harness gbrain hook stop' },
+      { type: 'command', command: 'env GBRAIN_HOOK_LANE=harness gbrain hook stop', _gbrain: GBRAIN_HOOK_MARKER_VALUE },
+      { type: 'prompt', prompt: 'GBRAIN_HOOK_LANE=harness' },
+    ] }] } };
+    const original = JSON.stringify(settings);
+    writeFileSync(path, original);
+    const r = removeClaudeHooksAt(path, GBRAIN_HARNESS_MARKER_VALUE);
+    expect(r.notes).toEqual([]);
+    expect(r.removed).toBe(0);
+    expect(r.backupPath).toBeNull();
+    expect(readFileSync(path, 'utf8')).toBe(original);
   });
 });
 

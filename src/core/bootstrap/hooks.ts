@@ -37,6 +37,7 @@ import {
   CLAUDE_HOOK_EVENTS,
   CLAUDE_HOOK_SUBCOMMAND,
   CLAUDE_SETTINGS_FILE_RELPATH,
+  GBRAIN_HARNESS_MARKER_VALUE,
   GBRAIN_HOOK_MARKER_KEY,
   GBRAIN_HOOK_MARKER_VALUE,
   type ClaudeHookEvent,
@@ -310,6 +311,19 @@ function isForeignGbrainMarked(entry: unknown, marker: string): boolean {
   if (typeof entry !== 'object' || entry === null) return false;
   const v = (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
   return typeof v === 'string' && v !== marker;
+}
+
+/** A lane assignment is evidence of a possible straggler, NOT ownership.
+ * Hosts or users can drop unknown JSON fields when rewriting settings. Never
+ * delete an unmarked command by substring; keep the receipt retryable instead.
+ * Token boundaries include shell quotes because the writer quotes env values.
+ */
+function isUnmarkedHarnessHook(entry: unknown): boolean {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return e[GBRAIN_HOOK_MARKER_KEY] === undefined && e.type === 'command' &&
+    typeof e.command === 'string' &&
+    /(?:^|[\s'"])GBRAIN_HOOK_LANE=harness(?=$|[\s'"])/.test(e.command);
 }
 
 /**
@@ -650,7 +664,8 @@ export function writeCommittedClaudeHooks(
  * left untouched (removal must never destroy what it cannot read) — the note
  * says so. Event arrays we emptied lose their key; an emptied hooks object
  * loses its key; foreign structure (including other-marker gbrain entries)
- * survives.
+ * survives. Unmarked harness-lane commands are left untouched with a WARNING:
+ * callers must retain their removal receipt until manual cleanup is complete.
  */
 export function removeClaudeHooksAt(
   settingsPath: string,
@@ -694,6 +709,17 @@ export function removeClaudeHooksAt(
     if (!Array.isArray(groups)) continue; // structurally foreign — never touch
     const { kept, removed: n } = stripOurEntries(groups, marker);
     removed += n;
+    if (marker === GBRAIN_HARNESS_MARKER_VALUE && kept.some((group) => {
+      if (typeof group !== 'object' || group === null) return false;
+      const entries = (group as HookMatcherGroup).hooks;
+      return Array.isArray(entries) && entries.some(isUnmarkedHarnessHook);
+    })) {
+      notes.push(
+        `WARNING: hooks.${event} in ${settingsPath} still contains a harness-lane command ` +
+          'whose ownership marker is missing; left untouched. Inspect and manually remove it ' +
+          'if it belongs to this install, then re-run `gbrain bootstrap harness --remove`.',
+      );
+    }
     if (n === 0) continue;
     if (kept.length === 0) {
       delete hooks[event]; // emptied by OUR removal — drop the key

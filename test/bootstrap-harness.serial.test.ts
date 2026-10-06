@@ -491,6 +491,38 @@ describe('full apply', () => {
 });
 
 describe('--remove', () => {
+  // Marker-intact teardown coverage misses host/user rewrites that drop the
+  // ownership field. The off-ramp must not claim success or consume its only
+  // retry receipt while those hooks still run; no new production seam needed.
+  test('unmarked harness hooks refuse teardown, preserve foreign entries and retain a retry receipt', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--token', TOKEN_A]), f.deps)).toBe(0);
+    const settings = readJson(f.userSettings);
+    const hooks = settings.hooks as Record<string, Array<{ hooks: Array<Record<string, unknown>> }>>;
+    for (const groups of Object.values(hooks)) {
+      for (const group of groups) for (const entry of group.hooks) delete entry._gbrain;
+    }
+    const foreign = { type: 'command', command: 'echo unrelated', _gbrain: 'bootstrap-v1' };
+    hooks.SessionStart[0].hooks.push(foreign);
+    writeFileSync(f.userSettings, JSON.stringify(settings));
+    expect(await removeHarness(flags(['--remove']), f.deps)).toBe(1);
+    expect(readJson(f.userSettings).hooks).toEqual(hooks);
+    expect(f.err.join('\n')).toMatch(/SessionStart.*ownership.*manual/i);
+    expect(f.out.join('\n')).not.toContain('harness wiring fully removed');
+    const state = readHarnessReceiptState(f.home);
+    expect(state.state).toBe('ok');
+    if (state.state !== 'ok') throw new Error('retry receipt missing');
+    expect(state.receipt.targets).toHaveLength(1);
+    expect(state.receipt.targets[0]).toMatchObject({ kind: 'hooks', state: 'failed' });
+    // The operator removes only the ambiguous entries; the same off-ramp now
+    // converges and leaves the unrelated workspace hook in place.
+    settings.hooks = { SessionStart: [{ hooks: [foreign] }] };
+    writeFileSync(f.userSettings, JSON.stringify(settings));
+    expect(await removeHarness(flags(['--remove']), f.deps)).toBe(0);
+    expect(readJson(f.userSettings).hooks).toEqual(settings.hooks);
+    expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
+  });
+
   test('full remove: ours-by-url removed, token revoked by id, receipt consumed; foreign entries survive', async () => {
     const f = makeFake();
     expect(await applyHarness(flags(), f.deps)).toBe(0);
