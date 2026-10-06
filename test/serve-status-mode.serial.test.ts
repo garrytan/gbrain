@@ -19,7 +19,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -109,8 +109,9 @@ describe('status-only serve: lock contention → recovery in place (a)', () => {
     expect(status.decisions[0].options.map((o: { id: string }) => o.id)).toEqual(['close_owner', 'share_http']);
     // The executable shared-HTTP plan: stop the owner → serve --http → rewire harnesses.
     expect(status.share_http_plan.argv).toEqual(['kill', String(status.lock_owner.pid)]);
-    expect(status.share_http_plan.then.argv).toEqual(['gbrain', 'serve', '--http']);
-    expect(status.share_http_plan.then.then.argv).toEqual(['gbrain', 'bootstrap', 'harness', '--harness', 'all', '--yes']);
+    expect(status.share_http_plan.then.argv).toEqual(['gbrain', 'mcp', 'grant', '--help']);
+    expect(status.share_http_plan.then.then.argv).toEqual(['gbrain', 'serve', '--http', '--bind', '127.0.0.1', '--port', '3131']);
+    expect(status.share_http_plan.then.then.then.argv).toContain('--credentials-file');
 
     // Any other tool: one error block that names gbrain_status.
     const refused = await second.client.callTool({ name: 'search', arguments: { query: MARKER } });
@@ -204,26 +205,38 @@ describe('status-only serve: lock contention → one shared serve --http (b)', (
     await owner.client.close();
     opened.shift();
     // No prior HTTP credentials: mint one token per harness while the lock is free.
-    const tokens = ['harness-a', 'harness-b'].map(name => {
-      const out = cli(['auth', 'create', name, '--scopes', 'read,write'], env);
+    const port = await freePort();
+    const handoffs = ['harness-a', 'harness-b'].map(name => {
+      const path = join(home, `${name}.json`);
+      const out = cli(['mcp', 'grant', name, '--harness', 'codex', '--profile', 'memory-writer', '--source', 'default',
+        '--skills', 'memory-only', '--url', `http://127.0.0.1:${port}/mcp`, '--credentials-out', path], env);
       expect(out.status).toBe(0);
-      return (out.stdout.match(/gbrain_[a-f0-9]{64}/) ?? [''])[0];
+      const credentials = JSON.parse(readFileSync(path, 'utf8'));
+      expect(credentials.expires_at - Math.floor(Date.now() / 1000)).toBeGreaterThan(3600);
+      return { path, token: credentials.access_token as string };
     });
-    expect(tokens.every(Boolean)).toBe(true);
+    expect(handoffs.every(h => Boolean(h.token))).toBe(true);
     // Step 2: one shared HTTP server owns the brain.
-    http = await startServeHttp({ cwd: process.cwd(), env });
+    http = await startServeHttp({ cwd: process.cwd(), env, port });
 
     // The stale stdio server cannot take the brain back; it names the HTTP owner and the rewiring fix.
     const after = body(await stale.client.callTool({ name: 'gbrain_status', arguments: {} }));
     expect(after.status).toBe('unavailable');
     expect(after.lock_owner.transport).toBe('http');
     expect(after.why).toContain('gbrain serve --http');
-    expect(after.fix.argv).toEqual(['gbrain', 'bootstrap', 'harness', '--harness', 'all', '--yes']);
+    expect(after.fix.argv).toEqual(['gbrain', 'mcp', 'grant', '--help']);
+    expect(after.fix.why).toContain('actual endpoint');
+    expect(after.fix.then.argv).toContain('--credentials-file');
 
     // Step 3: each harness, rewired to the shared server, recalls.
-    for (const token of tokens) {
+    const httpBase = http.base;
+    await Promise.all(handoffs.map(async ({ path, token }, index) => {
+      const wired = cli(['bootstrap', 'harness', '--harness', 'codex', '--credentials-file', path, '--no-hooks', '--skills', 'memory-only', '--yes'],
+        { ...env, CODEX_HOME: join(home, `codex-${index}`) });
+      expect({ status: wired.status, stderr: wired.stderr }).toMatchObject({ status: 0 });
+      expect(wired.stdout + wired.stderr).not.toContain(token);
       const client = new Client({ name: 'shared-http', version: '1' }, { capabilities: {} });
-      await client.connect(new StreamableHTTPClientTransport(new URL(`${http.base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${httpBase}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
       try {
         const found = await client.callTool({ name: 'search', arguments: { query: MARKER } });
         expect(found.isError).toBeFalsy();
@@ -231,7 +244,7 @@ describe('status-only serve: lock contention → one shared serve --http (b)', (
       } finally {
         await client.close();
       }
-    }
+    }));
   }, 240_000);
 });
 

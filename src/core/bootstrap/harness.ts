@@ -129,6 +129,7 @@ import {
   writeOpencodeMcpEntry,
 } from './opencode-json.ts';
 import { isServeOlderThanScopes, probeServeHealth } from './serve-health.ts';
+import { validateHarnessInputs } from './harness-credentials.ts';
 
 // Peeled façade seam (cathedral-6): the serve probe + scopes version floor
 // moved to serve-health.ts; re-exported so this module's public surface — and
@@ -151,6 +152,7 @@ export interface HarnessFlags {
   source?: string;
   tokenName: string;
   token?: string;
+  credentialsFile?: string;
   name: string;
   projects: string[];
   noHooks: boolean;
@@ -239,6 +241,12 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
   out.tokenName = value('--token-name') ?? out.tokenName;
   const token = value('--token');
   if (token !== undefined) out.token = token;
+  const credentialsFile = value('--credentials-file');
+  if (credentialsFile !== undefined) out.credentialsFile = credentialsFile;
+  if (token !== undefined && credentialsFile !== undefined) {
+    out.error = '--token and --credentials-file are mutually exclusive';
+    return out;
+  }
   const name = value('--name');
   if (name !== undefined) {
     if (!isValidName(name)) {
@@ -276,6 +284,9 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
   }
   if (out.status && out.remove) {
     out.error = out.error ?? 'pass --status OR --remove, not both';
+  }
+  if (out.credentialsFile && (out.status || out.remove || out.refreshSkills)) {
+    out.error = out.error ?? '--credentials-file applies to installation only';
   }
   if (out.refreshSkills && (out.status || out.remove)) out.error = out.error ?? 'pass --refresh-skills alone, not with --status or --remove';
   // --user-hooks and --local are accepted, documented no-ops (script clarity).
@@ -873,20 +884,9 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   const emitJson = d.log;
   if (flags.json) (d as { log: (line: string) => void }).log = d.logError;
 
-  // 1. Validate inputs + detect harnesses.
-  for (const dir of flags.projects) {
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) {
-      d.logError(`--project directory does not exist: ${dir}`);
-      return 2;
-    }
-  }
-  if (flags.token !== undefined) {
-    const v = validateToken(flags.token);
-    if (!v.ok) {
-      d.logError(`--token: ${v.error}`);
-      return 2;
-    }
-  }
+  const validated = validateHarnessInputs(flags, d.logError);
+  if (!validated) return 2;
+  flags = validated;
   // [X1] Detection heuristics gate only the `all` DEFAULT. An explicit
   // `--harness codex` FORCES wiring: the TOML writer needs no codex CLI and
   // creates the config 0600 — that no-CLI box (embedded/ACP codex) is the

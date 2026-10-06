@@ -226,33 +226,44 @@ export function statusFix(state: StatusModeState, t: StatusTransport = 'stdio'):
     };
   }
   const owner = ownerPhrase(state);
+  const handoff = gbrainPath('shared-http-credentials.json');
   const wireHarnesses: Action = {
-    argv: ['gbrain', 'bootstrap', 'harness', '--harness', 'all', '--yes'], consent: ['persistent_install', 'credentials'], actor: 'agent', requires_exclusive: false,
-    why: 'Mints one bearer token per detected harness through the running HTTP server and rewrites each harness MCP entry to it (each stdio entry keeps working until its harness is rewired).',
+    argv: ['gbrain', 'bootstrap', 'harness', '--harness', 'all', '--credentials-file', handoff, '--no-hooks', '--skills', 'memory-only', '--yes'], consent: ['persistent_install', 'credentials'], actor: 'agent', requires_exclusive: false,
+    why: 'Reads the private credential handoff and rewrites detected harness MCP entries without opening the occupied PGLite database or adding capture hooks.',
     user_message: 'I can connect your agent apps to the shared gbrain server so every session uses memory at once. That stores an access token in each app\'s config and pre-approves gbrain\'s tools. OK?',
     verify: { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'] }, docs: 'docs/guides/remote-mcp.md',
   };
+  const grant: Action = {
+    argv: ['gbrain', 'mcp', 'grant', '--help'],
+    consent: [], actor: 'user', requires_exclusive: false,
+    why: `Before starting HTTP, provision a handoff at ${handoff} with the intended native harness, endpoint, source and grants explicitly selected. Preserve the stdio source; do not use a short-lived renewable generic token for static configs. If a handoff exists, reuse it instead of creating a duplicate. A recovered handoff without an access token must use gbrain connect with the credentials file and install flag once HTTP is running, instead of the following bootstrap step.`,
+    docs: 'docs/mcp/ADMIN.md',
+  };
+  const grantThroughOwner: Action = { ...grant,
+    requires_exclusive: false, then: wireHarnesses,
+    why: `Obtain a static native-harness handoff at ${handoff} through the running owner's administration API, with its actual endpoint, protected owner credential and intended source explicitly selected. No endpoint or credential is guessed and no competing database connection is opened. Reuse an existing handoff; for a recovered client without an access token use gbrain connect with the credentials file and install flag instead of the following bootstrap step.`,
+  };
   if (state.lock_owner?.transport === 'http') {
     // A shared HTTP server already owns the brain: only this harness needs rewiring.
-    return { fix: wireHarnesses, user_message: wireHarnesses.user_message! };
+    return { fix: grantThroughOwner, user_message: wireHarnesses.user_message! };
   }
   if (t === 'http') {
     // This process is the shared HTTP server: once the owner stops, it opens the brain and the harnesses move to it.
     const user_message = `Your gbrain brain is open in ${owner.replace(/`/g, '')}, so the shared gbrain server can't open it. Should I stop that session so every agent shares the server?`;
     return { user_message, fix: {
       ...(state.lock_owner?.pid !== undefined ? { argv: ['kill', String(state.lock_owner.pid)] } : {}), consent: [], actor: 'user', requires_exclusive: false, user_message,
-      why: `Stop ${owner} (or quit that session); ${recheck(t)}. Then wire the harnesses to it.`, then: wireHarnesses,
+      why: `Stop ${owner} (or quit that session); ${recheck(t)}. Then provision through the recovered HTTP server.`, then: grantThroughOwner,
     } };
   }
   const startHttp: Action = {
-    argv: ['gbrain', 'serve', '--http'], consent: ['persistent_install'], actor: 'user', requires_exclusive: true,
+    argv: ['gbrain', 'serve', '--http', '--bind', '127.0.0.1', '--port', '3131'], consent: ['persistent_install'], actor: 'user', requires_exclusive: true,
     why: 'Run ONE shared HTTP server for every agent session on this machine (keep it running, e.g. under autopilot or a terminal).',
     then: wireHarnesses,
   };
   const shareHttp: Action = state.lock_owner?.pid !== undefined
     ? { argv: ['kill', String(state.lock_owner.pid)], consent: [], actor: 'user', requires_exclusive: false,
-      why: `Stop ${owner} first (or quit that session); the shared server needs the brain's single-writer lock.`, then: startHttp }
-    : startHttp;
+      why: `Stop ${owner} first (or quit that session); provision the credential before starting the shared server.`, then: { ...grant, then: startHttp } }
+    : { ...grant, then: startHttp };
   const waitFix: Action = {
     ...statusCall(t), consent: [], actor: 'user', requires_exclusive: false,
     why: `Close the session that owns the brain (${owner}); then ${recheck(t)} (re-checked at most every 5 s). ${restartNote(t)}`,

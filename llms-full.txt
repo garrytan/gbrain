@@ -8066,6 +8066,22 @@ is not required for this shared-server arrangement. See
 Do not remove a live owner's lock or stop another chat's server merely
 to make a second connection succeed.
 
+For a PGLite host, provision a private handoff with `gbrain mcp grant`
+before starting the shared HTTP server. Then `gbrain bootstrap harness
+--credentials-file FILE --no-hooks --skills memory-only --yes` reads the
+existing access token and endpoint without trying to mint through the
+occupied database. An explicit `--url` or `--port` must match the handoff;
+expired tokens and invalid files are refused before changing any harness.
+Use a handoff provisioned for a static native client, such as `--harness
+codex`; renewable or recovered tokenless handoffs belong in `gbrain connect
+--credentials FILE --install`. The handoff's
+source is retained, and an explicit conflicting `--source` is refused.
+If the HTTP server already owns the database, provision through its
+administration API with `gbrain mcp grant --admin-token-file FILE` instead
+of opening a second PGLite connection. Use that server's actual URL and
+protected owner credential. Keep the handoff private; it is not a public
+setup receipt. Selected harnesses share that connection and its grants.
+
 `--surface` is the callable ceiling. To keep every operation callable while
 listing fewer tools to the agent, set `mcp.advertised_surface`:
 

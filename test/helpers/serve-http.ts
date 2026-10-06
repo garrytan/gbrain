@@ -44,8 +44,8 @@ export interface ServeHttp {
  * GET /health answers ok. If serve exits first (a taken port, a held lock, a bad
  * config) this throws at once with serve's output; a deadline failure carries it too.
  */
-export async function startServeHttp(opts: { cwd: string; env: Record<string, string>; args?: string[]; timeoutMs?: number }): Promise<ServeHttp> {
-  const port = await freePort();
+export async function startServeHttp(opts: { cwd: string; env: Record<string, string>; args?: string[]; timeoutMs?: number; port?: number }): Promise<ServeHttp> {
+  const port = opts.port ?? await freePort();
   const base = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ['--no-env-file', CLI, 'serve', '--http', '--bind', '127.0.0.1', '--port', String(port), ...(opts.args ?? [])],
     { cwd: opts.cwd, env: opts.env, stdio: ['ignore', 'pipe', 'pipe'] });

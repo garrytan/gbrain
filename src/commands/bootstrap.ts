@@ -145,7 +145,7 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
                                   magic moment, scans, hooks smoke). Exit 0 or not done.
   attach [--harness H]            Machine two: adopt a cloned agent workspace.
   harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]
-          [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...
+          [--token-name NAME | --token TOK | --credentials-file FILE] [--name MCPNAME] [--project DIR]...
           [--no-hooks] [--no-capture] [--force] [--status] [--remove] [--refresh-skills] [--yes] [--json]
           [--seat <label> | --no-seat]
                                   Wire framework-spawned Claude Code / Codex / opencode
@@ -224,7 +224,7 @@ const SUBCOMMAND_HELP: Record<string, string> = {
   // false, so `--help` after the subcommand name ran the harness apply path.
   harness:
     'gbrain bootstrap harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]\n' +
-    '                       [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...\n' +
+    '                       [--token-name NAME | --token TOK | --credentials-file FILE] [--name MCPNAME] [--project DIR]...\n' +
     '                       [--no-hooks] [--no-capture] [--force] [--status] [--remove] [--yes] [--json]\n' +
     '                       [--seat <label> | --no-seat]\n' +
     '  Wire framework-spawned Claude Code / Codex / opencode sessions to a RUNNING `gbrain serve --http`\n' +

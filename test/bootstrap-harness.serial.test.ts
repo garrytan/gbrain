@@ -26,7 +26,7 @@ import { describe, test, expect } from 'bun:test';
 import { setCliExitVerdict } from '../src/core/cli-force-exit.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import {
   applyHarness,
@@ -197,6 +197,53 @@ function flags(extra: string[] = []): HarnessFlags {
   return parseHarnessArgs(['--yes', ...extra]);
 }
 
+// Protects credential-based harness wiring under a live PGLite owner. Removing
+// handoff loading restores the competing mint/connection path. Existing token
+// tests pass raw --token and cannot catch a broken private-file path. No new seam.
+describe('private handoff while a shared PGLite server owns the database', () => {
+  test('wires Codex from a pre-provisioned token without minting or exposing it', async () => {
+    const f = makeFake({ pgliteLive: true, hookSourceError: new Error('already open through `gbrain serve`') });
+    const path = join(f.home, 'handoff.json');
+    writeFileSync(path, JSON.stringify({ version: 1, client_id: ID_A, mcp_url: URL, access_token: TOKEN_A }), { mode: 0o600 });
+    expect(await applyHarness(flags(['--harness', 'codex', '--credentials-file', path, '--no-hooks', '--skills', 'memory-only']), f.deps)).toBe(0);
+    expect(f.mintCalls).toEqual([]);
+    expect(readFileSync(f.codexConfig, 'utf8')).toContain(TOKEN_A);
+    expect([...f.out, ...f.err].join('\n')).not.toContain(TOKEN_A);
+  });
+
+  test.each(['expired', 'wrong-endpoint', 'missing-access-token', 'renewable', 'source-mismatch'] as const)('rejects %s before changing a harness or minting', async (reason) => {
+    const f = makeFake({ pgliteLive: true });
+    const path = join(f.home, 'handoff.json');
+    writeFileSync(path, JSON.stringify({ version: 1, client_id: ID_A, mcp_url: URL,
+      ...(reason === 'missing-access-token' ? { client_secret: TOKEN_A } : { access_token: TOKEN_A }),
+      ...(reason === 'expired' ? { expires_at: 1 } : {}),
+      ...(reason === 'renewable' ? { harness: 'generic' } : {}),
+      ...(reason === 'source-mismatch' ? { source_id: 'workspace' } : {}),
+    }), { mode: 0o600 });
+    expect(await applyHarness(flags(['--harness', 'codex', '--credentials-file', path,
+      ...(reason === 'wrong-endpoint' ? ['--url', 'http://127.0.0.1:3132/mcp'] : []),
+      ...(reason === 'source-mismatch' ? ['--source', 'default'] : [])]), f.deps)).toBe(2);
+    expect(f.mintCalls).toEqual([]);
+    expect(existsSync(f.codexConfig)).toBe(false);
+    expect(f.calls).toEqual([]);
+    expect([...f.out, ...f.err].join('\n')).not.toContain(TOKEN_A);
+  });
+
+  test('preserves the handoff source without minting a default-source grant', async () => {
+    const f = makeFake({ pgliteLive: true, hookSourceError: new Error('already open through `gbrain serve`') });
+    const path = join(f.home, 'handoff.json');
+    writeFileSync(path, JSON.stringify({ version: 1, client_id: ID_A, mcp_url: URL, access_token: TOKEN_A, harness: 'codex', source_id: 'workspace' }), { mode: 0o600 });
+    expect(await applyHarness(flags(['--harness', 'codex', '--credentials-file', path, '--no-hooks', '--skills', 'memory-only']), f.deps)).toBe(0);
+    expect(f.mintCalls).toEqual([]);
+    expect(readHarnessReceiptState(f.home)).toMatchObject({ receipt: { source_id: 'workspace', token: { minted: false } } });
+  });
+
+  test('rejects conflicting credentials and missing file values', () => {
+    expect(parseHarnessArgs(['--credentials-file']).error).toContain('requires a value');
+    expect(parseHarnessArgs(['--token', TOKEN_A, '--credentials-file', 'handoff.json']).error).toContain('mutually exclusive');
+  });
+});
+
 function readJson(path: string): Record<string, unknown> {
   return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
 }
@@ -222,7 +269,7 @@ describe('parseHarnessArgs', () => {
   });
   test('--project is repeatable and resolved', () => {
     const f = parseHarnessArgs(['--project', '/a', '--project', '/b']);
-    expect(f.projects).toEqual(['/a', '/b']);
+    expect(f.projects).toEqual([resolve('/a'), resolve('/b')]);
   });
 });
 
@@ -1268,7 +1315,7 @@ describe('opencode harness target (managed JSONC entry)', () => {
     expect(parsed.mcp.gbrain.url).toBe(URL);
     expect(parsed.mcp.gbrain.headers.Authorization).toBe(`Bearer ${TOKEN_A}`);
     expect(parsed.mcp.gbrain.enabled).toBe(true);
-    expect(statSync(f.opencodeConfig).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(f.opencodeConfig).mode & 0o777).toBe(0o600);
     const state = readHarnessReceiptState(f.home);
     const receipt = (state as { receipt: { targets: Array<{ host: string; kind: string; state: string; mechanism?: string }> } }).receipt;
     const t = receipt.targets.find((x) => x.host === 'opencode');
