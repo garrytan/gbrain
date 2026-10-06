@@ -109,6 +109,7 @@ export function legacyAsciiEntitySlug(name: string, type: 'person' | 'company'):
   const slug = name
     .toLowerCase()
     .replace(/['']/g, '')
+    // gbrain-allow-ascii-class: deliberately reproduces the pre-Unicode ASCII-only slugifier
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   const prefix = type === 'person' ? 'people' : 'companies';

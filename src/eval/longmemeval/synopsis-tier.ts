@@ -68,6 +68,7 @@ export const LME_SYNOPSIS_FLAGS: Array<{ name: string; arg?: string; help: strin
 ];
 
 export function defaultSynopsisCachePath(model: string): string {
+  // gbrain-allow-ascii-class: filesystem-safe cache-filename fragment, not a displayed slug
   return join(homedir(), '.cache', 'gbrain-eval', `synopsis-${model.replace(/[^a-z0-9.-]+/gi, '_')}.jsonl`);
 }
 

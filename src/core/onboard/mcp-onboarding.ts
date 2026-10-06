@@ -145,6 +145,7 @@ async function cachePath(): Promise<string> {
   const { getCliOptions } = await import('../cli-options.ts');
   let brainId = 'host';
   try { brainId = resolveBrainId(getCliOptions().brain); } catch { /* host */ }
+  // gbrain-allow-ascii-class: filesystem-safe filename fragment, not a displayed slug
   return gbrainPath(`onboard-counts-${brainId.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
 }
 

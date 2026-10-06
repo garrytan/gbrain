@@ -139,6 +139,7 @@ CHECKS=(
   "check:fixture-privacy"
   "check:source-scope-onboard"
   "check:getpage-scope"
+  "check:ascii-slug-class"
   "check:no-double-retry"
   "check:batch-audit-site"
   "check:engine-dynamic-import"

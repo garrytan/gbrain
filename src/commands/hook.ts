@@ -435,6 +435,7 @@ export function sanitizeSessionId(id: unknown): string {
   // downstream argv consumer (the detached memorable spawn passes it as a
   // positional value) — hook stdin is untrusted input.
   const s =
+    // gbrain-allow-ascii-class: filesystem-safe session-id fragment, not a displayed slug
     typeof id === 'string' ? id.replace(/[^A-Za-z0-9._-]/g, '-').replace(/^-+/, '').slice(0, 120) : '';
   return s && !/^\.+$/.test(s) ? s : 'unknown';
 }

@@ -95,6 +95,7 @@ function noticeDir(): string {
   return gbrainPath('notices', 'behavior-changes');
 }
 
+// gbrain-allow-ascii-class: filesystem-safe filename fragment, not a displayed slug
 const safe = (s: string) => s.replace(/[^A-Za-z0-9_.-]/g, '_');
 
 /** Brain identity under GBRAIN_HOME: the brain id plus a hash of its database location (never the location itself). */

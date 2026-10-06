@@ -18,6 +18,7 @@ export async function normalizeTakesIntent(ctx: OperationContext, params: Record
   const date = new Date().toISOString().slice(0,10);
   let resolvedBy = params.resolved_by;
   if (ctx.remote !== false) {
+    // gbrain-allow-ascii-class: internal client-id attribution fragment, not a displayed slug
     const id = (ctx.auth?.clientId ?? ctx.transport ?? 'remote').replace(/[^\w.:-]/g,'_').slice(0,64);
     resolvedBy = `mcp:${id}`;
   } else if (typeof resolvedBy !== 'string' || !resolvedBy) {

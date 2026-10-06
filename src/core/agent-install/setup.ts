@@ -86,6 +86,7 @@ function artifactFromBundle(bundle: string, sourceRef: string): Omit<InstallArti
 }
 
 function installArtifact(root: string, options: AgentSetupOptions, identity: ReturnType<typeof artifactFromBundle>): InstallArtifact {
+  // gbrain-allow-ascii-class: filesystem-safe runtime-directory fragment, not a displayed slug
   const directory = `runtime/${identity.version.replace(/[^a-zA-Z0-9.-]/g, '_')}-${randomUUID()}`;
   const target = confinedPath(root, directory);
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 });

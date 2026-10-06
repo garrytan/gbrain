@@ -12,6 +12,7 @@
 // PII flows out. Cap output to top-N prefixes per source to bound size.
 
 import type { BrainEngine } from '../engine.ts';
+import { slugifyText } from '../cjk.ts';
 import type { SchemaPackManifest } from './manifest-v1.ts';
 
 export interface DetectOpts {
@@ -68,9 +69,9 @@ export function buildCandidate(opts: {
     .slice(0, maxTypes);
 
   const page_types = filtered.map((p) => {
-    // Suggest a type name from the prefix. Strip trailing slash, replace
-    // non-alphanum with hyphen, lowercase.
-    const typeName = p.prefix.replace(/\/$/, '').replace(/[^a-z0-9]+/gi, '-').toLowerCase() || 'untyped';
+    // Suggest a type name from the prefix through the shared slug grammar:
+    // letters of every script survive, every other run → one hyphen.
+    const typeName = slugifyText(p.prefix, Number.POSITIVE_INFINITY) || 'untyped';
     return {
       name: typeName,
       primitive: 'entity' as const,

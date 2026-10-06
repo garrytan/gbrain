@@ -55,6 +55,7 @@ export interface FactKeyArm {
 export const PAPER_USER_FACT_SYSTEM = 'You will be given a list of messages from a human user to an AI assistant. Extract all the personal information, life events, experience, and preferences related to the user. Make sure you include all details such as life events, personal experience, preferences, specific numbers, locations, or dates. State each piece of information in a simple sentence. Put these sentences in a json list, each element being a standalone personal fact about the user. Minimize the coreference across the facts, e.g., replace pronouns with actual entities. If there is no specific events, personal information, or preference mentioned, just generate an empty list.';
 
 export function defaultFactCachePath(extractor: FactExtractor, model: string): string {
+  // gbrain-allow-ascii-class: filesystem-safe cache-filename fragment, not a displayed slug
   return join(homedir(), '.cache', 'gbrain-eval', `fact-keys-${extractor}-${model.replace(/[^a-z0-9.-]+/gi, '_')}.jsonl`);
 }
 

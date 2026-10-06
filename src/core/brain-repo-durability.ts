@@ -772,9 +772,11 @@ function removeCredentialWiring(repoPath: string): boolean {
 // ── Minimal DB-free pull cron (D2 + D12) ────────────────────────────────────
 
 function cronLabel(sourceId: string): string {
+  // gbrain-allow-ascii-class: launchd label must be ASCII, not a displayed slug
   return `com.gbrain.brain-pull.${sourceId.replace(/[^A-Za-z0-9._-]/g, '_')}`;
 }
 function cronWrapperPath(sourceId: string): string {
+  // gbrain-allow-ascii-class: filesystem-safe script-path fragment, not a displayed slug
   return join(gbrainHome(), `brain-pull-${sourceId.replace(/[^A-Za-z0-9._-]/g, '_')}.sh`);
 }
 function launchdPlistPath(sourceId: string): string {

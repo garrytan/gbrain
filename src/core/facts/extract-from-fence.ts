@@ -41,6 +41,7 @@
 import { attributionCompatible } from './attribution.ts';
 import type { NewFact, FactKind, FactVisibility } from '../engine.ts';
 import type { ParsedFact } from '../facts-fence.ts';
+import { foldSlugText, SLUG_WORD_CHARS } from '../cjk.ts';
 
 /**
  * Fence-extracted fact row. Structural superset of `NewFact` with the
@@ -179,6 +180,8 @@ export const METRIC_NORMALIZATION_MAP: ReadonlyMap<string, string> = new Map([
   ['ltv', 'ltv'],
 ]);
 
+const METRIC_DROP_RE = new RegExp(`[^${SLUG_WORD_CHARS}_]`, 'gu');
+
 /**
  * Normalize a free-text metric label to lowercase snake_case. Known
  * labels (seed map above) map to canonical names; unknown labels are
@@ -194,8 +197,9 @@ export function normalizeMetricLabel(raw: string | undefined | null): string | u
   if (seed) return seed;
   // Collapse runs of whitespace to single underscore, strip non-alphanumeric
   // edges. Allows users to write "Net Promoter Score" → `net_promoter_score`
-  // without registering it.
-  return trimmed.replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  // without registering it. The shared letter fold keeps letters of every
+  // script ("Выручка" → `выручка`).
+  return foldSlugText(trimmed).replace(/\s+/g, '_').replace(METRIC_DROP_RE, '');
 }
 
 /**

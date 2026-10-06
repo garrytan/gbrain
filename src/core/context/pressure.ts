@@ -146,6 +146,7 @@ export function pressureNotice(percent: number): string {
 interface PressureState { segment: string; warned: boolean; maxSeen: number; lastUsed: number }
 
 function stateFile(dir: string, sessionKey: string): string {
+  // gbrain-allow-ascii-class: filesystem-safe filename fragment, not a displayed slug
   return join(dir, `${sessionKey.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 120) || 'session'}.json`);
 }
 

@@ -312,6 +312,7 @@ function stringish(v: unknown): string | null {
 
 function nameMatches(name: string, slug: string): boolean {
   const base = slug.split('/').pop()!.toLowerCase();
+  // gbrain-allow-ascii-class: known gap (follow-up) — non-Latin names fold to '', so only the exact normalizeLinkTarget comparison below still matches them
   const norm = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return norm === base || base.startsWith(`${norm}-`) || normalizeLinkTarget(name).toLowerCase() === slug.toLowerCase();
 }

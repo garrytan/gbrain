@@ -123,6 +123,7 @@ export function deriveSourceId(account: string): string {
   const local = account.split('@')[0] ?? 'gmail';
   const id = `gmail-${local}`
     .toLowerCase()
+    // gbrain-allow-ascii-class: internal source_id key, not a displayed slug
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
     .slice(0, 32)
