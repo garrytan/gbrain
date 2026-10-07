@@ -352,10 +352,15 @@ person on the `Attendees:` line and in `attendees:` frontmatter (Phase 5) gets a
 page are not recorded as attendance; a pack that overrides attendance, such as
 the older `gbrain-base`, sets its own rule and direction. Leave attendance to
 auto-link rather than `gbrain link` or `add_link`: a hand-written `attended`
-edge can point the wrong way. Over MCP, `put_page` skips auto-link: a stdio
-`gbrain serve` reconciles the page on its maintenance sweep, and behind
-`gbrain serve --http` you run `gbrain sweep --once` or
-`gbrain extract links --source db`.
+edge can point the wrong way. Over MCP, `put_page` does not auto-link inline
+(the receipt says `auto_links.skipped: remote`). It queues plain `mentions`
+edges to pages that already exist (`auto_links.mention_links: queued`), but
+never the typed `attended` edges. Those come from a maintenance pass: a stdio
+`gbrain serve` runs it on its startup and idle sweeps; behind
+`gbrain serve --http` the host runs `gbrain sweep --once` or
+`gbrain extract links --source db`. No MCP tool runs that pass for you, so
+over HTTP ask the host operator, and don't hand-write `attended` with
+`add_link`.
 
 A missing `attended` edge has one of two causes. Either the attendee record
 breaks a Phase 5 rule, or it names a person whose page did not exist when the
@@ -385,7 +390,17 @@ itself, chain into `skills/signal-detector/SKILL.md` after ingestion.
 
 ### Phase 9: Sync
 
-`gbrain sync` to update the index.
+The pages are already in the brain; this step catches the index up to the
+brain repo checkout. Use the form that matches the brain:
+
+- **Managed brain** (managed persistence on): `gbrain sync --source <id> --no-pull`.
+  A managed checkout moves only through `gbrain sources refresh <id>`, never
+  through sync, so a bare `gbrain sync` there would pull the checkout behind
+  the coordinator's back.
+- **Unmanaged brain:** `gbrain sync`.
+
+If you can't tell which, use `gbrain sync --source <id> --no-pull`: it is
+correct on both and never moves the checkout.
 
 ## Verify before declaring done (HARD GATE)
 
@@ -509,7 +524,7 @@ name the failing item.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A contradiction with an existing page blocks ingestion until the user fixes or waives it: show both sources and wait.
 - `add_link` / auto-link reports an error after the meeting page was written: the page is saved but the links are not; list the failed links and add them after fixing slugs.

@@ -24,7 +24,13 @@ chat-history brains (−0.1, CI [−1.0, +0.6]); results:
 - An answer carries an `answer_id` (`ans_…`) and `feedback: { rateable: true }`
   in its response meta. On the CLI, `query`, `search` and `think` print
   `answer: ans_… (rate with: gbrain rate ans_… 1-5)` on stderr, and `--json`
-  rows carry `answer_id`.
+  rows carry `answer_id`. Over MCP, `search` and `query` also put the id in
+  the tool result text the model sees (hosts often hide `_meta`): `Rate after
+  use: rate_answer { answer_id: "ans_…", rating: 1-5 }` on every rateable
+  answer, worded as a fuller prompt on the answers where the `how_to_rate`
+  cadence fires (`feedback.rating_prompt`; the cadence counter is
+  per process and starts over when the server restarts). The line stays
+  within 160 characters.
 - A rating of 1-5 maps to a target `r = (rating - 1) / 4`. Each rated page's
   weight `w` (0.5 when never rated) moves by `w + 0.1 * (r - w)`, clipped to
   [0, 1]. Edges on the relational path into a rated page move the same way.
@@ -95,6 +101,11 @@ gbrain config set feedback.learn false     # keep learned weights, stop learning
 | `feedback.max_ratings_per_hour` | 120 | Rating calls per client per hour. |
 | `feedback.event_retention_days` | 30 | How long answers stay rateable. |
 | `feedback.rating_prompt` | true | Show the one-line `how_to_rate` line on answers. |
+
+Doctor `retrieval_feedback_health` warns when feedback is on, at least 50
+answers were recorded and none was rated: the agent's host is probably not
+showing tool result text, so the agent never sees the answer id. Its fix is
+the read-only `gbrain feedback status --json`.
 
 ## Refusals
 

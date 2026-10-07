@@ -130,3 +130,21 @@ command runs, or Postgres will reject the trigger recreation with
   a CJK-aware extension (`pgroonga` / `zhparser`) installed. Wiring a
   CJK-capable `GBRAIN_FTS_LANGUAGE` config past the fallback is a filed
   follow-up.
+  <a id="cjk-keyword-budget"></a>In hybrid search the fallback keeps every term required first and, when
+  that finds fewer rows than requested, matches any term, ranking chunks by
+  how many terms they contain and then by term frequency (so `席位 升级`
+  finds pages that mention either word). Results are unchanged whenever the
+  all-terms match already fills the request. Direct keyword reads stay
+  all-terms. The hybrid keyword arm also has one time budget,
+  `search.cjk_keyword_deadline_ms` (integer milliseconds, default 3000,
+  range 500 to 30000; `gbrain config set search.cjk_keyword_deadline_ms
+  5000`). On Postgres the normal scoring gets two thirds of it; if that
+  times out, a capped retry scores at most 2,000 matching chunks (all-terms
+  matches before partial ones) in the remaining third. On PGLite, which
+  cannot interrupt a running query, a brain past 50,000 chunks always uses
+  the capped stage. When the cap or the budget cut the candidates, the search
+  reports the degraded stage `keyword_candidates_incomplete`: an incomplete
+  keyword search is not evidence that the brain has nothing, and the next
+  step is to narrow with `--source-id` (MCP `source_id`) or raise the
+  deadline. The vector arm still runs either way. Ranking quality among the
+  capped candidates has not been measured against relevance judgments.

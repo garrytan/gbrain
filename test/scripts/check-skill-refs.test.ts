@@ -236,7 +236,7 @@ describe('check-skill-refs', () => {
     expect(pass.out).toContain('OK');
   });
 
-  test('cli-refs warn lane: unknown gbrain command in a fenced block warns without failing', () => {
+  test('cli-refs lane: an unknown gbrain command in a fenced block fails the build (#6197)', () => {
     // The script derives the known-command set from src/cli.ts +
     // src/core/operations.ts of the CWD repo, so this one runs from the real
     // repo root against a temp skills dir.
@@ -253,6 +253,6 @@ describe('check-skill-refs', () => {
     );
     expect(out).toContain('[cli-refs]');
     expect(out).toContain('not-a-real-command');
-    expect(code).toBe(0); // warn-only lane never fails the build
+    expect(code).toBe(1);
   }, 30_000);
 });

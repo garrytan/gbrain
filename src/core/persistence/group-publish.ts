@@ -37,6 +37,7 @@ import { clearResolvedRecoveries, completeWrite, ENSURE_COUNTERS_SQL, getWriteRe
   publicationGroupKey, reclaimReleasedWrite, releaseUnpublishedClaim, renewGroupClaims } from './journal.ts';
 import { principalKey, requestPrincipal, type FileRecoveryRecord, type WriteRequest } from './model.ts';
 import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
+import { claimPhaseStamp, enterClaimPhase, startClaimPhase } from './claim-phase.ts';
 import { setMemberAttribution, withCoordinatedWrite } from './context.ts';
 import { requestAttribution } from './attribution.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
@@ -338,7 +339,8 @@ export interface GroupExecution {
  * any member settled.
  */
 export async function executeClaimedGroup(engine: BrainEngine, rows: WriteRequest[], run: GroupExecution): Promise<boolean> {
-  const lease = startClaimLease(async signal => (await renewGroupClaims(engine, rows, 30_000, signal)).size === rows.length,
+  const clock = startClaimPhase();
+  const lease = startClaimLease(async signal => (await renewGroupClaims(engine, rows, 30_000, signal, claimPhaseStamp(clock, null))).size === rows.length,
     run.lease ?? DEFAULT_CLAIM_LEASE_TIMING);
   if (run.lane) laneClaimed(run.lane, rows);
   try {
@@ -358,6 +360,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
       for (const row of rows) await releaseUnpublishedClaim(engine, row, 'claim_lost');
       return false;
     }
+    enterClaimPhase(clock, 'publishing');
     // A put_pages batch is independent page writes: one page's failure never cancels its siblings.
     const independent = publicationGroupKey(rows[0]!)?.startsWith('batch:') === true;
     let requeued = new Set<string>();

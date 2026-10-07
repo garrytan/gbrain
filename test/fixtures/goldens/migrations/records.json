@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 210,
+    "count": 213,
     "gaps": [
       17,
       18,
@@ -35,7 +35,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "59d9ccfea1c53384d8607874a51209a9c2dfd51b2b85a2cb6269fa4120faf1f3"
     },
-    "latest": 215,
+    "latest": 218,
     "records": [
       {
         "handler": {
@@ -3191,6 +3191,45 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 215
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "chronicle_campaign_stamps",
+        "sql": {
+          "length": 559,
+          "sha256": "a8eccca165c3a93ce31f7f1f77cd28f4a0968b0498ba962d07c199bc680942a8"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 216
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "persistence_request_claim_phase",
+        "sql": {
+          "length": 84,
+          "sha256": "830bd460b2c241fe7d09818ad43f630956bc53a9f3e2d66bca5d62750c6d55dd"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 217
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "purge_legacy_worktree_manifest_files",
+        "sql": {
+          "length": 798,
+          "sha256": "60e812f52a977b94f1c0a3fa3657a3ec9394f09ff48dbef04550eb2b89f7d084"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 218
       }
     ],
     "versions": [
@@ -3403,7 +3442,10 @@
       212,
       213,
       214,
-      215
+      215,
+      216,
+      217,
+      218
     ]
   },
   "normalizer": "migrations-record-v1"

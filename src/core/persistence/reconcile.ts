@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { relative } from 'node:path';
+import { hardenedGitSync } from '../hardened-git.ts';
 import type { BrainEngine } from '../engine.ts';
 import { loadConfig, loadConfigWithEngine, type GBrainConfig } from '../config.ts';
 import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
@@ -62,14 +64,25 @@ function assertPreimages(artifact: ReconcileArtifact, state: ReconcileState): vo
     digest(artifact.preimages.stored_page) !== digest(state.storedPage)) staleReconcile('preimages changed or were edited');
 }
 /** Agent-facing next step for an --auto-additive preview. */
-function additiveNextAction(classification: DriftClassification, status: string): string {
-  if (classification.verdict === 'no_drift') return 'No drift: the file and database agree. Retry the original write with a new request ID.';
+function additiveNextAction(classification: DriftClassification, status: string, git: { dirty: boolean | null; root: string; path: string }): string {
+  // #6138: agreeing content can still be a modified file in Git (the same content written differently, such as YAML quoting).
+  if (classification.verdict === 'no_drift') return git.dirty
+    ? `No drift in content: the file and database agree, but Git reports ${git.path} as modified, because its bytes differ from the last commit only in how the same content is written (for example YAML quoting). `
+      + `Reconcile does not commit files, so there is nothing to apply here. Show the difference with git -C ${git.root} diff -- ${git.path}; leaving it uncommitted is safe, and committing it by hand is the user's decision. `
+      + 'If this preview came from a refused write, retry that write with a new request ID.'
+    : 'No drift: the file and database agree' + (git.dirty === false ? ' and Git shows the file unchanged' : '')
+      + '. Nothing needs reconciling; if this preview came from a refused write, retry that write with a new request ID.';
   if (classification.verdict === 'review_required') return 'Some paths are not structurally additive (see drift_paths with class review). Do not apply this preview; '
     + 'show the user the private preview file\'s conflicts and result, then resolve with --from <preview> --decisions <file> after they decide.';
   if (status === 'ready') return `Apply with --apply <preview file> --request-id <new uuid>, then retry the original write with a new request ID.`;
   if (classification.verdict !== 'additive_with_suggestions') return 'Resolve the remaining conflict_paths with --from <preview> --decisions <file>; no automatic rule covers them.';
   return 'Inserted text is structurally additive but can still contradict existing text. Read the inserted lines in the private preview file '
     + '(or show them to the user if the page is private or the claims matter), then rerun the preview with --auto-additive --accept-suggested.';
+}
+/** #6138: whether Git reports the canonical file as changed from its last commit; null when Git cannot say (not a Git checkout). */
+function canonicalFileGitDirty(root: string, path: string): boolean | null {
+  const status = hardenedGitSync(root, ['status', '--porcelain', '-z', '--', relative(root, path)], { timeoutMs: 10_000, maxBytes: 1024 * 1024 });
+  return status.ok ? status.stdout.length > 0 : null;
 }
 async function config(engine: BrainEngine): Promise<GBrainConfig> {
   return await loadConfigWithEngine(engine, loadConfig()) ?? { engine: engine.kind } as GBrainConfig;
@@ -114,9 +127,11 @@ export async function runReconcilePreview(engine: BrainEngine, params: Record<st
     decisions, conflicts: prepared.conflicts, result: prepared.result, result_digest: digest(prepared.result),
     status: prepared.conflicts.length || reviewRequired ? 'needs_resolution' : 'ready', ...(autoDecisions.length ? { auto_decisions: autoDecisions } : {}) };
   await assertReconcileSize(engine, preview);
+  const git = { dirty: classification?.verdict === 'no_drift' ? canonicalFileGitDirty(state.root, state.path) : null, root: state.root, path: relative(state.root, state.path) };
   return { source_id: sourceId, slug, preview_id: preview.preview_id, status: preview.status,
     ...(classification ? { classification: classification.verdict, drift_paths: classification.paths,
-      auto_decided_paths: autoDecisions.map(d => d.path), next_action: additiveNextAction(classification, preview.status) } : {}),
+      auto_decided_paths: autoDecisions.map(d => d.path), next_action: additiveNextAction(classification, preview.status, git),
+      ...(git.dirty === null ? {} : { git_dirty: git.dirty }) } : {}),
     conflict_paths: prepared.conflicts.map(c => c.path), protected_paths: prepared.protectedPaths,
     migrated_scan_paths: prepared.scanPaths, relative_path: state.pins.relative_path,
     line_endings: state.raw.includes(Buffer.from('\r\n')) ? 'crlf' : 'lf',

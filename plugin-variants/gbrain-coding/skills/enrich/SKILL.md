@@ -214,6 +214,14 @@ Current projects, recent launches, what they're focused on.
 ## What Motivates Them
 Ambition, career arc, what drives them.
 
+## Communication Style
+How they like to communicate, how they handle disagreement, what energizes
+them in a conversation. Write only what you observed directly (meetings,
+their emails or posts) or what they said about themselves; label each line
+observed, self-described or inferred. One data point is a timeline entry,
+not a pattern. Confidence follows interaction count: low after one, high
+after five or more.
+
 ## Hobby Horses
 Topics they return to obsessively. Recurring themes in their work/posts.
 
@@ -279,10 +287,13 @@ Active items, pending decisions, things to track.
 `put_page` call (auto-link post-hook). Step 7 focuses on content
 cross-references (updating related pages' compiled truth with new signal
 from this enrichment), not on creating links. On a trusted local write the
-put_page response carries `auto_links: { created, removed, errors }`; MCP
-writes (stdio and HTTP) return `auto_links: { skipped: "remote", hint }`
-instead — edges are reconciled by the serve maintenance sweep or
-`gbrain sweep --once`, and `add_link` covers an edge you need immediately.
+put_page response carries `auto_links: { created, removed, errors }`. MCP
+writes (stdio and HTTP) skip inline auto-link (`auto_links.skipped: "remote"`)
+but queue plain `mentions` edges to pages that already exist
+(`auto_links.mention_links: "queued"`). Typed and frontmatter edges
+(`works_at`, `invested_in`, `source`, ...) wait for a maintenance pass: the
+stdio serve sweep, or `gbrain sweep --once` on the host for an HTTP brain.
+Use `add_link` for a typed edge you need immediately.
 Timeline entries still need explicit `gbrain timeline-add` calls.
 
 ## Bulk Enrichment Rules
@@ -315,7 +326,7 @@ This creates an audit trail for brain enrichment over time.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - External enrichment APIs return `rate_limited` or an auth failure: back off for the stated delay; on auth failure stop and tell the user which key is missing. Never fill the gap with guessed facts.
 - `put_page` returns `revision_conflict`: re-read the entity page, merge, and save with the new revision.

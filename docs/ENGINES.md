@@ -651,7 +651,14 @@ checkpoint did not advance. The message names both errors (redacted, at most
 the SQLSTATE (for example `53300` when a pooler's client limit is reached),
 a write-error code, `storage_error`, or `deadline_exceeded` when the phase
 overran its five-second budget. `message` is the redacted error text, one line,
-at most 200 characters. Connection-wait evidence follows on Postgres:
+at most 200 characters. When an unexpected exception in the owner failed a
+write (`storage_error` with a generic public message; the class and frame stay owner-only),
+the line also carries `class=`, `errno=` and `frame=` (the top gbrain source
+frame, repo-relative, for example `src/core/persistence/page-prepare.ts:120`):
+the owner diagnostics the receipt points at. The stored receipt keeps the same
+identifiers (never the error message) owner-side in `error_detail`, with the
+build that ran the attempt; `gbrain write-request <id>` names an owner on
+another build than the CLI (`owner_build`) and the restart to run. Connection-wait evidence follows on Postgres:
 `first_conn_ms` is the time from phase start until the phase obtained a
 connection; `checkout=not_observed conn_wait_ms=<n>` means it had not obtained
 one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
@@ -663,6 +670,12 @@ An idle consumer keeps one ordinary-pool connection for its work probe and
 never holds a direct or session-pooler connection, so a
 `GBRAIN_DIRECT_DATABASE_URL` that points at a session pooler is not pinned by
 idle `gbrain serve` processes.
+
+<a id="persistence-claim-phase"></a>**Claim phases.** Each claim renewal also records the claimed write's phase
+(`preparing` or `publishing`); `gbrain sources writer status --json` shows it as
+`claim` on running blockers, and doctor `persistence_write_stall` warns past
+`persistence.max_claim_ms` (default 600000, 60000 to 86400000). See
+[troubleshooting](guides/troubleshooting.md#persistence-write-stall).
 
 ## JSONB writes: never double-encode
 

@@ -48,7 +48,7 @@ Advisory: "File this at `{type}/{slug}.md` because the primary subject is {reaso
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `list_pages` / `search` cannot find a matching directory or the brain is unreachable: fall back to `skills/_brain-filing-rules.md` and say the placement came from the rules, not the live brain.
 - `get_page` returns `page_not_found` for the page being filed: confirm the slug with the user before choosing a directory.

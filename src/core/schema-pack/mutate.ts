@@ -523,7 +523,10 @@ function checkNoReferences(manifest: SchemaPackManifest, typeName: string): void
 export interface AddTypeOpts {
   name: string;
   primitive: PackPrimitive;
-  prefix: string;
+  /** Required unless `noPrefix` is set. */
+  prefix?: string;
+  /** Declare a frontmatter-only type (`path_prefixes: []`, #6135). */
+  noPrefix?: boolean;
   extractable?: boolean;
   expertRouting?: boolean;
   aliases?: string[];
@@ -536,10 +539,22 @@ export interface AddTypeOpts {
 // (batch path, below) reuses the SAME builders so single-call and batched
 // mutations can never drift in what they accept or reject.
 
+function validateNoPrefix(opts: AddTypeOpts): void {
+  const conflict = opts.prefix !== undefined
+    ? 'a frontmatter-only type takes a prefix or noPrefix, not both'
+    : opts.extractable
+      ? 'a frontmatter-only type cannot be extractable: extractable types are checked through their path prefixes (lint rule extractable_empty_corpus)'
+      : opts.expertRouting
+        ? 'a frontmatter-only type cannot use expert routing: expert routing without a path prefix silently misses content (lint rule expert_routing_without_prefix)'
+        : null;
+  if (conflict) throw new SchemaPackMutationError('INVALID_RESULT', `${conflict} (type: ${JSON.stringify(opts.name)})`);
+}
+
 function buildAddTypeMutator(opts: AddTypeOpts): (m: SchemaPackManifest) => SchemaPackManifest {
   validateTypeName(opts.name);
   validatePrimitive(opts.primitive);
-  validatePrefix(opts.prefix);
+  if (opts.noPrefix) validateNoPrefix(opts);
+  else validatePrefix(opts.prefix);
   return (m) => {
     if (m.page_types.some((pt) => pt.name === opts.name)) {
       throw new SchemaPackMutationError(
@@ -551,7 +566,7 @@ function buildAddTypeMutator(opts: AddTypeOpts): (m: SchemaPackManifest) => Sche
     const newType: PackPageType = {
       name: opts.name,
       primitive: opts.primitive,
-      path_prefixes: [opts.prefix],
+      path_prefixes: opts.noPrefix ? [] : [opts.prefix!],
       aliases: opts.aliases ?? [],
       extractable: opts.extractable ?? false,
       expert_routing: opts.expertRouting ?? false,
@@ -769,7 +784,8 @@ function buildBatchMutator(
         mutate: buildAddTypeMutator({
           name: m.name as string,
           primitive: m.primitive as never,
-          prefix: m.prefix as string,
+          prefix: m.prefix as string | undefined,
+          noPrefix: m.no_prefix === true,
           extractable: m.extractable as boolean | undefined,
           expertRouting: m.expert_routing as boolean | undefined,
           aliases: m.aliases as string[] | undefined,

@@ -203,6 +203,13 @@ export const SECTIONS: DocSection[] = [
         includeInFull: false,
       },
       {
+        title: "docs/guides/dream-patterns.md",
+        description:
+          "Dream patterns phase: settings (min_evidence, subagent timeouts), in-cycle budget sizing from the recorded `dream.patterns.last_run` (first batch, timeout halving, `insufficient_cycle_budget` skip, probe after 3 skips), reset with `gbrain config unset dream.patterns.last_run`.",
+        path: "docs/guides/dream-patterns.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/facts-drain.md",
         description:
           "Automatic facts drain on PGLite (on by default): queued facts-absorb jobs run inside gbrain serve, serve --http and the facts_drain cycle phase with no command; per-run, daily and job-count caps, deferrals that never drop work, doctor facts_drain, opt-out `gbrain config set facts.extraction_enabled false`.",

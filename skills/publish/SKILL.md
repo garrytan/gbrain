@@ -145,7 +145,7 @@ If using static hosting, remove the file from the host.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The source page returns `page_not_found`: resolve the real slug first; never publish a guessed page.
 - `gbrain files upload` / `gbrain files signed-url` fails (storage not configured, `bucket_not_found`): tell the user publishing needs storage and run `gbrain doctor --json`; do not paste private page content instead.

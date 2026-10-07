@@ -53,6 +53,21 @@ describe('autoFixFrontmatter', () => {
     expect(fixes).toEqual([]);
   });
 
+  // #6157: valid YAML is never rewritten. A folded continuation line that
+  // looks like `Key: "a", then "b"` used to be re-quoted, changing the value.
+  test('leaves a valid folded block scalar byte-identical (#6157)', () => {
+    const input = `${fence}\ntype: concept\ntitle: Interview notes\nclaim: >-\n  The founder said\n  Reply: "Ship it", then "measure it" twice\n${fence}\n\nbody`;
+    const { content, fixes } = autoFixFrontmatter(input);
+    expect(content).toBe(input);
+    expect(fixes).toEqual([]);
+  });
+
+  test('tag normalization never changes a parsed value (#6157)', () => {
+    const input = `${fence}\ntype: person\ntags: ["a\\"b", "yc"]\n${fence}\n\nbody`;
+    const { content } = autoFixFrontmatter(input);
+    expect(content).toBe(input);
+  });
+
   test('does not corrupt closed frontmatter with an indented `#` line inside a YAML block scalar', () => {
     const input = `${fence}\ndescription: |\n  # not a heading, just literal block-scalar text\ntitle: ok\n${fence}\nBody`;
     const { content, fixes } = autoFixFrontmatter(input);

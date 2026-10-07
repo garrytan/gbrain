@@ -5,6 +5,8 @@
  *   the frozen goldens in test/fixtures/agent-contract/v1/ and the quick
  *   contract is copied verbatim into AGENTS.md; both must match a fresh
  *   render (regenerate: bun run build:agent-protocol).
+ * - skills/conventions/agent-operator-protocol.md is the whole page bundled
+ *   with the skills (#6198) and must match a fresh render too.
  * - The quick contract stays at most 10 lines.
  * - The entry points agents read first link the protocol page.
  */
@@ -12,7 +14,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  AGENTS_PATH, PROTOCOL_PATH, TRANSCRIPTS, quickContract, renderAgentProtocolDocs,
+  AGENTS_PATH, BUNDLED_PROTOCOL_PATH, PROTOCOL_PATH, TRANSCRIPTS, quickContract, renderAgentProtocolDocs,
 } from '../scripts/build-agent-protocol.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -29,6 +31,10 @@ describe('AGENT_OPERATOR_v1.md generated regions', () => {
   test('AGENTS.md carries the quick contract verbatim', () => {
     expect(renderAgentProtocolDocs(protocol, agents).agents, REGEN).toBe(agents);
     expect(agents).toContain(quickContract(protocol));
+  });
+
+  test('the skills tree carries a fresh bundled copy of the page', () => {
+    expect(renderAgentProtocolDocs(protocol, agents).bundled, REGEN).toBe(readFileSync(BUNDLED_PROTOCOL_PATH, 'utf8'));
   });
 
   test('the quick contract is at most 10 lines', () => {

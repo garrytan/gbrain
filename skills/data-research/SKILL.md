@@ -118,7 +118,7 @@ Three example recipes ship with GBrain (see `~/.gbrain/recipes/`):
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `file_upload` is refused for a path outside the allowed root (remote callers are confined): ask the user to upload from the brain host or pass the content inline.
 - `put_page` / `add_timeline_entry` returns `revision_conflict` or `write_pending`: re-read and merge for the first; poll `gbrain write-request <request_id>` for the second.

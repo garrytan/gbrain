@@ -1367,7 +1367,7 @@ export class PostgresEngine implements BrainEngine {
         bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
         await tx.unsafe(SET_STATEMENT_TIMEOUT_SQL, [String(remainingVectorBudget(deadline))]);
         return run(tx, exact ? stmt.exactSql : stmt.sql, bound as Parameters<typeof tx.unsafe>[1]);
-      }, deadline);
+      }, deadline, opts?.hnswIterativeScan);
     }, { alwaysTransaction: true, jitOff: true });
   }
 

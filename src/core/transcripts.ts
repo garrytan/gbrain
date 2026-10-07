@@ -85,7 +85,7 @@ export async function listRecentTranscripts(
     const name = basename(c.path);
     const dateMatch = DATE_RE.exec(name);
     // Redact the whole file before the summary/full-read cap cuts it.
-    const text = redactFindings(raw, { highEntropy: true }).text;
+    const text = redactFindings(raw, { highEntropy: true, labeledCredentials: true }).text;
     out.push({
       path: name,
       date: dateMatch ? dateMatch[1] : null,

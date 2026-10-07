@@ -91,7 +91,15 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   chunks fill the inner candidate pool, the engines escalate the pool in a
   bounded loop (×4 per step, at most 3 escalations). SQL candidate limits and
   offsets are independent of `ef_search`; supported pgvector versions use
-  strict iterative scans with bounded visits. A filtered short pool is not
+  `relaxed_order` iterative scans with bounded visits (`ef_search` is still
+  sized to the candidate pool). Relaxed order keeps a closer candidate the
+  scan finds after farther ones, which strict order drops, so a selective
+  source or visibility filter fills more of its true neighbours; output order
+  never reaches callers because the inner `ORDER BY distance` and the pooled
+  outer sort re-sort it. `search.hnsw_iterative_scan` (`relaxed_order` |
+  `strict_order` | `off`; env `GBRAIN_HNSW_ITERATIVE_SCAN` wins) restores the
+  older mode without a release; it is latched once per process, so restart
+  serve and autopilot after changing it. A filtered short pool is not
   proof that the corpus is exhausted. Postgres may make one exact fallback
   inside the remaining eight-second arm budget; PGLite does not pretend that
   a JavaScript timeout can cancel its WASM work. Unresolved shortfalls appear

@@ -78,6 +78,7 @@ import {
 import { hookLaneLabel, resolveSeat, seatReasonHint, writeSeatSidecar } from '../core/context/seat.ts';
 import { gateWritebackTurn, WRITEBACK_SKIP_REASONS } from '../core/facts/writeback-gate.ts';
 import { resolveWritebackConfigFromFile } from '../core/facts/writeback-config.ts';
+import { recordCaptureIfOff } from '../core/context/capture-consent.ts';
 import { memorableGateAllowed, recordAndRelayReceipt, redactedToolCallsJson } from '../core/context/hook-heartbeat.ts';
 import { captureSpecFor } from '../core/transcripts/capture-spec.ts';
 import {
@@ -112,6 +113,8 @@ import {
 import { realpathOrResolve } from '../core/path-confine.ts';
 import { isClaudeCliSelfTranscriptPath } from '../core/ai/providers/claude-cli-scratch.ts';
 import { withoutPhysicalRootMetadata } from '../core/persistence/root-metadata.ts';
+import { HOOK_SUBCOMMANDS as HOOK_EVENTS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
+import { isManagedFilesystemPath } from '../core/persistence/filesystem-guard.ts';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -232,7 +235,8 @@ export interface HookIo {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-export const HOOK_EVENTS = ['session-start', 'user-prompt', 'stop', 'session-end', 'compact'] as const;
+export { HOOK_EVENTS, HOOK_EVENTS as SUBCOMMANDS };
+export const printUsage = (): void => { process.stdout.write(`${USAGE}\n`); };
 
 const USAGE = `Usage: gbrain hook <event>
 
@@ -257,7 +261,7 @@ All events fail open: errors exit 0 with empty stdout and a heartbeat entry at
 /** Dispatch a hook event. Returns the process exit code (0 for every runtime path). */
 export async function runHook(args: string[], io: HookIo = {}): Promise<number> {
   const event = args[0];
-  if (event === '--help' || event === '-h' || event === 'help') {
+  if (subcommandHelpRequested(args, ROUTERS.hook)) {
     write(io, USAGE + '\n');
     return 0;
   }
@@ -817,6 +821,7 @@ async function dirtyTreePush(
     const root = await resolveBootstrapWorkspaceRoot(ws);
     if (!root) return null;
     if (!(await treeNeedsPush(root))) return null; // clean + up to date → nothing to recover
+    if (isManagedFilesystemPath(root)) return { reason: 'push_managed_coordinator' };
     // There IS unpushed work. Defer until the repo phase verified privacy +
     // recorded repo_url — never recover-push to an unverified origin
     // (create-repo-first race). Only fires when work actually exists (P2-1).
@@ -943,6 +948,7 @@ async function stopPushIfDue(ws: string, io: HookIo): Promise<string> {
   // verified the origin and recorded repo_url (create-repo-first race).
   if (!(await repoPhaseComplete(root))) return 'push_deferred_repo_pending';
   if (!(await treeNeedsPush(root))) return 'push_clean';
+  if (isManagedFilesystemPath(root)) return 'push_managed_coordinator';
   try {
     // Written BEFORE the spawn so repeated fail-fast children stay debounced
     // on the healthy path; the [D20] failing-status bypass handles retries.
@@ -1371,6 +1377,7 @@ async function hookCompact(io: HookIo): Promise<number> {
       remainingMs: remaining,
       minScanMs: SEGMENT_MIN_BUDGET_MS,
       minWriteMs: SEGMENT_WRITE_MIN_BUDGET_MS,
+      beforeWrite: (file, text) => { recordCaptureIfOff(cfg, file, text, process.env.GBRAIN_SOURCE); },
     });
     segment = banked.segment;
     const flushCorpusFile = banked.flushCorpusFile;
@@ -1786,6 +1793,7 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
           // completion sidecar survived the overwrite).
           const corpusFile = join(dir, `${sessionId}.txt`);
           const tmpCorpus = `${corpusFile}.tmp-${process.pid}`;
+          recordCaptureIfOff(cfg, corpusFile, text, process.env.GBRAIN_SOURCE); // #6091, before the rename
           writeFileSync(tmpCorpus, text, { mode: 0o600 });
           renameSync(tmpCorpus, corpusFile);
           // Additive signal for a local third-party consumer (never gbrain
@@ -1855,7 +1863,9 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
   try {
     if (ws) {
       const root = await resolveBootstrapWorkspaceRoot(ws);
-      if (root && (await repoPhaseComplete(root))) {
+      if (root && isManagedFilesystemPath(root)) {
+        if (outcome === 'ok' && !reason) reason = 'push_managed_coordinator';
+      } else if (root && (await repoPhaseComplete(root))) {
         try {
           (io.spawnPush ?? spawnDetachedPush)(root);
           if (outcome === 'ok' && !reason) reason = 'push_spawned';

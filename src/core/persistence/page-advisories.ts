@@ -3,6 +3,7 @@ import type { ParsedPage } from '../import-file.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { writerLintForPutPage } from '../output/post-write.ts';
 import type { WriteRequest } from './model.ts';
+import type { TimelineRowsRemoved } from './canonical-projections.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { prepareFactsBackstop } from './effect-facts.ts';
 import { lineGrammarOptions, parseLineGrammar } from '../line-grammar.ts';
@@ -69,6 +70,17 @@ async function lineGrammarAdvisory(engine: BrainEngine, row: WriteRequest, page:
 
 const LINT_MESSAGES: Record<string,string> = { citation:'Paragraph has no citation marker.',
   link:'A link target is unavailable.', 'back-link':'A reverse link is missing.', 'triple-hr':'An ambiguous timeline separator was found.' };
+
+/**
+ * #5969: the timeline rows this write deleted (rows whose bullets the new body dropped). Dates only:
+ * page-write receipts never carry stored text.
+ */
+export function timelineRowsRemovedAdvisory(row: WriteRequest, removed: TimelineRowsRemoved): Record<string, unknown> {
+  return { ...removed,
+    warning: `This write deleted ${removed.count} timeline row(s) of ${row.slug} dated ${removed.earliest}${removed.latest !== removed.earliest ? ` to ${removed.latest}` : ''}, because the content dropped their bullets.`,
+    fix: readFix(`Lists ${row.slug}'s recent versions, read-only. If the rows were removed by mistake, revert_version with the id of the version before this write restores them (as new rows).`,
+      { mcp: { tool: 'get_versions', arguments: { slug: row.slug, limit: 5, include_body: false } } }) };
+}
 
 export function remoteLinkHint(row: WriteRequest): Record<string, unknown> {
   return row.authority.remote && !row.authority.autoLinkTrusted ? { auto_links: { skipped: 'remote',

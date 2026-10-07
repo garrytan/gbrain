@@ -1178,6 +1178,10 @@ export interface SearchOpts extends PageReadPolicy {
   onVectorPoolMeta?: (m: VectorPoolMeta) => void;
   /** #5824 rollback: keep the freshness guard inside the HNSW candidate CTE. Latched by the caller (search/vector-legacy-guard.ts). */
   vectorLegacyGuard?: boolean;
+  /** #6132: pgvector `hnsw.iterative_scan` mode (default relaxed_order), latched by the caller (search/hnsw-iterative-scan.ts). */
+  hnswIterativeScan?: import('./search/hnsw-iterative-scan.ts').HnswIterativeScanMode;
+  /** #5989: bounded CJK keyword arm (deadline + meta sink); set by hybrid only (engine-sql/cjk-search.ts). */
+  cjkKeyword?: import('./engine-sql/cjk-search.ts').CjkKeywordRun;
   /**
    * v0.42 — intent-aware adaptive return-sizing. `true` enables with config/
    * default caps; an object overrides caps per-call; omitted/`false` = off
@@ -1999,6 +2003,7 @@ export const DEGRADED_STAGES = [
   'keyword_relaxed_carried',
   'safe_index_pending',
   'vector_candidates_incomplete',
+  'keyword_candidates_incomplete',
   'projection_pending',
   'projection_status_unknown',
 ] as const;
@@ -2095,6 +2100,8 @@ export interface HybridSearchMeta {
    * yield). Omitted on clean runs. Exhaustion is VISIBLE, not silent.
    */
   vector_pool_underfilled?: Omit<VectorPoolMeta, 'underfilled'>;
+  /** #5989: the bounded CJK keyword arm's outcome and wall time (separate from total hybrid latency). */
+  keyword_candidates?: import('./engine-sql/cjk-search.ts').CjkKeywordMeta;
   /**
    * v0.42.3.0 — autocut decision (signal, cut point, kept/total, gapRatio).
    * Omitted when autocut didn't run (no reranker). Surfaced for

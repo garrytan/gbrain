@@ -92,7 +92,9 @@ describe("skills conformance", () => {
       test("has a When it fails section that links the agent operator protocol", () => {
         const section = content.split(/^## When it fails\s*$/m)[1]?.split(/^## /m)[0];
         expect(section).toBeDefined();
-        expect(section).toContain("AGENT_OPERATOR_v1.md");
+        // #6198 (D13): the link targets the protocol copy bundled with the
+        // skills, so it resolves in every installed copy of the skill.
+        expect(section).toContain("conventions/agent-operator-protocol.md)");
       });
     });
   }

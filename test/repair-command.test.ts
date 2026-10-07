@@ -24,6 +24,10 @@ import { withEnv } from './helpers/with-env.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { getCliOptions, setCliOptions } from '../src/core/cli-options.ts';
+import { repairRunner } from '../src/core/repair/registry.ts';
+import { planRepairSteps, runRepairSteps } from '../src/core/remediation/repairs.ts';
 
 
 const backends = testBackends();
@@ -212,6 +216,77 @@ describe('gbrain repair timeline', () => {
       await expect(runRepairCommand(engine, ['bogus'])).rejects.toMatchObject({ code: 'invalid_params' });
       await expect(runRepairCommand(engine, ['--apply'])).rejects.toMatchObject({ code: 'invalid_params' });
       expect(await markedPages(engine, source)).toEqual([]);
+    });
+  }, 120_000);
+});
+
+/** Every publication stalls at the consumer for `ms` before it commits (#6185). */
+async function withSlowPublications<T>(ms: number, run: () => Promise<T>): Promise<T> {
+  installFaultHook(async point => { if (point === 'consumer:prepared') await new Promise(resolve => setTimeout(resolve, ms)); });
+  try { return await run(); } finally { installFaultHook(undefined); }
+}
+
+async function withWriteWait<T>(writeWaitMs: number | undefined, run: () => Promise<T>): Promise<T> {
+  const previous = getCliOptions();
+  setCliOptions({ ...previous, writeWaitMs });
+  try { return await run(); } finally { setCliOptions(previous); }
+}
+
+describe('#6185: repair --apply waits with the CLI write wait', () => {
+  test('a publication slower than the 5 s agent wait commits within the CLI default, and one run repairs every page', async () => {
+    await brain(async (engine, [source]) => {
+      for (const slug of ['notes/a', 'notes/b']) await pageWithHistory(engine, source, slug);
+      const scope = await resolveRepairScope(engine);
+      const runner = await repairRunner(engine, { apply: true, noEmbed: true, logger: { info() {}, warn() {}, error() {} } });
+      const applied = await withSlowPublications(5_500, () => runner.run('timeline', scope));
+      expect(applied.stopped).toBeUndefined();
+      expect(applied).toMatchObject({ applied: 2, complete: true });
+      expect(await markedPages(engine, source)).toEqual(['notes/a', 'notes/b']);
+    });
+  }, 120_000);
+
+  test('--wait 0 still stops at the pending write with the resume message, and the rerun finishes', async () => {
+    await brain(async (engine, [source]) => {
+      await pageWithHistory(engine, source, 'notes/a');
+      const scope = await resolveRepairScope(engine);
+      const quiet = { info() {}, warn() {}, error() {} };
+      const stopped = await withWriteWait(0, async () => withSlowPublications(1_000,
+        async () => (await repairRunner(engine, { apply: true, noEmbed: true, logger: quiet })).run('timeline', scope)));
+      expect(stopped.applied).toBe(0);
+      expect(stopped.stopped).toEqual({ reason: 'write_pending', message: `The repair of ${source}:notes/a was accepted and is still pending publication. `
+        + 'Rerun `gbrain repair timeline --apply` to resume; the same request is replayed.' });
+      const resumed = await (await repairRunner(engine, { apply: true, noEmbed: true, logger: quiet })).run('timeline', scope);
+      expect(resumed).toMatchObject({ complete: true });
+      expect(await markedPages(engine, source)).toEqual(['notes/a']);
+    });
+  }, 120_000);
+
+  test('the doctor remediation run uses the same wait: under --wait 0 a slow publication reports stopped', async () => {
+    await brain(async (engine, [source]) => {
+      await pageWithHistory(engine, source, 'notes/a');
+      const steps = (await planRepairSteps(engine, { noEmbed: true, kinds: ['timeline'] }));
+      expect(steps.map(step => step.kind)).toEqual(['timeline']);
+      const [result] = await withWriteWait(0, () => withSlowPublications(1_000,
+        () => runRepairSteps(engine, steps, { remote: false, noEmbed: true, remainingUsd: () => undefined })));
+      expect(result).toMatchObject({ kind: 'timeline', status: 'stopped', applied: 0 });
+      expect(result.message).toContain('still pending publication');
+    });
+  }, 120_000);
+
+  test('a malformed GBRAIN_WRITE_WAIT_MS refuses the apply before any checkpoint; the preview still runs', async () => {
+    await brain(async (engine, [source]) => {
+      await pageWithHistory(engine, source, 'notes/a');
+      await withEnv({ GBRAIN_WRITE_WAIT_MS: 'soon' }, async () => {
+        await expect(repairRunner(engine, { apply: true, noEmbed: true })).rejects.toMatchObject({ code: 'invalid_write_wait' });
+        await expect(runRepairCommand(engine, ['timeline', '--apply'])).rejects.toMatchObject({ code: 'invalid_write_wait' });
+        expect(await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='repair'")).toEqual([]);
+        expect(await markedPages(engine, source)).toEqual([]);
+        const out: string[] = [];
+        const log = console.log;
+        console.log = (...args: unknown[]) => { out.push(args.join(' ')); };
+        try { await runRepairCommand(engine, ['timeline', '--json']); } finally { console.log = log; }
+        expect(JSON.parse(out[0]).results[0]).toMatchObject({ mode: 'dry_run', affected: 1 });
+      });
     });
   }, 120_000);
 });

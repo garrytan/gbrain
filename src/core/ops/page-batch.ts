@@ -19,6 +19,7 @@ const put_pages: Operation = {
           content: { type: 'string', required: true, description: 'Complete markdown with frontmatter.' },
           expected_revision: { type: 'string', description: 'Revision read; omit to create.' },
           allow_empty: { type: 'boolean', description: 'Allow emptying a non-empty page.' },
+          drop_timeline: { type: 'boolean', description: 'Content without a Timeline section deletes its dated entries.' },
         },
       },
     },

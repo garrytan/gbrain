@@ -57,9 +57,14 @@ test/brain-registry.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/brain-repo-durability.serial.test.ts	exclusive	exclusive: hardenBrainRepo's own scaffolding commit fires the just-installed post-commit hook (background push) which races the synchronous push-probe on the same bare remote ("cannot lock ref" → needs_attention non-empty). The race is intra-call; pooled CPU contention widens the window past what the assertions tolerate (observed on a 4-vCPU CI runner, never locally). Sequential lane restores master-era timing until the probe learns to retry ref-lock contention.
 test/brainstorm/checkpoint.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/brainstorm/unpriced-chat-model.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests, __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; R1: mutates process.env (GBRAIN_HOME, GBRAIN_AUDIT_DIR)
+test/capture-consent-gate.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME); also real PGLite engines and the module-global harvest queue
 test/check-update-refresh.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/checkpoint-harvest.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, CLAUDE_CONFIG_DIR)
 test/cli-dispatch-lifecycle.serial.test.ts	R2	R2: mock.module(../src/core/engine-factory.ts, ../src/commands/orphans.ts, ../src/commands/salience.ts, ../src/commands/serve.ts (+4 more)) replaces modules for every file in the process
+test/cli-help-no-side-effects-2.serial.test.ts	global-state	global-state: spawns about 100 real gbrain CLI children with a probe preload and fingerprints a shared fixture brain and HOME; part 2 of the help gate
+test/cli-help-no-side-effects-3.serial.test.ts	global-state	global-state: spawns about 100 real gbrain CLI children with a probe preload and fingerprints a shared fixture brain and HOME; part 3 of the help gate
+test/cli-help-no-side-effects-4.serial.test.ts	global-state	global-state: spawns about 100 real gbrain CLI children with a probe preload and fingerprints a shared fixture brain and HOME; part 4 of the help gate
+test/cli-help-no-side-effects.serial.test.ts	global-state	global-state: spawns about 100 real gbrain CLI children with a probe preload and fingerprints a shared fixture brain and HOME; split into four parts to fit the serial lane budget
 test/code-callers-pin.serial.test.ts	global-state	global-state: spyOn console.log, console.error, process.exit; process.chdir changes the shared cwd
 test/code-def-refs-pin.serial.test.ts	global-state	global-state: spyOn console.log, console.error, process.exit; process.chdir changes the shared cwd
 test/codex-rollout-0154.serial.test.ts	R1	R1: mutates GBRAIN_HOME/CODEX_HOME for in-process session-end hook runs
@@ -221,6 +226,7 @@ test/llm-intent-hybrid-integration.serial.test.ts	global-state	global-state: pro
 test/loops-close-fact.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests; configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console
 test/loops-extract-run.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.ts) replaces modules for every file in the process
 test/managed-connector-routing.serial.test.ts	global-state	global-state: spyOn globalThis.fetch
+test/managed-push-remedy.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/managed-unsupported-preflight.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.ts) replaces modules for every file in the process
 test/mcp-admin-cli.serial.test.ts	global-state	global-state: spyOn console.log, globalThis.fetch
 test/mcp-backup-nag.serial.test.ts	R2	R2: mock.module(../src/core/search/hybrid.ts, ../src/core/search/projection-readiness.ts) replaces modules for every file in the process

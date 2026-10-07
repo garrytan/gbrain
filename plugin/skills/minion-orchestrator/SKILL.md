@@ -315,6 +315,19 @@ rung of this ladder the deployment supports**. This is a harness-routing
 convention the agent follows, not a mechanical guarantee — nothing stops a
 bare background shell except this skill saying don't.
 
+**Paid work gets consent before it is submitted.** A job runs without a
+terminal, so a paid command (`embed --stale`, or anything else that calls a
+model provider) stops with exit 3 and a consent payload unless it already
+carries the user's approval. Get that approval first, in the conversation:
+run the command's preview (for example `gbrain embed --stale --dry-run`),
+relay the estimate, and only after the user agrees put the approval in the
+submitted command (`gbrain embed --stale --yes --max-usd <cap>` with the cap
+they approved), or rely on a standing approval the user set with
+`gbrain config set consent.preapprove.paid.max_usd_per_run <usd>`. Never add
+`--yes` without the user's answer. When a job ends with exit 3 or the
+`confirmation_required` code, relay its message to the
+user and stop; don't resubmit it with `--yes`.
+
 ### Rung 1 — Minion job + deadman (Postgres + worker)
 
 Requires: Postgres engine, a running `gbrain jobs work` worker, and — for
@@ -505,7 +518,7 @@ Total tokens so far: 4.3k
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain jobs submit` over MCP for a protected job returns `permission_denied`: it must run from the trusted local CLI on the brain host; tell the user.
 - A shell job dead-letters immediately with the flag named in `error_text` (shell jobs disabled): tell the user which env flag the host operator must set; do not retry.

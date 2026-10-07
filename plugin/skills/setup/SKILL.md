@@ -38,13 +38,13 @@ Use the user's existing context; do not repeat choices they already made.
 
 | Intent | Action |
 | --- | --- |
-| Add memory inside Grok Bot | First choice: use the brain on your own computer over MCP — [remote-mcp](../remote-mcp/SKILL.md) publishes it (`--funnel`, the Bot runs in the vendor cloud), then [hosted harness access](../../docs/guides/hosted-harness-access.md) installs the private handoff in the Bot. No always-on machine: follow [Grok Bot](../../docs/guides/grok-bot.md) and the isolated [setup helper](../../docs/guides/in-agent-setup.md). Root: `/workspace/gbrain`, with data under `.gbrain`. |
-| Add memory inside Muse | First choice: use the brain on your own computer over MCP — [remote-mcp](../remote-mcp/SKILL.md) publishes it (`--funnel`), then [hosted harness access](../../docs/guides/hosted-harness-access.md) installs the private handoff in Muse. No always-on machine: follow [Muse](../../docs/guides/muse.md). Either way, establish its durable user-files location first. Do not invent `MUSE.md`, a persistent path, or a native MCP mechanism. |
-| Add memory to another existing agent | Follow [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md); the [coding-agent tutorial](../../docs/tutorials/connect-coding-agent.md) covers Claude Code and Codex. |
-| Connect an existing hosted brain | Follow [mcp-access](../mcp-access/SKILL.md) and [hosted harness access](../../docs/guides/hosted-harness-access.md). Select native OAuth/PKCE or a private machine handoff for the intended harness. |
+| Add memory inside Grok Bot | First choice: use the brain on your own computer over MCP — [remote-mcp](../remote-mcp/SKILL.md) publishes it (`--funnel`, the Bot runs in the vendor cloud), then [hosted harness access](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md) installs the private handoff in the Bot. No always-on machine: follow [Grok Bot](https://github.com/garrytan/gbrain/blob/master/docs/guides/grok-bot.md) and the isolated [setup helper](https://github.com/garrytan/gbrain/blob/master/docs/guides/in-agent-setup.md). Root: `/workspace/gbrain`, with data under `.gbrain`. |
+| Add memory inside Muse | First choice: use the brain on your own computer over MCP — [remote-mcp](../remote-mcp/SKILL.md) publishes it (`--funnel`), then [hosted harness access](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md) installs the private handoff in Muse. No always-on machine: follow [Muse](https://github.com/garrytan/gbrain/blob/master/docs/guides/muse.md). Either way, establish its durable user-files location first. Do not invent `MUSE.md`, a persistent path, or a native MCP mechanism. |
+| Add memory to another existing agent | Follow [INSTALL_FOR_AGENTS.md](https://github.com/garrytan/gbrain/blob/master/INSTALL_FOR_AGENTS.md); the [coding-agent tutorial](https://github.com/garrytan/gbrain/blob/master/docs/tutorials/connect-coding-agent.md) covers Claude Code and Codex. |
+| Connect an existing hosted brain | Follow [mcp-access](../mcp-access/SKILL.md) and [hosted harness access](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md). Select native OAuth/PKCE or a private machine handoff for the intended harness. |
 | Use the brain from other devices, apps or cloud agents over MCP | Follow [remote-mcp](../remote-mcp/SKILL.md): `gbrain mcp expose` publishes the local server on the Tailscale tailnet (Funnel only for cloud agents), then [mcp-access](../mcp-access/SKILL.md) / hosted access selects native OAuth or a private machine handoff for each consumer. |
-| Explicitly create a new personal agent with identity and a private repo | Follow [BOOTSTRAP_FOR_AGENTS.md](../../BOOTSTRAP_FOR_AGENTS.md). `gbrain bootstrap` is for this explicit request. |
-| Explicitly configure per-worktree code engines with shared artifacts | Follow [topologies](../../docs/architecture/topologies.md). Brain and source routing must be set independently. |
+| Explicitly create a new personal agent with identity and a private repo | Follow [BOOTSTRAP_FOR_AGENTS.md](https://github.com/garrytan/gbrain/blob/master/BOOTSTRAP_FOR_AGENTS.md). `gbrain bootstrap` is for this explicit request. |
+| Explicitly configure per-worktree code engines with shared artifacts | Follow [topologies](https://github.com/garrytan/gbrain/blob/master/docs/architecture/topologies.md). Brain and source routing must be set independently. |
 
 If intent is unclear, default to memory for the existing agent. Ask only for
 missing information needed to choose a safe target, such as which existing
@@ -79,7 +79,7 @@ gbrain init --pglite --no-embedding
 ```
 
 Install Bun first if missing, following
-[INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md). Do not use the unrelated
+[INSTALL_FOR_AGENTS.md](https://github.com/garrytan/gbrain/blob/master/INSTALL_FOR_AGENTS.md). Do not use the unrelated
 npm package named `gbrain`, or `bun add` in the user's current project.
 Local/thin-client conversion requires explicit intent and preservation of the
 previous configuration.
@@ -87,11 +87,11 @@ previous configuration.
 **Required search-mode choice:** initialization may select a noninteractive
 default and print a nine-cell cost matrix with `[AGENT]` markers. Relay that
 matrix and confirm the operator's choice before continuing. Follow Step 3.5 of
-[INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md); use the printed matrix,
+[INSTALL_FOR_AGENTS.md](https://github.com/garrytan/gbrain/blob/master/INSTALL_FOR_AGENTS.md); use the printed matrix,
 not remembered prices. Illustrative model API costs are separate from a
 harness subscription. This choice does not enable paid APIs or capture.
 
-If the user explicitly wants Postgres, follow [engines](../../docs/ENGINES.md)
+If the user explicitly wants Postgres, follow [engines](https://github.com/garrytan/gbrain/blob/master/docs/ENGINES.md)
 or [postgres-adopt](../postgres-adopt/SKILL.md). `--prefer-postgres` is optional.
 Supabase uses a database connection string, not an anon key. Keep credentials
 private and do not copy ambient secrets into file configuration.
@@ -100,7 +100,7 @@ private and do not copy ambient secrets into file configuration.
 
 Skip local database initialization, import, and maintenance installation.
 Read [mcp-access](../mcp-access/SKILL.md). If the target harness uses native
-OAuth/PKCE, use its [native path](../../docs/guides/hosted-harness-access.md#native-oauth-path):
+OAuth/PKCE, use its [native path](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md#native-oauth-path):
 register the actual redirect URI and authentication method, initiate OAuth
 inside the client, and preserve the pending request through owner login and
 consent. Do not install a machine handoff in an OAuth-only client.
@@ -119,7 +119,7 @@ gbrain connect https://brain.example.com/mcp --harness codex \
 ```
 
 Thin CLI adapters also need the verified persistent `--root`. Follow the
-adapter's reload instructions and the complete [hosted guide](../../docs/guides/hosted-harness-access.md).
+adapter's reload instructions and the complete [hosted guide](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md).
 Do not grant `admin` merely to make a convenience health command pass.
 Delegation requires an explicit choice, bound tools, an active source, and a
 path policy. New delegation has unlimited spending and concurrency 1; explain
@@ -170,17 +170,17 @@ Only proceed with capabilities the user requested:
 | Capability | Next step |
 | --- | --- |
 | Import selected notes or chat exports | Confirm the selected source; follow [ingest](../ingest/SKILL.md) or [conversation archive](../conversation-archive/SKILL.md). Do not scan and import arbitrary directories. |
-| Connect an account | Follow [chat connectors](../chat-connectors/SKILL.md) or [Google setup](../../docs/guides/google-connect.md), preserving their credential and consent boundaries. |
+| Connect an account | Follow [chat connectors](../chat-connectors/SKILL.md) or [Google setup](https://github.com/garrytan/gbrain/blob/master/docs/guides/google-connect.md), preserving their credential and consent boundaries. |
 | Automatic conversation capture | Follow [signal detector](../signal-detector/SKILL.md) after opt-in. Recall and explicit remembering work without it. |
 | Paid retrieval or enrichment | Configure the chosen capability and budget separately. Existing API keys do not imply permission to spend. |
 | Scheduled maintenance | For in-agent installs, reuse the generated routine ID and absolute launcher; start with bounded `doctor --fast --json`. Observe native activation. Hosted clients use the host's existing schedule. |
-| Sync a selected file source | Follow [live sync](../../docs/guides/live-sync.md). Keyless sync uses `--no-pull --no-embed`; do not implicitly add embedding or a worker. |
+| Sync a selected file source | Follow [live sync](https://github.com/garrytan/gbrain/blob/master/docs/guides/live-sync.md). Keyless sync uses `--no-pull --no-embed`; do not implicitly add embedding or a worker. |
 | Import more data later | Offer [cold start](../cold-start/SKILL.md) as an optional next step; do not launch it automatically. |
 | Upgrade | Follow [gbrain-upgrade](../gbrain-upgrade/SKILL.md) and the installation's recorded repair/upgrade policy. |
 
 Facts, corrections, jobs, and accounting can exist only in the database.
 A Git clone is not a complete backup. For PGLite, use the
-[private backup and restore procedure](../../docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database).
+[private backup and restore procedure](https://github.com/garrytan/gbrain/blob/master/docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database).
 Treat the whole archive as sensitive; off-VM copies require an explicit
 destination. Restore into an absent new root, then reattach external roots,
 connectors, and schedules explicitly.
@@ -199,7 +199,7 @@ connectors, and schedules explicitly.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain init` prints `[AGENT]` blocks with the search-mode cost matrix: relay it and get the operator's choice before continuing.
 - An initialization error: never replace existing memory to recover. Run `gbrain doctor --json` and follow its `fix`.

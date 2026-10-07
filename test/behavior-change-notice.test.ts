@@ -38,6 +38,7 @@ import {
   takeHttpBehaviorNotice,
   takeLocalBehaviorNotice,
 } from '../src/core/behavior-change-notice.ts';
+import { cliRenderContext, renderNotice } from '../src/core/agent-output.ts';
 import { VERSION } from '../src/version.ts';
 import { checkBehaviorChanges } from '../src/commands/doctor/checks/behavior-changes.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -466,5 +467,28 @@ describe('fence rows (#6188 D25, D26)', () => {
     await withEnv({ GBRAIN_HOME: freshHome(), ...NO_CHAIN }, async () => {
       expect(await takeLocalBehaviorNotice(freshEngine(new Date().toISOString()), 'cli', { cfg: null, brainKey: 'fresh-fences' })).toBeNull();
     });
+  });
+});
+
+describe('fix wave 11 rows inside the notice length cap', () => {
+  const BREAKING = [
+    'gbrain pages purge-deleted --dry-run --json',
+    'exits 3 with an ask_user payload',
+    'gbrain apply-migrations --yes',
+    'drop_timeline: true',
+    'gbrain sources list --json',
+    'no_counterparty',
+  ];
+
+  test('an upgrade into the wave sees every breaking row and its replacement command within the rendered 2,000 characters', () => {
+    const first = BEHAVIOR_CHANGES.findIndex(c => typeof c.text === 'string' && c.text.includes(BREAKING[0]!));
+    expect(first).toBeGreaterThan(0);
+    const after = BEHAVIOR_CHANGES[first - 1]!.since;
+    const notice = behaviorChangesNotice(null, { after });
+    expect(notice).not.toBeNull();
+    const rendered = renderNotice(notice!, cliRenderContext()).why;
+    expect(rendered.length).toBeLessThanOrEqual(2_000);
+    for (const command of BREAKING) expect(rendered).toContain(command);
+    expect(notice!.why).toContain('gbrain doctor --only behavior_changes shows this again.');
   });
 });

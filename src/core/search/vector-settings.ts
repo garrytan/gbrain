@@ -1,5 +1,6 @@
 import { hnswEfSearchFor, HNSW_EF_SEARCH_DEFAULT } from '../vector-index.ts';
 import { remainingVectorBudget } from './vector-pool.ts';
+import { HNSW_ITERATIVE_SCAN_DEFAULT, type HnswIterativeScanMode } from './hnsw-iterative-scan.ts';
 
 export async function withVectorSettings<T>(
   query: (sql: string, params: unknown[]) => Promise<Record<string, unknown>[]>,
@@ -8,11 +9,12 @@ export async function withVectorSettings<T>(
   maxScanTuples: number,
   run: () => Promise<T>,
   deadline?: number,
+  iterativeMode: HnswIterativeScanMode = HNSW_ITERATIVE_SCAN_DEFAULT,
 ): Promise<T> {
   const settings: Record<string, string> = { 'hnsw.ef_search': String(hnswEfSearchFor(candidateLimit)) };
   const defaults: Record<string, string> = { 'hnsw.ef_search': String(HNSW_EF_SEARCH_DEFAULT), 'hnsw.iterative_scan': 'off', 'hnsw.max_scan_tuples': '20000' };
   if (iterative) {
-    settings['hnsw.iterative_scan'] = 'strict_order';
+    settings['hnsw.iterative_scan'] = iterativeMode;
     settings['hnsw.max_scan_tuples'] = String(maxScanTuples);
   }
   if (deadline !== undefined) settings.statement_timeout = String(remainingVectorBudget(deadline));

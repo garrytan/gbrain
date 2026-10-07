@@ -49,7 +49,7 @@ that you author with `gbrain schema init` or `gbrain schema fork`.
 Inspection verbs:
 
 ```bash
-gbrain schema active     # show resolved pack + which tier set it
+gbrain schema active [--source <id>] [--json]  # show resolved pack + which tier set it
 gbrain schema list       # list bundled + installed packs
 gbrain schema show       # pretty-print the active pack
 gbrain schema validate   # validate a manifest's shape
@@ -62,6 +62,25 @@ Use `gbrain config unset schema_pack` to remove that database override, then
 `gbrain schema active` to confirm the resolved pack and its selection tier.
 `gbrain config get schema_pack` and `gbrain config show` report the same
 resolved pack and name its tier.
+
+### Per-source resolution
+
+`gbrain schema active --source <id>` resolves the pack the engine uses for
+that source, including the per-source database override
+(`schema_pack.source.<id>`), and prints `Resolved for source <id>: <tier>`
+(`per-source-db`, `db-config`, `home-config`, `env` or `default`). Under
+`--json` the document carries `pack`, `version`, `identity`,
+`resolved_from`, `source_id` and `database` (`read`, `unreadable` or
+`not_configured`).
+
+- An unregistered or archived source is refused with `unknown_source`; its fix
+  is `gbrain sources list --json`, which lists the ids `--source` accepts.
+- When the brain database can't be read, the database tiers are skipped and
+  the answer comes from the environment and `~/.gbrain/config.json` only. Text
+  mode prints a `Degraded: database unreadable` line on stderr and exits 0;
+  `--json` exits nonzero with a `database_error` envelope that still carries
+  the file-plane answer (`degraded: true`). Run `gbrain doctor --json`, then
+  `gbrain schema active --json` again.
 
 Authoring + discovery verbs:
 
@@ -118,7 +137,7 @@ classification as `schema lint --with-db`'s `stored_type_undeclared`:
   undeclared type, per source against that source's pack.
 
 Fix one by declaring it (`gbrain schema add-type <type> --primitive <p>
---prefix <dir/>`) or by rewriting the pages with a declared type. On a managed
+--prefix <dir/>`, or `--no-prefix` for a type set by frontmatter only) or by rewriting the pages with a declared type. On a managed
 brain the `unify-types` job cannot apply yet, so rewrite the page with
 `put_page` (read it with `get_page include_content:true`, change `type:`, put it
 back). gbrain's own outputs use declared types: `gbrain report` and the dream

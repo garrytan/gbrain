@@ -146,14 +146,14 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
   attach [--harness H]            Machine two: adopt a cloned agent workspace.
   harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]
           [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...
-          [--no-hooks] [--no-capture] [--force] [--status] [--remove] [--refresh-skills] [--yes] [--json]
+          [--no-hooks] [--no-capture] [--force] [--status] [--remove [--dry-run]] [--refresh-skills] [--yes] [--json]
           [--seat <label> | --no-seat]
                                   Wire framework-spawned Claude Code / Codex / opencode
                                   sessions to a RUNNING \`gbrain serve --http\` on this box
                                   (#4043): scoped bearer token, user-scope MCP + headless
                                   pre-approval, lifecycle hooks (user scope, or per --project
                                   dir), codex config block, opencode config entry. No
-                                  agent.json needed. Idempotent; --remove tears it down.
+                                  agent.json needed. Idempotent; --remove tears it down (--dry-run previews).
                                   --source ID: the source the hooks + token bind to
                                   (default: sources.default, else the sole populated
                                   non-default source, else default).
@@ -225,7 +225,7 @@ const SUBCOMMAND_HELP: Record<string, string> = {
   harness:
     'gbrain bootstrap harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]\n' +
     '                       [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...\n' +
-    '                       [--no-hooks] [--no-capture] [--force] [--status] [--remove] [--yes] [--json]\n' +
+    '                       [--no-hooks] [--no-capture] [--force] [--status] [--remove [--dry-run]] [--yes] [--json]\n' +
     '                       [--seat <label> | --no-seat]\n' +
     '  Wire framework-spawned Claude Code / Codex / opencode sessions to a RUNNING `gbrain serve --http`\n' +
     '  on this box (#4043). Idempotent; --remove tears it down. (--local is an accepted no-op alias.)\n' +
@@ -1755,10 +1755,10 @@ async function runHarness(rest: string[], home: string, runner: ExecRunner, dete
     prompt: promptLine,
     ...harnessDetectDeps(detect),
   };
-  // [X12] --status is READ-ONLY: no home mkdir, no lock — it must work (and
-  // stay side-effect-free) even while an apply/remove holds the mutex.
-  if (flags.status) {
-    return statusHarness(flags, deps);
+  // [X12] --status and --remove --dry-run are READ-ONLY: no home mkdir, no
+  // lock — they must work (and stay side-effect-free) while the mutex is held.
+  if (flags.status || (flags.remove && rest.includes('--dry-run'))) {
+    return flags.status ? statusHarness(flags, deps) : removeHarness(flags, deps);
   }
   ensureHarnessHome(home);
   return withLock(home, async () => {

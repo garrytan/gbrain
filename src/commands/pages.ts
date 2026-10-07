@@ -1,35 +1,46 @@
 /**
  * gbrain pages — page-level operator commands. v0.26.5+.
  *
- * The first subcommand: `pages purge-deleted [--older-than HOURS] [--dry-run]`.
+ * The first subcommand: `pages purge-deleted [--older-than HOURS|Nh|Nd] [--dry-run] [--json] [--yes]`.
  * Manual escape hatch alongside the autopilot purge phase. Hard-deletes pages
  * whose `deleted_at` is older than the cutoff; cascades to content_chunks,
  * page_links, chunk_relations via existing FKs.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { purgeDeletedPagesCoordinated } from '../core/persistence/purge-deleted.ts';
+import { purgeConsentRequest, purgeDeletedPagesCoordinated } from '../core/persistence/purge-deleted.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { consentGate } from '../core/consent-cli.ts';
+import { strictArgsRefusal } from '../cli/strict-args.ts';
+import { PAGES_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 
 const SOFT_DELETE_TTL_HOURS_DEFAULT = 72;
 
-function parseOlderThanHours(args: string[]): number {
-  const idx = args.indexOf('--older-than');
-  if (idx === -1 || idx === args.length - 1) return SOFT_DELETE_TTL_HOURS_DEFAULT;
-  const raw = args[idx + 1];
-  // Accept bare numbers (hours) or `<N>h` / `<N>d`. Reject anything ambiguous.
-  const trimmed = raw.trim();
-  const dayMatch = trimmed.match(/^(\d+)d$/);
-  if (dayMatch) return Math.max(0, parseInt(dayMatch[1], 10) * 24);
-  const hourMatch = trimmed.match(/^(\d+)h?$/);
-  if (hourMatch) return Math.max(0, parseInt(hourMatch[1], 10));
-  console.error(`Invalid --older-than value: "${raw}". Expected hours (e.g. 72 or 72h) or days (e.g. 3d).`);
-  process.exit(2);
+export { PAGES_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
+
+export interface PurgeArgs { olderThanHours: number; dryRun: boolean; json: boolean }
+
+/**
+ * Strict `purge-deleted` arguments (#6114): exactly `--dry-run`, `--json`,
+ * `--yes` (read by the consent gate) and one `--older-than <HOURS|Nh|Nd>` (also `--older-than=N`).
+ * Anything else throws `invalid_params` before the engine is touched; cli.ts
+ * refuses the same tokens earlier through the same table.
+ */
+export function parsePurgeArgs(args: readonly string[]): PurgeArgs {
+  const refusal = strictArgsRefusal('pages', ['purge-deleted', ...args]);
+  if (refusal) throw refusal;
+  let olderThanHours = SOFT_DELETE_TTL_HOURS_DEFAULT;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    const raw = a === '--older-than' ? args[++i]! : a.startsWith('--older-than=') ? a.slice('--older-than='.length) : null;
+    if (raw === null) continue;
+    const n = parseInt(raw, 10);
+    olderThanHours = raw.endsWith('d') ? n * 24 : n;
+  }
+  return { olderThanHours, dryRun: args.includes('--dry-run'), json: args.includes('--json') };
 }
 
 async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<void> {
-  const olderThanHours = parseOlderThanHours(args);
-  const dryRun = args.includes('--dry-run');
-  const json = args.includes('--json');
+  const { olderThanHours, dryRun, json } = parsePurgeArgs(args);
 
   if (dryRun) {
     // Same engine method, same WHERE predicate, same DB now() clock as the
@@ -45,6 +56,18 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
     for (const p of preview.pages ?? []) console.log(`  ${p.slug}  deleted_at=${p.deleted_at.toISOString()}`);
     return;
   }
+
+  // D6: a hard purge is irreversible and brain-wide, so the CLI asks first
+  // (a TTY prompt, `--yes`, or exit 3 with the consent payload). The
+  // autopilot purge phase calls the library directly and is unaffected.
+  const preview = await engine.purgeDeletedPages(olderThanHours, { dryRun: true });
+  if (preview.count === 0) {
+    if (json) console.log(JSON.stringify({ older_than_hours: olderThanHours, count: 0, slugs: [] }, null, 2));
+    else console.log(`No pages to purge (older than ${olderThanHours}h).`);
+    return;
+  }
+  const authorized = await consentGate(purgeConsentRequest(preview.count, olderThanHours, json, args), { json });
+  if (!authorized) return;
 
   const result = await purgeDeletedPagesCoordinated(engine, olderThanHours);
   if (json) {
@@ -63,13 +86,16 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
   }
 }
 
-function printHelp(): void {
+export function printUsage(): void {
   console.log(`gbrain pages — page-level operator commands (v0.26.5)
 
 Subcommands:
-  purge-deleted [--older-than HOURS|Nd] [--dry-run] [--json]
+  purge-deleted [--older-than HOURS|Nh|Nd] [--dry-run] [--json] [--yes]
                                     Hard-delete soft-deleted pages older than the cutoff
-                                    (default 72h). Cascades to chunks/links/edges.
+                                    (default 72h) in every source of the brain (per-source
+                                    purge is not supported). Cascades to chunks/links/edges.
+                                    Asks first: a TTY prompt, --yes, or exit 3 with the
+                                    consent payload. Preview with --dry-run --json.
                                     Mirror of the autopilot purge phase.
 
 Notes:
@@ -82,19 +108,16 @@ Notes:
 }
 
 export async function runPages(engine: BrainEngine, args: string[]): Promise<void> {
-  const sub = args[0];
-  const rest = args.slice(1);
-
+  if (subcommandHelpRequested(args, ROUTERS.pages)) { printUsage(); return; }
+  const sub = args[0] as (typeof PAGES_SUBCOMMANDS)[number] | undefined;
   switch (sub) {
-    case 'purge-deleted': return runPurgeDeleted(engine, rest);
+    case 'purge-deleted': return runPurgeDeleted(engine, args.slice(1));
     case undefined:
-    case '--help':
-    case '-h':
-      printHelp();
+      printUsage();
       return;
     default:
       console.error(`Unknown subcommand: ${sub}`);
-      printHelp();
+      printUsage();
       process.exit(2);
   }
 }

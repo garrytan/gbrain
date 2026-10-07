@@ -269,10 +269,18 @@ cd /path/to/gbrain/evals/functional-area-resolver
 TMP=$(mktemp -d)/variants && mkdir -p "$TMP"
 cp "$EDITED" "$TMP/my-edit.md"
 
-# Run the harness against your file (sequential, ~75 calls × $0.0076 ≈ $0.57 on Opus).
+# Without --yes the harness prints its cost estimate and exits (no model calls).
+ANTHROPIC_API_KEY=... node harness.mjs --variants-dir "$TMP" --variants my-edit \
+                                       --model opus --parallel 3
+
+# Only after the user approves that estimate:
 ANTHROPIC_API_KEY=... node harness.mjs --variants-dir "$TMP" --variants my-edit \
                                        --model opus --parallel 3 --yes
 ```
+
+Gate 2 makes paid model calls. Show the user the estimate the first command
+prints and get their agreement before you add `--yes`; `--yes` only skips
+the harness's own prompt, it is not the user's approval.
 
 The harness uses gbrain's bundled fixture set, so this verifies "did the LLM
 land in the right sub-skill for routing intents the gbrain-bundled fixtures
@@ -318,7 +326,7 @@ The compressed routing file follows the area-entry template documented in Step 4
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Either verification gate fails (structural or LLM A/B): refuse to compress and report the failing gate; never ship a smaller resolver that routes worse.
 - The A/B harness lacks a provider key or hits a cost cap: say the LLM gate did not run and keep the original resolver.

@@ -46,7 +46,8 @@ default.
 
 | `memory.auto_writeback` | What agents are told to save |
 |---|---|
-| `off` (default) | Nothing — no instruction section, no backstop, no banking. |
+| unset (default) | Nothing — no instruction section, no Stop-hook backstop, no banking. The compaction harvest and SessionEnd transcripts still extract; see [Capture lanes and the off switch](#capture-lanes-and-the-off-switch). |
+| `off` | Nothing, and every ambient capture lane stops: the compaction harvest and SessionEnd transcripts too. |
 | `salient` (recommended) | Durable, notable claims only: preferences, corrections, decisions, commitments, relationships, project-state changes. The backstop keeps medium+ notability facts. |
 | `all` | Every direct factual user statement — still excluding operational chatter, assistant-generated content, secrets/credentials, and quoted third-party material. Precision rides the extractor's semantic skip rules (the second of the two filters); expect more low-value facts and more extraction spend. |
 
@@ -67,6 +68,66 @@ runtime value is unchanged. Selecting a MOUNTED brain (`--brain`,
 machine-local mirror gates the host's Stop hook, so enabling a team mount
 never opts the host's own conversations into banking. A wrong-brain hook
 bank remains harmless — the target serve's own DB gate decides.
+
+## Capture lanes and the off switch
+
+Three lanes turn captured session text into facts. Installing the harness
+hooks is the opt-in for the compaction and SessionEnd lanes, so they run while
+`memory.auto_writeback` is unset; the setting governs them once it is set
+explicitly. One gate (`captureGateDecision` in
+`src/core/facts/writeback-config.ts`) applies this table to every lane, under
+the file's claim and before any provider call:
+
+| `memory.auto_writeback` | Stop-hook turns (`.wb-` files, `hook:writeback`) | Compaction harvest (PreCompact segments and OpenClaw compactions, `hook:compact`) | SessionEnd transcripts (`<session>.txt`, `sweep:corpus`) |
+|---|---|---|---|
+| unset | retire | extract | extract |
+| `off` | retire | retire | retire |
+| `salient` / `all` | extract | extract | extract |
+| unrecognized value | hold | hold | hold |
+| DB row absent, file mirror on (plane drift) | hold | hold | hold |
+| DB row absent, file mirror `off` (a dual-write of off that never reached the DB) | retire | hold | hold |
+| config unreadable | hold | hold | hold |
+
+- **extract** runs the lane. **retire** records the file as finished without
+  extracting it (`.progress` holds its turn hashes and a `writeback_off`
+  `.ingested` sidecar names the reason), so a resumed session later extracts
+  only its new turns. **hold** leaves the file untouched until the config is
+  coherent again; `gbrain doctor` names the re-sync command.
+- **Capture time counts too.** When the brain's own file plane says `off`, the
+  PreCompact and SessionEnd hooks (and the OpenClaw compaction spool) write a
+  `<file>.capture-off.json` record naming the brain and the hashes of the turns
+  banked under off, before the file lands. Extraction applies the stricter of
+  that record and the current setting: a transcript banked under `off` is
+  never extracted, even after writeback is turned back on, and a resumed
+  session extracts only the turns banked under `on`, wherever a later rewrite
+  places the off-period turns (they are skipped by hash, not only as a leading
+  run). Dream synthesis reads the same transcripts without those turns, and
+  skips a transcript that holds nothing else. A record written by another
+  brain sharing the corpus directory is ignored.
+- **In-flight calls.** Facts from a capture lane carry their provenance into
+  the fact request, and admission re-checks the gate (code
+  `ambient_capture_off`). `off` applies to every capture-lane request admitted
+  after `config set` commits, including one whose provider call was already in
+  flight; requests admitted before it publish.
+- **What `off` does not stop:** facts already saved, explicit `remember` and
+  `extract_facts` calls, and fact extraction from pages written on purpose
+  (sync, `put_page`, imports). To review what the lanes already saved, run
+  `gbrain recall --since 30d --limit 500 --json` and look for rows whose
+  `source` is `hook:compact`, `hook:writeback` or `sweep:corpus`; forget a fact
+  only with the user's agreement (`gbrain forget <fact-id>`).
+- **Stopping capture entirely.** `off` stops extraction, but the hooks still
+  bank session text locally (it is retired, never extracted). To stop the
+  hooks themselves, SessionEnd included, run `gbrain bootstrap harness --remove`.
+- **Restart older workers.** Workers started on a gbrain older than this gate
+  don't run it: long-running `gbrain serve` processes (compaction harvest),
+  cron or autopilot sweeps (SessionEnd transcripts and the compaction
+  backstop), and any OpenClaw gateway hosting the gbrain context engine.
+  `gbrain config set memory.auto_writeback off` and `gbrain doctor`
+  (`details.restart_after_off`) list them; enforcement is incomplete until they
+  restart.
+- `gbrain config get memory.auto_writeback` prints the bare value on stdout and
+  each lane's effective action on the stderr `[config]` line; doctor's
+  `memory_writeback` row carries the same in `details.capture_lanes`.
 
 ## The three activation surfaces
 
@@ -159,6 +220,19 @@ bank remains harmless — the target serve's own DB gate decides.
    `captured_facts_active` counts facts already extracted from such sessions;
    `gbrain repair captured-facts` previews and expires them
    ([repair guide](repair.md#captured-facts)).
+
+### Harnesses with an instruction cap
+
+Claude Code reads only the first 2,048 characters of a server's initialize
+instructions. So when writeback is on, the contract's memory clause carries a
+one-line version of it (`Ambient writeback is ON (<mode>): unprompted,
+`remember` the user's preferences, corrections, decisions and commitments`,
+plus `with visibility "private"` under a private posture), and the error
+protocol sits right after the data-not-instructions clause; both land inside
+the first 2,048 characters on every surface. The full rules stay in the
+section appended last, which a capped harness may not see. An operator can
+raise Claude Code's limit with `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` on the
+client; the server never relies on it.
 
 ## Pasted content
 
@@ -254,7 +328,7 @@ and reads `memory_writeback`).
 | Harness | Real-time contract | Backstop |
 |---|---|---|
 | Claude Code | MCP instructions + managed user CLAUDE.md block | Stop-hook lane (above) |
-| Codex | MCP instructions + managed `$CODEX_HOME/AGENTS.md` block | **No per-turn hook exists** (SessionEnd only, 3s hard-kill). The existing SessionEnd capture → corpus → maintenance-sweep extraction lane is the delayed backstop — whole-session, next-sweep latency, governed by `facts.extraction_enabled` (it predates this feature). |
+| Codex | MCP instructions + managed `$CODEX_HOME/AGENTS.md` block | **No per-turn hook exists** (SessionEnd only, 3s hard-kill). The existing SessionEnd capture → corpus → maintenance-sweep extraction lane is the delayed backstop — whole-session, next-sweep latency. It runs while `memory.auto_writeback` is unset and stops on an explicit `off` ([Capture lanes and the off switch](#capture-lanes-and-the-off-switch)); `facts.extraction_enabled` stops it too. |
 | Hermes | MCP instructions when connected | None wired. |
 | opencode / OpenClaw / others | MCP instructions when connected | None wired — follow-ups filed. |
 
@@ -351,8 +425,10 @@ session or a compaction rewrite costs only its new turns. The compaction
 harvest extracts the first window right away; the sweep does the rest. Set
 `GBRAIN_CORPUS_WINDOWS_PER_SWEEP` to a positive integer in the environment of
 the process that runs the sweep (`gbrain serve` or `gbrain sweep --once`) to
-change the 32-window total; the per-file cap of 8 is fixed. The off switch
-for all of this is the brain-wide `facts.extraction_enabled`. `gbrain sweep
+change the 32-window total; the per-file cap of 8 is fixed. An explicit
+`memory.auto_writeback off` stops all of this for session text
+([Capture lanes and the off switch](#capture-lanes-and-the-off-switch)); the
+brain-wide `facts.extraction_enabled` stops every fact extraction. `gbrain sweep
 --once --json` lists `corpus_files[]` with `windows_done` and
 `windows_remaining` per file. Transcripts marked done before windowed
 extraction existed are not re-read; only turns added after the upgrade are
@@ -392,7 +468,10 @@ gbrain doctor | grep -A6 memory_writeback
 # In a NEW agent session, say: "I prefer dark mode in every editor." Then:
 gbrain recall --grep "dark mode"
 gbrain sweep --once   # drives the sweep backstop extraction immediately
-# Off switch (anytime; converge harness blocks with another bootstrap run):
+# Off switch (anytime; stops every capture lane, SessionEnd included;
+# converge harness blocks with another bootstrap run):
 gbrain config set memory.auto_writeback off
 gbrain bootstrap harness --yes
+# Stop the hooks from banking session text at all:
+gbrain bootstrap harness --remove
 ```

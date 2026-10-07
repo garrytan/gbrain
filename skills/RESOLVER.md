@@ -10,7 +10,7 @@ phrases. If a row here and a skill's frontmatter disagree, the frontmatter
 wins; fix the row.
 
 **A gbrain call failed or printed `[AGENT]` or a notice block:** follow the
-[agent operator protocol](../docs/protocol/AGENT_OPERATOR_v1.md). Read the
+[agent operator protocol](./conventions/agent-operator-protocol.md). Read the
 error's `code` (fall back to `error`), follow `fix.next`, then run `fix.verify`.
 
 ## Memory defaults

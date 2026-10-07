@@ -51,7 +51,8 @@ import {
 import { shellQuote } from '../mcp-registration.ts';
 import { FACTS_DEFAULT_VISIBILITY_KEY } from '../facts/visibility.ts';
 import { byteFloors } from './render.ts';
-import { CLAUDE_HOOK_EVENTS, GBRAIN_HOOK_MARKER_KEY, claudeUserSettingsPath } from './host-specs.ts';
+import { CLAUDE_HOOK_EVENTS, claudeUserSettingsPath } from './host-specs.ts';
+import { groupsCarryGbrainHook } from './hooks.ts';
 import { BOOTSTRAP_TEMPLATES, loadQuestionBank } from './assets.ts';
 import { readManifest, writeManifest } from './format.ts';
 import { status as interviewStatus } from './interview.ts';
@@ -436,7 +437,7 @@ export function checkHookCarrierOverlap(
         try {
           const parsed = JSON.parse(readFileSync(path, 'utf8')) as { hooks?: Record<string, unknown> };
           const groups = parsed?.hooks?.[event];
-          return Array.isArray(groups) && JSON.stringify(groups).includes(`"${GBRAIN_HOOK_MARKER_KEY}"`);
+          return groupsCarryGbrainHook(groups, event);
         } catch {
           return false;
         }

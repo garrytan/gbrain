@@ -98,12 +98,15 @@ import {
   addPermissionsAllowEntry,
   claudeSettingsPath,
   committedHookEvents,
+  harnessHookIdentity,
   parseSeatFlags,
   removeClaudeHooksAt,
   removePermissionsAllowEntry,
   writeClaudeHooksAt,
   type ClaudeHookEnv,
 } from './hooks.ts';
+import { codexPluginProvidesName } from './plugin-lanes.ts';
+import { harnessHookCarrierStatus, harnessHooksPresent, previewHarnessRemoval, removeHarnessHooksTarget } from './harness-hooks.ts';
 import {
   CLAUDE_HOOK_EVENTS,
   CODEX_TOML_BLOCK_BEGIN,
@@ -157,6 +160,8 @@ export interface HarnessFlags {
   noCapture: boolean;
   force: boolean;
   remove: boolean;
+  /** `--remove --dry-run`: list what removal would do, write nothing. */
+  dryRun?: boolean;
   status: boolean;
   refreshSkills: boolean;
   yes: boolean;
@@ -261,6 +266,7 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
   out.noCapture = rest.includes('--no-capture');
   out.force = rest.includes('--force');
   out.remove = rest.includes('--remove');
+  out.dryRun = rest.includes('--dry-run');
   out.status = rest.includes('--status');
   out.refreshSkills = rest.includes('--refresh-skills');
   out.yes = rest.includes('--yes');
@@ -278,6 +284,7 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
     out.error = out.error ?? 'pass --status OR --remove, not both';
   }
   if (out.refreshSkills && (out.status || out.remove)) out.error = out.error ?? 'pass --refresh-skills alone, not with --status or --remove';
+  if (out.dryRun && !out.remove) out.error = out.error ?? '--dry-run previews --remove only: pass `--remove --dry-run`';
   // --user-hooks and --local are accepted, documented no-ops (script clarity).
   // Unknown/typo'd flags never reach this parser through the CLI: cli.ts
   // validates argv against CLI_FLAG_REGISTRY pre-dispatch and rejects them
@@ -696,7 +703,9 @@ async function cleanupStalePriorTargets(
           if (r.removed) d.log(`stale ambient-writeback block removed from ${pt.path} (no longer planned).`);
         }
       } else if (pt.host === 'claude-code' && pt.kind === 'hooks') {
-        const r = removeClaudeHooksAt(pt.path ?? d.userSettingsPath, pt.marker ?? GBRAIN_HARNESS_MARKER_VALUE);
+        const r = removeClaudeHooksAt(pt.path ?? d.userSettingsPath, pt.marker ?? GBRAIN_HARNESS_MARKER_VALUE, {
+          identity: harnessHookIdentity(prior, pt, { launcher: d.gbrainBin }),
+        });
         if (r.notes.some((n) => n.startsWith('WARNING'))) throw new Error(r.notes.join('; '));
         if (r.removed > 0) d.log(`stale harness hooks unwired from ${r.settingsPath} (no longer planned).`);
       } else if (pt.host === 'claude-code' && pt.kind === 'permission') {
@@ -1028,20 +1037,15 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // knowable, so scan it. (The reverse — user-scope wiring vs some other
   // home's --project dirs — is not enumerable; the receipt check plus the
   // same-file writer refusal are the guards there.)
-  if (flags.projects.length > 0 && !flags.noHooks && existsSync(d.userSettingsPath)) {
-    try {
-      const raw = readFileSync(d.userSettingsPath, 'utf8');
-      if (raw.includes(`"${GBRAIN_HARNESS_MARKER_VALUE}"`)) {
-        d.logError(
-          `user-scope harness hooks already exist in ${d.userSettingsPath} (possibly from another GBRAIN_HOME's ` +
-            'install); --project wiring would double-fire every event. Remove that install first ' +
-            '(`gbrain bootstrap harness --remove` under its home).',
-        );
-        return 2;
-      }
-    } catch {
-      /* unreadable → the writers' own fail-closed paths handle it */
-    }
+  // Marked or not (the host may drop the marker): an unreadable file falls
+  // through to the writers' own fail-closed paths.
+  if (flags.projects.length > 0 && !flags.noHooks && harnessHooksPresent(d.userSettingsPath)) {
+    d.logError(
+      `user-scope harness hooks already exist in ${d.userSettingsPath} (possibly from another GBRAIN_HOME's ` +
+        'install); --project wiring would double-fire every event. Remove that install first ' +
+        '(`gbrain bootstrap harness --remove` under its home).',
+    );
+    return 2;
   }
 
   // 4. Plan targets + WRITE-AHEAD receipt [F1/X6] — BEFORE the mint, so a
@@ -1117,6 +1121,10 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   const targets: HarnessTarget[] = [];
   if (wireClaude) {
     targets.push({ host: 'claude-code', kind: 'mcp', state: 'pending', scope: 'user', name: flags.name, mechanism: 'claude-cli' });
+    // A re-run finds its own earlier entry already allowed: ownership carries
+    // from the prior receipt (a legacy confirmed target without a mechanism
+    // is ours) so it is never relabeled pre-existing.
+    const priorPerm = prior?.targets.find((t) => t.kind === 'permission' && t.path === d.userSettingsPath && t.entry === mcpPermissionEntry(flags.name));
     targets.push({
       host: 'claude-code',
       kind: 'permission',
@@ -1124,6 +1132,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       scope: 'user',
       path: d.userSettingsPath,
       entry: mcpPermissionEntry(flags.name),
+      ...(priorPerm?.state === 'confirmed' && priorPerm.mechanism !== 'pre-existing' ? { mechanism: 'added' } : {}),
     });
     if (wireHooks) {
       if (flags.projects.length > 0) {
@@ -1292,6 +1301,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // the codex .bak from THIS run — a failed apply restores a working state
   // (the old token is still valid; mint-first means nothing was revoked yet).
   let oldClaudeReg: { url: string; token: string } | null = null;
+  let permissionAddedThisRun = false;
   let claudeReplaced = false;
   let codexRollback: { path: string; backupPath: string | null; replacedPrior: boolean } | null = null;
   let opencodeRollback: {
@@ -1377,13 +1387,18 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         }
         const r = addPermissionsAllowEntry(t.path!, t.entry!);
         for (const note of r.notes) d.logError(note);
-        if (r.added === false) {
+        permissionAddedThisRun = r.added === true;
+        if (r.added === false && t.mechanism === 'added') {
+          confirm(t);
+          d.log(`headless pre-approval: '${t.entry}' already in permissions.allow from the previous harness install.`);
+        } else if (r.added === false) {
           // [X8] Already allowed before us — record it as pre-existing so
           // removal never deletes what we didn't add.
           t.mechanism = 'pre-existing';
           confirm(t);
           d.log(`headless pre-approval: '${t.entry}' was already allowed (pre-existing — remove will leave it).`);
         } else {
+          t.mechanism = 'added';
           confirm(t);
           d.log(`headless pre-approval: '${t.entry}' in permissions.allow (${t.path})`);
         }
@@ -1430,6 +1445,8 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
           marker: GBRAIN_HARNESS_MARKER_VALUE,
           backupStrategy: 'timestamped',
           refuseOnForeignGbrainMarker: true,
+          identity: harnessHookIdentity(prior, prior?.targets.find((p) => p.kind === 'hooks' && p.path === t.path),
+            { launcher: bin, source: hookSource, seat: flags.seat }),
           ...(t.scope === 'user'
             ? { freshMode: 0o600 }
             : // [D12] a --project dir whose COMMITTED settings carry workspace
@@ -1438,6 +1455,8 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
               { carriedEvents: committedHookEvents(dirname(dirname(t.path!))) }),
         });
         for (const note of r.notes) d.logError(note);
+        t.launcher = bin;
+        t.seat = r.seat;
         confirm(t);
         d.log(
           `hooks wired (${r.installed.length} event(s)${flags.noCapture ? ', capture off' : ''}) in ${r.settingsPath}`,
@@ -1760,7 +1779,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     // registration (red-team CRITICAL): remove the entry we added this run.
     // Pre-existing entries [X8] are never touched.
     const pt = targets.find((t) => t.host === 'claude-code' && t.kind === 'permission');
-    if (pt?.state === 'confirmed' && pt.mechanism !== 'pre-existing') {
+    if (pt?.state === 'confirmed' && permissionAddedThisRun) {
       try {
         removePermissionsAllowEntry(pt.path!, pt.entry!);
         failTarget(pt, 'pre-approval removed after the failed smoke (its registration was rolled back)');
@@ -2044,6 +2063,7 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
     return 1;
   }
   const receipt = state.receipt;
+  if (flags.dryRun) return previewHarnessRemoval(receipt, { ...d, gbrainBin: flags.gbrainBin ?? d.gbrainBin });
   const save = () => writeHarnessReceipt(d.gbrainHome, receipt);
   let anyFailed = false;
   let skillsDone = true;
@@ -2129,14 +2149,7 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
             : `permissions.allow entry '${t.entry}' already gone — counted as removed.`,
         );
       } else if (t.host === 'claude-code' && t.kind === 'hooks') {
-        const settingsPath = t.scope === 'user' ? (t.path ?? d.userSettingsPath) : t.path!;
-        const r = removeClaudeHooksAt(settingsPath, t.marker ?? GBRAIN_HARNESS_MARKER_VALUE);
-        if (r.notes.some((n) => n.startsWith('WARNING'))) throw new Error(r.notes.join('; '));
-        d.log(
-          r.removed > 0
-            ? `${r.removed} harness hook entr${r.removed === 1 ? 'y' : 'ies'} removed from ${settingsPath}.`
-            : `no harness hook entries in ${settingsPath} — counted as removed.`,
-        );
+        removeHarnessHooksTarget(t, receipt, { ...d, gbrainBin: flags.gbrainBin ?? d.gbrainBin });
       } else if (t.host === 'codex') {
         const codexPath = t.path ?? d.codexConfig;
         const codexDir = dirname(codexPath);
@@ -2478,6 +2491,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
       return { host: t.host, path: t.path ?? null, probe };
     });
   const instructionsOk = instructionsProbes.every((p) => p.probe === 'installed');
+  const hookCarriers = harnessHookCarrierStatus(receipt, d);
 
   if (flags.json) {
     d.log(
@@ -2498,6 +2512,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
           degraded_per_turn: degraded,
           targets: liveTargets,
           ...(instructionsProbes.length > 0 ? { instructions_blocks: instructionsProbes } : {}),
+          ...(hookCarriers.length > 0 ? { hook_carriers: hookCarriers } : {}),
           pending_previous_tokens: receipt.token.previous_ids ?? [],
           receipt_path: harnessReceiptPath(d.gbrainHome),
         },
@@ -2523,6 +2538,10 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
             ? ` (codex ignores AGENTS.md while ${d.codexAgentsOverride} exists — fold the block in there or remove the override and re-run)`
             : ''),
       );
+    }
+    for (const c of hookCarriers) {
+      d.log(`  hook entries in ${c.path}: ${c.state === 'ok' ? `${c.ours} gbrain (${c.unmarked} without the _gbrain marker)` : c.state}` +
+        `${c.duplicates.length ? `; duplicated: ${c.duplicates.join(', ')}` : ''}${c.unowned.length ? `; not this install's (left in place): ${c.unowned.join(', ')}` : ''}`);
     }
     if (receipt.token.previous_ids?.length) {
       d.log(`  pending: ${receipt.token.previous_ids.length} previous token(s) await revocation (re-run to converge): ${receipt.token.previous_ids.join(', ')}`);
@@ -2583,125 +2602,9 @@ export function codexBlockOwnsName(configPath: string, name: string): boolean {
   }
 }
 
-// ── Plugin-lane detection (codex/claude plugins provide an MCP server) ─────
-//
-// Plugin-provided MCP servers never appear in `codex mcp list` or in
-// `[mcp_servers.*]` — the only cheap CONFIG signal is the plugin-enable
-// entry in the harness's own config. Config is not health (an enabled
-// plugin whose launcher can't find the gbrain binary still matches), so
-// every consumer pairs the detection with an override path
-// (`--mcp-even-if-plugin`) and copy that says "enabled, not necessarily
-// healthy". All three detectors below share the read/normalize posture of
-// codexBlockOwnsName: fail-open (null/false) on any read or parse error.
-
-/**
- * Marketplace-qualified id (`<name>@<marketplace>`) when an ENABLED codex
- * plugin named `name` exists in the codex config, else null. Line-anchored
- * table-header scan — a commented-out lookalike or an inline mention never
- * matches — followed by `enabled = true` before the next table header.
- */
-export function codexPluginProvidesName(configPath: string, name: string): string | null {
-  if (!existsSync(configPath)) return null;
-  try {
-    const lines = readFileSync(configPath, 'utf8').replace(/\r\n/g, '\n').split('\n');
-    const header = new RegExp(`^\\[plugins\\."${name}@([^"]+)"\\]\\s*$`);
-    for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(header);
-      if (!m) continue;
-      for (let j = i + 1; j < lines.length; j++) {
-        const line = lines[j].trim();
-        if (line.startsWith('[')) break;
-        if (/^enabled\s*=\s*true\b/.test(line)) return `${name}@${m[1]}`;
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Marketplace-qualified id when an ENABLED Claude Code plugin named `name`
- * exists in `~/.claude/settings.json` (`enabledPlugins`: `"<name>@<mkt>":
- * true` — the shape verified on a live install), else null. User-level file
- * only; project-scope enablement is out of best-effort scope.
- */
-export function claudePluginProvidesName(settingsPath: string, name: string): string | null {
-  if (!existsSync(settingsPath)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-      enabledPlugins?: Record<string, unknown>;
-    };
-    const enabled = parsed.enabledPlugins;
-    if (!enabled || typeof enabled !== 'object') return null;
-    const prefix = `${name}@`;
-    for (const [key, value] of Object.entries(enabled)) {
-      if (key.startsWith(prefix) && value === true) return key;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Doctor-side coexistence scan: does ANY registration for `name` exist in
- * the harness config, regardless of owner? Unlike codexBlockOwnsName this
- * deliberately counts foreign/manual entries — a hand-wired
- * `[mcp_servers.<name>]` next to an enabled plugin is exactly the
- * double-registration the doctor advisory reports. Claude side scans BOTH
- * the user config (`~/.claude.json` mcpServers) and, when a project dir is
- * given, the project-scope `.mcp.json`.
- */
-export function codexAnyRegistrationExists(configPath: string, name: string): boolean {
-  if (!existsSync(configPath)) return false;
-  try {
-    const lines = readFileSync(configPath, 'utf8').replace(/\r\n/g, '\n').split('\n');
-    const header = new RegExp(`^\\[mcp_servers\\.(?:${name}|"${name}")\\]\\s*$`);
-    return lines.some(l => header.test(l));
-  } catch {
-    return false;
-  }
-}
-
-export function claudeAnyRegistrationExists(
-  userConfigPath: string,
-  name: string,
-  projectDir?: string,
-): boolean {
-  const hasInMcpServers = (servers: unknown): boolean =>
-    !!servers && typeof servers === 'object' && Object.prototype.hasOwnProperty.call(servers, name);
-  const readJson = (path: string): Record<string, unknown> | null => {
-    if (!existsSync(path)) return null;
-    try {
-      return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  };
-  const userCfg = readJson(userConfigPath) as {
-    mcpServers?: unknown;
-    projects?: Record<string, { mcpServers?: unknown }>;
-  } | null;
-  if (userCfg) {
-    // User scope: top-level mcpServers.
-    if (hasInMcpServers(userCfg.mcpServers)) return true;
-    // LOCAL scope: `claude mcp add` (README Option 1) defaults here —
-    // projects.<cwd>.mcpServers in ~/.claude.json, keyed by the resolved
-    // project path. Scan the projectDir entry (and, defensively, any entry —
-    // a duplicate under ANY project path is still a real coexistence).
-    const projects = userCfg.projects;
-    if (projects && typeof projects === 'object') {
-      if (projectDir && hasInMcpServers(projects[projectDir]?.mcpServers)) return true;
-      for (const entry of Object.values(projects)) {
-        if (hasInMcpServers(entry?.mcpServers)) return true;
-      }
-    }
-  }
-  // Project-committed .mcp.json.
-  if (projectDir) {
-    const projCfg = readJson(join(projectDir, '.mcp.json')) as { mcpServers?: unknown } | null;
-    if (projCfg && hasInMcpServers(projCfg.mcpServers)) return true;
-  }
-  return false;
-}
+export {
+  claudeAnyRegistrationExists,
+  claudePluginProvidesName,
+  codexAnyRegistrationExists,
+  codexPluginProvidesName,
+} from './plugin-lanes.ts';

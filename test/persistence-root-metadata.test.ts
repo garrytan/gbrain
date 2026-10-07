@@ -32,6 +32,11 @@ describe('withoutPhysicalRootMetadata', () => {
     expect(withoutPhysicalRootMetadata('?? ".gbrain-owner.json "')).toBe('?? ".gbrain-owner.json "');
   });
 
+  test('an untracked directory that happens to carry the stamp name is real content', () => {
+    expect(withoutPhysicalRootMetadata('?? .gbrain-owner.json/\n?? notes/.gbrain-owner.json/\n'))
+      .toBe('?? .gbrain-owner.json/\n?? notes/.gbrain-owner.json/');
+  });
+
   test('the physical-root facade re-exports the same predicate', () => {
     expect(viaPhysicalRoot).toBe(isPhysicalRootMetadata);
   });

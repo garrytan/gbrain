@@ -187,6 +187,11 @@
               "no shared declaration; 0 non-automation client(s) active in 30d"
             ],
             "backstop_visibility": "private",
+            "capture_lanes": {
+              "compact": "extract",
+              "session_end": "extract",
+              "writeback": "retire"
+            },
             "counters_note": "local, append-only, loss-tolerant observability over the last 7d — never a source of truth",
             "cross_lane_duplicates_7d": 0,
             "instruction_visibility": "world",
@@ -198,7 +203,7 @@
             "ttl_valid": true,
             "visibility_note": "world = readable by agents authorized on THIS brain, not the public internet"
           },
-          "message": "ambient writeback off (default). Enable: gbrain config set memory.auto_writeback salient",
+          "message": "ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: gbrain config set memory.auto_writeback off). Enable: gbrain config set memory.auto_writeback salient",
           "name": "memory_writeback",
           "status": "ok"
         },
@@ -516,7 +521,7 @@
         },
         {
           "category": "meta",
-          "message": "980 column(s) verified against live schema",
+          "message": "986 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -817,6 +822,19 @@
           },
           "message": "1 request row(s); no scope exhausts its lifetime request IDs within 90 days at its last-7-day rate.",
           "name": "persistence_request_growth",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "config_key": "persistence.max_claim_ms",
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#persistence-write-stall",
+            "max_claim_ms": "<volatile>",
+            "stalls": []
+          },
+          "message": "No write request has held its claim longer than persistence.max_claim_ms (600000 ms).",
+          "name": "persistence_write_stall",
           "status": "ok"
         },
         {

@@ -58,8 +58,9 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       'hooks: [{type:"command", command, timeout}]}] with timeout in SECONDS. ' +
       'Hook commands are shell strings (no env map) — env vars are embedded via ' +
       'an `env K=V …` prefix. Unknown properties on the command object are ' +
-      'tolerated by the harness, which is what makes the `_gbrain` marker key ' +
-      'safe. UserPromptSubmit context injection: stdout JSON ' +
+      'tolerated at run time, but a host rewrite of settings.json can drop them, ' +
+      'so the `_gbrain` marker key is advisory and the harness lane also ' +
+      'recognizes its own exact command. UserPromptSubmit context injection: stdout JSON ' +
       '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", ' +
       'additionalContext}}; SessionStart plain stdout becomes context. Hook ' +
       'stdout is capped at 10000 chars — overflow is diverted to a file and ' +
@@ -235,6 +236,14 @@ export const GBRAIN_HOOK_MARKER_VALUE = 'bootstrap-v1';
  * install (bootstrap-v1 in settings.local.json) AND a harness install
  * (bootstrap-harness-v1 in user settings.json or a project settings.local.json)
  * — each removal path strips only its own entries.
+ *
+ * The marker is advisory on Claude Code settings: when the host rewrites
+ * settings.json through its own schema it can drop keys it does not know,
+ * keeping only type/command/timeout. The harness lane therefore also owns an
+ * UNMARKED entry whose command is exactly the one it writes for that event
+ * and whose launcher/source/seat match the install or its receipt
+ * (hooks.ts classifyHarnessHook); the command string is the durable carrier.
+ * The workspace lane (bootstrap-v1) still keys on the marker alone.
  */
 export const GBRAIN_HARNESS_MARKER_VALUE = 'bootstrap-harness-v1';
 

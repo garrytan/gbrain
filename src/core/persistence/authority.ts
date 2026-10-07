@@ -42,6 +42,7 @@ function assertSkillWriteScopes(scopes: readonly string[], operation: string, re
   }
 }
 export async function submissionAuthority(ctx: OperationContext, operation: string, sourceId: string, sourceIncarnation: string, slug: string): Promise<WriteAuthority> {
+  if (ctx.replayAuthority) return replayedAuthority(ctx.engine, ctx.replayAuthority, operation, sourceId, sourceIncarnation, slug);
   if (ctx.auth?.sourceId === NO_SOURCES || sourceId === NO_SOURCES) throw noSourceGrantError(operation, ctx.auth);
   if (ctx.auth?.fenceProjectionDegraded || ctx.auth?.grantProjectionDegraded) deny('The grant projection is incomplete.');
   let principal: Principal;
@@ -73,6 +74,24 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
   if (!prefixAllowed(a.slugPrefixes, slug)) deny('The target is outside this writer grant.');
   await authorizeWrite(ctx.engine, a, operation, slug);
   if (!skillWrite(operation)) await authorizePageVisibility(ctx.engine, a, slug);
+  return a;
+}
+
+/**
+ * #5994: a failed write replayed by `gbrain repair failed-writes` keeps its
+ * original authority ceiling instead of the replay context's: the same
+ * principal, delegation, scopes, holders and autoLinkTrusted, for the same
+ * source incarnation, re-authorized against the live grant (a revoked or
+ * narrowed grant refuses here and again at publication). Admission recomputes
+ * the database-only reason; published-take bookkeeping is not carried.
+ */
+async function replayedAuthority(engine: SqlEngine, stored: WriteAuthority, operation: string, sourceId: string, sourceIncarnation: string, slug: string): Promise<WriteAuthority> {
+  if (stored.sourceId !== sourceId || stored.sourceIncarnation !== sourceIncarnation) deny('The source was removed and re-added since the original write.');
+  const { databaseOnlyReason: _reason, takeHoldersUsed: _used, ...kept } = stored;
+  const a: WriteAuthority = structuredClone(kept);
+  if (!prefixAllowed(a.slugPrefixes, slug)) deny('The target is outside this writer grant.');
+  await authorizeWrite(engine, a, operation, slug);
+  if (!skillWrite(operation)) await authorizePageVisibility(engine, a, slug);
   return a;
 }
 

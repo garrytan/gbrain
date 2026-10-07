@@ -3,9 +3,10 @@
 # Default 5s is too short for those tests' beforeAll hooks. 60s is the
 # empirical ceiling we observed for the slowest cold-init paths.
 #
-# v0.26.4: scripts/run-unit-parallel.sh and scripts/run-unit-shard.sh
-# also pass `--timeout=60000` explicitly so the ceiling is consistent
-# whether tests are invoked through the wrapper or directly via bun test.
+# Bun (verified on 1.4.2) does not apply this value: a plain `bun test`
+# still times out at 5s. Every runner passes `--timeout=60000` itself
+# (scripts/run-unit-parallel.sh, scripts/run-unit-shard.sh,
+# scripts/regen-all.ts); pass it yourself when running `bun test` directly.
 timeout = 60_000
 
 # v0.37 fix wave: pin gateway defaults to legacy OpenAI/1536 BEFORE any

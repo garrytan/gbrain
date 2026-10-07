@@ -105,6 +105,17 @@ describe('checkHookCarrierOverlap (#4585)', () => {
     expect(check.detail).not.toContain('WARN');
   });
 
+  test('#6092: user-scope harness hooks the host stripped of their marker still count as a carrier', () => {
+    mkdirSync(dirname(userSettings), { recursive: true });
+    writeFileSync(userSettings, JSON.stringify({
+      hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'env GBRAIN_SOURCE=default GBRAIN_HOOK_LANE=harness /opt/fake/gbrain hook session-start' }] }] },
+    }));
+    writeCarrier(join(ws, '.claude', 'settings.local.json'), ['SessionStart']);
+    const check = checkHookCarrierOverlap(ws, userSettings);
+    expect(check.detail).toContain('WARN');
+    expect(check.detail).toContain('SessionStart (user-scope settings.json + .claude/settings.local.json)');
+  });
+
   test('a malformed carrier fails soft (treated as carrying nothing)', () => {
     writeCarrier(join(ws, '.claude', 'settings.local.json'), ['SessionStart']);
     mkdirSync(dirname(userSettings), { recursive: true });

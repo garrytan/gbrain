@@ -86,6 +86,17 @@ Review the output. If the proposed changes look wrong, **don't** proceed — fil
 
 ### Phase 3: Apply
 
+**Managed brains: stop after the preview.** Applying the migration is not
+supported on a managed brain (managed persistence on) yet: the retype writes
+pages directly instead of through the coordinated writer, so the apply job is
+refused (`writer_coordinator_required`) before it changes anything. The
+`pack_upgrade_available` finding says so on those brains. Keep using
+`gbrain onboard --check --explain` to preview, tell the user the pack upgrade
+waits for coordinated retype support, and don't submit the apply job below.
+One exception: when the preview shows nothing to retype, link or alias, the
+apply job only switches the active pack, so it may be submitted with the
+user's agreement.
+
 The handler is PROTECTED (manual_only) — autopilot will never auto-fire it. Submit explicitly:
 
 ```bash
@@ -229,7 +240,7 @@ Failure modes:
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A second unify submission is rejected because the `gbrain-unify` lock is held ("already in progress"): wait for the running job (`gbrain jobs get <id>`); do not resubmit.
 - A phase fails before `active_pack_flipped`: the pack did not change; resume from the checkpoint rather than restarting from scratch.

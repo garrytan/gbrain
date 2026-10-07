@@ -216,6 +216,9 @@ import { v212 } from './v212-decide-review-proposals.ts';
 import { v213 } from './v213-core-edit-notices.ts';
 import { v214 } from './v214-wanted-links.ts';
 import { v215 } from './v215-facts-attributed-to.ts';
+import { v216 } from './v216-chronicle-campaign-stamps.ts';
+import { v217 } from './v217-persistence-request-claim-phase.ts';
+import { v218 } from './v218-purge-legacy-worktree-manifest-files.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -430,4 +433,7 @@ export const MIGRATIONS: Migration[] = [
   v213,
   v214,
   v215,
+  v216,
+  v217,
+  v218,
 ];

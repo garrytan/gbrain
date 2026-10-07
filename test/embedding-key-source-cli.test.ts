@@ -25,7 +25,7 @@ beforeAll(() => {
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 test('an ordinary command warns once on stderr and leaks no key bytes; a hook command never warns', async () => {
-  const command = await runCli(['engine', '--help'], opts);
+  const command = await runCli(['engine'], opts);
   expect(command.exitCode).toBe(0);
   expect(warnings(command.stderr)).toEqual([expect.stringContaining('[gbrain] warning: OPENAI_API_KEY in this process\'s environment differs from openai_api_key')]);
   expect(leaked(command.stdout + command.stderr)).toEqual([]);
@@ -39,6 +39,6 @@ test('`gbrain config unset openai_api_key` keeps the env key in effect and stops
   expect(unset.exitCode).toBe(0);
   expect(leaked(unset.stdout + unset.stderr)).toEqual([]);
   expect(JSON.parse(readFileSync(configFile, 'utf8')).openai_api_key).toBeUndefined();
-  const after = await runCli(['engine', '--help'], opts);
+  const after = await runCli(['engine'], opts);
   expect(warnings(after.stderr)).toEqual([]);
 }, 120_000);

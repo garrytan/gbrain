@@ -299,6 +299,9 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
     const dest = join(destDir, filename);
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- identity comparison only (skip self-copy when source already IS the dest); no fs path is derived from this expression
     if (resolve(dest) !== resolve(filePath)) {
+      // #5963: refuse on a managed root before mkdir, so a refused upload leaves no empty .raw/ directory.
+      const refusal = (await import('../core/raw-file-upload.ts')).managedRawUploadRefusal(dest, filePath, pageSlug);
+      if (refusal) throw refusal;
       mkdirSync(destDir, { recursive: true });
       assertManagedFilesystemWrite(dest);
       copyFileSync(filePath, dest);

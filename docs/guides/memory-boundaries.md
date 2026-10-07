@@ -21,7 +21,12 @@ instructions. Do not put secrets in memory pages. A durable decision about a
 setup can be recorded without copying its credentials or assuming that setup is
 active in another harness.
 
-Automatic capture is opt-in. Time-limited facts need an explicit TTL; ordinary
+Automatic capture is opt-in. Installing the harness hooks opts into the
+compaction and SessionEnd capture lanes; `gbrain config set
+memory.auto_writeback off` stops every capture lane, and `gbrain bootstrap
+harness --remove` stops the hooks from banking session text at all (see
+[ambient writeback](ambient-writeback.md#capture-lanes-and-the-off-switch)).
+Time-limited facts need an explicit TTL; ordinary
 saved facts do not expire just because they describe a temporary situation.
 `forget` withdraws a fact from active recall, not from all source material,
 history, or private backups. See [ambient writeback](ambient-writeback.md).

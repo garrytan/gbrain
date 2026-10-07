@@ -194,7 +194,7 @@ When presenting facts from brain pages, include inline citations:
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain waiting` refuses on stale data: run the sync command it names (or tell the user to, when it needs the brain host), then retry. Do not build the "waiting on you" section from stale mail.
 - `recall` / `query` sections come back empty with a degraded notice: write "the brain is searching keywords only right now" in that section instead of "nothing happened".

@@ -30,11 +30,13 @@ describe('A0 interfaces', () => {
 
   test('isCallable: verbs surface admits only verbs; http drops localOnly', () => {
     const recall = operations.find(o => o.name === 'recall')!;
-    const local = operations.find(o => o.localOnly)!;
+    const local = operations.find(o => o.localOnly && !o.cliOnly)!;
     const base = { scopes: ['read', 'write'], publishGates: {} };
     expect(isCallable(recall, { ...base, transport: 'stdio', surface: 'verbs' })).toBe(true);
     expect(isCallable(local, { ...base, transport: 'http', surface: 'full' })).toBe(false);
     expect(isCallable(local, { ...base, transport: 'stdio', surface: 'full' })).toBe(local.publishGateKey === undefined);
+    const cliOnly = operations.find(o => o.cliOnly)!;
+    expect(isCallable(cliOnly, { ...base, transport: 'stdio', surface: 'full' })).toBe(false);
   });
 
   test('readiness entry points have their frozen shapes', () => {

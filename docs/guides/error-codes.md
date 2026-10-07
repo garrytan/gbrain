@@ -72,6 +72,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### ambient_capture_off
+
+<a id="ambient_capture_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| memory.auto_writeback no longer allows this ambient capture lane, so facts extracted from captured session text were dropped before admission. | An explicit off (or an incoherent setting) applies to every capture-lane fact request admitted after the change, including one whose provider call was already in flight; requests admitted earlier still publish. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/ambient-writeback.md#capture-lanes-and-the-off-switch](../../docs/guides/ambient-writeback.md#capture-lanes-and-the-off-switch)
+
 ### ambiguous_id
 
 <a id="ambiguous_id"></a>
@@ -306,6 +316,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | The configured storage bucket does not exist. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
 
+### budget_below_recent_runtime
+
+<a id="budget_below_recent_runtime"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The cycle's remaining budget fits fewer reflections than dream patterns needs at the recorded runtime, so the in-cycle run was skipped before any spend. | An in-cycle patterns run is sized from dream.patterns.last_run; a run that cannot finish in the budget would spend tokens and be killed. | Run `gbrain dream --phase patterns` outside the cycle after the user agrees to the paid run (it is not budget-limited and records its cost), or reset the record with `gbrain config unset dream.patterns.last_run`. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/dream-patterns.md#budget-sizing](../../docs/guides/dream-patterns.md#budget-sizing)
+
 ### budget_unsatisfiable
 
 <a id="budget_unsatisfiable"></a>
@@ -382,7 +402,7 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 |---|---|---|---|---|---|---|
 | Automatic event extraction (auto_chronicle) skipped or failed this page; `reason` says why and `fix`, when present, is the next step. | A capability this request needs is not configured or not reachable on this brain. | Read the receipt or doctor `auto_chronicle` check: its `why` explains the reason and its `fix`, when present, is the next step (paid fixes need the user's agreement). | agent | `gbrain doctor --json` | 1 | no |
 
-Reasons: `auto_chronicle_off`, `auto_chronicle_invalid`, `slug_bound_client`, `operation_bound_client`, `no_extract`, `history`, `not_yet_happened`, `too_short`, `dream_generated`, `no_write_decision`, `not_chronicle_shaped`, `already_extracted`, `superseded`, `daily_limit`, `judge_llm_unavailable`, `no_pricing`, `budget_exhausted`, `judge_chat_error`, `judge_truncated`, `judge_parse_failed`, `malformed_proposal`, `publish_error`, `judge_refused`, `page_missing`, `no_events`, `future_dated`, `date_imprecise`, `no_chat_provider`.
+Reasons: `auto_chronicle_off`, `auto_chronicle_invalid`, `slug_bound_client`, `operation_bound_client`, `no_extract`, `history`, `not_yet_happened`, `too_short`, `dream_generated`, `no_write_decision`, `not_chronicle_shaped`, `already_extracted`, `superseded`, `daily_limit`, `judge_llm_unavailable`, `no_pricing`, `budget_exhausted`, `campaign_exhausted`, `judge_chat_error`, `judge_truncated`, `judge_parse_failed`, `malformed_proposal`, `publish_error`, `judge_refused`, `page_missing`, `no_events`, `future_dated`, `date_imprecise`, `no_chat_provider`.
 
 More: [docs/guides/life-chronicle.md#skip-and-failure-codes](../../docs/guides/life-chronicle.md#skip-and-failure-codes)
 
@@ -485,6 +505,16 @@ More: [docs/guides/write-refusals.md#colon_slug_windows_write_through](../../doc
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The command failed before it wrote its JSON result. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### concurrent_write
+
+<a id="concurrent_write"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A managed sync import raced a database-only write to the same page, so the file is held and the page keeps the database version; neither was overwritten. | The page's live revision was written by a committed non-sync request after the import was frozen, so the Git file and the database genuinely diverge; choosing either silently would lose the other. | Preview the reconciliation with gbrain sources reconcile <source> <slug> --preview, resolve it with the user, then run gbrain sources retry-held <source> and gbrain sync --source <source> --no-pull. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#concurrent_write](../../docs/guides/write-refusals.md#concurrent_write)
 
 ### config_error
 
@@ -1194,6 +1224,26 @@ More: [docs/guides/move-to-postgres.md#verify](../../docs/guides/move-to-postgre
 |---|---|---|---|---|---|---|
 | Source relationship reconciliation is incomplete. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### harness_hook_duplicates
+
+<a id="harness_hook_duplicates"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A harness hook carrier wires one Claude Code event more than once with this install's own entries (marked or not), so the hook fires twice per event. | Claude Code can drop the `_gbrain` marker when it rewrites settings.json; installs before wave 11 then appended a second set on every re-run. | Correct the request using the message above, then retry. Run: gbrain doctor --only bootstrap_harness_health --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/bootstrap.md#harness_hook_duplicates](../../docs/guides/bootstrap.md#harness_hook_duplicates)
+
+### harness_hook_unowned
+
+<a id="harness_hook_unowned"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A hook entry looks like gbrain's harness hook but is not this install's exact command, so gbrain left it in place. | An unmarked entry is deleted only when its command is exactly what this install (or its receipt) wrote; an edited command or another install's launcher is never removed, and removal is not reported complete while it remains. | Correct the request using the message above, then retry. Run: gbrain bootstrap harness --status | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/bootstrap.md#harness_hook_unowned](../../docs/guides/bootstrap.md#harness_hook_unowned)
+
 ### held_out_overlaps_benchmark
 
 <a id="held_out_overlaps_benchmark"></a>
@@ -1424,6 +1474,16 @@ More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guid
 |---|---|---|---|---|---|---|
 | Invalid write wait. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### keyword_candidates_incomplete
+
+<a id="keyword_candidates_incomplete"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Hybrid search's CJK keyword arm hit its deadline or candidate cap on a large corpus, so some keyword matches can be missing. | The CJK fallback is an unindexed LIKE scan; the arm is bounded so a large brain cannot stall every hybrid search. An incomplete keyword search is not evidence of absence. | Narrow the search with --source-id (MCP source_id), or ask the user to raise search.cjk_keyword_deadline_ms. Run: gbrain config get search.cjk_keyword_deadline_ms | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/multi-language-fts.md#cjk-keyword-budget](../../docs/guides/multi-language-fts.md#cjk-keyword-budget)
+
 ### legacy_job_selection_invalid
 
 <a id="legacy_job_selection_invalid"></a>
@@ -1508,13 +1568,23 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 
 Reasons: `orchestrator_failed`, `orchestrator_threw`, `ledger_write_failed`, `preview_failed`, `schema_failed`.
 
+### migration_lease_lost
+
+<a id="migration_lease_lost"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This apply-migrations run's own migration lease no longer matched its fence, so it stopped before the next migration. | The lease row still names this process (pid and host), but the fenced refresh matched no row: the direct and main database connections may reach different databases, or the row was rewritten. The details say whether the acquisition token and acquisition time still match (never the token itself). Run `gbrain doctor --json` and report it (#6028). | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### migrations_pending
 
 <a id="migrations_pending"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Schema migrations are behind and this run did not apply them. | apply-migrations applies schema migrations only with --yes (or --non-interactive); without it the run reports the drift instead of claiming the brain is up to date. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| Schema migrations are behind (or could not be confirmed at head), so the command did not report success. | apply-migrations reasons: not_applied: the run had no --yes (or --non-interactive), so it did not apply the schema migrations; the fix applies them with --yes. still_behind: an authorized run tried them and they did not apply; another --yes repeats the failure, so run `gbrain doctor --json` and report. schema_unreadable: the schema version could not be read back after the orchestrators ran, so the run cannot confirm it reached head; report it. Each failure names the schema migrations still pending. | not_applied: apply them with `gbrain apply-migrations --yes`. still_behind or schema_unreadable: run `gbrain doctor --json` and report it to the user; another --yes repeats the failure. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `not_applied`, `still_behind`, `schema_unreadable`.
 
 ### migrations_running
 
@@ -1725,6 +1795,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | This caller is not authorized for the operation. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### persistence_write_stall
+
+<a id="persistence_write_stall"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A managed write request has held its claim longer than persistence.max_claim_ms, so later writes on its root wait behind it. | The owner renews a claim for as long as its work is unsettled, so a preparation or publication that hangs never lets the lease lapse; doctor names the stuck phase, the root, the claim's age and whether the same request resumes on its own. | Inspect the request with the command in fix, then restart the gbrain serve that owns the root; attach that status output when reporting the hang. Run: gbrain sources writer status --source '{source_id}' --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#persistence-write-stall](../../docs/guides/troubleshooting.md#persistence-write-stall)
 
 ### pglite_busy
 
@@ -2334,6 +2414,26 @@ Reasons: `content_directory`.
 |---|---|---|---|---|---|---|
 | The skill target must remain within its selected root. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### timeline_comment_markup
+
+<a id="timeline_comment_markup"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A stored timeline row carries HTML comment markup, so gbrain keeps it database-side and never writes it back into the page; clean it with gbrain repair timeline-comments. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#timeline-comments](../../docs/guides/repair.md#timeline-comments)
+
+### timeline_rows_would_be_removed
+
+<a id="timeline_rows_would_be_removed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote put_page or put_pages entry has no Timeline section and would delete the page's dated entries; resend it with the section or with drop_timeline: true. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#timeline_rows_would_be_removed](../../docs/guides/write-refusals.md#timeline_rows_would_be_removed)
+
 ### timeout
 
 <a id="timeout"></a>
@@ -2349,6 +2449,16 @@ Reasons: `content_directory`.
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Adding this source would replace or overlap another owner root. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### transcript_secret_exposure
+
+<a id="transcript_secret_exposure"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Imported conversation pages may still carry a typed credential from before the labeled-credential detector, or the last audit found some; pages are never rewritten automatically. | Re-ingest skips unchanged sessions, so pages imported before the detector keep any password typed in prose until someone reviews them. | Run the read-only audit to list affected slugs (never values), then review, edit or (after asking the user) remove each page, and ask the user to rotate any real credential. Run: gbrain transcripts audit-secrets --json | agent | `gbrain doctor --only transcript_secret_exposure --json` | 1 | no |
+
+More: [docs/guides/data-ingestion.md#credential-redaction](../../docs/guides/data-ingestion.md#credential-redaction)
 
 ### trusted_local_only
 
@@ -2584,13 +2694,23 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | Successor checkout differs from the recorded canonical manifest. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### writer_manifest_rescope_required
+
+<a id="writer_manifest_rescope_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A writer transfer prepared by an older release covers every file of the old checkout, ignored files included, so a clean Git clone cannot match it. | Transfer manifests now cover the files Git tracks, so ignored secrets such as .env files are never read, hashed or required on the successor; a manifest recorded before that change is prepared again instead of asking the user to copy ignored files. | On the owner host, run gbrain sources writer transfer prepare <source> again with its admin intent and state, then accept with the new epoch and manifest. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/architecture/topologies.md#transfer-manifest-scope](../../docs/architecture/topologies.md#transfer-manifest-scope)
+
 ### writer_manifest_unsafe
 
 <a id="writer_manifest_unsafe"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Canonical worktree transfer requires a symlink-free manifest. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| The canonical worktree manifest cannot be recorded safely: the checkout holds a symlink or a Git submodule, or a Git-scoped comparison ran on a directory Git cannot list. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 ### writer_not_initialized
 

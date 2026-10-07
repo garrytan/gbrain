@@ -16,6 +16,7 @@ import { resolveGbrainHome } from '../../core/gbrain-home.ts';
 import { isManagedFilesystemPath } from '../../core/persistence/filesystem-guard.ts';
 import { withoutPhysicalRootMetadata } from '../../core/persistence/root-metadata.ts';
 import { agentFix } from './check-fix.ts';
+import type { PushStatusEntry } from '../../core/workspace-push.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../../version.ts';
 import type { Check } from '../doctor.ts';
 
@@ -70,6 +71,35 @@ function pushHealthCheck(root: string | null | undefined, status: 'warn' | 'fail
   };
 }
 
+/** #6083: a tree with nothing uncommitted (ownership metadata aside) on a named branch, 0 commits ahead of a configured origin. */
+function treeMatchesOrigin(root: string): boolean {
+  const g = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).toString().trim();
+  try {
+    g('remote', 'get-url', 'origin');
+    const branch = g('branch', '--show-current');
+    return branch !== '' && withoutPhysicalRootMetadata(g('status', '--porcelain')) === ''
+      && g('rev-list', '--count', `origin/${branch}..HEAD`) === '0';
+  } catch { return false; }
+}
+
+/**
+ * #6083: the recorded push failure finding. A failure whose tree now matches
+ * its origin is superseded (nothing is unpushed, and on a managed worktree
+ * nothing ever clears a refusal record); the first live failure decides.
+ */
+function recordedPushFailureCheck(failing: PushStatusEntry[], ws: string | null): Check {
+  const live = failing.filter((s) => !s.repoRoot || !treeMatchesOrigin(s.repoRoot));
+  if (live.length === 0) {
+    return { name: 'bootstrap_push_health', status: 'ok',
+      message: `last recorded push failed for ${failing.map((s) => s.repoRoot).join(', ')} (${failing[0]!.ts ?? 'unknown'}), but the tree matches its origin branch with nothing uncommitted; nothing to push` };
+  }
+  const s = live[0]!;
+  const target = s.repoRoot ?? ws ?? undefined;
+  const rest = live.length > 1 ? ` [+${live.length - 1} more workspace(s)]` : '';
+  return pushHealthCheck(target, 'warn', `last workspace push FAILED${target ? ` for ${target}` : ''} (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest}`,
+    ` — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``);
+}
+
 export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise<Check[]> {
   const checks: Check[] = [];
   let home: string;
@@ -88,33 +118,13 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
   // sole owner. "Enabled" is a CONFIG signal, not a health signal — the row
   // says so. Fail-soft like every probe in this group.
   try {
-    const {
-      codexPluginProvidesName,
-      claudePluginProvidesName,
-      codexAnyRegistrationExists,
-      claudeAnyRegistrationExists,
-    } = await import('../../core/bootstrap/harness.ts');
-    const { codexConfigPath, claudeUserSettingsPath, claudeUserMcpConfigPath } = await import('../../core/bootstrap/host-specs.ts');
-    const claudeUserMcpConfig = claudeUserMcpConfigPath();
-    const lanes: Array<{ harness: string; plugin: string; dup: boolean; disambiguate: string }> = [];
-    const codexPlugin = codexPluginProvidesName(codexConfigPath(), 'gbrain');
-    if (codexPlugin) {
-      lanes.push({
-        harness: 'codex',
-        plugin: codexPlugin,
-        dup: codexAnyRegistrationExists(codexConfigPath(), 'gbrain'),
-        disambiguate: 'keep one owner: `codex mcp remove gbrain` (drop the hand-wired entry) or `codex plugin remove gbrain@gbrain` (drop the plugin)',
-      });
-    }
-    const claudePlugin = claudePluginProvidesName(claudeUserSettingsPath(), 'gbrain');
-    if (claudePlugin) {
-      lanes.push({
-        harness: 'claude-code',
-        plugin: claudePlugin,
-        dup: claudeAnyRegistrationExists(claudeUserMcpConfig, 'gbrain', process.cwd()),
-        disambiguate: 'keep one owner: `claude mcp remove gbrain` (drop the hand-wired entry) or disable the plugin in Claude Code',
-      });
-    }
+    const { enabledPluginLanes, codexAnyRegistrationExists, claudeAnyRegistrationExists } = await import('../../core/bootstrap/plugin-lanes.ts');
+    const { codexConfigPath, claudeUserMcpConfigPath } = await import('../../core/bootstrap/host-specs.ts');
+    const lanes = enabledPluginLanes('gbrain').map((lane) => lane.harness === 'codex'
+      ? { ...lane, dup: codexAnyRegistrationExists(codexConfigPath(), 'gbrain'),
+          disambiguate: 'keep one owner: `codex mcp remove gbrain` (drop the hand-wired entry) or `codex plugin remove gbrain@gbrain` (drop the plugin)' }
+      : { ...lane, dup: claudeAnyRegistrationExists(claudeUserMcpConfigPath(), 'gbrain', process.cwd()),
+          disambiguate: 'keep one owner: `claude mcp remove gbrain` (drop the hand-wired entry) or disable the plugin in Claude Code' });
     for (const lane of lanes) {
       checks.push(
         lane.dup
@@ -215,6 +225,8 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
         });
       }
     }
+    const { harnessHookCarrierChecks } = await import('./harness-hook-checks.ts');
+    checks.push(...harnessHookCarrierChecks(hr));
   } else if (harnessState.state !== 'absent') {
     checks.push({
       name: 'bootstrap_harness_health',
@@ -278,11 +290,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
       const { PUSH_STALE_MS } = await import('../hook.ts'); // hook.ts owns the threshold (single source)
       const failing = pushStatuses.filter((s) => s.ok === false);
       if (failing.length > 0) {
-        const s = failing[0]!;
-        const target = s.repoRoot ?? ws ?? undefined;
-        const rest = failing.length > 1 ? ` [+${failing.length - 1} more workspace(s)]` : '';
-        checks.push(pushHealthCheck(target, 'warn', `last workspace push FAILED${target ? ` for ${target}` : ''} (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest}`,
-          ` — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``));
+        checks.push(recordedPushFailureCheck(failing, ws));
       } else {
         const stamps = pushStatuses.map((s) => Date.parse(s.ts ?? '')).filter((t) => Number.isFinite(t));
         const stalest = stamps.length > 0 ? Math.min(...stamps) : NaN;

@@ -53,6 +53,8 @@ const HELP_WITHOUT_BRAIN = [
   'embed',
   // Core memory: runCore prints its usage for --help before reading the engine.
   'core',
+  // #6114: router commands print their usage from cli.ts before dispatch (src/cli/router-help.ts).
+  'config',
 ];
 
 /**
@@ -62,9 +64,7 @@ const HELP_WITHOUT_BRAIN = [
  * CLI_ONLY_SELF_HELP so the generic stub answers, fails this test until the
  * entry moves.
  */
-const STILL_NEEDS_A_BRAIN = [
-  'config',
-];
+const STILL_NEEDS_A_BRAIN: string[] = [];
 
 async function runHelp(command: string): Promise<{ code: number; out: string }> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-nobrain-'));

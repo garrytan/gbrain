@@ -670,6 +670,7 @@
         "HOLD_CODES",
         "IDENTITY_FRONTMATTER_KEYS",
         "INVALID_FRONTMATTER_REASONS",
+        "MAX_FRONTMATTER_YAML_ALIASES",
         "PROTECTED_FRONTMATTER_KEYS",
         "RECOVERY_VERSION",
         "classifyImportHold",
@@ -689,7 +690,9 @@
         "resolveSourceLocalFilePath",
         "serializeMarkdown",
         "serializePageToMarkdown",
-        "splitBody"
+        "splitBody",
+        "yamlAliasesWithinLimit",
+        "yamlBlockError"
       ],
       "./minions": [
         "MinionQueue",

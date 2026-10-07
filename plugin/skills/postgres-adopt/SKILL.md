@@ -90,7 +90,7 @@ one-line note and falls through; nothing is silent.
 
 ## Step 3 — Existing PGLite brain: plan, ask, run
 
-Full reference: [Move a PGLite brain to Postgres](../../docs/guides/move-to-postgres.md).
+Full reference: [Move a PGLite brain to Postgres](https://github.com/garrytan/gbrain/blob/master/docs/guides/move-to-postgres.md).
 
 1. **Target URL.** Ask the user to put the connection string in an
    environment variable without pasting it into the conversation
@@ -148,7 +148,7 @@ otherwise PGLite is genuinely fine.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `effective_engine: "postgres"` but the probe fails: this is an access problem; run `gbrain engine status --probe`, then the db-repair skill.
 - Provisioning steps (Docker, installing Postgres) and the move itself need the user's explicit agreement; the docker rung needs `--allow-docker`, the move needs `--yes --expect <plan_hash>` after the user saw the plan.

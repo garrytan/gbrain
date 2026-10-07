@@ -376,6 +376,27 @@ doctor's `revision_backfill` check names those pages, and
 `gbrain apply-migrations --force-schema` resumes the backfill for the rest and
 prints its progress.
 
+<a id="timeline-comments"></a>
+### Timeline comments
+
+Earlier releases filed an HTML comment next to a `[Source: ..., YYYY-MM-DD]`
+citation (such as `<!-- AUTO:slack END -->`) as a timeline row and wrote it
+back into the page. The parser now skips comments, and a row still carrying
+`<!--` or `-->` is never written back (`timeline_comment_markup`). This
+explicit-only kind cleans what is already stored.
+
+**Say to your agent:** *"Preview the timeline comment cleanup, tell me how many
+rows and pages it touches, then apply after I agree."*
+
+```bash
+gbrain repair timeline-comments --source <id>          # preview: comment_only_rows, comment_bearing_rows, pages_with_comment_bullets
+gbrain repair timeline-comments --source <id> --apply  # clean them
+```
+
+It drops generated bullets that carry markup (yours are left alone), deletes
+markup-only rows and strips the rest, under the page lock. A second apply finds
+nothing, and a timeline-only rewrite queues no facts extraction.
+
 ### Timeline history scan coverage
 
 Doctor's `timeline_history` check classifies at most 2,000 pages or 10
@@ -623,16 +644,25 @@ and its original caller's authority is checked again first: a write that
 changed class since the preview reports `changed_since_preview`, and one whose
 caller lost its grant or whose source was re-created reports
 `authority_revoked`; both are kept. A replay goes through the operation's
-normal path on the original caller's trust lane: a write an agent sent over MCP
-is prepared as a remote write again, with its take-holder and delegated
-namespace limits, so it can do no more than the original could. A `put_page`
+normal path on the original caller's trust lane and under its stored authority:
+the same writer (an OAuth client stays that client), delegation, scopes,
+take-holder and delegated namespace limits and link trust, for the same source
+incarnation, checked against the live grant at admission and again at
+publication. A write an agent sent over MCP is prepared as a remote write
+again, so it can do no more than the original could; a grant revoked or
+narrowed between admission and publication refuses the replay at publication.
+A subagent or restricted-namespace write gets back the identity it recorded
+(the job id of an OAuth-delegated job, or the `wiki/agents/<id>/` namespace of
+a legacy subagent, which stays database-only); one that recorded neither is
+confined to exactly its stored namespace allow-list. Live subagent dispatches
+without a job id are still refused. A `put_page`
 replay is bound to the page revision the preview saw (an original `force: true`
 is dropped), so a page changed since the preview reports `changed_since_preview`
 or `conflict` instead of being overwritten. A `remember` replay targets the
 subject the original resolved. Each replay uses a new request id derived from
 the failed one, so a rerun after a crash resumes the same request and a second
 apply never writes it twice (`pending_elsewhere` when another writer holds that
-request). Attribution names the local owner's writer for that lane. A replay the
+request). Attribution names the original writer. A replay the
 brain refuses reports `refused` with the code. The failed receipts stay as
 history.
 
@@ -894,8 +924,7 @@ sent again until the file, the model or the rules change.
 The repair model is `models.fence_repair` when set. Unset, it is the first
 model the fence-repair eval measured as accurate enough whose provider key the
 brain has: `openai:gpt-6.1-sol` with an OpenAI key, else
-`anthropic:claude-opus-5-5` with an Anthropic key (`anthropic:claude-fable-5-1`
-also met the bar). With neither key, model-tier fences wait as
+`anthropic:claude-opus-5-5` with an Anthropic key. With neither key, model-tier fences wait as
 `no_measured_model` until the user picks a model.
 
 The gates check that no text is lost or rewritten; they cannot tell which of two
@@ -1078,6 +1107,12 @@ Request IDs are derived from the page and its revision, so rerunning after a
 crash replays the same write instead of making a second one. If the run stops
 with "still pending publication" or "the canonical writer ... is held", check
 `gbrain sources writer status <source>`, then rerun the printed apply command.
+
+Every applying kind waits for each publication with the CLI write wait: `--wait <seconds>`, then
+`GBRAIN_WRITE_WAIT_MS`, then `persistence.write_wait_ms`, else 30 seconds. That includes the doctor
+remediation run and the replay of a restore a previous `extractor-facts` apply left pending. A malformed
+`GBRAIN_WRITE_WAIT_MS` refuses the apply with `invalid_write_wait` before anything is written; a preview
+never reads it.
 
 ## Capacity stop
 

@@ -981,6 +981,7 @@ export function createGBrainContextEngine(ctx: {
     const cfg = loadConfig();
     const dir = await engineCorpusDir(cfg);
     await recordOpenclawSeat(dir, sessionId, sessionFile);
+    (await import('./context/capture-consent.ts')).recordCaptureIfOff(cfg, `${dir}/${segs.segmentFileName(sessionId, segs.segmentHash(rendered.text))}`, rendered.text);
     const w = segs.writeSegment(dir, sessionId, rendered.text);
     const ordinal = segs.appendSegmentLedger(dir, sessionId, w.hash);
     const memo = checkpointMemo.get(sessionId) ?? { links: [], polls: 0, expectSeg: null, settled: false };
@@ -1085,6 +1086,8 @@ export function createGBrainContextEngine(ctx: {
       if (ingested(fullPath + sweep.CORPUS_INGESTED_SUFFIX)) {
         return { status: 'banked', reason: 'already_ingested' };
       }
+      const gate = await (await import('./context/capture-consent.ts')).gateCorpusFile(pg, fullPath, 'compact');
+      if (gate.action !== 'extract') return { status: 'banked', reason: gate.reason };
       const { extractionAvailableForEngine } = await import('./facts/extraction-availability.ts');
       if (!(await extractionAvailableForEngine(pg))) return { status: 'banked', reason: 'keyless' };
       const { isFactsExtractionEnabled } = await import('./facts/extract.ts');

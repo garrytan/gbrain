@@ -393,10 +393,19 @@ Run weekly alongside lint. Surfaces missing embeddings, unused integrations,
 and configuration improvements.
 
 ### Embedding freshness
-Chunks without embeddings, or chunks embedded with an old model.
-- For large embedding refreshes (>1000 chunks), use nohup:
-  `nohup gbrain embed refresh > /tmp/gbrain-embed.log 2>&1 &`
-- Then check progress: `tail -1 /tmp/gbrain-embed.log`
+Chunks without an embedding yet (`--stale` selects exactly those). Embedding
+calls the configured provider, which bills per token, so this is paid work
+that needs the user's approval first:
+1. Preview with no provider calls: `gbrain embed --stale --dry-run`.
+2. Relay the chunk count and cost estimate to the user and wait for an answer.
+3. Only after they agree, run `gbrain embed --stale --yes --max-usd <cap>`
+   with the cap they approved.
+
+Without approval the command stops with exit 3 and an `[AGENT]` block asking
+you to ask the user; relay it and stop. Never pass `--yes` on your own.
+For a long run (>1000 chunks), route the approved command through the
+durable ladder in `skills/minion-orchestrator/SKILL.md` instead of a bare
+background shell, which hides that exit 3 in a log file.
 
 ### Security (RLS verification)
 Run `gbrain doctor --json` and check the RLS status.
@@ -451,11 +460,18 @@ staleness.
 
 ### Weekly maintenance
 
-Run `gbrain embed --stale` to refresh embeddings for pages that have changed since
-their last embedding. For large brains (>5000 pages), run this with nohup:
+Refresh embeddings for chunks that have none yet, with the same consent steps
+as "Embedding freshness" above: `gbrain embed --stale --dry-run`, relay the
+estimate, and after the user agrees `gbrain embed --stale --yes --max-usd <cap>`
+(or a standing approval the user set with
+`consent.preapprove.paid.max_usd_per_run`). For large brains (>5000 pages),
+submit the approved command through the minion-orchestrator durable ladder;
+if you must background it in a shell, keep the exit code:
 ```bash
-nohup gbrain embed --stale > /tmp/gbrain-embed.log 2>&1 &
+(gbrain embed --stale --yes --max-usd <cap>; echo "exit=$?") > /tmp/gbrain-embed.log 2>&1 &
+tail -2 /tmp/gbrain-embed.log   # later: the last line is exit=<code>
 ```
+Exit 3 in that log means the run needs the user's approval: relay it and stop.
 
 ### Monthly backup check
 
@@ -495,7 +511,7 @@ This creates an audit trail for brain health over time.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain doctor --remediate` steps marked "requires user agreement" (PROTECTED repairs, paid steps): show the plan and cost, and run with `--yes --include-repairs --expect <plan_hash> --max-usd <n>` (the hash from `--remediation-plan --json`) only after the user agrees; `preview_changed` means the plan moved, so preview and ask again. A step that would exceed the cap is not started.
 - A finding classified `operator_required`: follow its instruction or relay it to the brain host's operator. `consent_required`: ask the user.

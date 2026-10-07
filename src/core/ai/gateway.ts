@@ -68,6 +68,7 @@ import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
 import { mergedProviderEnv } from './provider-env.ts';
 import { redactProviderKeys } from './key-redact.ts';
+import { applyVoyageOutputDimension, embeddingDimMismatchError } from './voyage-gateway.ts';
 import { reportEmbeddingAuthFailure } from './key-warnings.ts';
 import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
 import { invokeAI, sdkInvocationUsage, responseInvocationUsage, hasAIInvocationGuard, isAIInvocationPolicyError } from './invocation-guard.ts';
@@ -1083,7 +1084,7 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
         if ('dimensions' in parsed) {
           const dims = parsed.dimensions;
           delete parsed.dimensions;
-          if (typeof dims === 'number') parsed.output_dimension = dims;
+          if (typeof dims === 'number') applyVoyageOutputDimension(parsed, input, dims);
           mutated = true;
         }
         // Recover the SDK-stripped input_type (#1400) — opt-in, mirroring
@@ -1748,10 +1749,8 @@ async function embedSubBatch(
 
     for (const embedding of result.embeddings) {
       if (Array.isArray(embedding) && embedding.length !== expectedDims) {
-        throw new AIConfigError(
-          `Embedding dim mismatch: model ${modelId} returned ${embedding.length} but schema expects ${expectedDims}.`,
-          `Run \`gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${embedding.length}\` or change models.`,
-        );
+        throw embeddingDimMismatchError(modelId, embedding.length, expectedDims, `gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${embedding.length}`,
+          { provider: recipe.id, baseUrl: _config?.base_urls?.[recipe.id], defaultBaseUrl: recipe.base_url_default });
       }
     }
 

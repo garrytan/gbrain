@@ -12,11 +12,12 @@ export function isPhysicalRootMetadata(name: string): boolean {
  * `git status --porcelain` (v1) output without entries whose every path is
  * physical-root metadata, so the stamp gbrain writes does not make a managed
  * tree look dirty. A rename or copy keeps its line unless both sides are
- * metadata, and a quoted path never matches an exact metadata name.
+ * metadata, a quoted path never matches an exact metadata name, and an
+ * untracked directory (porcelain's trailing `/`) is never metadata.
  */
 export function withoutPhysicalRootMetadata(porcelain: string): string {
   return porcelain
     .split('\n')
-    .filter(line => line.trim() !== '' && !line.slice(3).split(' -> ').every(path => isPhysicalRootMetadata(basename(path.trim()))))
+    .filter(line => line.trim() !== '' && !line.slice(3).split(' -> ').every(path => !path.trim().endsWith('/') && isPhysicalRootMetadata(basename(path.trim()))))
     .join('\n');
 }

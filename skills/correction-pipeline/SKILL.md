@@ -260,7 +260,7 @@ answer bank).
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `forget <fact-id>` / `remember` returns `fact_not_found` or `fact_already_expired`: re-run `recall` to get the current fact id; never forget by guessing an id.
 - A page fix returns `revision_conflict`: re-read the page, apply the correction to the current text, and save with the new revision.

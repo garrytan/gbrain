@@ -12,6 +12,35 @@ interface CitationParagraph {
   text: string;
 }
 
+/** #6184: HTML comments (section markers, materialized-row markers) are markup, never summary text. */
+/**
+ * A line made only of comments: once trimmed it opens with `<!--` and closes
+ * with a later `-->`. String checks, not a nested lazy regex, so a run of
+ * empty comments ending in text cannot backtrack catastrophically.
+ */
+function isCommentOnlyLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length >= 7 && trimmed.startsWith('<!--') && trimmed.endsWith('-->');
+}
+
+/**
+ * Each `<!-- … -->` becomes a space (the first `-->` after the opener closes
+ * it), then any stray `<!--` / `-->` does. One forward scan: an opener with no
+ * later `-->` ends the scan, so unclosed openers cost linear time.
+ */
+export function stripHtmlComments(text: string): string {
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const open = text.indexOf('<!--', at);
+    const close = open < 0 ? -1 : text.indexOf('-->', open + 4);
+    if (close < 0) break;
+    out += `${text.slice(at, open)} `;
+    at = close + 3;
+  }
+  return (out + text.slice(at)).replace(/<!--|-->/g, ' ');
+}
+
 function startsMarkdownBlock(line: string): boolean {
   return /^#{1,6}\s/.test(line) || /^\s*(?:[-*+]|\d+\.)\s+/.test(line);
 }
@@ -31,7 +60,7 @@ function citationParagraphs(
   };
 
   for (const line of stripCodeBlocks(content).split(/\r?\n/)) {
-    if (line.trim().length === 0) {
+    if (line.trim().length === 0 || isCommentOnlyLine(line)) {
       flush();
       continue;
     }
@@ -59,7 +88,7 @@ export function parseInlineCitationTimelineEntries(
   for (const paragraph of citationParagraphs(content, opts)) {
     const matches = [...paragraph.text.matchAll(CITATION_TIMELINE_RE)];
     if (matches.length === 0) continue;
-    const summary = paragraph.text
+    const summary = stripHtmlComments(paragraph.text)
       .replace(/\[Source:[^\]]*\](?:\((?:[^()]|\([^()]*\))*\))?/g, '')
       .replace(/^[-*>#\s]+/, '')
       .replace(/\s+/g, ' ')

@@ -14,8 +14,11 @@
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { SemanticQueryCache, loadCacheConfig, semanticResultCacheAvailable } from '../core/search/query-cache.ts';
+import { CACHE_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 
-function printHelp(): void {
+export { CACHE_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
+
+export function printUsage(): void {
   // eslint-disable-next-line no-console
   console.log(`
 gbrain cache \u2014 manage the semantic query cache (v0.32.x search-lite)
@@ -33,9 +36,9 @@ Flags:
 }
 
 export async function runCache(args: string[]): Promise<void> {
-  const sub = args[0];
-  if (!sub || sub === '--help' || sub === '-h') {
-    printHelp();
+  const sub = args[0] as (typeof CACHE_SUBCOMMANDS)[number] | undefined;
+  if (!sub || subcommandHelpRequested(args, ROUTERS.cache)) {
+    printUsage();
     return;
   }
 

@@ -67,7 +67,9 @@ describe('resolveMcpInstructions — three-way composition with the ambient-writ
     const out = resolveMcpInstructions({ mcp: { instructions: 'Team wiki brain' } }, {}, { writeback: WRITEBACK });
     const base = buildMcpInstructions({ writeback: WRITEBACK });
     expect(out).toBe(`${base}\n\nDeployment identity:\nTeam wiki brain`);
-    expect(out.startsWith(GBRAIN_MCP_INSTRUCTIONS + '\n\n')).toBe(true);
+    // #6170: the contract now carries the short writeback line, so it is no longer byte-identical to the off contract.
+    expect(out.startsWith(GBRAIN_MCP_INSTRUCTIONS.split('\n')[0] + '\n')).toBe(true);
+    expect(out.indexOf('Ambient writeback is ON')).toBeLessThan(out.indexOf(buildAmbientWritebackSection(WRITEBACK)));
     expect(out.indexOf(buildAmbientWritebackSection(WRITEBACK))).toBeLessThan(out.indexOf('Deployment identity:'));
   });
 

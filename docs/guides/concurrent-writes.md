@@ -284,6 +284,20 @@ makes it report-only on any brain (`details.lint_fix: false`, phase `warn`
 while issues remain); `gbrain config set cycle.lint_fix true` turns repairs
 back on. An explicit `gbrain lint <dir> --fix` is not affected.
 
+**Skip files the cycle should not lint:** `cycle.lint_exclude` (string, default
+unset = exclude nothing) is a comma-separated list of directory or file
+basenames that the cycle's lint phase and the `lint`/`lint-fix` minion jobs
+skip, matched like `gbrain lint --exclude`: whitespace is trimmed, blank entries
+are dropped, and each entry is the last part of a path (no slash).
+
+```bash
+gbrain config set cycle.lint_exclude attachments,drafts.md
+gbrain config unset cycle.lint_exclude   # lint everything again
+```
+
+The phase reports the list in `details.excluded`. `config set` refuses an entry
+with a slash (`invalid_params`), because a basename match would never apply it.
+
 ### Roll back safely
 
 Stop submitting new reconciliation requests first. Keep a compatible upgraded

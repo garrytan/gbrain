@@ -16,7 +16,7 @@
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -135,6 +135,47 @@ test('managed: every window commits its own coordinated facts batch; a resume su
         expect(inputs[3]).toMatch(/^\[assistant\]\nT03 /);
         expect(await batches()).toBe(4);
         expect((await active()).at(-1)).toBe('Alice Example owns workstream T03');
+      });
+    } finally {
+      await disposePersistenceConsumer(engine);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}, 180_000);
+
+// #6159: on a managed brain the coordinated facts batch carries the session file's write time as
+// valid_from (facts-maintenance.ts), without putting it in the batch key.
+test('managed: facts from a session file written 8 days ago are dated that day', async () => {
+  for (const engine of engines) {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-managed-sweep-fact-time-'));
+    const root = join(dir, 'brain'); mkdirSync(root);
+    const corpusDir = join(dir, 'corpus'); mkdirSync(corpusDir);
+    const sourceId = `facttime-${randomUUID().slice(0, 8)}`;
+    try {
+      await withEnv({ GBRAIN_HOME: join(dir, 'home'), GBRAIN_AUDIT_DIR: join(dir, 'audit') }, async () => {
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+        await engine.setConfig('sync.write_through', 'true');
+        await engine.setConfig('facts.extraction_enabled', 'true');
+        await engine.setConfig('dream.synthesize.session_corpus_dir', corpusDir);
+        await claimWorktree(engine, sourceId, root);
+        const ctx = { engine, sourceId, remote: false as const, config: { engine: engine.kind, embedding_disabled: true },
+          dryRun: false, logger: { info() {}, warn() {}, error() {} } };
+        await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'people/alice-example',
+          content: '---\ntitle: Alice Example\ntype: person\n---\n# Alice Example\n', request_id: randomUUID() } });
+        await disposePersistenceConsumer(engine);
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+
+        const file = join(corpusDir, 'backdated-session.txt');
+        writeFileSync(file, corpus(1));
+        const written = new Date(Date.now() - 8 * 86_400_000);
+        utimesSync(file, written, written);
+        await runMaintenanceSweep(engine, { sourceId, capabilities: KEYED, budgetMs: 120_000 });
+        const rows = await engine.executeRaw<{ valid_from: Date }>(
+          `SELECT valid_from FROM facts WHERE source_id=$1 AND source='sweep:corpus' AND expired_at IS NULL`, [sourceId]);
+        expect(rows).toHaveLength(1);
+        expect(new Date(rows[0].valid_from).toISOString().slice(0, 10)).toBe(written.toISOString().slice(0, 10));
       });
     } finally {
       await disposePersistenceConsumer(engine);

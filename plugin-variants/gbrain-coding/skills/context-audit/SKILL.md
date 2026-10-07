@@ -202,7 +202,7 @@ belongs: source file, answer bank/template, memory store, or a new skill.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain eval cross-modal` exits 1 (FAIL): fix the flagged weaknesses and re-run; do not deliver a failed audit as passing.
 - No judge model or provider key is configured: say the audit ran structure-only and name the missing key; do not fabricate scores.

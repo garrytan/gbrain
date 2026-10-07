@@ -5,11 +5,13 @@ import { finishUnpublishedFailure, publishMutation, recoverPublication, type Pre
 import { localHostId } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX } from './group-publish.ts';
 import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
+import { claimPhaseStamp, enterClaimPhase, startClaimPhase } from './claim-phase.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
+import { ownerExceptionLogText } from './publication-failure.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
-import { cancelOrphanedWindowGroup } from './sync-window.ts';
+import { claimedHeadOrder } from './sync-window.ts';
 import { laneClaim, laneOf, laneRoots, laneTask } from './sync-lanes.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
@@ -31,6 +33,12 @@ const PROCESS_STARTED_AT = new Date(performance.timeOrigin);
 const phaseScope = new AsyncLocalStorage<{ observation: PhaseObservation; startedAt: number }>();
 
 /** #5233: one-line, redacted, length-capped error text for the consumer's stderr line. */
+/** #5929: the failed receipt's message plus, for an owner exception, its class, errno and gbrain frame (this log is owner-side). */
+function failureLogText(row: WriteRequest): string | undefined {
+  const extra = ownerExceptionLogText(row.error_detail);
+  return row.error_message || extra ? `${row.error_message ?? ''}${extra}`.replaceAll('"', "'") : undefined;
+}
+
 function errorDetail(error: unknown): string | undefined {
   const message = (error as { message?: unknown } | null)?.message;
   if (typeof message !== 'string' || !message.trim()) return undefined;
@@ -106,7 +114,9 @@ export class PersistenceConsumer {
   constructor(readonly engine: BrainEngine, readonly config: GBrainConfig, readonly prepare: PrepareMutation,
     private opts: { hostId?: string; concurrency?: number; pollMs?: number; idleMaxMs?: number; phaseMs?: number; preparationMs?: number;
       /** Claim renewal cadence (default 10 s); each renewal runs under the `phaseMs` deadline. */
-      renewalIntervalMs?: number; onError?: (error: unknown) => void;
+      renewalIntervalMs?: number;
+      /** Claim lease length for single-request claims (default 30 s). A test seam, like the timings above. */
+      claimLeaseMs?: number; onError?: (error: unknown) => void;
       onSettled?: (row: WriteRequest) => void;
       /** Engine graduation drain: claim, recover and publish requests only; effect, projection, topology and maintenance workers never start. */
       requestsOnly?: boolean } = {}) {
@@ -366,7 +376,7 @@ export class PersistenceConsumer {
     while (!this.stopping && this.active.size - this.laneTaskCount() < concurrency) {
       const claimed = laneClaim();
       try {
-        const row = await this.phase('claim', () => claimNextWrite(this.engine, this.hostId, 30_000, [...attemptedRoots]));
+        const row = await this.phase('claim', () => claimNextWrite(this.engine, this.hostId, this.opts.claimLeaseMs ?? 30_000, [...attemptedRoots]));
         if (!row) break;
         if (this.stopping) { await releaseUnpublishedClaim(this.engine, row, 'consumer_stopping'); break; }
         const key = row.worktree_id ?? `db:${row.source_incarnation}`;
@@ -531,9 +541,10 @@ export class PersistenceConsumer {
       abort.abort({ code: 'preparation_deadline' });
       this.log('preparation', 'deadline_exceeded');
     }, budget) : undefined;
+    const clock = startClaimPhase();
     const lease = startClaimLease(
-      signal => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!, 30_000,
-        this.engine.kind === 'postgres' ? signal : undefined),
+      signal => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!, this.opts.claimLeaseMs ?? 30_000,
+        this.engine.kind === 'postgres' ? signal : undefined, claimPhaseStamp(clock, row.execution_token)),
       this.leaseTiming(), () => abort.abort({ code: 'claim_lost' }));
     const releaseReason = () => !lease.held ? 'claim_lost' : observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping';
     try {
@@ -556,9 +567,10 @@ export class PersistenceConsumer {
       }
       this.preparing.delete(row.id);
       preparationActive = false;
+      enterClaimPhase(clock, 'publishing');
       await faultPoint('consumer:prepared', { requestId: row.request_id, sourceId: row.source_id, operation: row.operation });
       const done = await publishMutation(this.engine, row, prepared, this.hostId);
-      if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', done.error_message ?? undefined);
+      if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', failureLogText(done));
       if (done.state === 'committed' && row.worktree_id && !String(row.intent?.kind).startsWith('managed_sync_')) {
         this.foregroundCounts.set(row.worktree_id, this.foregroundCompletions(row.worktree_id) + 1);
       }
@@ -572,7 +584,7 @@ export class PersistenceConsumer {
       const current = await getWriteRequestById(this.engine, row.id);
       if (current && !isTerminal(current) && current.execution_token === row.execution_token && !current.recovery) {
         const done = await finishUnpublishedFailure(this.engine, current, error, preparationActive ? 'preparation' : 'publication');
-        if (done.state === 'failed') this.log(preparationActive ? 'preparation' : 'publication', done.error_code ?? 'storage_error', done.error_message ?? undefined);
+        if (done.state === 'failed') this.log(preparationActive ? 'preparation' : 'publication', done.error_code ?? 'storage_error', failureLogText(done));
         return this.settled(done);
       }
       throw error;
@@ -587,9 +599,11 @@ export class PersistenceConsumer {
   private async executeOrGroup(row: WriteRequest, root: RootHold): Promise<boolean> {
     // #5984 admit-ahead: a window group whose predecessor did not commit is cancelled, never published after it.
     // A lane group may be claimed while its predecessor still publishes; its commit wait decides instead.
+    // A bulk-sync group member released mid-group follows the member before it, not only the previous group (#6153 class).
     const lane = laneOf(row);
-    const orphaned = lane ? null : await cancelOrphanedWindowGroup(this.engine, row);
-    if (orphaned) { for (const done of orphaned) this.settled(done); return true; }
+    const order = await claimedHeadOrder(this.engine, row, lane !== null);
+    if (order === 'wait') { await releaseUnpublishedClaim(this.engine, row, 'group_member_waiting'); return false; }
+    if (order) { for (const done of order) this.settled(done); return true; }
     const group = publicationGroupKey(row);
     if (!group || this.engine.kind !== 'postgres') return this.execute(row, root);
     // #6007: a put_pages batch publishes in groups of at most PAGE_BATCH_GROUP_MAX pages.

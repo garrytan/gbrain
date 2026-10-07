@@ -143,6 +143,11 @@
           "no shared declaration; 0 non-automation client(s) active in 30d"
         ],
         "backstop_visibility": "private",
+        "capture_lanes": {
+          "compact": "extract",
+          "session_end": "extract",
+          "writeback": "retire"
+        },
         "counters_note": "local, append-only, loss-tolerant observability over the last 7d — never a source of truth",
         "cross_lane_duplicates_7d": 0,
         "instruction_visibility": "world",
@@ -154,7 +159,7 @@
         "ttl_valid": true,
         "visibility_note": "world = readable by agents authorized on THIS brain, not the public internet"
       },
-      "message": "ambient writeback off (default). Enable: gbrain config set memory.auto_writeback salient",
+      "message": "ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: gbrain config set memory.auto_writeback off). Enable: gbrain config set memory.auto_writeback salient",
       "name": "memory_writeback",
       "status": "ok"
     },

@@ -85,6 +85,7 @@ import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
 import { syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
 import { gitConvergenceEntry } from './checks/git-convergence.ts';
 import { retrievalFeedbackEntry } from './checks/retrieval-feedback.ts';
+import { transcriptSecretExposureEntry } from './checks/transcript-secrets.ts';
 import { autoChronicleEntry } from './checks/auto-chronicle.ts';
 import { factsDrainEntry } from './checks/facts-drain.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
@@ -171,6 +172,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   factTakeVectorsEntry,
   plannerStatsEntry,
   retrievalFeedbackEntry,
+  transcriptSecretExposureEntry,
   revisionBackfillEntry,
   coreMemoryEntry,
   fenceIntegrityEntry,

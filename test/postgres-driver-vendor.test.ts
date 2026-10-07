@@ -34,6 +34,7 @@ describe('vendored Postgres driver packaging', () => {
       expect(index).toContain('sql.discard = reservation.discard');
       expect(index).toContain('completed.cancelPromise');
       expect(index).toContain('return poisoned(c)');
+      expect(index).toContain('cancelActive(query, resolve, reject, Math.min(delay * 2, 1000))');
     }
   });
 });

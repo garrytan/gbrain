@@ -2022,16 +2022,6 @@
         "unconditionalFor": []
       },
       {
-        "commands": [],
-        "condition": "command !== 'hook'",
-        "connectsEngine": false,
-        "refusesThinClient": false,
-        "routesThinClient": false,
-        "terminates": false,
-        "thinClientCheck": false,
-        "unconditionalFor": []
-      },
-      {
         "commands": [
           "ask"
         ],

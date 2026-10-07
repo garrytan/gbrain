@@ -112,7 +112,7 @@ After a mutation: one concise line — action, task ID, priority/status, relevan
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The tasks page update returns `revision_conflict`: re-read `ops/tasks.md`, re-apply the one task change, and save; never overwrite the whole list from an old read.
 - `write_pending` (exit 10): report `saved: false` with the pending receipt and poll `gbrain write-request <request_id>`; do not tell the user the task is recorded yet.

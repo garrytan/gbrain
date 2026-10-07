@@ -170,7 +170,7 @@ Remaining gaps:       N (pages with uncitable facts)
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `put_page` returns `revision_conflict` mid-batch: re-read that page, re-apply only the citation fix, and continue; never overwrite with the copy you read earlier.
 - `get_page` returns `page_not_found` for a cited source: mark the citation unresolvable in the report instead of rewriting it to a guessed slug.

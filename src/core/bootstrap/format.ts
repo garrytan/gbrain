@@ -247,6 +247,12 @@ export interface HarnessTarget {
   entry?: string;
   /** Hook marker value (hooks targets). */
   marker?: string;
+  /** Absolute gbrain launcher rendered into the hook commands (hooks targets;
+   * absent on receipts written before it was recorded). */
+  launcher?: string;
+  /** Seat label rendered into the hook commands, '' for none (hooks targets;
+   * absent on older receipts). */
+  seat?: string;
   /** Write mechanism note, e.g. 'toml-block' vs 'claude-cli'. */
   mechanism?: string;
   /** One-line failure reason when state === 'failed'. */

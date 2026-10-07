@@ -270,7 +270,7 @@ title: "My "Quoted" Title"
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain frontmatter validate` exits 1: errors were found (that is the result, not a crash). Parse `errors_by_code` and report counts per source.
 - Before a fix pass, state how many files will change and get the user's agreement; the fix writes `.bak` backups, and YAML_PARSE errors are not always auto-repairable.

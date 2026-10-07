@@ -65,8 +65,9 @@ conversation pages with provenance back to the exact session file. Pattern-based
 metadata before anything is written — vendor key prefixes, JWTs, cloud/API key
 shapes, `Bearer` and `Authorization: Basic` headers, database and `http(s)`
 URLs carrying a password, private keys (also when an excerpt cut off the
-`BEGIN` or `END` line), and high-entropy `KEY=`/`TOKEN=`/`password=`
-assignments (quoted values may contain punctuation) become `<REDACTED:…>` placeholders (preview with
+`BEGIN` or `END` line), high-entropy `KEY=`/`TOKEN=`/`password=`
+assignments (quoted values may contain punctuation), and typed passwords
+after a credential label (see [Credential redaction](#credential-redaction)) become `<REDACTED:…>` placeholders (preview with
 `--dry-run`; no pattern set is complete, so if a secret still lands see
 ["If a secret reached the brain"](../../SECURITY.md#if-a-secret-reached-the-brain):
 rotate it, then `gbrain delete <slug> --purge`). Embedding is off by default
@@ -93,6 +94,50 @@ watermark alone; for facts from a restored session, run
 `gbrain transcripts ingest <rollout> --facts --max-cost-usd <n>`.
 
 **Say to your agent:** *"Restore the codex sessions that lost my side of the conversation"* (your agent runs the preview, shows you the counts, and applies after you agree).
+
+### Credential redaction
+
+Transcript pages also redact a password typed after a credential label,
+even when it is short and low-entropy (`labeled_credential`). Two label
+forms are recognized, with bare, quoted or backticked values:
+
+- a single label, `password`, `passwd`, `passcode`, `passphrase` or `pwd`
+  (also behind a prefix such as `DB_` and as a JSON key), followed by `:`,
+  `=` or the full-width `：` — `password: hunter2`, `**Password:** …`,
+  `{"password": "…"}`;
+- a pair label, `login`, `log-in`, `credentials`, `creds`, `user/pass` or
+  `username/password`, followed by `:`, `=`, `：`, ` - ` or nothing, then
+  `user / pass` or `user:pass` — `login alice / hunter2`,
+  `creds: alice:hunter2`. Only the password half is redacted. A pair whose
+  password starts the next line is redacted too.
+
+To keep prose and code intact, a value is never redacted when it is a
+placeholder (`<…>`, `${…}`, `$VAR`), a mask (`****`), a URL, a path, a
+function call, a dotted reference (`req.body.password`), a code identifier
+(`hashedPassword`), or one of the stoplisted words (`n/a`, `none`, `string`,
+`required`, `changed`, `reset`, `flow`, `email`, `await` and similar; the
+list is `LABELED_STOPLIST` in `src/core/secret-scan-labeled.ts`). A pair's
+password must also be 4+ characters with a letter and a digit or symbol, so
+`login: Google/GitHub SSO` and `credentials: docs/auth.md` stay. Known
+misses: an unquoted multi-word passphrase, a label with no delimiter
+(`the password is …`), and a meeting link's `?pwd=` passcode. A redacted
+value of 8+ characters that is not a stoplisted word is also scrubbed where
+the session repeats it bare.
+
+Pages imported before this detector shipped are not rewritten
+automatically. `gbrain transcripts audit-secrets --json` (read-only; all
+sources, or one with `--source-id`) lists the conversation pages that still
+carry a credential: slug, source, hit count per pattern and line numbers,
+never the text. The doctor check `transcript_secret_exposure` reads the
+audit's cached summary (it never scans pages itself) and says when no audit
+has run or what the last one found and how long ago. Review, edit and
+removal are separate steps: `gbrain get <slug>`, then `gbrain put <slug> <
+edited.md` to remove the credential, or `gbrain delete <slug> --purge` after
+asking the user. Rotate any real credential that reached a page (see
+["If a secret reached the brain"](../../SECURITY.md#if-a-secret-reached-the-brain)),
+then re-run the audit.
+
+**Say to your agent:** *"Check my imported transcripts for passwords"* (your agent runs the audit, lists the pages by slug and asks before changing any).
 
 Or connect the account and skip the manual export entirely. `gbrain connectors`
 syncs your ChatGPT and Claude conversation history live, using your own browser

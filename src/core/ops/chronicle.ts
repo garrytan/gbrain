@@ -9,6 +9,7 @@
 
 import type { Operation, OperationContext } from './contract.ts';
 import { readPolicyOpts, sourceScopeOpts } from './context.ts';
+import { invalidParam } from './op-fix.ts';
 
 // ── Remote diary redaction (fail-closed) ─────────────────────────────────
 // The exact mechanism the ontology siblings use (`ctx.remote !== false` →
@@ -299,8 +300,9 @@ const chronicle_backfill: Operation = {
     'cal/, calendar/) for timeline-event extraction. One paid chat call per page, so it needs --yes; --dry-run ' +
     'reports the candidates, an estimated cost and skip reasons. The chronicle_page_state ledger skips content ' +
     'already extracted or queued, so repeats never pay twice. Queued pages run in the `chronicle` cycle phase ' +
-    '(`gbrain dream --phase chronicle`), exempt from the daily limit. Local-only bulk op. ' +
-    'CLI: `gbrain chronicle-backfill [--since YYYY-MM-DD] [--dated-since YYYY-MM-DD] [--recent] [--limit N] [--dry-run | --yes]`.',
+    '(`gbrain dream --phase chronicle`), exempt from the daily limit. --max-usd is a hard bound counting retries: ' +
+    'pages queue only while their worst case fits, and an unpriced chat model then refuses with no_pricing. Local-only bulk op. ' +
+    'CLI: `gbrain chronicle-backfill [--since YYYY-MM-DD] [--dated-since YYYY-MM-DD] [--recent] [--limit N] [--max-usd USD] [--dry-run | --yes]`.',
   scope: 'admin',
   mutating: true,
   localOnly: true,
@@ -311,6 +313,7 @@ const chronicle_backfill: Operation = {
     limit: { type: 'number', description: 'Max pages queued in this run, across all types and sources (default 1000).' },
     dry_run: { type: 'boolean', description: 'Count candidates, estimate cost and report skip reasons without queuing.' },
     yes: { type: 'boolean', description: 'Consent to queue paid extraction (one chat call per page). Ask the user first.' },
+    max_usd: { type: 'number', description: 'Hard spend bound in USD for everything this run queues, retries included; pages beyond it are not queued (cap_reached).' },
   },
   handler: async (ctx, p) => {
     const { runChronicleBackfill } = await import('../chronicle/backfill.ts');
@@ -318,6 +321,9 @@ const chronicle_backfill: Operation = {
     let model: string | undefined;
     try { model = getChatModel(); } catch { model = undefined; }
     const scope = sourceScopeOpts(ctx);
+    if (p.max_usd !== undefined && !(typeof p.max_usd === 'number' && Number.isFinite(p.max_usd) && p.max_usd > 0)) {
+      throw invalidParam(ctx, 'chronicle_backfill', 'max_usd', 'chronicle_backfill: max_usd must be a positive number of US dollars.', { example: 5 });
+    }
     return runChronicleBackfill(ctx.engine, {
       since: typeof p.since === 'string' ? p.since : undefined,
       datedSince: typeof p.dated_since === 'string' ? p.dated_since : undefined,
@@ -328,6 +334,7 @@ const chronicle_backfill: Operation = {
       sourceId: scope.sourceId,
       sourceIds: scope.sourceIds,
       model,
+      maxUsd: typeof p.max_usd === 'number' ? p.max_usd : undefined,
     });
   },
   cliHints: { name: 'chronicle-backfill' },

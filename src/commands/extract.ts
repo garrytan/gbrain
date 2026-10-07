@@ -95,6 +95,7 @@ import { runSlidingPool } from '../core/worker-pool.ts';
 import { isAborted } from '../core/abort-check.ts';
 import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 import { loadAllSources } from '../core/sources-load.ts';
+import { plannerStatsForLinkDrain } from '../core/planner-stats.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -2140,7 +2141,9 @@ export async function extractStaleFromDB(
   let skippedCrossSource = 0;
 
   const wantedEnabled = await isWantedPagesEnabled(engine);
+  const plannerTick = await plannerStatsForLinkDrain(engine, async () => totalStale);
   for (;;) {
+    await plannerTick(pagesProcessed);
     const rows = await engine.listStalePagesForExtraction({
       batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs,
     });

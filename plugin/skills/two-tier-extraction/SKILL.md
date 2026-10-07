@@ -318,7 +318,7 @@ gbrain config set models.tier.deep opus   # example: pin the escalation tier
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The deep tier hits a cost cap or `no_pricing`: stop deep reads, keep the triage results, and ask the user before raising the cap or registering a price.
 - A triage call fails or returns low confidence: fail closed to human review; never silently promote the item to the deep tier or drop it.

@@ -155,7 +155,7 @@ is the artifact.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain get <slug>` fails with `page_not_found`: stop before rendering and resolve the real slug; report the page missing only after a title search.
 - The make-pdf binary is missing: this is a gstack dependency, not a gbrain error. Tell the user to install gstack; do not hand-roll a PDF.

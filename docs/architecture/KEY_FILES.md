@@ -45,6 +45,7 @@ boundary and add its link here rather than raising the cap.
 | [Core Persistence](key-files/core-persistence.md) | `src/core/persistence/` write journal, coordinator, effects, canonical projections and managed sync |
 | [Core Persistence (continued)](key-files/core-persistence-continued.md) | `src/core/persistence/connector-*.ts`, `src/core/connectors/item-holds*.ts`, checkpoint validation, no-op kernel, accepted-pending receipts, verb types/errors, database-write, attribution, purge-deleted and loop-fact retirement |
 | [Core Persistence (engine graduation)](key-files/core-persistence-graduation.md) | `engine-graduation*.ts`, `graduation-*.ts`, `src/commands/migrate-graduation.ts`, the graduation doctor finding |
+| [Managed sync and persistence stalls (key files cluster)](key-files/persistence-stalls.md) | `claim-phase.ts`, `pre-activation-release.ts`, `sync-concurrent-write.ts`, `worktree-manifest.ts`, `src/core/hardened-git.ts` |
 | [Core Search (1/2)](key-files/core-search-1.md) | `src/core/search/` through `src/core/search/rerank.ts` |
 | [Core Search (2/2)](key-files/core-search-2.md) | `src/core/search/return-policy.ts` through `src/core/search/vector-pool.ts`, plus the relational arm and multi-hop chain modules (`relational-recall.ts`, `relational-rerank-pin.ts`, `relational-chain.ts`, `relational-plan.ts`, `hub-dampening.ts`) |
 | [Core Services (1/3)](key-files/core-services-1.md) | `src/core/advisor/{types,run,render,recommended-set,history,apply,collect-*}.ts` through `src/core/connectors/` |
@@ -77,6 +78,8 @@ boundary and add its link here rather than raising the cap.
 | [Google connector + open-loop engine (key files cluster)](key-files/google-and-loops.md) | Cross-file subsystem contract |
 | [Google And Loops (continued)](key-files/google-and-loops-continued.md) | Remaining cross-file entries |
 | [Always-loaded core memory (key files cluster)](key-files/core-memory.md) | Core tier, write-path guard and lock order, delivery lanes, pressure notice |
+| [Workspace push and backup coverage (key files cluster)](key-files/workspace-push-and-backup.md) | Workspace push, hook push backstops, backup verdicts |
+| [Ambient capture consent gate (key files cluster)](key-files/ambient-capture.md) | `memory.auto_writeback` capture lanes |
 
 ## BrainBench — in a sibling repo
 

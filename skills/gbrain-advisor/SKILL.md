@@ -106,7 +106,7 @@ WARN      gbrain 0.44 is available (you're on 0.43).
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A `critical` finding (pending migrations) carries a fix such as `gbrain apply-migrations --yes`: ask the user before running it; findings without a `dispatch_id` are not auto-runnable.
 - `gbrain advisor` cannot reach the brain (`GBRAIN_DB_ACCESS` marker): route to the db-repair skill instead of reporting "no findings".

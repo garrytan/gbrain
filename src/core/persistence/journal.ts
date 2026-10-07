@@ -318,10 +318,11 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
 }
 
 /** Renews every claim of a group in one statement; returns the ids still held. */
-export async function renewGroupClaims(engine: SqlEngine, rows: WriteRequest[], leaseMs = 30_000, signal?: AbortSignal): Promise<Set<string>> {
-  const held = await engine.executeRaw<{ id: string }>(`UPDATE persistence_requests r SET claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now()
+export async function renewGroupClaims(engine: SqlEngine, rows: WriteRequest[], leaseMs = 30_000, signal?: AbortSignal, phase: string | null = null): Promise<Set<string>> {
+  const held = await engine.executeRaw<{ id: string }>(`UPDATE persistence_requests r SET claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),
+    claim_phase=COALESCE(jsonb_set($4::text::jsonb,'{token}',to_jsonb(t.token::text)),r.claim_phase)
     FROM unnest($1::uuid[],$2::uuid[]) AS t(id,token) WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING r.id`,
-  [rows.map(row => row.id), rows.map(row => row.execution_token), leaseMs], { signal });
+  [rows.map(row => row.id), rows.map(row => row.execution_token), leaseMs, phase], { signal });
   return new Set(held.map(row => row.id));
 }
 
@@ -445,10 +446,11 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
     return claimed;
   });
 }
-export async function renewWriteClaim(engine: SqlEngine, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal): Promise<boolean> {
+/** `phase` (claim-phase.ts `claimPhaseStamp`, #6176) records the claim's current phase with the renewal. */
+export async function renewWriteClaim(engine: SqlEngine, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal, phase: string | null = null): Promise<boolean> {
   const rows = await engine.executeRaw(`UPDATE persistence_requests SET
-    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now()
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [id, token, leaseMs], { signal });
+    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),claim_phase=COALESCE($4::text::jsonb,claim_phase)
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [id, token, leaseMs, phase], { signal });
   return rows.length === 1;
 }
 export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: string): Promise<void> {

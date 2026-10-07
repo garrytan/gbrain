@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -7,14 +7,14 @@ import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
-import { createProgress, type ProgressOptions } from '../progress.ts';
-import { digest, sha256 } from './digest.ts';
+import type { ProgressOptions } from '../progress.ts';
+import { detectManifestScope, storedManifestScope, worktreeManifest, type StoredWorktreeManifest, type WorktreeManifest } from './worktree-manifest.ts';
 import { localHostId, persistenceHome } from './identity.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { acquireShared, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
-import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
+import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
 import { readPhysicalRootStamp } from './physical-root-record.ts';
 import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
@@ -197,38 +197,30 @@ export async function activateManagedPersistence(engine: BrainEngine, opts: { co
   await activatePersistence(engine, opts);
 }
 
-export interface WorktreeManifest { digest: string; file_count: number }
-export type StoredWorktreeManifest = WorktreeManifest & { canonical_stamp?: string; self_transfer?: PhysicalRootRecovery };
-export const MANIFEST_PROGRESS_MIN_FILES = 5000;
+export { MANIFEST_PROGRESS_MIN_FILES, compactStoredManifest, storedManifestScope, worktreeManifest,
+  type StoredWorktreeManifest, type WorktreeManifest, type WorktreeManifestScope } from './worktree-manifest.ts';
 
 /**
- * Deterministic content manifest includes deletions by exact path-set equality.
- * The per-file hash map stays local; stored manifests carry only its digest
- * and file count, so their size does not grow with the worktree.
+ * #6099: why a successor checkout does not verify, agent-first. A transfer an older release prepared in tree scope
+ * (every file, ignored ones included) is re-prepared in Git scope rather than asking the user to copy ignored files.
  */
-export function worktreeManifest(root: string, opts: { progress?: ProgressOptions } = {}): WorktreeManifest {
-  const canonical = realpathSync(root);
-  const paths: string[] = [];
-  const visit = (dir: string) => {
-    for (const name of readdirSync(dir).sort()) {
-      if (name === '.git' || name === '.gbrain-managed' || isPhysicalRootMetadata(name)) continue;
-      const path = join(dir, name), info = lstatSync(path);
-      if (info.isSymbolicLink()) throw opError('writer_manifest_unsafe', 'Canonical worktree transfer requires a symlink-free manifest.',
-        `${relative(canonical, path).split(sep).join('/')} in the checkout is a symlink, so no manifest was recorded. Ask the user to replace it with a real file or directory (or remove it), then run the transfer step again.`);
-      if (info.isDirectory()) visit(path);
-      else if (info.isFile()) paths.push(path);
-    }
-  };
-  visit(canonical);
-  const progress = opts.progress && paths.length > MANIFEST_PROGRESS_MIN_FILES ? createProgress(opts.progress) : undefined;
-  progress?.start('sources.manifest_hash', paths.length);
-  const files: Record<string, string> = {};
-  for (const path of paths) {
-    files[relative(canonical, path).split(sep).join('/')] = sha256(readFileSync(path));
-    progress?.tick();
-  }
-  progress?.finish();
-  return { digest: digest(files), file_count: paths.length };
+export function successorManifestMismatch(sourceId: string, root: string, expected: string, prepared: StoredWorktreeManifest | null,
+  candidate: WorktreeManifest): OperationError {
+  if (storedManifestScope(prepared) === 'tree' && detectManifestScope(root) === 'git') return opError('writer_manifest_rescope_required',
+    'The transfer was prepared over every file of the old checkout, ignored files included; prepare it again so it covers tracked Git files only.',
+    `Source ${sourceId}'s transfer manifest ${expected} was recorded by an older release over every file in the owner's checkout, including files Git ignores (such as .env files), so a clean clone at ${root} cannot match it and nothing was accepted. `
+      + `Do not copy ignored files across. On the owner host, prepare the transfer again (it now records tracked Git files only), then accept with the new epoch and manifest it prints.`,
+    { fix: { argv: ['gbrain', 'sources', 'writer', 'transfer', 'prepare', sourceId, '--admin-intent', 'writer_transfer_prepare', '--expected-state', '<admin_state>'],
+      inputs: [{ name: 'admin_state', how: `admin_state from gbrain sources writer status ${sourceId} --json on the owner host` }],
+      consent: [], actor: 'host_admin', requires_exclusive: false, docs: 'docs/architecture/topologies.md#transfer-manifest-scope',
+      why: 'Re-records the transfer manifest over tracked Git files on the owner host; the successor then accepts with the printed epoch and manifest.' } });
+  const untracked = candidate.scope === 'git' && candidate.untracked_count ? ` ${candidate.untracked_count} untracked file(s) here that Git does not ignore are not part of the manifest and do not cause this.` : '';
+  return opError('writer_manifest_mismatch', 'Successor checkout differs from the recorded canonical manifest.',
+    candidate.scope === 'git'
+      ? `The tracked Git files at ${root} (${candidate.file_count} present) do not hash to manifest ${expected} that the owner recorded for source ${sourceId}; nothing was accepted. A tracked file differs, is missing or is extra.${untracked} `
+        + `Make ${root} a clean clone of the owner's repository at the same commit (git clone <owner repository> ${root}, then git -C ${root} checkout <owner commit>), compare with git -C ${root} status, then accept again.`
+      : `The checkout at ${root} does not hash to manifest ${expected} that the owner recorded for source ${sourceId}; nothing was accepted. Bring it to exactly the prepared content (same files, no extras or deletions), then accept again.`,
+    { fix: writerStatusFix(sourceId) });
 }
 
 /** Human-mode progress for manifest hashing; JSON and quiet modes report nothing. */
@@ -237,11 +229,6 @@ export function humanManifestProgress(): ProgressOptions | undefined {
   return options.mode === 'auto' ? options : undefined;
 }
 
-/** Drops a legacy per-file map from a stored manifest, keeping every other field. */
-export function compactStoredManifest<T extends { digest: string; files?: Record<string, string>; file_count?: number }>(manifest: T): Omit<T, 'files'> & { file_count: number } {
-  const { files, ...rest } = manifest;
-  return { ...rest, file_count: rest.file_count ?? Object.keys(files ?? {}).length };
-}
 export async function prepareWriterTransfer(engine: BrainEngine, sourceId: string, hostId = localHostId(), expectedAdminState?: string,
   opts: { selfTransfer?: boolean; dryRun?: boolean } = {}): Promise<{ worktree_id: string; owner_epoch: string; manifest: StoredWorktreeManifest }> {
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
@@ -310,10 +297,10 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
     `Another gbrain process holds the successor checkout's coordination lock, so source ${sourceId}'s transfer was not accepted. Run transfer accept again once that process has finished.`,
     { fix: writerStatusFix(sourceId) });
   try {
-    if (worktreeManifest(root, { progress: humanManifestProgress() }).digest !== expectedManifest)
-      throw opError('writer_manifest_mismatch', 'Successor checkout differs from the recorded canonical manifest.',
-        `The checkout at ${root} does not hash to manifest ${expectedManifest} that the owner recorded for source ${sourceId}; nothing was accepted. Bring it to exactly the prepared content (same files, no extras or deletions), then accept again.`,
-        { fix: writerStatusFix(sourceId) });
+    // #6099: verify in the scope the owner recorded (a manifest an older release prepared is in tree scope).
+    const [prepared] = await engine.executeRaw<{ manifest: StoredWorktreeManifest | null }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [binding.worktree_id]);
+    const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared?.manifest) });
+    if (candidate.digest !== expectedManifest) throw successorManifestMismatch(sourceId, root, expectedManifest, prepared?.manifest ?? null, candidate);
     await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);

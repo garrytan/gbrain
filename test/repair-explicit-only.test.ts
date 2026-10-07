@@ -24,7 +24,7 @@ import { REPAIR_HELP, parseRepairArgs, runRepairCommand } from '../src/commands/
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-const EXPLICIT: RepairKind[] = ['google-file-modes', 'stale-atoms', 'extractor-facts', 'captured-facts', 'loop-facts', 'ontology-facts', 'orphan-children', 'failed-writes', 'frontmatter'];
+const EXPLICIT: RepairKind[] = ['google-file-modes', 'stale-atoms', 'extractor-facts', 'captured-facts', 'loop-facts', 'ontology-facts', 'orphan-children', 'failed-writes', 'frontmatter', 'timeline-comments'];
 let engine: PGLiteEngine;
 const home = mkdtempSync(join(tmpdir(), 'gbrain-repair-explicit-'));
 

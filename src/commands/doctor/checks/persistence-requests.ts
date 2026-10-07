@@ -2,6 +2,8 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { readRequestIndexStates, REQUEST_INDEXES_REPAIR_COMMAND } from '../../../core/persistence/checkpoint-validation.ts';
 import { oneYearCapacity, readJournalLimits, journalLimitKey } from '../../../core/persistence/limits.ts';
+import { claimStateOf, MAX_CLAIM_CONFIG_KEY, readMaxClaimMs } from '../../../core/persistence/claim-phase.ts';
+import { agentFix, checkError } from '../check-fix.ts';
 
 const WINDOW_DAYS = 7;
 const SAMPLE = 10_000;
@@ -93,5 +95,52 @@ export async function requestGrowthCheck(engine: BrainEngine): Promise<Check> {
     return { name: 'persistence_request_growth', status: 'warn',
       message: `Request-table growth could not be read: ${error instanceof Error ? error.message : String(error)}. Health is unknown.`,
       details: { health: 'unknown', docs } };
+  }
+}
+
+/**
+ * #6176: a write request that has held its claim longer than
+ * `persistence.max_claim_ms` (default 10 minutes). The queue checks only see
+ * Minion jobs, so a persistence request whose preparation or publication hangs
+ * while its owner keeps renewing the claim was invisible: every later write on
+ * its root waits behind it. Names the stuck phase (claim-phase.ts), the root,
+ * the claim's age, how many writes wait behind it and whether the same request
+ * resumes on its own, with the read-only writer status as the next step.
+ */
+export async function writeStallCheck(engine: BrainEngine): Promise<Check> {
+  const docs = 'docs/guides/troubleshooting.md#persistence-write-stall';
+  try {
+    const maxClaimMs = await readMaxClaimMs(engine);
+    const rows = await engine.executeRaw<{ request_id: string; source_id: string; worktree_id: string | null; operation: string; state: string; claim_phase: unknown;
+      execution_token: string | null; claim_lapsed: boolean | null; publication_started: boolean; request_age_ms: string; waiting: number }>(
+      `SELECT r.request_id::text,r.source_id,r.worktree_id::text,r.operation,r.state,r.claim_phase,r.execution_token::text,r.claim_expires_at<now() AS claim_lapsed,
+        r.publication_started,(EXTRACT(EPOCH FROM (now()-r.created_at))*1000)::bigint::text AS request_age_ms,
+        (SELECT count(*)::int FROM persistence_requests q WHERE q.worktree_id=r.worktree_id AND q.state='queued' AND q.sequence>r.sequence) AS waiting
+      FROM persistence_requests r WHERE r.state='running' ORDER BY r.sequence LIMIT 100`);
+    const now = Date.now();
+    const stalls = rows.flatMap(row => {
+      const claim = claimStateOf(row, now);
+      if (!claim) return [];
+      // An owner that predates phase recording never stamps its claims; the request's own age bounds the claim's.
+      const held = claim.claim_age_ms ?? (row.claim_phase == null ? Math.max(0, Number(row.request_age_ms)) : null);
+      if (held === null || !(held >= maxClaimMs)) return [];
+      return [{ request_id: row.request_id, source_id: row.source_id, root: row.worktree_id, operation: row.operation, phase: claim.phase,
+        claim_age_ms: held, phase_age_ms: claim.phase_age_ms, waiting_behind: row.waiting, resumes_on_its_own: claim.resumes_on_its_own, why: claim.why }];
+    });
+    const details = { max_claim_ms: maxClaimMs, config_key: MAX_CLAIM_CONFIG_KEY, count: stalls.length, stalls, docs };
+    if (!stalls.length) return { name: 'persistence_write_stall', status: 'ok', details,
+      message: `No write request has held its claim longer than ${MAX_CLAIM_CONFIG_KEY} (${maxClaimMs} ms).` };
+    const first = stalls[0]!;
+    const minutes = (ms: number) => `${Math.round(ms / 60_000)} min`;
+    return { name: 'persistence_write_stall', status: 'warn', details,
+      message: `${stalls.length} write request(s) have held their claim longer than ${MAX_CLAIM_CONFIG_KEY} (${maxClaimMs} ms). `
+        + stalls.slice(0, 3).map(stall => `Request ${stall.request_id} (${stall.operation}) on source ${stall.source_id}, root ${stall.root ?? 'database-only'}, `
+          + `is stuck in phase ${stall.phase} after ${minutes(stall.claim_age_ms)}; ${stall.waiting_behind} queued write(s) wait behind it. ${stall.why}`).join(' ')
+        + ` Next: inspect it with gbrain sources writer status --source ${first.source_id} --json, then restart the gbrain serve that owns the root`
+        + `${first.resumes_on_its_own ? ' if it is still stuck after its transaction ends' : ''}. The root trigger of a hang is not known yet; attach that status output when reporting it.`,
+      fix: agentFix(['gbrain', 'sources', 'writer', 'status', '--source', first.source_id, '--json'],
+        'Read-only: shows the owner, the stuck request\'s claim phase and every write waiting behind it on that root.', 'persistence_write_stall', { docs }) };
+  } catch (error) {
+    return checkError('persistence_write_stall', 'inspect running write requests', error, { details: { health: 'unknown', docs } });
   }
 }

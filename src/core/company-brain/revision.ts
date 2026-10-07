@@ -4,6 +4,7 @@ import { constants, existsSync, lstatSync, openSync, fstatSync, readSync, closeS
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Action } from '../agent-output.ts';
 import { opError } from '../ops/contract.ts';
+import { HARDENED_GIT_ARGS, hardenedGitEnvironment } from '../hardened-git.ts';
 import {
   COMPANY_BRAIN_MAX_ENTRIES, COMPANY_BRAIN_MAX_FILE_BYTES, COMPANY_BRAIN_MAX_METADATA_BYTES,
   type CommittedEntry, type InspectionLimits, type RevisionIdentity, type UncommittedEntry,
@@ -31,19 +32,10 @@ export function safeRepositoryPath(path: string): boolean {
     path.split('/').every(part => part !== '' && part !== '.' && part !== '..' && part.toLowerCase() !== '.git');
 }
 
-function gitEnvironment(): NodeJS.ProcessEnv {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-  return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0',
-    GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', LC_ALL: 'C' };
-}
-
 async function gitRead(root: string, args: string[], maxBytes: number, onChunk?: (chunk: Buffer) => void): Promise<Buffer> {
   return await new Promise((accept, reject) => {
-    const child = spawn('git', ['--no-pager', '--no-optional-locks', '--no-replace-objects',
-      '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.untrackedCache=false',
-      '-c', 'submodule.recurse=false', '-c', 'protocol.allow=never', '-c', 'credential.helper=',
-      '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', '-C', root, ...args],
-    { env: gitEnvironment(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('git', [...HARDENED_GIT_ARGS, '-C', root, ...args],
+    { env: hardenedGitEnvironment(), stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks: Buffer[] = [];
     let bytes = 0;
     let failure: Error | undefined;

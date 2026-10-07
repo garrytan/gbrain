@@ -606,6 +606,14 @@ export interface SubagentHandlerData {
    */
   oneshot_slug_suffix?: string;
   /**
+   * #6160 — the namespaces a oneshot synthesis child may write (the cycle's
+   * resolved reflections and originals prefixes). Oneshot validation uses
+   * them as its task shapes instead of guessing from the allow-list's
+   * spelling, so root-level and custom namespaces validate. Absent on jobs
+   * queued by older builds, which keep the allow-list derivation.
+   */
+  oneshot_task_prefixes?: string[];
+  /**
    * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
    * that `buildSystemPrompt()` splices into `system`. Default behavior
    * (omitted or false) prepends a deterministic preamble listing each

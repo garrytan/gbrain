@@ -39,10 +39,20 @@ export function unboundBindCommand(sourceId: string, path: string | null): strin
  * `path` is filled only for trusted local callers; remote callers get a
  * placeholder instead of a host path.
  */
-export function unboundSourceError(sourceId: string, path: string | null, scope: 'database_only_eligible' | 'file_backed'): OperationError {
+export function unboundSourceError(sourceId: string, path: string | null, scope: 'database_only_eligible' | 'file_backed', classic = false): OperationError {
   const bind = `bind the source on the brain host: ${unboundBindCommand(sourceId, path)} `
     + '(if an operator has locked writer administration, ask the operator to unlock it first)';
-  const suggestion = scope === 'database_only_eligible'
+  // #6122: on a brain whose managed persistence is not activated, a claim alone fences classic sync of the source,
+  // so the working path is the file plus classic sync; claiming is named with that consequence.
+  const edit = `edit the page's file in the checkout${path ? ` (${path})` : ''} and run gbrain sync --source ${sourceId}, which imports it`;
+  const trap = `For a gbrain-owned checkout instead (a brain-wide change: ask the user first), ${bind}, then activate managed persistence (preview first: gbrain sources writer activate --confirm-quiesced --dry-run --json). `
+    + `Managed persistence is not activated on this brain, so a claim without activation blocks classic sync of ${sourceId} until it is activated or the claim is released with gbrain sources writer deactivate.`;
+  const suggestion = classic ? scope === 'database_only_eligible'
+    ? `Source '${sourceId}' has a checkout path but no canonical owner. Choose one: ${edit}; or allow database-only writes to unbound sources `
+      + `with gbrain config set ${UNBOUND_WRITE_KEY} database_only. Pages written that way stay database-only and are not materialized into canonical files after binding. ${trap}`
+    : `Source '${sourceId}' has a checkout path but no canonical owner. To change this page, ${edit}. `
+      + `${UNBOUND_WRITE_KEY}=database_only does not apply: this page came from a canonical file, and a database-only edit would be lost on the next sync. ${trap}`
+    : scope === 'database_only_eligible'
     ? `Source '${sourceId}' has a checkout path but no canonical owner. Choose one: ${bind}; or allow database-only writes to unbound sources `
       + `with gbrain config set ${UNBOUND_WRITE_KEY} database_only. Pages written that way stay database-only and are not materialized into canonical files after binding.`
     : `Source '${sourceId}' has a checkout path but no canonical owner. To write this page, ${bind}. `

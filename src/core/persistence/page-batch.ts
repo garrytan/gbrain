@@ -35,8 +35,8 @@ export const PAGE_BATCH_DEFAULT_WAIT_MS = 25_000;
 const PREPARE_CONCURRENCY = 8;
 /** Batch admission is one transaction over every page; it gets more than a single write's budget. */
 const BATCH_ADMISSION_BUDGET_MS = 30_000;
-const PAGE_KEYS = new Set(['slug', 'content', 'expected_revision', 'allow_empty']);
-interface BatchPage { slug: string; content: string; expected_revision?: unknown; allow_empty?: unknown }
+const PAGE_KEYS = new Set(['slug', 'content', 'expected_revision', 'allow_empty', 'drop_timeline']);
+interface BatchPage { slug: string; content: string; expected_revision?: unknown; allow_empty?: unknown; drop_timeline?: unknown }
 interface PageResult { index: number; slug: string; row?: WriteRequest; refusal?: OperationError; typeWarning?: PageTypeWarning | null }
 interface BatchMarker { id: string; index: number; size: number }
 
@@ -50,10 +50,10 @@ function parsePages(value: unknown): BatchPage[] {
   const seen = new Set<string>();
   let bytes = 0;
   const pages = value.map((page, index) => {
-    if (!page || typeof page !== 'object' || Array.isArray(page)) throw invalid(`pages[${index}] must be an object {slug, content}; nothing was written.`, 'Pass each page as {slug, content} with optional expected_revision and allow_empty.');
+    if (!page || typeof page !== 'object' || Array.isArray(page)) throw invalid(`pages[${index}] must be an object {slug, content}; nothing was written.`, 'Pass each page as {slug, content} with optional expected_revision, allow_empty and drop_timeline.');
     const record = page as Record<string, unknown>;
     const extra = Object.keys(record).filter(key => !PAGE_KEYS.has(key));
-    if (extra.length) throw invalid(`pages[${index}] has unsupported fields (${extra.join(', ')}); nothing was written.`, 'Each page accepts only slug, content, expected_revision and allow_empty; put frontmatter inside content.');
+    if (extra.length) throw invalid(`pages[${index}] has unsupported fields (${extra.join(', ')}); nothing was written.`, 'Each page accepts only slug, content, expected_revision, allow_empty and drop_timeline; put frontmatter inside content.');
     if (typeof record.slug !== 'string' || !record.slug) throw invalid(`pages[${index}].slug must be a non-empty string; nothing was written.`, 'Give every page its slug, for example "notes/topic-name".');
     if (typeof record.content !== 'string') throw invalid(`pages[${index}].content must be a string; nothing was written.`, 'Pass the complete markdown page, frontmatter included, as content.');
     const key = record.slug.toLowerCase();
@@ -95,7 +95,8 @@ function pageEntry(result: PageResult): Record<string, unknown> {
     return { ...base, request_id: row.request_id, state: 'committed', revision: receipt.revision ?? outcome.revision ?? null,
       status: outcome.status, ...(typeof outcome.slug === 'string' && outcome.slug !== result.slug ? { duplicate_of: outcome.slug } : {}),
       ...(outcome.embedding_state !== undefined ? { embedding_state: outcome.embedding_state } : {}), ...warning,
-      ...(outcome.fences_normalized ? { fences_normalized: outcome.fences_normalized } : {}) };
+      ...(outcome.fences_normalized ? { fences_normalized: outcome.fences_normalized } : {}),
+      ...(outcome.timeline_rows_removed ? { timeline_rows_removed: outcome.timeline_rows_removed } : {}) };
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
     return { ...base, request_id: row.request_id, state: row.state, error: error.toJSON(), ...warning };
@@ -175,6 +176,7 @@ async function preparePages(own: OperationContext, shared: OperationContext, bat
     const params: Record<string, unknown> = { slug: page.slug, content: page.content, source_id: sourceId };
     if (page.expected_revision !== undefined) params.expected_revision = page.expected_revision;
     if (page.allow_empty !== undefined) params.allow_empty = page.allow_empty;
+    if (page.drop_timeline !== undefined) params.drop_timeline = page.drop_timeline;
     try {
       prepared[index] = await preparePageAdmission(ctx, { operation: 'put_page', params,
         batch: { id: batchId, index, size: pages.length, requestId: pageBatchChildRequestId(batchId, index) } });

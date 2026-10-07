@@ -189,6 +189,7 @@ source id. Full per-asset detail (which repo, which fix) is local-only:
   `git remote add origin git@github.com:you/your-brain-repo.git && git push -u origin main`,
   then `gbrain sources harden <source-id>` for auto-push durability.
 - Unpushed workspace work: for a managed canonical worktree, inspect the managed writer with `gbrain sources writer status --probe --json` (legacy bulk push is refused there); otherwise `gbrain sources push --path <workspace>`.
+  On a managed worktree the persistence coordinator commits and pushes as Git effects; the probe lists `effects`, `blocking_effects` and `recent_failures`, and a parked push is retried with `gbrain sources writer retry-effects <source> --request-id <id>`. gbrain's own ownership stamp (`.gbrain-owner.json`) never counts as uncommitted work, the session hooks never start `sources push` there, and a root with no `origin` remote reads `no_remote` (add one: `git remote add origin <url>`) even after a recorded push refusal. A recorded push failure stops warning once the tree matches its origin branch with nothing uncommitted.
 - db_only pages: `gbrain export --source <id> --dir BACKUP_DIR/<id>` for
   each source the row names, with `BACKUP_DIR` replaced by a directory
   outside the gitignored dirs (another disk, another repo, anywhere durable). One directory per source:

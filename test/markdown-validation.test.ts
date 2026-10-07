@@ -192,6 +192,20 @@ body`;
       expect(parsed.errors!.filter(e => e.code === 'NESTED_QUOTES')).toHaveLength(0);
     });
 
+    // #6157: a block-scalar continuation line can look like `Key: "a", "b"`.
+    // When the whole block parses, the per-line heuristic must not run.
+    test('folded block-scalar continuation that looks like key: "a" "b" does NOT trigger (#6157)', () => {
+      const md = `${fence}\ntype: concept\ntitle: Interview notes\nclaim: >-\n  The founder said\n  Reply: "Ship it", then "measure it" twice\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.filter(e => e.code === 'NESTED_QUOTES' || e.code === 'YAML_PARSE')).toHaveLength(0);
+    });
+
+    test('literal block-scalar lines with Key: "a" "b" do NOT trigger (#6157)', () => {
+      const md = `${fence}\ntype: concept\ntitle: x\nnotes: |\n  Q: "why" and "how"\n  A: "later" "maybe"\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, undefined, { validate: true });
+      expect(parsed.errors!.filter(e => e.code === 'NESTED_QUOTES' || e.code === 'YAML_PARSE')).toHaveLength(0);
+    });
+
     test('genuinely broken nested quotes STILL trigger', () => {
       // Outer " followed by stray inner " — yaml.safeLoad throws.
       const md = `${fence}\ntype: concept\ntitle: "Foo "bar" baz "qux" end"\n${fence}\n\nbody`;

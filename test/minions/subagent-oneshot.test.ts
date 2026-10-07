@@ -346,6 +346,28 @@ describe('runSubagentOneshot', () => {
     expect(outcome).toEqual({ kind: 'fallback', reason: 'bad_slug', tokens: FB_TOKENS });
   });
 
+  // #6160: root-level and custom namespaces are task shapes too.
+  test('a root-level originals/ namespace from the allow-list validates (legacy job data)', async () => {
+    const data: SubagentHandlerData = { ...DATA, allowed_slug_prefixes: [...PREFIXES, 'personal/reflections/*', 'originals/*'] };
+    const ctx = await makeCtx(data);
+    const slug = `originals/2026-10-04-some-idea-${SUFFIX}`;
+    const resp = JSON.stringify({ pages: [{ slug, body: `An idea. [[${GOOD_SLUG_A}]]` }], skipped: false });
+    const outcome = await runSubagentOneshot(makeArgs(ctx, data, resp));
+    expect(outcome.kind).toBe('done');
+    expect(await engine.getPage(slug)).not.toBeNull();
+  });
+
+  test('explicit oneshot_task_prefixes admit a custom namespace and still refuse people pages', async () => {
+    const data: SubagentHandlerData = { ...DATA, allowed_slug_prefixes: [...PREFIXES, 'ideas/*'], oneshot_task_prefixes: ['ideas', 'wiki/personal/reflections'] };
+    const ok = `ideas/2026-10-04-custom-${SUFFIX}`;
+    const okCtx = await makeCtx(data);
+    expect((await runSubagentOneshot(makeArgs(okCtx, data, JSON.stringify({ pages: [{ slug: ok, body: `x [[${GOOD_SLUG_A}]]` }], skipped: false })))).kind).toBe('done');
+    const second = { ...data, prompt: `${data.prompt} (second job)` };
+    const badCtx = await makeCtx(second);
+    const bad = await runSubagentOneshot(makeArgs(badCtx, second, JSON.stringify({ pages: [{ slug: 'wiki/people/alice-example', body: `bio [[${GOOD_SLUG_A}]]` }], skipped: false })));
+    expect(bad).toEqual({ kind: 'fallback', reason: 'bad_slug', tokens: FB_TOKENS });
+  });
+
   test('zero wikilinks → no_wikilink fallback', async () => {
     const ctx = await makeCtx(DATA);
     const resp = JSON.stringify({

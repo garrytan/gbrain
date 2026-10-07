@@ -136,6 +136,8 @@ beforeAll(async () => {
   else { const pglite = new PGLiteEngine(); await pglite.connect({}); await pglite.initSchema(); engine = pglite; }
   await engine.setConfig('embedding_model', MODEL);
   await engine.setConfig('embedding_dimensions', String(DIM));
+  // #6091: capture-lane facts are admitted only while memory.auto_writeback allows the lane.
+  await engine.setConfig('memory.auto_writeback', 'all');
 }, 120_000);
 afterAll(async () => { await disposePersistenceConsumer(engine); if (close) await close(); else await engine.disconnect(); });
 beforeEach(() => {

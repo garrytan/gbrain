@@ -78,7 +78,7 @@ Event transformed and written to brain. Report: "Webhook: {event_type} from {sou
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A transformed write returns `write_pending` (exit 10): the event is accepted; record the request id and poll it, never replay the event under a new id.
 - `source_binding_required` / `insufficient_scope`: the webhook's token cannot write that source; tell the user which grant the brain host's operator must add.

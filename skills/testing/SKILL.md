@@ -233,7 +233,7 @@ This enables:
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A test fails because of a missing API key or a flaky provider: classify it as an environment failure, not a code failure, and say which key.
 - A security test fails: always escalate to the user; never auto-fix it.

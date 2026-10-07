@@ -57,6 +57,15 @@ happy path exactly-once and every failure path at-least-once (never loss):
 | Session-end corpus + sweep pass 3 | SessionEnd hook + serve sweep | the post-last-boundary REMAINDER when segment coverage holds; the FULL transcript otherwise |
 | `gbrain transcripts ingest --facts` | manual | whatever the operator points it at (operator's explicit choice) |
 
+The checkpoint harvest and the session-end lane run while
+`memory.auto_writeback` is unset (installing the harness hooks opted into
+them) and stop on an explicit `off`: banked segments and transcripts are
+retired, never extracted, and a capture made under `off` stays retired after
+writeback is turned back on. Read errors, plane drift and invalid values hold
+them untouched. The full truth table is in
+[ambient writeback](ambient-writeback.md#capture-lanes-and-the-off-switch).
+`gbrain transcripts ingest --facts` is an explicit choice and is never gated.
+
 Coverage is decided by **exact-set hashes**, not counts: session-end
 recomputes every boundary window's redacted hash from its own full parse and
 requires each in the per-session ledger (`<session>.ledger.json`). A missed

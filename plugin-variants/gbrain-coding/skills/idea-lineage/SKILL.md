@@ -32,7 +32,7 @@ when_to_use: "Use when the user asks: \"idea lineage\", \"trace the lineage of t
 > **Convention:** see [conventions/quality.md](../conventions/quality.md) for
 > citation rules, quote fidelity, and source-backed claims.
 >
-> **Boundary:** see [docs/takes-vs-facts.md](../../docs/takes-vs-facts.md) for
+> **Boundary:** see [docs/takes-vs-facts.md](https://github.com/garrytan/gbrain/blob/master/docs/takes-vs-facts.md) for
 > the distinction between holder-attributed takes and the brain owner's hot
 > facts. Do not collapse those layers when summarizing lineage.
 
@@ -195,7 +195,7 @@ cite the source for each non-gap claim.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `find_trajectory` or the concept search returns nothing with a degraded notice: keyword-only search misses earlier phrasings, so say so and do not claim "this idea first appears in X".
 - `get_page` returns `page_not_found` for a concept stub: resolve the slug by title search before tracing; report the gap instead of inventing a lineage step.

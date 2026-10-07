@@ -111,6 +111,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async engine => (await import('./checks/persistence-requests.ts')).requestGrowthCheck(engine),
   },
   {
+    id: 'persistence_write_stall', resolution: 'operator', registration: 'wave',
+    count: d => Number(d.count ?? 0),
+    hostOnly: 'Request ids, roots and the owning process are brain-host persistence state outside any source scope.',
+    impact: 'A write request has held its claim past persistence.max_claim_ms, so later writes on its root wait behind it',
+    instruction: 'Inspect it with `gbrain sources writer status --source <id> --json`, then restart the `gbrain serve` that owns the root (docs/guides/troubleshooting.md#persistence-write-stall).',
+    run: async engine => (await import('./checks/persistence-requests.ts')).writeStallCheck(engine),
+  },
+  {
     id: 'connector_held_items', resolution: 'operator', registration: 'wave',
     count: d => Number(d.held ?? 0),
     impact: 'Some connector items are held after repeated failures and are not imported',

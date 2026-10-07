@@ -826,3 +826,45 @@ describe('#3746 — cjk-title arm (pure-CJK weak norms probe exact title/slug)',
     expect(block).toBeNull();
   });
 });
+
+// #6195: lowercase multi-word names ("call alice example") volunteer through 2-3-word weak
+// n-grams: the exact alias arm, and an exact-title arm limited to entity types with a globally
+// unique title. Single lowercase words stay alias-only.
+describe('lowercase multi-word names (#6195)', () => {
+  async function seedTyped(slug: string, title: string, type: string) {
+    await engine.executeRaw(`INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline) VALUES ($1, 'default', $2, $3, 'Body.', '')`, [slug, type, title]);
+  }
+
+  test('a lowercase multi-word alias or entity title volunteers; a single lowercase word does not', async () => {
+    await seed('people/alice-example', 'Alice Example', 'A founder.');
+    await engine.setPageAliases('people/alice-example', 'default', [normalizeAlias('Alice Sample')]);
+    const viaAlias = await resolveEntitiesToPointers(engine, 'default', extractCandidates('did alice sample reply'), {});
+    expect(viaAlias?.pointers.map((p) => [p.slug, p.arm])).toEqual([['people/alice-example', 'alias']]);
+    const viaTitle = await resolveEntitiesToPointers(engine, 'default', extractCandidates('call alice example tomorrow'), {});
+    expect(viaTitle?.pointers.map((p) => [p.slug, p.arm])).toEqual([['people/alice-example', 'weak-title']]);
+    expect(await resolveEntitiesToPointers(engine, 'default', extractCandidates('ask alice about it'), {})).toBeNull();
+  });
+
+  test('a non-entity or ambiguous title does not volunteer, and the kill switch turns the arm off', async () => {
+    await seedTyped('concepts/open-source', 'Open Source', 'concept');
+    expect(await resolveEntitiesToPointers(engine, 'default', extractCandidates('we like open source tools'), {})).toBeNull();
+    await seedTyped('companies/acme-example', 'Acme Example', 'company');
+    await seedTyped('people/acme-example', 'Acme Example', 'person');
+    expect(await resolveEntitiesToPointers(engine, 'default', extractCandidates('met acme example today'), {})).toBeNull();
+    await seed('people/alice-example', 'Alice Example', 'A founder.');
+    expect(await resolveEntitiesToPointers(engine, 'default', extractCandidates('call alice example'), { lexicalArms: false })).toBeNull();
+  });
+
+  test('a private entity page is hidden from the weak-title arm by default', async () => {
+    await engine.executeRaw(`INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline, frontmatter)
+      VALUES ('people/zora-example', 'default', 'person', 'Zora Example', 'Body.', '', '{"visibility":"private"}'::jsonb)`);
+    expect(await resolveEntitiesToPointers(engine, 'default', extractCandidates('call zora example'), {})).toBeNull();
+    const trusted = await resolveEntitiesToPointers(engine, 'default', extractCandidates('call zora example'), { excludePrivate: false });
+    expect(trusted?.pointers[0].slug).toBe('people/zora-example');
+  });
+
+  test('punctuation breaks an n-gram', () => {
+    const grams = extractCandidates('thanks alice, example follows').filter((c) => c.weak && c.query.includes(' ')).map((c) => c.query);
+    expect(grams).not.toContain('alice example');
+  });
+});

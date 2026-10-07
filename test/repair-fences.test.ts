@@ -55,6 +55,7 @@ import { readUncommittedFenceRepairs } from '../src/core/fence-repair/uncommitte
 import { parseRepairArgs, runRepairCommand } from '../src/commands/repair.ts';
 import { runModels } from '../src/commands/models.ts';
 import { resolveFenceRepairModel } from '../src/core/fence-repair/model.ts';
+import { FENCE_REPAIR_MEASURED_MODELS } from '../src/core/fence-repair/measured.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -483,6 +484,8 @@ test('models.fence_repair: unset, the first measured model with a key (else none
     try { await runModels(engine, ['--json']); } finally { process.stdout.write = write; }
     return JSON.parse(chunks.join('')) as { per_task: Array<{ key: string; tier: string; resolved: string; source: string }> };
   };
+  expect(FENCE_REPAIR_MEASURED_MODELS).toEqual(['openai:gpt-6.1-sol', 'anthropic:claude-opus-5-5']);
+  expect(FENCE_REPAIR_MEASURED_MODELS.some(model => model.includes('fable'))).toBe(false);
   expect(await resolveFenceRepairModel(engine, { ANTHROPIC_API_KEY: 'k' })).toBe('anthropic:claude-opus-5-5');
   expect(await resolveFenceRepairModel(engine, { ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' })).toBe('openai:gpt-6.1-sol');
   expect(await resolveFenceRepairModel(engine, { GEMINI_API_KEY: 'k' })).toBeNull();

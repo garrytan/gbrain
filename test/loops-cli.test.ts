@@ -194,6 +194,18 @@ describe('runWaiting', () => {
     expect(r.verdict).toBe(0);
   });
 
+  // #5871: no-counterparty loops are listed in their own section, never as a person.
+  test('only no-counterparty loops → their section and the management hint, never "You are clean"', async () => {
+    await upsertOpenLoop(engine, loop({ dedupKey: 'decision:solo', loopType: 'decision_pending', counterpartyEmail: null, threadId: null,
+      summary: 'Decide on the offsite venue', detector: 'llm_extract' }));
+    const r = await captured(() => runWaiting(engine, []));
+    expect(r.out).toContain('## No counterparty (1 open: decision_pending 1)');
+    expect(r.out).not.toContain('You are clean');
+    expect(r.out).toContain('gbrain loops done <id>');
+    const j = await captured(() => runWaiting(engine, ['--json']));
+    expect(JSON.parse(j.out)).toMatchObject({ ok: true, groups: [], no_counterparty: { loop_count: 1, loops_omitted: 0 } });
+  });
+
   test('partially stale google sources warn with source ids without refusing, including JSON', async () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name, config, last_sync_at)

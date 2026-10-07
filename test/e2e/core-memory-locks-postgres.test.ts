@@ -35,6 +35,19 @@ async function writer(engine: BrainEngine) {
   };
 }
 
+// topologyTransaction takes publication capacity without waiting and throws the retryable
+// writer_pool_capacity when the concurrent writes hold every slot; a caller retries it.
+async function retryOnPoolCapacity<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run();
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'writer_pool_capacity' || attempt >= 40) throw error;
+      await new Promise(r => setTimeout(r, 50 * Math.min(attempt, 10)));
+    }
+  }
+}
+
 describeE2E('core memory ordered source lock (Postgres)', () => {
   test('core writes in two sources, non-core writes in default and a topology change interleave without deadlock', () => managedBrain(async ({ engine, root }) => {
     const alphaPath = join(root, '..', 'alpha'); mkdirSync(alphaPath);
@@ -48,8 +61,8 @@ describeE2E('core memory ordered source lock (Postgres)', () => {
     }
     const probe = join(root, '..', 'probe'); mkdirSync(probe);
     const topology = (async () => {
-      await runManagedSourceLifecycle(engine, { operation: 'add', sourceId: 'probe', path: probe });
-      return runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: 'probe', confirmDestructive: true });
+      await retryOnPoolCapacity(() => runManagedSourceLifecycle(engine, { operation: 'add', sourceId: 'probe', path: probe }));
+      return retryOnPoolCapacity(() => runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: 'probe', confirmDestructive: true }));
     })();
     const results = await Promise.all(writes);
     await topology;

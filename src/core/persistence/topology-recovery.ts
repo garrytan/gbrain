@@ -50,11 +50,11 @@ function validateRecord(record:TopologyCloneRecovery):void{
     throw retainedClone('The recorded clone paths no longer belong to this owner.',record,
       `The recovery record names paths or an owner host that this host (${localHostId()}) cannot vouch for.`);
 }
-function treeHash(path:string):string|null{
+function treeHash(path:string,scope:'git'|'tree'):string|null{
   if(!existsSync(path))return null;
   if(lstatSync(path).isSymbolicLink())throw opError('recovery_required','Recovery refuses a substituted symbolic link.',
     `${path} was replaced by a symbolic link, so clone recovery stopped without following or removing it. Show the user the path; the owner re-checks it on every recovery pass and stays blocked until the link is replaced by the recorded directory (docs/architecture/topologies.md).`);
-  return worktreeManifest(path).digest;
+  return worktreeManifest(path,{scope}).digest;
 }
 function assertRetainedRoot(record:TopologyCloneRecovery,path:string):void{
   const reservation=readPhysicalRootReservation(record.target);
@@ -69,7 +69,7 @@ function assertStagingOwned(record:TopologyCloneRecovery):void{
     throw retainedClone('Unexpected staging directory identity; recovery retained its bytes.',record,
       `The staging directory ${record.stage} is not the one this clone created (device/inode differ).`);
   if(record.afterHash!==null){
-    if(treeHash(record.stage)!==record.afterHash)throw retainedClone('Unexpected staged clone bytes; recovery retained them.',record,
+    if(treeHash(record.stage,record.hashScope??'tree')!==record.afterHash)throw retainedClone('Unexpected staged clone bytes; recovery retained them.',record,
       `The staged clone at ${record.stage} no longer matches the bytes this clone wrote.`);
     assertRetainedRoot(record,record.stage);
   }
@@ -110,7 +110,7 @@ async function abortClone(engine:BrainEngine,row:TopologyChange,record:TopologyC
     // Restore only this attempt's exact bytes. A newer withdrawal remains in
     // the database; its mirror resumes after the root becomes available.
     assertStagingOwned(record);
-    const aside=treeHash(record.aside),target=treeHash(record.target);
+    const aside=treeHash(record.aside,record.hashScope??'tree'),target=treeHash(record.target,record.hashScope??'tree');
     if(target!==null)assertPhysicalRoot(record.target,{worktreeId:record.worktreeId});
     if(aside!==null){
       assertRetainedRoot(record,record.aside);
@@ -156,7 +156,7 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
               {fix:cloneStatusFix(record.sourceId)});
           await settleTopologyRequests(tx,sources,[record.worktreeId],row.principal_id);
           assertStagingOwned(record);
-          const stage=treeHash(record.stage),target=treeHash(record.target),aside=treeHash(record.aside);
+          const stage=treeHash(record.stage,record.hashScope??'tree'),target=treeHash(record.target,record.hashScope??'tree'),aside=treeHash(record.aside,record.hashScope??'tree');
           if(stage!==null){
             assertRetainedRoot(record,record.stage);
             if(aside!==null)assertRetainedRoot(record,record.aside);
@@ -198,9 +198,9 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
       }
     }
     assertPhysicalRoot(record.target,{worktreeId:record.worktreeId});
-    if(treeHash(record.target)!==record.afterHash)throw retainedClone('The committed clone changed before recovery cleanup.',record,
+    if(treeHash(record.target,record.hashScope??'tree')!==record.afterHash)throw retainedClone('The committed clone changed before recovery cleanup.',record,
       `The clone is committed, but ${record.target} changed before its cleanup ran.`);
-    const aside=treeHash(record.aside);
+    const aside=treeHash(record.aside,record.hashScope??'tree');
     if(aside!==null&&aside!==record.beforeHash)throw retainedClone('The retained old checkout changed; cleanup requires inspection.',record,
       `The clone is committed, but the retained original at ${record.aside} changed, so it was not removed.`);
     if(existsSync(record.stage))throw retainedClone('Unexpected staging bytes remain after clone commitment.',record,

@@ -28,8 +28,10 @@ import type { Effect } from '../../../core/agent-output.ts';
 import { loadConfig } from '../../../core/config.ts';
 import { resolveGbrainHome } from '../../../core/gbrain-home.ts';
 import {
+  captureLaneStates,
   resolveWritebackConfig,
   resolveWritebackConfigFromFile,
+  WRITEBACK_RESTART_AFTER_OFF,
   AUTO_WRITEBACK_NOTICE_KEY,
   PRIVATE_DEFAULT_REMOTE_CONSEQUENCE,
 } from '../../../core/facts/writeback-config.ts';
@@ -163,6 +165,7 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
       nudge_shown: nudgeShown === 'true',
       ...(wb.read_error ? { read_error: true } : {}),
       ...(wb.plane_drift ? { plane_drift: true } : {}),
+      capture_lanes: captureLaneStates(await resolveWritebackConfig(engine, fileCfg, { gate: true })),
       counters_note: `local, append-only, loss-tolerant observability over the last ${COUNTER_WINDOW_DAYS}d — never a source of truth`,
     };
 
@@ -224,12 +227,16 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
         offProblems.push(`ambient writeback is off but instruction blocks are still installed for ${lingering.join(', ')} — new sessions keep saving. Remove: gbrain bootstrap harness --yes (converges on off)`);
       }
       if (privateRemoteProblem) offProblems.push(privateRemoteProblem);
+      const explicitOff = wb.raw_mode === 'off';
+      if (explicitOff) details.restart_after_off = WRITEBACK_RESTART_AFTER_OFF;
       return {
         name: MEMORY_WRITEBACK_CHECK_NAME,
         status: offProblems.length ? 'warn' : 'ok',
         message: offProblems.length
           ? `ambient writeback off: ${offProblems.join('; ')}`
-          : 'ambient writeback off (default). Enable: gbrain config set memory.auto_writeback salient',
+          : explicitOff
+            ? 'ambient writeback off (explicit): every capture lane, SessionEnd transcripts included, retires banked session text. Enforcement is incomplete until workers started on an older gbrain restart (details.restart_after_off). Enable: gbrain config set memory.auto_writeback salient'
+            : 'ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: gbrain config set memory.auto_writeback off). Enable: gbrain config set memory.auto_writeback salient',
         details,
       };
     }

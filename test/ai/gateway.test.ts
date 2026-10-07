@@ -304,6 +304,63 @@ describe('Voyage openai-compatible request shim', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  // #6061: the Vercel AI Gateway reads the width from providerOptions.voyage;
+  // Voyage's own API rejects providerOptions with HTTP 400.
+  async function captureVoyageRequest(baseUrl: string | undefined, returnedDims = 2048) {
+    const originalFetch = globalThis.fetch;
+    let requestBody: Record<string, unknown> | undefined;
+    let requestUrl = '';
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      requestUrl = String(url instanceof Request ? url.url : url);
+      requestBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [{ object: 'embedding', index: 0, embedding: new Array(returnedDims).fill(0.01) }],
+        model: 'voyage-4-large',
+        usage: { total_tokens: 3 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    try {
+      configureGateway({
+        embedding_model: 'voyage:voyage-4-large',
+        embedding_dimensions: 2048,
+        env: { VOYAGE_API_KEY: 'voyage-fake' },
+        ...(baseUrl ? { base_urls: { voyage: baseUrl } } : {}),
+      });
+      const result = await embed(['dimension probe']).then((v) => ({ vectors: v, error: null }), (error: unknown) => ({ vectors: null, error }));
+      return { requestBody, requestUrl, ...result };
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  test('through the Vercel AI Gateway the width also rides providerOptions.voyage.outputDimension', async () => {
+    const { requestBody, requestUrl } = await captureVoyageRequest('https://ai-gateway.vercel.sh/v1');
+    expect(new URL(requestUrl).hostname).toBe('ai-gateway.vercel.sh');
+    expect(requestBody?.output_dimension).toBe(2048);
+    expect(requestBody?.providerOptions).toEqual({ voyage: { outputDimension: 2048 } });
+  });
+
+  test('the direct Voyage API and look-alike hosts never get providerOptions (Voyage answers 400 on it)', async () => {
+    for (const baseUrl of [undefined, 'https://api.voyageai.com/v1', 'https://ai-gateway.vercel.sh.attacker.example/v1', 'https://my-ai-gateway.vercel.sh/v1', 'https://proxy.example/ai-gateway.vercel.sh/v1']) {
+      const { requestBody } = await captureVoyageRequest(baseUrl);
+      expect(requestBody?.output_dimension).toBe(2048);
+      expect(requestBody && 'providerOptions' in requestBody).toBe(false);
+    }
+  });
+
+  test('a width mismatch through a custom base URL names the proxy as the likely cause; the default route keeps the migrate hint', async () => {
+    const proxied = await captureVoyageRequest('https://ai-gateway.vercel.sh/v1', 1024);
+    const err = proxied.error as { message: string; fix?: string };
+    expect(err.message).toContain('returned 1024 but schema expects 2048');
+    expect(err.message).toContain('ai-gateway.vercel.sh (provider_base_urls.voyage)');
+    expect(err.fix).toContain('gbrain doctor --only embedding_provider --probe --json');
+    const direct = await captureVoyageRequest(undefined, 1024);
+    const directErr = direct.error as { message: string; fix?: string };
+    expect(directErr.message).not.toContain('base_urls');
+    expect(directErr.fix).toContain('gbrain migrate --embedding-model');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────

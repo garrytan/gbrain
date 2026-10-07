@@ -188,6 +188,49 @@ gbrain chronicle-backfill --since 2026-09-01 --limit 50 --yes
 `--since` filters on the page's last update, not its own date. Re-running is
 safe: content already extracted is not paid for again.
 
+### Bound the spend with `--max-usd`
+
+`--max-usd <usd>` is a hard bound on everything the run queues, retries
+included. A page is queued only while
+
+    queued pages × (chronicle.job_budget_usd + one call's ceiling) × 5 attempts ≤ --max-usd
+
+The ceiling covers the one call that can overshoot the per-page cap before the
+tracker sees it. Each queued row is stamped with the run's campaign id, the
+per-attempt cap, the maximum attempts and the pricing policy, and the
+`chronicle` phase runs it under those values even if you change
+`chronicle.job_budget_usd` later. Attempts are counted when a row is claimed,
+so a crash never earns a page an extra attempt; a page that uses every attempt
+without finishing fails as `campaign_exhausted`. The bound is deliberately
+conservative: real spend is usually near `estimated_usd`, far below
+`worst_case_usd`.
+
+```bash
+gbrain chronicle-backfill --since 2026-09-01 --max-usd 20 --dry-run --json
+gbrain chronicle-backfill --since 2026-09-01 --max-usd 20 --yes
+```
+
+`--json` adds these fields; before this release none of them existed. An
+example with a Sonnet-class model at the default $0.25 per-page cap:
+
+```json
+{ "queued": 8, "estimated_usd": 0.13, "max_usd": 20, "worst_case_usd": 17.9098,
+  "per_page_worst_case_usd": 2.2387, "max_attempts": 5, "fits_under_cap": 8,
+  "cap_reached": true, "campaign_id": "3f0c…", "spent_usd": 0,
+  "next_command": "gbrain dream --phase chronicle" }
+```
+
+`cap_reached: true` means eligible pages were left out. A larger bound is a new
+paid run, so ask the user, then preview it with `--dry-run`. When no page fits,
+nothing is queued, `ask_user` is true and `next_command` is that preview.
+`spent_usd` is the campaign's recorded spend, summed across attempts.
+
+With `--max-usd`, a chat model gbrain has no price for is refused with
+`no_pricing` before anything is queued; the error's `fix` is the
+`gbrain pricing set` registration (look up the rate first). Without
+`--max-usd`, an unpriced model still warns and runs, and the message points at
+price registration and `--max-usd`.
+
 ## Skip and failure codes
 
 Write receipts, doctor and the advisor use these codes. `decision` codes come
@@ -214,6 +257,7 @@ brackets are filled in with real values on each surface.
 | `judge_llm_unavailable` | execution | No chat provider is configured on the brain host, so extraction cannot run. | — | user | credentials |
 | `no_pricing` | execution | chronicle.job_budget_usd was set explicitly, and gbrain has no price for <provider:model>, so the cap cannot be enforced. | `gbrain pricing set <provider:model> --input <usd-per-1M-input-tokens> --output <usd-per-1M-output-tokens> --source <pricing-page-url>` | agent | — |
 | `budget_exhausted` | execution | The extraction call cost more than chronicle.job_budget_usd allows for one page. | `gbrain config set chronicle.job_budget_usd 0.50` | agent | paid |
+| `campaign_exhausted` | execution | The page used every attempt its capped backfill (chronicle-backfill --max-usd) authorized without finishing, so it stops before spending more. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run` | agent | — |
 | `judge_chat_error` | execution | The chat provider returned an error; the page retries with backoff. | — | provider | — |
 | `judge_truncated` | execution | The extraction output hit chronicle.judge_max_tokens and was cut off, so nothing was written. | `gbrain config set chronicle.judge_max_tokens 8000` | agent | paid |
 | `judge_parse_failed` | execution | The extraction output had no parseable JSON array, so nothing was written; the page retries on a later run. | — | — | — |
