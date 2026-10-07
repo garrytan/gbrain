@@ -379,7 +379,7 @@ export const NOTICE_CODES = {
   listing_truncated: { kind: 'info', summary: 'A listing returned a full page and more rows match; the fix is the next-page call.' },
   former_relationships_hidden: { kind: 'info', summary: 'A graph read returned live relationships only and left out ended ones; the fix repeats the call with status: "all" (or as_of) to see history.' },
   mention_index: { kind: 'degraded', summary: 'The entity mention index is pending, off, failed or does not cover this page type, so references listed for an entity may be incomplete.' },
-  degraded_recall: { kind: 'degraded', summary: 'A retrieval stage that affects recall did not run; an empty or thin result is not proof of absence.' },
+  degraded_recall: { kind: 'degraded', summary: 'A retrieval stage that affects recall did not run; an empty or thin result is not proof of absence. A failed rerank names its reason (timeout, budget, rate_limited, unreachable, auth, provider_error), the fused-order fallback and the session\'s count of reranker-degraded calls; timeout and rate_limited say to repeat the call after a delay, the rest point at doctor\'s reranker_health.' },
   source_binding_narrowed: { kind: 'info', summary: "A GBRAIN_SOURCE / .gbrain-source binding narrowed an unqualified read that came back empty; the fix reads another source explicitly." },
   degraded_dedup: { kind: 'info', summary: 'remember ran without an embedding provider, so only exact duplicates are detected.' },
   local_transcripts: { kind: 'info', summary: 'The brain host keeps recent session transcripts that page reads never return and this connection cannot read; the fix is the CLI read (`gbrain transcripts recent --json`).' },

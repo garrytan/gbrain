@@ -36,6 +36,7 @@ export interface NoticeAudience {
 export class NoticeLedger {
   private seen = new Map<string, number>();
   private coaching = new Map<string, { count: number; at: number }>();
+  private tallies = new Map<string, { n: number; at: number }>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -49,6 +50,16 @@ export class NoticeLedger {
       if (at(v) >= cutoff && map.size <= MAX_KEYS) break;
       map.delete(k);
     }
+  }
+
+  /** Count one more `key` event in this audience's session (e.g. a reranker-degraded call) and return the session total. */
+  tally(audience: NoticeAudience, key: string): number {
+    const k = `${this.session(audience)}|${key}`;
+    const n = (this.tallies.get(k)?.n ?? 0) + 1;
+    this.tallies.delete(k);
+    this.tallies.set(k, { n, at: this.now() });
+    this.prune(this.tallies, v => v.at);
+    return n;
   }
 
   /** Filter one call's notices: mute, dedupe and the coaching budget. Never throws. */

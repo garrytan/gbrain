@@ -291,6 +291,8 @@ test/remediation-run-extras.serial.test.ts	R2	R2: mock.module(../src/core/minion
 test/remediation-run-loop.serial.test.ts	R2	R2: mock.module(../src/core/minions/queue.ts, ../src/core/minions/wait-for-completion.ts, ../src/core/remediation-checkpoint.ts, ../src/core/ai/gateway.ts) replaces modules for every file in the process
 test/remote-privacy-journeys.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; configureGateway changes the process-wide AI gateway; binds local servers/ports
 test/repair-contextual-mode-5621.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
+test/rerank-degraded-notice.serial.test.ts	R2	R2: mock.module (hybridSearchCached)
+test/rerank-failure-reason.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway; binds local servers/ports; R1: mutates process.env (GBRAIN_HOME, GBRAIN_AUDIT_DIR); R3: constructs PGLiteEngine inside a test (disconnected in finally)
 test/rerank-no-key.serial.test.ts	global-state	global-state: process-wide test seams __setRerankTransportForTests; configureGateway changes the process-wide AI gateway
 test/schema-cli-database-path.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/schema-engine-isolation.serial.test.ts	global-state	global-state: spyOn engine.getConfig, engine.searchKeyword, engine.searchVector

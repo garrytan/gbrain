@@ -17,7 +17,7 @@ import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, orderNotices, redactForTransport, renderNotice, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
 import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
-import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
+import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger, type NoticeAudience } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
 import { hiddenToolHint } from './hidden-tool-hint.ts';
@@ -573,15 +573,37 @@ export function localCallErrorEnvelope(tool: string, e: unknown) {
  * ServeHttpContext ledger. Session identity is the transport-resolved id only.
  * Fail-open: a ledger fault delivers every notice.
  */
+function noticeAudience(opts: DispatchOpts): NoticeAudience {
+  return { transport: opts.transport === 'stdio' ? 'stdio' : opts.remote === false ? 'cli' : 'http', principal: opts.auth?.clientId, sessionId: opts.sessionId };
+}
+
 function admitNotices(notices: Notice[], opts: DispatchOpts): Notice[] {
   if (notices.length === 0) return notices;
   try {
-    const principal = opts.auth?.clientId;
-    const transport = opts.transport === 'stdio' ? 'stdio' : opts.remote === false ? 'cli' : 'http';
-    return (opts.noticeLedger ?? processNoticeLedger()).admit(notices,
-      { transport, principal, sessionId: opts.sessionId }, mutedNoticeCodes(principal ?? (transport === 'stdio' ? 'stdio' : undefined)));
+    const audience = noticeAudience(opts);
+    return (opts.noticeLedger ?? processNoticeLedger()).admit(notices, audience,
+      mutedNoticeCodes(audience.principal ?? (audience.transport === 'stdio' ? 'stdio' : undefined)));
   } catch {
     return notices;
+  }
+}
+
+/**
+ * Cat 40 R0: a search/query whose reranker failed counts toward this
+ * session's reranker-degraded calls, and its own `_meta.retrieval` records
+ * the reason, the fallback and that count (no `fields: "full"` needed).
+ * Returns the session count, or undefined when the reranker did not fail.
+ */
+function recordRerankDegradation(responseMeta: Record<string, unknown>, opts: DispatchOpts): number | undefined {
+  try {
+    const retrieval = responseMeta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
+    const failed = retrieval?.degraded?.find(d => d.stage === 'rerank_failed');
+    if (!retrieval || !failed) return undefined;
+    const calls = (opts.noticeLedger ?? processNoticeLedger()).tally(noticeAudience(opts), 'rerank_failed');
+    responseMeta.retrieval = { ...retrieval, rerank_degraded: { reason: failed.reason ?? 'provider_error', fallback: 'fused_order', calls_this_session: calls } };
+    return calls;
+  } catch {
+    return undefined;
   }
 }
 
@@ -930,8 +952,9 @@ export async function dispatchToolCall(
       notices.push({ code: 'unknown_param', kind: 'info', why: buildUnknownParamWarnBlock([w]) });
     }
     // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
+    const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
-      { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding }));
+      { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding, rerankDegradedCalls }));
     // Monthly backup-coverage: one AGGREGATE notice per process (counts only —
     // never a local path or source id). The refresher runs on the stdio
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or

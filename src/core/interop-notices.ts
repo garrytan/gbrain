@@ -14,6 +14,7 @@ import type { GBrainConfig } from './config.ts';
 import type { ExplicitReadBinding } from './ops/contract.ts';
 import { configReadiness } from './readiness.ts';
 import { affectsRecall, type DegradedStage } from './types.ts';
+import type { RerankFailedReason } from './search/rerank.ts';
 import { localTranscriptsFix } from './transcripts.ts';
 
 // ── degraded recall (F3) ───────────────────────────────────────────────────
@@ -58,6 +59,52 @@ export const DEGRADED_STAGE_GUIDANCE: Readonly<Record<RecallStage, StageGuidance
 
 const NOT_ABSENCE = 'Treat a thin or empty result as "not found with a degraded search", never as "the brain has nothing on this".';
 
+/** Why each `rerank_failed` reason happened (closed vocabulary: RerankFailedReason). */
+const RERANK_REASON_WHY: Readonly<Record<RerankFailedReason, string>> = {
+  timeout: 'the reranker did not answer within its timeout',
+  budget: 'a spend cap stopped the reranker call',
+  rate_limited: 'the reranker provider refused the call for its rate or concurrency limit (HTTP 429)',
+  unreachable: 'the reranker endpoint could not be reached (connection refused, DNS or network error; a wrong reranker base URL looks like this)',
+  auth: 'the reranker provider rejected its API key (HTTP 401/403)',
+  provider_error: 'the reranker provider answered with an error',
+};
+/** Seconds to wait before repeating the call, for the transient reasons. */
+const RERANK_RETRY_AFTER_S: Partial<Record<RerankFailedReason, number>> = { timeout: 5, rate_limited: 20 };
+const RERANKER_HEALTH_VERIFY = { argv: ['gbrain', 'doctor', '--only', 'reranker_health', '--json'] };
+
+function rerankReason(reason: string | undefined): RerankFailedReason {
+  return reason !== undefined && reason in RERANK_REASON_WHY ? reason as RerankFailedReason : 'provider_error';
+}
+
+/**
+ * The fix for a failed rerank, per reason: a transient one (timeout, rate
+ * limit) repeats the same call after the stated delay (`next: wait`); the
+ * rest point at doctor's `reranker_health`, which names the endpoint, key or
+ * cap behind the failure. A rejected key is the user's to replace.
+ */
+function rerankFix(reason: RerankFailedReason, retry?: { op: string; args: Record<string, unknown> }): Action {
+  const delay = RERANK_RETRY_AFTER_S[reason];
+  if (delay !== undefined && retry) {
+    return {
+      mcp: { tool: retry.op, arguments: retry.args }, consent: [], actor: 'provider', requires_exclusive: false,
+      why: `The results are complete but keep their fused order. If ranking matters, repeat this ${retry.op} call after about ${delay} seconds; if reranking keeps failing, \`gbrain doctor --only reranker_health --json\` on the brain host names the cause.`,
+    };
+  }
+  if (reason === 'auth') {
+    return {
+      argv: RERANKER_HEALTH_VERIFY.argv, consent: ['credentials'], actor: 'user', requires_exclusive: false, verify: RERANKER_HEALTH_VERIFY,
+      why: 'The reranker provider rejected its API key. The user replaces the key in the .env file in the gbrain home directory (never on a command line); doctor confirms the reranker afterwards.',
+      user_message: 'Search results are not being reranked because the reranker rejected its API key. Can you check the reranker key (for example VOYAGE_API_KEY) on the brain host?',
+    };
+  }
+  const why = reason === 'unreachable'
+    ? "Doctor's reranker_health names the reranker endpoint that could not be reached; the fix is the provider's base URL (provider_base_urls) or the network on the brain host."
+    : reason === 'budget'
+      ? "Doctor's reranker_health names the spend cap or missing price that stopped reranking; raising a cap is the user's call."
+      : "Doctor's reranker_health names the reranker failure and its fix.";
+  return { ...doctorFix(why), verify: RERANKER_HEALTH_VERIFY };
+}
+
 /** Doctor on the brain host; `run_doctor` where callable (renderAction drops it otherwise). */
 export function doctorFix(why: string): Action {
   return { argv: ['gbrain', 'doctor', '--json'], mcp: { tool: 'run_doctor', arguments: {} }, consent: [], actor: 'agent', why, requires_exclusive: false };
@@ -75,26 +122,38 @@ function embeddingsFix(cfg: GBrainConfig | null | undefined, transport: 'stdio' 
   return { fix: entry && entry.state !== 'ok' && entry.fix ? entry.fix : doctorFix('Embeddings are configured but did not answer; doctor reports the provider failure.'), byChoice: false };
 }
 
-/** One `degraded_recall` notice for the recall-affecting stages of this call; null when none applies. */
+/**
+ * One `degraded_recall` notice for the recall-affecting stages of this call; null when none applies.
+ * A `rerank_failed` stage names its reason, the fallback (fused order) and, when the caller counts them
+ * (`rerankDegradedCalls`), this session's reranker-degraded calls; its fix follows the reason (`retry`
+ * is the call to repeat after a transient failure) when no other stage needs a fix.
+ */
 export function degradedRecallNotice(
   stages: ReadonlyArray<{ stage?: string; reason?: string } | string>,
-  opts: { config?: GBrainConfig | null; transport: 'stdio' | 'http' | 'cli'; optedOut?: boolean },
+  opts: { config?: GBrainConfig | null; transport: 'stdio' | 'http' | 'cli'; optedOut?: boolean; rerankDegradedCalls?: number; retry?: { op: string; args: Record<string, unknown> } },
 ): Notice | null {
-  const names = [...new Set(stages
-    .map(s => (typeof s === 'string' ? { stage: s } : s))
+  const entries = stages.map(s => (typeof s === 'string' ? { stage: s } : s));
+  const names = [...new Set(entries
     .filter(s => affectsRecall(s) && (s.stage as string) in DEGRADED_STAGE_GUIDANCE)
     .map(s => s.stage as RecallStage))];
   if (names.length === 0) return null;
+  const rerank = names.includes('rerank_failed') ? rerankReason(entries.find(s => s.stage === 'rerank_failed')?.reason) : undefined;
+  const labels = names.map(n => (n === 'rerank_failed' ? `rerank_failed: ${rerank}` : n));
+  const whys = names.map(n => (n === 'rerank_failed'
+    ? `reranking failed because ${RERANK_REASON_WHY[rerank!]}, so results keep their fused order (fallback: fused_order${opts.rerankDegradedCalls ? `; reranker-degraded calls this session: ${opts.rerankDegradedCalls}` : ''})`
+    : DEGRADED_STAGE_GUIDANCE[n].why));
   const guidance = names.map(n => DEGRADED_STAGE_GUIDANCE[n]);
   const fixKind: StageFix = guidance.some(g => g.fix === 'embeddings') ? 'embeddings' : guidance.some(g => g.fix === 'doctor') ? 'doctor' : null;
-  const byChoice = opts.optedOut || stages.some(s => typeof s !== 'string' && s.reason === 'embedding_disabled');
+  const byChoice = opts.optedOut || entries.some(s => s.reason === 'embedding_disabled');
   const emb = fixKind === 'embeddings' ? (byChoice ? { byChoice: true } as { fix?: Action; byChoice: boolean } : embeddingsFix(opts.config, opts.transport)) : undefined;
-  const fix = emb ? emb.fix : fixKind === 'doctor' ? doctorFix('Doctor names the failing retrieval dependency and its fix.') : undefined;
+  const fix = emb ? emb.fix
+    : fixKind === 'doctor' ? doctorFix('Doctor names the failing retrieval dependency and its fix.')
+    : rerank ? rerankFix(rerank, opts.retry) : undefined;
   const choice = emb?.byChoice ? ' This brain was set up keyword-only by the user\'s choice; mention it only if the user asks why something was not found. No query text was sent to an embedding provider. If the user wants semantic search, `gbrain doctor --json` names the enable command; turning it on needs their consent.' : '';
   return {
     code: 'degraded_recall',
     kind: 'degraded',
-    why: `Recall was degraded (${names.join(', ')}): ${guidance.map(g => g.why).join('; ')}. ${NOT_ABSENCE}${choice}`,
+    why: `Recall was degraded (${labels.join(', ')}): ${whys.join('; ')}. ${NOT_ABSENCE}${choice}`,
     ...(fix ? { fix } : {}),
     ...(fix?.user_message ? { user_message: fix.user_message } : {}),
   };
@@ -236,11 +295,14 @@ export function recallStagesFor(op: string, result: unknown, meta: Record<string
  */
 export function recallInteropNotices(
   op: string, result: unknown, meta: Record<string, unknown>, params: Record<string, unknown>,
-  opts: { config?: GBrainConfig | null; transport: 'stdio' | 'http' | 'cli'; binding?: ExplicitReadBinding },
+  opts: { config?: GBrainConfig | null; transport: 'stdio' | 'http' | 'cli'; binding?: ExplicitReadBinding; rerankDegradedCalls?: number },
 ): Notice[] {
   try {
     const out: Notice[] = [];
-    const degraded = degradedRecallNotice(recallStagesFor(op, result, meta, opts.config), { ...opts, optedOut: embeddingOptedOutFor(op, result, meta) });
+    const entries = (meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined)?.degraded ?? [];
+    const stages = recallStagesFor(op, result, meta, opts.config).map(stage => entries.find(d => d.stage === stage) ?? stage);
+    const { _meta: _ignored, ...args } = params;
+    const degraded = degradedRecallNotice(stages, { ...opts, optedOut: embeddingOptedOutFor(op, result, meta), retry: { op, args } });
     if (degraded) out.push(degraded);
     const narrowed = opts.transport === 'stdio' ? sourceBindingNarrowedNotice(op, params, result, opts.binding) : null;
     if (narrowed) out.push(narrowed);

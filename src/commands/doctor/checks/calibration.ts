@@ -682,6 +682,17 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
       };
     }
 
+    // Cat 40 R0: no HTTP response at all is a configuration or network fault
+    // (a stale base URL fails every call), not a provider outage.
+    const unreachableFails = failures.filter((f) => f.reason === 'unreachable');
+    if (unreachableFails.length >= 3) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${unreachableFails.length} reranker call(s) in the last 7 days could not reach the ${model} endpoint (connection refused, DNS or network error), so those searches kept their fused order. Fix: check the reranker base URL (\`provider_base_urls.${model.split(':')[0]}\` in the gbrain config, or the provider default) and that the brain host can reach it, then run \`gbrain models doctor\`.`,
+      };
+    }
+
     const transientFails = failures.filter(
       (f) => f.reason === 'network' || f.reason === 'timeout' || f.reason === 'rate_limit',
     );

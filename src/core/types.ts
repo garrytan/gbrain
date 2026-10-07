@@ -2017,7 +2017,7 @@ export const DEGRADED_REASONS = [
   // #4648 — rerank_passthrough reasons (mirror RerankPassThroughReason).
   'empty_result_set',
   'malformed_shape',
-  'budget',
+  'budget', 'rate_limited', 'unreachable', 'auth', // rerank_failed reasons (mirror RerankFailedReason)
   'candidate_budget',
   'iterative_scan_unavailable',
   'egress_denied', // System One: the Jev reranker skipped a query with a candidate from decide.egress.deny_sources
@@ -2044,7 +2044,7 @@ export interface DegradedStageEntry {
  *     short degraded TTL lets the next query recover a reranked result set
  *     (master's v0.48.1.0 behavior, kept at the merge). It never reaches the
  *     empty-result copy because a pass-through implies a non-empty batch.
- *   - `rerank_failed` (the call threw: timeout / provider_error / budget) is transient too.
+ *   - `rerank_failed` (the call threw: timeout / budget / rate_limited / unreachable / auth / provider_error) is transient too.
  *   - `keyword_relaxed_carried` is recall-shaped by definition (see above).
  * Pinned by test/degraded-stages-recall.test.ts; a new fail-open stage must be
  * classified here in the same commit that adds it.
