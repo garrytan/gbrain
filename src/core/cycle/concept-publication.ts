@@ -7,6 +7,7 @@
  * the #5525 order: publish private, bank provenance edges, then promote.
  */
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
+import { preservedConceptSections, stripPreservedConceptSections } from './concept-sections.ts';
 import type { Page } from '../types.ts';
 import { serializeMarkdown, parseMarkdown } from '../markdown.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, replaceOrInsertFactsFence, stripFactsFence } from '../facts-fence.ts';
@@ -91,22 +92,27 @@ export function composeConceptRepublication(page: Pick<Page, 'type' | 'title' | 
  * body written by a model or a synthesis phase, which owns only the prose. Any
  * fence in the replacement is dropped and the original blocks are inserted
  * verbatim, so publication neither expires fence facts nor deletes takes.
- * Throws a hold (`concept_preservation_hold`) when the original fences are
- * ambiguous or the result would not carry exactly the original rows.
+ * Curated `## Facets` / `## Merged` sections (#6161: the record of a concept
+ * merge) are carried the same way. Throws a hold
+ * (`concept_preservation_hold`) when the original fences are ambiguous or the
+ * result would not carry exactly the original rows and sections.
  */
 export function preserveCanonicalFences(page: Pick<Page, 'compiled_truth' | 'timeline'>, replacement: string): string {
   const hold = conceptPreservationHold(page);
   if (hold) throw conceptHoldError(hold);
   const body = page.compiled_truth ?? '';
-  let compiled = stripTakesFence(stripFactsFence(replacement)).trim();
+  let compiled = stripPreservedConceptSections(stripTakesFence(stripFactsFence(replacement))).trim();
+  const sections = preservedConceptSections(body);
+  if (sections.length) compiled = [compiled, ...sections].join('\n\n');
   const facts = fenceBlock(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
   if (facts) compiled = replaceOrInsertFactsFence(compiled, facts).trimEnd();
   const takes = fenceBlock(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
   if (takes) compiled = `${compiled}\n\n## Takes\n\n${takes}`;
   const out = parseMarkdown(serializeMarkdown({}, compiled, (page.timeline ?? '').trim(), { type: 'note', title: 'x', tags: [] }), 'page');
   if (JSON.stringify(canonicalRows(out.compiled_truth)) !== JSON.stringify(canonicalRows(body))
+    || JSON.stringify(preservedConceptSections(out.compiled_truth)) !== JSON.stringify(sections)
     || (out.timeline ?? '').trim() !== (page.timeline ?? '').trim()) {
-    throw conceptHoldError('CONCEPT_REPUBLICATION_LOSSY: composed page would not preserve the existing fences or timeline');
+    throw conceptHoldError('CONCEPT_REPUBLICATION_LOSSY: composed page would not preserve the existing fences, curated sections or timeline');
   }
   return compiled;
 }

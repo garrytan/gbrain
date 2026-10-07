@@ -200,3 +200,10 @@ bun test test/openclaw-context-engine-native.serial.test.ts
 The database user needs `CREATEDB`; fixtures create/drop unique databases
 rather than truncating shared rows. Real-provider recall and macOS 27 behavior
 remain unverified.
+
+`package.json` in this directory is a private package boundary, not a
+package: plugin hosts that derive a native-addon namespace from the nearest
+`package.json` above a `.node` file otherwise treat the whole checkout as one
+package and load slowly (#6026). It declares no entry points, is not a
+prebuild input, and must never move into `prebuilds/`, which holds exactly the
+eight addons.

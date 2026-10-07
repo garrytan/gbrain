@@ -76,3 +76,41 @@ test('an unmanaged dry run carries no managed warning', async () => {
     _resetPackCacheForTests();
   }
 }, 60_000);
+
+test('#6196: on a managed brain with nothing to retype, apply switches the pack without touching a page', async () => {
+  const unifyHome = mkdtempSync(join(tmpdir(), 'gbrain-unify-managed-empty-'));
+  try {
+    await managedBrain(async ({ ctx, engine }) => {
+      _resetPackCacheForTests();
+      const before = await types(engine);
+      await withEnv({ GBRAIN_HOME: unifyHome }, async () => {
+        const r = await runUnifyTypes(ctx, { target_pack: 'gbrain-base-v2', apply: true });
+        expect(r.active_pack_flipped).toBe(true);
+        expect(r.per_phase.retype_explicit.applied).toBe(0);
+        expect(await engine.getConfig('schema_pack')).toBe('gbrain-base-v2');
+      });
+      expect(await types(engine)).toEqual(before);
+    });
+  } finally {
+    rmSync(unifyHome, { recursive: true, force: true });
+    _resetPackCacheForTests();
+  }
+}, 120_000);
+
+test('#6196: a managed refusal names what would change and how to preview it', async () => {
+  const unifyHome = mkdtempSync(join(tmpdir(), 'gbrain-unify-managed-counts-'));
+  try {
+    await managedBrain(async ({ ctx }) => {
+      _resetPackCacheForTests();
+      await withEnv({ GBRAIN_HOME: unifyHome }, async () => {
+        const error = await runUnifyTypes(ctx, { target_pack: 'gbrain-base-v2', apply: true }).catch((e: unknown) => e) as { code?: string; message?: string; fix?: { argv?: string[] } };
+        expect(error.code).toBe('writer_coordinator_required');
+        expect(error.message).toMatch(/\d+ page\(s\) to retype/);
+        expect(error.fix?.argv).toEqual(['gbrain', 'onboard', '--check', '--explain']);
+      });
+    }, { setup: seed });
+  } finally {
+    rmSync(unifyHome, { recursive: true, force: true });
+    _resetPackCacheForTests();
+  }
+}, 120_000);

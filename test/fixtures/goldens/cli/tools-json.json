@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 212931,
-    "stdoutSha256": "ed214ad37fedcdf50f7998f61747fd3b1d67b20c11ffdc6d6f0ce8fb8523b5c4",
+    "stdoutBytes": 214035,
+    "stdoutSha256": "9130819a69d3546a6e6a29318ef3072825c65ac39f526de3222ac2da26a097c8",
     "toolNames": [
       "remember",
       "entity",
@@ -425,7 +425,7 @@
         "scope": "read"
       },
       {
-        "description": "Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Small changes: edit_page. Over 3 pages: put_pages.",
+        "description": "Complete content REPLACES the whole page: read get_page include_content:true, then send its revision as expected_revision and a request_id. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Edits: edit_page; over 3 pages: put_pages.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -433,6 +433,7 @@
         "parameters": {
           "allow_empty": "boolean?",
           "content": "string",
+          "drop_timeline": "boolean?",
           "expected_revision": "string?",
           "force": "boolean?",
           "ingested_via": "string?",
@@ -447,12 +448,16 @@
         "schema": {
           "properties": {
             "allow_empty": {
-              "description": "Allow emptying a non-empty page.",
+              "description": "Allow emptying the page.",
               "type": "boolean"
             },
             "content": {
               "description": "Complete markdown with frontmatter; read get_page include_content:true first.",
               "type": "string"
+            },
+            "drop_timeline": {
+              "description": "No Timeline in content: delete its entries.",
+              "type": "boolean"
             },
             "expected_revision": {
               "description": "Revision read; omit to create.",
@@ -661,13 +666,14 @@
         "scope": "write"
       },
       {
-        "description": "Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.",
+        "description": "Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72), in every source. Cascades through content_chunks, page_links, chunk_relations. Trusted local CLI only; the command is `gbrain pages purge-deleted`, which asks first (yes: true is the consent). Manual escape hatch alongside the autopilot purge phase.",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
         "name": "purge_deleted_pages",
         "parameters": {
-          "older_than_hours": "number?"
+          "older_than_hours": "number?",
+          "yes": "boolean?"
         },
         "required_scopes": [],
         "schema": {
@@ -675,6 +681,10 @@
             "older_than_hours": {
               "description": "Age cutoff in hours. Default 72.",
               "type": "number"
+            },
+            "yes": {
+              "description": "Consent to the irreversible brain-wide purge. Ask the user first.",
+              "type": "boolean"
             }
           },
           "required": [],
@@ -881,6 +891,10 @@
                   "content": {
                     "description": "Complete markdown with frontmatter.",
                     "type": "string"
+                  },
+                  "drop_timeline": {
+                    "description": "Content without a Timeline section deletes its dated entries.",
+                    "type": "boolean"
                   },
                   "expected_revision": {
                     "description": "Revision read; omit to create.",
@@ -5030,7 +5044,7 @@
         "scope": "read"
       },
       {
-        "description": "Life Chronicle: queue existing meeting/conversation/calendar pages (by type or under meetings/, conversations/, cal/, calendar/) for timeline-event extraction. One paid chat call per page, so it needs --yes; --dry-run reports the candidates, an estimated cost and skip reasons. The chronicle_page_state ledger skips content already extracted or queued, so repeats never pay twice. Queued pages run in the `chronicle` cycle phase (`gbrain dream --phase chronicle`), exempt from the daily limit. Local-only bulk op. CLI: `gbrain chronicle-backfill [--since YYYY-MM-DD] [--dated-since YYYY-MM-DD] [--recent] [--limit N] [--dry-run | --yes]`.",
+        "description": "Life Chronicle: queue existing meeting/conversation/calendar pages (by type or under meetings/, conversations/, cal/, calendar/) for timeline-event extraction. One paid chat call per page, so it needs --yes; --dry-run reports the candidates, an estimated cost and skip reasons. The chronicle_page_state ledger skips content already extracted or queued, so repeats never pay twice. Queued pages run in the `chronicle` cycle phase (`gbrain dream --phase chronicle`), exempt from the daily limit. --max-usd is a hard bound counting retries: pages queue only while their worst case fits, and an unpriced chat model then refuses with no_pricing. Local-only bulk op. CLI: `gbrain chronicle-backfill [--since YYYY-MM-DD] [--dated-since YYYY-MM-DD] [--recent] [--limit N] [--max-usd USD] [--dry-run | --yes]`.",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
@@ -5039,6 +5053,7 @@
           "dated_since": "string?",
           "dry_run": "boolean?",
           "limit": "number?",
+          "max_usd": "number?",
           "recent": "boolean?",
           "since": "string?",
           "yes": "boolean?"
@@ -5056,6 +5071,10 @@
             },
             "limit": {
               "description": "Max pages queued in this run, across all types and sources (default 1000).",
+              "type": "number"
+            },
+            "max_usd": {
+              "description": "Hard spend bound in USD for everything this run queues, retries included; pages beyond it are not queued (cap_reached).",
               "type": "number"
             },
             "recent": {
@@ -6384,7 +6403,7 @@
         "scope": "admin"
       },
       {
-        "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked) or flat. Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures; present the answer as partial and name the held items and their retry command.",
+        "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked; each group shows at most 5 loops, the rest counted in loops_omitted) or flat. Loops that name no counterparty are never ranked as a person: they come back in no_counterparty (null when none). Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures; present the answer as partial and name the held items and their retry command.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,

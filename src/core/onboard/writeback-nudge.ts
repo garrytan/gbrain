@@ -90,7 +90,8 @@ export async function runWritebackNudge(
     line('[gbrain]   - saved facts are readable by agents authorized on THIS brain — not the');
     line('[gbrain]     public internet. Nothing new leaves your machine beyond your');
     line('[gbrain]     configured model provider calls.');
-    line('[gbrain] Off switch (anytime): gbrain config set memory.auto_writeback off,');
+    line('[gbrain] Off switch (anytime): gbrain config set memory.auto_writeback off');
+    line('[gbrain]   (it also stops the compaction harvest and SessionEnd transcript extraction),');
     line('[gbrain]   then gbrain bootstrap harness --yes to remove installed instruction blocks.');
     line('═══════════════════════════════════════════════════════════════');
     // Agent contract v1 (F7): the ask is a decision for the user; the

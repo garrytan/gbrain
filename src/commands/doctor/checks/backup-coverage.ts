@@ -81,7 +81,9 @@ function backupAssetFix(s: BackupStatus): Action | undefined {
       argv: filled, consent: egress ? ['credentials', 'egress'] : [], actor: 'agent', requires_exclusive: false,
       why: egress
         ? 'Creates a private GitHub repository for the brain and pushes to it (needs the user\'s GitHub credentials; content leaves this machine).'
-        : `Writes a Markdown copy of '${a.id}' (pages and facts) to a directory outside the brain so it survives losing the database.`,
+        : argv[2] === 'writer'
+          ? `'${a.id}' is a managed canonical worktree: the persistence coordinator commits and pushes it as Git effects, and \`gbrain sources push\` refuses there by design. The read-only probe lists effects, blocking_effects and recent_failures; a parked push is retried with \`gbrain sources writer retry-effects <source> --request-id <id>\`.`
+          : `Writes a Markdown copy of '${a.id}' (pages and facts) to a directory outside the brain so it survives losing the database.`,
       ...(filled.some((x) => x.includes('<BACKUP_DIR>')) ? { inputs: [{ name: 'BACKUP_DIR', how: 'Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).' }] } : {}),
       verify: doctorVerify('backup_coverage'), docs: 'docs/operations/backup-check.md',
     };

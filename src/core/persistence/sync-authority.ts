@@ -12,6 +12,7 @@ import { authorizePageVisibility } from './page-visibility.ts';
 import { submissionAuthority, authorizeWrite } from './authority.ts';
 import { currentVerifiedLocalWriter, registerLocalWriter } from './identity.ts';
 import type { WriteAuthority } from './model.ts';
+import { writerAdminState } from './admin-intent.ts';
 
 const legacyDelegation = new AsyncLocalStorage<boolean>();
 /** The bulk sync of one source, which only the brain host's CLI may run. */
@@ -49,11 +50,25 @@ export async function resolveSyncPersistenceMode(engine: BrainEngine, opts: Sync
   const [source] = await engine.executeRaw<{ claimed: boolean }>(`SELECT
     EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id AND source_incarnation=s.incarnation) AS claimed
     FROM sources s WHERE s.id=$1`, [opts.sourceId ?? 'default']);
-  if (source?.claimed) {
-    throw new OperationError('writer_coordinator_required', 'Claimed-source sync, including connectors, requires explicit persistence activation.',
-      'Stop older writers and review gbrain sources writer status, then explicitly activate persistence before retrying. Claiming a source alone does not exclude running legacy writers.');
-  }
+  if (source?.claimed) throw await preActivationClaimRefusal(engine, opts.sourceId ?? 'default');
   return false;
+}
+/**
+ * #6122: a source claimed while managed persistence was never activated. Classic sync must not run under the
+ * claim and nothing managed publishes it, so the user chooses: release the claim (classic sync resumes) or
+ * activate managed persistence. The fix is the state-bound release, behind ask_user; its preview changes nothing.
+ */
+async function preActivationClaimRefusal(engine: BrainEngine, sourceId: string): Promise<OperationError> {
+  const state = await writerAdminState(engine);
+  return opError('writer_coordinator_required', 'Claimed-source sync, including connectors, requires explicit persistence activation.',
+    `Source ${sourceId} is claimed by a managed writer, but managed persistence was never activated on this brain, so classic sync is fenced and nothing was synced. `
+      + 'This is a topology decision for the user: release the claim so classic sync resumes (the command in fix; preview it first with gbrain sources writer deactivate --dry-run --json), '
+      + 'or stop older writers on every host and activate managed persistence (gbrain sources writer activate --confirm-quiesced --admin-intent writer_activate --expected-state <admin_state>, see docs/architecture/topologies.md).',
+    { fix: { argv: ['gbrain', 'sources', 'writer', 'deactivate', '--admin-intent', 'writer_deactivate', '--expected-state', state],
+      preview_argv: ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run', '--json'], consent: ['destructive'], actor: 'agent', requires_exclusive: false,
+      why: 'Releases every source claimed before activation (bindings removed, worktrees retired, a topology change recorded); the brain stays classic and the next gbrain sync runs in classic mode.',
+      user_message: `Source ${sourceId} was claimed for managed writes, but managed persistence was never turned on, so sync is blocked. Release the claim and go back to classic sync, or turn managed persistence on?`,
+      verify: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] }, docs: 'docs/architecture/topologies.md#deactivate-runbook' } });
 }
 export async function assertManagedSyncActive(engine: BrainEngine, lock = false): Promise<void> {
   const [brain] = await engine.executeRaw<{ enabled: boolean }>(`SELECT enabled FROM persistence_brain WHERE singleton=1${lock ? ' FOR SHARE' : ''}`);

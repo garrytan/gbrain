@@ -83,8 +83,21 @@ const TIMELINE_DECISIONS: Record<ProjectionWriter, Record<TimelineRowState, Time
   immutable: { in_body: 'refresh_detail', drifted: 'delete', removed: 'delete', removed_marked: 'keep', database_only: 'keep' },
 };
 
-export function timelineRowAction(writer: ProjectionWriter, state: TimelineRowState): TimelineRowAction {
-  return TIMELINE_DECISIONS[writer][state];
+/**
+ * #5969 (D3): what an ordinary put_page / put_pages body says about its
+ * Timeline section (`timeline-omission.ts`); other writers pass none and keep
+ * the table above. Only rows the writer saw (`removed`, `removed_marked`)
+ * change: an explicitly empty section deletes them for every writer class; a
+ * body with no section at all keeps them for a local preserving writer
+ * (rendered back like a marked row) and, with `drop_timeline`, deletes them.
+ */
+export interface TimelineWritePolicy { section: 'present' | 'emptied' | 'omitted'; drop: boolean; preserveOmitted: boolean }
+
+export function timelineRowAction(writer: ProjectionWriter, state: TimelineRowState, policy?: TimelineWritePolicy): TimelineRowAction {
+  const action = TIMELINE_DECISIONS[writer][state];
+  if (!policy || (state !== 'removed' && state !== 'removed_marked')) return action;
+  if (policy.section === 'emptied' || (policy.section === 'omitted' && policy.drop)) return 'delete';
+  return policy.section === 'omitted' && policy.preserveOmitted ? 'materialize' : action;
 }
 
 function exactTimelineKey(entry: { date: string; source?: string | null; summary: string }): string {
@@ -159,7 +172,8 @@ export async function unrecordedCanonicalTimeline(engine: BrainEngine, pageId: n
 }
 
 /** Classify stored rows against a new body and the writer's prior snapshot. */
-function classifyTimeline(rows: StoredTimelineRow[], body: CanonicalBody, prior: CanonicalBody | null, slug: string, writer: ProjectionWriter) {
+function classifyTimeline(rows: StoredTimelineRow[], body: CanonicalBody, prior: CanonicalBody | null, slug: string, writer: ProjectionWriter,
+  policy?: TimelineWritePolicy) {
   const timeline = canonicalTimeline(body, slug);
   const exactIncoming = new Map([...timeline.values()].map(t => [exactTimelineKey(t), sanitizeForJsonb(t.detail ?? '')]));
   const priorTimeline = prior ? new Set(canonicalTimeline(prior, slug).keys()) : new Set<string>();
@@ -168,12 +182,34 @@ function classifyTimeline(rows: StoredTimelineRow[], body: CanonicalBody, prior:
     const key = timelineKey(row);
     const state: TimelineRowState = exactIncoming.has(exactTimelineKey(row)) ? 'in_body' : timeline.has(key) ? 'drifted'
       : priorMarked.has(key) ? 'removed_marked' : priorTimeline.has(key) ? 'removed' : 'database_only';
-    return { ...row, key, state, action: timelineRowAction(writer, state) };
+    return { ...row, key, state, action: timelineRowAction(writer, state, policy) };
   });
   return { timeline, exactIncoming, pinned };
 }
 
+/** True when the body carries at least one timeline entry the coordinator would project. */
+export function bodyHasTimelineEntries(body: CanonicalBody, slug: string): boolean {
+  return canonicalTimeline(body, slug).size > 0;
+}
+
+/** Dates of the timeline rows a write removed (or would remove): the rows it saw in the prior body and dropped. */
+export interface TimelineRowsRemoved { count: number; earliest: string; latest: string }
+
+function removedSummary(dates: string[]): TimelineRowsRemoved | null {
+  if (!dates.length) return null;
+  const sorted = dates.map(d => d.slice(0, 10)).sort();
+  return { count: sorted.length, earliest: sorted[0]!, latest: sorted[sorted.length - 1]! };
+}
+
+/** The stored rows this writer would delete because the new body dropped their bullets, judged now. */
+export async function timelineRowsToRemove(engine: BrainEngine, body: CanonicalBody, prior: PageSnapshot, slug: string,
+  writer: ProjectionWriter, policy?: TimelineWritePolicy): Promise<TimelineRowsRemoved | null> {
+  const { pinned } = classifyTimeline(await storedTimeline(engine, prior.page.id), body, prior.page, slug, writer, policy);
+  return removedSummary(pinned.filter(row => row.action === 'delete' && (row.state === 'removed' || row.state === 'removed_marked')).map(row => row.date));
+}
+
 const collapse = (text: string) => sanitizeForJsonb(text).replace(/\s+/g, ' ').trim();
+export const TIMELINE_COMMENT_MARKUP = /<!--|-->/;
 
 /**
  * Render one row as a marked bullet, or null when render-then-extract would
@@ -186,6 +222,9 @@ export function renderMaterializedBullet(row: { date: string; source: string; su
   const detail = collapse(row.detail ?? '');
   // Pre-#4277 backlink receipts are graph noise the extractors deliberately skip.
   if (/^Referenced in\s+\[/i.test(tuple.summary)) return null;
+  // #6184: a row carrying HTML comment markup (a junk row the citation parser filed from a section END marker)
+  // would write a second copy of that marker into the page; it stays database-side until `gbrain repair timeline-comments`.
+  if (TIMELINE_COMMENT_MARKUP.test(`${row.source}\n${row.summary}\n${row.detail ?? ''}`)) return null;
   const block = [materializedMarker(tuple), `- **${tuple.date}** | ${tuple.source} — ${tuple.summary}`, ...(detail ? [`  ${detail}`] : [])].join('\n');
   const extracted = [...canonicalTimeline({ compiled_truth: block, timeline: '' }, slug).values()];
   if (extracted.length !== 1) return null;
@@ -203,10 +242,10 @@ export interface TimelineMaterialization { timeline: string; materialized: numbe
  * digested, by writers that render the canonical file from the database.
  */
 export async function materializeTimeline(engine: BrainEngine, body: CanonicalBody, slug: string,
-  prior: PageSnapshot | null, writer: ProjectionWriter): Promise<TimelineMaterialization> {
+  prior: PageSnapshot | null, writer: ProjectionWriter, policy?: TimelineWritePolicy): Promise<TimelineMaterialization> {
   const timelineText = body.timeline ?? '';
   if (!prior) return { timeline: timelineText, materialized: 0, unrenderable: 0 };
-  const { pinned } = classifyTimeline(await storedTimeline(engine, prior.page.id), body, prior.page, slug, writer);
+  const { pinned } = classifyTimeline(await storedTimeline(engine, prior.page.id), body, prior.page, slug, writer, policy);
   const blocks: string[] = [];
   const seen = new Set<string>();
   let unrenderable = 0;
@@ -288,12 +327,12 @@ function takeCollision(rows: number[], sections: Map<number, FenceSection>, slug
  * what this writer actually edited.
  */
 export async function prepareCanonicalProjections(engine: BrainEngine, page: ParsedPage, slug: string, sourceId: string,
-  prior: PageSnapshot | null, writer: ProjectionWriter): Promise<(tx: BrainEngine, pageId?: number) => Promise<void>> {
+  prior: PageSnapshot | null, writer: ProjectionWriter, policy?: TimelineWritePolicy): Promise<(tx: BrainEngine, pageId?: number) => Promise<CanonicalProjectionResult>> {
   const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId);
   const { timeline, exactIncoming, pinned } = classifyTimeline(prior ? await storedTimeline(engine, prior.page.id) : [],
-    page, prior?.page ?? null, slug, writer);
+    page, prior?.page ?? null, slug, writer, policy);
   const deletions = JSON.stringify(pinned.filter(row => row.action === 'delete')
-    .map(({ id, date, source, summary, detail }) => ({ id, date, source, summary, detail })));
+    .map(({ id, date, source, summary, detail, state }) => ({ id, date, source, summary, detail, removed: state === 'removed' || state === 'removed_marked' })));
   const refreshes = JSON.stringify(pinned.filter(row => row.action === 'refresh_detail')
     .map(row => ({ id: row.id, detail: row.detail, next: exactIncoming.get(exactTimelineKey(row)) }))
     .filter(row => row.next !== row.detail));
@@ -318,7 +357,9 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   // statement (insertFacts, addTakesBatch) ends one, so order is kept.
   return async (tx, pageId) => {
     const id = pageId ?? (await tx.readPageSnapshot(slug, { sourceId }))?.page.id;
-    if (id == null) return;
+    if (id == null) return { timelineRowsRemoved: null };
+    // #5969: only rows this statement actually deleted count; a row changed since preparation is left alone and uncounted.
+    const removedDates: string[] = [];
     if (quoted) await refuseQuotedFenceLoss(tx, id, quoted, takeRowsGone, factRows, slug, sourceId);
     // Fact IDs in permanent receipts remain meaningful when a canonical row is
     // removed/replaced. Expire and detach its row position instead of deleting it.
@@ -351,9 +392,10 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     // Event-page references have a different canonical origin and remain intact;
     // new rows carry their Markdown detail on insert, pinned rows refresh only from their preimage.
     const timelineRows = [
-      () => tx.executeRaw(`DELETE FROM timeline_entries t USING jsonb_to_recordset($2::text::jsonb) AS d(id integer,date date,source text,summary text,detail text)
+      () => tx.executeRaw<{ date: string; removed: boolean }>(`DELETE FROM timeline_entries t USING jsonb_to_recordset($2::text::jsonb) AS d(id integer,date date,source text,summary text,detail text,removed boolean)
         WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=d.id AND t.date=d.date AND t.source=d.source
-          AND t.summary=d.summary AND t.detail=d.detail`, [id, deletions]),
+          AND t.summary=d.summary AND t.detail=d.detail RETURNING t.date::text AS date, d.removed`, [id, deletions])
+        .then(rows => { for (const row of rows) if (row.removed) removedDates.push(row.date); return rows; }),
       ...[...timeline.values()].map(entry => () => tx.addTimelineEntry(slug, entry, { sourceId })),
       () => tx.executeRaw(`UPDATE timeline_entries t SET detail=r.next FROM jsonb_to_recordset($2::text::jsonb) AS r(id integer,detail text,next text)
         WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=r.id AND t.detail=r.detail`, [id, refreshes]),
@@ -367,5 +409,8 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       await tx.addTakesBatch(takes.map(t => takesPreparation.toCanonicalBatchInput(id, t)));
       await pipelined(tx, [...resolveTakes, ...timelineRows]);
     } else await pipelined(tx, timelineRows);
+    return { timelineRowsRemoved: removedSummary(removedDates) };
   };
 }
+
+export interface CanonicalProjectionResult { timelineRowsRemoved: TimelineRowsRemoved | null }

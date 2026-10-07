@@ -58,9 +58,17 @@ import { opError } from '../core/ops/contract.ts';
 import { readDbSchemaPack } from '../core/schema-pack/best-effort.ts';
 import { sanitizeTypeForDisplay } from '../core/schema-pack/type-usage.ts';
 import { yamlScalar } from '../core/frontmatter-inference.ts';
+import { ROUTERS, SCHEMA_SUBCOMMANDS, subcommandHelpRequested } from '../cli/subcommands.ts';
+
+export { SCHEMA_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
+
+export function printUsage(): void {
+  printHelp();
+}
 
 export async function runSchema(args: string[]): Promise<void> {
-  const sub = args[0];
+  if (subcommandHelpRequested(args, ROUTERS.schema)) return printHelp();
+  const sub = args[0] as (typeof SCHEMA_SUBCOMMANDS)[number] | undefined;
   switch (sub) {
     case 'active':   return runActive(args.slice(1));
     case 'list':     return runList(args.slice(1));
@@ -97,8 +105,6 @@ export async function runSchema(args: string[]): Promise<void> {
     case 'set-expert-routing': return runSetExpertRoutingCmd(args.slice(1));
     case 'scaffold-extractable': return runScaffoldExtractableCmd(args.slice(1));
     case undefined:
-    case '--help':
-    case '-h':
       return printHelp();
     default:
       console.error(`Unknown schema subcommand: ${sub}`);
@@ -134,7 +140,7 @@ Authoring (v0.40.6.0):
   edit <name>             Print the on-disk pack file path
   diff <a> <b>            Compare page_type sets across two packs
 
-  add-type <name> --primitive <p> --prefix <dir/>
+  add-type <name> --primitive <p> (--prefix <dir/> | --no-prefix)
                           [--extractable] [--expert] [--alias <a>]* [--pack <name>]
   remove-type <name>      [--pack <name>]
   update-type <name>      [--extractable BOOL] [--expert BOOL] [--primitive P] [--pack <name>]
@@ -197,20 +203,10 @@ async function readDbSchemaPackConfig(cfg: GBrainConfig | null): Promise<string 
   }
 }
 
-async function runActive(_args: string[]): Promise<void> {
-  const cfg = loadConfig();
-  const dbConfig = await readDbSchemaPackConfig(cfg);
-  const resolution = resolveActivePackNameOnly({ cfg, remote: false, dbConfig });
-  const pack = await loadActivePack({ cfg, remote: false, dbConfig });
-  console.log(`Active pack: ${pack.manifest.name} v${pack.manifest.version}`);
-  console.log(`Source: ${resolution.source}`);
-  console.log(`Pack identity: ${pack.identity}`);
-  console.log(`Page types: ${pack.manifest.page_types.length}`);
-  console.log(`Link verbs: ${pack.manifest.link_types.length}`);
-  console.log(`Takes kinds: ${pack.manifest.takes_kinds.join(', ')}`);
-  if (pack.manifest.description) {
-    console.log(`\n${pack.manifest.description}`);
-  }
+async function runActive(args: string[]): Promise<void> {
+  const { json, source } = parseFlags(args);
+  const { runSchemaActive } = await import('./schema-active.ts');
+  return runSchemaActive({ json, sourceId: source }, withConnectedEngine);
 }
 
 function runList(_args: string[]): void {
@@ -1145,37 +1141,24 @@ function runReloadCmd(args: string[]): void {
 
 async function runAddTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
+  const { parseAddTypeArgs, NO_PREFIX_NOTE } = await import('./schema-add-type.ts');
+  let parsed: import('./schema-add-type.ts').AddTypeArgs;
+  try {
+    parsed = parseAddTypeArgs(args);
+  } catch (e) {
+    const { writeCliRefusal } = await import('../cli/cli-error.ts');
+    const err = e as import('../core/ops/contract.ts').OperationError;
+    process.exit(writeCliRefusal(err, 'schema', { json, human: `${err.message}\n  ${err.suggestion}` }));
+  }
   const packName = pickPackName({}, args);
-  const positional = args.filter((a) => !a.startsWith('--'));
-  const name = positional[0];
-  if (!name) { console.error('Usage: gbrain schema add-type <name> --primitive <p> --prefix <dir/>'); process.exit(2); }
-  let primitive: string | undefined;
-  let prefix: string | undefined;
-  let extractable = false;
-  let expert = false;
-  const aliases: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--primitive') primitive = args[++i];
-    else if (a?.startsWith('--primitive=')) primitive = a.slice('--primitive='.length);
-    else if (a === '--prefix') prefix = args[++i];
-    else if (a?.startsWith('--prefix=')) prefix = a.slice('--prefix='.length);
-    else if (a === '--extractable') extractable = true;
-    else if (a === '--expert' || a === '--expert-routing') expert = true;
-    else if (a === '--alias') aliases.push(args[++i]!);
-    else if (a?.startsWith('--alias=')) aliases.push(a.slice('--alias='.length));
-  }
-  if (!primitive || !PACK_PRIMITIVES.includes(primitive as PackPrimitive)) {
-    console.error(`--primitive must be one of ${PACK_PRIMITIVES.join('|')}`);
-    process.exit(2);
-  }
-  if (!prefix) { console.error('--prefix is required (e.g. --prefix people/researchers/)'); process.exit(2); }
   try {
     const result = await addTypeToPack(packName, {
-      name, primitive: primitive as PackPrimitive, prefix,
-      extractable, expertRouting: expert, aliases,
+      name: parsed.name, primitive: parsed.primitive, prefix: parsed.prefix, noPrefix: parsed.noPrefix,
+      extractable: parsed.extractable, expertRouting: parsed.expert, aliases: parsed.aliases,
     });
-    emitMutateResult(result, json);
+    const output: typeof result & { note?: string } = parsed.noPrefix ? { ...result, note: NO_PREFIX_NOTE } : result;
+    emitMutateResult(output, json);
+    if (parsed.noPrefix && !json) console.log(`Note: ${NO_PREFIX_NOTE}`);
   } catch (e) { handleMutationError(e); }
 }
 

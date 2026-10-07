@@ -51,6 +51,12 @@ export interface EntityCandidate {
    * sentence, so the capital is no evidence that it is a name ("Met", "Raised").
    */
   sentenceStart?: true;
+  /**
+   * #6195: a weak candidate of 2-3 consecutive lowercase words ("alice
+   * example"). Besides the alias arm, the resolver may match it to the exact
+   * title of an entity page whose title is globally unique.
+   */
+  multiToken?: true;
 }
 
 /** Max STRONG candidates returned per turn — bounds downstream DB work regardless of pointer cap. */
@@ -74,6 +80,13 @@ export const MAX_WEAK_CANDIDATES = 32;
  * so the cap only bounds probe size.
  */
 export const MAX_CJK_WEAK_CANDIDATES = 24;
+
+/**
+ * Max lowercase multi-word weak n-grams per turn (#6195). Own budget: they
+ * never take budget from strong candidates or single weak tokens, and the
+ * resolver only matches them exactly, so the cap bounds probe size.
+ */
+export const MAX_WEAK_NGRAM_CANDIDATES = 16;
 
 /**
  * HARD stopwords — function words that are never an entity, even capitalized
@@ -278,6 +291,28 @@ export function extractCandidates(text: string): EntityCandidate[] {
     weakSeen.add(norm);
     weakCount++;
     out.push({ display: raw, query: raw, weak: true });
+  }
+
+  // 3.6. Lowercase multi-word weak n-grams (#6195): 2-3 consecutive lowercase
+  // words separated only by spaces or tabs ("call alice example" → "alice
+  // example"), so a lowercase full name can match its alias or entity title
+  // whole. An n-gram made only of stopwords/common words is skipped.
+  const words = [...text.matchAll(WEAK_TOKEN_RE)].map((m) => ({ raw: stripPossessive(m[0]), start: m.index!, end: m.index! + m[0].length }));
+  let ngramCount = 0;
+  ngrams: for (let i = 0; i < words.length; i++) {
+    for (const n of [2, 3]) {
+      if (i + n > words.length) break;
+      const span = words.slice(i, i + n);
+      if (span.some((w, k) => k > 0 && !/^[ \t]+$/.test(text.slice(span[k - 1].end, w.start)))) break;
+      if (span.every((w) => STOPWORDS.has(w.raw.toLowerCase()) || COMMON_WORDS.has(w.raw.toLowerCase()))) continue;
+      const phrase = span.map((w) => w.raw).join(' ');
+      const norm = normalizeAlias(phrase);
+      if (!norm || strongNorms.has(norm) || weakSeen.has(norm)) continue;
+      if (ngramCount >= MAX_WEAK_NGRAM_CANDIDATES) break ngrams;
+      weakSeen.add(norm);
+      ngramCount++;
+      out.push({ display: phrase, query: phrase, weak: true, multiToken: true });
+    }
   }
 
   // 4. CJK weak n-gram pass (#3746). CJK scripts carry no capitalization and

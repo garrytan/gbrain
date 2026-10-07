@@ -29,6 +29,13 @@ if (readFileSync('docs/guides/harness-adapters.md', 'utf8') !== renderHarnessRef
   process.exit(1);
 }`;
 
+/**
+ * Every `bun test` this script spawns. Bun does not apply bunfig.toml's
+ * `[test] timeout`, so without the flag a cold PGLite init or a JIT-less
+ * runner hits the 5 s default (#6187).
+ */
+const BUN_TEST = ['bun', 'test', '--timeout=60000'];
+
 export const ARTIFACTS: Artifact[] = [
   { name: 'schema (src/schema-embedded)', regen: ['bun', 'run', 'scripts/build-schema.ts'], check: ['bash', 'scripts/check-schema-fresh.sh'] },
   { name: 'schema migrations bundle', regen: ['bun', 'run', 'scripts/build-schema-migrations.ts'], check: ['bash', 'scripts/check-schema-migrations-fresh.sh'] },
@@ -38,10 +45,10 @@ export const ARTIFACTS: Artifact[] = [
   { name: 'MCP tool catalog', regen: ['bun', 'run', 'scripts/generate-tool-catalog.ts'], check: ['bash', 'scripts/check-tool-catalog-fresh.sh'] },
   { name: 'skills manifest', regen: ['bun', 'run', 'scripts/generate-skills-manifest.ts'], check: ['bash', 'scripts/check-skills-manifest-fresh.sh'] },
   { name: 'eval metric glossary', regen: ['bun', 'run', 'scripts/generate-metric-glossary.ts'], check: ['bash', 'scripts/check-eval-glossary-fresh.sh'] },
-  { name: 'CLI flag registry', regen: ['bun', 'run', 'scripts/generate-flag-registry.ts'], check: ['bun', 'test', 'test/generate-flag-registry.test.ts'] },
+  { name: 'CLI flag registry', regen: ['bun', 'run', 'scripts/generate-flag-registry.ts'], check: [...BUN_TEST, 'test/generate-flag-registry.test.ts'] },
   { name: 'plugin tree + persona variants', regen: ['bun', 'run', 'scripts/generate-plugin-tree.ts', '--out', 'plugin', '--variants-out', 'plugin-variants'], check: ['bash', 'scripts/check-plugin-tree.sh'] },
   { name: 'structural suites manifest', regen: ['bun', 'scripts/classify-tests.ts'], check: ['bun', 'scripts/classify-tests.ts', '--check'] },
-  { name: 'llms.txt + llms-full.txt', regen: ['bun', 'run', 'scripts/build-llms.ts'], check: ['bun', 'test', 'test/build-llms.test.ts'] },
+  { name: 'llms.txt + llms-full.txt', regen: ['bun', 'run', 'scripts/build-llms.ts'], check: [...BUN_TEST, 'test/build-llms.test.ts'] },
 ];
 
 /** Offline contract goldens: regenerated only with --goldens, each a reviewer-visible change to justify. */
@@ -57,6 +64,8 @@ export const POSTGRES_GOLDENS = [
   'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test --timeout=60000 test/e2e/schema-catalog-golden.test.ts',
   'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test --timeout=60000 test/e2e/doctor-json-golden.test.ts',
 ];
+
+export const goldenArgv = (file: string): string[] => [...BUN_TEST, file];
 
 const ROOT = resolve(import.meta.dir, '..');
 const DOCS = 'docs/RELEASING.md#generated-artifacts';
@@ -129,7 +138,7 @@ if (import.meta.main) {
 
   const before = dirtyState();
   const steps = [...ARTIFACTS.map(a => ({ name: a.name, argv: a.regen, env })),
-    ...(args.includes('--goldens') ? CONTRACT_GOLDENS.map(f => ({ name: `golden ${f}`, argv: ['bun', 'test', f], env: { ...env, GBRAIN_TEST_UPDATE_GOLDENS: '1' } })) : [])];
+    ...(args.includes('--goldens') ? CONTRACT_GOLDENS.map(f => ({ name: `golden ${f}`, argv: goldenArgv(f), env: { ...env, GBRAIN_TEST_UPDATE_GOLDENS: '1' } })) : [])];
   const llms = steps.findIndex(s => s.name.startsWith('llms'));
   steps.push(...steps.splice(llms, 1));
   for (const step of steps) {

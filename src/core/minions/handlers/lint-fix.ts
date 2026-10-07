@@ -13,8 +13,9 @@ import type { MinionHandler } from '../types.ts';
 export function makeLintFixHandler(engine: BrainEngine): MinionHandler {
   return async (job) => {
     const { runLintCore } = await import('../../../commands/lint.ts');
+    const { cycleLintExcludes } = await import('../../cycle/lint-fix-setting.ts');
     const target = typeof job.data.dir === 'string' ? job.data.dir : '.';
-    // issue #1678: reuse the worker's live engine (see 'lint' handler).
-    return await runLintCore({ target, fix: true, dryRun: false, engine, signal: job.signal });
+    // issue #1678: reuse the worker's live engine (see 'lint' handler). #6134: honors cycle.lint_exclude.
+    return await runLintCore({ target, fix: true, dryRun: false, engine, signal: job.signal, exclude: await cycleLintExcludes(engine) });
   };
 }

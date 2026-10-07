@@ -7,6 +7,7 @@ import { maintenanceAttribution } from './attribution.ts';
 import { unrecordedCanonicalTimeline } from './canonical-projections.ts';
 import { runMentionPass, type MentionPassResult } from '../mentions/pass.ts';
 import { formatMentionSummary, linkPhaseDeadline, mentionJsonFields, previewMentionPass } from '../mentions/stale.ts';
+import { plannerStatsForLinkDrain } from '../planner-stats.ts';
 
 export interface ManagedLinkExtraction { pages: number; created: number; removed: number; timeline: number; skipped: number; remaining: number;
   /** The mention pass (absent when the caller ran links only, as sync does). */
@@ -101,8 +102,10 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
     result.timeline += outcome.timeline;
   };
   const budget = () => result.pages + result.skipped < maxPages && Date.now() < deadline;
+  const plannerTick = await plannerStatsForLinkDrain(engine, async () =>
+    Math.min(maxPages, await engine.countStalePagesForExtraction({ sourceId: opts.sourceId, versionTs })));
   if (opts.slugs?.length && opts.sourceId) {
-    for (const slug of new Set(opts.slugs)) { if (!budget()) break; await derive(slug, opts.sourceId); }
+    for (const slug of new Set(opts.slugs)) { if (!budget()) break; await plannerTick(result.pages + result.skipped); await derive(slug, opts.sourceId); }
   }
   let afterPageId = 0;
   while (budget()) {
@@ -112,6 +115,7 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
       if (!budget()) break;
       afterPageId = row.id;
       if (done.has(`${row.source_id}\0${row.slug}`)) continue;
+      await plannerTick(result.pages + result.skipped);
       await derive(row.slug, row.source_id, row.updated_at.getTime() >= Date.parse(versionTs) ? row.updated_at_iso : versionTs);
     }
   }

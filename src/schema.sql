@@ -1910,6 +1910,13 @@ CREATE TABLE IF NOT EXISTS chronicle_page_state (
   event_hashes TEXT[] NOT NULL DEFAULT '{}',
   decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- #6199 (migration chronicle_campaign_stamps): the --max-usd campaign stamp.
+  campaign_id TEXT,
+  attempt_cap_usd NUMERIC,
+  max_attempts INTEGER CHECK (max_attempts > 0),
+  pricing_policy TEXT,
+  campaign_max_usd NUMERIC,
+  cost_attempts INTEGER[] NOT NULL DEFAULT '{}',
   PRIMARY KEY (source_id, page_id, content_hash, extractor_version)
 );
 CREATE INDEX IF NOT EXISTS chronicle_page_state_work_idx

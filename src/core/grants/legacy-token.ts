@@ -348,7 +348,8 @@ export async function resolveTokenGrant(sql: SqlQuery, row: Record<string, unkno
   try {
     const [converted] = await sql`
       UPDATE access_tokens SET source_grant = ${kind}, source_id = ${write}, federated_read = ${reads}::text[],
-        allowed_operations = ${ops}::text[], takes_holders = ${holders}::text[], grant_revision = grant_revision + 1
+        allowed_operations = ${ops}::text[], takes_holders = ${holders}::text[], grant_revision = grant_revision + 1,
+        last_used_at = now()
       WHERE id IN (SELECT id FROM access_tokens WHERE id = ${String(row.id)}::uuid AND source_grant IS NULL FOR UPDATE SKIP LOCKED)
       RETURNING *
     `;
@@ -357,6 +358,26 @@ export async function resolveTokenGrant(sql: SqlQuery, row: Record<string, unkno
     // Read-only role or transient failure: authorize with the identical in-memory conversion.
   }
   return grant;
+}
+
+/**
+ * Debounced, fire-and-forget `last_used_at` write for a token row the auth
+ * paths just read (once per token per 60 s; SKIP LOCKED so a lock held
+ * elsewhere never parks a pool slot, #5730). A row still on the legacy shape
+ * is left to `resolveTokenGrant`, whose conversion records first use itself:
+ * a touch holding that row's lock made every concurrent conversion skip it
+ * (SKIP LOCKED), so a burst of first reads could leave it unconverted (#6230).
+ */
+export function touchTokenLastUsed(sql: SqlQuery, row: Record<string, unknown>): Promise<unknown> {
+  const id = String(row.id);
+  const touch = 'source_grant' in row
+    ? sql`UPDATE access_tokens SET last_used_at = now()
+        WHERE id IN (SELECT id FROM access_tokens WHERE id = ${id}::uuid AND source_grant IS NOT NULL
+          AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`
+    : sql`UPDATE access_tokens SET last_used_at = now()
+        WHERE id IN (SELECT id FROM access_tokens WHERE id = ${id}::uuid
+          AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`;
+  return Promise.resolve(touch).catch(() => { /* fire-and-forget */ });
 }
 
 /** A bare `auth rescope <name>`: a token name, an OAuth client id, or a client name. Both kinds matching refuses. */

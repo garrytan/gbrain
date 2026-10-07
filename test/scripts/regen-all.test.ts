@@ -7,7 +7,7 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ARTIFACTS, CONTRACT_GOLDENS, POSTGRES_GOLDENS, checkArtifacts, offlineEnv, staleReport, type Artifact } from '../../scripts/regen-all.ts';
+import { ARTIFACTS, CONTRACT_GOLDENS, POSTGRES_GOLDENS, checkArtifacts, goldenArgv, offlineEnv, staleReport, type Artifact } from '../../scripts/regen-all.ts';
 
 const ROOT = join(import.meta.dir, '../..');
 
@@ -37,6 +37,13 @@ describe('regen:all', () => {
     expect(ARTIFACTS.at(-1)!.name).toContain('llms');
     for (const f of CONTRACT_GOLDENS) expect(existsSync(join(ROOT, f)), f).toBe(true);
     for (const c of POSTGRES_GOLDENS) expect(existsSync(join(ROOT, /bun test (?:--timeout=\d+ )?(\S+)/.exec(c)![1]!)), c).toBe(true);
+  });
+
+  test('every bun test it spawns passes an explicit --timeout (bunfig\'s [test] timeout is not applied, #6187)', () => {
+    const argvs = [...ARTIFACTS.flatMap(a => [a.regen, a.check]), ...CONTRACT_GOLDENS.map(goldenArgv)];
+    const bunTests = argvs.filter(argv => argv[0] === 'bun' && argv[1] === 'test');
+    expect(bunTests.length).toBeGreaterThanOrEqual(2 + CONTRACT_GOLDENS.length);
+    for (const argv of bunTests) expect(argv.some(x => /^--timeout=\d+$/.test(x)), argv.join(' ')).toBe(true);
   });
 
   test('generators run without provider keys or database URLs', () => {

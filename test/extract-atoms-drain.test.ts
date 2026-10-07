@@ -169,7 +169,7 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
 
 // #1685 GAP D (CODEX #1) — the auto-drain Minion job burns Haiku, so it must be
 // PROTECTED: no MCP/OAuth-scoped caller can submit it; only trusted local
-// callers (autopilot, explicit CLI with --allow-protected) can.
+// callers (autopilot, an explicit `gbrain jobs submit` from the CLI) can.
 describe('extract-atoms-drain protected-name membership', () => {
   it('extract-atoms-drain is PROTECTED', () => {
     expect(isProtectedJobName('extract-atoms-drain')).toBe(true);
@@ -208,12 +208,14 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
 
 // The register comment is the only place an operator learns how a PROTECTED
 // name gets submitted from the CLI. `jobs submit` sets allowProtectedSubmit
-// itself for protected names; there is no `--allow-protected` flag, and a
+// itself for protected names; there is no allow-protected flag, and a
 // comment advertising one sends operators to a flag that exits "unknown".
+// The repo-wide form of this pin is test/no-allow-protected-flag.test.ts.
 describe('protected-names register comment names the real trust mechanism', () => {
   const src = readFileSync(join(import.meta.dir, '../src/core/minions/protected-names.ts'), 'utf8');
-  it('does not advertise the non-existent --allow-protected flag', () => {
-    expect(src).not.toContain('--allow-protected');
+  const flag = ['--allow', 'protected'].join('-');
+  it('does not advertise the non-existent allow-protected flag', () => {
+    expect(src).not.toContain(flag);
     expect(src).toContain('allowProtectedSubmit');
   });
 });

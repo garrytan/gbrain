@@ -320,7 +320,7 @@ export const extractorFactsRepair: RepairHandler = {
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { page, hash, last } = entry as PageItem;
     const result = await managedPersistenceEnabled(ctx.engine)
-      ? await restoreManaged(ctx.engine, ctx.config, page, hash)
+      ? await restoreManaged(ctx.engine, ctx.config, page, hash, ctx.writeWaitMs)
       : await maintenanceTransaction(ctx.engine, async tx => {
         await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
         return restorePageFacts(tx, page, false);
@@ -334,7 +334,8 @@ export const extractorFactsRepair: RepairHandler = {
 
 interface RestoreResult { restored: number[]; changed: number[] }
 
-async function restoreManaged(engine: BrainEngine, config: Parameters<typeof waitForWrite>[2], page: ExtractorFactsPage, hash: string): Promise<RestoreResult> {
+async function restoreManaged(engine: BrainEngine, config: Parameters<typeof waitForWrite>[2], page: ExtractorFactsPage, hash: string,
+  writeWaitMs: number | undefined): Promise<RestoreResult> {
   const unchanged: RestoreResult = { restored: [], changed: page.facts.map(f => f.id) };
   const authority = (await maintenancePreflight(engine, page.source_id))!;
   for (let attempt = 0; ; attempt++) {
@@ -345,7 +346,8 @@ async function restoreManaged(engine: BrainEngine, config: Parameters<typeof wai
       let receipt: Record<string, unknown>;
       if (prior) {
         await authorizeStoredRequest(engine, prior);
-        receipt = writeResponse(await waitForWrite(engine, prior, config));
+        // #6185: a pending restore replayed by a resumed apply waits like the apply's own writes.
+        receipt = writeResponse(await waitForWrite(engine, prior, config, writeWaitMs));
       } else {
         const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
         if (!snapshot || snapshot.page.id !== page.page_id) return unchanged;

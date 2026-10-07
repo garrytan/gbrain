@@ -8,6 +8,7 @@ import {
   extractCandidatesFromWindow,
   MAX_CANDIDATES,
   MAX_WEAK_CANDIDATES,
+  MAX_WEAK_NGRAM_CANDIDATES,
 } from '../../src/core/context/entity-salience.ts';
 
 /** STRONG candidate queries only (the v1 contract most tests pin). */
@@ -121,10 +122,12 @@ describe('extractCandidates', () => {
     const weakPart = Array.from({ length: 50 }, (_, i) => `wkword${i}xy`).join(' ');
     const out = extractCandidates(`${strongPart}. ${weakPart}`);
     const strong = out.filter((c) => !c.weak);
-    const weak = out.filter((c) => c.weak);
+    const weak = out.filter((c) => c.weak && !c.multiToken);
+    const ngrams = out.filter((c) => c.multiToken);
     expect(strong.length).toBeLessThanOrEqual(MAX_CANDIDATES);
     expect(strong.length).toBe(MAX_CANDIDATES); // weak never displaces strong
-    expect(weak.length).toBeLessThanOrEqual(MAX_WEAK_CANDIDATES);
+    expect(weak.length).toBe(MAX_WEAK_CANDIDATES);
+    expect(ngrams.length).toBe(MAX_WEAK_NGRAM_CANDIDATES); // #6195: lowercase n-grams have their own cap
     // strong candidates come first in the output
     expect(out.findIndex((c) => c.weak)).toBeGreaterThanOrEqual(strong.length);
   });

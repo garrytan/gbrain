@@ -18,7 +18,11 @@ export function makeHome(engine: LockTestEngine): string {
 
 /** A runner whose single pending migration logs start/end and holds for `holdMs`. */
 /** `stealLease` adds an earlier migration that hands the Postgres lease to another holder; the probe migration then must not run. */
-export function writeDriver(home: string, opts: { holdMs: number; openDatastore: boolean; fail?: boolean; stealLease?: boolean }): string {
+/** `rotateOwnToken` instead rewrites only the lease's acquisition token, so the row still names this runner (#6028). */
+export function writeDriver(home: string, opts: { holdMs: number; openDatastore: boolean; fail?: boolean; stealLease?: boolean; rotateOwnToken?: boolean }): string {
+  const leaseUpdate = opts.rotateOwnToken
+    ? "UPDATE gbrain_cycle_locks SET acquisition_token=gen_random_uuid() WHERE id='gbrain-apply-migrations'"
+    : "UPDATE gbrain_cycle_locks SET holder_pid=4242, holder_host='host-b', acquisition_token=gen_random_uuid() WHERE id='gbrain-apply-migrations'";
   const driver = join(home, `driver-${Math.random().toString(36).slice(2)}.ts`);
   writeFileSync(driver, `import { mock } from 'bun:test';
 import { appendFileSync, readFileSync } from 'node:fs';
@@ -42,7 +46,7 @@ mock.module(${JSON.stringify(join(REPO, 'src/commands/migrations/index.ts'))}, (
       appendFileSync(log, 'end ' + process.pid + '\\n');
       return { version: ${JSON.stringify(VERSION)}, status: ${JSON.stringify(opts.fail ? 'failed' : 'complete')}, phases: [] };
     },
-  }, ...(${opts.stealLease === true} ? [{
+  }, ...(${opts.stealLease === true || opts.rotateOwnToken === true} ? [{
     version: '0.0.1',
     featurePitch: { headline: 'hands the lease to another holder' },
     orchestrator: async () => {
@@ -50,7 +54,7 @@ mock.module(${JSON.stringify(join(REPO, 'src/commands/migrations/index.ts'))}, (
         const { createEngine } = await import(${JSON.stringify(join(REPO, 'src/core/engine-factory.ts'))});
         const engine = await createEngine(cfg);
         await engine.connect(cfg);
-        await engine.executeRaw("UPDATE gbrain_cycle_locks SET holder_pid=4242, holder_host='host-b', acquisition_token=gen_random_uuid() WHERE id='gbrain-apply-migrations'");
+        await engine.executeRaw(${JSON.stringify(leaseUpdate)});
         await engine.disconnect();
       return { version: '0.0.1', status: 'complete', phases: [] };
     },

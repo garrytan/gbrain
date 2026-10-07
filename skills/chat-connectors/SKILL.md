@@ -189,7 +189,7 @@ This skill guarantees:
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `forbidden` (a Cloudflare/bot challenge): the provider refuses server-side fetch from this machine. Tell the user and switch to the export-file lane (`gbrain transcripts ingest`); never loop retries.
 - An auth error (expired cookie or token): ask the user to re-run `gbrain connectors auth` for that provider themselves; the credential belongs to them and stays on their machine.

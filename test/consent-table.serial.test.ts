@@ -93,6 +93,9 @@ const ROWS: Row[] = [
     today_non_tty: 'refused: "Refusing to spend without a cap in a non-interactive context", exit 1' },
   { name: 'book-mirror', argv: () => ['book-mirror', '--chapters-dir', chapters, '--slug', 'a-book'], effects: ['paid'],
     today_non_tty: 'refused: "refusing to spend … Pass --yes", exit 0 (nothing submitted)' },
+  // D6 (#6114): the hard purge is brain-wide and irreversible; `idea` is soft-deleted in beforeAll.
+  { name: 'pages purge-deleted --json', argv: () => ['pages', 'purge-deleted', '--older-than', '0h', '--json'], effects: ['destructive'],
+    today_non_tty: 'ran: hard-purged every soft-deleted page past the cutoff with no confirmation (exit 0)' },
   { name: 'connect --install (opencode)', argv: () => ['connect', 'https://brain.example.invalid/mcp', '--token', 'gbrain_tok_example', '--agent', 'opencode', '--install', '--json'],
     effects: ['credentials', 'persistent_install'], today_non_tty: 'refused: "--install in a non-interactive shell requires --yes", exit 1' },
 ];
@@ -112,6 +115,7 @@ beforeAll(async () => {
   writeFileSync(join(notes, 'idea.md'), '---\ntitle: Idea\n---\n\nAn idea page.\n');
   const imported = await cli(['import', notes, '--no-embed']);
   expect(imported.exitCode).toBe(0);
+  expect((await cli(['delete', 'idea', '--force'])).exitCode).toBe(0);
   chapters = join(home, 'chapters');
   mkdirSync(chapters, { recursive: true });
   writeFileSync(join(chapters, '01.txt'), 'Chapter one text.');

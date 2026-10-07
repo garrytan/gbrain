@@ -348,7 +348,7 @@ Evolution:
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain extract-conversation-facts` stops at its cost cap (exit 11): run the printed `resume_command`; it skips pages already done. Raise `--max-cost-usd` only after the user agrees.
 - Under an explicit cap it refuses with `no_pricing`: the user must agree to register the model price; the brain host's operator runs `gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`.

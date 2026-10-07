@@ -2,7 +2,7 @@
  * #1575 — the unify-types WORKER registration defaulted `apply` to true,
  * while the handler interface documents "Default false (dry-run)". The
  * canonical operator invocation —
- *   gbrain jobs submit unify-types --allow-protected --params '{"target_pack":"X"}'
+ *   gbrain jobs submit unify-types --params '{"target_pack":"X"}'
  * — therefore applied a one-shot destructive taxonomy migration on first
  * invocation, with no dry-run checkpoint.
  *

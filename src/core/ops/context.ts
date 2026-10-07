@@ -265,10 +265,14 @@ export function matchesSlugAllowList(slug: string, prefixes: readonly string[]):
  *   - Legacy default: slug must live under `wiki/agents/<subagentId>/...`
  *     (anchored, slash-boundary \u2014 `wiki/agents/12evil/*` can't impersonate
  *     subagent 12).
+ *
+ * #5994: the one exception to the missing-`subagentId` refusal is the trusted
+ * local failed-writes replay of a stored restricted authority that recorded no
+ * job id (`replayedAllowList`); it still checks the slug against that list.
  */
 export function enforceSubagentSlugFence(ctx: OperationContext, slug: string, opName: string): void {
   if (ctx.viaSubagent !== true) return;
-  if (typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) {
+  if ((typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) && !replayedAllowList(ctx)) {
     throw opError('permission_denied', `${opName} via subagent requires ctx.subagentId`,
       'This is a gbrain dispatch fault, not a caller mistake: report it to the user instead of resubmitting the write.');
   }
@@ -284,6 +288,14 @@ export function enforceSubagentSlugFence(ctx: OperationContext, slug: string, op
       ? `Write to a slug matching one of: ${allowList.join(', ')}.`
       : `Write under wiki/agents/${ctx.subagentId}/ (for example wiki/agents/${ctx.subagentId}/notes).`,
   );
+}
+
+/** A failed-writes replay of a restricted authority, confined to exactly the stored, non-empty allow-list. */
+function replayedAllowList(ctx: OperationContext): boolean {
+  const stored = ctx.replayAuthority;
+  const list = ctx.allowedSlugPrefixes;
+  return !!stored?.restrictedNamespace && !!list?.length && !!stored.delegatedPrefixes?.length
+    && list.length === stored.delegatedPrefixes.length && list.every((prefix, i) => prefix === stored.delegatedPrefixes![i]);
 }
 
 /**

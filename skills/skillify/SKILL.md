@@ -621,7 +621,7 @@ without parsing prose.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain skillify check` reports failing checklist items: fix only those items and re-run; any edit must keep existing tests green (no-regression law).
 - `gbrain eval cross-modal` fails or lacks a provider key: report the eval as not run; do not mark the skill proven.

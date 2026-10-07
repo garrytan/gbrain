@@ -75,6 +75,23 @@ describe('checkPackUpgradeAvailable', () => {
     });
   });
 
+  it('#6196: a managed brain gets an honest info row and no apply remediation it cannot run', async () => {
+    await withEnv({ GBRAIN_HOME: emptyHome(), GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      try {
+        const result = await checkPackUpgradeAvailable(engine);
+        expect(result.check.status).toBe('ok');
+        expect(result.check.severity).toBe('info');
+        expect(result.check.message).toContain('gbrain-base-v2');
+        expect(result.check.message).toContain('managed brain');
+        expect(result.remediations).toEqual([]);
+        expect(result.check.fix?.argv).toEqual(['gbrain', 'onboard', '--check', '--explain']);
+      } finally {
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      }
+    });
+  });
+
   it('honors file-plane schema_pack when DB config is unset', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-pack-upgrade-'));
     const configDir = join(home, '.gbrain');

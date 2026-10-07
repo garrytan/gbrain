@@ -416,7 +416,7 @@ folk history survive fact-checking because nobody thinks to check them.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A claim's supporting page returns `page_not_found`, or the search is empty with a degraded notice: mark the claim UNSUPPORTED (it blocks delivery), and say the search was keyword-only when it was.
 - A `gbrain graph-query` walk returns nothing: verify the slug and link type before concluding a relationship does not exist.

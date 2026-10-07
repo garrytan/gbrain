@@ -210,3 +210,14 @@ describe('resolveCorpusWindowsPerSweepTotal (GBRAIN_CORPUS_WINDOWS_PER_SWEEP)', 
     expect(warnings[0]).toContain('GBRAIN_CORPUS_WINDOWS_PER_SWEEP');
   });
 });
+
+describe('#6091: retired turns are skipped wherever they sit', () => {
+  test('planCorpusWindows leaves a retired turn out of every window, not only a leading run', () => {
+    const raw = '[user]\nfirst open turn\n\n[assistant]\nreply one\n\n[user]\nretired secret turn\n\n[assistant]\nreply two\n';
+    const turns = parseCorpusTurns(raw);
+    const text = planCorpusWindows(turns, { turn: 0, offset: 0 }, undefined, new Set([turns[2].sha256])).map((w) => w.text).join('\n');
+    expect(text).toContain('first open turn');
+    expect(text).toContain('reply two');
+    expect(text).not.toContain('retired secret turn');
+  });
+});

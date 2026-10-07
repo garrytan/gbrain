@@ -2,6 +2,7 @@ import { isConnectorSourceKind } from './connector-identity.ts';
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { FactsBackstopCtx } from '../facts/backstop.ts';
+import { factEventTime } from '../facts/event-time.ts';
 import { ENTITY_HINTS_CAP, type ExtractedFact, type FactEmbeddingSignature } from '../facts/extract.ts';
 import { readFactsEmbeddingDim } from '../embedding-dim-check.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -27,6 +28,7 @@ import { maintenancePublishWaitMs } from './maintenance-wait.ts';
 import { digest, requireUuid, sha256 } from './digest.ts';
 import { isTerminal, type WriteAuthority, type WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
+import { assertAmbientCaptureAdmissible, captureGateLaneForSource } from '../facts/capture-sources.ts';
 
 export interface ManagedFactsResult {
   inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; write_requests: WriteReceipt[];
@@ -49,6 +51,8 @@ export interface ManagedFactIntent extends Record<string, unknown> {
    */
   attribute_fallback?: true;
   embedding?: FactEmbeddingSignature | null;
+  /** #6091: the ambient capture lane (`hook:*`, `sweep:*`) the facts came from; admission re-checks its gate. */
+  capture_source?: string;
 }
 export interface ManagedFactsSession {
   authority: WriteAuthority; binding: WorktreeBinding | null; config: GBrainConfig;
@@ -57,6 +61,8 @@ export interface ManagedFactsSession {
   embedding?: FactEmbeddingSignature | null;
   /** #6048: the batch is keyed by its input alone and the caller asked to re-admit facts the canonical file check refused. */
   fileRefusalRetry?: boolean;
+  /** #6091: set when the facts come from an ambient capture lane. */
+  captureSource?: string;
 }
 
 /** #6048: follow-up batches one input-keyed extraction may admit for file-check refusals. */
@@ -236,7 +242,8 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
   const session: ManagedFactsSession = { authority, binding: writeThrough ? binding : null, config,
     batchKey, inputDigest, origin, originalRequestId: ctx.persistenceRequestId ?? null,
     completionRequestId: ctx.requestId ? requireUuid(ctx.requestId) : managedFactRequestId(batchKey, '__managed_facts_complete__'),
-    fileRefusalRetry: ctx.reAdmitFileRefusals === true && seed === inputDigest };
+    fileRefusalRetry: ctx.reAdmitFileRefusals === true && seed === inputDigest,
+    ...(captureGateLaneForSource(ctx.source) ? { captureSource: ctx.source } : {}) };
   const prior = await getWriteRequest(engine, authority.principal, session.completionRequestId);
   if (prior) await validateManagedFactsCompletion(engine, session, prior);
   return session;
@@ -371,7 +378,7 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
     // #5836: an inferred subject carries its provenance note into the fence cell and the row.
     group.push({ ...fact, entity_slug: attributed, visibility, context: fact.entity_inferred ? appendContextNote(context, inferenceNote(fact.entity_inferred)) : context,
       embedding: fact.embedding ? Array.from(fact.embedding) : null,
-      valid_from: (fact.valid_from ?? ctx.validFrom ?? new Date()).toISOString(), valid_until: fact.valid_until?.toISOString() ?? null });
+      valid_from: (factEventTime(fact, ctx) ?? new Date()).toISOString(), valid_until: fact.valid_until?.toISOString() ?? null });
     groups.set(slug, group);
   }
   const inputs: ManagedFactsEntityInput[] = [];
@@ -384,6 +391,7 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
       inputDigest: session.inputDigest, origin: session.origin, originalRequestId: session.originalRequestId,
       embedding: session.embedding ?? null, ...(options.supersede ? { supersede: true as const } : {}),
       ...(options.attributeFallback ? { attribute_fallback: true as const } : {}),
+      ...(session.captureSource ? { capture_source: session.captureSource } : {}),
       ...(snapshot ? { expected_revision: snapshot.revision } : {}), facts: group } });
   }
   return collectManagedFacts(engine, session, await admitManagedFactsBatch(engine, session, inputs, embedded, ctx.abortSignal));
@@ -396,12 +404,14 @@ async function admitManagedFactsBatch(engine: BrainEngine, session: ManagedFacts
   embedded: boolean, signal?: AbortSignal): Promise<WriteRequest[]> {
   const sourceId = session.authority.sourceId;
   return engine.transaction(async tx => {
+    await assertAmbientCaptureAdmissible(tx, session.captureSource);
     if (embedded) await assertManagedFactsEmbedding(tx, session.config, session.embedding, true);
     const children: string[] = [];
     const accepted: WriteRequest[] = [];
     for (const input of [...inputs, { slug: '__managed_facts_complete__', pageId: null, intent: {
       kind: 'managed_facts_complete', batchKey: session.batchKey, inputDigest: session.inputDigest,
-      origin: session.origin, originalRequestId: session.originalRequestId, children } as ManagedFactIntent }]) {
+      origin: session.origin, originalRequestId: session.originalRequestId, children,
+      ...(session.captureSource ? { capture_source: session.captureSource } : {}) } as ManagedFactIntent }]) {
       if (signal?.aborted) throw new DOMException('Fact extraction was aborted before admission.', 'AbortError');
       await authorizePageVisibility(tx, session.authority, input.slug);
       const requestId = input.intent.kind === 'managed_facts_complete' ? session.completionRequestId : managedFactRequestId(session.batchKey, input.slug);

@@ -54,6 +54,7 @@ import {
   TUNE_MIN_CALLS,
   type TuneRecommendation,
 } from '../core/search/tune-recommendations.ts';
+import { ROUTERS, SEARCH_SUBCOMMANDS, subcommandHelpRequested } from '../cli/subcommands.ts';
 
 function formatModesText(report: SearchModesReport): string {
   const lines: string[] = [];
@@ -352,7 +353,8 @@ function buildRevertCommand(r: TuneRecommendation): string {
   return r.apply_command;
 }
 
-const USAGE = `Usage: gbrain search <modes|stats|tune> [flags]
+const USAGE = `Usage: gbrain search <modes|stats|tune|diagnose> [flags]
+       gbrain search "<query>"     (free-text search; see gbrain search --help)
 
 Subcommands:
   modes [--json]              Show active mode, bundles, and per-knob source.
@@ -360,6 +362,8 @@ Subcommands:
   modes --source <mode>       Dry-run: list what --reset would change.
   stats [--days N] [--json]   Cache hit rate, intent mix, budget pressure.
   tune [--apply] [--json]     Print recommendations; --apply mutates config.
+  diagnose "<query>" --target <slug> [--json] [--source <id>]
+                              Trace where a target page surfaces across retrieval layers.
 
 Examples:
   gbrain search modes
@@ -369,12 +373,18 @@ Examples:
   gbrain search tune --apply
 `;
 
+export { SEARCH_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
+
+export function printUsage(): void {
+  console.log(USAGE);
+}
+
 export async function runSearch(engine: BrainEngine, args: string[]): Promise<void> {
-  const sub = args[0];
+  const sub = args[0] as Exclude<(typeof SEARCH_SUBCOMMANDS)[number], 'diagnose'> | undefined;
   const rest = args.slice(1);
 
-  if (!sub || sub === '--help' || sub === '-h') {
-    console.log(USAGE);
+  if (!sub || subcommandHelpRequested(args, ROUTERS.search)) {
+    printUsage();
     return;
   }
 

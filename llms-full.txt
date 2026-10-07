@@ -1708,8 +1708,10 @@ start here.
    ```
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`,
    the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218).
-   Run `gbrain apply-migrations --yes --no-autopilot-install` to recover without installing services, or fall back to the
-   deterministic install: `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
+   Run `gbrain apply-migrations --yes --no-autopilot-install` to recover without installing services. It exits 0
+   only when the schema is at head; exit 1 with `migrations_pending` means the schema is still behind, and another
+   `--yes` repeats the failure, so run `gbrain doctor --json` and fall back to the deterministic install:
+   `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
 2. Init keyless memory: `gbrain init --pglite --no-embedding` (zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
 3. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
@@ -2524,7 +2526,9 @@ restart the shell or add the PATH export to the shell profile.
 > occasionally blocks the top-level postinstall hook on global installs, so schema
 > migrations don't run automatically), the CLI prints a recovery hint pointing at
 > [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain apply-migrations --yes --no-autopilot-install`
-> to recover. If that doesn't work, fall back to the deterministic install path:
+> to recover. It exits 0 only when the schema is at head. Exit 1 with `migrations_pending` means the schema
+> is still behind: another `--yes` repeats the failure, so run `gbrain doctor --json`, tell the user what it
+> reports, and fall back to the deterministic install path:
 >
 > ```bash
 > git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
@@ -4376,7 +4380,7 @@ phrases. If a row here and a skill's frontmatter disagree, the frontmatter
 wins; fix the row.
 
 **A gbrain call failed or printed `[AGENT]` or a notice block:** follow the
-[agent operator protocol](../docs/protocol/AGENT_OPERATOR_v1.md). Read the
+[agent operator protocol](./conventions/agent-operator-protocol.md). Read the
 error's `code` (fall back to `error`), follow `fix.next`, then run `fix.verify`.
 
 ## Memory defaults
@@ -4657,14 +4661,15 @@ Requires **Bun 1.4.0 or newer**. Existing worker installations should follow the
 before restarting services with this version.
 
 > [!WARNING]
-> **GBrain is NOT distributed on npm.** The npm package named `gbrain` is an unrelated
-> package with no connection to this project. Do not run `npm install -g gbrain` or
-> `bun add -g gbrain` — you'll get something else, and it can shadow the real binary on
-> your PATH. Install and upgrade ONLY via the documented paths below
-> (`bun install -g github:garrytan/gbrain`, or `git clone` + `bun install && bun link`).
-> If you already ran the npm install by mistake: `npm uninstall -g gbrain` /
-> `bun remove -g gbrain`, then reinstall from GitHub. `gbrain doctor` detects a
-> shadowing npm install and prints the fix.
+> **GBrain is NOT distributed on npm.** The npm `gbrain` package is unrelated and
+> can shadow the real binary, so never run `npm install -g gbrain` or
+> `bun add -g gbrain`. Install only via `bun install -g github:garrytan/gbrain`
+> or `git clone` + `bun install && bun link`.
+> Installed it by mistake? `npm uninstall -g gbrain` / `bun remove -g gbrain`, then
+> reinstall; `gbrain doctor` detects it.
+> Schema not migrated ([#218](https://github.com/garrytan/gbrain/issues/218))?
+> Run `gbrain apply-migrations --yes --no-autopilot-install`; exit 1 means it's still
+> behind: run `gbrain doctor --json`, not `--yes` again.
 
 Start with the agent you already use. For Grok Bot and Muse, the dedicated guides above install an isolated launcher, repairable runtime, and memory in a verified persistent directory. For a coding agent, paste:
 
@@ -5682,7 +5687,14 @@ checkpoint did not advance. The message names both errors (redacted, at most
 the SQLSTATE (for example `53300` when a pooler's client limit is reached),
 a write-error code, `storage_error`, or `deadline_exceeded` when the phase
 overran its five-second budget. `message` is the redacted error text, one line,
-at most 200 characters. Connection-wait evidence follows on Postgres:
+at most 200 characters. When an unexpected exception in the owner failed a
+write (`storage_error` with a generic public message; the class and frame stay owner-only),
+the line also carries `class=`, `errno=` and `frame=` (the top gbrain source
+frame, repo-relative, for example `src/core/persistence/page-prepare.ts:120`):
+the owner diagnostics the receipt points at. The stored receipt keeps the same
+identifiers (never the error message) owner-side in `error_detail`, with the
+build that ran the attempt; `gbrain write-request <id>` names an owner on
+another build than the CLI (`owner_build`) and the restart to run. Connection-wait evidence follows on Postgres:
 `first_conn_ms` is the time from phase start until the phase obtained a
 connection; `checkout=not_observed conn_wait_ms=<n>` means it had not obtained
 one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
@@ -5694,6 +5706,12 @@ An idle consumer keeps one ordinary-pool connection for its work probe and
 never holds a direct or session-pooler connection, so a
 `GBRAIN_DIRECT_DATABASE_URL` that points at a session pooler is not pinned by
 idle `gbrain serve` processes.
+
+<a id="persistence-claim-phase"></a>**Claim phases.** Each claim renewal also records the claimed write's phase
+(`preparing` or `publishing`); `gbrain sources writer status --json` shows it as
+`claim` on running blockers, and doctor `persistence_write_stall` warns past
+`persistence.max_claim_ms` (default 600000, 60000 to 86400000). See
+[troubleshooting](guides/troubleshooting.md#persistence-write-stall).
 
 ## JSONB writes: never double-encode
 
@@ -6174,6 +6192,14 @@ You now have:
 You also exercised the full mutation skeleton: bundled-pack guard, per-pack lock, validation gate, atomic write, audit log, cache invalidation. Every step was idempotent — re-running any of them is a no-op.
 
 ## Next steps
+
+**Add a type set by frontmatter only.** Some types don't live in one directory: an `archive` page can sit anywhere and is typed by its frontmatter `type: archive`. Declare it with `--no-prefix` instead of `--prefix`:
+
+```bash
+gbrain schema add-type archive --primitive concept --no-prefix
+```
+
+The pack records `path_prefixes: []`, so pages get this type only from frontmatter. Leaving out both `--prefix` and `--no-prefix` is refused (exit 2, `invalid_params`), and `--no-prefix` can't be combined with `--extractable` or `--expert` (lint rules `extractable_empty_corpus`, `expert_routing_without_prefix`).
 
 **Add a link verb.** A `researcher` can `author` a `paper`. To model that:
 
@@ -7597,6 +7623,16 @@ plugin-manifest tests, `check-resolvable --strict`, the `skills.lock.json`
 regen + freshness check, and `check-skill-refs` in seconds — run it before
 committing a skills change so the membership/closure and `plugin.version`
 assertions fail locally instead of in CI.
+
+`check-skill-refs` fails on two things:
+
+- **A `gbrain` command that cannot run.** Every `gbrain <cmd>` in a code block
+  or inline span must be real (`gbrain embed refresh` fails with its
+  replacement). Paid commands go preview, user approval, then `--yes --max-usd <cap>`.
+- **A relative link that leaves `skills/`**, which dangles in every copied
+  skill. Link the protocol through `skills/conventions/agent-operator-protocol.md`
+  and other docs by absolute URL; `bun scripts/portable-skill-links.ts` rewrites
+  both (honoring `LLMS_REPO_BASE`). `skills/migrations/**` is exempt.
 
 ## When a skill misroutes
 
@@ -10174,6 +10210,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 
 <a id="held-fence-files"></a>**Sync held a file because of its facts or takes fence (`Held <path>: invalid_fence …`)?** Managed sync succeeded; only that file waits. The hold names the fence, section, row numbers, columns and reason, never a cell, and most holds clear by themselves: the maintenance run's `fence_repair` phase repairs the fence on the owner host and commits the file. To see the plan or do it now, run `gbrain repair fences --source <id>` (a read-only preview with no model call), then the apply command it prints; applying needs no extra consent. Model repair spends only within `fences.repair.max_usd_per_page` and `fences.repair.max_usd_per_day`; raising them, or pausing automatic repair with `gbrain config set fences.repair.enabled false`, is the user's call. A hold whose reason is `manual` needs a person: read the page (`gbrain get --source <id> -- <slug>`), edit only that fence in the file (not the frontmatter; `gbrain repair frontmatter` does not touch fences), commit, and run `gbrain sync --source <id> --no-pull`. A `prepare_time` hold was refused against stored rows (for example a takes row number a stored take already uses): fix it as its `fence.reason` says, and after a database-side fix run `gbrain sources retry-held <id>`. A source a fence blocked before upgrading recovers on its next sync. A fence with one obvious meaning is never held: sync rewrites it losslessly, commits the file and reports `fences_normalized`; a `fence_normalized` notice on a write means re-read the page before editing it. `gbrain doctor --only fence_integrity` counts every malformed fence still waiting (held, stored or unsynced) by tier. See [fence holds](write-refusals.md#invalid_fence), [fence repair](repair.md#fences) and the [fence format](fence-format.md).
 
+<a id="concurrent-write-hold"></a>**Sync held a file with `concurrent_write`?** A Git edit raced a database-only write; nothing was overwritten. Preview `gbrain sources reconcile <id> <slug> --preview`, let the user choose, then `gbrain sources retry-held <id>`. See [concurrent_write](write-refusals.md#concurrent_write).
+
 <a id="held-connector-items"></a>**A Google or GitHub item is held after repeated failures (doctor `connector_held_items`, `gbrain waiting` says coverage is partial)?** Run `gbrain sources status <id>`, fix the cause, then after the user agrees run `gbrain sources retry-held <id>` and `gbrain sync --source <id>`. See [held items](google-connect.md#held-items).
 
 <a id="checkpoint-validation-timeout"></a>**A managed sync is blocked with `checkpoint_validation_timeout`?** Run the printed commands on the brain host: `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <id> --no-pull --retry-failed …`. Doctor's `persistence_request_growth` warns before lifetime request IDs run out.
@@ -10207,6 +10245,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 **`brain_score` shows a low "timeline density (entity and event pages)"?** The 15-point timeline component grades only linkable pages whose type's active-pack primitive is `entity` or `temporal` (people, companies, meetings, emails, events…); reference documents such as notes, writing and guides have no events and are not graded, so do not stamp "page created" rows onto them. Types the pack does not declare are still graded. Raise the score by giving those entity and event pages real timeline entries (`gbrain extract timeline`).
 
 **`gbrain doctor` warns `slug_collisions`, or sync prints slug collisions?** Two or more files in a source map to the same page slug (for example `notes/Foo Bar.md` and `notes/foo-bar.md`), and only one is indexed. Rename all but one file in each group, commit, then sync.
+
+<a id="persistence-write-stall"></a>**A managed write stays `running` and later writes queue behind it, or doctor warns `persistence_write_stall`?** The owner keeps renewing a hung claim; doctor warns past `persistence.max_claim_ms` (default 600000) and names the request, root, age and phase. Run `gbrain sources writer status --source <id> --json` (read-only), then restart the `gbrain serve` that owns the root and attach that output when reporting it.
 
 <a id="write-capacity"></a>**Managed writes refused with `queue_capacity`, or doctor warns `persistence_capacity`?** A per-principal or per-brain write-journal limit (`persistence.limits.*`) is full (`queue_capacity`), or doctor sees lifetime request IDs or receipt bytes at 80% or more (`persistence_capacity`). For the cumulative limits (lifetime request IDs and receipt bytes), the warning and the refusal print a `gbrain config set persistence.limits.<limit> <value>` sized for about one more year; run it on the brain host, then retry with the same request ID. For outstanding-request or queued-byte limits, let outstanding writes finish and check `gbrain sources writer status`. Receipt compaction age is `persistence.receipt_retention_days` (default 30). Limits and defaults: [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).
 
@@ -10371,6 +10411,8 @@ report the regression:
    active after restarting the owning service".
 5. Remove it once the regression is fixed: `gbrain config set
    search.vector_legacy_guard false` (or unset the variable) and restart again.
+
+**Filtered vector results changed (#6132).** HNSW scans use `relaxed_order`; restore with `gbrain config set search.hnsw_iterative_scan strict_order`, then restart serve.
 
 The guard is temporary. The release that retires it prints a one-time notice
 when the inert setting is still present.
@@ -11023,8 +11065,8 @@ can load, and Google source files other local users can read. `gbrain repair`
 fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
-Eight explicit-only kinds, `google-file-modes`, `stale-atoms`, `extractor-facts`,
-`captured-facts`, `loop-facts`, `orphan-children`, `failed-writes` and `frontmatter`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
+Nine explicit-only kinds, `google-file-modes`, `stale-atoms`, `extractor-facts`,
+`captured-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes` and `frontmatter`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
 (see [Run repairs through doctor](#run-repairs-through-doctor)).
@@ -11391,6 +11433,27 @@ doctor's `revision_backfill` check names those pages, and
 `gbrain apply-migrations --force-schema` resumes the backfill for the rest and
 prints its progress.
 
+<a id="timeline-comments"></a>
+### Timeline comments
+
+Earlier releases filed an HTML comment next to a `[Source: ..., YYYY-MM-DD]`
+citation (such as `<!-- AUTO:slack END -->`) as a timeline row and wrote it
+back into the page. The parser now skips comments, and a row still carrying
+`<!--` or `-->` is never written back (`timeline_comment_markup`). This
+explicit-only kind cleans what is already stored.
+
+**Say to your agent:** *"Preview the timeline comment cleanup, tell me how many
+rows and pages it touches, then apply after I agree."*
+
+```bash
+gbrain repair timeline-comments --source <id>          # preview: comment_only_rows, comment_bearing_rows, pages_with_comment_bullets
+gbrain repair timeline-comments --source <id> --apply  # clean them
+```
+
+It drops generated bullets that carry markup (yours are left alone), deletes
+markup-only rows and strips the rest, under the page lock. A second apply finds
+nothing, and a timeline-only rewrite queues no facts extraction.
+
 ### Timeline history scan coverage
 
 Doctor's `timeline_history` check classifies at most 2,000 pages or 10
@@ -11559,6 +11622,42 @@ in one coordinated write, exactly for the previewed set; a loop or fact that
 changed since the preview reports `changed_since_preview` and is kept. No
 withdrawal is recorded, so the same promise made again is stored normally.
 
+<a id="ontology-facts"></a>
+### Ontology facts
+
+From v0.60.53.0 until v0.60.104.0 the facts step of the maintenance run (the
+`gbrain serve` sweep and the dream cycle) moved ontology observations
+(`ontology_propose`) onto their entity page's `## Facts` table: each took the
+page as its source, and the next rewrite of the page that did not list it
+retired it, so `ontology_get` stopped returning it (#6264). `gbrain repair
+ontology-facts` restores them. It is explicit-only and preview-bound.
+
+**Say to your agent:** *"Doctor says some ontology observations were moved onto
+page tables. Preview restoring them, then apply after I agree."* The agent runs
+`gbrain repair ontology-facts` and, after you agree, the printed apply command.
+
+```bash
+gbrain doctor --only ontology_facts_fenced      # fenced=N retired=N
+gbrain repair ontology-facts                    # preview: one line per observation
+gbrain repair ontology-facts --apply --expect <hash>
+gbrain doctor --only ontology_facts_fenced
+```
+
+A candidate is an ontology row with a fence row number, or whose
+`source_markdown_slug` differs from its `source`; ontology writes produce
+neither. The preview classes each one `fenced` (still on the table) or
+`retired` (a page write retired it), or excludes it: `withdrawn` (its claim
+was forgotten), `consolidated`, or `duplicate` (the same observation was
+proposed again after it went missing, so restoring it would make a second
+copy). The apply gives each restorable row its own source back, takes it off
+the table and clears its expiry, exactly for the previewed set; validity dates
+and supersession links stay as they are. A row that changed since the preview
+reports `changed_since_preview` and is kept. It writes the database only:
+the line the old step added to the page's Facts table stays in the page as an
+ordinary page fact. An observation whose source was already the page's own
+slug and that a page write detached carries no trace of the move, so it is not
+found.
+
 <a id="failed-writes"></a>
 ### Failed writes
 
@@ -11602,16 +11701,25 @@ and its original caller's authority is checked again first: a write that
 changed class since the preview reports `changed_since_preview`, and one whose
 caller lost its grant or whose source was re-created reports
 `authority_revoked`; both are kept. A replay goes through the operation's
-normal path on the original caller's trust lane: a write an agent sent over MCP
-is prepared as a remote write again, with its take-holder and delegated
-namespace limits, so it can do no more than the original could. A `put_page`
+normal path on the original caller's trust lane and under its stored authority:
+the same writer (an OAuth client stays that client), delegation, scopes,
+take-holder and delegated namespace limits and link trust, for the same source
+incarnation, checked against the live grant at admission and again at
+publication. A write an agent sent over MCP is prepared as a remote write
+again, so it can do no more than the original could; a grant revoked or
+narrowed between admission and publication refuses the replay at publication.
+A subagent or restricted-namespace write gets back the identity it recorded
+(the job id of an OAuth-delegated job, or the `wiki/agents/<id>/` namespace of
+a legacy subagent, which stays database-only); one that recorded neither is
+confined to exactly its stored namespace allow-list. Live subagent dispatches
+without a job id are still refused. A `put_page`
 replay is bound to the page revision the preview saw (an original `force: true`
 is dropped), so a page changed since the preview reports `changed_since_preview`
 or `conflict` instead of being overwritten. A `remember` replay targets the
 subject the original resolved. Each replay uses a new request id derived from
 the failed one, so a rerun after a crash resumes the same request and a second
 apply never writes it twice (`pending_elsewhere` when another writer holds that
-request). Attribution names the local owner's writer for that lane. A replay the
+request). Attribution names the original writer. A replay the
 brain refuses reports `refused` with the code. The failed receipts stay as
 history.
 
@@ -11873,8 +11981,7 @@ sent again until the file, the model or the rules change.
 The repair model is `models.fence_repair` when set. Unset, it is the first
 model the fence-repair eval measured as accurate enough whose provider key the
 brain has: `openai:gpt-6.1-sol` with an OpenAI key, else
-`anthropic:claude-opus-5-5` with an Anthropic key (`anthropic:claude-fable-5-1`
-also met the bar). With neither key, model-tier fences wait as
+`anthropic:claude-opus-5-5` with an Anthropic key. With neither key, model-tier fences wait as
 `no_measured_model` until the user picks a model.
 
 The gates check that no text is lost or rewritten; they cannot tell which of two
@@ -12057,6 +12164,12 @@ Request IDs are derived from the page and its revision, so rerunning after a
 crash replays the same write instead of making a second one. If the run stops
 with "still pending publication" or "the canonical writer ... is held", check
 `gbrain sources writer status <source>`, then rerun the printed apply command.
+
+Every applying kind waits for each publication with the CLI write wait: `--wait <seconds>`, then
+`GBRAIN_WRITE_WAIT_MS`, then `persistence.write_wait_ms`, else 30 seconds. That includes the doctor
+remediation run and the replay of a restore a previous `extractor-facts` apply left pending. A malformed
+`GBRAIN_WRITE_WAIT_MS` refuses the apply with `invalid_write_wait` before anything is written; a preview
+never reads it.
 
 ## Capacity stop
 
@@ -12435,8 +12548,8 @@ Each heading below is the `docs` anchor a refusal carries.
 
 ### Explicit-only repair kinds
 
-`google-file-modes`, `stale-atoms`, `extractor-facts`, `captured-facts` and
-`loop-facts` run only when named: `gbrain repair <kind>` previews, and
+`google-file-modes`, `stale-atoms`, `extractor-facts`, `captured-facts`,
+`loop-facts` and `ontology-facts` run only when named: `gbrain repair <kind>` previews, and
 `gbrain repair <kind> --apply` applies (every kind but `google-file-modes`
 also needs `--expect <hash>`, so it applies exactly the previewed set; `google-file-modes` re-checks each file's owner,
 type and mode at apply time). They are excluded everywhere else:

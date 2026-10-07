@@ -284,7 +284,7 @@ scan_paths: ["paths from gbrain.yml"]
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - No `archive-crawler.scan_paths:` allow-list: this is the skill's own hard refusal. Ask the user which directories may be scanned; never widen the list yourself to get past it.
 - An archive mount, takeout or bucket is unreadable (permission, expired token): report the exact path that failed and stop that source; do not fall back to scanning a parent directory.

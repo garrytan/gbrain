@@ -22,7 +22,7 @@ import { retainReconcileBackup } from '../src/core/persistence/reconcile-backup.
 import { prepareReconcileMutation } from '../src/core/persistence/reconcile-prepare.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
-import { parseFactsFence, renderFactsTable, upsertFactRow } from '../src/core/facts-fence.ts';
+import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, upsertFactRow } from '../src/core/facts-fence.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { operationsByName } from '../src/core/operations.ts';
@@ -694,3 +694,73 @@ test('a fact withdrawn between reconciliation preparation and publication leaves
     });
   }
 }), 120_000);
+
+// #6137: private fact rows are identified by (row number, claim), never by claim text alone.
+type FenceRow = { rowNum: number; claim: string; visibility: 'private' | 'world'; context?: string; source?: string; confidence?: number; forgotten?: boolean };
+const LONG_PRIVATE_CONTEXT = 'Told in confidence at the example offsite';
+function factsBody(rows: FenceRow[], prose = 'A durable example biography.') {
+  const facts = rows.map(r => ({ rowNum: r.rowNum, claim: r.claim, kind: 'fact' as const, confidence: r.confidence ?? 1, visibility: r.visibility,
+    notability: 'medium' as const, source: r.source, active: !r.forgotten, ...(r.forgotten ? { forgotten: true, context: 'forgotten: user request' } : { context: r.context }) }));
+  return replaceOrInsertFactsFence(prose, renderFactsTable(facts));
+}
+const TWIN: FenceRow[] = [{ rowNum: 1, claim: 'Prefers the example venue', visibility: 'private' }, { rowNum: 2, claim: 'Prefers the example venue', visibility: 'world' }];
+const FORGOTTEN_TWIN: FenceRow[] = [{ ...TWIN[0], forgotten: true }, TWIN[1]];
+const PRIVATE_AND_WORLD: FenceRow[] = [{ rowNum: 1, claim: 'Holds a private example account', visibility: 'private', context: LONG_PRIVATE_CONTEXT, source: 'Slack import' },
+  { rowNum: 2, claim: 'Works at acme-example', visibility: 'world', source: 'Slack import' }];
+const reconcileCases: Array<{ name: string; stored: FenceRow[]; incoming?: FenceRow[]; prose?: string; refusedRow?: number }> = [
+  { name: 'a frontmatter-only edit with an active private twin', stored: TWIN },
+  { name: 'a frontmatter-only edit with a forgotten private twin', stored: FORGOTTEN_TWIN },
+  { name: 'a take_file body edit with an active private twin', stored: TWIN, incoming: TWIN, prose: 'A revised public biography.' },
+  { name: 'a take_file body edit with a forgotten private twin', stored: FORGOTTEN_TWIN, incoming: FORGOTTEN_TWIN, prose: 'A revised public biography.' },
+  { name: 'an edit of the world twin', stored: TWIN, incoming: [TWIN[0], { ...TWIN[1], claim: 'Now prefers the new example venue' }] },
+  { name: 'a new unrelated world row', stored: PRIVATE_AND_WORLD, incoming: [...PRIVATE_AND_WORLD, { rowNum: 3, claim: 'Lives in example-city', visibility: 'world' }] },
+  { name: 'a new world row sharing a short context and the source', stored: [{ ...PRIVATE_AND_WORLD[0], context: 'Slack import' }, PRIVATE_AND_WORLD[1]],
+    incoming: [{ ...PRIVATE_AND_WORLD[0], context: 'Slack import' }, PRIVATE_AND_WORLD[1], { rowNum: 3, claim: 'Joined the example guild', visibility: 'world', context: 'Slack import', source: 'Slack import' }] },
+  { name: 'an existing world row whose context equals the private context', stored: [PRIVATE_AND_WORLD[0], { ...PRIVATE_AND_WORLD[1], context: LONG_PRIVATE_CONTEXT }],
+    incoming: [PRIVATE_AND_WORLD[0], { ...PRIVATE_AND_WORLD[1], context: LONG_PRIVATE_CONTEXT }], prose: 'A revised public biography.' },
+  { name: 'editing the private twin', stored: TWIN, incoming: [{ ...TWIN[0], confidence: 0.5 }, TWIN[1]], refusedRow: 1 },
+  { name: 'making a private fact world', stored: TWIN, incoming: [{ ...TWIN[0], visibility: 'world' }, TWIN[1]], refusedRow: 1 },
+  { name: 'copying a private claim into a new world row', stored: PRIVATE_AND_WORLD, incoming: [...PRIVATE_AND_WORLD, { rowNum: 3, claim: PRIVATE_AND_WORLD[0].claim, visibility: 'world' }], refusedRow: 3 },
+  { name: 'writing a private claim over an existing world row', stored: PRIVATE_AND_WORLD, incoming: [PRIVATE_AND_WORLD[0], { ...PRIVATE_AND_WORLD[1], claim: PRIVATE_AND_WORLD[0].claim }], refusedRow: 2 },
+  { name: 'copying a private context into an existing world row', stored: PRIVATE_AND_WORLD,
+    incoming: [PRIVATE_AND_WORLD[0], { ...PRIVATE_AND_WORLD[1], context: LONG_PRIVATE_CONTEXT }], refusedRow: 2 },
+  { name: 'copying a private context into a new world row', stored: PRIVATE_AND_WORLD,
+    incoming: [...PRIVATE_AND_WORLD, { rowNum: 3, claim: 'Mentioned an example plan', visibility: 'world', context: LONG_PRIVATE_CONTEXT }], refusedRow: 3 },
+];
+for (const c of reconcileCases) {
+  test(`#6137 reconcile private facts: ${c.refusedRow ? 'refuses' : 'publishes'} ${c.name}`, async () => isolated(async engine => {
+    const f = await fixture(engine, false, factsBody(c.stored));
+    if (c.incoming || c.prose) {
+      writeFileSync(f.file, serializePageToMarkdown({ ...f.snapshot.page, compiled_truth: factsBody(c.incoming ?? c.stored, c.prose) }, f.snapshot.tags));
+    }
+    await local(engine, f.registration, async () => {
+      const preview = async () => {
+        const initial = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
+        const decisions = initial.preview.conflicts.map(conflict => ({ path: conflict.path, action: 'take_file' }));
+        return decisions.length ? runReconcilePreview(engine, { source_id: f.id, slug: f.slug, from: initial.preview, decisions }) : initial;
+      };
+      if (c.refusedRow) {
+        const error = await preview().then(() => null, (e: unknown) => e as { code: string; message: string; suggestion: string; why?: string; fix?: { argv?: string[] } });
+        expect(error).toMatchObject({ code: 'permission_denied' });
+        const text = `${error!.message} ${error!.suggestion} ${error!.why ?? ''}`;
+        expect(text).toContain(`Row ${c.refusedRow} `);
+        for (const row of [...c.stored, ...(c.incoming ?? [])]) {
+          expect(text).not.toContain(row.claim);
+          if (row.context) expect(text).not.toContain(row.context);
+        }
+        expect(error!.fix?.argv).toEqual(['gbrain', 'get', '--source', f.id, '--', f.slug]);
+        expect((await engine.readPageSnapshot(f.slug, { sourceId: f.id }))!.revision).toBe(f.snapshot.revision);
+        return;
+      }
+      const resolved = await preview();
+      const receipt = await runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview: resolved.preview, request_id: randomUUID() });
+      expect(receipt.state).toBe('committed');
+      const stored = (await engine.readPageSnapshot(f.slug, { sourceId: f.id }))!;
+      const fileFence = parseFactsFence(parseMarkdown(readFileSync(f.file, 'utf8'), f.slug).compiled_truth);
+      expect(renderFactsTable(fileFence.facts)).toBe(renderFactsTable(parseFactsFence(stored.page.compiled_truth).facts));
+      const privateRow = parseFactsFence(stored.page.compiled_truth).facts.find(fact => fact.rowNum === 1)!;
+      expect(privateRow.visibility).toBe(c.stored[0].visibility);
+      expect(privateRow.claim).toBe(c.stored[0].claim);
+    });
+  }), 120_000);
+}

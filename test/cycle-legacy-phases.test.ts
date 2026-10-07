@@ -17,12 +17,15 @@
  * describes here rather than 7 nearly-identical files.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runPhaseLint, runPhaseBacklinks } from '../src/core/cycle.ts';
+import { makeLintHandler } from '../src/core/minions/handlers/lint.ts';
+import { makeLintFixHandler } from '../src/core/minions/handlers/lint-fix.ts';
+import { parseCycleLintExclude } from '../src/core/cycle/lint-fix-setting.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -108,6 +111,62 @@ describe('runPhaseLint — result-mapping', () => {
     // Critical: throw does NOT escape — the wrapper's try/catch envelope
     // contains it. If this assertion ever flips, every cycle that hits a
     // lint failure would abort instead of carrying on with the next phase.
+  });
+});
+
+// #6134: the cycle and the minion lint handlers honor cycle.lint_exclude (basenames, like `gbrain lint --exclude`).
+describe('cycle.lint_exclude (#6134)', () => {
+  const README = 'Attachments for the deck, not a brain page.\n';
+  function seedAttachments(): void {
+    mkdirSync(join(brainDir, 'attachments'), { recursive: true });
+    writeFileSync(join(brainDir, 'attachments', 'README.md'), README);
+  }
+
+  test('an excluded directory is neither reported nor rewritten by the lint phase', async () => {
+    try {
+      seedAttachments();
+      await engine.setConfig('cycle.lint_exclude', ' attachments , ');
+      const result = await runPhaseLint(brainDir, false, engine);
+      expect(result.status).toBe('ok');
+      expect(result.details).toMatchObject({ issues: 0, excluded: ['attachments'] });
+      expect(readFileSync(join(brainDir, 'attachments', 'README.md'), 'utf8')).toBe(README);
+    } finally {
+      cleanupBrain();
+    }
+  });
+
+  test('a blank value excludes nothing', async () => {
+    try {
+      seedAttachments();
+      await engine.setConfig('cycle.lint_exclude', ' , ');
+      const result = await runPhaseLint(brainDir, true, engine);
+      expect((result.details as { issues: number }).issues).toBeGreaterThan(0);
+      expect(result.details).toMatchObject({ excluded: [] });
+    } finally {
+      cleanupBrain();
+    }
+  });
+
+  test('the minion lint and lint-fix handlers read the same setting', async () => {
+    try {
+      seedAttachments();
+      await engine.setConfig('cycle.lint_exclude', 'attachments');
+      const job = { data: { dir: brainDir }, signal: new AbortController().signal } as unknown as Parameters<ReturnType<typeof makeLintHandler>>[0];
+      const linted = await makeLintHandler(engine)(job) as { total_issues: number };
+      expect(linted.total_issues).toBe(0);
+      await makeLintFixHandler(engine)(job);
+      expect(readFileSync(join(brainDir, 'attachments', 'README.md'), 'utf8')).toBe(README);
+    } finally {
+      cleanupBrain();
+    }
+  });
+
+  test('config set refuses a path where a basename belongs', () => {
+    expect(parseCycleLintExclude(' attachments , drafts ,')).toEqual(['attachments', 'drafts']);
+    let err: unknown;
+    try { parseCycleLintExclude('wiki/attachments'); } catch (e) { err = e; }
+    expect((err as { code?: string }).code).toBe('invalid_params');
+    expect((err as { fix?: { argv?: string[] } }).fix?.argv?.slice(0, 4)).toEqual(['gbrain', 'config', 'set', 'cycle.lint_exclude']);
   });
 });
 

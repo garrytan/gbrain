@@ -195,6 +195,7 @@ const HELP = `Usage:
   gbrain transcripts ingest --all        # import everything discovered
   gbrain transcripts status              # found vs imported gap table
   gbrain transcripts recover codex       # restore user turns lost to #5163 (preview; --apply)
+  gbrain transcripts audit-secrets       # list imported pages that still carry a credential (read-only)
   gbrain transcripts recent [options]
 
 ingest — import dead session logs and chat exports as conversation pages
@@ -607,6 +608,11 @@ export async function runTranscripts(engine: BrainEngine, args: string[], dispat
     await runStatus(engine, args.slice(1));
     return;
   }
+  if (sub === 'audit-secrets') {
+    const { runTranscriptsAuditSecrets } = await import('./transcripts-audit.ts');
+    await runTranscriptsAuditSecrets(engine, args.slice(1));
+    return;
+  }
   if (sub === 'recover') {
     const { runTranscriptsRecover } = await import('./transcripts-recover.ts');
     await runTranscriptsRecover(engine, args.slice(1), dispatch);
@@ -615,7 +621,7 @@ export async function runTranscripts(engine: BrainEngine, args: string[], dispat
   if (sub !== 'recent') {
     if (sub !== '--help' && sub !== '-h' && args.includes('--json')) {
       const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status, recover or recent.',
+      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status, recover, audit-secrets or recent.',
         'Run `gbrain transcripts recent --json` to list recent transcripts, or `gbrain transcripts --help`.'), 'transcripts', { json: true });
     }
     console.log(HELP);

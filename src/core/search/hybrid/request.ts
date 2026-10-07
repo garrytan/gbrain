@@ -23,6 +23,8 @@ import { recordSearchTelemetry } from '../telemetry.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../source-boost.ts';
 import { resolveEmbeddingColumn } from '../embedding-column.ts';
 import { resolveVectorLegacyGuard } from '../vector-legacy-guard.ts';
+import { resolveHnswIterativeScan } from '../hnsw-iterative-scan.ts';
+import { resolveCjkKeywordDeadlineMs } from '../cjk-keyword-deadline.ts';
 import { resolveSearchDateBounds } from '../date-bounds.ts';
 import { type DecideSearchContext, decideMetaFor, resolveAndLaunchDecide } from '../decide-stage.ts';
 import { applySearchIntent } from '../decide-retrieval.ts';
@@ -55,6 +57,8 @@ export interface HybridRequest {
   degraded: DegradedStageEntry[];
   /** v0.46.15: max-escalations searchVector exhaustion event, accumulated across vector calls. */
   vectorPoolUnderfill: HybridSearchMeta['vector_pool_underfilled'];
+  /** #5989: the last bounded CJK keyword arm outcome. */
+  keywordCandidates?: HybridSearchMeta['keyword_candidates'];
   /** v0.25.0: whether query expansion actually produced variants (onMeta). */
   expansionApplied: boolean;
   /** Telemetry counters set at each return path before emitHybridMeta. */
@@ -235,6 +239,15 @@ export async function resolveHybridRequest(
     embeddingColumn: resolvedCol,
     // #5824 rollback switch, latched once per process from env/config.
     vectorLegacyGuard: resolveVectorLegacyGuard(cfgForColumn),
+    hnswIterativeScan: resolveHnswIterativeScan(cfgForColumn),
+    // #5989: bound the CJK keyword arm by one deadline; its outcome and wall time ride the meta.
+    cjkKeyword: {
+      deadlineMs: resolveCjkKeywordDeadlineMs(cfgForColumn),
+      onMeta: (m) => {
+        if (m.incomplete) pushDegraded(degraded, 'keyword_candidates_incomplete', m.reason);
+        req.keywordCandidates = m;
+      },
+    },
     // D2 fix (fix/title-retrieval-arm, Reviewer F1): the hybrid keyword arm
     // is a recall arm — opt in to the engine's AND→OR zero-recall fallback.
     // Direct searchKeyword consumers (countMentions, link-extraction, eval)
@@ -317,8 +330,9 @@ export async function applyIdentityBoosts(req: HybridRequest, list: SearchResult
   // search_telemetry rollup. Telemetry write is sync (bumps a bucket map),
   // flush is fire-and-forget on 60s / 100-call thresholds. The hot path
   // never waits.
-export function emitHybridMeta(req: HybridRequest, rawMeta: HybridSearchMeta): void {
+export function emitHybridMeta(req: HybridRequest, armMeta: HybridSearchMeta): void {
   const { engine, opts } = req;
+  const rawMeta = req.keywordCandidates ? { ...armMeta, keyword_candidates: req.keywordCandidates } : armMeta;
   const decide = decideMetaFor(req.decide);
   const answerability = req.decide?.answerability;
   const meta: HybridSearchMeta = decide || req.rerankMeta || answerability || req.relationalPlan

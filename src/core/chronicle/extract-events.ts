@@ -291,6 +291,17 @@ Use the provided attendee slugs for "who" when the text does not name participan
  * array). Override via `chronicle.judge_max_tokens`.
  */
 const DEFAULT_JUDGE_MAX_TOKENS = 4000;
+/** Page body characters the judge reads at most. */
+export const JUDGE_BODY_CHARS = 12_000;
+/** Judge input outside the body: the system prompt plus headroom for the wrapper, title, attendees and date rule. */
+export const JUDGE_PROMPT_CHARS = JUDGE_SYSTEM.length + 2_000;
+
+/** The judge's output-token cap: `chronicle.judge_max_tokens`, else the default. */
+export async function chronicleJudgeMaxTokens(engine: BrainEngine): Promise<number> {
+  const capRaw = await engine.getConfig('chronicle.judge_max_tokens').catch(() => null);
+  const n = capRaw ? parseInt(capRaw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_JUDGE_MAX_TOKENS;
+}
 
 export function defaultJudge(engine: BrainEngine): ChronicleJudge {
   return async (input) => {
@@ -300,14 +311,9 @@ export function defaultJudge(engine: BrainEngine): ChronicleJudge {
     // so keyless daemons reported clean no_events runs forever. Surface it as
     // a distinct failure (mapped to status 'skipped' / judge_llm_unavailable).
     if (!isAvailable('chat')) return { events: [], failure: 'llm_unavailable' };
-    const body = (input.body || '').slice(0, 12_000);
+    const body = (input.body || '').slice(0, JUDGE_BODY_CHARS);
     // #2606: configurable cap so event-dense pages have headroom.
-    let maxTokens = DEFAULT_JUDGE_MAX_TOKENS;
-    const capRaw = await engine.getConfig('chronicle.judge_max_tokens').catch(() => null);
-    if (capRaw) {
-      const n = parseInt(capRaw, 10);
-      if (Number.isFinite(n) && n > 0) maxTokens = n;
-    }
+    const maxTokens = await chronicleJudgeMaxTokens(engine);
     // extraction.date_grounding: the page date is the observation date; a
     // relative "last Tuesday" resolves against it, never against today.
     const { isConsumerDateGroundingOn } = await import('../facts/extract.ts');

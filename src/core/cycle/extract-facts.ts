@@ -498,15 +498,17 @@ export async function runExtractFacts(
   // reconciliation pass. A row counts only when `row_num IS NULL`, its
   // `entity_slug` resolves to a LIVE page in THIS run's source (#3526 source
   // isolation), it is not soft-expired (#2646: `forget_fact` drains rows by
-  // soft-expiring them), and the source has a `local_path` (#2763). Rows
-  // without a page or checkout (#2484: the inline writer's
-  // slugify-floor / stub-guard-blocked slugs) are structurally unfenceable
-  // and never gate.
+  // soft-expiring them), the source has a `local_path` (#2763), and it is
+  // not an ontology observation (`dimension IS NULL`, #6264: those are never
+  // fenced, so they must not gate either). Rows without a page or checkout
+  // (#2484: the inline writer's slugify-floor / stub-guard-blocked slugs)
+  // are structurally unfenceable and never gate.
   const legacy = await engine.executeRaw<{ n: string }>(
     `SELECT COUNT(*) AS n
        FROM facts f
       WHERE f.source_id = $1
         AND f.row_num IS NULL
+        AND f.dimension IS NULL
         AND f.entity_slug IS NOT NULL
         AND f.expired_at IS NULL
         AND EXISTS (

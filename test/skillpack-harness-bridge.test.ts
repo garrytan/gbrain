@@ -435,3 +435,13 @@ describe('review-driven hardening (ship pre-landing findings)', () => {
     expect(ref.summary.differs).toBe(0);
   });
 });
+
+describe('ownedBridgeSlugs (#5912)', () => {
+  test('drops the reserved shared-dep key, sorts, and handles an absent entry', async () => {
+    const { ownedBridgeSlugs, SHARED_DEP_LEDGER_KEY } = await import('../src/core/skillpack/harness-bridge.ts');
+    const rec = { mode: 'full' as const, files: {} };
+    expect(ownedBridgeSlugs({ written: { query: rec, [SHARED_DEP_LEDGER_KEY]: rec, enrich: rec } as never })).toEqual(['enrich', 'query']);
+    expect(ownedBridgeSlugs({ written: { [SHARED_DEP_LEDGER_KEY]: rec } as never })).toEqual([]);
+    expect(ownedBridgeSlugs(undefined)).toEqual([]);
+  });
+});

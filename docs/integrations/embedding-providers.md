@@ -89,6 +89,8 @@ Optional `OPENAI_BASE_URL` — point the native OpenAI provider at an OpenAI-com
 
 Voyage 4 family shares an embedding space across all variants, so you can index with `voyage-4` and later point the query model at `voyage-4-large` or `voyage-4-lite` without reindexing. Dims: 256, 512, 1024, 2048. **2048 exceeds pgvector's HNSW cap of 2000** — those brains fall back to exact vector scans (still correct, just slower).
 
+Routed through the Vercel AI Gateway (`provider_base_urls.voyage` = `https://ai-gateway.vercel.sh/v1`), the embedding request also carries the width as `providerOptions.voyage.outputDimension`, which the gateway reads instead of Voyage's root `output_dimension`; that field is sent only when the hostname is exactly `ai-gateway.vercel.sh`, because Voyage's own API rejects it with HTTP 400. If a proxy returns a different width than `embedding_dimensions`, the embed fails before anything is written and the error names the proxy as the likely cause; fix the proxy's width parameter before considering a migration.
+
 Voyage also serves four hosted rerankers at `POST /v1/rerank` — `rerank-2.5` ($0.05/M) and `rerank-2.5-lite` ($0.02/M), plus the preview `rerank-3` ($0.05/M) and `rerank-3-lite` ($0.02/M) (2.5 pair verified 2026-08-15, rerank-3 pair 2026-09-06). All four share one request/response wire, so switching is a config change and nothing else.
 
 `rerank-2.5` is the mode-bundle reranker default, so no config row is needed for it (an explicit `search.reranker.model` equal to it is exactly what `gbrain doctor`'s `search_mode` check calls redundant). Moving to the preview generation is one command:

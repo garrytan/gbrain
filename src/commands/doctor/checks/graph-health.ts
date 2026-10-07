@@ -285,6 +285,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'connector_checkpoints',
     'persistence_request_indexes',
     'persistence_request_growth',
+    'persistence_write_stall',
     'connector_held_items',
     'git_held_files',
     'frontmatter_hook',
@@ -298,6 +299,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'extractor_facts_expired',
     'captured_facts_active',
     'loop_facts_drift',
+    'ontology_facts_fenced',
   ],
   run: runTimelineHistory,
 };

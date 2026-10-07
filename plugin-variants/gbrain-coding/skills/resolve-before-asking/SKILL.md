@@ -259,7 +259,7 @@ After emitting the gate, stop the turn (see ask-user).
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Every lookup comes back empty with a degraded notice: keyword-only search can miss the entity. Say so in the confirmable question instead of asking "who is X?" cold.
 - `get_page` returns `page_not_found` for a guessed slug: try title and alias search before concluding the entity is unknown.

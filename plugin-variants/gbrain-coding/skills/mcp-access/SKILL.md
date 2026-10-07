@@ -21,9 +21,9 @@ when_to_use: "Use when the user asks: \"GBrain admin login link\", \"open the MC
 
 # MCP access and administration
 
-Use [MCP administration](../../docs/mcp/ADMIN.md) for the exact commands and
-recovery table, [hosted setup](../../docs/guides/hosted-harness-access.md) for
-client installation, and [deployment](../../docs/mcp/DEPLOY.md) for the running
+Use [MCP administration](https://github.com/garrytan/gbrain/blob/master/docs/mcp/ADMIN.md) for the exact commands and
+recovery table, [hosted setup](https://github.com/garrytan/gbrain/blob/master/docs/guides/hosted-harness-access.md) for
+client installation, and [deployment](https://github.com/garrytan/gbrain/blob/master/docs/mcp/DEPLOY.md) for the running
 service. If this skill is loaded remotely without those files, use
 https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/ADMIN.md.
 No local brain initialization or personal-agent bootstrap is required to
@@ -110,7 +110,7 @@ and never bypasses owner consent. Do not enable it as a silent repair.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `insufficient_scope` / `invalid_token` on an MCP call: this is a grant problem only the owner can change. Do not try successively broader OAuth scopes; tell the user which scope is missing.
 - A failed transport after a mutation was sent means the outcome is unknown: re-read the client list before retrying, never re-send blind.

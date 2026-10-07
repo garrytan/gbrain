@@ -170,7 +170,7 @@ frontmatter.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `PERPLEXITY_API_KEY` missing or rejected: tell the user the web arm cannot run; answer from the brain only and say so.
 - `rate_limited`: retry after the stated delay; for bulk work drop to the cheaper model rather than looping.

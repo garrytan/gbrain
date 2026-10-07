@@ -66,6 +66,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'derived_visibility',
   'extractor_facts_expired',
   'loop_facts_drift',
+  'ontology_facts_fenced',
   'orphan_persistence_bindings',
   'safe_index_pending',
   'self_capture',
@@ -165,6 +166,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'timeline_coverage',
   'timeline_orphans',
   'timeline_history',
+  // #6147: imported conversation pages that may still carry a typed credential (cached audit).
+  'transcript_secret_exposure',
   // #5254 — pages written database-only to a source with no canonical owner.
   'unbound_source',
   'undeclared_db_only_pages',
@@ -244,6 +247,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'publication_refusals',
   'persistence_request_growth',
   'persistence_request_indexes',
+  'persistence_write_stall',
   'stale_embedding_effects',
   'vector_plan',
   'writer_version',

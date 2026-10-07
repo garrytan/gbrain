@@ -176,7 +176,7 @@ decision.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A review model refuses: switch to the next model in the chain silently; escalate to the user only when every model refuses.
 - `gbrain eval cross-modal` fails on a missing provider key or `no_pricing`: name the missing provider and run with the models that are configured; never report a review that did not run as passed.

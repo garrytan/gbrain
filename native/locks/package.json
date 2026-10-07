@@ -1,0 +1,5 @@
+{
+  "name": "gbrain-native-locks",
+  "private": true,
+  "description": "Package boundary for gbrain's prebuilt native lock addons. Internal; not published."
+}

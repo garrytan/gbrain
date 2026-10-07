@@ -254,7 +254,7 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
     }
     default:
       console.log(USAGE);
-      if (sub && sub !== '--help' && sub !== 'help') setCliExitVerdict(1);
+      if (sub && sub !== '--help' && sub !== '-h' && sub !== 'help') setCliExitVerdict(1);
   }
 }
 

@@ -177,8 +177,9 @@ describe('#5567 database-only rows are materialized as marked bullets', () => {
       const edited = f.file(slug).replace('Kickoff held before write-through', 'Kickoff held in person');
       await f.put(slug, edited, { expected_revision: await f.revision(slug) });
       expect((await f.timeline(slug)).map(r => r.summary)).toEqual(['Kickoff held in person']);
-      await f.put(slug, page('Draft.'), { force: true });
-      expect(await f.timeline(slug)).toEqual([]);
+      // #5969 (D3): a preserving put that omits the section keeps every row, so the dropped bullet is dropped from a present section.
+      await f.put(slug, page('Draft.', '- **2026-08-02** | markdown — Next step'), { force: true });
+      expect((await f.timeline(slug)).map(r => r.summary)).toEqual(['Next step']);
     });
   });
 
@@ -283,9 +284,11 @@ describe('#5567 per-writer classes for marked rows', () => {
       await f.put(slug, page('Draft.', '- **2026-08-01** | connector — Old item'));
       await f.legacy(slug, legacy);
       await f.put(slug, page('Draft.', '- **2026-08-01** | connector — Old item'), { force: true });
-      for (const render of [page('Connector render.'), page('Connector render.')]) {
+      // #5969 (D3): each render carries its section (an omitted one keeps every row for a preserving put).
+      const current = '- **2026-08-02** | connector — Current item';
+      for (const render of [page('Connector render.', current), page('Connector render.', current)]) {
         await f.put(slug, render, { force: true });
-        expect(await f.timeline(slug)).toEqual([normalized]);
+        expect(await f.timeline(slug)).toEqual([normalized, { date: '2026-08-02', source: 'connector', summary: 'Current item', detail: '' }]);
         expect(await f.body(slug)).toContain(bullet);
       }
     });

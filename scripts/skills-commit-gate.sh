@@ -7,7 +7,7 @@
 #   2. check-resolvable --strict (MECE overlap, DRY delegation, filing audit,
 #      routing-eval fixtures)
 #   3. skills.lock.json regen + freshness
-#   4. check-skill-refs (dangling refs, donor remnants, CLI refs warn-only)
+#   4. check-skill-refs (dangling refs, donor remnants, CLI refs, links that leave skills/)
 #
 # Optional: pass changed .md file paths as arguments to also run the harvest
 # privacy linter over them (the merge-lane lint — harvest can't lint merges).

@@ -160,7 +160,8 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
     } finally { release.resolve(); await holding; await consumer.stop(); }
   }), 30000);
 
-  for (const [phase, table] of [['refresh_roots', 'persistence_brain'], ['recovery_scan', 'persistence_worktrees']] as const) {
+  for (const [phase, table, statement] of [['refresh_roots', 'persistence_brain', 'SELECT brain_id,enabled,to_jsonb(persistence_brain)'],
+    ['recovery_scan', 'persistence_worktrees', 'ORDER BY r.updated_at,r.sequence LIMIT 16']] as const) {
     test(`${phase} stopping cancels its blocked query without reporting a storage failure`, () => fixture(async ({ engine, databaseUrl }, config) => {
       const observer = postgres(databaseUrl, { max: 1, prepare: false });
       const held = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
@@ -175,7 +176,7 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
       try {
         consumer.start();
         await waitFor(async () => (await observer.unsafe<{ waiting: boolean }[]>(
-          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND query LIKE $1) AS waiting", [`%${table}%`]))[0].waiting && consumer.status().phase?.name === phase,
+          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND strpos(query, $1)>0) AS waiting", [statement]))[0].waiting && consumer.status().phase?.name === phase,
         { timeoutMs: 5000 });
         const stopping = consumer.stop();
         await waitFor(() => consumer.status().phase === null, { timeoutMs: 2000, label: 'cancelled phase settlement before releasing its blocker' });
@@ -185,6 +186,65 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
         release.resolve(); await holding; await stopping;
         expect(await engine.executeRaw('SELECT 42 AS answer')).toEqual([{ answer: 42 }]);
       } finally { release.resolve(); await holding; await consumer.stop(); await observer.end(); }
+    }), 30000);
+
+    test(`${phase} stopping re-sends a cancel that reached its backend before the statement`, () => fixture(async ({ engine, databaseUrl }, config) => {
+      const target = new URL(databaseUrl);
+      const sockets = new Set<Socket>();
+      const backendKey = Buffer.from([0x4b, 0, 0, 0, 12]);
+      const statementRelease = Promise.withResolvers<void>();
+      let consumer: PersistenceConsumer | undefined, statementPid: number | undefined, delivered = false, forwarded = false;
+      const gateway = createServer(socket => {
+        const upstream = connect({ host: target.hostname, port: Number(target.port) });
+        for (const end of [socket, upstream]) { sockets.add(end); end.once('close', () => sockets.delete(end)); }
+        socket.on('error', () => {}); upstream.on('error', () => {});
+        socket.once('close', () => upstream.destroy()); upstream.once('close', () => socket.destroy());
+        let pid: number | undefined, gate = Promise.resolve();
+        upstream.on('data', (chunk: Buffer) => {
+          const at = pid === undefined ? chunk.indexOf(backendKey) : -1;
+          if (at >= 0) pid = chunk.readInt32BE(at + 5);
+          socket.write(chunk);
+        });
+        socket.on('data', (chunk: Buffer) => {
+          if (chunk.length === 16 && chunk.readInt32BE(4) === 80877102 && statementPid !== undefined && chunk.readInt32BE(8) === statementPid)
+            upstream.once('close', () => { delivered = true; });
+          const held = statementPid === undefined && consumer?.status().phase?.name === phase && chunk.includes(statement);
+          if (held) { statementPid = pid; gate = statementRelease.promise; }
+          gate = gate.then(() => { upstream.write(chunk); if (held) forwarded = true; });
+        });
+      });
+      await new Promise<void>(resolve => gateway.listen(0, '127.0.0.1', resolve));
+      const gatewayUrl = new URL(databaseUrl);
+      gatewayUrl.hostname = '127.0.0.1';
+      gatewayUrl.port = String((gateway.address() as { port: number }).port);
+      const worker = new PostgresEngine();
+      const held = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+      const holding = engine.transaction(async tx => {
+        await tx.executeRaw(`LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE`);
+        held.resolve(); await release.promise;
+      });
+      await held.promise;
+      const errors: unknown[] = [];
+      try {
+        await worker.connect({ database_url: gatewayUrl.toString(), poolSize: 4 });
+        consumer = new PersistenceConsumer(worker, { engine: 'postgres' }, async () => { throw new Error('unexpected preparation'); },
+          { hostId: config.hostId, phaseMs: 10000, pollMs: 60000, onError: error => errors.push(error) });
+        consumer.start();
+        await waitFor(() => statementPid !== undefined, { timeoutMs: 5000, label: `${phase} statement held in transit` });
+        const stopping = consumer.stop();
+        await waitFor(() => delivered, { timeoutMs: 5000, label: 'CancelRequest delivered before the backend read its statement' });
+        expect(forwarded).toBe(false);
+        statementRelease.resolve();
+        await waitFor(() => consumer!.status().phase === null, { timeoutMs: 2000, label: 'cancelled phase settlement before releasing its blocker' });
+        expect(forwarded).toBe(true);
+        expect(errors).toEqual([]);
+        expect(consumer.status().last_error).toBeUndefined();
+        release.resolve(); await holding; await stopping;
+      } finally {
+        statementRelease.resolve(); release.resolve(); await holding; await consumer?.stop(); await worker.disconnect();
+        for (const socket of sockets) socket.destroy();
+        await new Promise<void>(resolve => gateway.close(() => resolve()));
+      }
     }), 30000);
 
     test(`${phase} cancels a real table-lock wait and retains fail-closed scheduling`, () => fixture(async ({ engine }, config) => {

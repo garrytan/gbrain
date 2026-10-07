@@ -119,7 +119,7 @@ rather than blocking — the version numbers alone are enough to decide.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The version is listed in `self_upgrade.failed_versions`: do not retry it; tell the user and wait for the next release.
 - `gbrain upgrade` fails with `lock_busy` (another upgrade or migration runs) or exit 75: wait for the other runner and retry; never delete a lock file.

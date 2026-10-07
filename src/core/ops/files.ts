@@ -97,6 +97,10 @@ const file_upload: Operation = {
     // lane (`gbrain files upload-raw --page <slug>`).
     if (!ctx.config.storage) {
       const slugOk = pageSlug !== null && /^[a-z0-9][a-z0-9._/-]*$/i.test(pageSlug);
+      // #5963: the git-tracked lane is refused on a managed worktree, so it is not offered there.
+      if (slugOk && await (await import('../raw-file-upload.ts')).rawUploadRefusedFor(ctx.engine, pageSlug!, ctx.sourceId ?? 'default')) throw opError('storage_error',
+        'No storage backend configured — file_upload would record a files row with no stored bytes.',
+        'Configure `storage` in your gbrain config (supabase | s3 | local), then upload again. This page lives in a managed canonical worktree, which does not accept raw files from outside the persistence coordinator, so a storage backend is the only way to store it.');
       throw opError(
         'storage_error',
         'No storage backend configured — file_upload would record a files row with no stored bytes.',

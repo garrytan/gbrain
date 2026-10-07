@@ -230,7 +230,7 @@ describe('#2184 conversation-shaped types survive v2 unify', () => {
 
 // #1575 — the jobs worker registration must honor the handler's documented
 // dry-run default. `apply: data.apply ?? true` made the canonical operator
-// invocation (`gbrain jobs submit unify-types --allow-protected --params
+// invocation (`gbrain jobs submit unify-types --params
 // '{"target_pack":...}'`) destructively retype pages by default while
 // UnifyTypesOpts.apply documents 'Default false (dry-run)'. Structural pin —
 // the worker source must default apply to false.

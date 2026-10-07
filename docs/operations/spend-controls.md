@@ -325,7 +325,10 @@ tracker cannot price, the default cap is not enforced: extraction warns and
 runs, bounded only by the call count. When you set `chronicle.job_budget_usd`
 yourself, an unpriced model refuses with `no_pricing` until you register its
 price with `gbrain pricing set`. `gbrain chronicle-backfill` (history, on
-request) is exempt from the daily limit and bounded by its `--limit`.
+request) is exempt from the daily limit and bounded by its `--limit`;
+`--max-usd` adds a hard spend bound that counts retries (an unpriced model then
+refuses with `no_pricing`; see the
+[chronicle guide](../guides/life-chronicle.md#bound-the-spend-with---max-usd)).
 
 ```bash
 gbrain config set auto_chronicle false              # opt out

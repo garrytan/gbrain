@@ -24,6 +24,8 @@ import { harnessWiringEntry, httpStatusServerEntry, type ReadinessHarness } from
 import { verifiedStatusMarkers } from '../../../core/serve-http-status-marker.ts';
 import { agentProcessMarker } from '../../../core/interaction.ts';
 import { resolveGbrainBin } from '../../../core/gbrain-bin.ts';
+import { enabledPluginLanes } from '../../../core/bootstrap/plugin-lanes.ts';
+import { claudeConfigDir } from '../../../core/bootstrap/host-specs.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
@@ -139,7 +141,7 @@ function detectedHarnesses(): ReadinessHarness[] {
     return ['opencode'];
   }
   const out: ReadinessHarness[] = [];
-  if (existsSync(join(home(), '.claude.json')) || existsSync(join(home(), '.claude'))) out.push('claude-code');
+  if (existsSync(join(home(), '.claude.json')) || existsSync(join(home(), '.claude')) || existsSync(claudeConfigDir())) out.push('claude-code');
   if (existsSync(process.env.CODEX_HOME || join(home(), '.codex'))) out.push('codex');
   if (existsSync(join(process.env.XDG_CONFIG_HOME || join(home(), '.config'), 'opencode'))) out.push('opencode');
   return out;
@@ -245,7 +247,15 @@ export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Chec
   }
   const regs = readHarnessRegistrations();
   if (regs.length === 0) {
-    const harnesses = detectedHarnesses();
+    const detected = detectedHarnesses();
+    const plugins = enabledPluginLanes('gbrain').filter((lane) => detected.includes(lane.harness));
+    const harnesses = detected.filter((h) => !plugins.some((lane) => lane.harness === h));
+    if (detected.length > 0 && harnesses.length === 0) {
+      return { name: NAME, status: 'ok',
+        message: `${plugins.map((p) => `${HARNESS_LABEL[p.harness]} gets gbrain from the enabled '${p.plugin}' plugin`).join('; ')}. Enabled is a config signal: doctor does not smoke-test plugin lanes, so verify by starting a new session in that app and checking that gbrain's tools (recall, remember) are listed.`,
+        details: { reason: 'plugin_lane_enabled', plugins: plugins.map((p) => p.plugin), harnesses: plugins.map((p) => p.harness),
+          verify: 'start a new session in the harness and list its tools; gbrain\'s recall and remember should appear' } };
+    }
     const lock = brainLock();
     const lockOwner = lock?.held && lock.isServe && lock.pid !== undefined ? { pid: lock.pid, transport: lock.http ? 'http' as const : 'stdio' as const, is_self: false } : null;
     const entry = harnessWiringEntry({ transport: 'cli', harnesses, lockOwner, gbrainBin: resolveGbrainBin() });

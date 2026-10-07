@@ -77,8 +77,11 @@ Brain / database level (gbrain-specific):
   sweeps `delete_page` across a set of slugs. Deletes are soft (recoverable via
   `gbrain restore <slug>`) until purged — say so on the card, then gate anyway:
   a sweep that's wrong in bulk is expensive to un-wrong in bulk.
-- **`gbrain purge-deleted`** — permanently removes soft-deleted pages. This is
-  the point of no return for the soft-delete safety net.
+- **`gbrain pages purge-deleted`** — permanently removes soft-deleted pages
+  from every source of the brain. This is the point of no return for the
+  soft-delete safety net. Show the user `gbrain pages purge-deleted --dry-run --json`
+  first; the command itself asks (exit 3 without a terminal) and runs with
+  `--yes` only after the user agrees.
 - **Source removal** — `gbrain sources remove <id>` deletes the source AND
   every page in it. The `--confirm-destructive` flag does not substitute for
   the card.
@@ -178,10 +181,10 @@ still wrong because:
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - A destructive command exits 3 (`confirmation_required`) or asks for `--confirm-destructive`: that flag confirms the agent is sure, not the user. Show the recoverability card and wait for the user's explicit yes.
-- `gbrain purge-deleted` removes soft-deleted pages for good, so `gbrain restore` cannot bring them back afterwards: say so on the card. Never promise physical erasure or a recovery you cannot verify.
+- `gbrain pages purge-deleted` removes soft-deleted pages for good, so `gbrain restore` cannot bring them back afterwards: say so on the card. Never promise physical erasure or a recovery you cannot verify.
 - A delete or forget returns `write_pending` (exit 10): poll the receipt before writing the deletion log entry.
 
 ## Anti-Patterns

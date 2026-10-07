@@ -117,7 +117,7 @@ NEVER use `[[wiki-links]]` — they don't render on GitHub.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `get_page` returns `page_not_found`: the raw dump moved or the slug is wrong; search for the title before reporting the article missing.
 - The rewrite returns `revision_conflict`: someone else edited the page since you read it. Re-read, re-apply the enrichment to the new text, and save with the new revision; never overwrite blind.

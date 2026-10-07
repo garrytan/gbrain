@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { loadConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
+import { requireConsent, type ConsentRequest } from '../consent.ts';
 import { managedPersistenceEnabled } from './ownership.ts';
 import { submitPageMutation } from './page-mutations.ts';
 
@@ -19,6 +20,35 @@ export interface DeletedPagePurge {
   failed: number;
   /** Present when `failed > 0`, so the caller cannot report success. */
   error?: { class: string; code: string; message: string };
+}
+
+/**
+ * D6 (#6114): the one consent request for a manual hard purge, used by
+ * `gbrain pages purge-deleted` and by the `purge_deleted_pages` op (reached
+ * through `gbrain call`), so no manual entry point purges without it. The
+ * approved command is always the gated `pages purge-deleted --yes`. The
+ * autopilot purge phase calls `purgeDeletedPagesCoordinated` directly.
+ */
+export function purgeConsentRequest(count: number, olderThanHours: number, json: boolean, args: readonly string[]): ConsentRequest {
+  return {
+    command: 'pages purge-deleted', effects: ['destructive'], actor: 'agent',
+    what: `Permanently purge ${count} soft-deleted page(s)`,
+    why: 'A hard purge removes soft-deleted pages, their chunks and links, from every source of this brain.',
+    risk: 'Purged pages cannot be restored with `gbrain restore`.',
+    user_message: `Permanently delete ${count} page(s) soft-deleted more than ${olderThanHours}h ago, across every source in this brain? They cannot be restored afterwards.`,
+    argv: ['gbrain', 'pages', 'purge-deleted', '--older-than', `${olderThanHours}h`, ...(json ? ['--json'] : []), '--yes'],
+    preview_argv: ['gbrain', 'pages', 'purge-deleted', '--older-than', `${olderThanHours}h`, '--dry-run', '--json'],
+    args,
+  };
+}
+
+/** The `purge_deleted_pages` op (`gbrain call`): the D6 consent first (`yes` is `--yes`); an empty purge set needs none. */
+export async function consentedPurgeDeletedPages(engine: BrainEngine, olderThanHours: number, yes: boolean) {
+  const preview = await engine.purgeDeletedPages(olderThanHours, { dryRun: true });
+  if (preview.count === 0) return { status: 'purged', count: 0, slugs: [] };
+  await requireConsent(purgeConsentRequest(preview.count, olderThanHours, false, yes ? ['--yes'] : []));
+  const result = await purgeDeletedPagesCoordinated(engine, olderThanHours);
+  return { status: result.failed ? 'partial' : 'purged', count: result.count, slugs: result.slugs, ...(result.blocked.length ? { blocked: result.blocked } : {}) };
 }
 
 /**

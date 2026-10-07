@@ -123,7 +123,8 @@ export interface ChronicleRowWrite {
  * Record a decision. An extracted row stays extracted unless a later
  * generation of the page was extracted after it (A→B→A re-extracts A once,
  * E9); a pending or failed backfill row is never overwritten by an
- * automatic decision.
+ * automatic decision. A new decision leaves any `--max-usd` campaign
+ * (#6199): its stamp is cleared, and only campaign.ts writes one.
  */
 export async function upsertChronicleRow(engine: BrainEngine, w: ChronicleRowWrite): Promise<boolean> {
   const written = await engine.executeRaw(
@@ -133,7 +134,8 @@ export async function upsertChronicleRow(engine: BrainEngine, w: ChronicleRowWri
      ON CONFLICT (source_id, page_id, content_hash, extractor_version) DO UPDATE SET
        slug=EXCLUDED.slug, state=EXCLUDED.state, reason=EXCLUDED.reason, trigger=EXCLUDED.trigger,
        principal_kind=EXCLUDED.principal_kind, principal_id=EXCLUDED.principal_id, request_id=EXCLUDED.request_id,
-       no_extract=EXCLUDED.no_extract, next_attempt_at=EXCLUDED.next_attempt_at, decided_at=now(), updated_at=now()
+       no_extract=EXCLUDED.no_extract, next_attempt_at=EXCLUDED.next_attempt_at, decided_at=now(), updated_at=now(),
+       campaign_id=NULL, attempt_cap_usd=NULL, max_attempts=NULL, pricing_policy=NULL, campaign_max_usd=NULL
      WHERE NOT (EXCLUDED.trigger='auto' AND c.trigger='backfill' AND c.state IN ('pending','failed'))
        AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
          WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash

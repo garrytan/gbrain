@@ -394,6 +394,10 @@
         "name": "persistence_request_growth"
       },
       {
+        "category": "ops",
+        "name": "persistence_write_stall"
+      },
+      {
         "category": "brain",
         "name": "connector_held_items"
       },
@@ -444,6 +448,10 @@
       {
         "category": "brain",
         "name": "loop_facts_drift"
+      },
+      {
+        "category": "brain",
+        "name": "ontology_facts_fenced"
       },
       {
         "category": "brain",
@@ -672,6 +680,10 @@
       {
         "category": "meta",
         "name": "retrieval_feedback_health"
+      },
+      {
+        "category": "brain",
+        "name": "transcript_secret_exposure"
       },
       {
         "category": "meta",

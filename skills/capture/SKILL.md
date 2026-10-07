@@ -83,7 +83,7 @@ captured:
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Exit 10 (`write_pending`): the thought was accepted and may still commit. Tell the user it is saved and pending, and poll `gbrain write-request <request_id>`; never capture it a second time.
 - A secret-scan or slug-fence refusal: nothing was saved. Tell the user what was refused; do not edit the content to sneak past the scanner.

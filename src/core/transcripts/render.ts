@@ -133,6 +133,11 @@ export function loadImportRedactionPatterns(userPatternsPath?: string): ImportRe
  * carry a digit and clear the entropy gate). Transcripts are the corpus where
  * a pasted `.env` line is most likely, so recall wins over the false-positive
  * cost here; the push gate and compiled-context scan keep the heuristic off.
+ * Also opted in for this lane only: the `labeled_credential` detector
+ * (`secret-scan-labeled.ts`), which claims a low-entropy value typed after a
+ * password / login / credentials label (`password: hunter2`, `login alice /
+ * hunter2`); a claimed value of 8+ characters that is not a stoplisted word
+ * joins the echo dictionary below.
  * Every match becomes `<REDACTED:pattern>`; user patterns become
  * `<REDACTED:user-pattern>`.
  *
@@ -161,9 +166,10 @@ export function redactSession(
     // sanitizeForJsonb (NUL-strip + well-form): transcripts capture raw tool
     // output that legitimately carries U+0000, which Postgres text/jsonb
     // reject at the write boundary (#4392).
-    // highEntropy: transcripts opt into the assignment heuristic (see doc
-    // comment above) — the shared scanner keeps it off by default.
-    planRedaction(sanitizeForJsonb(text), { highEntropy: true, echoValues });
+    // highEntropy + labeledCredentials: transcripts opt into the assignment
+    // heuristic and the labeled-credential detector (see doc comment above);
+    // the shared scanner keeps both off by default.
+    planRedaction(sanitizeForJsonb(text), { highEntropy: true, labeledCredentials: true, echoValues });
 
   const apply = (p: RedactionPlan): string => {
     redactionCount += p.redactions.length;

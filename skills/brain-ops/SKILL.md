@@ -181,8 +181,12 @@ the write path:
   `auto_links: { created, removed, errors }`.
 - **MCP callers (stdio AND HTTP)** return `auto_links: { skipped: "remote", hint }`
   and `auto_timeline: { skipped: "remote" }`. Body wikilinks are saved as text.
-  A stdio `gbrain serve` reconciles the edges asynchronously with its
-  maintenance sweep (startup + 10-minute idle ticks).
+  A post-commit effect then adds plain `mentions` edges to pages that already
+  exist in the same source (`auto_links.mention_links: "queued"`;
+  `gbrain config set mcp.remote_auto_links off` turns it off). Typed,
+  frontmatter and timeline edges are not part of it: a stdio `gbrain serve`
+  reconciles those asynchronously with its maintenance sweep (startup +
+  10-minute idle ticks).
   `gbrain serve --http` does not self-sweep — reconcile on demand with
   `gbrain sweep --once` (delegates to the live serve over IPC) or
   `gbrain extract links --source db`.
@@ -248,7 +252,7 @@ the citation is `[gstack:plans/foo]`. That's the whole rule.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `put_page` returns `revision_conflict`: re-read the page, merge your change into the new text, and save with the new revision. `write_pending` (exit 10): poll `get_write_request` (`gbrain write-request <request_id>`) before claiming the write landed.
 - A write is refused by the secret scan or a slug fence (`permission_denied`): do not strip or rename to dodge it; tell the user what was refused and why (see `docs/guides/write-refusals.md`).

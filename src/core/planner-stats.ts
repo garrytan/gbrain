@@ -14,7 +14,8 @@
  *
  * Call sites: the PGLite engine's planner-sensitive reads (first relevant
  * read, `planner.first_read_budget_ms`), bulk import, managed sync and the
- * database timeline walk every `import.analyze_every_pages` pages, the cycle after its freshness phases,
+ * database timeline walk every `import.analyze_every_pages` pages, stale link
+ * drains (`plannerStatsForLinkDrain`), the cycle after its freshness phases,
  * the resident consumer's idle tick, and `refreshProjectionStatistics` (full
  * ANALYZE, then watermarks for every table). `planner.auto_analyze=false`
  * (env GBRAIN_PLANNER_AUTO_ANALYZE) disables all of them; doctor
@@ -261,6 +262,42 @@ export async function maybeRefreshPlannerStats(engine: BrainEngine, reason: Plan
   })();
   state.inflight = run;
   try { return await run; } finally { state.inflight = null; }
+}
+
+/** A stale link drain at least this large checks planner statistics before its first page (PLANNER_STATS_MIN_PENDING's floor). */
+export const LINK_DRAIN_ANALYZE_MIN_STALE = 500;
+/** Link-graph tables the drain rewrites that carry no F4b deltas: analyzed whenever `links` is. */
+const LINK_DRAIN_UNTRACKED_TABLES = ['link_transitions', 'link_relationships'] as const;
+
+/**
+ * Planner upkeep for a stale link drain (`extractStaleFromDB` and
+ * `extractManagedStaleLinks`). The drain reads every page twice through
+ * readPageSnapshot and rewrites its links; on a brain that grew since its last
+ * ANALYZE the snapshot read scans the whole source instead of using
+ * pages_source_slug_key, so per-page cost grows with brain size. PGLite with at
+ * least LINK_DRAIN_ANALYZE_MIN_STALE stale pages (`countStale`, called only on
+ * PGLite): refresh stale tables now, then again every
+ * `import.analyze_every_pages` drained pages through the returned tick. Each
+ * refresh ANALYZEs only tables past the F4b threshold, plus link_transitions
+ * and link_relationships when `links` was analyzed. Postgres, small drains and
+ * `planner.auto_analyze=false`: a no-op. Never throws.
+ */
+export async function plannerStatsForLinkDrain(engine: BrainEngine, countStale: () => Promise<number>): Promise<(drained: number) => Promise<void>> {
+  const noop = async () => {};
+  const every = await importAnalyzeEveryPages(engine).catch(() => 0);
+  if (every <= 0 || await countStale().catch(() => 0) < LINK_DRAIN_ANALYZE_MIN_STALE) return noop;
+  const refresh = async () => {
+    const { analyzed } = await maybeRefreshPlannerStats(engine, 'extract', { throttle: false });
+    if (!analyzed.some(a => a.table === 'links')) return;
+    for (const table of LINK_DRAIN_UNTRACKED_TABLES) await engine.executeRaw(`ANALYZE ${table}`);
+  };
+  await refresh().catch(() => undefined);
+  let next = every;
+  return async drained => {
+    if (drained < next) return;
+    next = drained + every;
+    await refresh().catch(() => undefined);
+  };
 }
 
 /**

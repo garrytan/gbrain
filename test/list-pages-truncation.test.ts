@@ -35,6 +35,10 @@ import { operations, type OperationContext } from '../src/core/operations.ts';
 import { dispatchToolCall, __resetBackupNoticeForTests } from '../src/mcp/dispatch.ts';
 import { __resetFactsDrainNoticesForTests } from '../src/core/facts/drain.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { __resetBehaviorNoticeForTests } from '../src/core/behavior-change-notice.ts';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ListPagesPagination } from '../src/core/ops/list-pages-pagination.ts';
 
 const list_pages = operations.find(o => o.name === 'list_pages')!;
@@ -242,7 +246,12 @@ describe('list_pages pagination meta for remote callers', () => {
     await seed(12);
     // Once-per-process notices (backup coverage, post-upgrade, a pending facts-drain notice) depend on what other tests
     // in the same shard leave behind; switch them off or clear them so this test counts only the listing notice.
-    await withEnv({ GBRAIN_BACKUP_CHECK: 'off', GBRAIN_NO_ONBOARD_NUDGE: '1' }, async () => {
+    // The one-time behavior_changes disclosure fires on a brain older than its fresh-install grace (the restored PGLite
+    // snapshot is), once per brain per GBRAIN_HOME; a fresh brain in its own GBRAIN_HOME never owes it.
+    await engine.executeRaw('UPDATE sources SET created_at = now()');
+    __resetBehaviorNoticeForTests();
+    const noticeHome = mkdtempSync(join(tmpdir(), 'gbrain-list-pages-notice-'));
+    await withEnv({ GBRAIN_BACKUP_CHECK: 'off', GBRAIN_NO_ONBOARD_NUDGE: '1', GBRAIN_HOME: noticeHome }, async () => {
     const opts = { remote: true, transport: 'stdio' as const, sourceId: 'default' };
     const res = await dispatchToolCall(engine as any, 'list_pages', { limit: 10, type: 'note' }, opts);
     expect(res.isError).toBeUndefined();

@@ -284,9 +284,6 @@ describe('resolveSchemaBehind (#1530)', () => {
     expect(behind).toBe(true);
   });
 
-  test('up-to-date branch exits 1 when schemaBehind (source shape)', async () => {
-    const { readFileSync } = await import('fs');
-    const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
-    expect(src).toMatch(/if \(schemaBehind\)[\s\S]{0,300}return 1;[\s\S]{0,120}All migrations up to date/);
-  });
+  // The exit when the schema stays behind is pinned by behavior (#6089):
+  // test/e2e/apply-migrations-schema-exit.test.ts and test/apply-migrations-schema-exit.test.ts.
 });

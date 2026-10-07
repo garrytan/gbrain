@@ -228,3 +228,11 @@ describe('inline citation link targets (#5483)', () => {
     )).toEqual([{ date: '2024-02-27', source: 'memo', summary: 'Reviewed (carefully).' }]);
   });
 });
+
+// #6133: inline spans pair backtick runs of equal length (CommonMark), so a double-backtick span is code.
+test('inline masking pairs backtick runs of equal length', () => {
+  expect(stripCodeBlocks('a ``2026-XX-XX`` b')).toBe(`a ${' '.repeat(14)} b`);
+  expect(stripCodeBlocks('a `` x ` y `` b')).toBe(`a ${' '.repeat(11)} b`);
+  expect(stripCodeBlocks('a ``unclosed` run')).toBe('a ``unclosed` run');
+  expect(stripCodeBlocks('see \\`not code` here')).toBe('see \\`not code` here');
+});

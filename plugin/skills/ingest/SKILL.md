@@ -284,7 +284,7 @@ up 100 bad pages is enormous.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The sub-skill this routes to fails: report which one and why, using that skill's own failure guidance; do not silently re-route to a generic page write.
 - `put_page` returns `write_pending` (exit 10) or `revision_conflict`: poll `gbrain write-request <request_id>`, or re-read and merge; never write a duplicate page.

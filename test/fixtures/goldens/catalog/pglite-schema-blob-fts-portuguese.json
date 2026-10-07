@@ -8,6 +8,7 @@
       "chat_usage_log.chat_usage_log_pkey": "p PRIMARY KEY (id)",
       "chronicle_judge_reservations.chronicle_judge_reservations_pkey": "p PRIMARY KEY (id)",
       "chronicle_page_state.chronicle_page_state_attempts_check": "c CHECK ((attempts >= 0))",
+      "chronicle_page_state.chronicle_page_state_max_attempts_check": "c CHECK ((max_attempts > 0))",
       "chronicle_page_state.chronicle_page_state_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "chronicle_page_state.chronicle_page_state_pkey": "p PRIMARY KEY (source_id, page_id, content_hash, extractor_version)",
       "chronicle_page_state.chronicle_page_state_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
@@ -992,7 +993,13 @@
           "17 event_slugs ARRAY/_text NOT NULL DEFAULT '{}'::text[]",
           "18 event_hashes ARRAY/_text NOT NULL DEFAULT '{}'::text[]",
           "19 decided_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "20 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "20 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "21 campaign_id text/text NULL",
+          "22 attempt_cap_usd numeric/numeric NULL",
+          "23 max_attempts integer/int4 NULL",
+          "24 pricing_policy text/text NULL",
+          "25 campaign_max_usd numeric/numeric NULL",
+          "26 cost_attempts ARRAY/_int4 NOT NULL DEFAULT '{}'::integer[]"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

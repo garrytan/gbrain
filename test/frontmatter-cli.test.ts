@@ -170,6 +170,21 @@ describe('gbrain frontmatter CLI (B4)', () => {
     expect(readFileSync(f, 'utf8')).toMatch(/^title: '.*'\s*$/m);
   }, 60_000);
 
+  // #6157: a valid folded value whose continuation line looks like
+  // `Key: "a", then "b"` is neither reported nor rewritten by --fix.
+  test('validate --fix writes nothing on a valid folded block scalar (#6157)', async () => {
+    const f = join(tmp, 'folded.md');
+    const original = `${fence}\ntype: concept\ntitle: Interview notes\nclaim: >-\n  The founder said\n  Reply: "Ship it", then "measure it" twice\n${fence}\n\nbody`;
+    writeFileSync(f, original);
+    await withEnv({ GBRAIN_HOME: join(tmp, 'home') }, async () => {
+      const { out, verdict } = await runFm(['validate', f, '--fix']);
+      expect(verdict).toBe(0);
+      expect(out).not.toContain('NESTED_QUOTES');
+    });
+    expect(readFileSync(f, 'utf8')).toBe(original);
+    expect(existsSync(join(tmp, 'home', '.gbrain', 'backups', 'frontmatter'))).toBe(false);
+  });
+
   test('validate --fix succeeds on a non-git path (no dirty-tree guard)', async () => {
     // tmp is not a git repo; --fix must still work.
     const f = join(tmp, 'broken.md');

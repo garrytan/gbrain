@@ -22,6 +22,10 @@ default; Postgres brains are unaffected (autovacuum owns statistics there).
     (at most one check every 2 seconds per process);
   - every `import.analyze_every_pages` files (default 500) during
     `gbrain import` and managed sync;
+  - before a stale link drain of at least 500 pages (`gbrain extract --stale`,
+    the dream cycle's extract phase, link extraction after a managed sync) and
+    every `import.analyze_every_pages` pages during it; `link_transitions` and
+    `link_relationships` are analyzed whenever `links` is;
   - after the dream cycle's freshness phases, and when the resident write
     consumer is idle;
   - the full ANALYZE that import and sync already run at the end resets every
@@ -49,7 +53,7 @@ lock timeout.
 |---|---|---|
 | `planner.auto_analyze` (env `GBRAIN_PLANNER_AUTO_ANALYZE`, which wins) | `true` | `false` turns off every automatic ANALYZE, including the full ANALYZE at the end of import and sync (which falls back to the narrow `pages` refresh the search projection needs). Doctor still reports stale tables. |
 | `planner.first_read_budget_ms` | `2000` | A stale table whose last ANALYZE took longer is analyzed after the read instead of before it. |
-| `import.analyze_every_pages` | `500` | Import and managed sync check statistics every N files; `0` disables that cadence. |
+| `import.analyze_every_pages` | `500` | Import, managed sync and stale link drains check statistics every N files or pages; `0` disables that cadence. |
 
 To opt out: `gbrain config set planner.auto_analyze false`. To turn it back on:
 `gbrain config set planner.auto_analyze true`.

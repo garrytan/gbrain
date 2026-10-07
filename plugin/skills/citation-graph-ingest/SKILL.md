@@ -208,7 +208,7 @@ diagnosis — never a partial success framing.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The verification `gbrain graph-query` walk returns nothing: the run FAILED. Check the source scope (`--source`) and slug spelling before reporting; never report success on an empty walk.
 - `gbrain link` returns `page_not_found` for an endpoint: the target page does not exist in that source; create or import it first, or list it as unresolved.

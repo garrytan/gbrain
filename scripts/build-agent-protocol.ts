@@ -12,6 +12,11 @@
  *    expected value, so a contract change cannot silently rewrite the story.
  * 2. AGENTS.md "Agent operator protocol" quick contract: copied verbatim from
  *    the protocol page's quick-contract region.
+ * 3. skills/conventions/agent-operator-protocol.md: the whole protocol page,
+ *    bundled with the skills (#6198, D13) so skill links to it resolve in
+ *    every copy (skillpack scaffold, harness dirs, plugin trees). Its own
+ *    relative links become absolute repo URLs (scripts/portable-skill-links.ts,
+ *    which honors the LLMS_REPO_BASE fork override).
  *
  * Adding a transcript (Lane H journey goldens): append a TRANSCRIPTS entry
  * naming its golden file, transport, expected `next` and narration. Journey
@@ -19,15 +24,17 @@
  * from real runs; their placeholders render as fixed example values.
  * Drift test: test/agent-protocol-doc.test.ts.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deriveNext, type Action, type RenderContext, type Transport } from '../src/core/agent-output.ts';
 import { renderConsentRefusal, type ConfirmationPayload } from '../src/core/consent.ts';
+import { BUNDLED_PROTOCOL, renderBundledProtocol, repoBlobBase } from './portable-skill-links.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const GOLDENS = join(ROOT, 'test', 'fixtures', 'agent-contract', 'v1');
 export const PROTOCOL_PATH = join(ROOT, 'docs', 'protocol', 'AGENT_OPERATOR_v1.md');
 export const AGENTS_PATH = join(ROOT, 'AGENTS.md');
+export const BUNDLED_PROTOCOL_PATH = join(ROOT, BUNDLED_PROTOCOL);
 /** Transcripts show the source-checkout base; the wire pins the installed version. */
 const DOCS_BASE = 'https://github.com/garrytan/gbrain/blob/master';
 
@@ -258,22 +265,29 @@ export function quickContract(protocol: string): string {
   return protocol.slice(m.index + m[0].length, end);
 }
 
-/** Fresh text for both files, from the committed protocol page and goldens. */
-export function renderAgentProtocolDocs(protocol: string, agents: string): { protocol: string; agents: string } {
+/** Fresh text for every generated file, from the committed protocol page and goldens. */
+export function renderAgentProtocolDocs(protocol: string, agents: string): { protocol: string; agents: string; bundled: string } {
   const transcripts = `${TRANSCRIPTS.map(renderTranscript).join('\n\n')}\n`;
+  const freshProtocol = replaceRegion(protocol, TRANSCRIPT_REGION, transcripts);
   return {
-    protocol: replaceRegion(protocol, TRANSCRIPT_REGION, transcripts),
+    protocol: freshProtocol,
     agents: replaceRegion(agents, 'agent-protocol:quick-contract', quickContract(protocol)),
+    bundled: renderBundledProtocol(freshProtocol, repoBlobBase()),
   };
 }
 
 if (import.meta.main) {
-  const current = { protocol: readFileSync(PROTOCOL_PATH, 'utf8'), agents: readFileSync(AGENTS_PATH, 'utf8') };
+  const current = {
+    protocol: readFileSync(PROTOCOL_PATH, 'utf8'),
+    agents: readFileSync(AGENTS_PATH, 'utf8'),
+    bundled: existsSync(BUNDLED_PROTOCOL_PATH) ? readFileSync(BUNDLED_PROTOCOL_PATH, 'utf8') : '',
+  };
   const fresh = renderAgentProtocolDocs(current.protocol, current.agents);
   if (process.argv.includes('--check')) {
     const stale = [
       ...(fresh.protocol !== current.protocol ? ['docs/protocol/AGENT_OPERATOR_v1.md'] : []),
       ...(fresh.agents !== current.agents ? ['AGENTS.md'] : []),
+      ...(fresh.bundled !== current.bundled ? [BUNDLED_PROTOCOL] : []),
     ];
     if (stale.length) {
       console.error(`${stale.join(', ')}: generated agent-protocol regions are stale. Run: bun run build:agent-protocol`);
@@ -283,6 +297,7 @@ if (import.meta.main) {
   } else {
     writeFileSync(PROTOCOL_PATH, fresh.protocol);
     writeFileSync(AGENTS_PATH, fresh.agents);
-    console.log('wrote docs/protocol/AGENT_OPERATOR_v1.md and AGENTS.md generated regions');
+    writeFileSync(BUNDLED_PROTOCOL_PATH, fresh.bundled);
+    console.log(`wrote docs/protocol/AGENT_OPERATOR_v1.md and AGENTS.md generated regions, and ${BUNDLED_PROTOCOL}`);
   }
 }

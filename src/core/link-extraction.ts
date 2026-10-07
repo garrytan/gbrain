@@ -15,6 +15,7 @@ import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import type { PageType, EffectiveDateSource } from './types.ts';
 import { ensureWellFormed } from './text-safe.ts';
 import { stripCodeBlocks } from './markdown-code.ts';
+import { targetTakesVerb } from './link-target-roles.ts';
 import { inSuppressedRange, rolePriorSuppressedRanges } from './machine-sections.ts';
 import { statedRelationTypes } from './line-grammar.ts';
 import { isValidSourceId } from './source-id.ts';
@@ -1260,7 +1261,7 @@ const coordinated = (between: string) => {
   return !lead.trim() && gaps.length > 0 && gaps.every(gap => CONNECTOR_RE.test(gap));
 };
 const GLOBAL_VERB_RULES = VERB_RULES.map(([re, verb]) => [new RegExp(re.source, `${re.flags.replace('g', '')}g`), verb] as const);
-function attachedVerb(context: string, targetSlug?: string, anchor?: number): string | null | undefined {
+function attachedVerb(context: string, targetSlug?: string, anchor?: number, targetType?: string | null): string | null | undefined {
   const fromAnchor = targetSlug && anchor !== undefined ? context.indexOf(targetSlug, anchor) : -1;
   const at = fromAnchor >= 0 ? fromAnchor : targetSlug ? context.indexOf(targetSlug) : -1;
   if (at < 0) return undefined;
@@ -1274,7 +1275,7 @@ function attachedVerb(context: string, targetSlug?: string, anchor?: number): st
       if (end <= linkStart && LINK_MARK_RE.test(context.slice(end, linkStart))
         && !coordinated(context.slice(end, linkStart))) continue;
       if (start >= linkEnd && (LINK_MARK_RE.test(context.slice(linkEnd, start)) || /^\s*(?:(?:with|at|to|for|of|in|on)\s+)?\[/i.test(context.slice(end)))) continue;
-      return verb;
+      if (targetTakesVerb(verb, targetSlug, targetType)) return verb; // #6191: e.g. no works_at toward a meeting or person
     }
   }
   return null;
@@ -1312,9 +1313,9 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   // Per-edge verb rules, precedence founded > invested_in > advises > works_at
   // (then the Chinese rules), over the verbs that belong to this link: in
   // "works at [A] and also advises [B]", A is works_at and B advises.
-  const attached = attachedVerb(context, targetSlug, anchor);
+  const attached = attachedVerb(context, targetSlug, anchor, targetType);
   if (attached) return attached;
-  if (attached === undefined) for (const [re, verb] of VERB_RULES) if (re.test(context)) return verb;
+  if (attached === undefined) for (const [re, verb] of VERB_RULES) if (re.test(context) && targetTakesVerb(verb, targetSlug, targetType)) return verb;
   // Page-role prior: only fires for person -> company links. Concept pages
   // about VC topics naturally contain "venture capital" in their text, but
   // their company refs are mentions, not investments. Partner pages mentioning

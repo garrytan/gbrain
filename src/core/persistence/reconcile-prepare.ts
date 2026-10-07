@@ -4,7 +4,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { importFromContent, type ParsedPage } from '../import-file.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
-import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, restoreHiddenFactRows } from '../facts-fence.ts';
+import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, restoreHiddenFactRows, type ParsedFact } from '../facts-fence.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
@@ -30,15 +30,56 @@ const receiptFix = (row: WriteRequest): Action => readFix('Reads the reconcile r
   { argv: ['gbrain', 'write-request', '--', row.request_id] });
 const freshPreview = (sourceId: string, slug: string) => `Generate a fresh preview with gbrain sources reconcile ${sourceId} ${slug} --preview (with the same --brain), review it and apply that file; nothing from this attempt was written.`;
 
-function preservePrivateFacts(incoming: string, stored: string): string {
+/** A copied private context shorter than this is too common to count as a copy ("Slack import", "meeting notes"). */
+export const PRIVATE_CONTEXT_COPY_MIN_CHARS = 24;
+
+/**
+ * #6137: the first incoming fact row reconcile must refuse, or null. A row's
+ * identity is its (row number, claim), as `restoreHiddenFactRows` uses.
+ *   - Identity rule: a stored non-world row that the incoming fence carries at
+ *     the same identity must be unchanged (same digest, so same visibility).
+ *   - Copy rule: a row at no stored identity must not carry a stored private
+ *     claim under another visibility, and a world row must not carry a stored
+ *     private row's context verbatim when it is at least
+ *     PRIVATE_CONTEXT_COPY_MIN_CHARS long (nor may a stored world row's
+ *     context be changed to one). Sources are never compared: rows share
+ *     provenance such as "Slack import".
+ * A row at a stored world identity is a world row, whatever private row shares
+ * its claim. This guards against verbatim copying; reworded text is not
+ * detected, so it is not a confidentiality proof.
+ */
+export function privateFactViolation(next: readonly ParsedFact[], prior: readonly ParsedFact[]): number | null {
+  const identity = (f: ParsedFact) => `${f.rowNum}\u0000${f.claim}`;
+  const stored = new Map(prior.map(f => [identity(f), f]));
+  const hidden = prior.filter(f => f.visibility !== 'world');
+  const copiedContext = (f: ParsedFact) => {
+    const context = f.context?.trim() ?? '';
+    return context.length >= PRIVATE_CONTEXT_COPY_MIN_CHARS && hidden.some(h => h.context?.trim() === context);
+  };
+  for (const fact of next) {
+    const at = stored.get(identity(fact));
+    if (at) {
+      if (at.visibility !== 'world' && digest(fact) !== digest(at)) return fact.rowNum;
+      if (fact.visibility === 'world' && fact.context?.trim() !== at.context?.trim() && copiedContext(fact)) return fact.rowNum;
+      continue;
+    }
+    if (hidden.some(h => h.claim === fact.claim && h.visibility !== fact.visibility)) return fact.rowNum;
+    if (fact.visibility === 'world' && copiedContext(fact)) return fact.rowNum;
+  }
+  return null;
+}
+
+function preservePrivateFacts(incoming: string, stored: string, section: string, sourceId: string, slug: string): string {
   const next = parseFactsFence(incoming), prior = parseFactsFence(stored);
   if (next.warnings.length || prior.warnings.length) throw opError('invalid_params', 'Fact fences must parse losslessly before reconciliation.',
     'The ## Facts table of the file or of the stored page has rows that do not parse cleanly, so reconciliation cannot prove its private facts are kept; nothing was written. Repair the malformed rows in the file, then generate a fresh preview and apply it.');
-  for (const fact of prior.facts.filter(f => f.visibility !== 'world')) {
-    if (next.facts.some(f => f.claim === fact.claim && (f.visibility !== fact.visibility || f.rowNum === fact.rowNum && digest(f) !== digest(fact)))) {
-      throw opError('permission_denied', 'Reconciliation cannot modify protected private facts; use the scoped fact workflow.',
-        'The reconciled page would edit, renumber or change the visibility of a private fact, which reconcile never does; nothing was written. Keep those fact rows as stored, generate a fresh preview, and change private facts through the fact tools (remember, forget) instead.');
-    }
+  const row = privateFactViolation(next.facts, prior.facts);
+  if (row !== null) {
+    throw opError('permission_denied', 'Reconciliation cannot modify protected private facts; use the scoped fact workflow.',
+      `Row ${row} of the ## Facts table in the reconciled ${section} would edit, renumber or change the visibility of a private fact, or copy a private fact's claim or context into another row, which reconcile never does; nothing was written. `
+      + `Read the stored page with the command in fix, keep row ${row} as stored in the file (or remove the copied text), then ${freshPreview(sourceId, slug).replace(/^Generate/, 'generate')} Change private facts through the fact tools (remember, forget) instead.`,
+      { why: `Row ${row} conflicts with a private fact row stored for ${slug}; reconcile only publishes rows whose (row number, claim) identity it can prove is not a private row edited or copied.`,
+        fix: pageFix(sourceId, slug), docs: 'docs/guides/write-refusals.md#reconcile-private-facts' });
   }
   const merged = restoreHiddenFactRows(next, prior);
   return merged ? replaceOrInsertFactsFence(incoming, renderFactsTable(merged.merged)) : incoming;
@@ -48,7 +89,8 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
   if (merged.conflicts.length) return { ...merged, ready: undefined };
   const result = merged.result;
   for (const key of ['compiled_truth', 'timeline'] as const) {
-    result[key] = preservePrivateFacts(preserveProtectedTakes(result[key], state.snapshot.page[key] ?? ''), state.snapshot.page[key] ?? '');
+    result[key] = preservePrivateFacts(preserveProtectedTakes(result[key], state.snapshot.page[key] ?? ''), state.snapshot.page[key] ?? '',
+      key === 'timeline' ? 'timeline' : 'page body', state.pins.source_id, state.pins.slug);
   }
   // #5567: reconcile renders from the merged database state; an operator-approved
   // body decision edits the file side, every other merge preserves history.

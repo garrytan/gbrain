@@ -35,6 +35,7 @@ import {
 } from '../chronicle/contract.ts';
 import { CHRONICLE_TYPES, RESCUE_SLUG_PREFIXES } from '../chronicle/eligibility.ts';
 import { claimChronicleRow, executeChronicleRow } from '../chronicle/execute.ts';
+import { failExhaustedCampaignRows } from '../chronicle/campaign.ts';
 import { defaultJudge, type ChronicleDropReason, type ChronicleJudge } from '../chronicle/extract-events.ts';
 import {
   RETIRE_REASONS, chronicleDailyRemaining, decideChronicle, pruneChronicleReservations, upsertChronicleRow,
@@ -104,8 +105,8 @@ async function candidates(engine: BrainEngine, sourceId: string, enabled: boolea
        JOIN pages p ON p.id=c.page_id AND p.source_id=c.source_id AND p.content_hash=c.content_hash AND p.deleted_at IS NULL
       WHERE c.source_id=$1 AND c.extractor_version=$2
         AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= now())
-        AND ((c.state='pending' AND ($3 OR c.trigger='backfill'))
-          OR (c.state='failed' AND c.attempts < $4 AND ($3 OR c.trigger='backfill')
+        AND ((c.state='pending' AND ($3 OR c.trigger='backfill') AND (c.max_attempts IS NULL OR c.attempts < c.max_attempts))
+          OR (c.state='failed' AND c.attempts < COALESCE(c.max_attempts, $4) AND ($3 OR c.trigger='backfill')
             AND (c.next_attempt_at IS NOT NULL OR c.reason IN ('judge_llm_unavailable','no_pricing')))
           OR (c.state='skipped' AND c.next_attempt_at IS NOT NULL AND c.reason = ANY($5::text[])))
       ORDER BY (c.state='skipped') DESC, (c.trigger='auto') DESC, c.decided_at, c.page_id
@@ -144,6 +145,7 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
 
   if (!dryRun) {
     await pruneChronicleReservations(engine);
+    await failExhaustedCampaignRows(engine);
     await engine.executeRaw(
       `UPDATE chronicle_page_state c SET state='skipped', reason='superseded', next_attempt_at=NULL, updated_at=now()
         WHERE c.state IN ('pending','failed') AND NOT EXISTS (SELECT 1 FROM pages p

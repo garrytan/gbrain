@@ -281,6 +281,21 @@ mode wires them in one command, with no `agent.json` and no interview:
   and run even while a serve is live; the token revoke defers with exact
   instructions if a live PGLite serve holds the brain. `gbrain bootstrap
   uninstall` removes harness wiring first, automatically.
+  `gbrain bootstrap harness --remove --dry-run` lists what removal would do
+  (including each unmarked hook entry it would delete) and writes nothing.
+- Hook ownership survives a missing marker. Claude Code can drop keys it does
+  not know (the `_gbrain` marker) when it rewrites `settings.json`, so the
+  marker is advisory there and the command is the durable carrier. An entry
+  without the marker is this install's when its command is exactly the
+  harness hook gbrain writes for that event (`env … GBRAIN_HOOK_LANE=harness
+  <launcher> hook <event>`, nothing before or after) and its launcher, source
+  and seat match the running install or what the harness receipt recorded.
+  Re-running the install replaces such entries (one entry per event, never a
+  second set), and `--remove` deletes them, listing each by event and why it
+  matched. Anything else that merely looks like a harness hook is left alone
+  (see `harness_hook_unowned` below). `bootstrap_harness_health` in
+  `gbrain doctor` reads each receipt-named hook file: unmarked entries alone
+  are an `ok` note, duplicated events warn `harness_hook_duplicates`.
 - Everything is stated before it happens; non-interactive runs require
   `--yes`. Close active Claude Code sessions for the cleanest user-scope
   settings writes (the host also writes that file).
@@ -297,6 +312,28 @@ binary without token scoping verifies every scoped token as FULL-ACCESS (its
 verify path never reads the scopes column). If you
 downgrade after a harness install, revoke the scoped tokens first
 (`gbrain auth revoke` with the id flag) and re-mint once you upgrade again.
+
+### harness_hook_unowned
+
+An entry under an event gbrain wires looks like gbrain's harness hook but is
+not this install's exact command: it was edited (an appended pipe or flag), or
+another install or launcher wrote it. gbrain never deletes it. `--remove`
+removes everything it does own, keeps the hooks target failed on the receipt,
+exits 1 and prints the file and event; it does not report the harness as
+removed while that entry remains. If the entry is a leftover, delete it from
+the named file by hand and run `gbrain bootstrap harness --remove` again; keep
+it only if you added it on purpose. `gbrain bootstrap harness --status` shows
+each hook file and the events holding such entries. Doctor reports the same
+finding as a warning on `bootstrap_harness_health`.
+
+### harness_hook_duplicates
+
+One event in a harness hook file is wired more than once by this install
+(marked or unmarked entries), so the hook fires twice per event. It is left
+behind when an older gbrain re-ran the install after the host had dropped the
+markers. The doctor fix re-runs `gbrain bootstrap harness` with the
+install's own `--project` and `--no-capture` choices; it rewrites the hook
+entries and rotates the harness token, so ask the user first.
 
 ## Multi-device
 

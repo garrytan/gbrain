@@ -40,6 +40,7 @@ import { lockTopologyPrincipal, topologyPrincipal } from './topology-locks.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { carryHoldsToClassicState, holdCarryBlocked, planHoldCarry, type HoldCarry } from '../connectors/item-holds-store.ts';
 import { PHYSICAL_ROOT_MARKER, physicalRootReservationPath } from './physical-root-record.ts';
+import { preActivationClaims, releasePreActivationClaims, type PreActivationClaim } from './pre-activation-release.ts';
 
 export const DEACTIVATE_DOCS = 'docs/architecture/topologies.md#deactivate-runbook';
 
@@ -71,6 +72,8 @@ export interface DeactivationReport {
   blockers: DeactivationBlocker[];
   /** Held connector items copied (or, on a dry run, to be copied) into each source's classic state file. */
   carried_holds?: HoldCarry[];
+  /** #6122: on a never-activated brain, the claimed sources a deactivation releases (dry run) or released. */
+  pre_activation_claims?: PreActivationClaim[];
   local_markers?: LocalMarkerReport;
 }
 
@@ -175,9 +178,19 @@ export async function deactivatePersistence(engine: BrainEngine, opts: { dryRun?
   const kept = await keptSettings(engine, brain);
   const base = { dry_run: opts.dryRun === true, retired_worktrees: topology.worktrees, source_bindings: topology.bindings, kept };
   if (!brain.enabled) {
-    // A disabled brain has nothing to convert; a rerun only clears this host's retired markers.
-    return { ...base, mode: 'classic', deactivated: false, mode_epoch: Number(brain.mode_epoch), retired_worktrees: [], source_bindings: 0, blockers: [],
-      ...(opts.dryRun ? {} : { local_markers: await cleanupRetiredManagedMarkers(engine) }) };
+    // #6122: a disabled brain has no managed mode to convert, but sources claimed before activation fence classic sync;
+    // deactivate releases them. Without claims a rerun only clears this host's retired markers.
+    const claims = await preActivationClaims(engine);
+    const classic = { ...base, mode: 'classic' as const, deactivated: false, mode_epoch: Number(brain.mode_epoch) };
+    if (!claims.length) return { ...classic, retired_worktrees: [], blockers: [], ...(opts.dryRun ? {} : { local_markers: await cleanupRetiredManagedMarkers(engine) }) };
+    const blockers = await deactivationBlockers(engine);
+    if (opts.dryRun) return { ...classic, retired_worktrees: [], blockers, pre_activation_claims: claims };
+    if (blockers.length) throw blockedError(blockers);
+    const released = await releasePreActivationClaims(engine, { expectedState: opts.expectedState, requestId: opts.requestId,
+      blocked: async tx => { const inside = await deactivationBlockers(tx); return inside.length ? blockedError(inside) : null; } });
+    const worktrees = [...new Set(released.map(claim => claim.worktree_id))];
+    return { ...classic, retired_worktrees: worktrees.map(id => ({ id, roots: [...new Set(released.filter(c => c.worktree_id === id).flatMap(c => c.roots))] })),
+      blockers: [], pre_activation_claims: released, local_markers: await cleanupRetiredManagedMarkers(engine) };
   }
   const blockers = await deactivationBlockers(engine);
   if (opts.dryRun) {

@@ -8,7 +8,7 @@ import type { RegistryCode } from '../error-registry.ts';
 import { currentSourceFilesystemSignal } from '../minions/source-filesystem.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { digest, sha256 } from './digest.ts';
-import { getWriteRequest, admitWriteInTransaction, receiptFor } from './journal.ts';
+import { getWriteRequest, admitWriteInTransaction, intentDigest, receiptFor } from './journal.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
 import { assertPersistenceAccepting, awaitWrite, foregroundWriteCompletions, startPersistenceConsumer, type WriteWait } from './service.ts';
 import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncContent, readSyncFile, syncGit, type SyncDiscovery } from './sync-discovery.ts';
@@ -38,6 +38,7 @@ import { isContentRefusal } from '../import-screen.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { dryRunScreen, isSyncReadBound, loadSyncScreenRun, managedImageHold, pinnedBlob, prepareTimeFenceHold, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
 import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
+import { concurrentWriteHold, concurrentWriteProof } from './sync-concurrent-write.ts';
 import { faultPoint } from './fault-points.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { principalAttribution } from './attribution.ts';
@@ -229,6 +230,9 @@ function writeDiagnostic(cursor: Cursor, pending: Pending, row: WriteRequest): M
   };
   const diagnostic: ManagedSyncWriteDiagnostic = { source_id: cursor.sourceId, slug: pending.slug,
     path: pending.intent.path, write_error: code, ...detail, write_request: publicWriteReceipt(receiptFor(row)) };
+  // #6194: an import that lost to a database write the hold could not prove; --retry-failed re-imports the Git version over it.
+  if (terminal && code === 'revision_conflict' && pending.intent.kind === 'managed_sync_import') diagnostic.suggestion = `The page changed in the database after this import was frozen. `
+    + `Before retrying, compare the file and the page with gbrain sources reconcile ${cursor.sourceId} ${pending.slug} --preview (it writes nothing): a retry re-imports the Git version over the database one. ${diagnostic.suggestion}`;
   if (terminal) diagnostic.suggestion += ` After repair, run ${checkpointRetryCommand({ sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? null, repoPath: pending.intent.repoPath })} to start a new request. Without --retry-failed, the frozen terminal request returns the same outcome. Skipping failures cannot bypass a managed write.`;
   if (diagnostic.reason === 'pinned_git_worktree_conflict' && pending.intent.path && pending.intent.content !== null) {
     try {
@@ -418,7 +422,8 @@ async function convertBlockedCursor(engine: BrainEngine, blocked: Cursor, key: s
 }
 
 /**
- * #6188 (E10): a page request of this run that failed with a fence refusal is held in the
+ * #6188 (E10): a page request of this run that failed with a fence refusal (or, #6194, a
+ * `revision_conflict` proven to come from a concurrent database-only write) is held in the
  * same run instead of blocking it (the single path, and a bulk group's failed member, which
  * the group step leaves as the single pending entry). Other requests of the source settle
  * first, within the run's wait budget; when they are still running the run returns
@@ -432,7 +437,10 @@ async function holdFailedFenceRequest(engine: BrainEngine, cursor: Cursor, key: 
   if (!run.screen || cursor.companyPlan || pending.intent.kind !== 'managed_sync_import' || typeof pending.intent.content !== 'string') return null;
   const fence = fenceReceiptLocation(done);
   const entry = cursor.entries[cursor.index];
-  if (!fence || !entry || entry.path !== pending.intent.path) return null;
+  if (!entry || entry.path !== pending.intent.path) return null;
+  // #6194 (D4): a revision conflict proven to come from a concurrent database-only write is held the same way (sync-concurrent-write.ts).
+  const proof = fence ? null : await concurrentWriteProof(engine, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, pending, done });
+  if (!fence && !proof) return null;
   const deadline = performance.now() + waitMs;
   for (;;) {
     const unfinished = await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) LIMIT 1", [cursor.sourceId]);
@@ -441,7 +449,8 @@ async function holdFailedFenceRequest(engine: BrainEngine, cursor: Cursor, key: 
     if (performance.now() >= deadline) return 'pending';
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  const hold = prepareTimeFenceHold(entry, pending.slug, pending.pageId, fence, pending.intent.content, pending.intent.blobOid);
+  const hold = fence ? prepareTimeFenceHold(entry, pending.slug, pending.pageId, fence, pending.intent.content, pending.intent.blobOid)
+    : concurrentWriteHold(entry, pending.slug, pending.pageId!, pending.intent, proof!);
   const base: Cursor = { ...cursor }; delete base.group;
   return saveCursor(engine, key, cursor, advanceHeld(base, [...(cursor.convertedFromFailed ?? []), pending.requestId]), false, assertActive, async tx => {
     await heldWrite(cursor, hold, run.observedAt!)(tx);
@@ -541,8 +550,17 @@ async function formGroup(engine: BrainEngine, head: Cursor, pending: Pending, ke
   if (!followers.length) return head;
   // Members name their group (the head's request ID), so a consumer can claim them together.
   const lane = laneRunOf(head, bulk);
-  const members = [pending, ...followers].map(member => ({ ...member, intent: { ...member.intent, group: pending.requestId, ...(lane ? { lane } : {}) } }));
+  const members = [pending, ...followers].map(member => ({ ...member, intent: groupedIntent(member.intent, pending.requestId, lane) }));
   return saveCursor(engine, key, head, { ...head, pending: members[0], group: members }, false, assertActive);
+}
+/** The keys formGroup adds to a frozen intent; `ungroupedIntent` removes exactly these. */
+function groupedIntent(intent: SyncIntent, group: string, lane: string | null): SyncIntent {
+  return { ...intent, group, ...(lane ? { lane } : {}) };
+}
+/** #6075: the intent a head carried before formGroup named its group, as a single-path pass admits it. */
+function ungroupedIntent(intent: SyncIntent): SyncIntent {
+  const { group: _group, lane: _lane, ...single } = intent;
+  return single;
 }
 
 /** #5984 lanes: the drain's lane run, opened for this cursor's worktree on first use; null when lanes are off. */
@@ -623,6 +641,15 @@ async function groupStep(engine: BrainEngine, cursor: Cursor, key: string, bulk:
   let rows = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
     [principal.kind, principal.id, members.map(member => member.requestId)]);
   if (rows.length < members.length) {
+    // #6075: a pass that froze the head before it was grouped may have admitted it on the single path. The group is
+    // dropped and the single path takes that request; the followers were never admitted (a group admits in one
+    // transaction) and are frozen again. Any other intent under the head's request ID stays an idempotency_conflict.
+    const head = members[0]!, single = ungroupedIntent(head.intent);
+    const prior = rows.find(row => row.request_id === head.requestId);
+    if (prior && !cursor.window && prior.digest === intentDigest({ operation: 'submit_job', sourceId: cursor.sourceId, slug: head.slug, callerIntent: single })) {
+      const next: Cursor = { ...cursor, pending: { ...head, intent: single } }; delete next.group;
+      return { cursor: await saveCursor(engine, key, cursor, next) };
+    }
     const admitted = await admitGroup(engine, members, cursor, async tx => {
       const [held] = await tx.executeRaw<{ request_id: string | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key]);
       return held?.request_id === members[0]!.requestId;
@@ -674,6 +701,19 @@ async function groupStep(engine: BrainEngine, cursor: Cursor, key: string, bulk:
       managedWrite: writeDiagnostic(saved, stuck, stuckRow), writeWait: writeWaitOf(last.request_id === stuckRow.request_id ? waited : { kind: 'pending', row: stuckRow }) }) } };
   }
   return { cursor: saved };
+}
+
+/**
+ * A single-path admission that lost its cursor resolves to null (the caller re-reads the cursor): ENG-A7's
+ * CursorMoved, or #6075's idempotency_conflict when a bulk pass admitted the head first with its grouped intent.
+ */
+async function cursorMovedAdmission(engine: BrainEngine, key: string, admitting: Cursor, pending: Pending, error: unknown): Promise<null> {
+  if (error instanceof CursorMoved) return null;
+  if (error instanceof OperationError && error.code === 'idempotency_conflict') {
+    const current = await readCursor(engine, key, admitting);
+    if (current?.pending?.requestId === pending.requestId && digest(current.pending.intent) !== digest(pending.intent)) return null;
+  }
+  throw error;
 }
 
 /** A finished cursor is deleted (compare-and-swap) before the next run discovers; returns whichever cursor replaced it. */
@@ -940,13 +980,14 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
           sourceId: admitting.sourceId, sourceIncarnation: admitting.incarnation, slug: pending.slug, pageId: pending.pageId,
           worktreeId: admitting.binding.worktree_id, topologyGeneration: admitting.binding.topology_generation,
           principal: admitting.authority.writer.principal, authority: admitting.authority.writer, callerIntent: pending.intent, intent: pending.intent });
-        // ENG-A7: after the counter locks (the publication lock order), admit only while the cursor still holds this entry.
-        const [held] = await tx.executeRaw<{ request_id: string | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id
-          FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key]);
-        if (held?.request_id !== pending.requestId) throw new CursorMoved();
+        // ENG-A7: after the counter locks (the publication lock order), admit only while the cursor still holds this entry
+        // with this intent (#6075: a bulk pass may have grouped the head since this pass read it).
+        const [held] = await tx.executeRaw<{ request_id: string | null; same: boolean | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id,
+          completed_keys->0->'pending'->'intent' = $3::text::jsonb AS same FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key, JSON.stringify(pending.intent)]);
+        if (held?.request_id !== pending.requestId || held.same !== true) throw new CursorMoved();
         assertActive();
         return accepted;
-      })).catch(error => { if (error instanceof CursorMoved) return null; throw error; });
+      })).catch(error => cursorMovedAdmission(engine, key, admitting, pending, error));
       if (!row) { cursor = await currentCursor(engine, key, cursor); continue; }
       await validateSyncAuthority(engine, cursor.authority, pending.slug);
       assertSyncDispatchActive();

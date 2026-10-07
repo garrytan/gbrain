@@ -9,6 +9,13 @@
  * so the cycle fences them on every run instead of waiting for a manual
  * migration retry.
  *
+ * Ontology observations (`dimension IS NOT NULL`, written by
+ * `mergeOntologyFact`) are never candidates (#6264): they belong to the
+ * entity's ontology, keyed by their own provenance in `source_markdown_slug`,
+ * and have no row on any page's Facts table. Fencing one rewrote its
+ * provenance to the page and handed it to the fence reconciler, which retired
+ * it on the next page write that did not list it.
+ *
  * Eligibility (`planUnfencedFacts`): the row names an `entity_slug`, its page
  * is live in the row's source, and either the brain is managed (the
  * coordinator publishes database-only pages too; archived sources are
@@ -109,7 +116,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
             EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id
               AND p.slug = f.entity_slug AND p.deleted_at IS NULL) AS page_exists
        FROM facts f
-      WHERE row_num IS NULL AND expired_at IS NULL
+      WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL
         ${opts.sourceId !== undefined ? 'AND source_id = $1' : ''}
       ORDER BY source_id, entity_slug, id`,
     opts.sourceId !== undefined ? [opts.sourceId] : [],

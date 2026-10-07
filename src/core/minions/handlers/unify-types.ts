@@ -11,9 +11,9 @@ import { OperationError } from '../../ops/contract.ts';
  * migration that retypes 25K+ pages, creates alias rows, converts edge-
  * shaped pages to link rows, AND flips the active pack at end of run.
  * manual_only via src/core/onboard/render.ts:MANUAL_ONLY_PROTECTED_JOBS.
- * Dry-run preview: `gbrain jobs submit unify-types --allow-protected
- * --params '{"target_pack":"gbrain-base-v2"}'`; apply with
- * '{"target_pack":"gbrain-base-v2","apply":true}'.
+ * Dry-run preview: `gbrain jobs submit unify-types --params
+ * '{"target_pack":"gbrain-base-v2"}' --follow` (`jobs submit` opts protected
+ * names in itself); apply with '{"target_pack":"gbrain-base-v2","apply":true}'.
  */
 export function makeUnifyTypesHandler(engine: BrainEngine): MinionHandler {
   return async (job) => {

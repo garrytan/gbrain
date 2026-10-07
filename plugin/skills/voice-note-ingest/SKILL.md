@@ -171,7 +171,7 @@ No batching.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Transcription is unavailable or the storage backend refuses the audio (`gbrain storage` shows no backend): file the note text you have and tell the user the audio was not stored.
 - The routed page write returns `revision_conflict` or `write_pending`: re-read and merge, or poll `gbrain write-request <request_id>`; never paraphrase to resolve a conflict.

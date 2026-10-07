@@ -341,7 +341,7 @@ exporting — export packages, it does not re-verify.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain lsd "<question>" --save --max-cost <n>` stops at its cost cap: report what finished; raise the cap only with the user's agreement.
 - `no_pricing` under the user's cap: look up the model rate and, after the user agrees, ask the brain host's operator to run `gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`.

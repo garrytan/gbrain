@@ -55,6 +55,9 @@ import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta }
 import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './cli/source-scope.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from './core/cli-flag-registry.generated.ts';
+import { cliHelpRequested } from './cli/subcommands.ts';
+import { printRouterHelp } from './cli/router-help.ts';
+import { strictArgsRefusal } from './cli/strict-args.ts';
 import { migrationCliArgumentError } from './core/embedding-migration-cli.ts';
 import { VERSION } from './version.ts';
 import { exitOnUnsupportedBun } from './core/runtime-version.ts';
@@ -332,6 +335,9 @@ async function main() {
     return;
   }
 
+  // #6114: decided once, before startup side effects; help never runs the command (grammar: cli/subcommands.ts).
+  const helpRequested = cliHelpRequested(command, args.slice(1));
+
   if (command === 'extract' && !args.some(arg => arg === '--help' || arg === '-h')
     && args.some(arg => ['--repair-attendance', '--apply-preview', '--backup-verified', '--confirm', '--checkpoint'].includes(arg.split('=')[0]))) {
     const { runAttendanceRepairCli } = await import('./commands/extract-attendance-repair.ts');
@@ -342,16 +348,16 @@ async function main() {
   // v0.42 self-upgrade: ride this invocation as an update heartbeat. Cache-read-
   // only, fail-open, never blocks. Skips the update path's own commands + sets
   // GBRAIN_SKIP_STARTUP_HOOKS for their children. Runs for every real command.
-  maybeEmitUpdateMarker(command);
+  if (!helpRequested) {
+    maybeEmitUpdateMarker(command);
 
-  // Monthly backup-coverage nag (cache-read-only, bounded by the nag gate;
-  // guards + skip set live inside the helper — one place, every call site).
-  {
+    // Monthly backup-coverage nag (cache-read-only, bounded by the nag gate;
+    // guards + skip set live inside the helper — one place, every call site).
     const { maybeEmitBackupNag } = await import('./core/backup/status-file.ts');
     maybeEmitBackupNag(command, { quiet: getCliOptions().quiet === true });
+    // #5137: once per process, when an env key shadows a different config key; never from hook commands.
+    if (command !== 'hook') (await import('./core/ai/key-warnings.ts')).warnShadowedProviderKeys();
   }
-  // #5137: once per process, when an env key shadows a different config key; never from hook commands.
-  if (command !== 'hook') (await import('./core/ai/key-warnings.ts')).warnShadowedProviderKeys();
 
   const subArgs = args.slice(1);
 
@@ -371,6 +377,36 @@ async function main() {
     const { markShortLivedCliProcess } = await import('./core/facts/cli-process-mode.ts');
     markShortLivedCliProcess();
   }
+
+  // Per-command --help; the scan stops at `--` (`agent run -- --help` submits the prompt). Router
+  // commands print usage here, so `<cmd> <sub> --help` never reaches the subcommand (#6114).
+  if (helpRequested) {
+    if (await printRouterHelp(command, subArgs)) return;
+    if (await printCuratedHelp(command, subArgs)) return;
+    // `eval brainbench` ships a published foreign-runner flag surface — its
+    // own usage() must win over the generic eval stub (codex P3). Fall
+    // through to handleCliOnly's no-DB brainbench route, which prints it.
+    const selfHelpSub = command === 'eval' && subArgs[0] === 'brainbench';
+    const op = cliOps.get(command) ?? cliAliases.get(command);
+    if (op && !selfHelpSub) {
+      printOpHelp(op, command);
+      return;
+    }
+    if (!selfHelpSub && CLI_ONLY.has(command) && !CLI_ONLY_SELF_HELP.has(command)) {
+      printCliOnlyHelp(command);
+      return;
+    }
+    // Self-help members whose handler answers --help before it touches the
+    // engine. Without this they fall through to the normal dispatch, which
+    // connects first — so `gbrain models --help` on a machine with no brain
+    // exits 1 with "No brain configured", and the handler's own help block is
+    // unreachable. That is the state a reader is most likely to be in.
+    if (await printSelfHelpWithoutEngine(command, subArgs)) return;
+  }
+
+  // #6114: destructive subcommands refuse a token they would ignore (exit 2) before dispatch.
+  const strictRefusal = helpRequested ? null : strictArgsRefusal(command, subArgs);
+  if (strictRefusal) exitCliError(strictRefusal, command);
 
   // T5 — `gbrain search modes|stats|tune` is the read-only config dashboard,
   // NOT a free-text search for the literal word "modes". Free-text
@@ -415,35 +451,6 @@ async function main() {
       await finishCliTeardown({ engine });
     }
     return;
-  }
-
-  // Per-command --help. For `agent`, the scan STOPS at the `--` terminator:
-  // everything after it is literal prompt text, so `agent run -- --help`
-  // must submit the prompt, never print help (cathedral-6 eng review).
-  const helpScanArgs = command === 'agent' && subArgs.includes('--')
-    ? subArgs.slice(0, subArgs.indexOf('--'))
-    : subArgs;
-  if (hasHelpFlag(helpScanArgs)) {
-    if (await printCuratedHelp(command, subArgs)) return;
-    // `eval brainbench` ships a published foreign-runner flag surface — its
-    // own usage() must win over the generic eval stub (codex P3). Fall
-    // through to handleCliOnly's no-DB brainbench route, which prints it.
-    const selfHelpSub = command === 'eval' && subArgs[0] === 'brainbench';
-    const op = cliOps.get(command) ?? cliAliases.get(command);
-    if (op && !selfHelpSub) {
-      printOpHelp(op, command);
-      return;
-    }
-    if (!selfHelpSub && CLI_ONLY.has(command) && !CLI_ONLY_SELF_HELP.has(command)) {
-      printCliOnlyHelp(command);
-      return;
-    }
-    // Self-help members whose handler answers --help before it touches the
-    // engine. Without this they fall through to the normal dispatch, which
-    // connects first — so `gbrain models --help` on a machine with no brain
-    // exits 1 with "No brain configured", and the handler's own help block is
-    // unreachable. That is the state a reader is most likely to be in.
-    if (await printSelfHelpWithoutEngine(command, subArgs)) return;
   }
 
   if (command === 'sources' && subArgs[0] === 'inspect') {

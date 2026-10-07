@@ -9,7 +9,6 @@ test/agent-register.test.ts	resolvePreset	7	readFileSync
 test/agent-register.test.ts	structural guards	2	readFileSync
 test/ai/silent-drop-regression.test.ts	(file-level)	3	source-surface-helper
 test/apply-migrations.test.ts	failed migration prints phase detail (#921)	1	readFileSync
-test/apply-migrations.test.ts	resolveSchemaBehind (#1530)	5	readFileSync
 test/apply-migrations.test.ts	runApplyMigrations exit codes (v0.36.1.x #1062)	1	readFileSync
 test/archived-source-scoping.test.ts	#3880 structural pins — all-source local_path selections filter archived	2	readFileSync
 test/auto-link-targeted-probe-2544.test.ts	#2544 — auto-link behavior through put_page (targeted probe)	6	readFileSync
@@ -57,6 +56,9 @@ test/chat-key-plane.test.ts	#3944 both planner surfaces share the helper (source
 test/check-bootstrap-guards.test.ts	check-grok-pin.sh	9	readFileSync
 test/check-bootstrap-guards.test.ts	check-opencode-pin.sh	6	readFileSync
 test/check-bootstrap-guards.test.ts	verify + workflow wiring	5	readFileSync
+test/check-skill-refs.test.ts	check-skill-refs CLI-ref lane (#6197)	4	exec-scan
+test/check-skill-refs.test.ts	check-skill-refs on the shipped trees	1	exec-scan
+test/check-skill-refs.test.ts	check-skill-refs outside-root links (#6198)	3	exec-scan
 test/check-update.test.ts	check-update CLI	3	source-surface-helper
 test/child-worker-supervisor.test.ts	issue #1801 — restartCurrentChild + killChild liveness fix	4	readFileSync
 test/chronicle-extract.test.ts	runChronicleExtract	9	readFileSync
@@ -91,6 +93,7 @@ test/cycle-abort.test.ts	CycleOpts.signal contract (v0.20.5)	3	readFileSync
 test/cycle-abort.test.ts	autopilot-cycle handler contract (v0.20.5)	3	readFileSync,source-surface-helper
 test/cycle-drain-renewal.test.ts	db-lock heartbeat wiring (structural — issue #6 cancellation)	1	readFileSync
 test/cycle-drain-renewal.test.ts	drain-loop wiring (structural — the shape guard only covers worker.ts)	2	readFileSync
+test/cycle-legacy-phases.test.ts	cycle.lint_exclude (#6134)	4	readFileSync
 test/cycle-patterns-deadline-budget.test.ts	deadline plumbing wiring (structural)	7	readFileSync,source-surface-helper
 test/cycle-patterns.test.ts	patterns private-queue keepalive wiring	1	readFileSync
 test/cycle-phase-deadline-drift.test.ts	propose_takes deadline < job timeout (#4168)	4	readFileSync
@@ -228,6 +231,7 @@ test/migrations-v0_22_4.test.ts	v0.22.4 migration (B11)	10	readFileSync
 test/model-pricing.test.ts	D3 peak-rate label	1	readFileSync
 test/model-pricing.test.ts	DRIFT GUARD — derived views stay equal to canonical (re-hardcode trip-wire)	6	readFileSync
 test/model-pricing.test.ts	no heavy import (cycle guard)	1	readFileSync
+test/native-locks-package-boundary.test.ts	native/locks package boundary (#6026)	2	readFileSync
 test/ocr-run-budget.test.ts	doctor ocr_health surfaces the budget-skip counter (#3973)	1	doctor-source-helper
 test/openclaw-plugin-manifest.test.ts	bundled-skill reference closure (nothing bundled points at a non-bundled skill)	1	readFileSync
 test/openclaw-plugin-manifest.test.ts	plugin membership curation (skills = plugin ∪ exclusions, disjoint)	9	readFileSync
@@ -292,7 +296,7 @@ test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync
 test/scripts/nightly-issue.test.ts	operator messages carry docs anchors that resolve	1	readFileSync
 test/scripts/postgres-lane-coverage.test.ts	check-postgres-lane-coverage.ts	9	readFileSync
-test/scripts/regen-all.test.ts	regen:all	4	readFileSync
+test/scripts/regen-all.test.ts	regen:all	5	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	7	readFileSync
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync

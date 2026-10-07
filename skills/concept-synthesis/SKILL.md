@@ -468,7 +468,7 @@ This is heavy work. Run on a cadence, not on every signal:
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - The LLM judge or synthesis run stops on a cost cap (`cost_cap_exceeded`, or exit 11 with a `resume_command`): report what finished; resume with the printed command only within the budget the user agreed.
 - `no_pricing` under a user cap: tell the user, look up the model's per-token rate, and after they agree ask the brain host's operator to register it with `gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`.

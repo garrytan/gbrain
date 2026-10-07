@@ -56,6 +56,11 @@ nohup cmd > /tmp/job.log 2>&1 &
 tail -20 /tmp/job.log
 ```
 
+For a `gbrain` command, keep its exit code: `(gbrain … ; echo "exit=$?") > /tmp/job.log 2>&1 &`.
+Exit 3 means it stopped to ask for the user's approval; relay its message and
+stop instead of retrying with `--yes`. For anything long, prefer the durable
+ladder in `skills/minion-orchestrator/SKILL.md` over a background shell.
+
 ## Diagnostic Ladder for an Empty Exec Result
 
 Run in order. Stop at the first one that explains it.

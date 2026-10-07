@@ -218,6 +218,26 @@ source's suppression is as much a targeted write as planting one). `open_loops` 
 point the read at the google source, grant-checked for remote callers) and
 `all_sources` (trusted local spans the brain; remote stays in-grant).
 
+**Who counts as a person.** Grouped output ranks counterparties only. A loop
+with neither a counterparty page nor an email (a `decision_pending` the
+extractor could not attribute, say) is not a person, so it never takes a
+ranked slot or counts toward `--top`/`limit`: it comes back in
+`no_counterparty` and the digest lists it last under
+`## No counterparty (N open: <type> N, …)`. When only such loops exist, the
+digest says no person is waiting and lists them; it never says "You are
+clean". Each group (and the no-counterparty section) shows at most 5 loops,
+due-soonest first and then the most recently active; `loop_count` stays the
+total and `loops_omitted` counts the rest (`+N more` in the digest).
+
+```json
+// before
+{ "groups": [{ "counterparty": "unknown", "loop_count": 9, "loops": [/* all 9 */] },
+             { "counterparty": "bob@example.com", "loop_count": 8, "loops": [/* all 8 */] }] }
+// after
+{ "groups": [{ "counterparty": "bob@example.com", "loop_count": 8, "loops": [/* 5 */], "loops_omitted": 3 }],
+  "no_counterparty": { "loop_count": 9, "by_type": { "decision_pending": 9 }, "loops": [/* 5 */], "loops_omitted": 4 } }
+```
+
 When the scope holds **no google source at all**, the result carries
 `no_google_sources: true` and the digest says so explicitly instead of "You
 are clean" — a brain whose email arrives through a gateway or agent-authored

@@ -251,7 +251,7 @@ loadActivePack — v0.40.6.0 closed the cross-process invalidation gap).
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Mutation codes: `PACK_READONLY` → fork first (`gbrain schema fork gbrain-base mine`); `STILL_REFERENCED` → remove the named references first; `LOCK_BUSY` → wait about 30 seconds and retry.
 - Over MCP, a mutation returns `insufficient_scope`: schema writes need the `admin` scope, which only the brain host's operator grants; tell the user.

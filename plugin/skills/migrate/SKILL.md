@@ -136,7 +136,7 @@ After any migration:
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain sources inspect` reports blockers or the import exits 3 asking for confirmation: show the preview, and rerun with `--yes` only after the operator approves it.
 - A collision or recovery refusal: do not remove the source or activate a global schema to bypass it; report it.

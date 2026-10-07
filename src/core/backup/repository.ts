@@ -4,6 +4,8 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { buildGitEnv } from '../git-remote.ts';
 import { pushStatusPathForRoot, readPushStatusForRoot } from '../workspace-push.ts';
 import { readManifest } from '../bootstrap/format.ts';
+import { managedFilesystemRootFor } from '../persistence/filesystem-guard.ts';
+import { withoutPhysicalRootMetadata } from '../persistence/root-metadata.ts';
 import { BACKUP_VERIFICATION_MAX_AGE_MS, type BackupAssetVerdict } from './status-file.ts';
 
 export const BACKUP_REMOTE_PROBE_CAP = 8;
@@ -61,29 +63,36 @@ export async function assessBackupRepository(
   const asset: BackupAssetVerdict = { kind, id, state: 'unknown', fix_argv: null, verification: { state: 'not_checked' } };
   try {
     const failedPush = readPushStatusForRoot(root)?.ok === false;
-    if (failedPush && kind === 'bootstrap_workspace') asset.fix_argv = ['gbrain', 'sources', 'push', '--path', root];
+    // #6083: a managed canonical worktree is committed and pushed by its persistence owner; `sources push` refuses there.
+    const managed = managedFilesystemRootFor(root);
+    const managedFix = managed ? ['gbrain', 'sources', 'writer', 'status', ...(managed.sourceId ? [managed.sourceId] : []), '--probe', '--json'] : null;
+    if (failedPush && kind === 'bootstrap_workspace') asset.fix_argv = managedFix ?? ['gbrain', 'sources', 'push', '--path', root];
     let origin: string;
     try {
       origin = git(root, ['remote', 'get-url', 'origin']);
       asset.configured_remote = true;
     } catch (error) {
-      if (failedPush) return { ...asset, state: 'failing', detail: 'last_push_failed' };
-      if ((error as { status?: number }).status !== 2) throw error;
+      if ((error as { status?: number }).status !== 2) {
+        if (failedPush) return { ...asset, state: 'failing', detail: 'last_push_failed' };
+        throw error;
+      }
       asset.configured_remote = false;
       asset.state = 'no_remote';
-      asset.detail = 'fix: git remote add origin <url> && git push -u origin <branch>, then gbrain sources harden <id>';
+      asset.fix_argv = null;
+      asset.detail = `${failedPush ? 'the last recorded push failed because there is no origin remote; ' : ''}fix: git remote add origin <url> && git push -u origin <branch>, then gbrain sources harden <id>`;
       try { if (readManifest(root).state === 'initialized') asset.fix_argv = ['gbrain', 'bootstrap', 'repo']; } catch {}
       return asset;
     }
     const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
     const head = git(root, ['rev-parse', '--verify', 'HEAD']);
-    const dirty = git(root, ['status', '--porcelain']).length > 0;
+    const dirty = withoutPhysicalRootMetadata(git(root, ['status', '--porcelain'])).length > 0;
     let ahead: number | undefined;
     try { ahead = Number(git(root, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`])); } catch {}
     asset.state = ahead && ahead > 0 ? 'unpushed' : dirty ? 'dirty' : 'ok';
     if (ahead && ahead > 0) { asset.ahead = ahead; asset.detail = `${ahead} commit(s) ahead of origin/${branch} (local tracking ref only)`; }
     else if (dirty) asset.detail = 'uncommitted changes';
     if (failedPush) { asset.state = 'failing'; asset.detail = 'last_push_failed'; }
+    if (managedFix && (dirty || (ahead ?? 0) > 0 || failedPush)) asset.fix_argv = managedFix;
     const fingerprint = repositoryFingerprint(root, origin, branch, head);
     asset.verification = { state: 'not_checked', repository_fingerprint: fingerprint };
     if (!budget) {
@@ -132,7 +141,7 @@ export async function assessBackupRepository(
     }
     const stillClean = git(root, ['rev-parse', '--verify', 'HEAD']) === head
       && git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']) === branch
-      && git(root, ['status', '--porcelain']).length === 0
+      && withoutPhysicalRootMetadata(git(root, ['status', '--porcelain'])).length === 0
       && git(root, ['remote', 'get-url', 'origin']) === origin
       && repositoryFingerprint(root, origin, branch, head) === fingerprint;
     asset.verification = { state: remoteHead === head && stillClean && !dirty ? 'verified' : 'mismatch', checked_at: now.toISOString(), local_commit: head, remote_commit: remoteHead, repository_fingerprint: fingerprint };

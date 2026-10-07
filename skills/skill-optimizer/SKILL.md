@@ -159,7 +159,7 @@ When invoked, this skill produces:
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - Hard refusals: `dirty_tree` (commit or stash skill edits first), `d_sel_too_small` (add benchmark tasks), a bundled skill without `--allow-mutate-bundled` plus `--held-out` (exit 2). Fix the input; never force past them.
 - The cost preflight refuses over `--max-cost-usd`, or `no_pricing` under a user cap: preview with `--dry-run`, then ask the user before raising the cap.

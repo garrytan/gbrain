@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto';
 import { pruneDir } from '../sync.ts';
 import { realpathOrResolve, resolvedPrefixContained } from '../path-confine.ts';
 import { corpusFileSessionId } from '../context/corpus-segments.ts';
+import { withoutOffPeriodTurns } from '../context/capture-consent.ts';
 import { readSeatSidecar } from '../context/seat.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -322,13 +323,15 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
         }
       }
 
-      let content: string;
+      let content: string | null;
       try {
         content = readFileSync(filePath, 'utf8');
       } catch {
         continue;
       }
-      if (content.length < minChars) continue;
+      // #6091: turns captured under memory.auto_writeback off never feed synthesis.
+      if (ext === '.txt') content = withoutOffPeriodTurns(filePath, content);
+      if (content === null || content.length < minChars) continue;
       if (isDreamOutput(content, bypass)) {
         process.stderr.write(`[dream] skipped ${baseName}: dream_generated marker (self-consumption guard)\n`);
         continue;

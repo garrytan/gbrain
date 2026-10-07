@@ -495,3 +495,21 @@ describe('security fix wave shapes are linear (A1 walks, A2, A3, A5; ENG-15, ENG
     expect(ms).toBeLessThan(300);
   });
 });
+
+describe('labeled_credential (transcript lane): every candidate start does constant work', () => {
+  const LABELED = { highEntropy: true, labeledCredentials: true } as const;
+  const adversaries: Array<[string, string]> = [
+    ['240 KB of `login `', 'login '.repeat(40_000)],
+    ['220 KB of `login: a / `', 'login: a / '.repeat(20_000)],
+    ['200 KB of `password: `', 'password: '.repeat(20_000)],
+    ['a label, 200k spaces, then a value', 'password:' + ' '.repeat(200_000) + 'x'],
+    ['200 KB of `a/` after a login label', 'login: ' + 'a/'.repeat(100_000)],
+    ['20000 dangling pair lines', Array.from({ length: 20_000 }, () => 'login: alice-example /').join('\n')],
+  ];
+  for (const [name, text] of adversaries) {
+    test(`${name}: redact < 400ms`, () => {
+      const ms = elapsedMs(() => { redactFindings(text, LABELED); });
+      expect(ms).toBeLessThan(400);
+    });
+  }
+});

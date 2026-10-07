@@ -277,6 +277,9 @@ function classifyHarvestFailure(job: HarvestJob, e: unknown): { outcome: 'degrad
   if (job.lane === 'writeback' && isWriterBusy(e) && requeueWhileWriterBusy(job)) {
     return { outcome: 'degraded', reason: 'writer_busy_requeued' };
   }
+  // #6091: writeback turned off while the provider call was in flight; admission
+  // refused the facts and the next pass retires the file.
+  if (e instanceof OperationError && e.code === 'ambient_capture_off') return { outcome: 'degraded', reason: 'writeback_off_inflight' };
   const reason = harvestErrorReason(e);
   logFirstHarvestError(job, reason, e);
   return { outcome: 'error', reason };
@@ -363,6 +366,16 @@ async function runOne(job: HarvestJob): Promise<{
     }
 
     if (job.lane === 'writeback') return await runWritebackTurn(job, full, ingestedPath);
+
+    // #6091: the capture gate runs under the claim before any provider call or
+    // receipt republication (serve compact lane and OpenClaw rung 2).
+    const { applyCaptureGate, resolveCaptureGate } = await import('./capture-consent.ts');
+    const gate = await applyCaptureGate(full, (await resolveCaptureGate(job.engine)).compact);
+    if (gate.action === 'hold') return { outcome: 'degraded', reason: gate.reason };
+    if (gate.action === 'retire') {
+      await rm(receiptPath, { force: true }).catch(() => {});
+      return { outcome: 'ok', reason: gate.reason };
+    }
 
     // Receipt retry path (codex round 2): extraction already happened; the
     // manifest publish failed transiently. Re-publish WITHOUT re-extracting.
@@ -533,29 +546,21 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
     await writeFile(ingestedPath, selfCaptureSidecarJson());
     return { outcome: 'ok', reason: 'self_capture' };
   }
-  const { resolveWritebackConfig } = await import('../facts/writeback-config.ts');
-  const { loadConfig } = await import('../config.ts');
-  // Gate semantics ({gate:true}): a config READ FAILURE is OFF but NOT
-  // terminal — skip with no sidecar (claim releases, sweep retries when the
-  // DB returns). Same for PLANE DRIFT (DB row absent while the file mirror
-  // says enabled — a failed dual-write is not operator intent) and for an
-  // UNRECOGNIZED mode value (a typo is not a decision). Only a
-  // genuinely-resolved OFF writes the terminal sidecar: that one is intent.
-  // The gate resolves BEFORE the capability/kill-switch checks: an
-  // operator's OFF must retire the banked turn even on a keyless or
-  // extraction-disabled brain — otherwise the file lingers eligible and a
-  // later re-enable would extract turns the operator already revoked
-  // (codex re-review, this wave).
-  const wb = await resolveWritebackConfig(job.engine, loadConfig(), { gate: true });
-  if (wb.read_error) return { outcome: 'degraded', reason: 'gate_unreadable' };
-  if (!wb.enabled && (wb.plane_drift || !wb.mode_valid)) {
-    return { outcome: 'degraded', reason: wb.plane_drift ? 'writeback_plane_drift' : 'writeback_mode_invalid' };
-  }
-  if (!wb.enabled) {
-    const { writebackOffSidecarJson } = await import('./corpus-segments.ts');
-    await writeFile(ingestedPath, writebackOffSidecarJson());
-    return { outcome: 'ok', reason: 'writeback_off' };
-  }
+  // Gate semantics (captureGateDecision, resolved {gate:true}): a config READ
+  // FAILURE, PLANE DRIFT (DB row absent while the file mirror says enabled — a
+  // failed dual-write is not operator intent) and an UNRECOGNIZED mode value
+  // hold: no sidecar, the claim releases and the sweep retries once the config
+  // is coherent. Only a genuinely-resolved OFF (or unset: this lane is opt-in)
+  // writes the terminal sidecar. The gate resolves BEFORE the
+  // capability/kill-switch checks: an operator's OFF must retire the banked
+  // turn even on a keyless or extraction-disabled brain — otherwise the file
+  // lingers eligible and a later re-enable would extract turns the operator
+  // already revoked (codex re-review, this wave).
+  const { applyCaptureGate, resolveCaptureGate } = await import('./capture-consent.ts');
+  const gate = await resolveCaptureGate(job.engine);
+  const applied = await applyCaptureGate(full, gate.writeback);
+  if (applied.action === 'hold') return { outcome: 'degraded', reason: applied.reason };
+  if (applied.action === 'retire') return { outcome: 'ok', reason: applied.reason };
   const { extractionAvailableForEngine } = await import('../facts/extraction-availability.ts');
   if (!(await extractionAvailableForEngine(job.engine, job.capabilities))) {
     return { outcome: 'degraded', reason: 'keyless' };
@@ -580,7 +585,7 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
       mode: 'inline',
       remote: false,
       abortSignal: abort.signal,
-      notabilityFilter: wb.mode === 'salient' ? 'medium-and-up' : 'all',
+      notabilityFilter: gate.mode === 'salient' ? 'medium-and-up' : 'all',
       // visibility deliberately unset → resolveDefaultVisibility [ENG-8] —
       // the backstop inherits extract_facts' contract, never widened (req 6).
     });

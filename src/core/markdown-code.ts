@@ -1,10 +1,16 @@
+import { inlineCodeEndAt, scanMarkdownCode, type MarkdownCodeMap } from './fence-scan.ts';
+
 /**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
  * replacing non-newline characters with spaces. Preserves CR/LF characters
  * and UTF-16 code-unit offsets for callers that care about positions.
+ * Inline spans follow CommonMark (#6133): a run of n backticks closes at the
+ * next run of exactly n on the same line (fence-scan.ts finds the spans), so
+ * ``a `b` c`` is one span; a bare CR does not end the line here.
  */
 export function stripCodeBlocks(content: string, opts: { onHtmlComment?: (start: number, end: number) => void } = {}): string {
   let fence: string | undefined;
+  let inline: MarkdownCodeMap | undefined;
   let out = '';
   let i = 0;
   while (i < content.length) {
@@ -37,14 +43,15 @@ export function stripCodeBlocks(content: string, opts: { onHtmlComment?: (start:
       continue;
     }
     if (content[i] === '`') {
-      const end = content.indexOf('`', i + 1);
-      if (end === -1 || content.slice(i + 1, end).includes('\n')) {
+      inline ??= scanMarkdownCode(content.replace(/\r(?!\n)/g, ' '));
+      const end = inlineCodeEndAt(inline, i);
+      if (end === -1) {
         out += content[i];
         i++;
         continue;
       }
-      out += content.slice(i, end + 1).replace(/[^\r\n]/g, ' ');
-      i = end + 1;
+      out += content.slice(i, end).replace(/[^\r\n]/g, ' ');
+      i = end;
       continue;
     }
     out += content[i];

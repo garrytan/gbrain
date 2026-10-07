@@ -305,6 +305,16 @@ regen + freshness check, and `check-skill-refs` in seconds — run it before
 committing a skills change so the membership/closure and `plugin.version`
 assertions fail locally instead of in CI.
 
+`check-skill-refs` fails on two things:
+
+- **A `gbrain` command that cannot run.** Every `gbrain <cmd>` in a code block
+  or inline span must be real (`gbrain embed refresh` fails with its
+  replacement). Paid commands go preview, user approval, then `--yes --max-usd <cap>`.
+- **A relative link that leaves `skills/`**, which dangles in every copied
+  skill. Link the protocol through `skills/conventions/agent-operator-protocol.md`
+  and other docs by absolute URL; `bun scripts/portable-skill-links.ts` rewrites
+  both (honoring `LLMS_REPO_BASE`). `skills/migrations/**` is exempt.
+
 ## When a skill misroutes
 
 Treat a misroute like a failing test, because it becomes one. First

@@ -1124,3 +1124,62 @@ describe('loops_unmute', () => {
     ).rejects.toThrow(/no Google content|invalid_params/);
   });
 });
+
+// #5871: loops with no counterparty (decision_pending and the like) are not a
+// person. They used to group under 'unknown' and rank first by sheer count.
+describe('open_loops no-counterparty loops and the per-group cap (#5871)', () => {
+  interface CappedResult extends GroupsResult {
+    groups: Array<GroupsResult['groups'][number] & { loops_omitted: number }>;
+    no_counterparty: { loop_count: number; by_type: Record<string, number>; loops: Array<Record<string, unknown>>; loops_omitted: number } | null;
+  }
+  async function seedPile(): Promise<void> {
+    for (let i = 0; i < 9; i++) {
+      await upsertOpenLoop(engine, loop({ dedupKey: `decision:${i}`, loopType: 'decision_pending', counterpartyEmail: null,
+        threadId: null, summary: `Decide on vendor option ${i}`, detector: 'llm_extract' }));
+    }
+    for (let i = 0; i < 8; i++) {
+      await upsertOpenLoop(engine, loop({ threadId: `18c2f4a9b3d21f${String(i).padStart(2, '0')}`, counterpartyEmail: 'bob@example.com',
+        summary: `Reply owed to bob@example.com: thread ${i}` }));
+    }
+    await upsertOpenLoop(engine, loop({ threadId: '18c2f4a9b3d21e99', counterpartyEmail: 'alice@example.com', summary: 'Reply owed to alice@example.com' }));
+  }
+
+  for (const remote of [false, true]) {
+    test(`${remote ? 'remote' : 'trusted'}: no-counterparty loops sit beside the people, never ranked, and each group shows at most 5`, async () => {
+      await seedPile();
+      const r = (await openLoopsOp.handler(ctx({ remote }), {})) as CappedResult;
+      expect(r.groups.map((g) => g.counterparty)).toEqual(['bob@example.com', 'alice@example.com']);
+      expect(r.groups[0]).toMatchObject({ loop_count: 8, loops_omitted: 3 });
+      expect(r.groups[0].loops).toHaveLength(5);
+      expect(r.no_counterparty).toMatchObject({ loop_count: 9, by_type: { decision_pending: 9 }, loops_omitted: 4 });
+      expect(r.no_counterparty!.loops).toHaveLength(5);
+      expect(r.count).toBe(18);
+      if (!remote) {
+        expect(r.text).toContain('2 people are waiting on you');
+        expect(r.text).not.toContain('## unknown');
+        expect(r.text).toContain('+3 more');
+        expect(r.text).toContain('## No counterparty (9 open: decision_pending 9)');
+      }
+    });
+  }
+
+  test('the group cap shows the due-soonest loop first', async () => {
+    for (let i = 0; i < 6; i++) {
+      await upsertOpenLoop(engine, loop({ threadId: `18c2f4a9b3d21a${String(i).padStart(2, '0')}`, summary: `Reply ${i}`,
+        ...(i === 5 ? { dueAt: new Date(Date.now() + 86_400_000).toISOString() } : {}) }));
+    }
+    const r = (await openLoopsOp.handler(ctx({ remote: true }), {})) as CappedResult;
+    expect(r.groups[0].loops[0].summary).toBe('Reply 5');
+    expect(r.groups[0].loops_omitted).toBe(1);
+  });
+
+  test('only no-counterparty loops: no person is waiting, and the digest never says you are clean', async () => {
+    await upsertOpenLoop(engine, loop({ dedupKey: 'decision:solo', loopType: 'decision_pending', counterpartyEmail: null, threadId: null,
+      summary: 'Decide on the offsite venue', detector: 'llm_extract' }));
+    const r = (await openLoopsOp.handler(ctx(), {})) as CappedResult;
+    expect(r.groups).toEqual([]);
+    expect(r.no_counterparty).toMatchObject({ loop_count: 1, loops_omitted: 0 });
+    expect(r.text).not.toContain('You are clean');
+    expect(r.text).toContain('## No counterparty (1 open: decision_pending 1)');
+  });
+});

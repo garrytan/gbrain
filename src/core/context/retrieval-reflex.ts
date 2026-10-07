@@ -54,7 +54,36 @@ const PURE_CJK_RE = new RegExp(`^[${CJK_SLUG_CHARS}]+$`, 'u');
 
 /** Which resolution arm produced a pointer (provenance → honest confidence). */
 /** `recall`: a System One S6 keyword-only retrieval fired by the know-to-ask slot (never produced by the resolver). */
-export type ResolveArm = 'alias' | 'title' | 'slug-suffix' | 'title-surname' | 'cjk-title' | 'recall';
+/**
+ * #6195 arm 2.6 ('weak-title'): a lowercase 2-3-word weak n-gram may match the
+ * exact title of an entity page (person, company, organization) when that
+ * title is globally unique across the considered sources and no other arm
+ * resolved the n-gram. Concepts and other types are excluded: their titles are
+ * common phrases ("open source"). Fail-open: the alias arm already ran.
+ */
+async function weakTitleHits(engine: BrainEngine, sourceIds: string[], privacySql: string, norms: string[]): Promise<PageRow[]> {
+  if (!norms.length) return [];
+  try {
+    const rows = await engine.executeRaw<PageRow>(
+      `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, p.compiled_truth
+         FROM pages p
+        WHERE p.deleted_at IS NULL ${privacySql}
+          AND p.source_id = ANY($1::text[])
+          AND lower(p.title) = ANY($2::text[])`,
+      [sourceIds, norms],
+    );
+    const byTitle = new Map<string, PageRow[]>();
+    for (const r of rows) byTitle.set((r.title ?? '').toLowerCase(), [...(byTitle.get((r.title ?? '').toLowerCase()) ?? []), r]);
+    return [...byTitle.values()].filter((list) => list.length === 1 && WEAK_TITLE_ENTITY_TYPES.has(String(list[0].type))).map((list) => list[0]);
+  } catch {
+    return [];
+  }
+}
+
+/** #6195: page types whose exact title a lowercase multi-word n-gram may match. */
+const WEAK_TITLE_ENTITY_TYPES = new Set(['person', 'company', 'organization']);
+
+export type ResolveArm = 'alias' | 'title' | 'slug-suffix' | 'title-surname' | 'cjk-title' | 'weak-title' | 'recall';
 
 /**
  * v0.43 (#2095) — arm → confidence. Lives HERE, next to the arm definitions,
@@ -77,6 +106,7 @@ export const ARM_CONFIDENCE: Record<ResolveArm, number> = {
   title: 0.8,
   'title-surname': 0.72,
   'cjk-title': 0.72,
+  'weak-title': 0.72,
   'slug-suffix': 0.6,
   recall: 0.5,
 };
@@ -196,6 +226,7 @@ export async function resolveEntitiesToPointers(
   // norms are tracked so the alias fold can apply the stricter cross-source
   // uniqueness rule to them.
   const weakNorms = new Set<string>();
+  const weakTitleNorms = new Set<string>(); // #6195: multi-word weak n-grams, also probed against exact entity titles (arm 2.6)
   // Surname arm inputs: strong single-token capitalized candidates ≥3 chars.
   const surnamePatterns: string[] = [];
   const surnameTokens: string[] = []; // lower(token), parallel to patterns
@@ -213,6 +244,7 @@ export async function resolveEntitiesToPointers(
       const wnorm = normalizeAlias(c.query);
       if (!wnorm) continue;
       if (!displayByNorm.has(wnorm)) displayByNorm.set(wnorm, c.display);
+      if (c.multiToken) weakTitleNorms.add(wnorm);
       if (!weakNorms.has(wnorm)) {
         weakNorms.add(wnorm);
         aliasNorms.push(wnorm);
@@ -497,6 +529,11 @@ export async function resolveEntitiesToPointers(
         /* fail-open — the alias arm already ran */
       }
     }
+  }
+
+  // Arm 2.6 — lowercase multi-word weak exact-title (#6195; see weakTitleHits).
+  if (lexicalArms && weakTitleNorms.size) for (const r of await weakTitleHits(engine, sourceIds, privacySql, [...weakTitleNorms].filter((n) => !resolved.some((x) => x.matchedNorm === n)))) {
+    rowByKey.set(keyOf(r.source_id, r.slug), r); push(r.slug, r.source_id, 'weak-title', (r.title ?? '').toLowerCase());
   }
 
   // Build pointers in confidence order, applying suppression + cap.

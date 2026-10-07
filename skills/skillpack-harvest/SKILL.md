@@ -73,7 +73,7 @@ a list of files written. JSON mode (`--json`) returns the full
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `lint_failed`: the privacy linter caught a real name or private detail; go back to Phase 3 and replace it with placeholders (`alice-example`, `acme-example`, `fund-a`).
 - `gbrain skillpack check --strict` reports drift after the harvest: regenerate the bundle and re-run; never ship a drifting skillpack.

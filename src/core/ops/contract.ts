@@ -17,6 +17,7 @@ import { publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from '../p
 // renderer below when it loads.
 import type { Action, Notice } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
+import type { WriteAuthority } from '../persistence/model.ts';
 import type { StdioSurfaceState } from '../../mcp/surface.ts';
 
 /** Agent contract v1: the wire renderer for `fix`/`notices` in toJSON(), registered by agent-output.ts on load. */
@@ -492,6 +493,17 @@ export interface OperationContext {
    * v0.15 behavior; pure addition, no regression).
    */
   allowedSlugPrefixes?: string[];
+  /**
+   * #5994: the stored authority of a failed write that `gbrain repair
+   * failed-writes` replays. Set only by that trusted local repair lane; no
+   * transport, dispatcher or job hydrates it. Admission reuses it as the
+   * write's authority ceiling (principal, delegation, source incarnation,
+   * autoLinkTrusted), re-authorized against the live grant, instead of
+   * deriving local authority from the replay context. The subagent fence
+   * accepts a missing `subagentId` only with this marker and a non-empty
+   * allow-list equal to the stored delegated prefixes.
+   */
+  replayAuthority?: WriteAuthority;
   /**
    * #4216 — defer chunk embeddings on put_page writes: importFromContent runs
    * noEmbed and the standing embed machinery (embed phase / phase-end

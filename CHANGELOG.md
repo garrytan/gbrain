@@ -10,6 +10,116 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.105.0] - 2026-10-07
+
+**Fix wave 11: asking for help never deletes anything, "off" means off, and your files stop getting quietly rewritten.**
+
+About 40 bug reports and 24 contributor PRs arrived in two days. Each bug was reproduced on master first. The good contributor ideas were rewritten in our own code with tests that fail before the fix and pass after; no contributor lines were merged. The worst ones: `--help` on some commands ran the real action (`pages purge-deleted help` hard-purged pages, `search modes --reset --help` deleted settings), chat capture kept going with writeback switched off, `harness --remove` left its hooks behind, `frontmatter --fix` rewrote valid YAML, a page save without its Timeline silently deleted every dated row, and moving a brain hashed `.env` files.
+
+### How to use it
+
+```bash
+gbrain pages purge-deleted --dry-run --json      # what a purge would remove; the real purge now asks first (--yes)
+gbrain bootstrap harness --remove --dry-run      # preview which hooks removal deletes, including ones Claude Code stripped
+gbrain repair timeline-comments --source <id>    # preview: timeline rows filed from HTML comments, then --apply
+gbrain transcripts audit-secrets --json          # transcript pages imported before label redaction, by slug and count
+gbrain chronicle-backfill --max-usd 5            # a hard spend bound, retries included
+gbrain config set cycle.lint_exclude attachments,drafts.md
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `--help` anywhere | Prints usage and exits 0 without running anything, connecting, checking for updates or nagging about backups. |
+| Destructive subcommands | `pages purge-deleted`, `cache clear\|prune`, `schema use\|downgrade\|init\|remove-*`, `integrity auto\|reset-progress` and `search modes --reset` refuse an argument they would ignore (exit 2, `invalid_params`) and name a read-only command instead. `pages purge-deleted --source <id>` used to purge every source. |
+| `gbrain pages purge-deleted` | Asks before a hard purge; without a terminal it exits 3 with an ask_user payload naming the `--yes` command. The autopilot purge is unchanged. |
+| `gbrain apply-migrations` | Exits 1 (`migrations_pending`) whenever it leaves the schema behind, with a reason: rerun with `--yes` (`not_applied`) or run `gbrain doctor --json` (`still_behind`, `schema_unreadable`). |
+| `memory.auto_writeback off` | An explicit `off` stops every capture lane, including the compaction harvest and SessionEnd transcripts, and text banked while off is never extracted later. Unset keeps today's behavior. |
+| `bootstrap harness` | Recognizes its own hooks by the exact command it wrote, even after Claude Code strips the `_gbrain` marker; a re-run converges to one hook per event; `--remove` never claims "fully removed" while a lookalike survives (`harness_hook_unowned`); doctor warns `harness_hook_duplicates`. |
+| Remote `put_page` / `put_pages` | Content with no Timeline section is refused (`timeline_rows_would_be_removed`) when it would delete dated rows; keep the section or pass `drop_timeline: true`. Every delete reports `timeline_rows_removed` (count and dates). |
+| Frontmatter | Validation, `--fix`, lint and `repair frontmatter` parse the whole block first, so valid folded YAML is never flagged or re-quoted. |
+| Writer manifests | Only Git-tracked files are compared, so ignored files such as `.env.local` are never opened or hashed; upgrading drops the path-to-hash maps older releases stored. |
+| Managed sync | A bulk group whose head was already admitted no longer wedges on `idempotency_conflict`; a Git edit racing a database-only write is held as `concurrent_write` with `gbrain sources reconcile --preview` as the fix. |
+| Doctor | New `persistence_write_stall`, `transcript_secret_exposure` and retrieval-feedback checks; `harness_wiring` counts an enabled plugin lane; `pack_upgrade_available` is honest on managed brains. |
+| `waiting --json` / `open_loops` | Loops with no counterparty move to `no_counterparty`; each group lists at most 5 loops with `loops_omitted`. |
+
+### Things to watch
+
+- **Scripts:** the exit-code changes above (strict arguments, purge consent, apply-migrations, `schema active --json`) and the `waiting --json` shape are the breaking ones. Each refusal names its replacement command.
+- **The MCP instructions are reordered** so Claude Code, which reads only the first 2,048 characters, gets the writeback contract and the error protocol. A Cat 40 smoke on the newest Opus, GPT, Sonnet and Fable models compared it with the previous order before release.
+- **Filtered vector search** now uses pgvector's relaxed order: on real 1024- and 1536-dimension embeddings, recall at a 50% filter rose about 2 points with no latency change. `gbrain config set search.hnsw_iterative_scan strict_order` restores the old mode.
+- **CJK keyword search** falls back to any-term matching and has a time budget (`search.cjk_keyword_deadline_ms`, default 3000); multi-term questions that returned nothing now return partial matches in about 2.7 s on a 400k-chunk brain.
+- **Dream patterns** sizes in-cycle runs from the last run's recorded cost and skips before spending when the budget can't fit a useful run. The sizing model is not yet measured on a paid run.
+- **Not fixed here:** a hard ceiling for a stuck publication (detection ships; the ceiling is next), the free relabel for legacy embedding settings (#6113), and #6131 (not reproduced on macOS 26). See TODOS.md.
+
+### Itemized changes
+
+- CLI help and arguments (#6114): help is decided once in `cli.ts` before startup side effects; every subcommand router exports `SUBCOMMANDS` and prints usage before dispatch; `src/cli/strict-args.ts` is the per-subcommand argument table; a serial gate runs `--help`/`-h` on every command and subcommand offline and checks the database and home tree are unchanged.
+- `apply-migrations` exit matrix (#6089) with `connectAtSchemaVersion`; `migration_lease_lost` when a lease row still names this runner (#6028, diagnostic); `edge-proposals --json` handles Postgres BigInt ids (#6193); `schema active --source` resolves the source's own pack (#6090); `schema add-type --no-prefix` (#6135).
+- Linear-time qualifier, citation and link parsing on the page-write path (#6186); `regen-all` passes `--timeout` to every `bun test` (#6187).
+- Writeback consent (#6091): capture-time retirement per brain, a re-check at managed fact admission, and an inventory test of every capture lane. Hook ownership by anchored command shape (#6092, #6171); plugin-lane wiring (#6082); `skillpack reference --harness` without a slug (#5912); enrich Person template matches the schema doc (#6162); MCP instruction order for 2,048-character harnesses (#6170).
+- Bundled skills (#6197, #6198): headless commands are runnable and ask before paid work; the operator protocol ships as a drift-checked copy under the skills tree; links that leave the skills root become absolute URLs honoring `LLMS_REPO_BASE`; the skill lint checks inline code and relative links. Managed worktrees stop running a refused `sources push` (#6083); `skills/migrations/v0.40.3.0.md` drops a flag that never existed.
+- Persistence: `claim_phase` on running requests and doctor `persistence_write_stall` (#6176); pre-activation claims are listed and released by `writer deactivate` (#6122); Git-tracked writer manifests through a hardened git runner, `writer_manifest_rescope_required`, and a migration purging old manifests (#6099); code-import read-back inside the transaction (#6011); `git_dirty` reconcile previews (#6138).
+- Repair and writes: repair applies use the CLI write wait (#6185); reconcile identifies private fact rows by row number and claim (#6137); Timeline omission refusal and removal reporting (#5969); `repair failed-writes` replays subagent and restricted-namespace writes under the stored authority while the live fence stays fail-closed (#5994); comment-safe citation parsing, write-back guard and `repair timeline-comments` (#6184); `files upload-raw` refuses before creating anything on a managed root (#5963); owner exceptions keep their class, errno and source frame, and `write-request` names an owner/CLI build mismatch (#5929).
+- Content and dream: frontmatter whole-block parse (#6157); sweep facts dated by the session file's write time (#6159); `waiting` buckets (#5871); `cycle.lint_exclude` (#6134); inline-code-aware lint (#6133); no `works_at`/`founded` toward person, meeting or calendar pages (#6191); lowercase multi-word names volunteer (#6195); one-shot synthesis namespaces (#6160); concept merges survive republish (#6161); dream patterns budget sizing (#6177); `chronicle-backfill --max-usd` with a stamped queue-time bound and `no_pricing` under a user cap (#6199); a clearer `junk_entity_hubs` message (#6158).
+- Search and providers: visible `rate_answer` line and a doctor warning (#6192); CJK any-term fallback and deadline (#6043, #5989); relaxed-order iterative scans (#6132); gateway-only Voyage output width (#6061); a private `native/locks/package.json` for OpenClaw load time (#6026); transcript `labeled_credential` redaction and `transcripts audit-secrets` (#6147).
+- PGLite stale link drains refresh planner statistics before and during large drains: at 10,000 pages the drain goes from 30 to 3.6 ms/page, or from 80 to 29 ms/page on managed brains. Postgres is unchanged. (GBRA-49)
+- A core-memory lock test retries the topology step on the retryable `writer_pool_capacity` instead of failing at random. (GBRA-54)
+
+### Contributors
+
+Contributed by @andreineacsu (#6140, #6155, #6152, #6182, #6166, #6148, #6200, #6145, #6141, #6180, #6174), @MarvinDontPanic (#6186, #6187, #6147, #6132), @javieraldape (#6172, #6151), @Masashi-Ono0611 (#6175, #6181, #6179, #5371). Each idea was re-implemented and widened; their PRs are superseded.
+
+## [0.60.104.0] - 2026-10-07
+
+**Ontology observations stay in the ontology: the maintenance sweep no longer moves them onto a page's Facts table and loses them.**
+
+Since v0.60.53.0 the facts step of the maintenance run (the sweep `gbrain serve` runs after about 3 seconds of quiet, and the dream cycle) moved every fact without a table row onto its entity page's `## Facts` table. That included ontology observations from `ontology_propose`, such as "Alder's location is Example City from 2026". Each one took the page as its source, and the next ordinary rewrite of the page, which didn't list it, plus one more sweep, retired it: `ontology_get` returned nothing for a write gbrain had acknowledged. The same step republished the page, so a client that had just read the page and was writing it back got `revision_conflict`, and the page kept serving its previous Facts value. Observations are now never moved, and they no longer hold up the reconcile of their page. Found by gbrain-evals N1-ci under CPU load (ledger N1-7, #6264).
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Maintenance sweep, dream cycle | The `extract_facts` step leaves rows with a `dimension` (ontology observations) alone and doesn't count them as rows waiting for a table. It doesn't rewrite a page for them. |
+| `gbrain doctor` | New `ontology_facts_fenced` check: how many observations an earlier release moved (still on a page table, or already retired by a page write), and the repair that brings them back. |
+| `gbrain repair ontology-facts` | Explicit-only and preview-bound. The preview lists every moved observation (`fenced`, `retired`, or excluded as `withdrawn`, `consolidated` or `duplicate`); `--apply --expect <hash>` gives each one its own source back, takes it off the table and makes a retired one active again. Database only: page text isn't rewritten, so a line the old step added to a page's Facts table stays there as an ordinary page fact. |
+
+### For contributors
+
+- `planUnfencedFacts` (`src/core/facts/unfenced-facts.ts`) and the empty-fence guard in `src/core/cycle/extract-facts.ts` select `dimension IS NULL` rows only. The fence step stays source-wide: the rows it fences are the inline writer's database-only facts, which mostly land on pages the run's slug list doesn't name.
+- `src/core/repair/ontology-facts.ts` finds ontology rows with a fence row number or a `source_markdown_slug` other than their `source` (ontology writes produce neither) and restores them through `ontology_propose`'s coordinated database-only write on managed brains.
+- `test/ontology-fence-sweep.test.ts` (PGLite, Postgres through `test/e2e/ontology-fence-sweep-postgres.test.ts`) runs the N1-7 repro (observation, sweep, page rewrite, sweep) on managed and unmanaged brains, a page write bound to a revision read before the sweep (it failed with `revision_conflict` before the fix), the reconcile guard, and the repair from damage made by the old fence step.
+
+## To take advantage of v0.60.104.0
+
+`gbrain upgrade` stops new losses. If you used `ontology_propose` on v0.60.53.0 or later, check what was moved and restore it:
+
+```bash
+gbrain doctor --only ontology_facts_fenced
+gbrain repair ontology-facts                 # preview: read-only, prints the apply command
+gbrain repair ontology-facts --apply --expect <hash>
+```
+
+## [0.60.103.0] - 2026-10-07
+
+**A legacy access token's first burst of reads converts it to the unified grant columns reliably, and the last nightly Test reds are fixed at their cause.**
+
+On Postgres, a legacy access token still on the old permissions shape is converted to the grant columns by its first read. Every read also fires a debounced `last_used_at` write, and that write held the token's row lock while the conversion skipped locked rows, so a burst of concurrent first reads could leave the token unconverted (it still authorized correctly from the same grant computed in memory, and a later read converted it). The `last_used_at` write now leaves an unconverted row to the conversion, which records first use itself.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| Several concurrent first reads of a legacy-shape token | could leave it unconverted until a later read | the first read converts it once and records `last_used_at` |
+
+For contributors and agents working on gbrain:
+
+- `test/e2e/access-token-grants.test.ts` gains a forced probe for #6230: a `last_used_at` touch held in an open transaction while the first read converts. It fails on the previous release (`grant_revision` 0, the flake's signature) and passes now.
+- `test/list-pages-truncation.test.ts` counted the one-time `behavior_changes` disclosure as an extra content block whenever its shard restored the aged PGLite snapshot first (nightly Test run 37588995327). The test now uses a fresh brain in its own `GBRAIN_HOME`, so it counts only the listing notice.
+
+## To take advantage of v0.60.103.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
 ## [0.60.102.0] - 2026-10-07
 
 **Broken facts and takes tables in your notes now get repaired by themselves.**

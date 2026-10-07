@@ -1570,7 +1570,7 @@ export class PGLiteEngine implements BrainEngine {
       dedup: boolean;
     },
   ): Promise<SearchResult[]> {
-    return searchKeywordCJK(async (read) => read(scopedRead(this.engineSql)), query, ctx);
+    return searchKeywordCJK(async (read) => read(scopedRead(this.engineSql)), query, ctx, 'pglite');
   }
 
   /**
@@ -1697,7 +1697,7 @@ export class PGLiteEngine implements BrainEngine {
           const bound = [...stmt.params];
           bound[stmt.innerLimitIdx] = requested;
           return readVectorPool((await tx.query<Record<string, unknown>>(stmt.sql, bound)).rows);
-        });
+        }, undefined, opts?.hnswIterativeScan);
       }),
       async pool => {
         const { rows } = await this.db.query<{ eligible: number }>(stmt.hasMoreSql, [...stmt.params.slice(0, stmt.innerLimitIdx), pool + 1]);

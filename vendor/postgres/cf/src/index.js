@@ -450,7 +450,7 @@ function Postgres(a, b) {
     return new Promise((resolve, reject) => {
       query.state
         ? query.active
-          ? Connection(options).cancel(query.state, resolve, reject)
+          ? cancelActive(query, resolve, reject)
           : query.cancelled = { resolve, reject }
         : (
           queries.remove(query),
@@ -459,6 +459,25 @@ function Postgres(a, b) {
           resolve()
         )
     })
+  }
+
+  function cancelActive(query, resolve, reject, delay = 50) {
+    Connection(options).cancel(query.state, () => {
+      if (!query.active)
+        return resolve()
+      let waiting = true
+      const timer = setTimeout(next, delay)
+      Promise.prototype.then.call(query, next, next)
+      function next() {
+        if (!waiting)
+          return
+        waiting = false
+        clearTimeout(timer)
+        query.active
+          ? cancelActive(query, resolve, reject, Math.min(delay * 2, 1000))
+          : resolve()
+      }
+    }, reject)
   }
 
   async function end({ timeout = null } = {}) {

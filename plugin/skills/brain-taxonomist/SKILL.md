@@ -169,7 +169,7 @@ When the active pack has NO matching type, signal to EIIRP Phase 3
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - `gbrain schema show` / `gbrain schema lint` fails because no schema pack is active or the pack is corrupt: report it and route to the schema-author skill; do not guess a directory from memory.
 - A recommendation needs a schema change (`gbrain schema add-type`, `gbrain schema use`): this skill is advisory. Hand it to EIIRP or schema-author with the user's agreement; never mutate the active pack from here.

@@ -26,6 +26,21 @@ import {
 
 const SANITY_OFF = { disabled: true } as const;
 
+// #6133: inline code spans (CommonMark backtick runs, double-backtick spans included) are code too.
+describe('#6133 placeholder-date skips inline code spans', () => {
+  test('inline, table-cell and double-backtick spans give no hits; prose and frontmatter still fire', () => {
+    const content = [
+      '---', 'title: Formats', 'type: note', 'created: YYYY-MM-DD', '---', '',
+      'Use `YYYY-MM-DD` for dates.',
+      '| field | format |', '|---|---|', '| created | `2026-XX-XX` |',
+      'A span with a tick inside: `` `XX-XX` stays code ``.',
+      'This event is still 2026-XX-XX in prose.',
+    ].join('\n');
+    const hits = lintContent(content, 'test.md', { contentSanity: SANITY_OFF }).filter(i => i.rule === 'placeholder-date');
+    expect(hits.map(h => h.line)).toEqual([4, 12]);
+  });
+});
+
 describe('#3958 placeholder-date skips fenced code blocks', () => {
   test('YYYY-MM-DD inside a ``` fence is not a placeholder', () => {
     const content =

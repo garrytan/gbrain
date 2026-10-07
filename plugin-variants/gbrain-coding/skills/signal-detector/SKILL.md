@@ -144,7 +144,7 @@ interrupt every response or ask for enablement repeatedly.
 
 ## When it fails
 
-Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
 - No automatic-capture opt-in on record: do nothing. An API key, silence or a first-fire announcement is not consent.
 - A capture write returns `write_pending` (exit 10) or `revision_conflict`: never block the main reply; poll the receipt or re-read and merge on the next turn.

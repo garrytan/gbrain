@@ -1,6 +1,7 @@
 import { OperationError } from '../ops/contract.ts';
 import { writerStamp } from './writer-versions.ts';
 import type { FenceFailureDetail } from '../fence-repair/refusal.ts';
+import type { Action } from '../agent-output.ts';
 
 /**
  * #5974: a database refusal during preparation or publication becomes a
@@ -25,7 +26,15 @@ export interface PublicationFailureDetail {
 }
 /** #6188: a typed fence refusal's location (`fence-repair/refusal.ts`), plus the attempt stamp. */
 export type FenceRefusalDetail = FenceFailureDetail & Pick<PublicationFailureDetail, 'stage' | 'attempt'>;
-export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail }
+/**
+ * #5929: an unexpected exception in the owner. Fixed identifiers only, never
+ * the message, SQL or values: the error class, its errno and the top gbrain
+ * source frame (repo-relative). All three are owner-only.
+ */
+export interface OwnerExceptionDetail extends Pick<PublicationFailureDetail, 'stage' | 'attempt'> {
+  origin: 'owner_exception'; error_class?: string; errno?: string; frame?: string;
+}
+export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | OwnerExceptionDetail }
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_.:-]{0,79}$/;
 const ident = (value: unknown) => typeof value === 'string' && IDENT.test(value) ? value : undefined;
@@ -72,6 +81,59 @@ export function databaseRefusal(error: unknown): PublicationFailure | null {
     detail: { origin: raiser ? 'database_trigger' : 'database', sqlstate, ...(raiser ? { raiser } : {}), ...(table ? { table } : {}) } };
 }
 
+const ERRNO = /^[A-Za-z0-9_]{1,40}$/;
+
+/** The top stack frame inside gbrain's own `src/`, as `src/<path>.ts:<line>`; never an absolute path. */
+function gbrainFrame(stack: unknown): string | undefined {
+  if (typeof stack !== 'string') return undefined;
+  for (const line of stack.split('\n').slice(1)) {
+    if (line.includes('node_modules')) continue;
+    const match = /.*[\/\\(\s](src[\/\\][\w./\\-]+?\.ts):(\d+)/.exec(line);
+    if (match) return `${match[1]!.replace(/\\/g, '/')}:${match[2]}`;
+  }
+  return undefined;
+}
+
+/**
+ * #5929: the public message of an unexpected owner exception. Remote submitters read it, so it names no class,
+ * errno or build; those stay in the owner-only detail, `gbrain write-request <id>` on the brain host and the consumer log.
+ */
+export const OWNER_EXCEPTION_MESSAGE = 'Publication failed on an unexpected owner exception. On the brain host, gbrain write-request <request_id> and the persistence consumer log name its class, source frame and owner build.';
+
+/** #5929: the bounded identity of an unexpected owner exception (class, errno, frame), kept owner-only. */
+export function ownerExceptionFailure(error: unknown): PublicationFailure {
+  const e = (error && typeof error === 'object' ? error : {}) as { constructor?: { name?: unknown }; code?: unknown; errno?: unknown; stack?: unknown };
+  const errorClass = ident(e.constructor?.name);
+  const raw = typeof e.code === 'string' ? e.code : typeof e.errno === 'number' ? String(e.errno) : undefined;
+  const errno = raw && ERRNO.test(raw) ? raw : undefined;
+  const frame = gbrainFrame(e.stack);
+  return { code: 'storage_error', message: OWNER_EXCEPTION_MESSAGE,
+    detail: { origin: 'owner_exception', ...(errorClass ? { error_class: errorClass } : {}), ...(errno ? { errno } : {}), ...(frame ? { frame } : {}) } };
+}
+
+/** Owner-side text for the consumer log: the class and frame of an owner exception, else nothing. */
+export function ownerExceptionLogText(detail: unknown): string {
+  const d = detail as Partial<OwnerExceptionDetail> | null;
+  if (!d || d.origin !== 'owner_exception') return '';
+  return [d.error_class ? ` class=${d.error_class}` : '', d.errno ? ` errno=${d.errno}` : '', d.frame ? ` frame=${d.frame}` : ''].join('');
+}
+
+/**
+ * #5929: when the owner that ran a failed attempt is on another build than
+ * this CLI (a long-running `gbrain serve` started before an upgrade), say so
+ * with the restart step. Owner-only: the attempt stamp is never public.
+ */
+export function ownerBuildMismatch(detail: unknown, cliVersion: string): { owner: string; cli: string; why: string; fix: Action } | null {
+  const owner = (detail as Partial<PublicationFailureDetail> | null)?.attempt?.consumer_version;
+  if (typeof owner !== 'string' || !owner || owner === cliVersion) return null;
+  return { owner, cli: cliVersion,
+    why: `The owner process that ran this attempt is on gbrain ${owner}; this CLI is ${cliVersion}. Long-running \`gbrain serve\` processes (and autopilot or sync jobs) started before the upgrade still own writes and run the old code.`,
+    fix: { consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Restart every serve, autopilot and sync process on the brain host so the owner runs this build (`gbrain sources writer status --probe --json` shows it), then submit the write again with a new request_id.',
+      user_message: `Restart the gbrain serve (and autopilot) processes on the brain host: they are on ${owner}, this CLI is ${cliVersion}.`,
+      verify: { argv: ['gbrain', 'doctor', '--only', 'writer_version', '--json'] } } };
+}
+
 /** Stamps which build, host and stage ran the failed attempt. */
 export function withAttempt(failure: PublicationFailure, stage: PublicationStage): PublicationFailure {
   if (!failure.detail) return failure;
@@ -85,9 +147,12 @@ export function withAttempt(failure: PublicationFailure, stage: PublicationStage
  * reason and problem classes; its row numbers stay owner-side (they can
  * number rows a remote caller never saw).
  */
+const PUBLIC_DETAIL_KEYS: ReadonlySet<string> = new Set(['origin', 'sqlstate', 'raiser', 'table', 'op', 'branch', 'relationship', 'stage', 'fence']);
+
 export function publicFailureDetail(detail: unknown): Record<string, unknown> | undefined {
   if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return undefined;
-  const { sources: _sources, attempt: _attempt, ...rest } = detail as PublicationFailureDetail;
+  // #5929: an allow-list, so a key added to a stored detail is owner-only unless it is listed here.
+  const rest = Object.fromEntries(Object.entries(detail).filter(([key]) => PUBLIC_DETAIL_KEYS.has(key)));
   if ((rest as { origin?: unknown }).origin === 'fence') {
     const { rows: _rows, issues, ...fence } = ((rest as unknown as FenceFailureDetail).fence ?? {}) as FenceFailureDetail['fence'];
     const publicIssues = Array.isArray(issues) ? issues.map(({ row: _row, ...issue }) => issue) : undefined;

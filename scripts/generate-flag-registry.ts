@@ -77,9 +77,12 @@ const DELEGATED_MODULES: Record<string, string[]> = {
  * builds the INTERNAL `jobs run-child` argv (`--job-id`, `--allow-shell-jobs`):
  * those literals are what a worker passes to its child, not flags an importer
  * parses — autopilot imports it only to resolve the child CLI, and `jobs`
- * declares both flags in its own source.
+ * declares both flags in its own source. strict-args.ts is the strict-argument
+ * table for several commands' destructive subcommands (#6114): its literals
+ * belong to pages, cache, schema, integrity and search, each of which reads
+ * its own flags in its own source.
  */
-const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts'];
+const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts'];
 
 function isExcludedModule(p: string): boolean {
   // Basename comparison is path-separator agnostic: on Windows p ends in

@@ -8,7 +8,7 @@ import { isValidSourceId } from '../source-id.ts';
 import { assertValidSlugPrefixes } from '../grants/encoding.ts';
 import { isWriteRequestId } from './types.ts';
 import { writerDiagnostics } from './control.ts';
-import { acceptWriterTransfer, claimWorktree, getWorktreeBinding, humanManifestProgress, prepareWriterTransfer, worktreeManifest } from './ownership.ts';
+import { acceptWriterTransfer, claimWorktree, getWorktreeBinding, humanManifestProgress, prepareWriterTransfer, storedManifestScope, worktreeManifest, type StoredWorktreeManifest } from './ownership.ts';
 import { existingLocalHostId, currentVerifiedLocalWriter, persistenceHome, readLocalWriter, registerLocalWriter, revokeLocalWriter, type LocalGrant } from './identity.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { operationScopesAllowed } from '../scope.ts';
@@ -270,7 +270,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       const state = await writerAdminState(engine);
       const report = await deactivatePersistence(engine, { dryRun: true });
       const unchanged = state === await writerAdminState(engine);
-      return { ...report, action: operation, ...(report.mode === 'managed' && report.blockers.length === 0 && unchanged
+      return { ...report, action: operation, ...((report.mode === 'managed' || report.pre_activation_claims?.length) && report.blockers.length === 0 && unchanged
         ? { apply_command: `gbrain sources writer deactivate --admin-intent writer_deactivate --expected-state ${state}` } : {}) };
     }
     let expectedState: string | undefined;
@@ -299,8 +299,11 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     }
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
     const prepared = await prepareWriterTransfer(engine, sourceId, undefined, expectedState, { selfTransfer: params.self_transfer === true });
+    // #6099: a Git-scoped manifest covers tracked files only; untracked files Git does not ignore are reported as a count.
+    const untracked = prepared.manifest.untracked_count ?? 0;
     return { prepared: true, source_id: sourceId, worktree_id: prepared.worktree_id, owner_epoch: prepared.owner_epoch,
-      manifest: { digest: prepared.manifest.digest, file_count: prepared.manifest.file_count } };
+      manifest: { digest: prepared.manifest.digest, file_count: prepared.manifest.file_count, ...(prepared.manifest.scope ? { scope: prepared.manifest.scope } : {}) },
+      ...(untracked ? { untracked_files: untracked, warning: `${untracked} untracked file(s) in the checkout that Git does not ignore are not part of the transfer manifest and are not carried to the successor; commit them, or add them to .gitignore, before the successor clones.` } : {}) };
   }
   if (operation === 'writer_transfer_accept') {
     keys(params, ['source_id', 'path', 'expected_epoch', 'manifest', 'dry_run', 'admin_intent', 'expected_state', 'self_transfer']);
@@ -312,8 +315,13 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (typeof params.manifest !== 'string' || !/^[a-f0-9]{64}$/.test(params.manifest)) throw invalid('manifest must be the prepared SHA-256 manifest digest.',
       `Pass --manifest with the 64-character manifest digest that gbrain sources writer transfer prepare ${sourceId} printed.`, transferStatusFix(sourceId));
     if (params.dry_run && params.self_transfer === true) await acceptWriterTransfer(engine, sourceId, root, params.expected_epoch, params.manifest, existingLocalHostId()!, undefined, { selfTransfer: true, dryRun: true });
-    if (params.dry_run) return { dry_run: true, action: operation, source_id: sourceId, current: await getWorktreeBinding(engine, sourceId, existingLocalHostId()),
-      manifest_matches: worktreeManifest(root, { progress: humanManifestProgress() }).digest === params.manifest, expected_epoch: params.expected_epoch };
+    if (params.dry_run) {
+      const current = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
+      const [prepared] = current ? await engine.executeRaw<{ manifest: StoredWorktreeManifest | null }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [current.worktree_id]) : [];
+      const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared?.manifest) });
+      return { dry_run: true, action: operation, source_id: sourceId, current, manifest_matches: candidate.digest === params.manifest, expected_epoch: params.expected_epoch,
+        ...(candidate.scope ? { manifest_scope: candidate.scope } : {}), ...(candidate.untracked_count ? { untracked_files: candidate.untracked_count } : {}) };
+    }
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
     await acceptWriterTransfer(engine, sourceId, root, params.expected_epoch, params.manifest, undefined, expectedState, { selfTransfer: params.self_transfer === true });
     return { transferred: true, binding: await getWorktreeBinding(engine, sourceId) };

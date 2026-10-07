@@ -174,6 +174,11 @@
               "no shared declaration; 0 non-automation client(s) active in 30d"
             ],
             "backstop_visibility": "private",
+            "capture_lanes": {
+              "compact": "extract",
+              "session_end": "extract",
+              "writeback": "retire"
+            },
             "counters_note": "local, append-only, loss-tolerant observability over the last 7d — never a source of truth",
             "cross_lane_duplicates_7d": 0,
             "instruction_visibility": "world",
@@ -185,7 +190,7 @@
             "ttl_valid": true,
             "visibility_note": "world = readable by agents authorized on THIS brain, not the public internet"
           },
-          "message": "ambient writeback off (default). Enable: gbrain config set memory.auto_writeback salient",
+          "message": "ambient writeback off (default): Stop-hook turn capture is off, but the compaction harvest and SessionEnd transcripts still extract (installing the harness hooks opted into them; stop them: gbrain config set memory.auto_writeback off). Enable: gbrain config set memory.auto_writeback salient",
           "name": "memory_writeback",
           "status": "ok"
         },
@@ -497,7 +502,7 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 122/122 public tables",
+          "message": "RLS enabled on 120/120 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -509,7 +514,7 @@
         },
         {
           "category": "meta",
-          "message": "1030 column(s) verified against live schema",
+          "message": "992 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -629,14 +634,6 @@
           "category": "brain",
           "message": "no embedding migration in flight",
           "name": "embedding_migration_state",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "message": "Embeddings are off on this brain, so facts are only deduplicated by exact text; no supersession threshold applies.",
-          "name": "supersession_calibration",
-          "readiness_state": "not_applicable",
-          "severity": "info",
           "status": "ok"
         },
         {
@@ -814,6 +811,19 @@
           },
           "message": "~0 request row(s); no scope exhausts its lifetime request IDs within 90 days at its last-7-day rate.",
           "name": "persistence_request_growth",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "config_key": "persistence.max_claim_ms",
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#persistence-write-stall",
+            "max_claim_ms": "<volatile>",
+            "stalls": []
+          },
+          "message": "No write request has held its claim longer than persistence.max_claim_ms (600000 ms).",
+          "name": "persistence_write_stall",
           "status": "ok"
         },
         {
@@ -995,6 +1005,19 @@
           },
           "message": "Every closed commitment loop has its fact retired.",
           "name": "loop_facts_drift",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/repair.md#explicit-only-repair-kinds",
+            "excluded": 0,
+            "fenced": 0,
+            "repair": "ontology-facts",
+            "retired": 0
+          },
+          "message": "No ontology observation is held by a page's Facts table.",
+          "name": "ontology_facts_fenced",
           "status": "ok"
         },
         {
@@ -1921,7 +1944,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 14,
+              "global": 13,
               "mixed": 2,
               "source": 12
             },
@@ -1950,13 +1973,12 @@
               "resolve_symbol_edges": "global",
               "schema-suggest": "source",
               "skillopt": "global",
-              "standing_questions": "global",
               "sync": "source",
               "synthesize": "mixed",
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 14 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 13 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },
