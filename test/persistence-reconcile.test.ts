@@ -636,14 +636,49 @@ test('candidate-origin fanout stops at a bounded verification limit rather than 
   await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], async () => {
     await tx.executeRaw('UPDATE pages SET source_uri=$3 WHERE source_id=$1 AND slug=$2', [f.id, f.slug, uri]);
     await tx.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,frontmatter,source_path,source_uri)
-      SELECT $1,'other/candidate-'||n,'note','Independent origin','Independent candidate '||n,'{}'::jsonb,'other/candidate-'||n||'.md',$2
-      FROM generate_series(1,101) n`, [f.id, uri]);
+      SELECT $1,'channels/channel-'||n||'/example','note','Independent origin','Independent candidate '||n,'{}'::jsonb,
+        'channels/channel-'||n||'/example.md',$2 FROM generate_series(1,205) n`, [f.id, uri]);
   }, TEST_WRITE_ATTRIBUTION));
+  for (let n = 1; n <= 205; n++) {
+    const dir = join(f.root, 'channels', `channel-${n}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'example.md'), `Independent candidate ${n}\n`);
+  }
+  const before = await engine.executeRaw('SELECT id,source_path,knowledge_revision FROM pages WHERE source_id=$1 AND id<>$2 ORDER BY id', [f.id, f.snapshot.page.id]);
   await local(engine, f.registration, async () => {
-    await expect(runReconcilePreview(engine, { source_id: f.id, slug: f.slug })).rejects.toMatchObject({
-      code: 'source_changed', message: 'Too many candidate page origins to verify this exact file safely.' });
+    const { preview, status } = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
+    expect(status).toBe('ready');
     expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id])).toHaveLength(0);
+    expect((await runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview, request_id: randomUUID() })).state).toBe('committed');
+    expect(await engine.executeRaw('SELECT id,source_path,knowledge_revision FROM pages WHERE source_id=$1 AND id<>$2 ORDER BY id', [f.id, f.snapshot.page.id])).toEqual(before);
+    for (let n = 1; n <= 205; n++) expect(readFileSync(join(f.root, 'channels', `channel-${n}`, 'example.md'), 'utf8')).toBe(`Independent candidate ${n}\n`);
   });
+}), 120_000);
+
+test('candidate-origin pagination refuses a late shared-file claimant during preview and apply', async () => isolated(async engine => {
+  for (const origin of ['path', 'uri']) {
+    const f = await fixture(engine, true), raw = readFileSync(f.file);
+    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], async () => {
+      await tx.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,source_path)
+        SELECT $1,'channels/channel-'||n||'/example','note','Independent origin','Independent candidate '||n,
+          'channels/channel-'||n||'/example.md' FROM generate_series(1,200) n`, [f.id]);
+    }, TEST_WRITE_ATTRIBUTION));
+    await local(engine, f.registration, async () => {
+      const { preview } = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
+      await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.putPage('other/late-claimant', {
+        type: 'note', title: 'Late claimant', compiled_truth: 'Another page claiming the same file.',
+        source_path: origin === 'path' ? './notes//example.md' : null,
+        source_uri: origin === 'uri' ? pathToFileURL(f.file).href : null,
+      }, { sourceId: f.id }), TEST_WRITE_ATTRIBUTION));
+      const before = await engine.readPageSnapshot(f.slug, { sourceId: f.id });
+      const collision = { code: 'source_changed', message: 'Several pages claim the recorded canonical file.' };
+      await expect(runReconcilePreview(engine, { source_id: f.id, slug: f.slug })).rejects.toMatchObject(collision);
+      await expect(runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview, request_id: randomUUID() })).rejects.toMatchObject(collision);
+      expect(await engine.readPageSnapshot(f.slug, { sourceId: f.id })).toEqual(before);
+      expect(readFileSync(f.file)).toEqual(raw);
+      expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id])).toHaveLength(0);
+    });
+  }
 }), 120_000);
 
 // The parser must not normalize an already-resolved identity a second time.
