@@ -218,13 +218,17 @@ export async function trackStdioRpc<T>(work: () => Promise<T>): Promise<T> {
  * `surface_env_invalid` notice to the first successful result.
  */
 function stdioSurfaceSession(
-  opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; access?: McpAccess },
+  opts: McpServerOptions,
   server: () => Server | null,
 ) {
   const session = createStdioSurfaceState(operations, {
     surface: clampSurface(opts.surface ?? 'full'), source: opts.surfaceSource ?? (opts.surface ? 'flag' : 'default'), readOnly: opts.access === 'read-only',
     onWiden: ({ from, to, added }) => {
-      process.stderr.write(`[gbrain-serve] surface_widened from=${from} to=${to} op=request_tools added=${added.length}\n`);
+      const line = `[gbrain-serve] surface_widened from=${from} to=${to} op=request_tools added=${added.length}\n`;
+      if (opts.session) {
+        // The authenticated local bridge routes this diagnostic to its own stderr.
+        Promise.resolve(opts.session.transport.send({ jsonrpc: '2.0', method: 'gbrain/local_owner_stderr', params: { line } })).catch(() => {});
+      } else process.stderr.write(line);
       Promise.resolve(server()?.sendToolListChanged()).catch(() => { /* best-effort */ });
     },
   });

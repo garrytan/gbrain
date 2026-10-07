@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { loadConfig } from '../core/config.ts';
 import { probeLivePgliteHolder } from '../core/bootstrap/uninstall.ts';
 import { acquireNativeLock } from '../core/persistence/native-lock.ts';
-import { clampSurface, parseAccessFlag, parseSurfaceFlag, resolveStdioSurface } from './surface.ts';
+import { clampSurface, parseAccessFlag, parseSurfaceFlag, resolveStdioSurface, SURFACE_SOURCE_LABEL } from './surface.ts';
 import { localOwnerPaths, ownerProof, prepareOwnerDirectory, readOwnerRecord, type LocalOwnerRecord } from './local-owner-state.ts';
 class SessionRejectedError extends Error {}
 
@@ -114,10 +114,13 @@ export async function serveViaLocalOwner(args: string[]): Promise<boolean> {
       if (!socket) throw new Error('Local MCP owner did not become ready. Run gbrain serve --direct to inspect the database startup error.');
     }
   } finally { await lock.release(); }
+  if (resolved.invalidEnv !== undefined) console.error(`[gbrain serve] ignoring GBRAIN_SURFACE="${resolved.invalidEnv}" (use verbs | starter | full)`);
+  console.error(`[gbrain serve] surface=${context.surface} (source: ${SURFACE_SOURCE_LABEL[resolved.source]})`);
   const active = socket;
   await new Promise<void>((resolve, reject) => {
     const pending = new Set<string>();
     let ended = false;
+    let outputPaused = false;
     let requestBuffer = '', responseBuffer = '';
     const requestDecoder = new StringDecoder('utf8'), responseDecoder = new StringDecoder('utf8');
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -126,20 +129,29 @@ export async function serveViaLocalOwner(args: string[]): Promise<boolean> {
     const watchdog = setInterval(() => { if (readLiveParentPid() !== parent) close(); }, 5000);
     const close = () => {
       clearInterval(watchdog); clearTimeout(idleTimer); clearTimeout(drainTimer);
-      process.stdin.unpipe(active); active.unpipe(process.stdout); active.destroy(); resolve();
+      process.stdin.unpipe(active); active.destroy(); resolve();
     };
     const rearm = () => { if (idleSeconds) { clearTimeout(idleTimer); idleTimer = setTimeout(close, idleSeconds * 1000); } };
     const observe = (chunk: Buffer | string, responses: boolean) => {
       const text = typeof chunk === 'string' ? chunk : (responses ? responseDecoder : requestDecoder).write(chunk);
       let buffer = (responses ? responseBuffer : requestBuffer) + text;
       for (let at = buffer.indexOf('\n'); at >= 0; at = buffer.indexOf('\n')) {
+        let diagnostic = false;
         try {
           const message = JSON.parse(buffer.slice(0, at));
+          if (responses && message.method === 'gbrain/local_owner_stderr' && typeof message.params?.line === 'string') {
+            process.stderr.write(message.params.line);
+            diagnostic = true;
+          }
           if (typeof message.id === 'number' || typeof message.id === 'string') {
             const id = JSON.stringify(message.id);
             if (responses) pending.delete(id); else if (typeof message.method === 'string') pending.add(id);
           }
         } catch { /* The SDK owns protocol validation; tracking never changes wire bytes. */ }
+        if (responses && !diagnostic && !process.stdout.write(buffer.slice(0, at + 1)) && !outputPaused) {
+          outputPaused = true; active.pause();
+          process.stdout.once('drain', () => { outputPaused = false; if (!active.destroyed) active.resume(); });
+        }
         buffer = buffer.slice(at + 1);
       }
       if (buffer.length > 10 * 1024 * 1024) { close(); return; }
@@ -158,7 +170,6 @@ export async function serveViaLocalOwner(args: string[]): Promise<boolean> {
     process.stdin.once('close', eof);
     process.once('SIGTERM', close); process.once('SIGINT', close);
     // Piping happens only after the owner attached the SDK transport; no initialize frame is lost.
-    active.pipe(process.stdout, { end: false });
     active.on('data', chunk => observe(chunk, true));
     process.stdin.on('data', chunk => observe(chunk, false));
     process.stdin.pipe(active, { end: false });

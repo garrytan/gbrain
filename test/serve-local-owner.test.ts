@@ -52,18 +52,20 @@ test('fresh PGLite install shares one owner across simultaneous stdio sessions a
   const env = keylessBrainEnv(process.env, home, { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined,
     GBRAIN_SOURCE: undefined, GBRAIN_LOCAL_OWNER_IDLE_MS: '1500' });
   const clients: Client[] = [];
+  const diagnosticsByClient = new Map<Client, () => string>();
   let ownerFile = '';
   const cli = (args: string[]) => {
     const r = spawnSync(process.execPath, ['--no-env-file', 'src/cli.ts', ...args], { env, encoding: 'utf8', timeout: 60_000 });
     if (r.status !== 0) throw new Error(`fixture CLI failed: ${r.stderr}`);
   };
   const script = join(process.cwd(), 'src', 'cli.ts');
-  const open = async (args: string[], source?: string, forceSurface?: string, cwd = process.cwd()) => {
+  const open = async (args: string[], source?: string, forceSurface?: string, cwd = process.cwd(), surfaceEnv?: string) => {
     const client = new Client({ name: 'local-owner-test', version: '1' });
-    const sessionEnv = { ...env, ...(source ? { GBRAIN_SOURCE: source } : {}), ...(forceSurface ? { GBRAIN_MCP_FORCE_SURFACE: forceSurface } : {}) };
+    const sessionEnv = { ...env, ...(source ? { GBRAIN_SOURCE: source } : {}), ...(forceSurface ? { GBRAIN_MCP_FORCE_SURFACE: forceSurface } : {}), ...(surfaceEnv ? { GBRAIN_SURFACE: surfaceEnv } : {}) };
     const transport = new StdioClientTransport({ command: process.execPath, args: ['--no-env-file', script, 'serve', ...args], cwd, env: sessionEnv, stderr: 'pipe' });
     let diagnostics = '';
     transport.stderr?.on('data', chunk => { diagnostics += String(chunk); });
+    diagnosticsByClient.set(client, () => diagnostics);
     clients.push(client);
     try { await client.connect(transport); } catch (error) { throw new Error(`MCP handshake failed: ${error}; ${diagnostics}`); }
     return client;
@@ -83,6 +85,21 @@ test('fresh PGLite install shares one owner across simultaneous stdio sessions a
     const owner = JSON.parse(readFileSync(ownerFile, 'utf8'));
     expect(owner.pid).toBeGreaterThan(0);
     const lists = await Promise.all([first.listTools(), second.listTools()]);
+    const narrow = await open(['--surface', 'starter'], 'default');
+    expect(diagnosticsByClient.get(narrow)!()).toContain('surface=starter (source: --surface)');
+    await narrow.callTool({ name: 'request_tools', arguments: { surface: 'full' } });
+    expect(diagnosticsByClient.get(narrow)!()).toContain('surface_widened from=starter to=full');
+    expect(diagnosticsByClient.get(second)!()).not.toContain('surface_widened');
+    await narrow.close();
+    const envSurface = await open(['--surface', 'full'], 'default', undefined, process.cwd(), 'verbs');
+    expect((await envSurface.listTools()).tools).toHaveLength(7);
+    expect(diagnosticsByClient.get(envSurface)!()).toContain('surface=verbs (source: env GBRAIN_SURFACE)');
+    await envSurface.close();
+    const invalidSurface = await open(['--surface', 'starter'], 'default', undefined, process.cwd(), 'everything');
+    expect(diagnosticsByClient.get(invalidSurface)!()).toContain('ignoring GBRAIN_SURFACE="everything"');
+    expect(JSON.stringify(await invalidSurface.callTool({ name: 'whoami', arguments: {} }))).toContain('surface_env_invalid');
+    expect(JSON.stringify(await invalidSurface.callTool({ name: 'whoami', arguments: {} }))).not.toContain('surface_env_invalid');
+    await invalidSurface.close();
     expect(lists[0].tools.some(t => t.name === 'put_page')).toBe(true);
     expect(lists[1].tools.some(t => t.name === 'put_page')).toBe(false);
     const results = await Promise.all([first, second].map(client => client.callTool({ name: 'search', arguments: { query: 'sharedowner-mark-3r8' } })));

@@ -36,7 +36,8 @@ interface Session { client: Client; stderr: () => string; listChanged: () => num
 
 async function session(args: string[], extraEnv: Record<string, string> = {}): Promise<Session> {
   const transport = new StdioClientTransport({
-    command: 'bun', args: ['--no-env-file', 'run', 'src/cli.ts', 'serve', ...args], cwd: process.cwd(), env: { ...env, ...extraEnv }, stderr: 'pipe',
+    // These fixtures mutate config between sessions, requiring immediate DB release.
+    command: 'bun', args: ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--direct', ...args], cwd: process.cwd(), env: { ...env, ...extraEnv }, stderr: 'pipe',
   });
   let err = '';
   transport.stderr?.on('data', (chunk: Buffer) => { err += chunk.toString('utf8'); });
