@@ -14,7 +14,7 @@ export const TYPING_UNITS = ['U1', 'U2', 'U3', 'U4', 'U5', 'U6'] as const;
 export type TypingUnit = typeof TYPING_UNITS[number];
 
 /** The units this build applies. Changed only by the package script after the verdict. */
-export const ENABLED_TYPING_UNITS: ReadonlySet<TypingUnit> = new Set<TypingUnit>([]);
+export const ENABLED_TYPING_UNITS: ReadonlySet<TypingUnit> = new Set<TypingUnit>(['U3', 'U4', 'U1', 'U2', 'U5']);
 
 let override: ReadonlySet<TypingUnit> | null = null;
 
