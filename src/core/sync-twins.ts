@@ -20,6 +20,7 @@
  */
 import type { BrainEngine } from './engine.ts';
 import { withCompanyBrainSource } from './company-brain/profile.ts';
+import { maintenanceTransaction } from './persistence/attribution.ts';
 import { insertAliasRow } from './schema-pack/page-to-alias.ts';
 import type { SupersededTwin } from './sync-reconcile.ts';
 
@@ -50,7 +51,10 @@ export async function retireSupersededTwins(
       // (links to the old slug would break, and a deleted row drops out of the
       // next reconcile, so nothing would retry it). An existing redirect for
       // the old slug — e.g. one the owner set by hand — is kept.
-      const done = await withCompanyBrainSource(engine, sourceId, scoped => scoped.transaction(async tx => {
+      // maintenanceTransaction (not a plain transaction): stamps the write
+      // attribution the managed-brain guard requires, same as the sibling
+      // batch delete in company-brain/profile.ts.
+      const done = await withCompanyBrainSource(engine, sourceId, scoped => maintenanceTransaction(scoped, async tx => {
         const deleted = await tx.softDeletePages([slug], { sourceId });
         if (deleted.length === 0) return false;
         await insertAliasRow(tx, sourceId, slug, canonical, 'slug grammar change');

@@ -277,6 +277,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/schema-pack/retype.ts` (1): each bounded retype batch runs in `maintenanceTransaction`.
 - `src/core/schema-pack/sync.ts` (1): each bounded pack type sync batch runs in `maintenanceTransaction`.
 - `src/core/sweep.ts` (1): the maintenance sweep's bounded timeline batch runs in `maintenanceTransaction`.
+- `src/core/sync-twins.ts` (1): a full-sync reconcile's old-slug twin retirement (soft delete plus its alias redirect) runs in `maintenanceTransaction`.
 - `src/core/takes-write.ts` (7): the takes file helpers' DB mirror (add, append, update, supersede, resolve and its self-heal) runs in `maintenanceTransaction`; managed brains publish through the takes request preparer.
 - `src/core/think/index.ts` (1): the saved `think` result page runs in `maintenanceTransaction`.
 - `src/core/timeline-dedup-repair.ts` (1): runs only from schema migration v139, before migration v193 adds the attribution columns, so it has no actor to record.
