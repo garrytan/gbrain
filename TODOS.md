@@ -1,5 +1,25 @@
 # TODOS
 
+## Cat 40 Hard fix wave follow-ups (filed 2026-10-07, GBRA-39)
+
+Context: gbrain-evals `docs/plans/2026-10-07-cat40-hard-fix/PLAN.md`; this wave fixes document retrieval only.
+
+- [ ] **P1 — Owner-phrase resolution with validity windows (deferred F1.3, C4).** **What:** references like "Dana Example's freight account" depend on who owned the account on that date; no extractor produces owner or handoff facts from page text. **Design:** the card gains `known_as` rows with each owner phrase's validity window, and the mention index links documents that use the phrase inside the window. **Gate:** ship only after a measured design: on development data, the share of needed owner-phrase documents an agent sees rises and no Cat 40 family regresses against the wave's development round. **Effort:** L. **Priority:** P1.
+- [ ] **P1 — H5 merge-chain recall.** **What:** recall should follow "A now uses B's discount code" redirections to B's current value, and corrections of B. **Gate:** H5 completions on development data at or above the fs arm. **Effort:** M. **Priority:** P1.
+- [ ] **P2 — Notice hygiene for unattended agents.** **What:** first-run ask and coaching notices ride on every session's tool results (498 results in the held-out run). **Gate:** share of tool results carrying notices drops with no loss in safety-notice delivery, measured on a Cat 40 development run. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Opt-in LLM alias extraction.** **What:** names declared only in free prose without a cue ("we just say Copper Fox") are not parsed; the card excerpt shows them. **Fix:** an opt-in, spend-gated extractor that proposes aliases with their source line. **Gate:** precision on a labeled real-brain sample at a Wilson 95% lower bound of 85% or more. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Scale-ladder eval above 200k documents (gbrain-evals).** **What:** the Hard world is 55k documents; alias fan-out, keyword counts and sibling grouping are unmeasured at 200k+. **Effort:** M. **Priority:** P3.
+- [ ] **P2 — Document-retrieval onboarding walkthrough on the `starter` surface.** **What:** the coding-agent tutorial registers `--surface verbs`, which has no `search`, so the card's search guidance points at a tool the agent lacks. **Effort:** S. **Priority:** P2.
+- [ ] **P3 — Timed fresh-install check.** **What:** a timed run from install to the first MCP write and read, to catch onboarding regressions. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Read-only alias preview before an upgrade.** **What:** show which names the new alias grammar would derive on a brain before the version bump re-derives them. **Effort:** S. **Priority:** P3.
+
+- [ ] **P2 — `degraded_recall` dedup hides a different later degradation on stdio.** **What:** the notice is deduped by code per process, so a rerank failure after an `embed_timeout` notice is never shown; AGENT_OPERATOR_v1 says stdio shows it on every affected call. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Profile email-typed searches on a real-corpus slot.** **What:** in the Hard run, `types` filters including `email` were 13% of searches and 44% of search time (p50 1.7 to 2.5 s, 16 to 18 s when short of the limit); a synthetic 55k brain did not reproduce it. **Fix:** `--explain` and `EXPLAIN ANALYZE` of the vector statement with `types: ['email']` on a calibration slot, then fix the plan. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Replay `remember(items)` by its canonical UUID.** **What:** children derive from the root string as sent, so a replay by the canonical UUID derives new children (items still dedup by text). **Fix:** store the root's client string and derive from it. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Store `client_request_id` on CLI-delegated and `extract_facts` writes.** **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Show the keyword count and `next` in CLI `gbrain search` output.** **Effort:** S. **Priority:** P3.
+- [ ] **P2 — Measure the keyword count at scale.** **What:** on PGLite the count runs serially with the search (one connection). **Gate:** `keyword_count_unavailable` under 1% of searches and added p50 under 100 ms on a 55k calibration slot; otherwise skip the count on large PGLite brains. **Effort:** S. **Priority:** P2.
+
 ## Fix wave 11 follow-ups (filed 2026-10-07, GBRA-55)
 
 - [ ] **P2 — Ceiling for a stuck managed publication (W3.3b, #6176).** **What:** a publication that hangs inside a live consumer keeps renewing its claim; wave 11 ships detection only (`claim_phase`, doctor `persistence_write_stall` past `persistence.max_claim_ms`). **Fix:** a phase-split ceiling: a statement timeout inside `publishMutation`, a recovery handoff that releases the root, and a bounded abandonment counter, written against the consumer/coordinator after GBRA-45's sync-feeder work lands. **Effort:** M. **Priority:** P2.

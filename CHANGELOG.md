@@ -10,6 +10,70 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased: Cat 40 Hard fix wave, version stamped at merge] - 2026-10-07
+
+**gbrain now knows every name an account goes by, tells your agent how many records match, and says why a write or a rerank failed.**
+
+On a company brain, most records never repeat a customer's full name. They use a nickname, a code or a name filed on a different page. Before this release an agent asked gbrain for the customer's card, saw the name and the code, and believed it had every alias, so it missed the records filed under the nickname. Now the card shows every other name the customer's pages declare, with the line that declares it; search also searches those names on its own; and every search says how many pages match its keywords, with a way to list them all. Saved memories fail less, and when one fails the answer says why. The Cat 40 Hard confirmation run has not happened yet; its numbers lead the version stamped at merge.
+
+### What changes for your agent
+
+| Where | What changed |
+|---|---|
+| `entity` card | New `identity_siblings` (pages about the same subject under another title prefix, each with its own aliases, never merged), `identity_excerpt` (verbatim lines that may carry another name, with the page they came from), `aka_sources` and `alias_guidance` (what `aka` covers, which names to search). `aka` is unchanged. |
+| Alias learning | Prose cues ("also known as", "goes by", "formerly", "doing business as"), alias label lines and table rows ("Internal nickname: Copper Fox") and multi-word names. A name two sibling pages share now links mentions to both instead of neither. |
+| `search` / `query` | When a query names an entity, gbrain also searches up to 4 of its other names (keyword-only, rows carry `matched_alias`). Every search adds one line: the rows are a ranked top-K, and `keyword_total` pages match the keywords (up to "10000+"). |
+| `search` `match: "keyword"` | Lists every keyword match, page by page, with `total`, `truncated` and a ready-to-send `next`. Remote agents can use it. A per-call `mode` is refused with a fix naming `match: "keyword"`; an offset over 10,000 is refused. |
+| Search rows | `effective_date_source` survives lean rows, and one line says whether each date is a document, event or fallback date (never a contract's effective date). Pages gbrain generated (`dream_generated`, `extract_receipt`) carry `provenance: "generated"` and rank below a primary record about the same entity. |
+| `remember` and write tools | Any `request_id` of 1 to 128 printable characters is accepted (echoed as `client_request_id`; `request_id` stays a UUID). Re-saving a claim that was forgotten is refused straight away with `fact_withdrawn` and the write that works (`entity` plus `replaces`), instead of being accepted and failing later. Failed receipts and `get_write_request` name the cause. |
+| Degraded reranking | The `degraded_recall` notice and `_meta.retrieval.rerank_degraded` carry the reason (`timeout`, `budget`, `rate_limited`, `unreachable`, `auth`, `provider_error`), the fallback and the session's count, with a fix per reason. |
+
+Example card fields for an account whose CRM record and account sheet share a subject:
+
+```json
+{
+  "aka": ["wgco", "widget co"],
+  "aka_sources": [{ "origin": "declared", "slug": "crm/widget-co" }, { "origin": "subject", "slug": "crm/widget-co" }],
+  "identity_siblings": { "capped": false, "pages": [{ "slug": "accounts/widget-co", "title": "Account sheet: Widget Co", "type": "account", "aka": ["Copper Fox", "Widget Co"] }] },
+  "identity_excerpt": [{ "slug": "accounts/widget-co", "line": "Internal nickname: Copper Fox" }]
+}
+```
+
+### How to use it
+
+```bash
+gbrain extract --stale --catch-up                     # re-derive aliases and rescan mentions once (autopilot does this too)
+gbrain extract mentions --explain crm/widget-co       # every name a page derives, rejected candidates, the sibling decision
+gbrain config set mentions.alias_deny "Copper Fox"    # drop a derived name (or frontmatter alias_deny: on one page)
+gbrain config set search.alias_fanout_max 0           # turn the alias fan-out off
+```
+
+**Say to your agent:** *"Find every record about the Acme account, under any name it goes by."*
+
+### Things to watch
+
+- **One-time rescan.** The alias and mention extractor versions moved (`MENTION_EXTRACTOR_VERSION` 3, `ALIAS_DERIVATION_VERSION` 2), so every brain re-derives aliases and rescans mentions once on its next `gbrain extract --stale`; cards show `coverage: pending` until it finishes, even on a brain where no page changed.
+- **Migration v219** adds `persistence_requests.client_request_id` (nullable).
+- **Search output grew** by one count line and one date line per call; the starter tool list stays within its 25,000-character budget.
+- **Settings:** `mentions.multiword_aliases`, `mentions.sibling_merge`, frontmatter `identity: separate`, `search.demote_generated` (all on by default) are the off switches.
+- **Latency.** Alias fan-out measured 16 ms p50 on a 3,100-page PGLite brain. The keyword count runs beside the search with a 2-second deadline; a late count says "unavailable", never zero. Per-cell latency on the benchmark was harness scheduling (slot queue and restore), not gbrain; the slowest gbrain searches were email-typed filters on the real corpus, filed for profiling.
+- **Not in this release:** owner-based names ("Dana's freight account"), recall that follows "A now uses B's code" chains, and the other items filed in TODOS.
+
+### Itemized changes
+
+- Alias grammar (`src/core/mentions/aliases.ts`, spec `docs/designs/ALIAS_CONVENTIONS.md`): `declarationsIn` with prose cues, label lines, table rows and quoted defined terms; up to 4-token captures with possessive, common-word and relational-noun guards; `mentions.alias_deny`, frontmatter `alias_deny`, `mentions.multiword_aliases`.
+- Identity siblings (`src/core/mentions/siblings.ts`): one rule for the card, the fan-out and the gazetteer; `buildGazetteer` keeps a name claimed by a sibling group and `findMentionedEntities` links every sibling; `identity_siblings_capped` notice.
+- Entity card identity fields (`src/core/verbs/entity-card-identity.ts`), excerpt cut from `sanitizeRemoteBody`.
+- Alias fan-out (`src/core/search/alias-fanout.ts`): `resolveQueryEntity`, alias-required keyword queries via `SearchOpts.rankQuery` on both engines, `fanout` meta, `alias_fanout` notice; search and query emit `mention_index` when the resolved entity's source is still being indexed.
+- Version-aware mention coverage without a migration (`src/core/mentions/coverage.ts`, `pass.ts`): pending counts version-behind pages, the policy fingerprint covers the new settings, post-upgrade names the sweep.
+- Keyword counts and paging (`src/core/search/keyword-paging.ts`, `keyword-statement.ts`, `src/core/engine-sql/keyword-pages.ts`): `countKeywordPages`, `searchKeywordPages`, keyset `next`, `keyword_count_unavailable` stage; errors `search_mode_local_only`, `search_cursor_requires_keyword`, `search_offset_over_cap`.
+- Date labels (`src/core/search/date-labels.ts`) and lean rows keep `effective_date_source`, `matched_alias`, `provenance`, `evidence_omitted`.
+- Generated-page demotion (`src/core/search/provenance-demotion.ts`) in the identity-boost stage; corrections exempt.
+- Write ids (`src/core/persistence/preconditions.ts` `parseWriteRequestId`, UUIDv5 under a fixed namespace); `client_request_id` stored and echoed; `remember(items)` children still derive from the root string.
+- `remember` refuses a withdrawn claim before admission (`fact_withdrawn`); `replaces` accepts a target with no entity; failed receipts name their code.
+- Rerank failure reasons (`src/core/ai/gateway.ts`, `src/core/search/rerank.ts`, `src/core/interop-notices.ts`): a rerank timeout is reported as `timeout` (it was filed as a network failure); `reranker_health` names `provider_base_urls.<provider>` after repeated `unreachable` failures.
+- `docs/what-schemas-unlock.md` is linked, not inlined, in `llms-full.txt`.
+
 ## [0.60.105.0] - 2026-10-07
 
 **Fix wave 11: asking for help never deletes anything, "off" means off, and your files stop getting quietly rewritten.**
