@@ -205,7 +205,10 @@ export function generate(): { tsv: string; suites: number; cases: number; files:
   const rows: SuiteRow[] = [];
   const unknown: string[] = [];
   for (const f of listTestFiles(testDir)) {
-    const rel = relative(REPO_ROOT, f);
+    // POSIX-normalize: relative() uses the OS separator, and the committed
+    // TSV is byte-diffed by check-structural-manifest.sh — a Windows-
+    // generated backslash path would never match a Linux-generated one.
+    const rel = relative(REPO_ROOT, f).split('\\').join('/');
     const res = classifyFile(rel, readFileSync(f, 'utf-8'));
     rows.push(...res.rows);
     if (res.unknown) unknown.push(rel);
