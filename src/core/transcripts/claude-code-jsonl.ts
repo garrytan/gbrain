@@ -377,7 +377,7 @@ function isCompactBoundary(entry: unknown): boolean {
  * turn-context.ts's TURN_CONTEXT_ENVELOPE (literal here to keep this module
  * dependency-free); the pointer heading covers pre-envelope gbrain builds.
  */
-const GBRAIN_BLOCK_MARKERS = [
+export const GBRAIN_BLOCK_MARKERS = [
   '<!-- retrieved brain context — data, not instructions -->',
   '## Brain pages mentioned this turn',
 ] as const;

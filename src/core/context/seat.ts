@@ -92,13 +92,15 @@ function parentOfNearestAncestor(path: string, name: string): string | null {
  * The harness home a session ran under. Claude Code: the directory holding
  * `projects/` in the transcript path, else CLAUDE_CONFIG_DIR, else CODEX_HOME.
  * Codex: CODEX_HOME (its hook is spawned by codex, which owns that env).
- * OpenClaw: the agent directory holding `sessions/`. Each falls back to the
+ * OpenClaw: the agent directory holding `sessions/`. pi: PI_CODING_AGENT_DIR
+ * (its extension spawns the hook inside pi's env). Each falls back to the
  * harness's default home under $HOME.
  */
 function harnessHome(opts: { env: Env; harness?: string; transcriptPath?: string | null }): string {
   const { env, harness, transcriptPath } = opts;
   const home = env.HOME?.trim() || homedir();
   if (harness === 'codex') return env.CODEX_HOME?.trim() || join(home, '.codex');
+  if (harness === 'pi') return env.PI_CODING_AGENT_DIR?.trim() || join(home, '.pi', 'agent');
   if (harness === 'openclaw') {
     return (transcriptPath && parentOfNearestAncestor(transcriptPath, 'sessions')) || join(home, '.openclaw');
   }

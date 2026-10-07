@@ -278,6 +278,7 @@ test/pglite-repair-command.serial.test.ts	global-state	global-state: R3: constru
 test/pglite-snapshot-timezone.serial.test.ts	R1	R1: mutates process.env (GBRAIN_PGLITE_SNAPSHOT)
 test/pglite-wal-repair.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; patches process stdout/stderr/console
 test/physical-root-overlap-vanished-dir.serial.test.ts	R2	R2: mock.module(node:fs) makes readdirSync throw ENOENT for one path
+test/pi-hook-command.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_STOP_PUSH, PI_CODING_AGENT_DIR)
 test/projections-drain-cli.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/put-page-push-reporting.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/quarantine-override.serial.test.ts	global-state	global-state: replaces console.log, console.error and process.exit to capture the quarantine CLI, and patches a shared engine's readPageSnapshot for the revision race

@@ -29,11 +29,11 @@ export const VOLUNTEER_EVENTS_TTL_DAYS = 90;
  * channel — deliberately NOT in HARNESS_CHANNELS below: it is never
  * wire-claimable (a hook client claiming it would spoof production
  * attribution; outside-voice codex-2 #7). */
-export const VOLUNTEER_CHANNELS = ['op', 'reflex', 'watch', 'openclaw', 'claude-code', 'codex', 'opencode'] as const;
+export const VOLUNTEER_CHANNELS = ['op', 'reflex', 'watch', 'openclaw', 'claude-code', 'codex', 'opencode', 'pi'] as const;
 export type VolunteerChannel = (typeof VOLUNTEER_CHANNELS)[number];
 
 /** The harness subset — the ONLY channels a wire caller may claim. */
-export const HARNESS_CHANNELS = ['claude-code', 'codex', 'opencode'] as const;
+export const HARNESS_CHANNELS = ['claude-code', 'codex', 'opencode', 'pi'] as const;
 export type HarnessChannel = (typeof HARNESS_CHANNELS)[number];
 
 /** Wire fallback: the only harness bootstrap registers hooks for today. */

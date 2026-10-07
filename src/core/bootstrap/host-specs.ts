@@ -21,7 +21,7 @@
 
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 
 // ── Spec-target registry [ENG-7] ────────────────────────────────────────────
 
@@ -40,6 +40,7 @@ export interface HostSpecTarget {
 export const CLAUDE_CODE_SPEC_ID = 'claude-code-2026-08';
 export const CODEX_SPEC_ID = 'codex-2026-08';
 export const OPENCODE_SPEC_ID = 'opencode-2026-08';
+export const PI_SPEC_ID = 'pi-2026-10';
 
 export const TARGETS: Record<string, HostSpecTarget> = {
   [CLAUDE_CODE_SPEC_ID]: {
@@ -158,6 +159,35 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       'Skills: no attested native skills DIR for direct file installs; a ' +
       'direct-copy target needs an observation run before a default ships ' +
       '(harness-bridge requires an explicit dest).',
+  },
+  [PI_SPEC_ID]: {
+    id: PI_SPEC_ID,
+    status: 'provisional',
+    verifiedAt: '2026-10-07',
+    references: [
+      'docs/mcp/PI.md',
+      '@earendil-works/pi-coding-agent 1.0.4 docs/session-format.md, docs/extensions.md, docs/mcp.md',
+      '@earendil-works/pi-coding-agent 1.0.4 dist/core/session-manager.js + dist/core/extensions/types.d.ts (source read)',
+    ],
+    note:
+      'pi (earendil-works pi-coding-agent) has NO shell-hook config: lifecycle ' +
+      'wiring is a TypeScript extension file under <agent-dir>/extensions/ ' +
+      '(agent-dir = PI_CODING_AGENT_DIR || ~/.pi/agent; loaded via jiti, no ' +
+      'build step). The gbrain-shipped extension maps session_start → ' +
+      'session-start, before_agent_start → user-prompt (context returned as a ' +
+      'hidden custom message, customType "gbrain-context", persisted as a ' +
+      '`custom_message` session entry), agent_end → stop, ' +
+      'session_before_compact → compact, session_shutdown → session-end ' +
+      '(detached). Sessions: <agent-dir>/sessions/--<cwd-slug>--/' +
+      '<timestamp>_<uuid>.jsonl, overridable by PI_CODING_AGENT_SESSION_DIR ' +
+      '(and settings.json sessionDir, NOT honored by the confinement root — ' +
+      'see piSessionsDir). Header {type:"session",version:3,id,cwd}; entries ' +
+      'form a tree via id/parentId (branches share one file). The file is ' +
+      'created lazily: nothing is written until the first user/assistant ' +
+      'message, so the first before_agent_start of a session has no file yet. ' +
+      'MCP: <agent-dir>/mcp.json {mcpServers:{<name>:{url, headers} | ' +
+      '{command, args, env}}}; header values support ${ENV} and a whole-value ' +
+      '`!command`.',
   },
 };
 
@@ -521,3 +551,72 @@ export function opencodeProjectConfigPath(workspaceDir: string): string {
  * natively (verified — and CLAUDE.md is NOT double-loaded alongside it).
  */
 export const OPENCODE_HAS_HOOKS = false;
+
+// ── pi shapes ───────────────────────────────────────────────────────────────
+
+/** `~/…` → `$HOME/…` (pi expands a leading tilde in its env overrides). */
+function expandPiTilde(p: string, home: string): string {
+  if (p === '~') return home;
+  if (p.startsWith('~/')) return join(home, p.slice(2));
+  return p;
+}
+
+/** HOME from the env first — Bun's homedir() reads the password database,
+ * not HOME (the claudeUserSettingsPath lesson), and every pi test isolates
+ * through a temp HOME. */
+function piHome(): string {
+  return process.env.HOME?.trim() || homedir();
+}
+
+/**
+ * pi agent directory — PI_CODING_AGENT_DIR (tilde-expanded, as pi's own
+ * getAgentDir does) else ~/.pi/agent. Every pi path joins onto THIS one
+ * resolution so the discipline can never drift per-path. A relative override
+ * is ignored (pi would resolve it against ITS cwd, which a hook child cannot
+ * reproduce) and falls back to the default.
+ */
+export function piAgentDir(): string {
+  const home = piHome();
+  const env = process.env.PI_CODING_AGENT_DIR?.trim();
+  if (env) {
+    const p = expandPiTilde(env, home);
+    if (isAbsolute(p)) return p;
+  }
+  return join(home, '.pi', 'agent');
+}
+
+/**
+ * pi session store — PI_CODING_AGENT_SESSION_DIR (absolute / tilde) else
+ * <agent-dir>/sessions. The confinement root for the pi hook lane's
+ * transcript_path [S3#8]. settings.json `sessionDir` is deliberately NOT read:
+ * a project-scope settings file is agent-writable, and honoring it would let
+ * the confined input pick its own fence. A user who moves the store sets the
+ * env var instead (pi honors it too).
+ */
+export function piSessionsDir(): string {
+  const env = process.env.PI_CODING_AGENT_SESSION_DIR?.trim();
+  if (env) {
+    const p = expandPiTilde(env, piHome());
+    if (isAbsolute(p)) return p;
+  }
+  return join(piAgentDir(), 'sessions');
+}
+
+/** User-level pi extensions directory (auto-loaded by pi at startup). */
+export function piExtensionsDir(): string {
+  return join(piAgentDir(), 'extensions');
+}
+
+/** The gbrain-owned pi extension file `bootstrap hooks --harness pi` writes. */
+export function piHooksExtensionPath(): string {
+  return join(piExtensionsDir(), 'gbrain-hooks.ts');
+}
+
+/** User-level pi MCP config (`{mcpServers:{…}}`). */
+export function piMcpConfigPath(): string {
+  return join(piAgentDir(), 'mcp.json');
+}
+
+/** pi message customType the gbrain extension tags its injected context with
+ * (the pi analogue of Claude Code's hook_additional_context attachment). */
+export const PI_CONTEXT_CUSTOM_TYPE = 'gbrain-context';
