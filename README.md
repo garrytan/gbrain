@@ -245,6 +245,13 @@ gbrain mcp expose         # publish serve --http on your Tailscale tailnet with 
 gbrain mcp expose --funnel  # same name, public HTTPS — for agents that run in a vendor's cloud
 ```
 
+For a local persistent PGLite brain, ordinary `gbrain serve` sessions automatically
+share one background database owner. Opening a second chat needs no port, token,
+or service setup; each chat keeps its own source, tool surface, and access mode.
+The owner exits after the last chat has been idle for 30 seconds and starts again
+when needed. Use `gbrain serve --direct` for the dedicated-process lifecycle.
+Other CLI commands still follow the PGLite lock and delegation rules.
+
 `gbrain mcp expose` is the recommended way to run the server from your own computer: it installs Tailscale if needed (after a consent prompt), signs in, publishes the server on `https://your-machine.your-tailnet.ts.net/mcp`, keeps the admin token in a private file, installs a launchd / systemd user service, and prints separate owner-login, native OAuth, and machine-client next steps (`--status` re-checks, `--remove` undoes only its own changes). Local coding agents on the same machine: `gbrain bootstrap harness --yes --port 3131` on a Postgres brain; on PGLite mint a token before the service runs (`gbrain auth create local-agents --scopes read,write`) and pass `--token`, or grant a scoped client through the running server (`gbrain mcp grant … --admin-token-file ~/.gbrain/serve/admin-token`). Tailnet-only by default; `--funnel` is the explicit opt-in for cloud agents. **Say to your agent:** *"use my brain over mcp"* — *"reach my brain from my phone"*. Guide: [use your brain from anywhere over MCP](docs/guides/remote-mcp.md).
 
 The HTTP server includes optional dynamic client registration, scope-gated access (`read` / `write` / `admin` / `agent`), owner-approved OAuth authorization, and rate limiting. Dynamic registration cannot grant delegation; `admin` implies neither `agent` nor owner administration. Start with the [MCP task guide](docs/mcp/README.md) for deployment, client setup, administration, and alternatives to Tailscale (ngrok, Railway, Fly.io).

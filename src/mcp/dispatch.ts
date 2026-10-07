@@ -153,6 +153,8 @@ export interface ToolResult {
 }
 
 export interface DispatchOpts {
+  /** A local session's filesystem confinement root, selected by its transport. */
+  cwd?: string;
   /** Configuration selected by the resident transport, never populated from wire params. */
   config?: OperationContext['config'];
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
@@ -670,6 +672,7 @@ export function buildOperationContext(
       : undefined) ?? metaSessionIdFrom(params);
   return {
     engine,
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
     config: opts.config ?? loadConfig() ?? { engine: 'postgres' },
     logger: opts.logger || stderrLogger,
     dryRun: !!params.dry_run,

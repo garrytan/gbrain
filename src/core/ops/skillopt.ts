@@ -213,7 +213,7 @@ const run_skillopt: Operation = {
     }
     const skillsDir = sharedSkill
       ? await (await import('../shared-skills/optimizer.ts')).sharedOptimizerSkillsDir(ctx, sharedSkill.source_id, sharedSkill.source_incarnation)
-      : autoDetectSkillsDirReadOnly(process.cwd()).dir;
+      : autoDetectSkillsDirReadOnly(ctx.cwd ?? process.cwd()).dir;
     if (!skillsDir) {
       throw opError('config_error', 'run_skillopt: skills directory not found',
         'The brain host has no skills directory to optimize. Run `gbrain doctor --json` on the host; it reports where gbrain looks for skills.');

@@ -2590,6 +2590,10 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
     await serveStatus!.runStatusModeServe(preConnectReason, null, args, () => connectEngineForServe(ENGINE_CONNECT_HOOKS));
     return null;
   }
+  if (command === 'serve' && (dbMarkerBrainId() ?? 'host') === 'host') {
+    const { serveViaLocalOwner } = await import('./mcp/local-owner-client.ts');
+    if (await serveViaLocalOwner(args)) return null;
+  }
   try {
     // A4: an observational command connects probe-only and completes startup only after consent.
     engine = await connectEngine({ probeOnly: findCliCommand(command)?.startup === 'observational' || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status') });

@@ -366,9 +366,12 @@ export interface IpcPathConfig {
  * `sourceId`: it routes to the single resident owner, so it stays
  * brain-keyed. Bound-source rejection [CX2-10] still applies per request.
  */
-export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined, kind: 'resolve' | 'persistence' = 'resolve', sourceId?: string): string | null {
+export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined, kind: 'resolve' | 'persistence' = 'resolve', sourceId?: string, sourceKeyedPglite = false): string | null {
   if (!cfg) return null;
-  if (cfg.engine === 'pglite' && cfg.database_path) return localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}.sock`));
+  if (cfg.engine === 'pglite' && cfg.database_path) {
+    const suffix = sourceKeyedPglite && kind === 'resolve' && sourceId ? `-${hash12(sourceId)}` : '';
+    return localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}${suffix}.sock`));
+  }
   if (cfg.engine === 'postgres' && cfg.database_url) {
     const sourceKey = kind === 'resolve' && sourceId ? `-${hash12(sourceId)}` : '';
     return localIpcSocketPath(join(ipcRunDir(), `${kind}-${hash12(cfg.database_url)}${sourceKey}.sock`));
@@ -384,7 +387,7 @@ export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined
  */
 export async function hookResolveSocketForConfig(cfg: IpcPathConfig | null | undefined, sourceId: string | undefined): Promise<string | null> {
   const legacy = resolveSocketPathForConfig(cfg);
-  const keyed = resolveSocketPathForConfig(cfg, 'resolve', sourceId || 'default');
+  const keyed = resolveSocketPathForConfig(cfg, 'resolve', sourceId || 'default', true);
   if (!legacy || !keyed || keyed === legacy) return legacy;
   return (await socketHasLiveListener(keyed)) ? keyed : legacy;
 }

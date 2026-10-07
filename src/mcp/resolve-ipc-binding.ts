@@ -88,14 +88,14 @@ export async function bindResolveIpcForServe(
   engine: BrainEngine,
   defaultSource: string,
   persistenceProvider?: PersistenceIpcProvider,
-  opts: { rememberCallable?: boolean | (() => boolean) } = {},
+  opts: { rememberCallable?: boolean | (() => boolean); sourceKeyedPglite?: boolean } = {},
 ): Promise<ResolveIpcBinding> {
   let persistence: PersistenceIpcBinding | null = null;
   try {
     const cfg = loadConfig();
     // #5042: this serve's own source-keyed socket, plus the legacy URL-only
     // socket when it is free (older hooks and hooks naming no source).
-    const resolveSocket = resolveSocketPathForConfig(cfg, 'resolve', defaultSource);
+    const resolveSocket = resolveSocketPathForConfig(cfg, 'resolve', defaultSource, opts.sourceKeyedPglite);
     const legacySocket = resolveSocketPathForConfig(cfg);
     if (!resolveSocket || !legacySocket) return NULL_BINDING;
 

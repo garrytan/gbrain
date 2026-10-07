@@ -31,7 +31,7 @@ function cli(args: string[]) {
 }
 
 async function session(args: string[]): Promise<{ client: Client; close: () => Promise<void> }> {
-  const transport = new StdioClientTransport({ command: 'bun', args: ['--no-env-file', 'run', 'src/cli.ts', 'serve', ...args], cwd: process.cwd(), env });
+  const transport = new StdioClientTransport({ command: 'bun', args: ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--direct', ...args], cwd: process.cwd(), env });
   const client = new Client({ name: 'gbrain-read-only-test', version: '1.0.0' }, { capabilities: {} });
   await client.connect(transport);
   return { client, close: async () => { await client.close().catch(() => {}); await transport.close().catch(() => {}); } };

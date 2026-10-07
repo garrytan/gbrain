@@ -30,10 +30,12 @@ import { readLocalWriter, verifyLocalWriter } from '../core/persistence/identity
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 import { assertStdioSourceBindable } from './source-preflight.ts';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 export async function resolveMcpStdioSourceScope(
   engine: BrainEngine,
   cwd: string = process.cwd(),
+  signals?: { envSource?: string },
 ): Promise<{
   sourceId: string;
   localFederatedSourceIds?: string[];
@@ -53,14 +55,14 @@ export async function resolveMcpStdioSourceScope(
   // DegradedRecoveredRetryError instead of a result (see degraded-engine.ts).
   if (isEngineDegraded(engine)) {
     const { isValidSourceId } = await import('../core/source-id.ts');
-    const env = process.env.GBRAIN_SOURCE;
+    const env = signals ? signals.envSource : process.env.GBRAIN_SOURCE;
     return env && isValidSourceId(env)
       ? { sourceId: env, tier: 'env' }
       : { sourceId: 'default', tier: 'seed_default' };
   }
   try {
     const { resolveSourceWithTier, localFederatedSourceIds, explicitReadBinding } = await import('../core/source-resolver.ts');
-    const resolved = await resolveSourceWithTier(engine, null, cwd);
+    const resolved = await resolveSourceWithTier(engine, null, cwd, signals);
     const federated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
     // #5081: the admission set is optional; a failed lookup must not discard
     // the resolved binding (the catch below would fall back to 'default').
@@ -82,7 +84,7 @@ export async function resolveMcpStdioSourceScope(
     // or a transient engine blit is a separate downstream concern, and
     // blocking a valid binding on a blip is worse.
     const { isValidSourceId } = await import('../core/source-id.ts');
-    const env = process.env.GBRAIN_SOURCE;
+    const env = signals ? signals.envSource : process.env.GBRAIN_SOURCE;
     return env && isValidSourceId(env)
       ? { sourceId: env, tier: 'env' }
       : { sourceId: 'default', tier: 'seed_default' };
@@ -243,13 +245,21 @@ function stdioSurfaceSession(
   return { session, finishResult, statusResult };
 }
 
-export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess } = {}) {
+export interface McpServerOptions {
+  surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string;
+  sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess;
+  /** Shared owners supply a separate transport and source context per session. */
+  session?: { transport: Transport; cwd: string; envSource?: string };
+}
+
+export async function startMcpServer(engine: BrainEngine, opts: McpServerOptions = {}) {
   const config = loadConfig();
+  const sourceScopeForSession = () => resolveMcpStdioSourceScope(engine, opts.session?.cwd, opts.session);
   const bootPhase = (phase: string) => { try { opts.onBootPhase?.(phase); } catch { /* diagnostic only */ } };
   // Refuse to serve a well-formed GBRAIN_SOURCE that no active source row
   // backs (see source-preflight.ts). Throws before any transport is attached.
   bootPhase('source_preflight');
-  await assertStdioSourceBindable(engine);
+  await assertStdioSourceBindable(engine, opts.session ? opts.session.envSource ?? '' : process.env.GBRAIN_SOURCE);
   // MEMORY_VERBS v1 surface mode: 'full' (default — every op, byte-identical
   // to pre-surface behavior), 'starter' (WP4 daily-driver set), or 'verbs'
   // (exactly the 7 protocol verbs). Enforced BOTH on the advertised list and
@@ -311,7 +321,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // WP3: strict-params schema emission, resolved ONCE at startup from the
   installCapabilitiesResource(server, async () => {
     if (statusMode && isEngineDegraded(engine)) return { transport: 'stdio', status_only: statusPayload(statusMode) };
-    const scope = await resolveMcpStdioSourceScope(engine);
+    const scope = await sourceScopeForSession();
     const available = (await stdioVisibleTools(engine, session.surfacedOps)).map(op => op.name);
     let scopes: readonly string[] = [];
     if (!isEngineDegraded(engine)) {
@@ -328,7 +338,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       ...await stdioCapabilityReadiness(engine, config),
       note: 'This local MCP pipe has no OAuth profile; agent-facing operation restrictions still apply.' };
   }, createSkillResources(engine, async () => {
-    const scope = await resolveMcpStdioSourceScope(engine);
+    const scope = await sourceScopeForSession();
     return { remote: true, transport: 'stdio', sourceId: scope.sourceId,
       localFederatedSourceIds: scope.localFederatedSourceIds, allowedOps: session.allowedOps, surface: session.surface, config: config ?? undefined };
   }));
@@ -379,7 +389,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // as local CLI dispatch: GBRAIN_SOURCE, then .gbrain-source, then the
     // non-explicit fallback tiers. Non-explicit tiers may widen to federated
     // local reads; explicit/env/dotfile scopes stay scalar.
-    const sourceScope = await resolveMcpStdioSourceScope(engine);
+    const sourceScope = await sourceScopeForSession();
     // v0.28: stdio MCP has no per-token auth (local pipe). Default the
     // takes-holder allow-list to ['world'] so agent-facing callers don't
     // see private hunches via takes_list / takes_search / query. Operators
@@ -401,6 +411,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       operations.find(o => o.name === name)?.mutating === true,
     );
     return finishResult(await dispatchToolCall(engine, name, params, {
+      ...(opts.session ? { cwd: opts.session.cwd } : {}),
       remote: true,
       // #1061: mark the transport so whoami can report {transport: 'stdio'}
       // instead of throwing unknown_transport. Trust posture unchanged —
@@ -433,9 +444,11 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     }));
   }));
 
-  const transport = new StdioServerTransport();
+  const transport = opts.session?.transport ?? new StdioServerTransport();
   bootPhase('mcp_connect');
   await server.connect(transport);
+  // Session close must never disconnect the common engine or exit its owner.
+  if (opts.session) return server;
 
   // Engine-dependent boot: the resolve-IPC listener, session-cursor GC, and
   // the startup maintenance sweep all touch the engine. In DEGRADED mode

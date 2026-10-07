@@ -89,7 +89,7 @@ export interface ServeOptions {
   // (which unconditionally attaches a 'data' listener to real
   // process.stdin and would pollute the test runner's stdin handle).
   // Defaults to the real implementation when omitted.
-  startMcpServer?: (engine: BrainEngine, opts?: { surface?: 'verbs' | 'starter' | 'full'; surfaceSource?: 'env' | 'flag' | 'config' | 'default'; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: 'full' | 'read-only' }) => Promise<void>;
+  startMcpServer?: (engine: BrainEngine, opts?: { surface?: 'verbs' | 'starter' | 'full'; surfaceSource?: 'env' | 'flag' | 'config' | 'default'; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: 'full' | 'read-only' }) => Promise<unknown>;
   // Test seam for the parent-process watchdog. The default
   // (`readLiveParentPid`) reads the live kernel PPID via `ps` on POSIX
   // because `process.ppid` is captured at process creation and does not
@@ -227,6 +227,12 @@ export async function runServe(
   // verifyAccessToken with legacy access_tokens fallback (so v0.22.7 callers
   // that used `gbrain auth create` keep working unchanged).
   const isHttp = args.includes('--http');
+  // --direct keeps the legacy per-process lifecycle for diagnostics and supervisors.
+  const direct = args.includes('--direct');
+  if (!direct && args.includes('--local-owner')) {
+    await (await import('../mcp/local-owner.ts')).runLocalOwner(engine);
+    return;
+  }
 
   // MEMORY_VERBS v1: tool-surface mode. stdio: GBRAIN_SURFACE > --surface >
   // config `mcp_surface` > 'full'; --http ignores GBRAIN_SURFACE (an HTTP
@@ -451,7 +457,7 @@ const DEFAULT_EOF_DRAIN_MS = 30_000;
 // Env resolution for the stdin-EOF drain bound. Lenient like
 // resolveBootTimeoutMs: a typo'd env var must not turn the data-loss fix
 // into a shutdown failure. 0 disables the drain (immediate exit).
-function resolveEofDrainMs(): number {
+export function resolveEofDrainMs(): number {
   const raw = process.env.GBRAIN_SERVE_EOF_DRAIN_MS;
   if (raw === undefined || raw.trim() === '') return DEFAULT_EOF_DRAIN_MS;
   const n = Number(raw);
@@ -1000,7 +1006,7 @@ export function probeWatchdogAvailable(platform: NodeJS.Platform = process.platf
   }
 }
 
-function parseStdioIdleTimeout(args: string[]): number {
+export function parseStdioIdleTimeout(args: string[]): number {
   const idx = args.indexOf('--stdio-idle-timeout');
   if (idx < 0) return 0;
   const raw = args[idx + 1];

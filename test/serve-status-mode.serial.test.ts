@@ -88,7 +88,7 @@ describe('status-only serve: lock contention → recovery in place (a)', () => {
   });
 
   test('second serve handshakes with gbrain_status naming the owner, then recovers when the owner closes', async () => {
-    const owner = await connect(env);
+    const owner = await connect(env, ['--direct']);
     opened.push(owner);
     expect((await owner.client.listTools()).tools.some(t => t.name === 'search')).toBe(true);
 

@@ -2,12 +2,13 @@
 import type { CliHelpSpec } from '../command-table.ts';
 
 export const help: CliHelpSpec = {
-  summary: 'Run the MCP server: stdio by default, or OAuth 2.1 HTTP with --http.',
+  summary: 'Run MCP over stdio. Local PGLite chats automatically share one owner; use --http for OAuth HTTP.',
   usage: [
     'gbrain serve [--surface verbs|starter|full] [--access full|read-only] [--source-guard] [--stdio-idle-timeout <s>] [--fail-fast]',
     'gbrain serve --http [--port <n>] [--bind <host>] [--public-url <url>] [--token-ttl <s>] [--enable-dcr] [--surface …]',
   ].join('\n'),
   flags: [
+    { name: '--direct', type: 'boolean', desc: 'Use a dedicated stdio database owner instead of automatic local sharing (diagnostics/legacy lifecycle).' },
     { name: '--http', type: 'boolean', desc: 'Serve over HTTP with OAuth 2.1, the admin dashboard and per-token scopes.' },
     { name: '--surface', type: 'enum', values: ['verbs', 'starter', 'full'], desc: 'Tool surface: the 7 memory verbs, the daily-driver ops, or every operation. stdio: env GBRAIN_SURFACE > --surface > config mcp_surface > full; --http ignores GBRAIN_SURFACE.' },
     { name: '--access', type: 'enum', values: ['full', 'read-only'], desc: 'stdio only: read-only exposes read-scoped, non-mutating operations.' },

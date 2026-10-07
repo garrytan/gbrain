@@ -116,7 +116,7 @@ describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', ()
     //    listener consume initialize before the SDK transport attached.
     transport = new StdioClientTransport({
       command: 'bun',
-      args: ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--stdio-idle-timeout', '14400'],
+      args: ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--direct', '--stdio-idle-timeout', '14400'],
       cwd: process.cwd(),
       env, // includes PATH (to find `bun`) + GBRAIN_HOME
     });
@@ -229,7 +229,7 @@ describe('serve --surface verbs stdio E2E (the 7 frozen memory verbs over a real
     // 3. Spawn the QUICKSTART surface — exactly the 7 protocol verbs.
     transport = new StdioClientTransport({
       command: 'bun',
-      args: ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--surface', 'verbs'],
+      args: ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--direct', '--surface', 'verbs'],
       cwd: process.cwd(),
       env,
     });

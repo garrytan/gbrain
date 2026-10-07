@@ -61,10 +61,10 @@ const file_upload: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'file_upload', path: p.path };
 
     const { readFileSync, statSync } = await import('fs');
-    const { basename, extname } = await import('path');
+    const { basename, extname, resolve } = await import('path');
     const { createHash } = await import('crypto');
 
-    const filePath = p.path as string;
+    const filePath = resolve(ctx.cwd ?? process.cwd(), p.path as string);
     const pageSlug = (p.page_slug as string) || null;
 
     // Fix 1 / B5 / H5 / M4: validate path, slug, filename before any filesystem read.
@@ -72,7 +72,7 @@ const file_upload: Operation = {
     // can upload from anywhere on the filesystem (loose) — the user owns the machine.
     // Default is strict when ctx.remote is undefined (defense-in-depth).
     const strict = ctx.remote !== false;
-    validateUploadPath(filePath, process.cwd(), strict);
+    validateUploadPath(filePath, ctx.cwd ?? process.cwd(), strict);
     if (pageSlug) validatePageSlug(pageSlug);
     const filename = basename(filePath);
     validateFilename(filename);

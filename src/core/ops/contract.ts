@@ -393,6 +393,8 @@ export function authTransport(auth: AuthInfo): 'oauth' | 'legacy' {
 }
 
 export interface OperationContext {
+  /** Transport-selected local working directory; never supplied by tool arguments. */
+  cwd?: string;
   engine: BrainEngine;
   config: GBrainConfig;
   logger: Logger;

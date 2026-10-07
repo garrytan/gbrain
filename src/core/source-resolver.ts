@@ -770,8 +770,9 @@ export async function resolveSourceWithTier(
   engine: BrainEngine,
   explicit: string | null | undefined,
   cwd: string = process.cwd(),
+  signals?: { envSource?: string },
 ): Promise<{ source_id: string; tier: SourceTier; detail?: string }> {
-  const resolved = await resolveSourceWithTierChain(engine, explicit, cwd);
+  const resolved = await resolveSourceWithTierChain(engine, explicit, cwd, signals);
   noteResolvedSource(resolved.source_id);
   return resolved;
 }
@@ -780,6 +781,7 @@ async function resolveSourceWithTierChain(
   engine: BrainEngine,
   explicit: string | null | undefined,
   cwd: string,
+  signals?: { envSource?: string },
 ): Promise<{ source_id: string; tier: SourceTier; detail?: string }> {
   // 1. Explicit flag wins. __all__ sentinel passes through verbatim (#1712).
   if (explicit) {
@@ -794,7 +796,7 @@ async function resolveSourceWithTierChain(
   }
 
   // 2. Env var. Same __all__ pass-through (#2140).
-  const env = process.env.GBRAIN_SOURCE;
+  const env = signals ? signals.envSource : process.env.GBRAIN_SOURCE;
   if (env && env.length > 0) {
     if (env === ALL_SOURCES) {
       return { source_id: ALL_SOURCES, tier: 'env', detail: `GBRAIN_SOURCE=${ALL_SOURCES} (spans all sources)` };
