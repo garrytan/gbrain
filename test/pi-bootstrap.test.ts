@@ -202,3 +202,17 @@ describe('gbrain connect --harness pi --install (pi-json adapter)', () => {
     }
   });
 });
+
+describe('routesToPiBootstrap', () => {
+  test('--harness pi routes every pi subcommand; bare `hooks` inside pi routes only when no other agent is detected', async () => {
+    const { routesToPiBootstrap } = await import('../src/core/bootstrap/pi-bootstrap.ts');
+    const inPi = { PI_CODING_AGENT: 'true' };
+    for (const sub of ['hooks', 'status', 'verify', 'uninstall']) expect(routesToPiBootstrap(sub, 'pi', false, {})).toBe(true);
+    expect(routesToPiBootstrap('render', 'pi', false, inPi)).toBe(false);
+    expect(routesToPiBootstrap('hooks', undefined, false, inPi)).toBe(true);
+    expect(routesToPiBootstrap('hooks', undefined, true, inPi)).toBe(false); // Claude Code/Codex/opencode marker wins
+    expect(routesToPiBootstrap('hooks', 'codex', false, inPi)).toBe(false);
+    expect(routesToPiBootstrap('status', undefined, false, inPi)).toBe(false); // workspace status stays the default
+    expect(routesToPiBootstrap('hooks', undefined, false, {})).toBe(false);
+  });
+});

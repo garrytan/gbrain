@@ -88,7 +88,7 @@ import {
   type HarnessDetectOverrides,
 } from '../core/bootstrap/harness.ts';
 import { refreshHarnessSkills } from '../core/bootstrap/harness-skills.ts';
-import { isPiBootstrapSubcommand, runPiBootstrap } from '../core/bootstrap/pi-bootstrap.ts';
+import { routesToPiBootstrap, runPiBootstrap } from '../core/bootstrap/pi-bootstrap.ts';
 import { claudeUserSettingsPath, codexConfigPath, opencodeConfigDir, opencodeGlobalConfigPath, opencodeProjectConfigPath } from '../core/bootstrap/host-specs.ts';
 import {
   opencodeEntryKind,
@@ -2022,7 +2022,7 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
   }
 
   // pi wiring is user-global and workspace-free (pi-bootstrap.ts): routed before workspace resolution.
-  if (flagValue(rest, '--harness') === 'pi' && isPiBootstrapSubcommand(sub)) return runPiBootstrap(sub, rest);
+  if (routesToPiBootstrap(sub, flagValue(rest, '--harness'), detectHarness() !== null)) return runPiBootstrap(sub, rest);
 
   if (sub === 'cloud-setup-script') {
     // Pure print [D16]: the paste-ready cloud environment setup script.

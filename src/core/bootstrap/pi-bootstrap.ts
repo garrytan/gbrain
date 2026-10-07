@@ -35,6 +35,23 @@ export function isPiBootstrapSubcommand(sub: string): sub is PiBootstrapSubcomma
   return (PI_BOOTSTRAP_SUBCOMMANDS as readonly string[]).includes(sub);
 }
 
+/**
+ * Whether `gbrain bootstrap <sub>` belongs to the pi lane: `--harness pi`, or
+ * `hooks` with no `--harness` when the only detected agent is pi (pi sets
+ * PI_CODING_AGENT=true in its process; a detected Claude Code / Codex /
+ * opencode marker keeps the workspace lane's own auto-detect).
+ */
+export function routesToPiBootstrap(
+  sub: string,
+  harnessFlag: string | undefined,
+  otherHarnessDetected: boolean,
+  env: Record<string, string | undefined> = process.env,
+): sub is PiBootstrapSubcommand {
+  if (!isPiBootstrapSubcommand(sub)) return false;
+  if (harnessFlag === 'pi') return true;
+  return sub === 'hooks' && harnessFlag === undefined && !otherHarnessDetected && env.PI_CODING_AGENT === 'true';
+}
+
 export interface PiBootstrapDeps {
   /** Stdout/stderr seams (default console). */
   log?: (s: string) => void;
