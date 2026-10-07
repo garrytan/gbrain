@@ -182,10 +182,11 @@ describe('search projection readiness over legacy bearer HTTP MCP', () => {
 
   test('empty search keeps its bare-array body and exposes visible pending projection work only through retrieval metadata', async () => {
     const response = await search('http-readiness-no-match');
-    // Body + empty-retrieval block + F3's degraded_recall notice (agent contract v1).
-    expect(response.content).toHaveLength(3);
-    expect(response.content[2]!.text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
-    expect(response.content[2]!.text).toContain('projection_pending');
+    // Body + F2's keyword count line + empty-retrieval block + F3's degraded_recall notice (agent contract v1).
+    expect(response.content).toHaveLength(4);
+    expect(response.content[1]!.text).toStartWith('[gbrain search] Rows are a ranked top-K');
+    expect(response.content[3]!.text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
+    expect(response.content[3]!.text).toContain('projection_pending');
     expect(response.body).toEqual([]);
     expectPendingMetadata(response.retrieval);
     expect(JSON.stringify(response.result)).not.toContain(PRIVATE_PENDING);
@@ -194,9 +195,10 @@ describe('search projection readiness over legacy bearer HTTP MCP', () => {
 
   test('partial nonempty search exposes the same readiness metadata without changing the public result body', async () => {
     const response = await search(MATCH);
-    // Body + F3's degraded_recall notice (recall-affecting stage present).
-    expect(response.content).toHaveLength(2);
-    expect(response.content[1]!.text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
+    // Body + F2's keyword count line + F3's degraded_recall notice (recall-affecting stage present).
+    expect(response.content).toHaveLength(3);
+    expect(response.content[1]!.text).toStartWith('[gbrain search] Rows are a ranked top-K');
+    expect(response.content[2]!.text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
     expect(response.body).toHaveLength(1);
     expect(JSON.stringify(response.body)).toContain(MATCH);
     expectPendingMetadata(response.retrieval);

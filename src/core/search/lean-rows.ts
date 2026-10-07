@@ -15,7 +15,8 @@
  *     message_id, thread_id, source_subject, matched_alias (the other name the
  *     alias fan-out searched); modality when not text; stale
  *     only when set (true, or the held-file object from #5988);
- *   - `delivered: { truncated: true }` whenever evidence delivery truncated.
+ *   - `delivered: { truncated: true }` whenever evidence delivery truncated;
+ *   - `evidence_omitted` on a keyword-mode row whose text did not fit.
  * `fields: "full"`, the `mcp.result_rows: full` host config and gbrain's own
  * thin client get every field; trusted local callers always do.
  */
@@ -29,6 +30,8 @@ const KEPT_FIELDS: ReadonlySet<string> = new Set([
   'evidence', 'create_safety',
   'injection_suspected', 'injection_p', 'unverified', 'content_flag', 'status', 'superseded', 'superseded_by',
   'message_id', 'thread_id', 'source_subject', 'relational', 'matched_alias',
+  // `match: "keyword"`: an enumerated page whose text did not fit the evidence budget.
+  'evidence_omitted',
   // Present only when the caller asked for `explain: true`.
   'score_details',
 ]);

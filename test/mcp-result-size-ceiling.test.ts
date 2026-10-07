@@ -24,8 +24,12 @@ import { serializeMarkdown } from '../src/core/markdown.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-/** ceil(measured x 1.05) on the fixture below. */
-const CEILINGS = { search: 2540, query: 2540 };
+/**
+ * ceil(measured x 1.05) on the fixture below. search 2540 -> 2754 (2622
+ * measured): Cat 40 Hard F2's keyword count line rides on every search call
+ * (the rows are top-K; the line says how many pages match the keywords).
+ */
+const CEILINGS = { search: 2754, query: 2540 };
 /**
  * The keyless fixture also gets the operator contract's degraded_recall
  * notice (F3) on every HTTP call. It is bounded on its own so the ceilings

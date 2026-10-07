@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 208662,
-    "stdoutSha256": "fae8f0c4da15f44cc70930976ee107142ab781deada2794a89c6f5947ab95082",
+    "stdoutBytes": 208759,
+    "stdoutSha256": "5de3a39404e4ab9c60d0a87de666fadafb6e96795bc53031c1507238e64787ad",
     "toolNames": [
       "remember",
       "entity",
@@ -1005,14 +1005,16 @@
         "scope": "write"
       },
       {
-        "description": "Cheap hybrid search (vector + keyword), no LLM expansion, top 20: for exact tokens, names, field values. Results are NOT proof of coverage: concepts or landscape, use `query`; exhaustive lists, list_pages. return_unit returns whole sections or conversations. Personal: get_recent_salience; saved facts: recall. fields: \"full\" adds diagnostics.",
+        "description": "Cheap hybrid search, no LLM expansion, top 20: exact tokens, names, field values. NOT proof of coverage; match: \"keyword\" pages every keyword match. Concepts or landscape: `query`; lists: list_pages; personal: get_recent_salience. return_unit: sections or conversations. fields: \"full\" adds diagnostics.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "search",
         "parameters": {
+          "cursor": "string?",
           "fields": "string?",
           "limit": "number?",
+          "match": "string?",
           "mode": "string?",
           "offset": "number?",
           "query": "string",
@@ -1028,6 +1030,10 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "cursor": {
+              "description": "From next.",
+              "type": "string"
+            },
             "fields": {
               "description": "lean (remote default) or full.",
               "enum": [
@@ -1037,8 +1043,16 @@
               "type": "string"
             },
             "limit": {
-              "description": "Max results (default 20).",
+              "description": "Default 20.",
               "type": "number"
+            },
+            "match": {
+              "description": "keyword: every keyword match, paged.",
+              "enum": [
+                "hybrid",
+                "keyword"
+              ],
+              "type": "string"
             },
             "mode": {
               "description": "Local callers only.",
@@ -1053,7 +1067,7 @@
               "type": "string"
             },
             "recency": {
-              "description": "Boost recent pages (default: auto).",
+              "description": "Boost recent pages.",
               "enum": [
                 "off",
                 "on",
@@ -1062,7 +1076,7 @@
               "type": "string"
             },
             "return_unit": {
-              "description": "auto (default) returns whole conversations.",
+              "description": "Default auto: whole conversations.",
               "enum": [
                 "chunk",
                 "window",
@@ -1073,11 +1087,11 @@
               "type": "string"
             },
             "return_window": {
-              "description": "Neighbor chunks each side for window (1-3).",
+              "description": "Window radius 1-3.",
               "type": "number"
             },
             "salience": {
-              "description": "Boost emotional pages (default: auto).",
+              "description": "Boost emotional pages.",
               "enum": [
                 "off",
                 "on",
@@ -1086,7 +1100,7 @@
               "type": "string"
             },
             "snippet_chars": {
-              "description": "Max chars per chunk_text (0 = full).",
+              "description": "Chars per row (0 = full).",
               "type": "number"
             },
             "source_id": {
@@ -1094,7 +1108,7 @@
               "type": "string"
             },
             "token_budget": {
-              "description": "Evidence token cap (default 6000).",
+              "description": "Default 6000.",
               "type": "number"
             },
             "types": {
@@ -1232,7 +1246,7 @@
               "type": "string"
             },
             "recency": {
-              "description": "Boost recent pages (default: auto).",
+              "description": "Boost recent pages.",
               "enum": [
                 "off",
                 "on",
@@ -1245,7 +1259,7 @@
               "type": "boolean"
             },
             "return_unit": {
-              "description": "auto (default) returns whole conversations.",
+              "description": "Default auto: whole conversations.",
               "enum": [
                 "chunk",
                 "window",
@@ -1256,11 +1270,11 @@
               "type": "string"
             },
             "return_window": {
-              "description": "Neighbor chunks each side for window (1-3).",
+              "description": "Window radius 1-3.",
               "type": "number"
             },
             "salience": {
-              "description": "Boost emotional pages (default: auto).",
+              "description": "Boost emotional pages.",
               "enum": [
                 "off",
                 "on",
@@ -1273,7 +1287,7 @@
               "type": "string"
             },
             "snippet_chars": {
-              "description": "Max chars per chunk_text (0 = full).",
+              "description": "Chars per row (0 = full).",
               "type": "number"
             },
             "source_id": {
@@ -1353,7 +1367,7 @@
               "type": "string"
             },
             "return_window": {
-              "description": "Neighbor chunks each side for window (1-3).",
+              "description": "Window radius 1-3.",
               "type": "number"
             },
             "token_budget": {

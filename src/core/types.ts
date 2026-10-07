@@ -846,6 +846,8 @@ export interface SearchResult {
   keyword_relaxed?: boolean;
   /** Set on rows search's alias fan-out spliced in: the entity's other name that found this page (search/alias-fanout.ts). */
   matched_alias?: string;
+  /** `search` `match: "keyword"`: an enumerated page whose text did not fit the evidence budget keeps its row, without text. */
+  evidence_omitted?: boolean;
   /**
    * Extraction quarantine lane (issue #160): true when the result's page is
    * an unverified auto-extracted entity stub (frontmatter
@@ -2006,6 +2008,7 @@ export const DEGRADED_STAGES = [
   'keyword_candidates_incomplete',
   'projection_pending',
   'projection_status_unknown',
+  'keyword_count_unavailable',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 

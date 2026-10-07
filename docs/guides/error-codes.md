@@ -2178,6 +2178,30 @@ Reasons: `rename_source_changed`.
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### search_cursor_requires_keyword
+
+<a id="search_cursor_requires_keyword"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A search cursor was sent without match: "keyword"; cursors continue keyword listings only (hybrid rows are a ranked top-K with no next page). | The request itself was wrong or no longer matches the brain; nothing was changed. | Send the next object from the previous search response unchanged; it carries match: "keyword". | agent | `repeat the read that failed` | 1 | no |
+
+### search_mode_local_only
+
+<a id="search_mode_local_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An agent-facing caller set search's mode, which only the brain's operator chooses. | The request itself was wrong or no longer matches the brain; nothing was changed. | Omit mode; for keyword-only matching with a total and paging, pass match: "keyword". | agent | `repeat the read that failed` | 1 | no |
+
+### search_offset_over_cap
+
+<a id="search_offset_over_cap"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A search offset was over the 10,000 limit. | The request itself was wrong or no longer matches the brain; nothing was changed. | Page with match: "keyword" and the next object each response returns; a cursor has no depth limit. | agent | `repeat the read that failed` | 1 | no |
+
 ### serve_port_in_use
 
 <a id="serve_port_in_use"></a>

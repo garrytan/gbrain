@@ -42,7 +42,7 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
   const run = async (label: string, name: string, params: Record<string, unknown>, overrides: Partial<OperationContext> = {}) => {
     const meta: Record<string, unknown>[] = [];
     const result = await op(name).handler(ctxOf(engine, meta, overrides), params);
-    out[label] = JSON.stringify({ result, meta });
+    out[label] = JSON.stringify({ result, meta: meta.map(m => m.key === 'retrieval' ? { ...m, value: withoutCounts(m.value as Record<string, unknown>) } : m) });
   };
   for (const variant of [{}, { return_unit: 'chunk' }]) {
     const tag = Object.keys(variant).length ? ':chunk' : '';
@@ -64,8 +64,10 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
         { remote: true, transport: 'stdio', sourceId: 'default' });
       // Agent contract v1 notices (extra prefixed blocks + _meta.gbrain_notices, e.g. degraded_recall on this
       // keyless corpus) are additive and pinned in test/mcp-notice-channels.test.ts; the off path compares the rest.
-      const content = res.content.filter(c => !c.text.startsWith('[gbrain notice '));
+      // Cat 40 Hard F2's keyword count line and fields are additive too (pinned in test/search-keyword-paging.test.ts).
+      const content = res.content.filter(c => !c.text.startsWith('[gbrain notice ') && !c.text.startsWith('[gbrain search] '));
       const { gbrain_notices: _notices, ...meta } = res._meta ?? {};
+      if (meta.retrieval) meta.retrieval = withoutCounts(meta.retrieval as Record<string, unknown>);
       out[`mcp-${name}`] = JSON.stringify({ ...res, content, ...(res._meta ? { _meta: meta } : {}) });
     }
   });
@@ -82,6 +84,12 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
 }
 
 const leanRetrieval = (meta: Record<string, unknown>) => ({ ...meta, rows: 'lean' });
+
+/** Cat 40 Hard F2's additive keyword count fields, compared in test/search-keyword-paging.test.ts instead. */
+function withoutCounts(meta: Record<string, unknown>): Record<string, unknown> {
+  const { keyword_total: _t, keyword_truncated: _r, keyword_total_capped: _c, ...rest } = meta;
+  return rest;
+}
 
 /**
  * The cost wave changes remote output on purpose: C1 projects remote
