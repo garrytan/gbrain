@@ -55,7 +55,9 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
       FROM jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text,claim text)
     ) SELECT * FROM w`,
   [sourceId, JSON.stringify(claims.map(c => ({ visibility: c.visibility, fact_hash: c.fact_hash, subject: c.subject ?? '*', claim: c.claim ?? null })))]);
-  const keys = JSON.stringify(keyed.map(k => ({ ...k, tokens: k.norm ? k.norm.split(' ').filter(Boolean) : [] })));
+  const keys = JSON.stringify(keyed.map(k => ({ ...k,
+    patterns: (k.norm ? k.norm.split(' ').filter(Boolean) : []).map(token => `%${token.replace(/[\\%_]/g, '\\$&')}%`),
+  })));
   const subjects = keyed.some(k => k.subject === '*') ? null : [...new Set(keyed.map(k => k.subject))];
   const affected = new Set<number>();
   const provenance = await engine.executeRaw<{ id: number }>(`SELECT DISTINCT p.id
@@ -78,13 +80,13 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
     for (const row of matches) affected.add(row.id);
     if (affected.size > WITHDRAWAL_LIMITS.targets) await refuseAffected(engine, sourceId, affected);
   };
-  const shortlist = (text: string) => `NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(k.tokens) t(v) WHERE strpos(lower(${text}),t.v)=0)`;
+  const shortlist = (text: string) => `lower(${text}) LIKE ALL(k.patterns)`;
   for (let after = 0; ;) {
     if (performance.now() > deadline) refuse();
     const pages = await engine.executeRaw<{ id: number; slug: string; compiled_truth: string; timeline: string }>(`SELECT p.id,p.slug,p.compiled_truth,p.timeline FROM pages p
       WHERE p.source_id=$1 AND p.id>$3 AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))
         AND (strpos(p.compiled_truth,'gbrain:facts:')>0 OR strpos(p.timeline,'gbrain:facts:')>0)
-        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,tokens jsonb)
+        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,patterns text[])
           WHERE (k.subject='*' OR k.subject=p.slug) AND ((${shortlist('p.compiled_truth')}) OR (${shortlist('p.timeline')})))
       ORDER BY p.id LIMIT $4`, [sourceId, keys, after, WITHDRAWAL_LIMITS.batch, subjects]);
     await match(pages.flatMap(page => [page.compiled_truth, page.timeline].flatMap(body => [
@@ -99,7 +101,7 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
     const chunks = await engine.executeRaw<{ id: number; page_id: number; slug: string; chunk_text: string }>(`SELECT c.id,c.page_id,p.slug,c.chunk_text
       FROM content_chunks c JOIN pages p ON p.id=c.page_id
       WHERE p.source_id=$1 AND c.id>$3 AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))
-        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,tokens jsonb)
+        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,patterns text[])
           WHERE (k.subject='*' OR k.subject=p.slug) AND ${shortlist('c.chunk_text')})
       ORDER BY c.id LIMIT $4`, [sourceId, keys, after, WITHDRAWAL_LIMITS.batch, subjects]);
     await match(chunks.flatMap(chunk => {

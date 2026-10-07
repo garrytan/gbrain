@@ -10,6 +10,19 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.104.0] - 2026-10-07
+
+**Withdraw a fact without repeatedly reading each chunk for every word.**
+
+A withdrawal could hit its database statement budget in an archive with large conversation chunks, even when the claim appeared on only one page. Candidate discovery now checks all words against one lowercased body. Exact claim verification, source and entity boundaries, and atomic refusal remain unchanged. This reduces the work required for discovery; it does not guarantee that every archive fits the existing limits.
+
+Use the existing `forget` operation. No migration or setting change is required. Withdrawal still removes active memory rather than erasing original source material or history.
+
+### Itemized changes
+
+- Shortlist pages and chunks using escaped literal `LIKE ALL` patterns; preserve exact fingerprint verification and every discovery bound.
+- Exercise symbols, stale chunks, near matches, source/entity/visibility isolation, multiple claims and malformed evidence on PGLite and PostgreSQL.
+
 ## [0.60.103.0] - 2026-10-07
 
 **A legacy access token's first burst of reads converts it to the unified grant columns reliably, and the last nightly Test reds are fixed at their cause.**
