@@ -521,7 +521,7 @@
         },
         {
           "category": "meta",
-          "message": "986 column(s) verified against live schema",
+          "message": "1030 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -645,6 +645,14 @@
           "category": "brain",
           "message": "no embedding migration in flight",
           "name": "embedding_migration_state",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "Embeddings are off on this brain, so facts are only deduplicated by exact text; no supersession threshold applies.",
+          "name": "supersession_calibration",
+          "readiness_state": "not_applicable",
+          "severity": "info",
           "status": "ok"
         },
         {
@@ -1954,7 +1962,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 13,
+              "global": 14,
               "mixed": 2,
               "source": 12
             },
@@ -1983,12 +1991,13 @@
               "resolve_symbol_edges": "global",
               "schema-suggest": "source",
               "skillopt": "global",
+              "standing_questions": "global",
               "sync": "source",
               "synthesize": "mixed",
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 13 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 14 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },

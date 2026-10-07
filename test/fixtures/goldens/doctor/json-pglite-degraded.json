@@ -518,7 +518,7 @@
         },
         {
           "category": "meta",
-          "message": "986 column(s) verified against live schema",
+          "message": "1030 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -557,6 +557,78 @@
           "category": "brain",
           "message": "no embedding migration in flight",
           "name": "embedding_migration_state",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "config_key": "facts.supersession_thresholds",
+            "dims": 3072,
+            "docs": "docs/eval/decisions/supersession-threshold-dev/README.md",
+            "key": "openai:text-embedding-3-large@3072",
+            "model": "openai:text-embedding-3-large",
+            "source": "uncalibrated",
+            "threshold": null
+          },
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "bun",
+              "<repo>/scripts/eval-c2-candidate-fusion.ts",
+              "calibrate",
+              "openai:text-embedding-3-large",
+              "3072",
+              "<tmp>/gbrain-supersession-openai-text-embedding-3-large-3072.json.gz"
+            ],
+            "command": "bun <repo>/scripts/eval-c2-candidate-fusion.ts calibrate openai:text-embedding-3-large 3072 <tmp>/gbrain-supersession-openai-text-embedding-3-large-3072.json.gz",
+            "consent": [
+              "paid",
+              "egress"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/eval/decisions/supersession-threshold-dev/README.md",
+            "next": "ask_user",
+            "requires_exclusive": false,
+            "then": {
+              "actor": "agent",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "facts.supersession_thresholds",
+                "{\"openai:text-embedding-3-large@3072\":THRESHOLD}",
+                "--brain",
+                "host"
+              ],
+              "command": "gbrain config set facts.supersession_thresholds '{\"openai:text-embedding-3-large@3072\":THRESHOLD}' --brain host",
+              "consent": [],
+              "inputs": [
+                {
+                  "how": "threshold_pick.guarded from the calibrate output. When it is null no threshold is safe for this model: skip this step and leave supersession off.",
+                  "name": "THRESHOLD"
+                }
+              ],
+              "next": "run",
+              "requires_exclusive": false,
+              "verify": {
+                "argv": [
+                  "gbrain",
+                  "doctor",
+                  "--only",
+                  "supersession_calibration",
+                  "--json",
+                  "--brain",
+                  "host"
+                ]
+              },
+              "why": "Registers the measured threshold for this model; the next fact write uses it. Remove it with gbrain config unset facts.supersession_thresholds."
+            },
+            "user_message": "Facts saved on this brain never replace a similar older fact automatically, because its embedding model (openai:text-embedding-3-large@3072) has no measured threshold. Measuring one sends about 23K tokens of synthetic test sentences to the embedding provider (about a cent). OK to run it?",
+            "why": "Supersession by similarity is off for openai:text-embedding-3-large@3072 until a threshold is measured for it. This embeds the synthetic C2 fixture (1,506 test sentences, about 23K tokens) with openai:text-embedding-3-large, then replays it at thresholds 0.80 to 0.97 on a throwaway in-memory brain (several minutes, no further provider calls) and prints threshold_pick.guarded. No brain content is sent."
+          },
+          "message": "Embedding model openai:text-embedding-3-large@3072 has no calibrated fact supersession threshold, so a saved fact never replaces a similar older one by similarity: it is inserted beside it (exact-text duplicates still collapse), and the conflict review sweep judges the pair where it is on. Measure one with the C2 fixture (about a cent), then register it in facts.supersession_thresholds. See docs/eval/decisions/supersession-threshold-dev/README.md.",
+          "name": "supersession_calibration",
+          "readiness_state": "degraded",
+          "severity": "info",
           "status": "ok"
         },
         {
@@ -1878,7 +1950,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 13,
+              "global": 14,
               "mixed": 2,
               "source": 12
             },
@@ -1907,12 +1979,13 @@
               "resolve_symbol_edges": "global",
               "schema-suggest": "source",
               "skillopt": "global",
+              "standing_questions": "global",
               "sync": "source",
               "synthesize": "mixed",
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 13 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 14 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },
