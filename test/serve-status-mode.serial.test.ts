@@ -194,7 +194,7 @@ describe('status-only serve: lock contention → one shared serve --http (b)', (
   });
 
   test('tokens minted before the shared owner starts; both harnesses recall over HTTP; the stale stdio server names the HTTP owner', async () => {
-    const owner = await connect(env);
+    const owner = await connect(env, ['--direct']);
     opened.push(owner);
     const stale = await connect(env);
     opened.push(stale);
@@ -258,7 +258,7 @@ describe('status-only serve: the shared-HTTP transition fails midway (H2)', () =
   });
 
   test('serve --http cannot listen: it fails fast without keeping the brain, and both stdio registrations keep working', async () => {
-    const owner = await connect(env);
+    const owner = await connect(env, ['--direct']);
     opened.push(owner);
     const stale = await connect(env);
     opened.push(stale);
@@ -285,7 +285,7 @@ describe('status-only serve: the shared-HTTP transition fails midway (H2)', () =
     const found = await stale.client.callTool({ name: 'search', arguments: { query: MARKER } });
     expect(found.isError).toBeFalsy();
     expect(JSON.stringify(body(found))).toContain(MARKER);
-    const relaunched = await connect(env);
+    const relaunched = await connect(env, ['--direct']);
     opened.push(relaunched);
     const status = body(await relaunched.client.callTool({ name: 'gbrain_status', arguments: {} }));
     expect(status.reason).toBe('lock_held');
@@ -316,7 +316,7 @@ describe('status-only serve: one re-probe for both transports; Postgres keeps th
   });
 
   test('stdio enters and recovers through the shared re-probe (the same transition lines serve --http writes)', async () => {
-    const owner = await connect(env);
+    const owner = await connect(env, ['--direct']);
     opened.push(owner);
     const transport = new StdioClientTransport({ command: 'bun', args: ['--no-env-file', 'run', 'src/cli.ts', 'serve'], cwd: process.cwd(), env, stderr: 'pipe' });
     let stderr = '';

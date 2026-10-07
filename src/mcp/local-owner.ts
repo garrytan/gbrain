@@ -34,6 +34,8 @@ export async function runLocalOwner(engine: BrainEngine): Promise<void> {
   if (!paths || engine.kind !== 'pglite') throw new Error('Local MCP owner requires a persistent PGLite brain');
   await prepareOwnerDirectory(paths.directory);
   const sockets = new Set<Socket>();
+  const writableSources = new Map<Socket, string>();
+  const rememberCallable = (source: string) => () => [...writableSources.values()].includes(source);
   let stopping = false;
   let lastClient = Date.now();
   let secret = '';
@@ -43,7 +45,7 @@ export async function runLocalOwner(engine: BrainEngine): Promise<void> {
     if (!isValidSourceId(source)) return Promise.resolve();
     let binding = bindings.get(source);
     if (!binding) {
-      binding = bindResolveIpcForServe(engine, source, undefined, { sourceKeyedPglite: true });
+      binding = bindResolveIpcForServe(engine, source, undefined, { sourceKeyedPglite: true, rememberCallable: rememberCallable(source) });
       bindings.set(source, binding);
       const sweep = armStartupSweep(engine, { sourceId: source });
       if (sweep) sweeps.push(sweep);
@@ -54,7 +56,7 @@ export async function runLocalOwner(engine: BrainEngine): Promise<void> {
     if (stopping) { socket.destroy(); return; }
     sockets.add(socket);
     socket.on('error', () => {});
-    socket.once('close', () => { sockets.delete(socket); lastClient = Date.now(); });
+    socket.once('close', () => { sockets.delete(socket); writableSources.delete(socket); lastClient = Date.now(); });
     socket.setTimeout(5000, () => socket.destroy());
     let data = '';
     const challenge = randomBytes(32).toString('hex');
@@ -85,6 +87,7 @@ export async function runLocalOwner(engine: BrainEngine): Promise<void> {
         socket.once('close', () => { session?.close().catch(() => {}); });
         if (socket.destroyed) { await session?.close(); return; }
         const scope = await resolveMcpStdioSourceScope(engine, hello.cwd, hello);
+        if (hello.access === 'full' && !socket.destroyed) writableSources.set(socket, scope.sourceId);
         await bindSource(scope.sourceId);
         socket.write(JSON.stringify({ ok: true, proof: ownerProof(secret, 'server', challenge, `ready:${nonce}:${paths.identity}`) }) + '\n'); socket.resume();
       } catch { socket.end('{"ok":false}\n'); }
@@ -96,7 +99,7 @@ export async function runLocalOwner(engine: BrainEngine): Promise<void> {
   if (!address || typeof address === 'string') throw new Error('Local MCP owner listener failed');
   const config = loadConfig();
   const persistence = await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind });
-  const ipc = await bindResolveIpcForServe(engine, 'default', persistence, { sourceKeyedPglite: true });
+  const ipc = await bindResolveIpcForServe(engine, 'default', persistence, { sourceKeyedPglite: true, rememberCallable: rememberCallable('default') });
   bindings.set('default', Promise.resolve(ipc));
   const sweep = armStartupSweep(engine, { sourceId: 'default' });
   if (sweep) sweeps.push(sweep);
