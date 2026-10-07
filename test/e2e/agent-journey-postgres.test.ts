@@ -104,7 +104,7 @@ function serveEnv(h: DoctorHome): Record<string, string> {
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
   for (const k of PROVIDER_ENV_KEYS) delete env[k];
   for (const k of ['DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_REMOTE_CLIENT_SECRET', 'GBRAIN_PGLITE_SNAPSHOT', 'GBRAIN_SKILLS_DIR', 'GBRAIN_SOURCE',
-    'GBRAIN_SERVE_FAIL_FAST', 'GBRAIN_SERVE_DEGRADED', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'CODEX_HOME', 'OPENCODE', 'OPENCODE_PID']) delete env[k];
+    'GBRAIN_SERVE_FAIL_FAST', 'GBRAIN_SERVE_DEGRADED', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'CODEX_HOME', 'OPENCODE', 'OPENCODE_PID', 'PI_CODING_AGENT']) delete env[k];
   Object.assign(env, {
     HOME: h.home, GBRAIN_HOME: h.home, GBRAIN_AUDIT_DIR: join(h.home, 'audit'), GBRAIN_SKIP_STARTUP_HOOKS: '1',
     GBRAIN_TEST_NET_LOG: h.netLog, NO_COLOR: '1', GBRAIN_NO_RETRY_CONNECT: '1',

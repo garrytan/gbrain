@@ -17,11 +17,12 @@
  * Serial: spawns `gbrain serve` subprocesses against one PGLite brain.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { peekLock } from '../src/core/pglite-lock.ts';
+import { renderPiHooksExtension } from '../src/core/bootstrap/pi-hooks.ts';
 import { makeDoctorHome, runGbrain, type DoctorHome } from './helpers/doctor-json-golden.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -105,6 +106,25 @@ describe('doctor --only harness_wiring', () => {
     expect(check.fix !== undefined || check.fix_unavailable_reason !== undefined).toBe(true);
     expect((check.details as Record<string, unknown>).reason).toBe('spawn_failed');
   }, 60_000);
+
+  test('pi: a registration without the gbrain hooks extension warns pi_hooks_missing; with it, the stdio entry is smoke-tested', async () => {
+    rmSync(join(h.home, '.claude.json'), { force: true });
+    const agentDir = join(h.home, '.pi', 'agent');
+    mkdirSync(join(agentDir, 'extensions'), { recursive: true });
+    writeFileSync(join(agentDir, 'mcp.json'), JSON.stringify({
+      mcpServers: { gbrain: { command: process.execPath, args: ['--no-env-file', CLI, 'serve', '--surface', 'verbs'], env: { GBRAIN_HOME: h.home, GBRAIN_SKIP_STARTUP_HOOKS: '1' } } },
+    }));
+    try {
+      const missing = harnessCheck(await runGbrain(h, ['doctor', '--only', 'harness_wiring', '--json']));
+      expect(missing).toMatchObject({ status: 'warn', details: { harness: 'pi', reason: 'pi_hooks_missing' } });
+      expect((missing.fix as { argv?: string[] }).argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'pi', '--no-mcp']);
+      writeFileSync(join(agentDir, 'extensions', 'gbrain-hooks.ts'), renderPiHooksExtension({ gbrainBin: '/opt/gbrain' }));
+      const run = await runGbrain(h, ['doctor', '--only', 'harness_wiring', '--json']);
+      expect(harnessCheck(run), run.stderr).toMatchObject({ status: 'ok', details: { reason: 'wired_running', smoke: 'smoke_passed', harness: 'pi' } });
+    } finally {
+      rmSync(join(h.home, '.pi'), { recursive: true, force: true });
+    }
+  }, 90_000);
 
   test('doctor seeds nothing into the brain', async () => {
     rmSync(join(h.home, '.claude.json'), { force: true });

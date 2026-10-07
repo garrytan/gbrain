@@ -383,7 +383,7 @@ function lockOwnerFor(cfg: GBrainConfig): LockOwner | null {
 
 // ── harness wiring ─────────────────────────────────────────────────────────
 
-export type ReadinessHarness = 'claude-code' | 'codex' | 'opencode';
+export type ReadinessHarness = 'claude-code' | 'codex' | 'opencode' | 'pi';
 export interface HarnessWiringInput {
   transport: Transport;
   /** The surface the registration pins; default REGISTRATION_SURFACE (`gbrain init --surface` overrides). */
@@ -397,11 +397,12 @@ export interface HarnessWiringInput {
   httpStatusServer?: HttpStatusMarker | null;
 }
 
-const HARNESS_LABEL: Record<ReadinessHarness, string> = { 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'opencode' };
+const HARNESS_LABEL: Record<ReadinessHarness, string> = { 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'opencode', pi: 'pi' };
 const HARNESS_DESTINATION: Record<ReadinessHarness, string> = {
   'claude-code': 'the Claude Code MCP config (~/.claude.json)',
   codex: 'the Codex config (~/.codex/config.toml)',
   opencode: 'the opencode config (opencode.json)',
+  pi: 'the pi MCP config (~/.pi/agent/mcp.json)',
 };
 const MEMORY_VERBS_INSTALL = 'docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart';
 
@@ -413,10 +414,15 @@ const SURFACE_GLOSS: Record<McpSurface, string> = {
 
 function stdioRegistration(h: ReadinessHarness, bin: string, surface: McpSurface = REGISTRATION_SURFACE): Action {
   const serve = stdioServeArgv(bin, surface);
+  const surfaceFlag = surface === REGISTRATION_SURFACE ? [] : ['--surface', surface];
+  // Exhaustive over ReadinessHarness: a new member must get its own branch, never fall into another's.
   const argv = h === 'claude-code' ? ['claude', 'mcp', 'add', 'gbrain', '--', ...serve]
     : h === 'codex' ? ['codex', 'mcp', 'add', 'gbrain', '--', ...serve]
-      : ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(surface === REGISTRATION_SURFACE ? [] : ['--surface', surface])];
-  const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.' : ' No hooks, tool pre-approvals or tokens are added.';
+      : h === 'pi' ? ['gbrain', 'bootstrap', 'hooks', '--harness', 'pi', ...surfaceFlag]
+        : ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...surfaceFlag];
+  const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.'
+    : h === 'pi' ? ' It also installs the gbrain-managed pi extension (~/.pi/agent/extensions/gbrain-hooks.ts) that runs gbrain\'s lifecycle hooks; no workspace is needed.'
+      : ' No hooks, tool pre-approvals or tokens are added.';
   return {
     argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
     why: `Registers gbrain as a stdio MCP server (${serve.join(' ')}, ${SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
@@ -425,7 +431,23 @@ function stdioRegistration(h: ReadinessHarness, bin: string, surface: McpSurface
   };
 }
 
+/** pi has no `bootstrap harness` lane: its HTTP wiring is `bootstrap hooks --harness pi --url`, with the
+ * bearer supplied by a command pi runs (never written into the file). */
+function piHttpWiring(): Action {
+  return {
+    argv: ['gbrain', 'bootstrap', 'hooks', '--harness', 'pi', '--url', '<MCP_URL>', '--mcp-auth-command', '<AUTH_COMMAND>'],
+    inputs: [
+      { name: 'MCP_URL', how: 'The running `gbrain serve --http` endpoint, e.g. http://127.0.0.1:3131/mcp.' },
+      { name: 'AUTH_COMMAND', how: 'Ask the user for a shell command that prints `Bearer <token>` for that serve (e.g. a Keychain lookup); pi runs it at connect time.' },
+    ],
+    consent: ['persistent_install', 'credentials'], actor: 'agent', requires_exclusive: false,
+    why: 'Wires pi to the shared `gbrain serve --http` on this machine: writes an HTTP MCP entry to ~/.pi/agent/mcp.json whose Authorization header is produced by a command pi runs, and installs the gbrain-managed pi hooks extension, so several sessions share one brain without lock contention.',
+    user_message: 'To let pi share this brain with your other sessions, I\'d connect it to the local gbrain HTTP server and install gbrain\'s pi hooks. I need a command that prints the bearer token (for example a Keychain lookup). OK?',
+    verify: VERIFY('harness_wiring'), docs: 'docs/mcp/PI.md',
+  };
+}
 function sharedHttpWiring(selector: ReadinessHarness | 'all'): Action {
+  if (selector === 'pi') return piHttpWiring();
   const names = selector === 'all' ? 'each detected harness' : HARNESS_LABEL[selector];
   return {
     argv: ['gbrain', 'bootstrap', 'harness', '--harness', selector, '--yes'],
@@ -484,7 +506,7 @@ export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
 }
 
 const MARKER_HARNESS: Record<string, ReadinessHarness> = {
-  CLAUDECODE: 'claude-code', CLAUDE_CODE_ENTRYPOINT: 'claude-code', CODEX_SANDBOX: 'codex', CODEX_CI: 'codex', OPENCODE: 'opencode', OPENCODE_PID: 'opencode',
+  CLAUDECODE: 'claude-code', CLAUDE_CODE_ENTRYPOINT: 'claude-code', CODEX_SANDBOX: 'codex', CODEX_CI: 'codex', OPENCODE: 'opencode', OPENCODE_PID: 'opencode', PI_CODING_AGENT: 'pi',
 };
 
 let cachedBin: { value: string | null } | null = null;

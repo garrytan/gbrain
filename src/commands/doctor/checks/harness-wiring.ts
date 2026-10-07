@@ -25,7 +25,8 @@ import { verifiedStatusMarkers } from '../../../core/serve-http-status-marker.ts
 import { agentProcessMarker } from '../../../core/interaction.ts';
 import { resolveGbrainBin } from '../../../core/gbrain-bin.ts';
 import { enabledPluginLanes } from '../../../core/bootstrap/plugin-lanes.ts';
-import { claudeConfigDir } from '../../../core/bootstrap/host-specs.ts';
+import { claudeConfigDir, piAgentDir, piMcpConfigPath } from '../../../core/bootstrap/host-specs.ts';
+import { readPiHooksStatus } from '../../../core/bootstrap/pi-hooks.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
@@ -48,7 +49,7 @@ export interface HarnessRegistration {
   url?: string;
 }
 
-const HARNESS_LABEL: Record<ReadinessHarness, string> = { 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'opencode' };
+const HARNESS_LABEL: Record<ReadinessHarness, string> = { 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'opencode', pi: 'pi' };
 
 function home(): string { return process.env.HOME || homedir(); }
 
@@ -127,9 +128,20 @@ function opencodeRegistration(name: string): HarnessRegistration | null {
   return { harness: 'opencode', source: path, kind: 'stdio', command: argv[0], args: argv.slice(1), env: stringRecord(entry.environment) };
 }
 
+/** pi's user MCP config (`{mcpServers}`, the Claude Code shape; PI_CODING_AGENT_DIR-resolved). */
+function piRegistration(name: string): HarnessRegistration | null {
+  const path = piMcpConfigPath();
+  const cfg = readJson(path) as { mcpServers?: Record<string, Record<string, unknown>> } | null;
+  const entry = cfg?.mcpServers?.[name];
+  if (!entry || typeof entry !== 'object') return null;
+  if (typeof entry.url === 'string') return { harness: 'pi', source: path, kind: 'http', url: entry.url };
+  if (typeof entry.command !== 'string') return null;
+  return { harness: 'pi', source: path, kind: 'stdio', command: entry.command, args: strings(entry.args) ?? [], env: stringRecord(entry.env) };
+}
+
 /** Every gbrain MCP registration this machine's harness configs carry. */
 export function readHarnessRegistrations(name = 'gbrain'): HarnessRegistration[] {
-  return [claudeRegistration(name), codexRegistration(name), opencodeRegistration(name)].filter((r): r is HarnessRegistration => r !== null);
+  return [claudeRegistration(name), codexRegistration(name), opencodeRegistration(name), piRegistration(name)].filter((r): r is HarnessRegistration => r !== null);
 }
 
 /** Harnesses installed on this machine: the active agent marker, else their config files. */
@@ -138,12 +150,14 @@ function detectedHarnesses(): ReadinessHarness[] {
   if (marker) {
     if (marker.startsWith('CLAUDE')) return ['claude-code'];
     if (marker.startsWith('CODEX')) return ['codex'];
+    if (marker === 'PI_CODING_AGENT') return ['pi'];
     return ['opencode'];
   }
   const out: ReadinessHarness[] = [];
   if (existsSync(join(home(), '.claude.json')) || existsSync(join(home(), '.claude')) || existsSync(claudeConfigDir())) out.push('claude-code');
   if (existsSync(process.env.CODEX_HOME || join(home(), '.codex'))) out.push('codex');
   if (existsSync(join(process.env.XDG_CONFIG_HOME || join(home(), '.config'), 'opencode'))) out.push('opencode');
+  if (existsSync(piAgentDir())) out.push('pi');
   return out;
 }
 
@@ -268,6 +282,17 @@ export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Chec
     const fix = rewireFix(bare);
     return { name: NAME, status: 'warn', message: `${describeRegistration(bare)} registers a bare \`${bare.command}\`; GUI-launched harnesses inherit no PATH, so it may not start. Re-register with the absolute binary.`,
       details: { harness: bare.harness, registration: bare.source, reason: 'bare_binary' }, ...(fix ? { fix } : { fix_unavailable_reason: 'no_safe_automatic_fix' as const }) };
+  }
+  // pi's lifecycle hooks ride a gbrain-managed extension, not the MCP entry: a pi registration
+  // without it gets tools but no per-turn context, writeback backstop or session capture.
+  const piHooks = regs.some((r) => r.harness === 'pi') ? readPiHooksStatus() : null;
+  if (piHooks && !piHooks.owned) {
+    return { name: NAME, status: 'warn',
+      message: `pi has a gbrain MCP entry but ${piHooks.present ? `${piHooks.path} is not gbrain-managed` : 'no gbrain hooks extension'}, so pi sessions get no per-turn brain context, writeback backstop or session capture.`,
+      details: { harness: 'pi', registration: piHooks.path, reason: 'pi_hooks_missing' },
+      fix: { argv: ['gbrain', 'bootstrap', 'hooks', '--harness', 'pi', '--no-mcp'], consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(NAME),
+        why: 'Installs the gbrain-managed pi extension that runs gbrain\'s lifecycle hooks (the MCP entry is left as is). A different file at that path is never overwritten: move it aside first.',
+        user_message: 'gbrain\'s pi hooks are not installed, so pi gets memory tools but no automatic brain context or session capture. Install them?', docs: 'docs/mcp/PI.md' } };
   }
   const active = detectedHarnesses()[0];
   const primary = regs.find((r) => r.harness === active) ?? regs[0];

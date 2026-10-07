@@ -31,8 +31,8 @@ export type StdinMode = 'devnull' | 'silent';
  * homes: harness detection reads them, so a test runner inside an agent or
  * with a real harness config must not leak them into the journey.
  */
-const AMBIENT_HARNESS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID',
-  'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME'];
+const AMBIENT_HARNESS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID', 'PI_CODING_AGENT',
+  'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'PI_CODING_AGENT_DIR', 'PI_CODING_AGENT_SESSION_DIR'];
 
 /** Hermetic keyless env: no provider keys, no database URLs, no agent markers or harness config homes, no ambient GBRAIN_* routing (brain, source, surface…). */
 export function journeyEnv(home: string, extra: Record<string, string | undefined> = {}): Record<string, string> {
