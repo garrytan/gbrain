@@ -41,7 +41,9 @@ This writes:
   existing `gbrain` entry that gbrain did not write is **kept** (it already
   provides the tools) and the run still succeeds.
 
-Restart pi (or run `/reload`) to load the extension.
+Restart pi (or run `/reload`) to load the extension. Run from inside pi with no
+`--harness`, `gbrain bootstrap hooks` picks the pi lane itself (pi sets
+`PI_CODING_AGENT=true`).
 
 Options:
 
@@ -99,8 +101,10 @@ gbrain bootstrap verify --harness pi     # exit 1 unless the extension is gbrain
 pi mcp list                              # pi's own view of the MCP connection
 ```
 
-Hook health lands in gbrain's usual heartbeat
-(`gbrain doctor`, `<gbrain home>/integrations/hooks/heartbeat.jsonl`).
+`gbrain doctor --only harness_wiring` reads the pi entry and smoke-tests it, and
+warns `pi_hooks_missing` when pi has the MCP entry but not gbrain's extension. Hook
+health lands in gbrain's usual heartbeat
+(`<gbrain home>/integrations/hooks/heartbeat.jsonl`).
 
 ## Remove
 
