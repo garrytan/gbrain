@@ -244,10 +244,7 @@ Save ONE fact with mandatory attribution.
   Empty ⇒ `provenance_required` error with a fix.
 - `entity`: set whenever the fact is about a specific person/company/project —
   entity-scoped recall will not find unattributed facts.
-- `valid_from` (additive, ISO 8601 date or time): when the fact was said or
-  became true, such as the date of the conversation it comes from. Omitted, the
-  fact is recorded with the write time, and date headers read its start of
-  validity as `unknown`. Not ISO 8601 ⇒ `invalid_params`.
+- `valid_from` (ISO 8601): when the fact became true. Omitted ⇒ write time.
 - `infer_entity` (additive, boolean, default `true`): when `entity` is omitted,
   the server may link the fact to the one entity page its text names exactly
   (zero LLM; a second competing name, a bare first name or an ambiguous match
@@ -279,9 +276,8 @@ near-duplicates may insert; dedup and supersession ride embedding similarity).
 
 #### remember replaces (additive)
 
-`replaces` (string): the `fact_id` of the fact this new fact replaces. It is a
-caller-directed replacement: it says the old fact is no longer the current one,
-not that the two texts mean the same. Zero model calls; the cosine rule does
+`replaces` (string): the `fact_id` this fact replaces, caller-directed: the
+old fact is no longer current (the texts need not mean the same). Zero model calls; the cosine rule does
 not apply. The target must be an active fact in the same source, with the same
 visibility (world only for remote callers, else `not_found`) and the same
 entity, on the same entity page. Refusals come back as `invalid_params` with a
@@ -670,17 +666,6 @@ always-loaded core block (owner-designated pages loaded in every session,
 [core memory](../guides/core-memory.md)) when core memory is on and not empty.
 `text` starts with the core block, and core tokens count inside
 `budget_tokens`. `entities` may be omitted to fetch core alone.
-
-#### context_pack pinned questions (additive)
-
-Two optional fields carry pinned-question answers
-([pinned questions](../guides/pinned-questions.md)) for owner-capable callers
-(the local CLI, or a connection that reads private pages and is not
-slug-fenced): `pinned_questions[]` (`{ id, question, answer[], freshness }`,
-fresh sentences of published pins scoped to a packed entity) and `withheld`
-(`{ stale_sentences, question_ids[], refresh_command }`, the sentences left out
-because their evidence changed or is unreadable). Both are outside `text` and
-the budget; every other caller gets neither.
 
 ### delta(since?, since_slug?, cursor?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
 

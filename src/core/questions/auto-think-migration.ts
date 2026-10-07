@@ -42,8 +42,10 @@ export const AUTO_THINK_REPLACEMENTS: Readonly<Record<string, string>> = {
   'models.auto_think': 'gbrain config set models.standing_questions <model>',
 };
 
-export function autoThinkReplacement(key: string): string | null {
-  return AUTO_THINK_REPLACEMENTS[key] ?? null;
+/** `gbrain config get|set` on a migrated dream.auto_think.* key names its pinned-questions replacement on stderr. */
+export function noteAutoThinkReplacement(key: string): void {
+  const replacement = AUTO_THINK_REPLACEMENTS[key];
+  if (replacement) console.error(`[config] ${key} is replaced by pinned questions (docs/guides/pinned-questions.md): ${replacement}`);
 }
 
 export interface AutoThinkMigrationReport {

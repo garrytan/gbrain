@@ -8,7 +8,7 @@
 path	name	lines	justification
 src/commands/bootstrap.ts	runHooks	600	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +3 #4618: --seat/--no-seat parse + refusal/note (logic in core/bootstrap/hooks.ts parseSeatFlags)
 src/commands/bootstrap.ts	runHooks>withLock(#1)	449	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/commands/config.ts	runConfig	781	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 #5232: persistence.write_wait_ms dispatch line (logic in setFileWriteWait); wave 10 collector: master and the #4907/#5958 config-set range refusals compose at 775; re-summed at the #6015 merge (767 master baseline + 4 integration lines); re-summed at the wave 10 merge on actual lines
+src/commands/config.ts	runConfig	776	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 #5232: persistence.write_wait_ms dispatch line (logic in setFileWriteWait); wave 10 collector: master and the #4907/#5958 config-set range refusals compose at 775; re-summed at the #6015 merge (767 master baseline + 4 integration lines); re-summed at the wave 10 merge on actual lines; +1 C4: dream.auto_think.* replacement note (logic in questions/auto-think-migration.ts)
 src/commands/doctor/bootstrap-checks.ts	bootstrapDoctorChecks	476	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/doctor/checks/extraction-sync.ts	checkSyncFreshness	333	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/doctor/report-remote.ts	doctorReportRemote	416	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)

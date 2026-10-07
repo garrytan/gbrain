@@ -98,7 +98,11 @@ sentence is stale when its evidence:
 `context_pack` returns only the fresh sentences of pinned answers for the
 entities you asked about, in an optional `pinned_questions` field, and counts
 the left-out sentences in an optional `withheld` field (with the refresh
-command). Both fields are outside `text` and the token budget.
+command). Both fields are outside `text` and the token budget:
+`pinned_questions[]` is `{ id, question, answer[], freshness }` and `withheld`
+is `{ stale_sentences, question_ids[], refresh_command }`. Owner-capable
+callers get them: the local CLI, or a connection that reads private pages and
+is not slug-fenced. Every other caller gets neither.
 
 Refreshing re-retrieves evidence from the current brain and edits the
 previous answer. After a deletion, a withdrawal, a conflicting correction, or
