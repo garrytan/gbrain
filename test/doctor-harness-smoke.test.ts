@@ -59,7 +59,7 @@ describe('doctor --only harness_wiring', () => {
   }, 60_000);
 
   test('a registered stdio serve answers initialize + tools/list + recall', async () => {
-    register(process.execPath, ['--no-env-file', CLI, 'serve', '--surface', 'verbs']);
+    register(process.execPath, ['--no-env-file', CLI, 'serve', '--direct', '--surface', 'verbs']);
     const run = await runGbrain(h, ['doctor', '--only', 'harness_wiring', '--json']);
     const check = harnessCheck(run);
     expect(check, run.stderr).toMatchObject({ status: 'ok', details: { reason: 'wired_running', smoke: 'smoke_passed', harness: 'claude-code' } });
@@ -67,11 +67,12 @@ describe('doctor --only harness_wiring', () => {
   }, 60_000);
 
   test('a live serve holding the brain lock passes without spawning a second one', async () => {
-    register(process.execPath, ['--no-env-file', CLI, 'serve', '--surface', 'verbs']);
+    register(process.execPath, ['--no-env-file', CLI, 'serve', '--direct', '--surface', 'verbs']);
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
     Object.assign(env, { HOME: h.home, GBRAIN_HOME: h.home, GBRAIN_SKIP_STARTUP_HOOKS: '1' });
-    const transport = new StdioClientTransport({ command: process.execPath, args: ['--no-env-file', CLI, 'serve', '--surface', 'verbs'], env, stderr: 'pipe' });
+    // This fixture asserts process ownership and immediate release between checks.
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--no-env-file', CLI, 'serve', '--direct', '--surface', 'verbs'], env, stderr: 'pipe' });
     let serveStderr = '';
     transport.stderr?.on('data', (chunk) => { serveStderr += String(chunk); });
     const client = new Client({ name: 'doctor-harness-smoke-live-serve', version: '1' }, { capabilities: {} });

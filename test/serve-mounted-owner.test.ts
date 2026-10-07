@@ -47,9 +47,9 @@ async function pageExists(path: string, slug: string): Promise<boolean> {
   finally { await engine.disconnect(); }
 }
 
-async function startServe(cwd: string, readyDb: string) {
+async function startServe(cwd: string, readyDb: string, direct = false) {
   serveStderr = '';
-  serve = Bun.spawn(['bun', 'run', CLI, 'serve'], { cwd, env: env(), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+  serve = Bun.spawn(['bun', 'run', CLI, 'serve', ...(direct ? ['--direct'] : [])], { cwd, env: env(), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
   void (async () => {
     const reader = (serve!.stderr as ReadableStream<Uint8Array>).getReader();
     const decoder = new TextDecoder();
@@ -113,7 +113,8 @@ describe('resident serve owner on a mounted brain (#5237)', () => {
   }, 240_000);
 
   test('a serve on the host brain still owns the host socket and commits host writes', async () => {
-    await startServe(neutral, hostDb);
+    // This host fixture reopens the DB immediately after killing its owner.
+    await startServe(neutral, hostDb, true);
     expect(existsSync(persistenceSocketPathForConfig({ engine: 'pglite', database_path: hostDb })!)).toBe(true);
     expect(existsSync(persistenceSocketPathForConfig({ engine: 'pglite', database_path: mountDb })!)).toBe(false);
     const put = await cli(['put', 'notes/host-example', '--content', '# Host example\n\nWritten through the host owner.'], neutral);

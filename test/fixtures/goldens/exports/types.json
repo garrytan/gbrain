@@ -5806,6 +5806,7 @@
           "brainId?: string | undefined",
           "cliOpts?: { quiet: boolean; progressJson: boolean; progressInterval: number; } | undefined",
           "config: GBrainConfig",
+          "cwd?: string | undefined",
           "deferEmbeds?: boolean | undefined",
           "dryRun: boolean",
           "emitNotice?: ((n: Notice) => void) | undefined",
