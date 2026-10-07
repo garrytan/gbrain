@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 207549,
-    "stdoutSha256": "ba03674e7846f4d445030acf6a2bb53cd5544abdff7f8d28e480903f1e852586",
+    "stdoutBytes": 207558,
+    "stdoutSha256": "2854faaa1fe72eaed133c401bbd785584cb5e006a56e20ea3f0ec6b7fa26c324",
     "toolNames": [
       "remember",
       "entity",
@@ -234,7 +234,7 @@
               "type": "string"
             },
             "replaces": {
-              "description": "fact_id this fact replaces (same entity).",
+              "description": "fact_id this fact replaces (same entity, or none).",
               "type": "string"
             },
             "request_id": {

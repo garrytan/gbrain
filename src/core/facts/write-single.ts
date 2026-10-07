@@ -103,11 +103,10 @@ export async function writeSingleFact(
   // resolver returned nothing (fail-closed — no live page was verified).
   const resolutionSource = resolved?.source ?? null;
 
-  const { isFactWithdrawn } = await import('./withdrawal.ts');
+  const { FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION, isFactWithdrawn } = await import('./withdrawal.ts');
   if (await isFactWithdrawn(engine, sourceId, visibility, factText, resolvedSlug)) {
     const { verbError } = await import('../ops/contract.ts');
-    throw verbError('invalid_params', 'fact_withdrawn: this exact claim was explicitly forgotten in this source and visibility.',
-      'Remember a corrected claim. Repeating the old claim does not restore withdrawn memory.');
+    throw verbError('invalid_params', FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION);
   }
 
   // Embedding (NOT an LLM call): powers dedup + downstream recall. Fail-soft —

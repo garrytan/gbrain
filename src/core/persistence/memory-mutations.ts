@@ -160,12 +160,13 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   // A source-scoped absent identity serializes subjectless facts. Bound writers
   // cannot use it to escape their namespace grant.
   const { slug, authority, snapshot, fence, binding, writeThrough } = linked?.target ?? await planRememberTarget(ctx, sourceId, source, entitySlug, null);
+  const { assertFactNotWithdrawn, decideReplacement } = await import('../facts/single-prepare.ts');
+  const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility: (p.visibility ?? 'world') as never, entity_slug: entitySlug };
+  // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
   if (p.replaces !== undefined && p.replaces !== null) {
-    // Fail fast on an invalid target; the coordinator re-checks it under the row lock before publishing.
-    const { decideReplacement } = await import('../facts/single-prepare.ts');
-    await decideReplacement(ctx.engine, sourceId, { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never,
-      visibility: (p.visibility ?? 'world') as never, entity_slug: entitySlug }, Number(p.replaces), { pageSlug: slug, remote: ctx.remote !== false });
+    await decideReplacement(ctx.engine, sourceId, factIntent, Number(p.replaces), { pageSlug: slug, remote: ctx.remote !== false });
   }
+  await assertFactNotWithdrawn(ctx.engine, sourceId, factIntent);
   const row = await admitWrite(ctx.engine, { principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent,
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records

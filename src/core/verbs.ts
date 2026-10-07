@@ -97,7 +97,7 @@ const remember: Operation = {
       enum: ['world', 'private'],
       description: 'world (default) or private (local CLI only).',
     },
-    replaces: { type: 'string', description: 'fact_id this fact replaces (same entity).', fullSurfaceOnly: true },
+    replaces: { type: 'string', description: 'fact_id this fact replaces (same entity, or none).', fullSurfaceOnly: true },
   },
   mutating: true,
   scope: 'write',

@@ -33,7 +33,7 @@ function candidateState(value: Awaited<ReturnType<typeof decideSingleFact>>): st
   return JSON.stringify([value.status, c?.id, c?.fact, c?.kind, c?.visibility,
     c?.valid_until ? new Date(c.valid_until).toISOString() : null, c?.source_markdown_slug, c?.row_num]);
 }
-export const NO_ENTITY_HINT = 'Saved without an entity, so entity-scoped recall will not find it. Pass `entity` (the person, company or project this fact is about) to link it.';
+export const NO_ENTITY_HINT = 'Saved without an entity, so entity-scoped recall will not find it. To link it, remember it again with `entity` (the person, company or project it is about) and `replaces` set to its id; do not forget it first, because a forgotten claim cannot be saved again.';
 function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', entitySlug: string | null, validUntil: Date | string | null, degraded: boolean, p: Record<string, unknown>, supersededId?: number) {
   const statusText = status === 'inserted' ? `remembered as fact #${id}` : status === 'duplicate'
     ? `already knew this — kept fact #${id}` : `updated — fact #${id} supersedes the previous version`;

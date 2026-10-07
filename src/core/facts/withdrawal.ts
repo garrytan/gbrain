@@ -10,6 +10,15 @@ export interface WithdrawalCommit {
   pages: Array<{ sourceId: string; slug: string; revision: string }>;
 }
 
+export const FACT_WITHDRAWN_MESSAGE = 'fact_withdrawn: this exact claim was explicitly forgotten in this source and visibility.';
+/**
+ * R1: the refusal names why repeating the claim fails and the write that works. A claim forgotten
+ * without an entity is withdrawn for every entity, so "forget, then remember it with an entity" is refused.
+ */
+export const FACT_WITHDRAWN_SUGGESTION = 'A forgotten claim stays withdrawn, and remembering the same text again is refused; '
+  + 'a claim forgotten without an entity is withdrawn for every entity. If it is still true, remember it in new words. '
+  + 'To link a fact saved without an entity, do not forget it: remember it with entity and replaces set to its fact id.';
+
 /** DB-first: no filesystem ownership, provider work or root lock is required. */
 /**
  * Called inside the withdrawal transaction after the ledger row commits with

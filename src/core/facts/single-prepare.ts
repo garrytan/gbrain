@@ -2,7 +2,7 @@ import type { BrainEngine, FactAttribution, FactRow } from '../engine.ts';
 import { verbError } from '../ops/contract.ts';
 import { isAvailable, embedOne, getEmbeddingModel } from '../ai/gateway.ts';
 import { cosineSimilarity } from './classify.ts';
-import { isFactWithdrawn } from './withdrawal.ts';
+import { FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION, isFactWithdrawn } from './withdrawal.ts';
 import { cosineVerdict } from './capture-dedup.ts';
 
 export type FactCandidate = FactRow & { source_markdown_slug: string | null; row_num: number | null };
@@ -25,8 +25,7 @@ export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, d
 }
 export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent): Promise<void> {
   if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug)) {
-    throw verbError('invalid_params', 'fact_withdrawn: this exact claim was explicitly forgotten in this source and visibility.',
-      'Remember a corrected claim. Repeating the old claim does not restore withdrawn memory.');
+    throw verbError('invalid_params', FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION);
   }
 }
 /**
@@ -96,7 +95,8 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
     throw verbError('invalid_params', `target_expired: fact #${targetId} is no longer active.`,
       'Remember the new claim without replaces.');
   }
-  if ((target.entity_slug ?? null) !== (input.entity_slug ?? null)) {
+  // R1: replacing a fact saved without an entity by the same claim with an entity links it (supersession, no withdrawal).
+  if (target.entity_slug != null && target.entity_slug !== (input.entity_slug ?? null)) {
     throw verbError('invalid_params', `replaces_entity_mismatch: fact #${targetId} is about ${target.entity_slug ?? 'no entity'}, not ${input.entity_slug ?? 'no entity'}.`,
       'Pass the same entity as the fact being replaced, or forget the old fact and remember the new one separately.');
   }

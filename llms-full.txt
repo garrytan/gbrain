@@ -9136,6 +9136,12 @@ near-duplicates may insert; dedup and supersession ride embedding similarity).
   supersedes the old ("X at acme-example" → "X left acme-example").
 - Omitted optional inputs echo as `null`, never absent.
 
+A claim that was forgotten is refused with `invalid_params` and the message
+prefix `fact_withdrawn`: remembering the same text again does not restore it,
+and a claim forgotten without an entity is withdrawn for every entity. To link
+a fact saved without an entity, do not forget it; remember it with `entity`
+and `replaces` set to its id.
+
 #### remember replaces (additive)
 
 `replaces` (string): the `fact_id` of the fact this new fact replaces. It is a
@@ -9143,7 +9149,9 @@ caller-directed replacement: it says the old fact is no longer the current one,
 not that the two texts mean the same. Zero model calls; the cosine rule does
 not apply. The target must be an active fact in the same source, with the same
 visibility (world only for remote callers, else `not_found`) and the same
-entity, on the same entity page. Refusals come back as `invalid_params` with a
+entity, on the same entity page. A target saved without an entity may be
+replaced by a fact with an entity: that links it (the unlinked fact is
+superseded, not forgotten, so the claim stays rememberable). Refusals come back as `invalid_params` with a
 code prefix and a `suggestion`: `target_withdrawn` (forgotten facts are not
 replaceable; remember without `replaces`), `target_superseded` (names the fact
 that replaced it), `target_expired`, `replaces_entity_mismatch`,
