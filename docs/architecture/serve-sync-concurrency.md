@@ -10,6 +10,19 @@ PGLite is a single-writer embedded Postgres (WASM). A resident owner holds
 its datastore's stable external native lock until the connection closes. A
 live holder is never displaced, and failed IPC never authorizes a second open.
 
+For a persistent local host brain, ordinary `gbrain serve` stdio sessions
+automatically share one background PGLite owner. Each session keeps its own
+source, tool surface, access mode and working directory. The owner exits
+30 seconds after the last session disconnects; opening another chat starts
+it again. This requires no manually configured HTTP endpoint or OS service.
+`gbrain serve --direct` retains the dedicated-process lifecycle. Mounted brains
+and Postgres keep their existing transport paths.
+
+The shared owner exposes source-keyed resolve IPC listeners for connected
+sources and one brain-keyed persistence listener for local CLI delegation.
+An existing HTTP or dedicated stdio owner is not displaced: new stdio sessions
+retain the status-only recovery path when that owner holds the database.
+
 The CLI resolves the selected brain before opening its datastore and delegates
 to an observed resident owner through authenticated persistence IPC:
 

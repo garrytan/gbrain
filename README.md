@@ -248,7 +248,7 @@ gbrain mcp expose --funnel  # same name, public HTTPS — for agents that run in
 For a local persistent PGLite brain, ordinary `gbrain serve` sessions automatically
 share one background database owner. Opening a second chat needs no port, token,
 or service setup; each chat keeps its own source, tool surface, and access mode.
-The owner exits after the last chat has been idle for 30 seconds and starts again
+The owner exits 30 seconds after the last chat disconnects and starts again
 when needed. Use `gbrain serve --direct` for the dedicated-process lifecycle.
 Other CLI commands still follow the PGLite lock and delegation rules.
 
