@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.105.0] - 2026-10-07
+## [0.60.106.0] - 2026-10-07
 
 ### Fixed
 
@@ -18,7 +18,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 Long conversations may use more model calls. This preserves input; the existing fact-selection limit and model interpretation still apply. Previously completed pages are not replayed automatically. Inspect and preview an affected exact source/slug before using native `--force` to recompute its derived facts, then review the result against the original.
 
-To take advantage of v0.60.105.0: run `gbrain upgrade`. No configuration or schema change is required.
+To take advantage of v0.60.106.0: run `gbrain upgrade`. No configuration or schema change is required.
 
 ## [0.60.103.0] - 2026-10-07
 
