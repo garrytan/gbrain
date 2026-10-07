@@ -238,6 +238,21 @@ export const resolveCodexBinary = makeBinaryResolver({
   pathSweep: true,
 });
 
+/** Locate the real `pi` binary (pi-coding-agent). Bun.which first, then the
+ *  npm/nvm global landing spots and the standalone installer's dir. */
+export const resolvePiBinary = makeBinaryResolver({
+  binName: 'pi',
+  candidates: (home) => [
+    '/opt/homebrew/bin/pi',
+    '/usr/local/bin/pi',
+    `${home}/.local/bin/pi`,
+    `${home}/.bun/bin/pi`,
+    `${home}/.npm-global/bin/pi`,
+  ],
+  nvmSweep: true,
+  pathSweep: true,
+});
+
 // ────────────────────────────────────────────────────────────────────────────
 // 3. Auth probes (drive skipIf in the door tests)
 // ────────────────────────────────────────────────────────────────────────────
@@ -261,6 +276,21 @@ export function hasCodexAuth(): boolean {
     // CODEX_API_KEY (hermeticChildEnv's extraAllow passes CODEX_* through).
     return fs.existsSync(path.join(os.homedir(), '.codex', 'auth.json'))
       || !!process.env.CODEX_API_KEY;
+  } catch {
+    return false;
+  }
+}
+
+/** pi is usable when the operator has a real ~/.pi/agent/auth.json (its OAuth
+ *  or API-key store), or a provider key the hermetic child env passes through.
+ *  pi's store is a JSON object keyed by provider (`anthropic`, `openai`, ...);
+ *  a present-but-empty object means no provider is signed in, so it does not
+ *  count. */
+export function hasPiAuth(): boolean {
+  try {
+    const raw = fs.readFileSync(path.join(os.homedir(), '.pi', 'agent', 'auth.json'), 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.keys(parsed).length > 0;
   } catch {
     return false;
   }
