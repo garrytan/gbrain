@@ -1052,6 +1052,10 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // as v178/v198: persistence_requests is migration-created on PGLite, no
   // index references the column, and every reader treats NULL as no recorded phase.
   'persistence_requests.claim_phase',
+  // Cat 40 Hard F6 (migration v219) — the client's original request_id. Same
+  // posture as v178/v198: persistence_requests is migration-created on PGLite,
+  // no index references the column, and every reader treats NULL as "sent a UUID or nothing".
+  'persistence_requests.client_request_id',
   // #5455 (migration v183) — managed mode epoch. persistence_brain is
   // migration-created on PGLite; no index in either blob references it, and
   // pre-migration readers go through to_jsonb(persistence_brain)->'mode_epoch'.

@@ -2564,7 +2564,8 @@
           "37 consumer_host_id uuid/uuid NULL",
           "38 published_at timestamp with time zone/timestamptz NULL",
           "39 error_detail jsonb/jsonb NULL",
-          "40 claim_phase jsonb/jsonb NULL"
+          "40 claim_phase jsonb/jsonb NULL",
+          "41 client_request_id text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

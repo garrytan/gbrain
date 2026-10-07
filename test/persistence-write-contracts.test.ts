@@ -27,7 +27,7 @@ describe('mutation preconditions', () => {
   });
 
   test.each([
-    { request_id: 'not-a-uuid' }, { request_id: null }, { expected_revision: '' },
+    { request_id: 'two words' }, { request_id: null }, { expected_revision: '' },
     { expected_revision: 42 }, { force: 'true' }, { expected_revision: REQUEST_ID, force: true },
   ])('rejects invalid preconditions before mutation: %j', (params) => {
     expect(() => parseMutationPrecondition(params)).toThrow(OperationError);

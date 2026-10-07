@@ -230,7 +230,7 @@ describe('replayProbe', () => {
       expect(await replayProbe(engine, fixture.queuedRequestId, reordered, { sourceEnabled: true, runId: RUN_ID }))
         .toEqual({ status: 'passed', requestId: fixture.queuedRequestId });
       const changed = await replayProbe(engine, fixture.queuedRequestId, { ...callerIntent, content: 'different' }, { sourceEnabled: true, runId: RUN_ID });
-      expect(changed).toMatchObject({ status: 'failed', detail: expect.stringContaining('different intent') });
+      expect(changed).toMatchObject({ status: 'failed', detail: expect.stringContaining('used for a different write') });
       const unfenced = await replayProbe(engine, fixture.queuedRequestId, callerIntent, { sourceEnabled: true });
       expect(unfenced).toMatchObject({ status: 'failed', detail: expect.stringContaining('graduation_in_progress') });
       expect(await replayProbe(engine, fixture.queuedRequestId, undefined)).toEqual({ status: 'not_available', reason: 'no_caller_input' });
