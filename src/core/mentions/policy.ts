@@ -63,13 +63,22 @@ export function parseNameList(value: unknown): string[] {
   return text.split(/[,\n]/).map(v => v.trim()).filter(Boolean);
 }
 
-export async function readMentionPolicy(engine: Pick<BrainEngine, 'getConfig'>): Promise<MentionPolicy> {
-  const [global, own, types, ignore, excludeSlugs, aliasDeny, multiword, siblings] = await Promise.all([
-    engine.getConfig('auto_link'), engine.getConfig('mentions.auto_link'),
-    engine.getConfig('mentions.entity_types'), engine.getConfig('mentions.ignore'),
-    engine.getConfig('mentions.exclude_slugs'), engine.getConfig('mentions.alias_deny'),
-    engine.getConfig('mentions.multiword_aliases'), engine.getConfig('mentions.sibling_merge'),
-  ]);
+const POLICY_KEYS = ['auto_link', 'mentions.auto_link', 'mentions.entity_types', 'mentions.ignore', 'mentions.exclude_slugs',
+  'mentions.alias_deny', 'mentions.multiword_aliases', 'mentions.sibling_merge'] as const;
+
+/** The policy keys in one config read when the engine can run SQL (the write path counts statements), else one read per key. */
+async function readPolicyKeys(engine: Pick<BrainEngine, 'getConfig'> & Partial<Pick<BrainEngine, 'executeRaw' | 'kind'>>): Promise<Array<string | null>> {
+  if (engine.executeRaw && (engine.kind === 'pglite' || engine.kind === 'postgres')) {
+    try {
+      const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[...POLICY_KEYS]]);
+      return POLICY_KEYS.map(k => rows.find(r => r.key === k)?.value ?? null);
+    } catch { /* fall back to per-key reads */ }
+  }
+  return Promise.all(POLICY_KEYS.map(k => engine.getConfig(k)));
+}
+
+export async function readMentionPolicy(engine: Pick<BrainEngine, 'getConfig'> & Partial<Pick<BrainEngine, 'executeRaw' | 'kind'>>): Promise<MentionPolicy> {
+  const [global, own, types, ignore, excludeSlugs, aliasDeny, multiword, siblings] = await readPolicyKeys(engine);
   const typeAdds: string[] = [];
   const typeRemoves: string[] = [];
   for (const entry of parseNameList(types)) {
