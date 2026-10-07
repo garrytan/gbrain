@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { getEngine, hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
-import { migrateLegacyTokens, parseRescopeTokenArgs, rescopeLegacyToken } from '../../src/core/grants/legacy-token.ts';
+import { migrateLegacyTokens, parseRescopeTokenArgs, rescopeLegacyToken, touchTokenLastUsed } from '../../src/core/grants/legacy-token.ts';
 import { grantFromTokenRow } from '../../src/core/grants/model.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { executeRawJsonb, sqlQueryForEngine } from '../../src/core/sql-query.ts';
@@ -60,6 +60,29 @@ d('F3 token grant columns on Postgres', () => {
     for (const r of reads) expect(strip(r)).toEqual(strip(reads[0]));
     expect(reads[0]).toMatchObject({ sourceId: 'other-f3', hasSourceGrant: true, scopes: ['read'] });
     expect(await row(late.id)).toMatchObject({ source_grant: 'scalar', source_id: 'other-f3', grant_revision: 1, kind: 'object' });
+  });
+
+  test('#6230: a last_used_at touch in flight never makes the first read skip converting a legacy row', async () => {
+    const engine = getEngine();
+    await engine.setConfig('version', '200');
+    await runMigrations(engine);
+    const token = generateToken('gbrain_');
+    const [late] = await executeRawJsonb<{ id: string }>(engine, 'INSERT INTO access_tokens (name, token_hash, scopes, permissions) VALUES ($1, $2, $3::text[], $4::jsonb) RETURNING id',
+      [`touch-${randomUUID().slice(0, 8)}`, hashToken(token), '{read}'], [{ takes_holders: ['world'], source_id: 'other-f3' }]);
+    const before = await row(late.id);
+    // Another request's touch holds its transaction open while this read converts.
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let touched!: () => void;
+    const touchedNow = new Promise<void>(resolve => { touched = resolve; });
+    const touching = engine.transaction(async tx => { await touchTokenLastUsed(sqlQueryForEngine(tx), before); touched(); await held; });
+    await touchedNow;
+    try {
+      const auth = await provider().verifyAccessToken(token);
+      expect(auth).toMatchObject({ sourceId: 'other-f3', hasSourceGrant: true, scopes: ['read'] });
+      expect(await row(late.id)).toMatchObject({ source_grant: 'scalar', source_id: 'other-f3', grant_revision: 1, kind: 'object' });
+      expect((await row(late.id)).last_used_at).not.toBeNull();
+    } finally { release(); await touching; }
   });
 
   test('mint and rescope write text[] columns with quoting intact and an object mirror', async () => {

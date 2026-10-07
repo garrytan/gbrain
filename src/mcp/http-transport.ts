@@ -53,7 +53,7 @@ import { classifyPgAccessError } from '../core/pg-access-classify.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { redactUrlsInText } from '../core/url-redact.ts';
 import { authSourcesFromGrant } from '../core/grants/model.ts';
-import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
+import { resolveTokenGrant, touchTokenLastUsed } from '../core/grants/legacy-token.ts';
 export { parseLegacyTokenScope } from '../core/legacy-token-scope.ts';
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
@@ -270,13 +270,8 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       if (!row) return { ok: false };
       const rowId = row.id as string;
       const rowName = row.name as string;
-      // Debounced last_used_at update — only writes once per token per 60s.
-      // SQL-level WHERE clause keeps this race-tolerant even under concurrent requests;
-      // SKIP LOCKED keeps a row lock held elsewhere from parking a pool slot (#5730).
-      sql`UPDATE access_tokens SET last_used_at = now()
-          WHERE id IN (SELECT id FROM access_tokens WHERE id = ${rowId}
-            AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`
-        .catch(() => { /* fire-and-forget */ });
+      // Debounced fire-and-forget last_used_at update, shared with the OAuth provider.
+      void touchTokenLastUsed(sql, row);
       // One grant shape (grants/model.ts) shared with the OAuth provider
       // behind `serve --http`, so the two transports cannot drift; a row still
       // on the legacy shape is converted on this read. Takes holders fail safe

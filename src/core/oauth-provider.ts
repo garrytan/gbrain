@@ -41,7 +41,7 @@ import { TOKEN_TTL_MAX_SECONDS, authSourcesFromGrant, grantFromRow, normalizeGra
 import { assertValidSlugPrefixes, pgArray } from './grants/encoding.ts';
 import { rescopeOAuthClient, type RescopeClientOptions, type RescopeClientResult } from './grants/rescope.ts';
 import { grantValidationContext, validateClientGrant, insertClientGrant, assertGrantPatch } from './grants/service.ts';
-import { resolveTokenGrant } from './grants/legacy-token.ts';
+import { resolveTokenGrant, touchTokenLastUsed } from './grants/legacy-token.ts';
 import { NO_SOURCES } from './source-id.ts';
 
 /**
@@ -912,17 +912,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     if (legacyRows.length > 0) {
       // For legacy tokens, name = clientId = clientName (single identifier).
-      // #2833: debounced fire-and-forget last_used_at update — only writes
-      // once per token per 60s, and NEVER blocks or fails verification (a
-      // slow/broken UPDATE used to hang or 401 every legacy-token request).
-      // Mirrors src/mcp/http-transport.ts validateToken; the SQL-level WHERE
-      // keeps the debounce race-tolerant under concurrent requests; SKIP LOCKED
-      // keeps a row lock held elsewhere from parking a pool slot (#5730).
-      this.sql`
-        UPDATE access_tokens SET last_used_at = now()
-        WHERE id IN (SELECT id FROM access_tokens WHERE token_hash = ${tokenHash}
-          AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)
-      `.catch(() => { /* fire-and-forget */ });
+      // #2833: debounced fire-and-forget last_used_at update that never blocks
+      // or fails verification; shared with src/mcp/http-transport.ts.
+      void touchTokenLastUsed(this.sql, legacyRows[0]);
       const name = legacyRows[0].name as string;
       // One grant shape (grants/model.ts), shared with the legacy HTTP
       // transport so the two cannot drift. Unified rows read the columns,

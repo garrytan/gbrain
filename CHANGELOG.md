@@ -10,6 +10,25 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.103.0] - 2026-10-07
+
+**A legacy access token's first burst of reads converts it to the unified grant columns reliably, and the last nightly Test reds are fixed at their cause.**
+
+On Postgres, a legacy access token still on the old permissions shape is converted to the grant columns by its first read. Every read also fires a debounced `last_used_at` write, and that write held the token's row lock while the conversion skipped locked rows, so a burst of concurrent first reads could leave the token unconverted (it still authorized correctly from the same grant computed in memory, and a later read converted it). The `last_used_at` write now leaves an unconverted row to the conversion, which records first use itself.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| Several concurrent first reads of a legacy-shape token | could leave it unconverted until a later read | the first read converts it once and records `last_used_at` |
+
+For contributors and agents working on gbrain:
+
+- `test/e2e/access-token-grants.test.ts` gains a forced probe for #6230: a `last_used_at` touch held in an open transaction while the first read converts. It fails on the previous release (`grant_revision` 0, the flake's signature) and passes now.
+- `test/list-pages-truncation.test.ts` counted the one-time `behavior_changes` disclosure as an extra content block whenever its shard restored the aged PGLite snapshot first (nightly Test run 37588995327). The test now uses a fresh brain in its own `GBRAIN_HOME`, so it counts only the listing notice.
+
+## To take advantage of v0.60.103.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
 ## [0.60.102.0] - 2026-10-07
 
 **Broken facts and takes tables in your notes now get repaired by themselves.**
