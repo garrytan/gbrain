@@ -1464,7 +1464,10 @@ export function normalizeBasename(s: string): string {
   // foldSlugText is slugifySegment's own letter fold, so the key and the page
   // slug agree on marks, Hebrew niqqud and variation selectors (#4985).
   const folded = foldNonDecomposingLatin(foldSlugText(s));
-  return folded.replace(BASENAME_KEEP_RE, '').trim().replace(/\s+/g, '-');
+  // #5623/#5624: a literal hyphen adjacent to whitespace (`Backlog - vault`)
+  // survives BASENAME_KEEP_RE, then the whitespace collapse mints a run of
+  // hyphens around it (`backlog---vault`) instead of one, like slugifySegment.
+  return folded.replace(BASENAME_KEEP_RE, '').trim().replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
 
 /** Stable order: shorter slug first (likely closer to brain root), then lexical. */
