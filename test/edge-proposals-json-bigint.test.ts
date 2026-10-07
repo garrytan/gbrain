@@ -3,7 +3,7 @@
  * returns BigInt ids (Postgres `bigint` columns). The CLI normalizes ids at
  * the row boundary: a safe integer becomes a number, anything larger a string.
  */
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { runEdgeProposals } from '../src/commands/edge-proposals.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -34,6 +34,7 @@ async function capture(engine: BrainEngine, args: string[]): Promise<string> {
   return lines.join('\n');
 }
 
+beforeEach(() => { _resetCliExitVerdictForTests(); process.exitCode = 0; });
 afterEach(() => { _resetCliExitVerdictForTests(); process.exitCode = 0; });
 
 describe('#6193 edge-proposals --json with BigInt ids', () => {

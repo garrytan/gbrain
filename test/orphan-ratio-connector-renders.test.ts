@@ -12,6 +12,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { findOrphans } from '../src/commands/orphans.ts';
 import { runDoctor, type DoctorReport } from '../src/commands/doctor.ts';
 import { setCliOptions } from '../src/core/cli-options.ts';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 
 let engine: PGLiteEngine;
 
@@ -56,6 +57,8 @@ async function doctorCheck(args: string[]) {
     if (!(e instanceof Error && e.message === '__exit')) throw e;
   } finally {
     console.log = log; console.error = err; (process as { exit: unknown }).exit = exit;
+    _resetCliExitVerdictForTests();
+    process.exitCode = 0;
   }
   for (let i = out.length - 1; i >= 0; i--) {
     try {
