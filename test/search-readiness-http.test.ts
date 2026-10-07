@@ -195,10 +195,11 @@ describe('search projection readiness over legacy bearer HTTP MCP', () => {
 
   test('partial nonempty search exposes the same readiness metadata without changing the public result body', async () => {
     const response = await search(MATCH);
-    // Body + F2's keyword count line + F3's degraded_recall notice (recall-affecting stage present).
-    expect(response.content).toHaveLength(3);
+    // Body + F2's keyword count line + F4's row-date line + F3's degraded_recall notice (recall-affecting stage present).
+    expect(response.content).toHaveLength(4);
     expect(response.content[1]!.text).toStartWith('[gbrain search] Rows are a ranked top-K');
-    expect(response.content[2]!.text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
+    expect(response.content[2]!.text).toStartWith('[gbrain dates] ');
+    expect(response.content[3]!.text).toStartWith('[gbrain notice degraded_recall kind=degraded]');
     expect(response.body).toHaveLength(1);
     expect(JSON.stringify(response.body)).toContain(MATCH);
     expectPendingMetadata(response.retrieval);

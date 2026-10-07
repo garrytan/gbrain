@@ -74,8 +74,15 @@ A lean row keeps `id` (the `fetch` key), `slug`, `title`, `type`,
 provenance marker that is present: `injection_suspected`, `injection_p`,
 `unverified`, `content_flag`, `status`, `superseded`, `superseded_by`,
 `message_id`, `thread_id`, `source_subject`, `modality` when not `text`,
-`stale` when true, and `delivered: {"truncated": true}` when evidence
-delivery cut the text.
+`stale` when true, `provenance: "generated"` on a machine-written page,
+and `delivered: {"truncated": true}` when evidence delivery cut the text.
+
+`effective_date` is the page's own date and `effective_date_source` says
+which kind: `date`, `published` or `filename` is a document date,
+`event_date` an event date, and `created` or `fallback` only when the page
+was created or imported. It is never a contract's effective or validity
+date; that date is in the text. Every reply with dated rows adds one line
+after the rows that says so (`[gbrain dates] ...`).
 
 ```json
 {"query": "acme-example renewal terms"}

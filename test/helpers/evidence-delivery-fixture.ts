@@ -64,8 +64,9 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
         { remote: true, transport: 'stdio', sourceId: 'default' });
       // Agent contract v1 notices (extra prefixed blocks + _meta.gbrain_notices, e.g. degraded_recall on this
       // keyless corpus) are additive and pinned in test/mcp-notice-channels.test.ts; the off path compares the rest.
-      // Cat 40 Hard F2's keyword count line and fields are additive too (pinned in test/search-keyword-paging.test.ts).
-      const content = res.content.filter(c => !c.text.startsWith('[gbrain notice ') && !c.text.startsWith('[gbrain search] '));
+      // Cat 40 Hard F2's keyword count line and fields and F4's row-date line are additive too
+      // (pinned in test/search-keyword-paging.test.ts and test/search-date-labels.test.ts).
+      const content = res.content.filter(c => !/^\[gbrain (notice |search\] |dates\] )/.test(c.text));
       const { gbrain_notices: _notices, ...meta } = res._meta ?? {};
       if (meta.retrieval) meta.retrieval = withoutCounts(meta.retrieval as Record<string, unknown>);
       out[`mcp-${name}`] = JSON.stringify({ ...res, content, ...(res._meta ? { _meta: meta } : {}) });

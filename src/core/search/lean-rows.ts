@@ -7,13 +7,15 @@
  * signals) that agents do not read but pay for on every later turn. A lean
  * row keeps what an agent acts on:
  *   - identity and text: id (the deep-research fetch key), slug, title, type,
- *     chunk_text, score, effective_date, source_id, chunk_id (assemble_evidence
+ *     chunk_text, score, effective_date (with effective_date_source, which
+ *     says what kind of date it is), source_id, chunk_id (assemble_evidence
  *     takes {source_id, slug, chunk_id});
  *   - the duplicate-page guard: evidence and create_safety;
  *   - safety and provenance markers whenever present: injection_suspected,
  *     injection_p, unverified, content_flag, status, superseded, superseded_by,
  *     message_id, thread_id, source_subject, matched_alias (the other name the
- *     alias fan-out searched); modality when not text; stale
+ *     alias fan-out searched); `provenance` only as `generated` (a
+ *     machine-written page); modality when not text; stale
  *     only when set (true, or the held-file object from #5988);
  *   - `delivered: { truncated: true }` whenever evidence delivery truncated;
  *   - `evidence_omitted` on a keyword-mode row whose text did not fit.
@@ -26,7 +28,7 @@ import type { OperationContext } from '../ops/contract.ts';
 export type ResultRows = 'lean' | 'full';
 
 const KEPT_FIELDS: ReadonlySet<string> = new Set([
-  'id', 'slug', 'title', 'type', 'chunk_text', 'score', 'effective_date', 'source_id', 'chunk_id',
+  'id', 'slug', 'title', 'type', 'chunk_text', 'score', 'effective_date', 'effective_date_source', 'source_id', 'chunk_id',
   'evidence', 'create_safety',
   'injection_suspected', 'injection_p', 'unverified', 'content_flag', 'status', 'superseded', 'superseded_by',
   'message_id', 'thread_id', 'source_subject', 'relational', 'matched_alias',
@@ -50,6 +52,7 @@ export function leanRow(row: Record<string, unknown>): Record<string, unknown> {
     if (KEPT_FIELDS.has(key)) out[key] = value;
     else if (key === 'stale' && (value === true || (typeof value === 'object' && value !== null))) out[key] = value;
     else if (key === 'modality' && value !== 'text') out[key] = value;
+    else if (key === 'provenance' && value === 'generated') out[key] = value;
     else if (key === 'delivered' && (value as { truncated?: unknown }).truncated === true) out[key] = { truncated: true };
   }
   return out;

@@ -20,6 +20,7 @@ import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger, type NoticeAudience } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { searchCountLine } from '../core/search/keyword-paging.ts';
+import { dateLabelLine } from '../core/search/date-labels.ts';
 import { localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
 import { hiddenToolHint } from './hidden-tool-hint.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
@@ -371,7 +372,7 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
 /**
  * Model-visible notices the search/query ops attach to `_meta.retrieval`: the
  * D8 empty-retrieval diagnosis, a reconciled type filter, other names declared in the evidence, and saved
- * facts that match the query, and search's keyword count line. Each rides as its own text block after the
+ * facts that match the query, search's keyword count line and the row-date label. Each rides as its own text block after the
  * results (content[0] stays the bare result array for thin clients).
  */
 export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): string[] {
@@ -400,6 +401,9 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   // F2: which set the rows are and which set the keyword count covers, on every search call.
   const countLine = searchCountLine(result, retrieval);
   if (countLine) blocks.push(countLine);
+  // F4: what each row's effective_date is (document, event or fallback date), never contractual validity.
+  const dateLine = dateLabelLine(result);
+  if (dateLine) blocks.push(dateLine);
   if (typeof r.answer_id === 'string' && r.feedback?.rateable === true) blocks.push(rateLine(r.answer_id, typeof r.feedback.how_to_rate === 'string'));
   return blocks;
 }
