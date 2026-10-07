@@ -13,6 +13,9 @@ import { readHarnessReceiptState, readReceipt, type HarnessReceipt } from '../..
 import { probeLivePgliteHolder, resolveBrainDataDir } from '../../core/bootstrap/uninstall.ts';
 import { readRunbookStamp, hooksInstalled, listVerifyRuns } from '../../core/bootstrap/status.ts';
 import { resolveGbrainHome } from '../../core/gbrain-home.ts';
+import { isManagedFilesystemPath } from '../../core/persistence/filesystem-guard.ts';
+import { withoutPhysicalRootMetadata } from '../../core/persistence/root-metadata.ts';
+import { agentFix } from './check-fix.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../../version.ts';
 import type { Check } from '../doctor.ts';
 
@@ -50,9 +53,21 @@ function commitsAheadOfOrigin(ws: string, branch: string): number {
   } catch { return 0; }
 }
 
-/** #5063: a recent successful push of something never certifies a tree that is still ahead. */
-function aheadOfOriginMessage(lastPush: string, ws: string, ahead: number): string {
-  return `last push ok (${lastPush}), but ${ws} has ${ahead} commit(s) not on origin — recent agent memory is unpushed. Run \`gbrain sources push --path ${ws}\`.`;
+/**
+ * #5371: one bootstrap_push_health finding. A managed canonical worktree
+ * refuses legacy bulk push, so there the remedy is the managed writer's
+ * read-only status probe; severity never changes, and an unmanaged root keeps
+ * `unmanagedRemedy`.
+ */
+function pushHealthCheck(root: string | null | undefined, status: 'warn' | 'fail', finding: string, unmanagedRemedy: string): Check {
+  if (!root || !isManagedFilesystemPath(root)) return { name: 'bootstrap_push_health', status, message: `${finding}${unmanagedRemedy}` };
+  return {
+    name: 'bootstrap_push_health', status,
+    message: `${finding} — ${root} is a managed canonical worktree, where legacy bulk push is not available. Inspect the managed writer with \`gbrain sources writer status --probe --json\`; changes must be written through gbrain (put_page or capture), direct file edits here are not published.`,
+    fix: agentFix(['gbrain', 'sources', 'writer', 'status', '--probe', '--json'],
+      'A managed canonical worktree is published by its persistence owner, not by a workspace push; the probe shows whether that owner is running and publishing, and changes nothing.',
+      'bootstrap_push_health'),
+  };
 }
 
 export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise<Check[]> {
@@ -266,11 +281,8 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
         const s = failing[0]!;
         const target = s.repoRoot ?? ws ?? undefined;
         const rest = failing.length > 1 ? ` [+${failing.length - 1} more workspace(s)]` : '';
-        checks.push({
-          name: 'bootstrap_push_health',
-          status: 'warn',
-          message: `last workspace push FAILED${target ? ` for ${target}` : ''} (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest} — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``,
-        });
+        checks.push(pushHealthCheck(target, 'warn', `last workspace push FAILED${target ? ` for ${target}` : ''} (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest}`,
+          ` — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``));
       } else {
         const stamps = pushStatuses.map((s) => Date.parse(s.ts ?? '')).filter((t) => Number.isFinite(t));
         const stalest = stamps.length > 0 ? Math.min(...stamps) : NaN;
@@ -295,9 +307,9 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
         let dirty = false, known = false, ahead = 0;
         if (ws) {
           try {
-            const statusOut = execFileSync('git', ['-C', ws, 'status', '--porcelain'], {
+            const statusOut = withoutPhysicalRootMetadata(execFileSync('git', ['-C', ws, 'status', '--porcelain'], {
               stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
-            }).toString();
+            }).toString());
             const branch = execFileSync('git', ['-C', ws, 'branch', '--show-current'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).toString().trim();
             ahead = commitsAheadOfOrigin(ws, branch);
             if (statusOut.trim() !== '') {
@@ -351,11 +363,8 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
           } catch { dirty = false; known = false; }
         }
         if (dirty && ws && Date.now() - Date.parse(pushStatusForWorkspace(pushStatuses, ws)?.ts ?? '') > PUSH_STALE_MS) { // #5432: this root's own receipt
-          checks.push({
-            name: 'bootstrap_push_health',
-            status: 'fail',
-            message: `last successful push ${pushStatusForWorkspace(pushStatuses, ws)?.ts} (>48h) with a DIRTY workspace tree — recent agent memory is unpushed [B4]. Run \`gbrain sources push --path ${ws}\`.`,
-          });
+          checks.push(pushHealthCheck(ws, 'fail', `last successful push ${pushStatusForWorkspace(pushStatuses, ws)?.ts} (>48h) with a DIRTY workspace tree — recent agent memory is unpushed [B4]`,
+            `. Run \`gbrain sources push --path ${ws}\`.`));
         } else if (stale && !targetMatchesWs) {
           // Multiple tracked push targets (or the one target names a
           // different repoRoot than `ws`) — the stale entry can't be
@@ -374,15 +383,13 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
           // the states that name a real fix.
           checks.push({ name: 'bootstrap_push_health', status: 'ok', message: `no push activity since ${staleIso}; tree confirmed clean, nothing to push` });
         } else if (stale) {
-          checks.push({
-            name: 'bootstrap_push_health',
-            status: 'warn',
-            message: ws
-              ? `last successful push ${staleIso} (>48h ago); workspace tree state unverified (the git probe failed) — check ${ws} manually, or run \`gbrain sources push --path ${ws}\` to be safe`
-              : `last successful push ${staleIso} (>48h ago); workspace tree state unverified (no bootstrap receipt on this machine names a workspace to check) — check the workspace manually`,
-          });
+          checks.push(ws
+            ? pushHealthCheck(ws, 'warn', `last successful push ${staleIso} (>48h ago); workspace tree state unverified (the git probe failed)`,
+              ` — check ${ws} manually, or run \`gbrain sources push --path ${ws}\` to be safe`)
+            : { name: 'bootstrap_push_health', status: 'warn', message: `last successful push ${staleIso} (>48h ago); workspace tree state unverified (no bootstrap receipt on this machine names a workspace to check) — check the workspace manually` });
         } else {
-          checks.push(ahead > 0 ? { name: 'bootstrap_push_health', status: 'warn', message: aheadOfOriginMessage(staleIso, ws!, ahead) }
+          // #5063: a recent successful push of something never certifies a tree that is still ahead.
+          checks.push(ahead > 0 ? pushHealthCheck(ws, 'warn', `last push ok (${staleIso}), but ${ws} has ${ahead} commit(s) not on origin — recent agent memory is unpushed`, `. Run \`gbrain sources push --path ${ws}\`.`)
             : { name: 'bootstrap_push_health', status: 'ok', message: `last push ok (${staleIso})` });
         }
       }

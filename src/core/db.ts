@@ -5,7 +5,7 @@ import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import type { BrainEngine } from './engine.ts';
 import { verifySchema } from './schema-verify.ts';
-import { isRetryableConnError } from './retry-matcher.ts';
+import { isConnectTimeoutError, isRetryableConnError } from './retry-matcher.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -105,6 +105,45 @@ export function resolvePrepare(url: string): boolean | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * Seconds a pool waits for a connection before giving up with CONNECT_TIMEOUT
+ * when its URL names no `connect_timeout` of its own.
+ */
+const FALLBACK_CONNECT_TIMEOUT_S = 10;
+
+/**
+ * Upper bound for a URL-supplied `connect_timeout`. postgres.js arms the
+ * connect timer with `setTimeout(seconds * 1000)`, and a delay past 2^31-1 ms
+ * does not fit the runtime's timer: Bun and Node replace it with 1 ms, so a
+ * "wait practically forever" value would fail every connect at once.
+ */
+const MAX_CONNECT_TIMEOUT_S = Math.floor(0x7fffffff / 1000);
+
+/**
+ * The `connect_timeout` each postgres() pool is built with, read from that
+ * pool's own URL.
+ *
+ * Every call site has to pass the option explicitly (an unset option would
+ * drop to postgres.js's 30s default), and postgres.js lets an explicit option
+ * override the URL query. So the URL's value is honoured only if we read it
+ * here and hand it back. The query is located the way the driver's `new URL()`
+ * does (after the first `?`, before any `#`), so userinfo and host text are
+ * never consulted. Accepted: whole seconds, surrounding blanks allowed, capped
+ * at MAX_CONNECT_TIMEOUT_S. Everything else, including `0` (no timer at all in
+ * postgres.js), keeps the fallback so no gbrain connect waits unbounded.
+ */
+export function resolveUrlConnectTimeout(url: string): number {
+  const [beforeFragment = ''] = url.split('#', 1);
+  const queryAt = beforeFragment.indexOf('?');
+  if (queryAt < 0) return FALLBACK_CONNECT_TIMEOUT_S;
+
+  const requested = new URLSearchParams(beforeFragment.slice(queryAt + 1)).get('connect_timeout');
+  const digits = requested?.match(/^\s*(\d+)\s*$/)?.[1];
+  const seconds = digits === undefined ? 0 : parseInt(digits, 10);
+  if (seconds < 1) return FALLBACK_CONNECT_TIMEOUT_S;
+  return Math.min(seconds, MAX_CONNECT_TIMEOUT_S);
 }
 
 export function resolvePoolSize(explicit?: number): number {
@@ -290,7 +329,7 @@ export async function connect(config: EngineConfig, hooks: { onpoisoned?: (statu
     const opts: Record<string, unknown> = {
       max: resolvePoolSize(),
       idle_timeout: 20,
-      connect_timeout: 10,
+      connect_timeout: resolveUrlConnectTimeout(url),
       // Explicit (matches the postgres.js implicit default; GBRAIN_POOL_MAX_LIFETIME_S overrides).
       max_lifetime: resolveMaxLifetimeSeconds(),
       types: {
@@ -399,6 +438,16 @@ export interface ConnectWithRetryOpts {
   baseDelayMs?: number;
   noRetry?: boolean;
   log?: (line: string) => void;
+  /**
+   * Also retry postgres.js CONNECT_TIMEOUT (#5946). Set it only when this
+   * process already holds a connection to the same database_url, as the
+   * per-worker pools of parallel import and incremental sync do: the route is
+   * then known to work, so a missed handshake timer means the handshake was
+   * starved (typically by a long synchronous stretch on this event loop), and
+   * no session existed yet, so dialing again is safe. Every other caller
+   * keeps failing fast on a timeout, which usually means a bad route.
+   */
+  retryConnectTimeout?: boolean;
 }
 
 export async function connectWithRetry(
@@ -418,7 +467,7 @@ export async function connectWithRetry(
       return;
     } catch (e: unknown) {
       lastErr = e;
-      const retryable = isRetryableDbConnectError(e);
+      const retryable = isRetryableDbConnectError(e) || (opts.retryConnectTimeout === true && isConnectTimeoutError(e));
       const isLast = i === attempts - 1;
       if (!retryable || isLast) {
         throw e;

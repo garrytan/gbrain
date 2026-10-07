@@ -39,8 +39,10 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     if (!binding?.local_path) throw opError('owner_unavailable', 'Cannot record the canonical Git target without its owner binding.',
       `Worktree ${row.worktree_id} of source ${row.source_id} has no host binding for its owner, so request ${row.id} could not record its Git target. Read the request's receipt; the owner host's binding is restored by its claim or transfer.`,
       row.principal_kind === 'local_cli' ? { fix: readFix(`Reads request ${row.id}'s durable receipt, read-only.`, { argv: ['gbrain', 'write-request', '--', row.id] }) } : {});
+    const commit = prepared.file.commit;
     queue('git', { relative_path: relative(binding.local_path, prepared.file.path).split(sep).join('/'),
-      expected_hash: prepared.file.content === null ? null : sha256(prepared.file.content) });
+      expected_hash: prepared.file.content === null ? null : sha256(prepared.file.content),
+      ...(commit ? { commit_subject: commit.subject, commit_line: commit.line } : {}) });
     if (outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
   }
   if (snapshot && !snapshot.page.deleted_at) {

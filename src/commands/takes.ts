@@ -20,6 +20,8 @@
 import { resolve as resolvePath } from 'node:path';
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
+import type { OperationError } from '../core/ops/contract.ts';
+import { usageError } from '../cli/cli-error.ts';
 import {
   TakesWriteError,
 } from '../core/takes-write.ts';
@@ -573,8 +575,8 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const sub = rest[0];
   if (sub !== '--from-pages') {
     process.stderr.write(
-      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--include-covered] [--holder <name>]\n' +
-      'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. --include-covered rescans everything (refresh).\n',
+      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--before <updated_at>,<id>] [--include-covered] [--holder <name>]\n' +
+      'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. Pass a run\'s next_before to --before to continue past pages that yielded no claims. --include-covered rescans everything (refresh).\n',
     );
     process.exit(1);
   }
@@ -589,6 +591,12 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const holderIdx = rest.indexOf('--holder');
   const holder = holderIdx >= 0 ? rest[holderIdx + 1] : 'system';
   const includeCovered = rest.includes('--include-covered');
+  let before: { updatedAt: string; id: number } | undefined;
+  try {
+    before = parseTakesBeforeCursor(rest);
+  } catch (e) {
+    (await import('../cli/cli-error.ts')).exitCliError(e, 'takes');
+  }
 
   // A12 consent gate.
   const bootstrapEnabledCfg = await engine.getConfig('takes.bootstrap_enabled');
@@ -623,8 +631,13 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     dryRun,
     sourceIdFilter,
     maxPages,
+    before,
     includeCovered,
     holder,
+  }).catch(async (e: unknown) => {
+    const { isDatetimeInputError } = await import('../core/utils.ts');
+    if (before && isDatetimeInputError(e)) (await import('../cli/cli-error.ts')).exitCliError(beforeCursorError('The database could not read the --before timestamp.'), 'takes');
+    throw e;
   });
   if (result.llm_unavailable) {
     if (json) {
@@ -667,6 +680,33 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +
     (dryRun ? ' (dry-run)' : '') + '\n',
   );
+  // Quoted: the cursor's timestamp contains a space.
+  if (result.next_before) process.stdout.write(`next: --before '${result.next_before}'\n`);
+}
+
+const BEFORE_CURSOR_RE = /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::?\d{2})?)?),([1-9]\d{0,15})$/;
+
+function beforeCursorError(message: string): OperationError {
+  return usageError(message, 'Pass the exact next_before value a previous takes extract run printed, or drop --before to start from the newest page.', {
+    why: '--before continues a sweep strictly below one (updated_at, id) keyset position; anything else could skip or repeat pages.',
+    fix: {
+      argv: ['gbrain', 'takes', 'extract', '--from-pages', '--dry-run', '--json'],
+      consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'A dry run without --before lists the newest pages and prints a fresh next_before.',
+      verify: { argv: ['gbrain', 'config', 'get', 'takes.bootstrap_enabled'] },
+    },
+  });
+}
+
+/** #5059: `--before <updated_at>,<id>` (a run's next_before), or undefined. Refuses before any page is read. */
+export function parseTakesBeforeCursor(rest: readonly string[]): { updatedAt: string; id: number } | undefined {
+  const idx = rest.indexOf('--before');
+  if (idx < 0) return undefined;
+  const raw = rest[idx + 1];
+  if (raw === undefined || raw.startsWith('--')) throw beforeCursorError('--before needs a value: <updated_at>,<page id>.');
+  const m = BEFORE_CURSOR_RE.exec(raw.trim());
+  if (!m) throw beforeCursorError('--before is not an <updated_at>,<page id> cursor.');
+  return { updatedAt: m[1]!, id: Number(m[2]) };
 }
 
 /**

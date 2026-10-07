@@ -14,16 +14,22 @@
  *      DB row at X AND default has its own legitimate slug) → ok (NOT a
  *      false positive).
  *   5. FS walk hits limit → status `warn 'check skipped, walk too large'`.
+ *
+ * #5862: sources pinned to git-root slugs are compared using the prefix git
+ * reports for local_path inside its work tree (empty at the toplevel), and a
+ * source git cannot place keeps the doctor verdict at "not verified".
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSources } from '../src/commands/sources.ts';
 import { findMisroutedPages } from '../src/core/multi-source-drift.ts';
 import { writeSlugRootMode } from '../src/core/sync-anchor.ts';
+import { multiSourceDriftCheck } from '../src/commands/doctor/schema-pack-checks.ts';
 
 let engine: PGLiteEngine;
 const TMP_ROOTS: string[] = [];
@@ -219,5 +225,112 @@ describe('findMisroutedPages — heuristic correctness', () => {
     expect(result.count).toBe(1);
     expect(result.sample[0]).toMatchObject({ slug: 'people/eve', intended_source: 'src-case9-sr' });
     expect(result.git_root_skipped).toEqual(['src-case9-gr']);
+  });
+});
+
+describe('findMisroutedPages — git-root pins inside a work tree (#5862)', () => {
+  /** A fresh repository; returns `<repo>/<subdir>` (the repo itself for ''). */
+  function gitWorkTree(label: string, subdir: string): string {
+    const repo = makeTmpRoot(label);
+    execFileSync('git', ['init', '-q', repo], { stdio: 'pipe' });
+    const dir = subdir ? join(repo, subdir) : repo;
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  async function registerSource(id: string, localPath: string, pin: 'git-root' | 'source-root' | null): Promise<void> {
+    await runSources(engine, ['add', id, '--no-federated']);
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = $2`, [localPath, id]);
+    if (pin) await writeSlugRootMode(engine, id, pin);
+  }
+
+  /**
+   * Two files under local_path. Sync stored `kept` under the source; `lost`
+   * exists only at default (a misroute). `<plain>/lost` is an unrelated
+   * default page that a wrong (unprefixed) slug shape would also flag.
+   */
+  async function seedPair(id: string, localPath: string, slugPrefix: string, tag: string): Promise<void> {
+    seedFile(localPath, `${tag}/kept.md`);
+    seedFile(localPath, `${tag}/lost.md`);
+    await engine.putPage(`${slugPrefix}${tag}/kept`, { type: 'note', title: 'Kept', compiled_truth: '.' }, { sourceId: id });
+    await engine.putPage(`${slugPrefix}${tag}/lost`, { type: 'note', title: 'Lost', compiled_truth: '.' });
+    if (slugPrefix) await engine.putPage(`${tag}/kept`, { type: 'note', title: 'Unrelated', compiled_truth: '.' });
+  }
+
+  test('git-root source at its repo toplevel is checked with no prefix', async () => {
+    const root = gitWorkTree('gr-top', '');
+    await registerSource('src-gr-top', root, 'git-root');
+    await seedPair('src-gr-top', root, '', 'grtop');
+
+    const result = await findMisroutedPages(engine, [{ id: 'src-gr-top', local_path: root }]);
+    expect(result.git_root_skipped).toEqual([]);
+    expect(result.sample).toEqual([{ slug: 'grtop/lost', intended_source: 'src-gr-top', local_path: root }]);
+    expect(multiSourceDriftCheck(result, 1, 'local').details).toMatchObject({ code: 'drift_detected' });
+  });
+
+  test('git-root source two levels down gets its work-tree location as the slug prefix', async () => {
+    const root = gitWorkTree('gr-nested', join('Field Notes', '2026'));
+    await registerSource('src-gr-nested', root, 'git-root');
+    await seedPair('src-gr-nested', root, 'field-notes/2026/', 'grnested');
+
+    const result = await findMisroutedPages(engine, [{ id: 'src-gr-nested', local_path: root }]);
+    expect(result.git_root_skipped).toEqual([]);
+    expect(result.count).toBe(1);
+    expect(result.sample.map((s) => s.slug)).toEqual(['field-notes/2026/grnested/lost']);
+  });
+
+  test('a symlinked local_path takes the prefix of the directory it points to', async () => {
+    const real = gitWorkTree('gr-link', 'shared');
+    const link = join(makeTmpRoot('gr-link-alias'), 'alias');
+    symlinkSync(real, link);
+    await registerSource('src-gr-link', link, 'git-root');
+    await seedPair('src-gr-link', link, 'shared/', 'grlink');
+
+    const result = await findMisroutedPages(engine, [{ id: 'src-gr-link', local_path: link }]);
+    expect(result.git_root_skipped).toEqual([]);
+    expect(result.sample).toEqual([{ slug: 'shared/grlink/lost', intended_source: 'src-gr-link', local_path: link }]);
+  });
+
+  test('control: a source-root source in a subdirectory keeps local_path-relative slugs', async () => {
+    const root = gitWorkTree('sr-sub', 'docs');
+    await registerSource('src-sr-sub', root, 'source-root');
+    await seedPair('src-sr-sub', root, '', 'srsub');
+
+    const result = await findMisroutedPages(engine, [{ id: 'src-sr-sub', local_path: root }]);
+    expect(result.sample.map((s) => s.slug)).toEqual(['srsub/lost']);
+  });
+
+  test('a git-root source whose local_path is gone is unreadable, not a git-root skip', async () => {
+    const gone = join(makeTmpRoot('gr-gone'), 'missing');
+    await registerSource('src-gr-gone', gone, 'git-root');
+
+    const result = await findMisroutedPages(engine, [{ id: 'src-gr-gone', local_path: gone }]);
+    expect(result.git_root_skipped).toEqual([]);
+    expect(result.unreadable_sources).toEqual([{ source_id: 'src-gr-gone', reason: 'root_unreadable', dirs: 1 }]);
+  });
+});
+
+describe('multiSourceDriftCheck — skipped git-root sources (#5862)', () => {
+  const clean = { walk_truncated: false, count: 0, sample: [], unreadable_sources: [], limit: 10_000, timeout_ms: 5_000 };
+
+  test('one skipped source beside a clean one is not verified, and says why', () => {
+    const check = multiSourceDriftCheck({ ...clean, git_root_skipped: ['src-outside-git'] }, 2, 'local');
+    expect(check.status).toBe('warn');
+    expect(check.details).toMatchObject({ code: 'not_verified', verified: false, git_root_skipped: ['src-outside-git'] });
+    expect(check.message).toStartWith('No cross-source slug drift among checked sources.');
+    expect(check.message).toContain('src-outside-git');
+    expect(check.message).toContain('work tree');
+    expect(check.message).not.toContain('#4712');
+  });
+
+  test('every candidate skipped means no verification at all', () => {
+    const check = multiSourceDriftCheck({ ...clean, git_root_skipped: ['a', 'b'] }, 2, 'remote');
+    expect(check.status).toBe('warn');
+    expect(check.message).toStartWith('Multi-source drift check performed no verification');
+  });
+
+  test('control: nothing skipped and nothing found is ok', () => {
+    const check = multiSourceDriftCheck({ ...clean, git_root_skipped: [] }, 2, 'local');
+    expect(check).toMatchObject({ status: 'ok', message: 'No cross-source slug drift detected.' });
   });
 });

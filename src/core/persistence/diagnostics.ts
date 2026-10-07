@@ -76,7 +76,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   const failures = await engine.executeRaw<{ request_id: string; operation: string; source_id: string; state: WriteRequestState;
     error_code: string | null; error_detail: Record<string, unknown>; completed_at: Date | string | null }>(
     `SELECT request_id,operation,source_id,state,error_code,error_detail,completed_at FROM persistence_requests
-    WHERE error_detail IS NOT NULL ORDER BY sequence DESC LIMIT 20`);
+    WHERE error_detail IS NOT NULL AND COALESCE(error_detail->>'origin','')<>'fence' ORDER BY sequence DESC LIMIT 20`);
   const limits = await readJournalLimits(engine);
   const { persistenceConsumerStatus } = await import('./service.ts');
   // C-NEW-4: the consumer is per process, so this is the answering process's own ingress, never proof the brain's owner is down.

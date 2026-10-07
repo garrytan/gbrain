@@ -95,7 +95,7 @@ describe('lock lease rendering (#4145)', () => {
   });
 
   test('unset lease on an unmapped handler renders no lease line (worker default applies)', () => {
-    const out = formatJobDetail(job({ name: 'sync', lock_duration_ms: null }));
+    const out = formatJobDetail(job({ name: 'shell', lock_duration_ms: null }));
     expect(out).not.toContain('Lock lease:');
   });
 });

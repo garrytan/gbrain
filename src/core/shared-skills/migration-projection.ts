@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { ParsedMarkdown } from '../markdown.ts';
 import { OperationError } from '../ops/contract.ts';
+import { readFix } from '../ops/op-fix.ts';
 import { compileCanonicalProjections } from '../persistence/canonical-projections.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
 import { parseFactsFence } from '../facts-fence.ts';
@@ -26,8 +27,25 @@ function differences(stored: Row, expected: Row): string[] {
   });
 }
 
+/**
+ * A malformed fence refuses typed (`invalid_fence`) instead of being normalized here (#6188, E16):
+ * the fix is the fence repair preview of that page.
+ */
+function compileForExport(page: ParsedMarkdown, sourceId: string): void {
+  try {
+    compileCanonicalProjections(page, page.slug, sourceId);
+  } catch (error) {
+    if (!(error instanceof OperationError) || error.canonicalCode !== 'invalid_fence') throw error;
+    const argv = ['gbrain', 'repair', 'fences', '--source', sourceId, '--slug', page.slug];
+    error.suggestion = `Page ${page.slug} in source ${sourceId} was not exported: the fence the message names does not parse. Preview its repair with ${argv.join(' ')} `
+      + '(read-only; it names the exact edit when gbrain will not repair it), apply the plan it prints, then preview the export again.';
+    error.fix = readFix(`Previews the fence repair of ${page.slug}, read-only, with the apply command.`, { argv });
+    throw error;
+  }
+}
+
 export async function assertExportProjectionRoundtrip(engine: BrainEngine, page: ParsedMarkdown, pageId: number, sourceId: string): Promise<void> {
-  compileCanonicalProjections(page, page.slug, sourceId);
+  compileForExport(page, sourceId);
   const fields = [page.compiled_truth, page.timeline];
   const facts = extractFactsFromFenceText(fields.flatMap(field => parseFactsFence(field).facts), page.slug, sourceId);
   const takes = fields.flatMap(field => parseTakesFence(field).takes);

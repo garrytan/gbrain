@@ -21,6 +21,7 @@ import { sanitizeText } from '../batch-rows.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { unifiedDiff } from '../skillpack/diff-text.ts';
 import { redactRetrievalOutput } from '../search/output-redaction.ts';
+import { scanCanonicalFences, targetFenceRefusal } from '../fence-repair/refusal.ts';
 
 export const EDIT_PAGE_MAX_EDITS = 50;
 export const EDIT_PAGE_DIFF_MAX_BYTES = 8 * 1024;
@@ -94,7 +95,7 @@ function bodySegments(body: string, remote: boolean): Segment[] {
 function text(value: string): Segment { return { canonical: value, view: value, editable: true }; }
 function unrepairedFence(): OperationError {
   return editError('edit_invalid', 'A takes or facts fence on this page is malformed.',
-    'Repair the fence (gbrain doctor names the page) before editing it.');
+    'Read the page, then fix the fence (or write the whole page with put_page, which normalizes what it can) before editing it.');
 }
 
 /**
@@ -137,6 +138,9 @@ function occurrences(haystack: string, needle: string): number[] {
  * view before and after (the only text a diff or receipt may show).
  */
 export function applyPageEdits(page: Page, tags: string[], remote: boolean, edits: PageEdit[]): { content: string; before: string; after: string } {
+  // #6188 (D19): edit_page never rewrites a fence; a stored fence that does not compile refuses typed, location only.
+  const [defect] = scanCanonicalFences(page).defects;
+  if (defect) throw targetFenceRefusal(defect, page.slug, page.source_id);
   let segments = pageSegments(page, tags, remote);
   const before = join(segments, 'view');
   edits.forEach((edit, index) => {

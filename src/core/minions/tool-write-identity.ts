@@ -3,6 +3,10 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { isWriteReceipt } from '../persistence/types.ts';
 import { isPersistenceIpcMutation } from '../persistence/ipc.ts';
+import { replayWhilePending, WRITE_ADMISSION_HEADROOM_MS } from '../persistence/write-wait.ts';
+import { WIRE_WRITE_WAIT_MAX_MS } from '../persistence/params.ts';
+import { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
+import { abortableSleep, RetryAbortError } from '../retry.ts';
 
 /** Bind a durable write to its persisted tool execution, including crash replay. */
 export function retainToolWriteRequestId(input: unknown, jobId: number, messageIdx: number, ordinal: number, toolUseId: string, toolName: string): void {
@@ -25,6 +29,34 @@ export function assertToolWriteCommitted(output: unknown, toolName: string): voi
     { fix: readFix(`Reads tool write ${output.request_id}'s durable receipt, read-only.`, { argv: ['gbrain', 'write-request', '--', output.request_id] }) });
   error.writeRequest = output; error.writeError = code; throw error;
 }
+
+/** What a subagent tool dispatch needs from its job to bound a pending write. */
+export interface ToolWriteJob { deadlineAtMs: number | null; signal?: AbortSignal }
+
+/**
+ * #5474: dispatch a subagent tool and, while its accepted write is still
+ * pending, replay the same request id (nothing new is admitted, no model turn)
+ * instead of failing the attempt. The replays stop when the write is terminal,
+ * when the job is aborted, or once the job's deadline is closer than one more
+ * longest tool wait plus admission headroom, so a retry still fits before the
+ * runner times the job out. A job with no deadline gets the maintenance write
+ * wait. Whatever is still pending then leaves as `write_pending` with its tool
+ * row pending, exactly as before.
+ */
+export async function awaitCommittedToolWrite(job: ToolWriteJob, toolName: string, dispatch: () => Promise<unknown>): Promise<unknown> {
+  const windowMs = job.deadlineAtMs == null ? new MaintenanceWriteWait().ms()
+    : Math.max(0, job.deadlineAtMs - Date.now() - WIRE_WRITE_WAIT_MAX_MS - WRITE_ADMISSION_HEADROOM_MS);
+  let lastFailure: unknown;
+  const attempt = () => dispatch()
+    .then(output => { assertToolWriteCommitted(output, toolName); return output; })
+    .catch((failure: unknown) => { lastFailure = failure; throw failure; });
+  try {
+    return await replayWhilePending(attempt, windowMs, ms => abortableSleep(ms, job.signal));
+  } catch (error) {
+    throw error instanceof RetryAbortError && lastFailure !== undefined ? lastFailure : error;
+  }
+}
+
 export function isPendingToolWrite(error: unknown): error is OperationError {
   return error instanceof OperationError && error.code === 'write_pending' && error.writeRequest !== undefined;
 }

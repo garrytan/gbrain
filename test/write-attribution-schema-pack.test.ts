@@ -24,7 +24,7 @@ import { runSyncCore } from '../src/core/schema-pack/sync.ts';
 import { __setPackLocatorForTests, _resetPackLocatorForTests } from '../src/core/schema-pack/load-active.ts';
 import { _resetPackCacheForTests } from '../src/core/schema-pack/registry.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -43,6 +43,7 @@ beforeAll(async () => {
   }
 }, 120_000);
 afterAll(async () => {
+  resetGateway(); // R5: restore the preload baseline for later files in this shard
   _resetPackLocatorForTests();
   _resetPackCacheForTests();
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }

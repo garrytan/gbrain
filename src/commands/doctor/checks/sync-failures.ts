@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { loadSyncFailures, unacknowledgedSyncFailures, decideSyncFailureSeverity, type SyncFailure } from '../../../core/sync-failure-ledger.ts';
-import { formatManagedSyncFailure, readManagedSyncFailures } from '../../../core/persistence/sync-failures.ts';
+import { formatManagedSyncFailure, managedSyncRetryCommand, readManagedSyncFailures } from '../../../core/persistence/sync-failures.ts';
 import { resolveHoursEnv } from '../../../core/env-number.ts';
 import { makeRemediationStep } from '../../../core/remediation-step.ts';
 
@@ -31,8 +31,9 @@ export async function checkSyncFailures(engine: BrainEngine | null, opts: { sour
       oldest_failure: unresolvedLegacy.map(row => row.ts).sort()[0] },
     severity: severity.status === 'fail' ? 'high' : 'medium', est_seconds: 30, est_usd_cost: 0,
     rationale: `Retry ${severity.unresolved} unresolved sync failure(s)` })];
+  const retries = [...new Set(managed.map(row => managedSyncRetryCommand(row)))];
   const recovery = requiresManagedRetry
-    ? 'Fix the cause, then run gbrain sync --no-pull --retry-failed with the same source and options. Completed full runs do not resolve a different unfinished cursor.'
+    ? `Fix the cause, then run ${retries.length ? retries.join(' ; ') : 'gbrain sync --no-pull --retry-failed with the same source and options'}. Completed full runs do not resolve a different unfinished cursor.`
     : "Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge legacy file failures.";
   return { name: 'sync_failures', status: severity.status, message: `${summary} ${details.join('; ')} ${recovery}`,
     remediation, remediation_status: remediation ? 'remediable' : 'blocked', ...(engine ? {} : { message: `${summary} Durable sync state is unavailable without a database connection; the local ledger is only a compatibility mirror.` }) };

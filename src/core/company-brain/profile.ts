@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { describeFixes } from '../fence-repair/report.ts';
 import { basename, relative } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
@@ -113,8 +114,12 @@ export async function importCompanyBrainFile(engine: BrainEngine, filePath: stri
     prepare: async ready => {
       const tags = [...(snapshot?.tags ?? []), ...ready.parsedPage.tags];
       if (digest(canonical(parsed, parsed.tags)) !== digest(canonical(ready.parsedPage, tags))) {
-        throw opError('source_writeback_required', 'Canonical preparation requires a source-content correction; this profile never writes repository files.',
-          `${path} would change when published canonically (for example normalized frontmatter or tags), and this profile never edits repository files. Review the needed correction with the user, commit it, then resume with ${resumeCommand(sourceId)}.`);
+        // #6188 (UC3): a fence Tier 1 would normalize is named by location; the repository commit is the only fix.
+        const fences = ready.result.fences_normalized ?? [];
+        throw opError('source_writeback_required', fences.length ? `Canonical preparation would normalize a facts or takes fence (${describeFixes(fences)}); this profile never writes repository files.`
+          : 'Canonical preparation requires a source-content correction; this profile never writes repository files.',
+          fences.length ? `${path} has a facts or takes fence gbrain would normalize (${describeFixes(fences)}), and this profile never edits repository files. Fix the fence in the repository and commit, then resume with ${resumeCommand(sourceId)}.`
+            : `${path} would change when published canonically (for example normalized frontmatter or tags), and this profile never edits repository files. Review the needed correction with the user, commit it, then resume with ${resumeCommand(sourceId)}.`);
       }
       if (ready.slug !== entry.page!.slug || ready.observedRevision !== (snapshot?.revision ?? null)) {
         throw opError('revision_conflict', 'The approved file no longer names the same page revision.',

@@ -5,6 +5,16 @@
  * `sync --retry-held` refuses with the pointer; Git holds never block writer
  * deactivation or activation (X14); a put_page refused over a held file names
  * the hold instead of reconciliation (E26).
+ *
+ * #6188 PR4 (D6, D16, D17, E35, Codex CEO #7): for a fence-only, a
+ * frontmatter-only and a mixed source, every DB-backed surface (sources
+ * status JSON and text, retry-held, doctor git_held_files and its banner
+ * line, the sync hold report, get_page file_held, the held_files notice, the
+ * held-file write refusal) names the right repair command and a fence-only
+ * source never mentions frontmatter; a fence hold's rendered next follows its
+ * state on the CLI and HTTP transports with the maintenance run active and
+ * inactive; a remote status read returns the owner handoff; no claim, holder
+ * or kind text reaches any of them.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -30,6 +40,16 @@ import { managedBrain } from './helpers/managed-brain.ts';
 import { waitFor } from './helpers/wait-for.ts';
 import { put } from './helpers/wave-fixture.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { buildHoldReport, readSyncHoldPolicy } from '../src/core/persistence/sync-holds.ts';
+import { heldFilesNotice, readHeldCoverage } from '../src/core/persistence/held-reads.ts';
+import { heldFileDiagnostic } from '../src/core/persistence/verb-errors.ts';
+import { gitHeldFilesCheck } from '../src/commands/doctor/checks/git-holds.ts';
+import { WAVE_CHECKS } from '../src/commands/doctor/wave-checks.ts';
+import { bannerFindingLine } from '../src/commands/doctor/upgrade-banner.ts';
+import { operations, type OperationContext } from '../src/core/operations.ts';
+import { cliRenderContext, renderAction, type Action } from '../src/core/agent-output.ts';
+import { fenceMessage } from '../src/core/fence-repair/reasons.ts';
+import { RECOVERY_VERSION } from '../src/core/markdown.ts';
 
 type HoldInput = Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>;
 
@@ -286,4 +306,148 @@ describe('Git holds and writer mode changes (X14)', () => {
     await engine.executeRaw('INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb)', ['gmail-x', JSON.stringify(gmailConfig)]);
     await writeGitHold(engine, hold('default', await incarnationOf(engine, 'default'), 'notes/held.md', { run_id: randomUUID() }));
   } }), 180_000);
+});
+
+describe('#6188 fence holds on every DB-backed surface: the router and the fix by state', () => {
+  let engine: PGLiteEngine;
+  let home: string;
+  const SECRETS = ['Sentinelclaimq92 renews yearly', 'Sentinelholderq92 Example', 'sentinelkindq92'];
+  const http = { transport: 'http' as const, isCallable: () => false, preapproved: () => false, routing: {} } as never;
+  const cli = cliRenderContext();
+  const getPage = operations.find(op => op.name === 'get_page')!;
+  const fenceAt = { reason: 'holder_unresolved' as const, fence: 'takes' as const, section: 'body' as const, rows: [3], columns: ['who'], line: 7 };
+  const fenceHold = (sourceId: string, incarnation: string, path: string, pageId: number | null, extra: Partial<HoldInput['meta']> = {}): HoldInput => hold(sourceId, incarnation, path, {
+    code: 'invalid_fence', page_id: pageId, message: fenceMessage(fenceAt),
+    meta: { reason: 'holder_unresolved', line: 12, recovery_version: RECOVERY_VERSION, fence: fenceAt, fence_version: 1, ...extra } });
+  const ctx = (sourceId: string, remote: boolean) => ({ engine, config: { engine: 'pglite', embedding_disabled: true }, logger: { info() {}, warn() {}, error() {} },
+    dryRun: false, remote, sourceId, emitNotice() {}, emitResponseMeta() {} }) as unknown as OperationContext;
+  const pageId = async (sourceId: string, slug: string) => {
+    await engine.putPage(slug, { type: 'note', title: 'Held page', compiled_truth: 'Last good body.' }, { sourceId });
+    return Number((await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]))[0]!.id);
+  };
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema();
+    home = mkdtempSync(join(tmpdir(), 'gbrain-fence-surfaces-'));
+    for (const id of ['fences-only', 'frontmatter-only', 'mixed-holds']) {
+      mkdirSync(join(home, id));
+      await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, join(home, id)]);
+    }
+    const fenceInc = await incarnationOf(engine, 'fences-only');
+    await writeGitHold(engine, fenceHold('fences-only', fenceInc, 'people/held-a.md', await pageId('fences-only', 'people/held-a')));
+    await writeGitHold(engine, fenceHold('fences-only', fenceInc, 'people/held-b.md', null, {
+      reason: 'takes_kind_unsupported', fence: { reason: 'takes_kind_unsupported', fence: 'takes', section: 'body', rows: [2], columns: ['kind'], line: 6 } }));
+    await writeGitHold(engine, hold('frontmatter-only', await incarnationOf(engine, 'frontmatter-only'), 'notes/broken.md'));
+    const mixedInc = await incarnationOf(engine, 'mixed-holds');
+    await writeGitHold(engine, hold('mixed-holds', mixedInc, 'notes/broken.md'));
+    await writeGitHold(engine, fenceHold('mixed-holds', mixedInc, 'people/held-c.md', null));
+  }, 120_000);
+
+  afterAll(async () => { await engine.disconnect(); rmSync(home, { recursive: true, force: true }); }, 60_000);
+
+  const expectRoute = (text: string, kind: 'fences' | 'frontmatter' | 'mixed', sourceId: string) => {
+    if (kind !== 'frontmatter') expect(text).toContain(`gbrain repair fences --source ${sourceId}`);
+    if (kind !== 'fences') expect(text).toContain(`gbrain repair frontmatter --source ${sourceId}`);
+    if (kind === 'fences') expect(text).not.toContain('repair frontmatter');
+    if (kind === 'frontmatter') expect(text).not.toContain('repair fences');
+    for (const secret of SECRETS) expect(text).not.toContain(secret);
+  };
+  const SOURCES = [['fences-only', 'fences'], ['frontmatter-only', 'frontmatter'], ['mixed-holds', 'mixed']] as const;
+
+  test('every surface names the right repair command for fence-only, frontmatter-only and mixed sources (D6)', async () => {
+    for (const [sourceId, kind] of SOURCES) {
+      const status = JSON.parse(await captured(() => runSources(engine, ['status', sourceId, '--json']))).sources[0].git_holds;
+      for (const item of status.items) {
+        if (item.code === 'invalid_fence') expect(item.fix.argv).toEqual(['gbrain', 'repair', 'fences', '--source', sourceId, '--only', item.path]);
+        else expect(item.fix.argv.slice(0, 3)).toEqual(['gbrain', 'repair', 'frontmatter']);
+      }
+      const text = await captured(() => runSources(engine, ['status', sourceId]));
+      if (kind !== 'frontmatter') expect(text).toContain(`gbrain repair fences --source ${sourceId} --only`);
+      if (kind === 'fences') expect(text).not.toContain('repair frontmatter');
+      expectRoute((await retryHeld(engine, sourceId, { dryRun: false })).next_action, kind, sourceId);
+      const doctor = await gitHeldFilesCheck(engine, [sourceId]);
+      expectRoute(doctor.message, kind, sourceId);
+      expect(doctor.fix!.argv).toEqual(kind === 'fences' ? ['gbrain', 'repair', 'fences', '--source', sourceId] : ['gbrain', 'repair', 'frontmatter', '--source', sourceId]);
+      const banner = bannerFindingLine({ spec: WAVE_CHECKS.find(spec => spec.id === 'git_held_files')!, check: doctor, state: 'finding' });
+      expectRoute(banner, kind, sourceId);
+      const report = await buildHoldReport(engine, { sourceId, incarnation: await incarnationOf(engine, sourceId), runId: 'none', remote: false,
+        policy: await readSyncHoldPolicy(engine), screened: 0 });
+      expectRoute(`${report.holds_fix!.argv!.join(' ')} ${report.holds_fix!.why}`, kind, sourceId);
+      const remote = await buildHoldReport(engine, { sourceId, incarnation: await incarnationOf(engine, sourceId), runId: 'none', remote: true,
+        policy: await readSyncHoldPolicy(engine), screened: 0 });
+      expect(remote.holds_fix!.actor).toBe('host_admin');
+      expectRoute(remote.holds_fix!.user_message!, kind, sourceId);
+      const coverage = await readHeldCoverage(engine, { sourceId });
+      const notice = heldFilesNotice(coverage, false)!.fix!;
+      expectRoute(`${notice.argv!.join(' ')} ${notice.why}`, kind, sourceId);
+      expectRoute(heldFilesNotice(coverage, true)!.fix!.user_message!, kind, sourceId);
+    }
+    expect(heldFileDiagnostic(heldFileMessage('drift', 'invalid_fence'), 'fences-only')!.suggestion).toContain('gbrain repair fences --source fences-only');
+  });
+
+  test('a fence hold\'s rendered next follows its state on CLI and HTTP, with the maintenance run inactive and active (D17, E35)', async () => {
+    const items = async () => {
+      const status = JSON.parse(await captured(() => runSources(engine, ['status', 'fences-only', '--json']))).sources[0].git_holds.items as Array<{ path: string; fix: Action; fence: Record<string, unknown> }>;
+      return Object.fromEntries(status.map(item => [item.path, item]));
+    };
+    const inactive = await items();
+    // Inactive: the auto-retry hold is the preview, then the apply; the manual one is the preview, then the sync. Never "no action needed".
+    expect(renderAction(inactive['people/held-a.md']!.fix, cli)).toMatchObject({ next: 'run', then: { argv: ['gbrain', 'repair', 'fences', '--source', 'fences-only', '--only', 'people/held-a.md', '--apply'] } });
+    expect(inactive['people/held-a.md']!.fix.why).not.toContain('No action is needed');
+    expect(inactive['people/held-a.md']!.fence).toMatchObject({ tier: 'resolver', auto_retry: false, classes: ['holder_unresolved'] });
+    expect(renderAction(inactive['people/held-b.md']!.fix, cli)).toMatchObject({ next: 'run', then: { argv: ['gbrain', 'sync', '--source', 'fences-only', '--no-pull'] } });
+    for (const item of Object.values(inactive)) expect(renderAction(item.fix, http).next).toBe('tell_user_to_run');
+
+    // A completed brain-wide maintenance job is the evidence that the maintenance run is active.
+    await engine.executeRaw(`INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at, finished_at)
+      VALUES ('{"version":1,"kind":"application"}'::jsonb, 'autopilot-global-maintenance', 'completed', '{}'::jsonb, 'default', 0, now(), now())`);
+    try {
+      const active = await items();
+      expect(active['people/held-a.md']!.fix.why).toContain('No action is needed: the next maintenance run repairs it automatically');
+      expect(active['people/held-a.md']!.fix.then).toBeUndefined();
+      expect(active['people/held-a.md']!.fence).toMatchObject({ auto_retry: true });
+      expect(renderAction(active['people/held-a.md']!.fix, cli).next).toBe('run');
+      expect(active['people/held-b.md']!.fix.why).toContain('gbrain will not guess this repair');
+      // Model repair off: a Tier 3 hold waits on a paid setting, which the CLI renders as ask_user.
+      await engine.setConfig('fences.repair.llm', 'false');
+      await writeGitHold(engine, fenceHold('fences-only', await incarnationOf(engine, 'fences-only'), 'people/held-d.md', null, {
+        reason: 'short_row', fence: { reason: 'short_row', fence: 'facts', section: 'body', rows: [4], columns: [], line: 9 } }));
+      const paid = (await items())['people/held-d.md']!;
+      expect(renderAction(paid.fix, cli)).toMatchObject({ next: 'ask_user', consent: ['paid'], argv: ['gbrain', 'config', 'set', 'fences.repair.llm', 'true'] });
+      expect(renderAction(paid.fix, http).next).toBe('tell_user_to_run');
+      const text = await captured(() => runSources(engine, ['status', 'fences-only']));
+      expect(text).toContain('No action needed: the next maintenance run repairs it.');
+      expect(text).toContain('Ask the user first, then: gbrain config set fences.repair.llm true');
+    } finally {
+      await engine.executeRaw("DELETE FROM minion_jobs WHERE name='autopilot-global-maintenance'");
+      await engine.unsetConfig('fences.repair.llm');
+      await clearHold('fences-only', 'people/held-d.md');
+    }
+  });
+
+  test('a remote status read of a held fence returns the owner handoff, saying whether it clears by itself, with no path (Codex CEO #7)', async () => {
+    const local = await getPage.handler(ctx('fences-only', false), { slug: 'people/held-a' }) as Record<string, any>;
+    expect(local.file_held).toMatchObject({ code: 'invalid_fence', path: 'people/held-a.md', line: 12,
+      fence: { fence: 'takes', section: 'body', rows: [3], columns: ['who'], classes: ['holder_unresolved'] },
+      fix: { argv: ['gbrain', 'repair', 'fences', '--source', 'fences-only', '--only', 'people/held-a.md'] } });
+    const remote = await getPage.handler(ctx('fences-only', true), { slug: 'people/held-a' }) as Record<string, any>;
+    expect(remote.file_held.path).toBeUndefined();
+    expect(remote.file_held.fence.rows).toEqual([]);
+    expect(remote.file_held.fix).toMatchObject({ actor: 'host_admin', argv: ['gbrain', 'repair', 'fences', '--source', 'fences-only'] });
+    expect(renderAction(remote.file_held.fix, http).next).toBe('tell_user_to_run');
+    expect(remote.file_held.fix.user_message).toContain('It does not clear by itself because no maintenance run is active on the brain host');
+    await engine.setConfig('autopilot.last_global_at', new Date().toISOString());
+    try {
+      const active = await getPage.handler(ctx('fences-only', true), { slug: 'people/held-a' }) as Record<string, any>;
+      expect(active.file_held.fix.user_message).toContain('It clears by itself');
+      expect(active.file_held.fence.auto_retry).toBe(true);
+    } finally { await engine.unsetConfig('autopilot.last_global_at'); }
+    const text = JSON.stringify(remote.file_held);
+    for (const hidden of ['people/held-a.md', home, ...SECRETS]) expect(text).not.toContain(hidden);
+  });
+
+  async function clearHold(sourceId: string, path: string) {
+    const { clearGitHold } = await import('../src/core/persistence/sync-holds.ts');
+    await clearGitHold(engine, { sourceId, incarnation: await incarnationOf(engine, sourceId), path, observedAt: '2999-01-01T00:00:00.000Z' });
+  }
 });

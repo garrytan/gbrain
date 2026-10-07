@@ -30,7 +30,7 @@ import { replaceDerivedFactsForPage } from '../src/core/persistence/derived-fact
 import type { Principal } from '../src/core/persistence/model.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { renderTakesFence } from '../src/core/takes-fence.ts';
-import { configureGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
@@ -60,6 +60,7 @@ beforeAll(async () => {
   }
 }, 120_000);
 afterAll(async () => {
+  resetGateway(); // R5: restore the preload baseline for later files in this shard
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
   await closePostgres?.();
   rmSync(home, { recursive: true, force: true });

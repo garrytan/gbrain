@@ -9,7 +9,10 @@
  * written still delivers (once per process); concurrent processes deliver it
  * once; the chain section appears only when a chain is set, and the HTTP view
  * never names entries or providers; failed tool responses carry it; doctor
- * reads it without recording anything.
+ * reads it without recording anything. The #6188 fence rows (inline
+ * normalization, automatic repair) reach an upgraded brain with their opt-out
+ * commands, the first-run sweep disclosure and undo guidance, and never a
+ * fresh install.
  * Fails when: eligibility, marker identity, the HTTP per-client store, the
  * remote redaction or dispatch delivery regress.
  * Seams: per-test GBRAIN_HOME; `__resetBehaviorNoticeForTests` stands in for a
@@ -428,4 +431,40 @@ describe('upgrades across releases (each step a new process pinned to a gbrain V
     }
     expect(readFileSync(join(noticeDir(home), 'new.baseline'), 'utf8').trim()).toBe(NEWEST);
   }, 60_000);
+});
+
+describe('fence rows (#6188 D25, D26)', () => {
+  const NORMALIZE = 'Fixable facts and takes fences are now rewritten instead of held or refused';
+  const REPAIR = 'Malformed facts and takes fences are now repaired automatically';
+  const fenceRows = BEHAVIOR_CHANGES.filter(c => typeof c.text === 'string' && (c.text.startsWith(NORMALIZE) || c.text.startsWith(REPAIR)));
+  const earliest = fenceRows.map(c => c.since).sort(compareReleases)[0]!;
+  const before = BEHAVIOR_CHANGES.map(c => c.since).filter(v => compareReleases(v, earliest) < 0).sort(compareReleases).at(-1)!;
+  const freshEngine = (createdAt: string) => ({ executeRaw: async () => [{ at: createdAt }], getConfig: async () => null }) as unknown as BrainEngine;
+
+  test('an upgraded brain sees the never-block row and the automatic repair row, each with its opt-out, the sweep disclosure and undo guidance', async () => {
+    expect(fenceRows.length).toBe(2);
+    const home = freshHome();
+    mkdirSync(noticeDir(home), { recursive: true });
+    writeFileSync(join(noticeDir(home), 'upgraded.baseline'), `${before}\n`);
+    __resetBehaviorNoticeForTests();
+    await withEnv({ GBRAIN_HOME: home, ...NO_CHAIN }, async () => {
+      const why = (await takeLocalBehaviorNotice(freshEngine(new Date().toISOString()), 'cli', { cfg: null, brainKey: 'upgraded' }))?.why ?? '';
+      expect(why).toContain(NORMALIZE);
+      expect(why).toContain(REPAIR);
+      for (const command of ['gbrain config set fences.normalize false', 'gbrain config set fences.repair.llm false', 'gbrain config set fences.repair.enabled false']) {
+        expect(why).toContain(command);
+      }
+      expect(why).toContain('its first run after upgrading repairs every malformed fence it finds in each source, rewriting and committing those files');
+      expect(why).toContain('gbrain doctor --only fence_integrity');
+      expect(why).toContain('`git revert` undoes it');
+      expect(why).toContain('turning these settings off stops future repairs and does not undo past ones');
+    });
+  });
+
+  test('a fresh install sees neither row', async () => {
+    __resetBehaviorNoticeForTests();
+    await withEnv({ GBRAIN_HOME: freshHome(), ...NO_CHAIN }, async () => {
+      expect(await takeLocalBehaviorNotice(freshEngine(new Date().toISOString()), 'cli', { cfg: null, brainKey: 'fresh-fences' })).toBeNull();
+    });
+  });
 });

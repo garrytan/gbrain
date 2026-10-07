@@ -21,7 +21,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
@@ -46,6 +46,7 @@ beforeAll(async () => {
   }
 }, 120_000);
 afterAll(async () => {
+  resetGateway(); // R5: restore the preload baseline for later files in this shard
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
   await closePostgres?.();
   rmSync(home, { recursive: true, force: true });

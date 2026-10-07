@@ -38,6 +38,7 @@ export const ERROR_CATALOGUE = {
   preview_changed: { code: 'preview_changed', docs: 'docs/guides/repair.md#preview-changed' },
   projection_owner_resident: { code: 'projection_owner_resident', docs: 'docs/guides/repair.md#projection-owner-resident' },
   file_removed_during_scan: { code: 'file_removed_during_scan', docs: 'docs/guides/repair.md#file-removed-during-scan' },
+  fix_not_writable: { code: 'fix_not_writable', docs: 'docs/guides/repair.md#fix-not-writable' },
   page_projection_conflict: { code: 'page_projection_conflict', docs: 'docs/guides/repair.md#page-projection-conflict' },
   explicit_kind_required: { code: 'explicit_kind_required', docs: 'docs/guides/repair.md#explicit-only-repair-kinds' },
   repair_kind_unavailable: { code: 'unavailable', docs: 'docs/guides/repair.md#explicit-only-repair-kinds' },

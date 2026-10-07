@@ -236,6 +236,81 @@ describe('check-test-isolation.sh', () => {
     });
   });
 
+  describe('R5: a configured gateway must be reset', () => {
+    const IMPORTS = `import { afterAll, afterEach, beforeAll, test } from 'bun:test';\n` +
+      `import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';\n`;
+    const CONFIGURE = `beforeAll(() => configureGateway({ embedding_model: 'litellm:example-embed', env: {} }));\n`;
+    const lintOne = (contents: string, path = 'gateway-user.test.ts') => runLintIn([{ path, contents }]);
+
+    it('flags a file that configures the gateway and never resets it, naming the call line', () => {
+      const r = lintOne(IMPORTS + CONFIGURE + `test('t', () => {});\n`);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain('test/gateway-user.test.ts');
+      expect(r.stdout).toContain('rule R5');
+      expect(r.stdout).toContain('3:beforeAll(() => configureGateway(');
+    });
+
+    it('control: the same file with an afterEach reset passes', () => {
+      const r = lintOne(IMPORTS + CONFIGURE + `afterEach(() => resetGateway());\n`);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('check-test-isolation: OK');
+    });
+
+    it('flags a call through a dynamic import and a call with a space before the paren', () => {
+      for (const call of [
+        `test('t', async () => { (await import('../src/core/ai/gateway.ts')).configureGateway({ env: {} }); });\n`,
+        `beforeAll(() => configureGateway ({ env: {} }));\n`,
+      ]) {
+        const r = lintOne(call);
+        expect(r.status).toBe(1);
+        expect(r.stdout).toContain('rule R5');
+      }
+    });
+
+    it('a reset that only appears in a comment does not count', () => {
+      for (const reset of [
+        `// afterAll(() => resetGateway()) is handled by a sibling file\n`,
+        `/**\n * The suite would call resetGateway() here.\n */\n`,
+        `test('t', () => {}); // TODO resetGateway()\n`,
+      ]) {
+        const r = lintOne(IMPORTS + CONFIGURE + reset);
+        expect(r.status).toBe(1);
+        expect(r.stdout).toContain('rule R5');
+      }
+    });
+
+    it('a configureGateway mention that only appears in a comment is not a call', () => {
+      for (const mention of [
+        `// configureGateway() is set up by the preload\n`,
+        `/*\n  configureGateway({ env: {} });\n*/\n`,
+        `test('t', () => {}); // unlike configureGateway(), this needs no reset\n`,
+      ]) {
+        expect(lintOne(mention + `test('u', () => {});\n`).status).toBe(0);
+      }
+    });
+
+    it('a URL or a glob on a code line does not hide the reset', () => {
+      const r = lintOne(
+        IMPORTS + CONFIGURE +
+        `const fixtures = 'test/*.json';\n` +
+        `afterAll(() => { const u = 'http://localhost:4000'; void u; resetGateway(); });\n`,
+      );
+      expect(r.status).toBe(0);
+    });
+
+    it('the subprocess opt-out exempts a file whose call runs in a child script', () => {
+      const body = 'const child = `\n  configureGateway({ env: {} });\n`;\nvoid child;\n';
+      expect(lintOne(`// isolation-lint: R5-subprocess-only (runs in the spawned child)\n` + body).status).toBe(0);
+      const control = lintOne(body);
+      expect(control.status).toBe(1);
+      expect(control.stdout).toContain('rule R5');
+    });
+
+    it('serial files are out of scope for R5', () => {
+      expect(lintOne(IMPORTS + CONFIGURE, 'gateway-user.serial.test.ts').status).toBe(0);
+    });
+  });
+
   describe('scope', () => {
     it('skips *.serial.test.ts files entirely', () => {
       const r = runLintIn([

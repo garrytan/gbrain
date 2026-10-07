@@ -25,6 +25,11 @@ describe('validateSlug', () => {
   test('rejects leading slash', () => {
     expect(() => validateSlug('/absolute/path')).toThrow('start with /');
   });
+
+  test('keeps a stored .md suffix: legacy identities are refused for new pages at put_page, never renamed here (#4807)', () => {
+    expect(validateSlug('notes/foo.md')).toBe('notes/foo.md');
+    expect(validateSlug('Notes/Foo.MDX')).toBe('notes/foo.mdx');
+  });
 });
 
 describe('contentHash', () => {

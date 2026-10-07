@@ -89,6 +89,18 @@ export function registerCleanup(name: string, fn: () => Promise<void>): () => vo
 }
 
 /**
+ * An AbortSignal that aborts when the cleanup pass runs (an unowned
+ * SIGTERM/SIGHUP, a crash, a broken stdout pipe), for in-flight work that
+ * must not outlive the process, such as a child process gbrain started.
+ * Call `release` when that work settles; a released signal never aborts.
+ */
+export function abortOnCleanupPass(name: string): { signal: AbortSignal; release: () => void } {
+  const controller = new AbortController();
+  const release = registerCleanup(name, async () => { controller.abort(); });
+  return { signal: controller.signal, release };
+}
+
+/**
  * #5062: claim the process's termination signals (SIGTERM, SIGHUP, SIGPIPE
  * and a broken stdout/stderr pipe). Without an owner the generic handler
  * runs every cleanup callback (which DELETEs held DB locks) and exits at

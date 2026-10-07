@@ -246,6 +246,17 @@ describe('runCycle — phase selection', () => {
     await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['orphans'], sourceId: 'source-a' });
     expect(orphansOpts.at(-1)).toEqual({ sourceId: 'source-a' });
   });
+
+  test('fence_repair runs right after sync; a dry run previews the fences kind and a real run applies it (#6188)', async () => {
+    const dry = await runCycle(sharedEngine, { brainDir: '/tmp/brain', dryRun: true });
+    const names = dry.phases.map(p => p.phase);
+    expect(names.indexOf('fence_repair')).toBe(names.indexOf('sync') + 1);
+    expect(dry.phases.find(p => p.phase === 'fence_repair')?.details.mode).toBe('dry_run');
+    await truncateCycleLocks(sharedEngine);
+    const live = await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['fence_repair'] });
+    expect(live.phases).toHaveLength(1);
+    expect(live.phases[0]).toMatchObject({ phase: 'fence_repair', status: 'ok', details: { mode: 'apply' } });
+  });
 });
 
 // ─── Lock-skip for non-DB-write phase selections ──────────────────
@@ -276,6 +287,15 @@ describe('runCycle — cycle lock acquire/release semantics', () => {
     await runCycle(sharedEngine,{ brainDir: '/tmp/brain', phases: ['sync'] });
     const { rows } = await (sharedEngine as any).db.query('SELECT COUNT(*)::int AS n FROM gbrain_cycle_locks');
     expect(rows[0].n).toBe(0);
+  });
+
+  test('phases: [fence_repair] holds the cycle lock while it writes (#6188)', async () => {
+    let held = -1;
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['fence_repair'], yieldBetweenPhases: async () => {
+      const { rows } = await (sharedEngine as any).db.query(`SELECT COUNT(*)::int AS n FROM gbrain_cycle_locks WHERE id = 'gbrain-cycle'`);
+      held = rows[0].n;
+    } });
+    expect(held).toBe(1);
   });
 });
 
@@ -361,6 +381,7 @@ describe('runCycle — engine = null (filesystem-only mode)', () => {
     expect(syncPhase?.details.reason).toBe('no_database');
     const embedPhase = report.phases.find(p => p.phase === 'embed');
     expect(embedPhase?.status).toBe('skipped');
+    expect(report.phases.find(p => p.phase === 'fence_repair')?.details.reason).toBe('no_database');
     // syncCalls + embedCalls are empty because DB-required phases skipped.
     expect(syncCalls.length).toBe(0);
     expect(embedCalls.length).toBe(0);
@@ -465,7 +486,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // conversation_facts_backfill). #5876: 24 (added `chronicle` after drift).
     // GBRA-40 Lane D: 25 (added `facts_drain` after chronicle).
     // Temporal typed edges: 26 (added `edge_contradictions` after calibration_profile).
-    expect(hookCalls).toBe(26);
+    // #6188: 27 (added `fence_repair` after sync).
+    expect(hookCalls).toBe(27);
   });
 
   test('hook exceptions do not abort the cycle', async () => {
@@ -481,7 +503,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.41.11.0: 20 phases (+extract_atoms, +synthesize_concepts, +conversation_facts_backfill).
     // v0.41.39 (#1700) + v0.42.0.0: 22 phases (+enrich_thin, +skillopt).
     // #2653: 23 phases (+drift). #5876: 24 (+chronicle). GBRA-40 Lane D: 25 (+facts_drain). Temporal typed edges: 26 (+edge_contradictions).
-    expect(report.phases.length).toBe(26);
+    // #6188: 27 (+fence_repair).
+    expect(report.phases.length).toBe(27);
   });
 });
 

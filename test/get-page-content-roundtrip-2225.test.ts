@@ -18,7 +18,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
@@ -50,6 +50,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  resetGateway(); // R5: restore the preload baseline for later files in this shard
   await engine.disconnect();
 }, 30_000);
 

@@ -234,14 +234,24 @@ explicitly on Jev, it needs `decide.egress.private allow`.
 
 ### claim support (`grounding`)
 
-After the mechanical checks in dream synthesis, each new claim that passes
-only because it has no quote, number or attribution is checked against up
-to three source windows: "is this claim supported by these sources?". An
-unsupported claim goes to the existing quarantine lane as
-`unsupported_paraphrase`; weak source coverage records
-`insufficient_context` instead. It only adds a check and can never admit a
-claim the mechanical checks rejected. On Jev it needs
-`decide.egress.private allow`.
+When this optional slot is on, every substantive new prose claim that passes
+Dream's mechanical checks is checked against up to three source excerpts:
+"is this claim supported by these sources?". A valid quote, number or speaker
+name does not prove the interpretation around it. Quote repairs happen before
+this check, so quarantine removes the repaired claim from the published body.
+
+An unsupported claim with adequate source coverage goes to the existing
+quarantine lane as `unsupported_paraphrase`. Coverage uses the distinct content
+words in the selected excerpts together, with the existing 25% floor (or a
+normalized substring hit); evidence omitted from those excerpts does not count.
+Weak coverage records `insufficient_context` and keeps the mechanical result.
+The check can never admit a claim the mechanical checks rejected. On Jev it
+needs `decide.egress.private allow`.
+
+This broader coverage can require more decision calls. The existing page/phase
+deadlines and budget limits still apply; behavior when off, on timeout or on a
+provider error is unchanged. Passing mechanical checks alone is not proof of full
+factual support, and enabling this slot does not guarantee the judge is correct.
 
 ### contradiction (`conflict`)
 

@@ -22,6 +22,7 @@ import { countStaleFactEmbeddings } from './facts/embedding-identity.ts';
 import { prepareEmbeddingProjections } from './embedding-readiness.ts';
 import { assertRetainedEmbeddingRebuildability } from './embedding-migration-retention.ts';
 import { annIndexValidity, canonicalChunkAnnIndex, mergeDeferredAnnIndexes, parseDeferredAnnIndexes, type DeferredAnnIndex } from './embedding-ann-build.ts';
+import { SMOKE_QUERY_CHUNK_UNITS, SMOKE_QUERY_TITLE_UNITS } from './embedding-migration-worst-case.ts';
 
 export interface EnvOverrideWarning {
   triggered: boolean;
@@ -891,6 +892,9 @@ export async function readMigrationStatus(engine: BrainEngine): Promise<Migratio
   };
 }
 
+const SMOKE_SAMPLE_BATCH = 25;
+const SMOKE_SAMPLE_SCAN_CHUNKS = 1000;
+
 export interface VerifySearchOutcome {
   status: 'pass' | 'warn' | 'skipped';
   /** Content-free per-sample record — safe to stamp into the completion marker. */
@@ -924,16 +928,28 @@ export async function verifySearchRoundTrip(
       AND p.text_projection_revision=p.knowledge_revision AND p.embedding_signature=$2
       AND NOT (COALESCE(p.frontmatter,'{}'::jsonb) ? 'embed_skip')
       AND (cc.modality IS NULL OR cc.modality='text') AND ${currentSpaceChunkPredicate('embedding', 3, 4)}`;
-    const rows = await engine.executeRaw<{ id: number; slug: string; page_id: number; source_id: string }>(
-      `SELECT cc.id, p.slug, cc.page_id, p.source_id
-         FROM content_chunks cc
-         JOIN pages p ON p.id = cc.page_id
-         JOIN sources s ON s.id=p.source_id
-        WHERE ${eligible}
-        ORDER BY cc.id DESC
-        LIMIT $1`,
-      [n, signature, queryModel, dims],
-    );
+    // One sample per page: walk the newest eligible chunks in small
+    // index-ordered batches (bounded) to pick distinct pages; the longest
+    // eligible chunk of each page is re-read under its page lock.
+    const rows: Array<{ slug: string; page_id: number; source_id: string }> = [];
+    for (let before = '9223372036854775807', scanned = 0; rows.length < n && scanned < SMOKE_SAMPLE_SCAN_CHUNKS;) {
+      const batch = await engine.executeRaw<{ id: number; slug: string; page_id: number; source_id: string }>(
+        `SELECT cc.id, p.slug, cc.page_id, p.source_id
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+           JOIN sources s ON s.id=p.source_id
+          WHERE ${eligible} AND cc.id < $5::bigint
+          ORDER BY cc.id DESC
+          LIMIT $1`,
+        [SMOKE_SAMPLE_BATCH, signature, queryModel, dims, before],
+      );
+      for (const row of batch) {
+        if (rows.length < n && !rows.some(r => Number(r.page_id) === Number(row.page_id))) rows.push(row);
+      }
+      if (batch.length < SMOKE_SAMPLE_BATCH) break;
+      scanned += batch.length;
+      before = String(batch[batch.length - 1].id);
+    }
     if (rows.length === 0) {
       return { status: 'skipped', samples: [], reason_code: 'no_embedded_chunks' };
     }
@@ -942,12 +958,14 @@ export async function verifySearchRoundTrip(
       try {
         const current = await engine.transaction(async tx => {
           await tx.lockPageKeys([{ sourceId: row.source_id, slug: row.slug }]);
-          return tx.executeRaw<{ chunk_text: string }>(`SELECT cc.chunk_text FROM content_chunks cc
+          return tx.executeRaw<{ title: string | null; chunk_text: string }>(`SELECT p.title, cc.chunk_text FROM content_chunks cc
             JOIN pages p ON p.id=cc.page_id JOIN sources s ON s.id=p.source_id
-            WHERE cc.id=$1 AND ${eligible}`, [row.id, signature, queryModel, dims]);
+            WHERE cc.page_id=$1 AND ${eligible}
+            ORDER BY length(cc.chunk_text) DESC, cc.id DESC LIMIT 1`, [row.page_id, signature, queryModel, dims]);
         });
         if (!current.length) continue;
-        const query = current[0].chunk_text.slice(0, 160);
+        const title = current[0].title?.trim().slice(0, SMOKE_QUERY_TITLE_UNITS);
+        const query = `${title ? `${title}\n` : ''}${current[0].chunk_text.slice(0, SMOKE_QUERY_CHUNK_UNITS)}`;
         const vec = await embedQuery(query);
         const results = await engine.searchVector(vec, {
           limit: 10,

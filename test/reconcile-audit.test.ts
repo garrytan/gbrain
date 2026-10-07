@@ -62,6 +62,25 @@ test('bounded audit detects metadata drift and missing files without changing ca
   expect(await engine.executeRaw('SELECT request_id FROM persistence_requests')).toEqual([]);
 }), 60_000);
 
+test('audit reports database-only pages separately; a legacy row without source_path is still drift', () => fixture(async (root, source) => {
+  const insert = `INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter,content_hash,source_path,database_only_reason)
+    VALUES($1,$2,'note','Example','A synthetic observation.','','{}'::jsonb,$3,NULL,$4)`;
+  await engine.executeRaw(insert, [source, 'd-db-only', 'synthetic-dbonly-hash', 'unbound_source']);
+  await engine.executeRaw(insert, [source, 'e-legacy', 'synthetic-legacy-hash', null]);
+  const report = await runReconcileAudit(engine, { source_id: source });
+  expect(report).toMatchObject({ inspected: 5, drifted: 3, errors: 0, database_only: 1 });
+  expect(report.findings.map(row => [row.slug, row.reason])).toEqual([
+    ['b', 'source_changed'], ['c', 'source_changed'], ['d-db-only', 'database_only'], ['e-legacy', 'source_changed']]);
+  const dbOnly = report.findings.find(row => row.slug === 'd-db-only')!;
+  expect(dbOnly.suggestion).not.toContain('sources reconcile');
+  expect(report.findings.find(row => row.slug === 'e-legacy')!.suggestion).toContain('sources reconcile');
+
+  writeFileSync(join(root, 'd-db-only.md'), '---\ntitle: Example\ntype: note\n---\nA file that appeared after binding.\n');
+  const collided = await runReconcileAudit(engine, { source_id: source });
+  expect(collided.database_only).toBe(0);
+  expect(collided.findings.find(row => row.slug === 'd-db-only')?.reason).not.toBe('database_only');
+}), 60_000);
+
 test('audit cursor is bounded, explicit and not a source checkpoint', () => fixture(async (_root, source) => {
   const first = await runReconcileAudit(engine, { source_id: source, limit: 1 });
   expect(first).toMatchObject({ inspected: 1, drifted: 0, next_after: 'a', complete: false });

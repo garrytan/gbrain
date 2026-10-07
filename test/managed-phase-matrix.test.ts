@@ -136,6 +136,15 @@ const MATRIX: Record<CyclePhase, Entry> = {
       expect((await engine.getPage('notes/sync-example', { sourceId }))?.compiled_truth).toContain('A synced observation.');
     },
   },
+  fence_repair: {
+    // The phase runs the registered `fences` kind as a trusted apply on the managed brain; with no malformed
+    // fence seeded it must finish without a refusal or a stop and report the kind's (empty) result.
+    seed: async ({ engine, sourceId }) => put(engine, sourceId, 'people/alice-example', page('person', 'Alice', 'A person with no fences.')),
+    assert: async ({ result }) => {
+      expect(result.status).toBe('ok');
+      expect(result.details).toMatchObject({ mode: 'apply', repaired: 0, stopped_reason: null, llm_usd: 0 });
+    },
+  },
   synthesize: {
     seed: async ({ engine, sourceId, root }) => {
       await put(engine, sourceId, 'people/example', page('note', 'Example', 'Example evidence.'));

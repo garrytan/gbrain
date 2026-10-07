@@ -24,6 +24,7 @@ test/doctor-frontmatter-holds.test.ts
 test/embedding-completion-atomic.serial.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/extract-endpoint-revision.serial.test.ts
+test/fence-repair-receipts.test.ts
 test/graduation-copy.test.ts
 test/graduation-digest.test.ts
 test/graduation-drain.test.ts
@@ -42,6 +43,7 @@ test/managed-cycle-pull-upstream.test.ts
 test/managed-lint.test.ts
 test/managed-maintenance-links.test.ts
 test/managed-sweep-corpus-windows.test.ts
+test/managed-sweep-refused-window-retry.test.ts
 test/managed-sweep-timeline.test.ts
 test/managed-sync-bulk.test.ts
 test/managed-sync-chunker-version.test.ts
@@ -68,9 +70,11 @@ test/persistence-physical-root-device.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
 test/persistence-sync-cursor-options.test.ts
+test/persistence-sync-fence-holds.test.ts
 test/persistence-sync-holds.test.ts
 test/persistence-writer-fences.test.ts
 test/repair-embedding-effects.test.ts
+test/repair-fences.test.ts
 test/repair-frontmatter.test.ts
 test/scripts/test-stress-postgres.test.ts
 test/shared-content-freshness.test.ts

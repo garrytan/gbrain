@@ -15,7 +15,13 @@
  * etc.) doesn't get dropped the same way.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
+import {
+  __setChatTransportForTests,
+  resetGateway,
+  type ChatOpts,
+  type ChatResult,
+} from '../src/core/ai/gateway.ts';
 import { extractFactsFromTurn, parseExtractorJson } from '../src/core/facts/extract.ts';
 
 describe('extractFactsFromTurn', () => {
@@ -46,6 +52,40 @@ describe('extractFactsFromTurn', () => {
     // No ANTHROPIC_API_KEY in test env → isAvailable('chat') is false →
     // empty array, no throw.
     expect(Array.isArray(r)).toBe(true);
+  });
+});
+
+describe('extractFactsFromTurn: sanitization keeps ordinary words (#5910)', () => {
+  afterEach(() => {
+    __setChatTransportForTests(null);
+    resetGateway();
+  });
+
+  test('the name "Dan" survives in the prompt and in the stored fact', async () => {
+    const seen: ChatOpts[] = [];
+    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      seen.push(opts);
+      return {
+        text: JSON.stringify({
+          facts: [{ fact: 'Dan moved the launch to Friday', kind: 'event', notability: 'high' }],
+        }),
+        blocks: [],
+        stopReason: 'end',
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'test:stub',
+        providerId: 'test',
+      };
+    });
+
+    const facts = await extractFactsFromTurn({
+      turnText: 'Dan said the launch moves to Friday.',
+      source: 'test:5910',
+      embedding: null,
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(JSON.stringify(seen[0]!.messages)).toContain('Dan said the launch moves to Friday.');
+    expect(facts.map(f => f.fact)).toEqual(['Dan moved the launch to Friday']);
   });
 });
 

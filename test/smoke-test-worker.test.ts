@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { spawnSync } from 'child_process';
@@ -8,7 +8,7 @@ const REPO = resolve(import.meta.dir, '..');
 const SCRIPT = join(REPO, 'scripts', 'smoke-test.sh');
 const tempDirs: string[] = [];
 
-function runSmoke(opts: { supervisorRunning: boolean; legacyPid?: number; configUrlOnly?: boolean; embeddingStatus?: string }) {
+function runSmoke(opts: { supervisorRunning: boolean; legacyPid?: number; configUrlOnly?: boolean; embeddingStatus?: string; path?: string }) {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-smoke-worker-'));
   tempDirs.push(dir);
   const fakeBun = join(dir, 'bun');
@@ -61,6 +61,7 @@ exit 0
       SMOKE_BUN_CALLS: calls,
       SMOKE_WORKER_STARTED: workerStarted,
       SMOKE_SUPERVISOR_RUNNING: opts.supervisorRunning ? '1' : '0',
+      PATH: opts.path ?? process.env.PATH,
     },
   });
   return { ...result, calls, workerStarted, workerPid };
@@ -111,5 +112,102 @@ describe('smoke-test database and embedding sources (#5063)', () => {
     const result = runSmoke({ supervisorRunning: true, embeddingStatus: 'fail' });
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('doctor embedding_provider failed');
+  }, 30_000);
+});
+
+const NO_TIMEOUT_TOOLS = ['timeout', 'gtimeout'];
+
+/**
+ * process.env.PATH with the named tools made unreachable, the way a stock
+ * macOS host looks without GNU coreutils: a directory that holds any of them
+ * is swapped for a mirror of symlinks to everything else in it.
+ */
+function pathHiding(hidden: string[], extraFront: string[] = []): string {
+  const root = mkdtempSync(join(tmpdir(), 'gbrain-smoke-path-'));
+  tempDirs.push(root);
+  const dirs = (process.env.PATH ?? '').split(':').filter(Boolean).map((dir, index) => {
+    if (!existsSync(dir)) return dir;
+    const names = readdirSync(dir);
+    if (!names.some(name => hidden.includes(name))) return dir;
+    const mirror = join(root, `mirror-${index}`);
+    mkdirSync(mirror);
+    for (const name of names) if (!hidden.includes(name)) symlinkSync(join(dir, name), join(mirror, name));
+    return mirror;
+  });
+  return [...extraFront, ...dirs].join(':');
+}
+
+/** Run a bash snippet with the smoke script's with_deadline function defined, in a scratch cwd. */
+function withDeadlineShell(snippet: string, path: string) {
+  const fn = readFileSync(SCRIPT, 'utf8').match(/^with_deadline\(\) \{\n[\s\S]*?\n\}\n/m);
+  expect(fn, 'scripts/smoke-test.sh defines with_deadline').not.toBeNull();
+  const cwd = mkdtempSync(join(tmpdir(), 'gbrain-smoke-deadline-'));
+  tempDirs.push(cwd);
+  const begin = performance.now();
+  const out = spawnSync('bash', ['-c', `${fn![0]}\n${snippet}`], { cwd, encoding: 'utf8', timeout: 25_000, env: { ...process.env, PATH: path } });
+  return { ...out, cwd, ms: performance.now() - begin };
+}
+
+function alive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+describe('smoke-test checks stay bounded without a timeout binary (#5248)', () => {
+  test('the whole smoke run passes on a PATH with neither timeout nor gtimeout', () => {
+    const path = pathHiding(NO_TIMEOUT_TOOLS);
+    expect(spawnSync('bash', ['-c', 'command -v timeout || command -v gtimeout'], { env: { PATH: path } }).status).not.toBe(0);
+    const result = runSmoke({ supervisorRunning: true, path });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).not.toContain('not found');
+    expect(result.stdout).toContain('health score: 97/100');
+    expect(result.stdout).toContain('GBrain worker (supervisor-managed)');
+    const calls = readFileSync(result.calls, 'utf8');
+    for (const bounded of ['--help', 'engine status --json', 'doctor --json', 'jobs supervisor status --json']) {
+      expect(calls).toContain(bounded);
+    }
+  }, 30_000);
+
+  test('a command still running at the deadline is stopped and reported as 124', () => {
+    const run = withDeadlineShell(`with_deadline 1 sh -c 'echo $$ > child.pid; exec sleep 30'; echo "rc=$?"`, pathHiding(NO_TIMEOUT_TOOLS));
+    expect(run.stdout.trim()).toBe('rc=124');
+    expect(run.ms).toBeLessThan(5_000);
+    expect(alive(Number(readFileSync(join(run.cwd, 'child.pid'), 'utf8')))).toBe(false);
+  }, 30_000);
+
+  test('a command that ignores TERM is killed', () => {
+    const run = withDeadlineShell(`with_deadline 1 sh -c 'trap "" TERM; echo $$ > child.pid; exec sleep 30'; echo "rc=$?"`, pathHiding(NO_TIMEOUT_TOOLS));
+    expect(run.stdout.trim()).toBe('rc=124');
+    expect(run.ms).toBeLessThan(6_000);
+    expect(alive(Number(readFileSync(join(run.cwd, 'child.pid'), 'utf8')))).toBe(false);
+  }, 30_000);
+
+  test('a command that finishes in time returns its own status at once, even close to the limit', () => {
+    const run = withDeadlineShell(
+      `with_deadline 20 sh -c 'exit 7'; echo "a=$?"; with_deadline 20 true; echo "b=$?"; with_deadline 2 sh -c 'sleep 1; exit 5'; echo "c=$?"`,
+      pathHiding(NO_TIMEOUT_TOOLS),
+    );
+    expect(run.stdout.trim().split('\n')).toEqual(['a=7', 'b=0', 'c=5']);
+    expect(run.ms).toBeLessThan(4_000);
+  }, 30_000);
+
+  test('arguments reach the command exactly as given and are never evaluated', () => {
+    const run = withDeadlineShell(`with_deadline 5 printf '%s|' 'two words' '$(touch injected)' '; touch injected2' '*'`, pathHiding(NO_TIMEOUT_TOOLS));
+    expect(run.stdout).toBe('two words|$(touch injected)|; touch injected2|*|');
+    expect(existsSync(join(run.cwd, 'injected'))).toBe(false);
+    expect(existsSync(join(run.cwd, 'injected2'))).toBe(false);
+  }, 30_000);
+
+  test('an installed timeout or gtimeout does the bounding instead of the fallback', () => {
+    const fakes = mkdtempSync(join(tmpdir(), 'gbrain-smoke-fake-timeout-'));
+    tempDirs.push(fakes);
+    for (const tool of NO_TIMEOUT_TOOLS) {
+      mkdirSync(join(fakes, tool));
+      writeFileSync(join(fakes, tool, tool), `#!/bin/sh\necho "${tool}:$*"\n`);
+      chmodSync(join(fakes, tool, tool), 0o755);
+    }
+    const both = withDeadlineShell('with_deadline 9 echo hi', pathHiding(NO_TIMEOUT_TOOLS, [join(fakes, 'timeout'), join(fakes, 'gtimeout')]));
+    expect(both.stdout.trim()).toBe('timeout:9 echo hi');
+    const homebrewOnly = withDeadlineShell('with_deadline 9 echo hi', pathHiding(NO_TIMEOUT_TOOLS, [join(fakes, 'gtimeout')]));
+    expect(homebrewOnly.stdout.trim()).toBe('gtimeout:9 echo hi');
   }, 30_000);
 });

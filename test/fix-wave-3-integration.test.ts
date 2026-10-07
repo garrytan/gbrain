@@ -432,7 +432,7 @@ test('check 9: every registered repair kind reaches the remediation plan with it
     await engine.executeRaw("UPDATE pages SET contextual_retrieval_mode=NULL,chunker_version=1,text_projection_revision=gen_random_uuid() WHERE source_id=$1 AND slug='people/second-example'", [f.id]);
     await engine.executeRaw("INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES('managed-connector',$1,'[]'::jsonb,now()-interval '9 days')", [`orphan-${randomUUID()}`]);
     const kinds = AUTO_REPAIR_REGISTRY.map(spec => spec.kind);
-    expect(kinds).toEqual(['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats']);
+    expect(kinds).toEqual(['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'fences']);
     const planned = Object.fromEntries((await planRepairSteps(engine, { noEmbed: true })).map(step => [step.kind, step]));
     expect(planned['contextual-mode']).toMatchObject({ paid: false, embeds: 'inline', command: 'gbrain repair contextual-mode --no-embed --apply' });
     expect(planned['connector-checkpoints']).toMatchObject({ paid: false, embeds: 'none' });

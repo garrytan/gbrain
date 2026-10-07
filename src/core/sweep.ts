@@ -771,6 +771,7 @@ async function runCorpusIngestPass(
         abortSignal: signal,
         // #5888: the file's write time anchors the capture dedup window, not the (possibly late) sweep.
         turnAt: await stat(full).then(st => st.mtime, () => undefined),
+        reAdmitFileRefusals: true,
         ...(wbMeta && wbCfg.mode === 'salient' ? { notabilityFilter: 'medium-and-up' as const } : {}),
         // visibility deliberately unset → resolveDefaultVisibility [ENG-8]
       };

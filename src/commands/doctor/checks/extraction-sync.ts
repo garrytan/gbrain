@@ -26,6 +26,7 @@ import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync
 import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
 import { scannerSlugRootMode } from '../../../core/write-through.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
+import { quarantineFilterFragment } from '../../../core/quarantine.ts';
 import { managedPersistenceEnabled } from '../../../core/persistence/ownership.ts';
 import { upstreamFreshness } from '../../../core/sync-upstream.ts';
 import type { Check } from '../../doctor.ts';
@@ -109,8 +110,8 @@ export async function checkLinksExtractionLag(
   try {
     const totalRows = await engine.executeRaw<{ count: number }>(
       sourceId
-        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND source_id = $1`
-        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL`,
+        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND ${quarantineFilterFragment('pages')} AND source_id = $1`
+        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND ${quarantineFilterFragment('pages')}`,
       sourceId ? [sourceId] : [],
     );
     const total = Number(totalRows[0]?.count ?? 0);
@@ -240,7 +241,6 @@ export async function checkUnverifiedExtractions(
  */
 export async function checkContentHashDuplicates(engine: BrainEngine): Promise<Check> {
   const name = 'content_hash_duplicates';
-  const fix = 'Fix: gbrain pages delete <bare-slug> for each pair, then gbrain pages purge-deleted --older-than 0';
   try {
     // #3946: no shape predicates — EVERY same-source duplicate-content group
     // surfaces (HAVING count(*) > 1 alone). Classification happens at render:
@@ -262,6 +262,7 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
       return { name, status: 'ok', message: 'No same-source content-hash duplicate groups' };
     }
     let pairCount = 0;
+    const pairSources = new Set<string>();
     const samples: string[] = [];
     let otherGroupCount = 0;
     const otherSamples: string[] = [];
@@ -273,6 +274,7 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
         for (const b of bare) {
           const twin = prefixed.find(p => p.endsWith('/' + b)) ?? prefixed[0];
           pairCount++;
+          pairSources.add(r.source_id);
           if (samples.length < 5) samples.push(`${b} <-> ${twin}`);
         }
       } else {
@@ -282,6 +284,12 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
     }
     const parts: string[] = [];
     if (pairCount > 0) {
+      // `gbrain delete` soft-deletes in the active source, so the command pins
+      // the pairs' source; --force because page writes are revisioned and a
+      // delete naming neither --force nor --expected-revision is refused.
+      const source = pairSources.size === 1 ? [...pairSources][0] : '<source-id>';
+      const sourceNote = pairSources.size === 1 ? '' : ` (pairs span sources ${[...pairSources].sort().join(', ')}; run it once per pair with that pair's source)`;
+      const fix = `Fix: GBRAIN_SOURCE=${source} gbrain delete <bare-slug> --force for each pair${sourceNote}.`;
       parts.push(
         `${pairCount} content-hash duplicate pair(s) detected (same content, differing slug forms — ` +
         `usually an import run from the wrong root, which drops the path prefix). ` +
@@ -1455,7 +1463,7 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'fail',
-        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` for each stale source${inProgressNote}`,
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>${managed ? ' --no-pull' : ''}\` for each stale source${inProgressNote}`,
         details,
       };
     }
@@ -1463,7 +1471,7 @@ export async function checkSyncFreshness(
       return {
         name: 'sync_freshness',
         status: 'warn',
-        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>\` to refresh${inProgressNote}`,
+        message: `${issues.join('; ')}. Run \`gbrain sync --source <id>${managed ? ' --no-pull' : ''}\` to refresh${inProgressNote}`,
         details,
       };
     }

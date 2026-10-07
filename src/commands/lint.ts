@@ -53,11 +53,11 @@ export interface LintIssue {
   rule: string;
   message: string;
   fixable: boolean;
-  /** The stable machine code: a managed-brain repair that waits, or a listed file removed before lint read it. */
-  code?: 'managed_write_pending' | 'file_removed_during_scan';
-  /** Why it waits: the coordinator refusal's reason (`file_database_drift`, `held_file`, `canonical_file_missing`, ...), `revision_changed` or `not_indexed`. */
+  /** The stable machine code: a repair that was not applied (`managed_write_pending` from a managed brain's coordinator, `fix_not_writable` when the file refused the write), or a listed file removed before lint read it (`file_removed_during_scan`). */
+  code?: 'managed_write_pending' | 'fix_not_writable' | 'file_removed_during_scan';
+  /** Why: the coordinator refusal's reason (`file_database_drift`, `held_file`, `canonical_file_missing`, ...), `revision_changed`, `not_indexed`, or the lowercased errno (`eacces`, `eperm`, `erofs`). */
   reason?: string;
-  /** The coordinator refusal's own next step, rendered for the CLI; lint never adds one of its own. */
+  /** The next step, rendered for the CLI: the coordinator refusal's own fix, or the owner's permission fix. */
   fix?: RenderedAction;
   docs?: string;
 }
@@ -84,14 +84,42 @@ const FRONTMATTER_FIXABLE: ReadonlySet<ParseValidationCode> = new Set<ParseValid
 
 // ── LLM artifact patterns ──────────────────────────────────────────
 
+// Anchored to the start of the page body (no `g`/`m` flags): an LLM prepends
+// a preamble to its output, so a line further down that merely begins
+// "Sure! Here is..." (a quoted reply, a transcript turn) is real content.
 const LLM_PREAMBLES = [
-  /^Of course\.?\s*Here is (?:a |the )?(?:detailed |comprehensive |updated )?(?:brain )?page[^.\n]*\.?\s*\n*/gim,
-  /^Certainly\.?\s*Here is[^.\n]*\.?\s*\n*/gim,
-  /^Here is (?:a |the )?(?:detailed |comprehensive |updated )?(?:brain )?page[^.\n]*\.?\s*\n*/gim,
-  /^I've (?:created|updated|written|prepared) (?:a |the )?(?:detailed |comprehensive )?(?:brain )?page[^.\n]*\.?\s*\n*/gim,
-  /^Sure(?:!|,)?\s*Here (?:is|are)[^.\n]*\.?\s*\n*/gim,
-  /^Absolutely\.?\s*Here[^.\n]*\.?\s*\n*/gim,
+  /^Of course\.?\s*Here is (?:a |the )?(?:detailed |comprehensive |updated )?(?:brain )?page[^.\n]*\.?\s*\n*/i,
+  /^Certainly\.?\s*Here is[^.\n]*\.?\s*\n*/i,
+  /^Here is (?:a |the )?(?:detailed |comprehensive |updated )?(?:brain )?page[^.\n]*\.?\s*\n*/i,
+  /^I've (?:created|updated|written|prepared) (?:a |the )?(?:detailed |comprehensive )?(?:brain )?page[^.\n]*\.?\s*\n*/i,
+  /^Sure(?:!|,)?\s*Here (?:is|are)[^.\n]*\.?\s*\n*/i,
+  /^Absolutely\.?\s*Here[^.\n]*\.?\s*\n*/i,
 ];
+
+const LEADING_FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
+const LEADING_MARKDOWN_FENCE = /^```(?:markdown|md)[ \t]*\r?\n/;
+
+/**
+ * The leading LLM preamble run (stacked preamble lines) at a body start: the
+ * top of the file, right after a leading frontmatter block, or right after a
+ * whole-page ```markdown wrapper, leading blank lines skipped. Returns the
+ * [start, end) span to remove, or null. Detection and repair both use it.
+ */
+function findLeadingPreamble(content: string): { start: number; end: number } | null {
+  const skipBlank = (i: number) => i + (/^\s*/.exec(content.slice(i))?.[0].length ?? 0);
+  const anchors = [0, LEADING_FRONTMATTER.exec(content)?.[0].length, LEADING_MARKDOWN_FENCE.exec(content)?.[0].length]
+    .filter((a): a is number => a !== undefined).map(skipBlank);
+  for (const start of anchors) {
+    let end = start;
+    for (let guard = 0; guard < 16; guard++) {
+      const hit = LLM_PREAMBLES.map(p => p.exec(content.slice(end))).find(m => m && m[0].length > 0);
+      if (!hit) break;
+      end += hit[0].length;
+    }
+    if (end > start) return { start, end };
+  }
+  return null;
+}
 
 // ── Rules ──────────────────────────────────────────────────────────
 
@@ -152,16 +180,14 @@ export function lintContent(content: string, filePath: string, opts: LintContent
     issues.push({ file: filePath, line: d.line, rule: 'line-grammar', message: `${d.message} (${d.reason})`, fixable: false });
   }
 
-  // Rule: LLM preamble artifacts
-  for (const pattern of LLM_PREAMBLES) {
-    pattern.lastIndex = 0;
-    if (pattern.test(content)) {
-      issues.push({
-        file: filePath, line: 1, rule: 'llm-preamble',
-        message: 'LLM preamble artifact detected (e.g., "Of course! Here is...")',
-        fixable: true,
-      });
-    }
+  // Rule: LLM preamble artifacts (only a leading run; see findLeadingPreamble)
+  const preamble = findLeadingPreamble(content);
+  if (preamble) {
+    issues.push({
+      file: filePath, line: content.slice(0, preamble.start).split('\n').length, rule: 'llm-preamble',
+      message: 'LLM preamble artifact detected (e.g., "Of course! Here is...")',
+      fixable: true,
+    });
   }
 
   // Rule: Wrapping code fences (```markdown ... ```)
@@ -378,11 +404,9 @@ export function promoteCreatedFromCapture(content: string): string {
 export function fixContent(content: string): string {
   let fixed = content;
 
-  // Fix LLM preambles
-  for (const pattern of LLM_PREAMBLES) {
-    pattern.lastIndex = 0;
-    fixed = fixed.replace(pattern, '');
-  }
+  // Fix LLM preambles: only the leading run at a body start.
+  const preamble = findLeadingPreamble(fixed);
+  if (preamble) fixed = fixed.slice(0, preamble.start) + fixed.slice(preamble.end);
 
   // Fix wrapping code fences
   fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
@@ -594,9 +618,10 @@ export interface LintResult {
   /** #5180: where fixes went — the worktree (legacy), the persistence
    *  coordinator (managed brain), or nowhere (report-only / dry-run). */
   write_path: 'filesystem' | 'coordinator' | 'none';
-  /** #5180: fixes a managed brain could not publish this run (the file has
-   *  no indexed page, or the page changed mid-scan); each is reported as a
-   *  non-fixable `managed-write-pending` issue and retried next cycle. */
+  /** Fixes not applied this run: a managed brain could not publish them (#5180:
+   *  no indexed page, or the page changed mid-scan; `managed-write-pending`),
+   *  or the file refused the write (`fix-not-writable`). Each is a non-fixable
+   *  issue and is retried on the next run. */
   fix_pending: number;
   /** The first MAX_PENDING_ISSUES of those issues with their code, reason and fix. */
   pending_issues: LintIssue[];
@@ -619,6 +644,32 @@ function removedDuringScanIssue(file: string, target: string): LintIssue {
     fix: renderAction({ argv: ['gbrain', 'lint', target], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Lists the tree again and lints the files present now.' }, cliRenderContext()),
     docs: docsUrl(ERROR_CATALOGUE.file_removed_during_scan.docs) };
+}
+
+const UNWRITABLE_CODES: ReadonlySet<string> = new Set(['EACCES', 'EPERM', 'EROFS']);
+
+/**
+ * Write one filesystem lint fix. A file the process may not write (EACCES,
+ * EPERM, EROFS: permissions or a read-only mount) is left unchanged and
+ * returned as a non-fixable `fix-not-writable` issue so the rest of the tree
+ * is still linted; any other write error propagates.
+ */
+function writeLintFixOrRefusal(page: string, relPath: string, fixed: string): LintIssue | null {
+  try {
+    writeSourceFileSync(page, fixed);
+    return null;
+  } catch (e) {
+    const errno = (e as NodeJS.ErrnoException | null)?.code;
+    if (typeof errno !== 'string' || !UNWRITABLE_CODES.has(errno)) throw e;
+    const envelope = toAgentError(opError('fix_not_writable', `fix not applied: ${relPath} is not writable (${errno}); the file was left unchanged.`,
+      'Make the file writable by the user running gbrain, or pass its directory or file name to `gbrain lint --exclude`, then lint again.', {
+        why: 'Lint repairs files in place, and this file refused the write (its permissions or a read-only mount).',
+        fix: { consent: [], actor: 'user', requires_exclusive: false, why: 'Only the file owner can change its permissions or mount.',
+          user_message: `Make ${relPath} writable for gbrain, or exclude it from lint.` },
+      }), { transport: 'cli', command: 'lint', render: cliRenderContext() });
+    return { file: relPath, line: 1, rule: 'fix-not-writable', fixable: false, code: 'fix_not_writable', reason: errno.toLowerCase(),
+      message: envelope.message, ...(envelope.fix ? { fix: envelope.fix } : {}), docs: docsUrl(ERROR_CATALOGUE.fix_not_writable.docs) };
+  }
 }
 
 function refusalReason(error: OperationError): string {
@@ -818,11 +869,16 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
           }
         } else {
           assertSourceFilesystemActive();
-          writeSourceFileSync(page, fixed);
-          if (commitFixes) {
-            commitWriteThroughFile(repoProbe, page, relative(repoProbe, page).replace(/\.md$/u, ''));
+          const unwritable = writeLintFixOrRefusal(page, relPath, fixed);
+          if (unwritable) {
+            issues.push(unwritable);
+            totalIssues++;
+            fixPending++;
+            if (pendingIssues.length < MAX_PENDING_ISSUES) pendingIssues.push(unwritable);
+          } else {
+            if (commitFixes) commitWriteThroughFile(repoProbe, page, relative(repoProbe, page).replace(/\.md$/u, ''));
+            fixCount = fixable;
           }
-          fixCount = fixable;
         }
         totalFixed += fixCount;
       }

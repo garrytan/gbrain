@@ -95,8 +95,11 @@ test('canonical replacement and revert restore facts, takes and timeline from co
   expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL',[sourceId,'projections'])).toHaveLength(2);
   expect(await engine.executeRaw('SELECT id FROM takes WHERE page_id=$1',[before.page.id])).toHaveLength(2);
   expect(await engine.getTimeline('projections',{sourceId})).toHaveLength(1);
-  const invalid=content.replace('Second fact','Conflicting fact').replace('| 2 | Conflicting fact','| 1 | Conflicting fact');
-  await expect(submit('put_page',{slug:'projections',content:invalid,expected_revision:restored.revision})).rejects.toMatchObject({code:'invalid_params'});
+  // #6188: a fence Tier 1 cannot fix exactly (a visibility no synonym maps) still refuses typed and changes nothing;
+  // a duplicate row number, which Tier 1 renumbers, is covered in test/fence-write-verbs.test.ts.
+  const invalid=content.replace('Second fact','Conflicting fact').replace(/(\| 2 \| Conflicting fact \| fact \| [^|]+ \| )world( \|)/,'$1nonvisible$2');
+  expect(invalid).toContain('| nonvisible |');
+  await expect(submit('put_page',{slug:'projections',content:invalid,expected_revision:restored.revision})).rejects.toMatchObject({code:'invalid_params',canonicalCode:'invalid_fence'});
   expect((await engine.readPageSnapshot('projections',{sourceId}))!.revision).toBe(restored.revision);
 });
 

@@ -334,7 +334,7 @@ describe('pullRepo', () => {
     const repo = join(FAKE_GIT_DIR, 'pull-target');
     mkdirSync(repo, { recursive: true });
     await withEnv({ PATH: fakePath() }, async () => {
-      pullRepo(repo);
+      await pullRepo(repo);
     });
     const argv = readArgvLog()[0];
     expect(argv[0]).toBe('-C');
@@ -357,7 +357,7 @@ describe('pullRepo', () => {
     mkdirSync(repo, { recursive: true });
     setMode('fail');
     await withEnv({ PATH: fakePath() }, async () => {
-      expect(() => pullRepo(repo)).toThrow(GitOperationError);
+      await expect(pullRepo(repo)).rejects.toThrow(GitOperationError);
     });
     rmSync(repo, { recursive: true, force: true });
   });
@@ -520,11 +520,11 @@ describe('#1315 — stderr-first GitOperationError (real git, file-origin repo)'
   // skipIf: pins "git's own fatal: appears within the first 200 chars" —
   // unrunnable behind an ambient git PATH shim that prints its own stderr
   // first (e.g. Conductor's auth-broker wrapper). See helpers/git-stderr-probe.
-  test.skipIf(!gitStderrLeads())('pullRepo message leads with the real git stderr, not the Command-failed envelope', () => {
+  test.skipIf(!gitStderrLeads())('pullRepo message leads with the real git stderr, not the Command-failed envelope', async () => {
     const mirror = mkFileOriginMirror();
     let threw: GitOperationError | undefined;
     try {
-      pullRepo(mirror);
+      await pullRepo(mirror);
     } catch (e) {
       threw = e as GitOperationError;
     }

@@ -16,6 +16,7 @@ Under contract v1 an `error` value never changes. Where a surface sends a legacy
 | `error` (frozen) | `code` (canonical) | Meaning |
 |---|---|---|
 | `permission_denied` | `insufficient_scope` | The connection lacks the OAuth scope the operation requires. |
+| `invalid_params` | `invalid_fence` | A facts or takes fence in the page cannot be imported without dropping or guessing rows, so the page (or the file) was not written. |
 | `invalid_params` | `not_found` | The requested resource does not exist or is not visible to this caller. |
 | `page_identity_changed` | `page_not_found` | No page with that slug exists in the selected source. |
 | `permission_denied` | `trusted_local_only` | The operation runs only from the trusted local CLI on the brain host; no MCP connection can call it. |
@@ -941,6 +942,16 @@ More: [docs/guides/repair.md#file-removed-during-scan](../../docs/guides/repair.
 |---|---|---|---|---|---|---|
 | The file is over the import size limit (5 MB for Markdown and code, 10 MiB for any sync read), so it was not imported. | Size limits bound parsing, chunking and embedding cost. The same bytes refuse on every retry. | Split the file into smaller files, or leave it out of the source (sync.exclude), then sync or import again. | agent | `repeat the read that failed` | 1 | no |
 
+### fix_not_writable
+
+<a id="fix_not_writable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrain lint fix was not applied because the file refused the write (EACCES, EPERM or EROFS); the file was left unchanged. | Lint repairs files in place, and this file's permissions or a read-only mount stopped the write; lint reports it and continues with the remaining files. | Make the file writable by the user running gbrain, or pass its directory or file name to gbrain lint --exclude, then lint again. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/repair.md#fix-not-writable](../../docs/guides/repair.md#fix-not-writable)
+
 ### follow_approval_required
 
 <a id="follow_approval_required"></a>
@@ -1274,6 +1285,18 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Invalid connector text. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### invalid_fence
+
+<a id="invalid_fence"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A facts or takes fence in the page cannot be imported without dropping or guessing rows, so the page (or the file) was not written. | Facts and takes fences are the page's structured rows. Importing a fence that does not parse, repeats a marker or reuses a row number would silently drop or renumber rows, so coordinated writers refuse it and managed sync holds the one file while the rest of the source syncs. | A refused write: fix the fence the message names (fence, section and rows; the reason says what is wrong) and send the page again with a new request_id, or write rows with remember / takes_add. A held file or stored page: the maintenance run repairs it; preview it now with gbrain repair fences --source <id> on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `header_unmapped`, `no_header`, `row_before_header`, `short_row`, `extra_cells`, `claim_split`, `holder_unresolved`, `missing_begin`, `split_rows`, `unclosed_trailing_content`, `marker_near_miss`, `repeated_marker`, `takes_in_facts`, `superseded_ambiguous`, `enum_unmapped`, `weight_missing`, `holder_missing`, `confidence_out_of_range`, `claim_value_invalid`, `takes_kind_unsupported`, `unparseable`, `row_collision`, `quoted_fence_rows`, `stored_row_collision`, `withdrawn_claim_in_malformed_fence`, `target_fence_malformed`, `prepare_time`, `normalizer_failed`, `llm_unavailable`, `llm_empty`, `llm_refused`, `llm_malformed`, `llm_truncated`, `llm_declined`, `llm_disabled`, `no_measured_model`, `budget_exhausted`, `no_pricing`, `ledger_unavailable`, `owner_unavailable`, `owner_cli_required`, `sync_in_progress`, `time_budget`, `changed_since_read`, `changed_since_preview`, `still_invalid`, `claim_changed`, `row_number_changed`, `visibility_loosened`, `row_count_changed`, `cell_changed`, `protection_loosened`.
+
+More: [docs/guides/write-refusals.md#invalid_fence](../../docs/guides/write-refusals.md#invalid_fence)
 
 ### invalid_frontmatter
 

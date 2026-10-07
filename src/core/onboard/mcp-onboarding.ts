@@ -17,6 +17,7 @@ import type { Action, Notice, RenderContext } from '../agent-output.ts';
 import { gbrainPath, type GBrainConfig } from '../config.ts';
 import { configReadiness } from '../readiness.ts';
 import { recallStagesFor } from '../interop-notices.ts';
+import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
 
 export const LINK_COVERAGE_MIN = 0.7;
 export const TIMELINE_COVERAGE_MIN = 0.9;
@@ -41,7 +42,8 @@ export interface OnboardCounts {
 }
 
 const COUNT_SQL = [
-  `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL`,
+  `SELECT COUNT(*) AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+           WHERE cc.embedding IS NULL AND p.deleted_at IS NULL AND ${EMBED_SKIP_FILTER_FRAGMENT}`,
   `SELECT COUNT(*) AS count FROM pages
            WHERE type IN ('person', 'company', 'organization', 'entity')
              AND deleted_at IS NULL`,

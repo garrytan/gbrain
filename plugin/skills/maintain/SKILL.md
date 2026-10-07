@@ -151,6 +151,12 @@ phases like atoms/concepts/drift slot in between):
 lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
 ```
 
+`fence_repair` runs right after `sync`, once per maintenance pass: it repairs
+the facts and takes fences sync held or pages store malformed (the same plan
+`gbrain repair fences` previews), for at most 300 s or a third of the job's
+remaining time, and resumes on the next run. Pause it with
+`gbrain config set fences.repair.enabled false`.
+
 The two new phases consolidate yesterday's conversations into long-term memory:
 
 **Synthesize phase (two-stage cascade):** reads transcripts from

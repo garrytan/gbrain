@@ -1006,6 +1006,10 @@
             "via": "tagged"
           },
           {
+            "paramCount": 0,
+            "via": "tagged"
+          },
+          {
             "paramCount": 8,
             "unsafeOptions": {
               "prepare": false,
@@ -1015,6 +1019,10 @@
           }
         ],
         "cjk+sourceIds+detailLow": [
+          {
+            "paramCount": 0,
+            "via": "tagged"
+          },
           {
             "paramCount": 0,
             "via": "tagged"
@@ -1036,6 +1044,10 @@
             "via": "tagged"
           },
           {
+            "paramCount": 0,
+            "via": "tagged"
+          },
+          {
             "paramCount": 7,
             "unsafeOptions": {
               "prepare": false,
@@ -1045,6 +1057,10 @@
           }
         ],
         "cjk+sourceId": [
+          {
+            "paramCount": 0,
+            "via": "tagged"
+          },
           {
             "paramCount": 0,
             "via": "tagged"
@@ -2568,6 +2584,28 @@
         "excludePrivate": [
           {
             "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "limit": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
+        "metadataOnly": [
+          {
+            "paramCount": 2,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

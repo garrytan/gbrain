@@ -21,8 +21,7 @@ import type { CompanyBrainPlan } from '../company-brain/types.ts';
 import { assertDistinctSyncOrigins, legacySyncOrigin, sameSyncOrigin, syncOriginPath, type SyncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive } from './sync-authority.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
-import { RECOVERY_VERSION } from '../markdown.ts';
-import { readGitHoldRetryPaths, readGitSourceHolds } from './sync-holds.ts';
+import { holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds } from './sync-holds.ts';
 import { readBlobContents, readTreeBlobs } from './sync-blobs.ts';
 
 /** The page an import takes over from its previous origin: a Git rename, or a file that replaced a vanished origin at the same slug. */
@@ -284,8 +283,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     for (const path of checked) {
       const hold = holdByPath.get(path), gitPath = toGitPath(path), blob = blobs.get(gitPath);
       const workingHold = working && (hold?.meta.working === true || !blob);
-      let changed = !hold || retry.has(path) || ['frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression'].includes(hold.code)
-        || hold.meta.recovery_version < RECOVERY_VERSION;
+      let changed = !hold || holdRescreenDue(hold, retry.has(path));
       let present = !!blob;
       if (workingHold) {
         let bytes: Buffer | null = null;

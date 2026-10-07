@@ -26,7 +26,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
-import { configureGateway } from '../../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { basisEmbedding } from '../../src/eval/deterministic-embed.ts';
 import type { HybridSearchMeta, SearchResult } from '../../src/core/types.ts';
@@ -108,6 +108,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  resetGateway(); // R5: restore the preload baseline for later files in this shard
   await engine.disconnect();
 }, 60_000);
 

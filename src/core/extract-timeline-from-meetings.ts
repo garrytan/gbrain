@@ -16,6 +16,7 @@ import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { parseFrontmatter } from './backfill-effective-date.ts';
 import { isPrivatePage } from './search/private-visibility.ts';
+import { quarantineFilterFragment } from './quarantine.ts';
 
 export interface ExtractTimelineFromMeetingsOpts {
   dryRun?: boolean;
@@ -87,6 +88,7 @@ export async function extractTimelineFromMeetings(
        FROM pages
       WHERE ${MEETING_PAGE_PREDICATE}
         AND deleted_at IS NULL
+        AND ${quarantineFilterFragment('pages')}
         ${sourceFilter}
       ORDER BY effective_date DESC NULLS LAST, slug`,
     meetingParams,

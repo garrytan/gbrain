@@ -13,7 +13,23 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { classifyGlobalLlmError, AIConfigError } from '../../src/core/ai/errors.ts';
+import { APICallError, RetryError } from 'ai';
+import { classifyGlobalLlmError, createGlobalLlmHaltTracker, AIConfigError, RATE_LIMIT_HALT_STREAK } from '../../src/core/ai/errors.ts';
+
+function sdkRetriesExhausted(statusCode: number, message = `synthetic provider error ${statusCode}`): RetryError {
+  const attempt = () => new APICallError({
+    message,
+    url: 'https://provider.example.invalid/v1/chat/completions',
+    requestBodyValues: {},
+    statusCode,
+    isRetryable: statusCode === 429 || statusCode >= 500,
+  });
+  return new RetryError({
+    message: 'Failed after 3 attempts. Last error: upstream busy',
+    reason: 'maxRetriesExceeded',
+    errors: [attempt(), attempt(), attempt()],
+  });
+}
 
 function errWithStatus(message: string, status: number): Error {
   return Object.assign(new Error(message), { status });
@@ -38,6 +54,55 @@ describe('classifyGlobalLlmError — positives', () => {
   test('apiErrorStatus / api_error_status property variants are honored (typed claude-cli errors)', () => {
     expect(classifyGlobalLlmError(Object.assign(new Error('request failed'), { apiErrorStatus: 429 }))).toBe('rate_limit');
     expect(classifyGlobalLlmError(Object.assign(new Error('request failed'), { api_error_status: 401 }))).toBe('auth');
+  });
+
+  // #5473: after the AI SDK's own retries exhaust, it throws `RetryError`
+  // whose final attempt's status lives on `.lastError` — a SIBLING field,
+  // not `.cause` (verified against node_modules/ai's RetryError class). The
+  // top-level RetryError message here deliberately carries no rate-limit
+  // phrasing ("upstream busy") so only the `lastError` walk can classify it.
+  test('RetryError-shaped wrapper: status lives on .lastError (not .cause), no rate-limit phrase in the message', () => {
+    const retryError = Object.assign(new Error('Failed after 3 attempts. Last error: upstream busy'), {
+      name: 'AI_RetryError',
+      reason: 'maxRetriesExceeded',
+      errors: [],
+      lastError: Object.assign(new Error('upstream busy'), { statusCode: 429 }),
+    });
+    expect(classifyGlobalLlmError(retryError)).toBe('rate_limit');
+  });
+
+  test('RetryError-shaped wrapper: a 5xx on .lastError does not falsely classify (no auth/billing/rate_limit class for 5xx)', () => {
+    const retryError = Object.assign(new Error('Failed after 3 attempts. Last error: gateway down'), {
+      name: 'AI_RetryError',
+      lastError: Object.assign(new Error('gateway down'), { statusCode: 503 }),
+    });
+    expect(classifyGlobalLlmError(retryError)).toBeNull();
+  });
+
+  test('AI SDK RetryError whose lastError is a 404 classifies as model_not_found, not transient or auth (#5473)', () => {
+    expect(classifyGlobalLlmError(sdkRetriesExhausted(404))).toBe('model_not_found');
+  });
+
+  test('AI SDK RetryError: a 429 lastError is rate_limit, but a spend-limit phrase on it still outranks the 429 as billing', () => {
+    expect(classifyGlobalLlmError(sdkRetriesExhausted(429))).toBe('rate_limit');
+    expect(classifyGlobalLlmError(sdkRetriesExhausted(429, 'You have reached your monthly spend limit'))).toBe('billing');
+  });
+
+  test('AI SDK RetryError: lastError 401 is auth', () => {
+    expect(classifyGlobalLlmError(sdkRetriesExhausted(401))).toBe('auth');
+  });
+
+  test('a rate-limited RetryError counts toward the halt streak, and a success resets it', () => {
+    const tracker = createGlobalLlmHaltTracker();
+    for (let i = 1; i < RATE_LIMIT_HALT_STREAK; i++) {
+      expect(tracker.observe(sdkRetriesExhausted(429))).toBe('continue');
+    }
+    expect(tracker.lastClass()).toBe('rate_limit');
+    tracker.reset();
+    expect(tracker.observe(sdkRetriesExhausted(429))).toBe('continue');
+    const unreset = createGlobalLlmHaltTracker();
+    for (let i = 1; i < RATE_LIMIT_HALT_STREAK; i++) unreset.observe(sdkRetriesExhausted(429));
+    expect(unreset.observe(sdkRetriesExhausted(429))).toBe('halt-rate_limit');
   });
 
   test('AIConfigError classifies structurally as auth (missing-key gateway errors carry no status, no phrase)', () => {
@@ -144,6 +209,14 @@ describe('classifyGlobalLlmError — negatives (per-item errors stay per-item)',
         'claude-cli output not JSON: Unexpected token\n--- raw ---\ndiscussing the monthly spend limit feature',
       )),
     ).toBeNull();
+  });
+
+  test('null for a rate-limit phrase inside the raw slice of a RetryError lastError with no status', () => {
+    const retryError = Object.assign(new Error('Failed after 3 attempts.'), {
+      name: 'AI_RetryError',
+      lastError: new Error('claude-cli returned malformed output\n--- raw ---\nthe rate limit should be raised: too many requests'),
+    });
+    expect(classifyGlobalLlmError(retryError)).toBeNull();
   });
 
   test('null for prose-shaped status forms inside a --- raw --- slice', () => {

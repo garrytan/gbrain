@@ -114,7 +114,7 @@ gbrain remember "<the fact>" --provenance "<source>" --entity <slug>
 | `withdrawn` | no | This claim was explicitly forgotten for that entity, so relink will not attach it there. |
 | `page_file_missing` | no | The entity page exists in the database but its file is missing from the source tree. Restore the file or run gbrain sync, then rerun. |
 | `unfenceable` | no | The source writes through to files but has no canonical owner. Bind the source (gbrain sources writer status <source> --json, then gbrain sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>), then rerun. |
-| `fence_malformed` | no | The entity page has a malformed ## Facts fence. Repair the fence (gbrain doctor names it), then rerun. |
+| `fence_malformed` | no | The entity page has a ## Facts fence that cannot be normalized. Preview the fence repair of that page (`repair fences --slug <entity-slug>` on the brain host; read-only, and it names the exact edit for anything it will not repair), apply it, then rerun. |
 | `claim_unfenceable` | no | The claim text cannot be written to a fence row unchanged (for example it is wrapped in ~~). Forget it and remember a cleaned-up claim with --entity. |
 | `visibility_conflict` | no | The entity already has the same claim from the same source with the other visibility, and a page indexes only one. Forget the copy you do not want, then rerun. |
 | `fence_owned` | no | The fact lives in another page fence (a transcript). Relink does not move fence-owned facts. |

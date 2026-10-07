@@ -15,7 +15,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { operationsByName } from '../src/core/operations.ts';
-import { configureGateway, __setChatTransportForTests, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { writeSingleFact } from '../src/core/facts/write-single.ts';
 import { extractFactsFromTurnWithOutcome } from '../src/core/facts/extract.ts';
 import { startPersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -41,6 +41,7 @@ beforeEach(() => {
   }) as never);
 });
 afterEach(() => { __setEmbedTransportForTests(null); __setChatTransportForTests(null); });
+afterAll(() => { resetGateway(); }); // R5: restore the preload baseline for later files in this shard
 
 async function seedEntity(engine: BrainEngine, root: string): Promise<void> {
   const person = await engine.putPage(ENTITY, { type: 'person', title: 'Opt Out Example', compiled_truth: '# Opt Out Example' }, { sourceId: 'default' });

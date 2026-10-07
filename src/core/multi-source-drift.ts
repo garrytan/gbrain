@@ -30,16 +30,16 @@
  *    yields zero files, NOT a thrown crash that takes down the whole doctor
  *    run; the source is reported in `unreadable_sources` (#5432) so doctor
  *    says "not verified" instead of "no drift".
- *  - #4712: the slug derivation below is `local_path`-relative only, which
- *    is the `'source-root'` slug-root shape (#4342, src/core/sync-anchor.ts).
- *    A source pinned to `'git-root'` mode produces slugs prefixed with its
- *    subdir under the repo root instead — this module has no git-root
- *    discovery of its own, so it CANNOT compute the slug sync actually
- *    produces for such a source. Rather than compare against the wrong
- *    slug (false-positive drift, with delete advice naming an unrelated
- *    page), a git-root-pinned source is skipped entirely and reported via
- *    `git_root_skipped`. True prefix-aware matching is tracked as a
- *    follow-up, not attempted here.
+ *  - Slugs are rebuilt the way sync minted them, which depends on the
+ *    source's slug-root pin (#4342, src/core/sync-anchor.ts). Unpinned and
+ *    `'source-root'` sources slug the `local_path`-relative path. A
+ *    `'git-root'` source slugs the path relative to its git work tree, so
+ *    every walked path gets `local_path`'s own location in the work tree in
+ *    front of it; that location is empty when `local_path` is the toplevel,
+ *    which is what managed sync pins for a source at its repo root (#5862).
+ *    When git cannot place `local_path` in a work tree the source is not
+ *    compared at all (a wrong slug shape false-positives, with delete advice
+ *    naming an unrelated page) and is reported in `git_root_skipped`.
  */
 
 import { readdirSync, lstatSync, statSync } from 'fs';
@@ -47,6 +47,7 @@ import { join, relative } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { pathToSlug } from './sync.ts';
 import { readSlugRootMode } from './sync-anchor.ts';
+import { git } from './sync-git.ts';
 
 export interface SourceWithPath {
   id: string;
@@ -66,10 +67,10 @@ export interface MisroutedResult {
   count: number;
   sample: MisroutedSample[];
   /**
-   * #4712: source IDs skipped because their persisted slug_root_mode is
-   * 'git-root' — this check only knows how to derive 'source-root'-shaped
-   * (local_path-relative) slugs, so a git-root-pinned source is excluded
-   * rather than checked against the wrong slug shape.
+   * Readable sources pinned to slug_root_mode 'git-root' that git cannot
+   * place inside a work tree (not a checkout, git missing or refusing the
+   * directory). The prefix their slugs carry is unknown, so they were not
+   * compared rather than compared against the wrong slug shape.
    */
   git_root_skipped: string[];
   /**
@@ -209,6 +210,23 @@ async function batchProbeExistence(
 }
 
 /**
+ * The path prefix sync put in front of a walked file's `local_path`-relative
+ * path before slugging it: '' unless the source is pinned to 'git-root', and
+ * then `local_path`'s location in its git work tree as git reports it
+ * (`rev-parse --show-prefix`: '' at the toplevel, 'sub/dir/' below it, with
+ * symlinks resolved, the scope managed sync derives). null when git cannot
+ * place `local_path` in a work tree.
+ */
+async function syncedPathPrefix(engine: BrainEngine, src: SourceWithPath): Promise<string | null> {
+  if (await readSlugRootMode(engine, src.id) !== 'git-root') return '';
+  try {
+    return git(src.local_path, ['rev-parse', '--show-prefix'], [], 30_000, { silenceStderr: true });
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Find pages that appear misrouted from intended source X to source 'default'.
  * For each non-default source with a configured local_path, walk the
  * filesystem and cross-check against the DB.
@@ -238,23 +256,22 @@ export async function findMisroutedPages(
       walkTruncated = true;
       break;
     }
-    // #4712: local_path-relative slugs are only correct for 'source-root'-
-    // pinned sources. A 'git-root' pin means sync produces subdir-prefixed
-    // slugs this module doesn't know how to reconstruct — skip rather than
-    // compare against a slug shape that will never match.
-    const rootMode = await readSlugRootMode(engine, src.id);
-    if (rootMode === 'git-root') {
-      gitRootSkipped.push(src.id);
-      continue;
-    }
     const { files, truncated, rootUnreadable, unreadableDirs } = walkMarkdownAndMdxFiles(src.local_path, limit, deadlineMs);
     if (truncated) walkTruncated = true;
     if (rootUnreadable) unreadable.push({ source_id: src.id, reason: 'root_unreadable', dirs: 1 });
     else if (unreadableDirs > 0) unreadable.push({ source_id: src.id, reason: 'subdirs_unreadable', dirs: unreadableDirs });
     if (files.length === 0) continue;
 
+    // Asked only once the walk found files, so a missing local_path stays
+    // root_unreadable instead of reading as a git-root skip.
+    const prefix = await syncedPathPrefix(engine, src);
+    if (prefix === null) {
+      gitRootSkipped.push(src.id);
+      continue;
+    }
+
     // Convert FS paths to canonical slugs (lowercased, extension stripped).
-    const slugs = Array.from(new Set(files.map(f => pathToSlug(f.relPath))));
+    const slugs = Array.from(new Set(files.map(f => pathToSlug(prefix + f.relPath))));
     const existenceMap = await batchProbeExistence(engine, slugs, src.id);
 
     for (const slug of slugs) {

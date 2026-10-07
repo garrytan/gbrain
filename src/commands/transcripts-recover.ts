@@ -6,6 +6,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import type { CliDispatchContext } from '../cli/command-table.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 export const TRANSCRIPTS_RECOVER_HELP = `Usage:
@@ -24,7 +25,7 @@ facts are extracted and the --since last watermark is untouched.
   --json            Machine-readable plan (and ingest result with --apply)
 `;
 
-export async function runTranscriptsRecover(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runTranscriptsRecover(engine: BrainEngine, args: string[], dispatch: Pick<CliDispatchContext, 'makeContext'> = {}): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(TRANSCRIPTS_RECOVER_HELP);
     return;
@@ -48,7 +49,8 @@ export async function runTranscriptsRecover(engine: BrainEngine, args: string[])
   const sourceId = (await resolveSourceWithTier(engine, source)).source_id;
   const { planCodexRecovery, applyCodexRecovery } = await import('../core/transcripts/recover.ts');
   const plan = await planCodexRecovery(engine, { sourceId, rolloutPaths: paths.length ? paths : undefined });
-  const result = apply ? await applyCodexRecovery(engine, plan) : null;
+  const context = apply ? await dispatch.makeContext?.(engine, { source: sourceId }) : undefined;
+  const result = apply ? await applyCodexRecovery(engine, plan, { context }) : null;
   if (json) {
     console.log(JSON.stringify({ plan, applied: apply, ...(result ? { ingest: { pages: result.pages, sessions_imported: result.sessionsImported, sessions_errored: result.sessionsErrored } } : {}) }, null, 2));
     if (result && (result.sessionsErrored > 0 || result.erroredFiles > 0)) setCliExitVerdict(1);

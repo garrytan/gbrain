@@ -11,6 +11,7 @@
  * any content.
  */
 import type { OperationContext } from '../ops/contract.ts';
+import { fenceNormalizedNotice, mergeFencesNormalized, type FencesNormalized } from '../fence-repair/report.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { admitWriteGroupInTransaction, type WriteAdmission } from './journal.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
@@ -93,7 +94,8 @@ function pageEntry(result: PageResult): Record<string, unknown> {
     const outcome = (receipt.outcome ?? {}) as Record<string, unknown>;
     return { ...base, request_id: row.request_id, state: 'committed', revision: receipt.revision ?? outcome.revision ?? null,
       status: outcome.status, ...(typeof outcome.slug === 'string' && outcome.slug !== result.slug ? { duplicate_of: outcome.slug } : {}),
-      ...(outcome.embedding_state !== undefined ? { embedding_state: outcome.embedding_state } : {}), ...warning };
+      ...(outcome.embedding_state !== undefined ? { embedding_state: outcome.embedding_state } : {}), ...warning,
+      ...(outcome.fences_normalized ? { fences_normalized: outcome.fences_normalized } : {}) };
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
     return { ...base, request_id: row.request_id, state: row.state, error: error.toJSON(), ...warning };
@@ -132,8 +134,11 @@ function batchReceipt(ctx: OperationContext, batchId: string, sourceId: string, 
     : failed
       ? { action: 'fix_pages', why: `${failed} page(s) did not commit. Each carries its own error with what to change. Resubmit only those pages, corrected, in a new put_pages call with a new request_id; committed pages are done.` }
       : { action: 'done' };
+  // #6188 (D12, D21): one `fences_normalized` and one coaching notice for every page whose fence Tier 1 rewrote.
+  const fences = mergeFencesNormalized(pages.flatMap(page => page.fences_normalized ? [page.fences_normalized as FencesNormalized] : []));
+  if (fences) ctx.emitNotice?.(fenceNormalizedNotice(fences));
   return { batch_request_id: batchId, source_id: sourceId, state, terminal: pending === 0, counts: { total: pages.length, committed, pending, failed },
-    ...(retryAfterMs !== null ? { retry_after_ms: retryAfterMs } : {}), next, links, pages };
+    ...(retryAfterMs !== null ? { retry_after_ms: retryAfterMs } : {}), next, links, pages, ...(fences ? { fences_normalized: fences } : {}) };
 }
 
 /**

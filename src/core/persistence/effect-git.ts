@@ -3,6 +3,7 @@ import { basename, dirname, join, relative, resolve as resolvePath, sep } from '
 import { execFileBounded, isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import type { GitCommitNote } from './effect-model.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
 
@@ -124,13 +125,21 @@ function withHooks<T>(run: (hooks: string) => Promise<T>): Promise<T> {
   return run(hooks).finally(() => rmSync(hooks, { recursive: true, force: true }));
 }
 
+const commitText = (text: string) => text.replace(/[\u0000-\u001f\u007f]/g, '');
+
 /**
  * #5530: commit a group of single-file targets with one `commit --only`. The
  * caller owns the native worktree lock and has probed durability. Each
  * target's outcome (or its own error) is keyed by its requested relative
  * path; a failing target never enters the commit. Nothing is pushed.
+ *
+ * `notes` (keyed by requested path) carry a preparer's commit metadata: a
+ * path that commits alone with a note uses its subject; a group keeps the
+ * generic subject and lists the noted paths' lines in the body, in path
+ * order. Control characters are stripped from both.
  */
-export async function commitGitTargets(root: string, relativePaths: string[], signal?: AbortSignal): Promise<Map<string, GitOutcome | OperationError>> {
+export async function commitGitTargets(root: string, relativePaths: string[], signal?: AbortSignal,
+  notes?: ReadonlyMap<string, GitCommitNote>): Promise<Map<string, GitOutcome | OperationError>> {
   const results = new Map<string, GitOutcome | OperationError>();
   await withHooks(async hooks => {
     // One ls-files, one status, one add and one diff for the group; targets
@@ -178,8 +187,12 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     // --only keeps unrelated staged paths out of this commit. After a lost
     // database acknowledgment the same HEAD/file state is an exact no-op.
     const commitPaths = [...new Set(changed.map(c => c.path))];
-    const message = commitPaths.length === 1 ? 'gbrain: persist canonical memory update' : `gbrain: persist ${commitPaths.length} canonical memory updates`;
-    const result = await git(root, hooks, ['commit', '--only', '-m', message, '--', ...commitPaths], signal);
+    const noted = new Map<string, GitCommitNote>();
+    for (const c of changed) { const note = notes?.get(c.requested); if (note && !noted.has(c.path)) noted.set(c.path, note); }
+    const subject = commitPaths.length > 1 ? `gbrain: persist ${commitPaths.length} canonical memory updates`
+      : commitText(noted.get(commitPaths[0]!)?.subject ?? '') || 'gbrain: persist canonical memory update';
+    const body = commitPaths.length > 1 ? [...new Set([...noted.keys()].sort().map(path => commitText(noted.get(path)!.line)).filter(Boolean))] : [];
+    const result = await git(root, hooks, ['commit', '--only', '-m', subject, ...(body.length ? ['-m', body.join('\n')] : []), '--', ...commitPaths], signal);
     const outcome = result.code === 0 ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
     for (const c of changed) results.set(c.requested, outcome);
@@ -209,9 +222,9 @@ export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{
  * the worktree.
  */
 export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal,
-  hardened?: boolean): Promise<Record<string, unknown>> {
+  hardened?: boolean, note?: GitCommitNote): Promise<Record<string, unknown>> {
   if (!(hardened ?? await isDurabilityHardenedAsync(root))) return { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' };
-  const outcome = (await commitGitTargets(root, [relativePath], signal)).get(relativePath)!;
+  const outcome = (await commitGitTargets(root, [relativePath], signal, note ? new Map([[relativePath, note]]) : undefined)).get(relativePath)!;
   if (outcome instanceof OperationError) throw outcome;
   if (outcome.reason === 'target_absent') return outcome;
   const pushed = await pushGitRoot(root, signal);

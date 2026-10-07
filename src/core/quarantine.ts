@@ -31,6 +31,8 @@
  * site (this module).
  */
 
+import type { BrainEngine } from './engine.ts';
+
 // ---------------------------------------------------------------------------
 // quarantine marker (HIDES)
 // ---------------------------------------------------------------------------
@@ -93,6 +95,14 @@ export function filterOutQuarantined<T extends { frontmatter?: Record<string, un
   pages: ReadonlyArray<T>,
 ): T[] {
   return pages.filter((p) => !isQuarantined(p.frontmatter ?? null));
+}
+
+/** Slugs of a source's live quarantined pages (the SQL marker test), for
+ *  file walks that never read the page row before deriving links/timeline. */
+export async function quarantinedSlugs(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<Set<string>> {
+  const rows = await engine.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND NOT ${quarantineFilterFragment('pages')}`, [sourceId]);
+  return new Set(rows.map((row) => row.slug));
 }
 
 // ---------------------------------------------------------------------------

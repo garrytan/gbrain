@@ -43,6 +43,7 @@ import {
   type ResolveSource,
 } from '../core/model-config.ts';
 import { resolveExtractAtomsModelWithSource } from '../core/cycle/extract-atoms.ts';
+import { resolveFenceRepairModelWithSource } from '../core/fence-repair/model.ts';
 import {
   NIGHTLY_PROBE_EXTRACTOR_ROUTE,
   NIGHTLY_PROBE_READER_ROUTE,
@@ -80,7 +81,7 @@ interface PerTaskModelRoute {
    * chain visible rather than implying full resolveModel() coverage — can
    * never disagree with the resolved value.
    */
-  narrowResolver?: (engine: BrainEngine) => Promise<{ model: string; source: 'config' | 'tier_default' }>;
+  narrowResolver?: (engine: BrainEngine) => Promise<{ model: string; source: 'config' | 'tier_default' | 'measured' }>;
 }
 
 const PER_TASK_KEYS: PerTaskModelRoute[] = [
@@ -102,6 +103,12 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
   { key: 'models.auto_think',               tier: 'deep',      description: 'Auto-think question answering' },
   { key: 'models.think',                    tier: 'deep',      description: '`gbrain think` synthesis op' },
+  {
+    key: 'models.fence_repair',
+    tier: 'deep',
+    description: 'Model repair (Tier 3) of malformed facts/takes fence rows; unset: the first measured model with a key, else none (off)',
+    narrowResolver: async engine => { const r = await resolveFenceRepairModelWithSource(engine); return { model: r.model ?? 'none', source: r.source }; },
+  },
   { key: 'models.subagent',                 tier: 'subagent',  description: '`gbrain agent run` subagent loop' },
   { key: 'facts.extraction_model',          tier: 'reasoning', description: 'Real-time facts extraction during sync' },
   { key: 'models.eval.longmemeval',         tier: 'reasoning', description: 'LongMemEval benchmark answer-gen' },
@@ -223,7 +230,7 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
       // so the label can never disagree with what `resolved` actually
       // reflects (previously a separate getConfig truthiness re-check).
       const { model: resolved, source: narrowSource } = await narrowResolver(engine);
-      const source = narrowSource === 'config' ? `config: ${key}` : `tier.${tier} (caller-specific)`;
+      const source = narrowSource === 'config' ? `config: ${key}` : narrowSource === 'measured' ? 'measured default' : `tier.${tier} (caller-specific)`;
       const newer = narrowSource === 'config' ? newerAvailable(resolved, key) : undefined;
       per_task.push({ key, tier, resolved, source, description, ...(newer ? { newer_available: newer } : {}) });
       continue;

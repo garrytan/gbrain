@@ -35,6 +35,7 @@ import { createProgress } from '../core/progress.ts';
 import { importAnalyzeEveryPages, maybeRefreshPlannerStats } from '../core/planner-stats.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { filterRefsSince } from './extract.ts';
+import { isQuarantined } from '../core/quarantine.ts';
 
 const BATCH_SIZE = 100;
 export const TIMELINE_EXTRACT_INTENT = 'managed_maintenance_timeline_extract';
@@ -159,7 +160,7 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
     }
 
     const page = await engine.getPage(slug, { sourceId: source_id });
-    if (!page) continue;
+    if (!page || isQuarantined(page.frontmatter)) continue;
     if (opts.typeFilter && page.type !== opts.typeFilter) continue;
     const fullContent = page.compiled_truth + '\n' + page.timeline;
     if (!opts.dryRun) await retractRemovedTimelineEntries(engine, slug, source_id, fullContent);
@@ -245,7 +246,7 @@ async function writePageTimeline(tx: BrainEngine, page: Page, slug: string, sour
 async function publishPageTimeline(engine: BrainEngine, authority: MaintenanceAuthority, slug: string, sourceId: string,
   opts: TimelineDbOptions): Promise<number | null | 'skipped' | 'pending'> {
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });
-  if (!snapshot || (opts.typeFilter && snapshot.page.type !== opts.typeFilter)) return null;
+  if (!snapshot || isQuarantined(snapshot.page.frontmatter) || (opts.typeFilter && snapshot.page.type !== opts.typeFilter)) return null;
   const plan = await plannedTimeline(engine, snapshot.page, slug, sourceId, opts.inferDates === true);
   if (!plan.removed && !plan.entries.length) return 0;
   for (let attempt = 0; ; attempt++) {

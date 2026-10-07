@@ -99,6 +99,13 @@ export interface GoogleSourceState {
    * calendars and was therefore always primary's.
    */
   calendar_id?: string | null;
+  /**
+   * Ceiling (epoch ms) of the last calendar list that reached the window's
+   * leading edge. Deltas omit unchanged events, so once the edge is a day
+   * past this value the sweep lists the gap (calendar-window.ts). Missing on
+   * state saved before it existed, which is listed from now instead.
+   */
+  calendar_horizon_ms?: number | null;
   contacts_sync_token: string | null;
   last_full_at: string | null;
   gmail_attachment_backfill?: {
@@ -171,6 +178,8 @@ export interface GmailMessageMeta {
   internalDateMs: number;
   labelIds: string[];
   listUnsubscribe: boolean;
+  /** RFC 3834 `Auto-Submitted` other than `no` (tracker notices, auto-replies); absent means human mail. */
+  autoSubmitted?: boolean;
   /**
    * iCalendar method when the message carries a `text/calendar` part or an
    * `.ics` attachment — 'REQUEST' | 'REPLY' | 'CANCEL' | 'COUNTER' | '' when a

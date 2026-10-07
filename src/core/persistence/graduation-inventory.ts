@@ -168,7 +168,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     entry('planner_stats_deltas', 'discard', 'operational', 'PGLite-only planner accounting.', { engines: { pglite: true, postgres: false } }),
     entry('planner_stats_state', 'discard', 'operational', 'PGLite-only planner accounting.', { engines: { pglite: true, postgres: false } }),
     entry('gbrain_cycle_locks', 'discard', 'operational', 'TTL run locks; every row is an orphan under the kernel lock.'),
-    entry('budget_reservations', 'discard', 'operational', 'No runtime reader or writer; only migrations reference it.'),
+    entry('budget_reservations', 'discard', 'operational', 'Daily-ledger holds (src/core/budget/daily-ledger.ts) that expire within minutes; budget_ledger carries the day\'s totals, so a hold dropped mid-graduation stays counted as reserved until its UTC day ends (only tightening that day\'s cap).'),
     entry('subagent_rate_leases', 'discard', 'operational', 'Job-owned concurrency leases that expire.'),
     entry('oauth_codes', 'discard', 'security', 'One-time authorization codes; an in-flight OAuth handshake restarts.'),
 

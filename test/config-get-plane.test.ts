@@ -14,6 +14,9 @@ import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runConfig } from '../src/commands/config.ts';
+import { operations } from '../src/core/operations.ts';
+import { readPublishGate, type PublishGateKey } from '../src/mcp/publish-gates.ts';
+import { loadConfig } from '../src/core/config.ts';
 import { withEnv } from './helpers/with-env.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -142,5 +145,40 @@ describe('#3943 — config get redacts sensitive values by default (--raw opts o
     const { logs, exit } = await runGet({}, 'chat_model');
     expect(exit).toBeNull();
     expect(logs).toContain('anthropic:claude-sonnet-4-6');
+  });
+});
+
+describe('#5358 — config get resolves publish-gate keys the way the runtime gate does (DB > file)', () => {
+  const gateKeys = [...new Set(operations.flatMap((op) => (op.publishGateKey ? [op.publishGateKey] : [])))];
+
+  test('the operation contract still registers publish gates (the set config get derives from)', () => {
+    expect(gateKeys).toContain('mcp.publish_skills');
+    expect(gateKeys.length).toBeGreaterThan(0);
+  });
+
+  test('mcp.publish_skills prints the DB value and warns about the diverged file mirror', async () => {
+    writeFileConfig({ engine: 'pglite', mcp: { publish_skills: true } });
+    const { logs, errs, exit } = await runGet({ 'mcp.publish_skills': 'false' }, 'mcp.publish_skills');
+    expect(exit).toBeNull();
+    expect(logs).toEqual(['false']);
+    expect(errs.join('\n')).toContain('db plane (authoritative for this key)');
+    expect(errs.join('\n')).toContain('file mirror disagrees');
+  });
+
+  test('mcp.publish_skills falls back to the file plane when no DB row exists', async () => {
+    writeFileConfig({ engine: 'pglite', mcp: { publish_skills: true } });
+    const { logs, errs } = await runGet({}, 'mcp.publish_skills');
+    expect(logs).toEqual(['true']);
+    expect(errs.join('\n')).toContain('file mirror (no DB row)');
+  });
+
+  test.each(gateKeys)('%s: config get reports the value the runtime gate resolves when the planes differ', async (key) => {
+    const leaf = key.slice('mcp.'.length);
+    writeFileConfig({ engine: 'pglite', mcp: { [leaf]: true } });
+    const db = { [key]: 'false' };
+    const { logs } = await runGet(db, key);
+    const runtime = await withEnv({ GBRAIN_HOME: home }, () =>
+      readPublishGate(stubEngine(db), loadConfig(), key as PublishGateKey, 'http'));
+    expect(logs).toEqual([String(runtime)]);
   });
 });

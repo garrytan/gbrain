@@ -1,10 +1,10 @@
 /**
  * System One S8 (claim support) — pure decision logic plus the real call
  * site (verifyAndRepairDreamPages on PGLite) with a fixture decide transport.
- * The managed postprocess site is covered by grounding-postprocess.serial.test.ts.
+ * Managed publication is covered by managed-synthesis-postprocess.test.ts.
  *
  * Protects: verifyBody's new `groundingUnits` output lists only passing units
- * with no quote, number or attribution (existing fields unchanged); up to
+ * including valid quotes, numbers and attribution (existing fields unchanged); up to
  * three source windows (substring, keyword, embedding); weak coverage records
  * insufficient_context and keeps the unit; a low answer with adequate
  * coverage quarantines as `unsupported_paraphrase` before the page is written;
@@ -41,14 +41,20 @@ const FABRICATED = 'Allegedly: "we will rewrite everything in a single weekend s
 describe('S8 grounding units from verifyBody', () => {
   const src = [groundSource('/t/s.md', TRANSCRIPT)];
 
-  test('only passing units without quote, number or attribution; headings and fragments excluded', () => {
+  test('all substantive passing units; headings, fragments and mechanical failures excluded', () => {
     const body = [
       '## Storage strategy notes', '', SUPPORTED, 'Short fragment here.',
       'The user said "reliable memories should survive every tool".', 'The team budgets 250 servers for storage next year.',
       'Assistant recommended boring storage for the whole tier.', FABRICATED, WEAK,
     ].join('\n');
     const r = verifyBody(body, src);
-    expect(r.groundingUnits).toEqual([SUPPORTED, WEAK]);
+    expect(r.groundingUnits).toEqual([
+      SUPPORTED,
+      'The user said "reliable memories should survive every tool".',
+      'The team budgets 250 servers for storage next year.',
+      'Assistant recommended boring storage for the whole tier.',
+      WEAK,
+    ]);
     expect(r.quarantined.map((q) => q.reason)).toEqual(['quote_not_in_source']);
   });
 
@@ -86,6 +92,31 @@ describe('S8 source windows, reducer and what-if', () => {
     expect(reduceGrounding(null, 'adequate', p)).toBeNull();
     expect(whatIfGrounding([{ answer_value: 0.1, protected: false }, { answer_value: 0.1, protected: true }, { answer_value: 0.9, protected: false }], 0.5, 0.05))
       .toEqual({ pass: 1, quarantine: 1, insufficient_context: 1, margin_hold: 0 });
+  });
+
+  test('coverage can span the selected excerpts without counting evidence the judge never receives', () => {
+    const claim = 'Conference attendance and workshop registration became important memorable personal milestones.';
+    const index = indexSourceWindows([
+      { path: '/fixtures/conference.md', content: 'User: I obtained a conference ticket.\nAssistant: Noted.' },
+      { path: '/fixtures/workshop.md', content: 'User: I completed workshop registration.\nAssistant: Noted.' },
+    ]);
+    const selected = selectSourceWindows(claim, index);
+    expect(selected.windows.every(w => w.overlap < 0.25)).toBe(true);
+    expect(selected.coverage).toBe('adequate');
+    expect(selectSourceWindows('Coastal volleyball holidays always create unexpected personal milestones.', index).coverage).toBe('weak');
+  });
+
+  test('coverage counts distinct words in selected windows, not repeated or omitted words', () => {
+    const claim = 'Alpha beta gamma delta epsilon zeta theta kappa lambda sigma omega polar solar lunar coastal velvet.';
+    const index = indexSourceWindows(['alpha', 'beta', 'gamma', 'delta'].map((word, i) =>
+      ({ path: `/fixtures/word-${i}.md`, content: `User: ${word}` })));
+    const selected = selectSourceWindows(claim, index);
+    expect(selected.windows).toHaveLength(3);
+    expect(selected.coverage).toBe('weak'); // all four windows would reach the floor
+    expect(selectSourceWindows(claim, indexSourceWindows([
+      { path: '/fixtures/repeated.md', content: 'User: alpha alpha alpha alpha.\nAssistant: alpha alpha alpha alpha.' },
+    ])).coverage).toBe('weak');
+    expect(selectSourceWindows(claim, []).coverage).toBe('weak');
   });
 
   test('quarantineUnits removes only present units and records unsupported_paraphrase', () => {
@@ -182,6 +213,33 @@ describe('S8 off', () => {
 });
 
 describe('S8 on at verifyAndRepairDreamPages', () => {
+  test('quarantines unsupported attendance despite a valid quote/year; supported ticket remains searchable', async () => {
+    const ticket = 'I signed up for a ticket and got it; I still have to travel to the conference.';
+    const content = `User: ${ticket}\nAssistant: We are discussing the conference in 2026.\nUser: I completed the workshop in 2026.`;
+    const sourcePath = '/fixtures/2026-04-03-session.md';
+    const unsupported = [
+      'The user reached a personal milestone in 2026: attending the conference.',
+      `**Attendance:** The user attended the conference: "${ticket}"`,
+    ];
+    const supported = ['The user obtained a ticket for the conference.', 'The user completed the workshop in 2026.'];
+    for (const [k, v] of Object.entries(S8_ON)) await engine.setConfig(k, v);
+    transport(claim => unsupported.includes(claim) ? 0.05 : 0.93);
+    const since = await readVerifyEpoch(engine);
+    const slug = `wiki/personal/reflections/attendance-${++n}-abc123`;
+    await importFromContent(engine, slug, ['---', 'type: note', '---', ...supported, ...unsupported].join('\n\n'),
+      { noEmbed: true, remote: false, sourceId: 'default' });
+    const grounding = await resolveGroundingDecide(engine);
+    await verifyAndRepairDreamPages(engine, [{ slug, source_id: 'default', raw_source: sourcePath }],
+      new Map([[sourcePath, { content }]]), { since, checkedAt: '2026-04-03', grounding });
+    const page = (await engine.getPage(slug, { sourceId: 'default' }))!;
+    expect(questions.sort()).toEqual([...supported, ...unsupported].sort());
+    expect(page.compiled_truth).toBe(supported.join('\n\n'));
+    expect(reasonsOf(page.frontmatter)).toEqual(['unsupported_paraphrase', 'unsupported_paraphrase']);
+    expect((await engine.searchKeyword('attending conference', { limit: 5 })).some(hit => hit.slug === slug)).toBe(false);
+    expect((await engine.searchKeyword('obtained ticket', { limit: 5 })).some(hit => hit.slug === slug)).toBe(true);
+    expect(grounding!.stats).toMatchObject({ units: 4, pass: 2, quarantine: 2 });
+  });
+
   test('quarantines an unsupported paraphrase before write-back; weak coverage is insufficient_context; the fabricated unit is never asked', async () => {
     await engine.executeRaw('SELECT 1');
     for (const [k, v] of Object.entries(S8_ON)) await engine.setConfig(k, v);

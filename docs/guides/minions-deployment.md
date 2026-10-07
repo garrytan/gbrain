@@ -385,8 +385,8 @@ the worker asks the database the authoritative question (one fenced
 re-check), so a starved-but-healthy job recovers its lease and keeps
 working. Eviction happens only on a fenced miss (the row was genuinely
 reclaimed — requeued with no attempt burned) or after a hard backstop
-(default 2× the lease) during a total outage. Long LLM handlers also get
-a 300 s lock lease by default (`HANDLER_DEFAULT_LOCK_DURATION_MS`)
+(default 2× the lease) during a total outage. Long LLM handlers, plus
+`sync`, get a 300 s lock lease by default (`HANDLER_DEFAULT_LOCK_DURATION_MS`)
 instead of the worker-global 30 s, and the stall sweep grants a 15 s
 reclaim grace so a just-recovered worker's renewal beats the sweep.
 The remaining exposure: a genuinely dead worker's long-lease job waits

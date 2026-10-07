@@ -353,6 +353,8 @@ export const SQL_CASES: SqlCase[] = [
     ['sourceId', (e) => e.getVersions(SLUG, { sourceId: SRC })],
     ['sourceIds', (e) => e.getVersions(SLUG, { sourceIds: SRCS })],
     ['excludePrivate', (e) => e.getVersions(SLUG, { excludePrivate: true })],
+    ['limit', (e) => e.getVersions(SLUG, { sourceId: SRC, limit: 3 })],
+    ['metadataOnly', (e) => e.getVersions(SLUG, { sourceIds: SRCS, includeBody: false })],
   ]),
   ...variants('revertToVersion', [
     ['default', (e) => e.revertToVersion(SLUG, 3)],

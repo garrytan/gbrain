@@ -59,10 +59,14 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
             deleted: (job.data.github_item as Record<string, unknown>).deleted === true,
           }
         : undefined;
+    // Under a signal owner (`jobs work`, the supervisor) SIGTERM skips the cleanup pass and
+    // aborts only the worker's shutdown signal, so the sync and its git pull stop on either signal.
+    const { composeAbortSignals } = await import('../../sync-reconcile.ts');
+    const signal = composeAbortSignals(job.signal, job.shutdownSignal);
     let result;
     try {
       result = await performSync(engine, {
-        repoPath, sourceId, noPull, noEmbed, noExtract, signal: job.signal,
+        repoPath, sourceId, noPull, noEmbed, noExtract, signal,
         explicitProcessing: explicitSyncProcessing(job.data),
         concurrency: concurrencyOverride,
         ...(githubItem ? { githubItem } : {}),
@@ -87,7 +91,7 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
 
     // A cancelled durable job must not complete or schedule follow-up work,
     // even when a direct sync interruption has a resumable partial result.
-    if (job.signal?.aborted) throw job.signal.reason ?? new Error('Sync job cancelled');
+    if (signal?.aborted) throw signal.reason ?? new Error('Sync job cancelled');
 
     // v0.40 D22: auto_embed_backfill defaults TRUE when sourceId is set AND
     // the feature flag is enabled. Submits a child embed-backfill job

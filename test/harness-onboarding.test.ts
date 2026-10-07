@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { harnessAdapter, HARNESS_ADAPTERS, renderHarnessReference } from '../src/core/harness/registry.ts';
+import { harnessAdapter, HARNESS_ADAPTERS, publicHarnessMetadata, renderHarnessReference } from '../src/core/harness/registry.ts';
 import { readCredentials, writeCredentials, credentialReceipt, validateCredentials, type HarnessCredentials } from '../src/core/harness/credentials.ts';
 import { installHarnessConnection } from '../src/core/harness/install.ts';
 import { verifyHarnessConnection, type VerificationPeer } from '../src/core/harness/verify.ts';
@@ -17,6 +17,15 @@ describe('harness identity and private handoff', () => {
   test('published adapter facts and guide destinations match the runtime registry', () => {
     expect(readFileSync(new URL('../docs/guides/harness-adapters.md', import.meta.url), 'utf8')).toBe(renderHarnessReference());
     for (const adapter of HARNESS_ADAPTERS) expect(() => statSync(new URL(`../${adapter.guide.split('#')[0]}`, import.meta.url))).not.toThrow();
+  });
+  test('the documented Hermes stdio transport is a manual adapter with no runtime-tested claim (#5292)', async () => {
+    const hermes = harnessAdapter('hermes');
+    expect(hermes).toMatchObject({ id: 'hermes', modes: ['stdio'], connection: 'manual', guide: 'docs/mcp/HERMES.md', nativeInstructions: 'manual' });
+    expect(hermes.evidence.runtimeTestedAt).toBeNull();
+    expect(publicHarnessMetadata().find(a => a.id === 'hermes')?.modes).toEqual(['stdio']);
+    const installed = await installHarnessConnection(creds(), { harness: 'hermes', configPath: join(temp(), 'unused.json') });
+    expect(installed).toMatchObject({ status: 'pending', reason: 'manual_configuration_required', documentation: 'docs/mcp/HERMES.md' });
+    expect(readFileSync(new URL('../docs/guides/ambient-writeback.md', import.meta.url), 'utf8')).toContain('| Hermes |');
   });
   test('old grok alias remains Build and personal agents have no asserted native MCP integration', () => {
     expect(harnessAdapter('grok').id).toBe('grok-build');

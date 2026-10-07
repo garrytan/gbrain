@@ -14,12 +14,13 @@
  * engine-shaped check gets a stub with just `getConfig`).
  */
 import { describe, test, expect, afterAll, spyOn } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 
 import { bootstrapDoctorChecks, type Check } from '../src/commands/doctor.ts';
+import { finalizeCheckFixes } from '../src/commands/doctor/check-fix.ts';
 import { readBootId, readPidNs } from '../src/core/pglite-lock.ts';
 import { writeHarnessReceipt } from '../src/core/bootstrap/format.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
@@ -361,8 +362,7 @@ describe('bootstrap_push_health', () => {
     writePushStatus(home, JSON.stringify({ ts: new Date().toISOString(), ok: true }));
     const c = byName(await run(parent), 'bootstrap_push_health');
     expect(c?.status).toBe('warn');
-    expect(c?.message).toContain('1 commit(s) not on origin');
-    expect(c?.message).toContain(ws);
+    expect(c?.message).toBe(`last push ok (${JSON.parse(readFileSync(join(home, 'bootstrap', 'push-status.json'), 'utf8')).ts}), but ${ws} has 1 commit(s) not on origin — recent agent memory is unpushed. Run \`gbrain sources push --path ${ws}\`.`);
   }, T);
 
   test('last push FAILED → warn naming the reason (regardless of age)', async () => {
@@ -443,6 +443,8 @@ describe('bootstrap_push_health', () => {
     expect(c?.status).toBe('fail');
     expect(c?.message).toContain('DIRTY');
     expect(c?.message).toContain(ws);
+    expect(c?.message).toContain(`Run \`gbrain sources push --path ${ws}\`.`);
+    expect(c?.fix).toBeUndefined();
   }, T);
 
   test('unparseable ts → not stale (NaN guard) → ok', async () => {
@@ -805,5 +807,97 @@ describe('fail-soft umbrella', () => {
     expect(byName(checks, 'bootstrap_push_health')?.status).toBe('warn');
     expect(checks.every((c) => c.name.startsWith('bootstrap_'))).toBe(true);
     expect(checks.some((c) => c.status === 'fail')).toBe(false);
+  }, T);
+});
+
+// #5371: a managed canonical worktree refuses `gbrain sources push`, and the
+// ownership stamp gbrain writes into it is not unpushed work.
+describe('bootstrap_push_health on a managed canonical worktree (#5371)', () => {
+  const stamp = (ws: string) => writeFileSync(join(ws, '.gbrain-owner.json'), '{}');
+  const MANAGED_PROBE = 'gbrain sources writer status --probe --json';
+  function expectManagedGuidance(c: Check | undefined, ws: string): void {
+    expect(c?.message).toContain(`${ws} is a managed canonical worktree`);
+    expect(c?.message).toContain('legacy bulk push is not available');
+    expect(c?.message).toContain(MANAGED_PROBE);
+    expect(c?.message).not.toContain('gbrain sources push');
+  }
+
+  test('stale push + tree whose only change is the ownership stamp → ok, confirmed clean', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace({ clean: true });
+    stamp(ws);
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('ok');
+    expect(c?.message).toContain('confirmed clean');
+  }, T);
+
+  test('stale push + a real page beside the stamp → still fail, with the managed-writer remedy', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace({ clean: true });
+    stamp(ws);
+    writeFileSync(join(ws, 'unpushed-note.md'), 'recent agent memory\n');
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('fail');
+    expect(c?.message).toContain('DIRTY');
+    expectManagedGuidance(c, ws);
+    expect(c?.message).toContain('direct file edits here are not published');
+  }, T);
+
+  test('a recorded managed-writer refusal stays warn and points at the writer status probe', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace({ clean: true });
+    stamp(ws);
+    writePushStatus(home, JSON.stringify({
+      ts: new Date().toISOString(), ok: false, repoRoot: ws,
+      reason: 'writer_coordinator_required: This path belongs to the managed canonical worktree.',
+    }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('FAILED');
+    expectManagedGuidance(c, ws);
+  }, T);
+
+  test('fresh push but AHEAD of origin (wave 9 path) → warn with the managed-writer remedy', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace({ ahead: true });
+    stamp(ws);
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: new Date().toISOString(), ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('1 commit(s) not on origin');
+    expectManagedGuidance(c, ws);
+  }, T);
+
+  test('stale push + failed git probe → still warn "unverified", never ok, with the managed-writer remedy', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace();
+    stamp(ws);
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('git probe failed');
+    expectManagedGuidance(c, ws);
+  }, T);
+
+  test('the managed finding renders the agent contract: a read-only probe with a doctor verify', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace({ dirty: true });
+    stamp(ws);
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const [c] = finalizeCheckFixes((await run(parent)).filter((x) => x.name === 'bootstrap_push_health'));
+    expect(c?.status).toBe('fail');
+    expect(c?.fix_unavailable_reason).toBeUndefined();
+    expect(c?.fix).toMatchObject({
+      next: 'run', command: MANAGED_PROBE, consent: [], actor: 'agent',
+      verify: { argv: ['gbrain', 'doctor', '--only', 'bootstrap_push_health', '--json'] },
+    });
+    expect(String((c?.fix as { why?: string }).why)).toContain('changes nothing');
   }, T);
 });

@@ -9,6 +9,8 @@
  * company-brain sources never hold (their approved manifest keeps blocking).
  */
 import { createHash, randomUUID } from 'crypto';
+import { importFenceTally } from '../../core/fence-repair/report.ts';
+import { recordSyncRunTrend } from '../../core/fence-repair/census-store.ts';
 import { existsSync, lstatSync } from 'fs';
 import { join } from 'path';
 import type { SyncResult } from '../sync.ts';
@@ -23,7 +25,7 @@ import { readSourceFileSync } from '../../core/minions/source-filesystem.ts';
 import { maintenanceTransaction } from '../../core/persistence/attribution.ts';
 import type { SyncRename } from '../../core/persistence/sync-discovery.ts';
 import {
-  addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, gitHoldItem, readGitHoldRetryPaths, readGitSourceHolds,
+  addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, gitHoldItem, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds,
   readSyncHoldPolicy, recoveredReport, writeGitHold, type GitHoldCode, type GitHoldItem, type GitHoldRecord, type GitHoldReason, type SyncHoldPolicy,
 } from '../../core/persistence/sync-holds.ts';
 import { DEFAULT_SOURCE_ID, hasMalformedPathSegment, isCodeFilePath, resolveSlugForPath, sanitizePathForDisplay, slugifyPath } from '../../core/sync.ts';
@@ -59,6 +61,8 @@ export interface LegacyHolds {
   readonly heldPaths: string[];
   readonly recoveredPaths: string[];
   readonly counts: { screened: number; commentValues: number };
+  /** #6188: fences Tier 1 normalized, and fences stored as written with issues (T5). */
+  readonly fences: ReturnType<typeof importFenceTally>;
 }
 
 export type HoldScreen = { refusal: ContentRefusal | null; upstreamVersion: string | null };
@@ -75,7 +79,7 @@ export async function openLegacyHolds(engine: BrainEngine, sourceId: string | un
   return {
     sourceId: id, incarnation: row.incarnation, runId: `legacy-${randomUUID()}`, observedAt: new Date().toISOString(), policy,
     active: policy.mode === 'hold', existing: new Map((listed[0]?.holds ?? []).map(record => [record.path, record])), retryPaths: new Set(retry),
-    rescreen: [], gone: [], retryTaken: [], heldPaths: [], recoveredPaths: [], counts: { screened: 0, commentValues: 0 },
+    rescreen: [], gone: [], retryTaken: [], heldPaths: [], recoveredPaths: [], counts: { screened: 0, commentValues: 0 }, fences: importFenceTally(id),
   };
 }
 
@@ -92,9 +96,10 @@ function currentVersion(filePath: string): string | null | undefined {
 
 /**
  * Picks the held paths this run re-screens though Git did not touch them:
- * changed bytes, a retry request, an older frontmatter reader, and slug
- * conflicts and over-size files (their verdict depends on database state or
- * the working tree). A held file that is gone or no longer synced clears.
+ * changed bytes, or what the shared `holdRescreenDue` predicate names (a
+ * retry request, an older frontmatter reader or fence screen, and holds whose
+ * verdict depends on database state or the working tree). A held file that is
+ * gone or no longer synced clears.
  * `selected` is null for a path outside this run's scope (left alone).
  */
 export function planHoldRescreen(holds: LegacyHolds, input: { root: string; touched: ReadonlySet<string>; selected: (path: string) => boolean | null }): void {
@@ -113,9 +118,7 @@ export function planHoldRescreen(holds: LegacyHolds, input: { root: string; touc
       continue;
     }
     if (!holds.active) continue;
-    const due = holds.retryPaths.has(path) || record.meta.recovery_version < RECOVERY_VERSION
-      || record.code === 'frontmatter_slug_conflict' || record.code === 'file_too_large'
-      || currentVersion(filePath) !== record.upstream_version;
+    const due = holdRescreenDue(record, holds.retryPaths.has(path)) || currentVersion(filePath) !== record.upstream_version;
     if (!due) continue;
     holds.rescreen.push(path);
     if (holds.retryPaths.has(path)) holds.retryTaken.push(path);
@@ -142,14 +145,17 @@ export function screenLegacyFile(filePath: string, relPath: string, activePack?:
   return { refusal, upstreamVersion: read.upstreamVersion };
 }
 
-/** The content refusal behind an import outcome; transient and conflict errors return null and keep failing. */
+/**
+ * The content refusal behind an import outcome; transient and conflict errors return null and keep failing.
+ * #6188 (T5): legacy sync never holds for a fence; a fence refusal keeps today's outcome.
+ */
 export function legacyRefusal(result: Pick<ImportResult, 'status' | 'error' | 'refusal'>): ContentRefusal | null {
   if (result.status === 'imported') return null;
-  if (result.refusal) return result.refusal;
+  if (result.refusal) return result.refusal.code === 'invalid_fence' ? null : result.refusal;
   const error = result.error ?? '';
   if (/^Content rejected by sanity gate: /.test(error)) return { code: 'content_rejected', message: error };
   const typed = isContentRefusal('invalid_params', error) ? contentRefusalFromReceipt('invalid_params', error) : null;
-  if (!typed) return null;
+  if (!typed || typed.code === 'invalid_fence') return null;
   const { suggestion: _suggestion, ...refusal } = typed;
   return { ...refusal, message: error };
 }
@@ -193,9 +199,10 @@ export async function holdRefusedImport(engine: BrainEngine, holds: LegacyHolds 
 }
 
 /** Bookkeeping for a screened import: the escalation denominator and the recovered-frontmatter tally. */
-export function noteScreenedImport(holds: LegacyHolds | null, path: string, result: Pick<ImportResult, 'status' | 'frontmatter_recovery'>): void {
+export function noteScreenedImport(holds: LegacyHolds | null, path: string, result: Pick<ImportResult, 'status' | 'frontmatter_recovery' | 'fences_normalized' | 'fence_issues'>): void {
   if (!holds) return;
   holds.counts.screened++;
+  holds.fences.note(path, result);
   if (result.status !== 'imported' || !result.frontmatter_recovery) return;
   if (result.frontmatter_recovery.quoted) holds.recoveredPaths.push(path);
   if (result.frontmatter_recovery.comment_value) holds.counts.commentValues++;
@@ -221,7 +228,11 @@ export async function legacyHoldFields(engine: BrainEngine, holds: LegacyHolds |
     policy: holds.policy, screened: holds.counts.screened });
   const recovered = holds.recoveredPaths.length || holds.counts.commentValues
     ? recoveredReport(holds.sourceId, addRecovered(undefined, { paths: holds.recoveredPaths, commentValues: holds.counts.commentValues })) : undefined;
-  return { ...report, ...(recovered ? { recovered_frontmatter: recovered } : {}) };
+  const fences = holds.fences.fields();
+  const normalized = fences.fences_normalized;
+  if (normalized) await recordSyncRunTrend(engine, { sourceId: holds.sourceId, runId: holds.runId, day: new Date().toISOString().slice(0, 10), count: normalized.count,
+    byClass: normalized.by_class as Record<string, number>, writers: Object.fromEntries(normalized.writers.map(w => [w.writer, w.count])) });
+  return { ...report, ...(recovered ? { recovered_frontmatter: recovered } : {}), ...fences };
 }
 
 /** Dry run: the files this run would hold, read-only (no hold row is written or changed). */

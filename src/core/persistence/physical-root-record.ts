@@ -5,8 +5,9 @@ import { OperationError } from '../ops/contract.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
+import { PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
 
-export const PHYSICAL_ROOT_MARKER = '.gbrain-owner.json';
+export { PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
 const RESERVATION_PREFIX = '.gbrain-owner-';
 export interface PhysicalRootReservation {
   version: 1; token: string; brainId: string; worktreeId: string; hostId: string;
@@ -16,10 +17,6 @@ export interface PhysicalRootStamp { version: 1; token: string; brainId: string;
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9-]{36}$/i.test(value);
 export function physicalRootError(message = 'The physical checkout identity changed or belongs to another owner.'): OperationError {
   return new OperationError('recovery_required', message, 'Use verified writer transfer or source recovery; do not remove ownership markers to claim this path.');
-}
-export function isPhysicalRootMetadata(name: string): boolean {
-  return name === PHYSICAL_ROOT_MARKER || /^\.gbrain-owner-[a-f0-9]{64}\.json$/.test(name)
-    || /^\.gbrain-owner\.json\.[a-f0-9-]{36}\.tmp$/.test(name);
 }
 export function physicalRootReservationPath(root: string): string {
   return join(dirname(root), `${RESERVATION_PREFIX}${sha256(root)}.json`);

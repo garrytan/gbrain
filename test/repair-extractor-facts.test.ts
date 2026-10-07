@@ -41,7 +41,7 @@ import { managedBrain } from './helpers/managed-brain.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { configureGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { startPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 
@@ -428,6 +428,7 @@ for (const backend of testBackends()) {
         } });
       } finally {
         __setEmbedTransportForTests(null);
+        resetGateway(); // R5: restore the preload baseline for later tests and files in this shard
       }
     }, 180_000);
   });

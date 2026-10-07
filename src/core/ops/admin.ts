@@ -2,6 +2,7 @@ import { pageMutationSource, submitPageMutation } from '../persistence/page-muta
 import { PAGE_MUTATION_PARAMS } from '../persistence/params.ts';
 import { readPolicyOpts } from './context.ts';
 import { attributeVersions, canReadWriteAttribution } from './attribution.ts';
+import { invalidParam } from './op-fix.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 /**
  * Admin operation cluster — pure move from operations.ts (v0.46.x tranche 2).
@@ -191,12 +192,26 @@ const get_versions: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { exempt: 'full page version snapshots by slug; a page read governed by visibility like get_page (CEO-17)' },
-  description: 'Page version history. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it).',
+  description: 'Page version history, newest snapshot first. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). `limit` returns only the newest N; `include_body: false` returns metadata only.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose version history to list.' },
+    limit: { type: 'number', description: 'Return only the newest N versions (a positive integer). Omit for the full history.' },
+    include_body: { type: 'boolean', description: 'false omits compiled_truth and timeline from every version (metadata only). Default true.' },
   },
   handler: async (ctx, p) => {
-    const plain = await ctx.engine.getVersions(p.slug as string, await readPolicyOpts(ctx));
+    // #5234: the bound and the body projection run in SQL, after the scope and
+    // privacy predicates, so a bounded or metadata-only read never loads more
+    // than it returns and never widens what the caller may see.
+    const limit = p.limit === undefined || p.limit === null ? undefined : p.limit;
+    if (limit !== undefined && !(typeof limit === 'number' && Number.isSafeInteger(limit) && limit >= 1)) {
+      throw invalidParam(ctx, 'get_versions', 'limit', 'get_versions: limit must be a positive integer.', { example: 5 });
+    }
+    const opts = { ...(await readPolicyOpts(ctx)), ...(limit !== undefined ? { limit } : {}) };
+    if (p.include_body === false) {
+      const metadata = await ctx.engine.getVersions(p.slug as string, { ...opts, includeBody: false });
+      return canReadWriteAttribution(ctx) ? attributeVersions(ctx.engine, metadata) : metadata;
+    }
+    const plain = await ctx.engine.getVersions(p.slug as string, opts);
     const versions = canReadWriteAttribution(ctx) ? await attributeVersions(ctx.engine, plain) : plain;
     if (ctx.remote === false) return versions;
     return versions.map(v => ({ ...v, compiled_truth: sanitizeRemoteBody(v.compiled_truth),

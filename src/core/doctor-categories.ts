@@ -61,6 +61,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'connector_checkpoints',
   'connector_held_items',
   'git_held_files',
+  'fence_integrity',
   'credential_projection_pending',
   'derived_visibility',
   'extractor_facts_expired',

@@ -198,6 +198,20 @@ examples lives in `docs/takes-vs-facts.md`.
 Slugs use the standard grammar (`[a-z0-9._-]+`). `Garry`, `people/Garry-Tan`,
 and `world/garry-tan` all fail validation.
 
+**Write takes with `takes_add`, not by hand.** `takes_add` (and `takes_update`
+for an existing row) writes the row for you: it allocates the row number,
+accepts only the four kinds (`fact`, `take`, `bet`, `hunch`), and keeps the
+fence's markers and header canonical, so the page never needs fence repair.
+Give it a canonical holder: `world`, `brain`, `people/<slug>` or
+`companies/<slug>`, with a lowercase slug (`people/alice-example`,
+`companies/acme-example`). A display name (`Alice Example`), a bare first
+name or an assistant label is not a holder: gbrain rewrites assistant labels
+(`System`, `assistant`) to `brain`, resolves a name only when it matches
+exactly one `people/` or `companies/` page, and otherwise refuses the write
+or holds the file for a person to fix. Facts rows go through `remember` the same way. Write a fence
+table by hand only when the user asks for one, and then follow the exact
+format in `docs/guides/fence-format.md`.
+
 **Founder-describing-own-company rule.** When a founder describes their own
 company, the holder is the FOUNDER, not the company. "We can hit $10M ARR"
 said by Bo Lu → `holder=people/bo-lu`, NOT `holder=companies/clipboard-health`.

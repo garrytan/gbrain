@@ -18,6 +18,8 @@ export interface WriteAuthority {
   slugPrefixes: string[] | null;
   delegatedPrefixes?: string[] | null;
   delegated?: boolean;
+  /** Minions job that accepted an OAuth-delegated write; a live `job` grant re-derives only that job's namespace from it. */
+  delegatedJobId?: number;
   takesHolders?: string[] | null;
   /** Actual holders touched by a published take mutation; retained after intent compaction. */
   takeHoldersUsed?: string[];

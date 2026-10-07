@@ -10,7 +10,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
-  mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, utimesSync,
+  mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, utimesSync, symlinkSync,
 } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -533,6 +533,24 @@ describe('single-flight lock [G14/A5, CX2-6]', () => {
       r.handle.release();
     }
     expect(existsSync(lockDir)).toBe(false);
+  }, T);
+
+  test('a symlinked spelling of the repo shares the physical lock (#5400)', () => {
+    const alias = join(root, 'alias-of-work');
+    symlinkSync(work, alias);
+    expect(pushLockDir(alias)).toBe(pushLockDir(work));
+    const first = acquirePushLock(work);
+    expect(first.acquired).toBe(true);
+    try {
+      const second = acquirePushLock(alias);
+      expect(second.acquired).toBe(false);
+      if (!second.acquired) expect(second.holderPid).toBe(process.pid);
+    } finally {
+      if (first.acquired) first.handle.release();
+    }
+    const absent = join(root, 'never-created');
+    expect(pushLockDir(absent)).toBe(pushLockDir(absent));
+    expect(existsSync(absent)).toBe(false);
   }, T);
 
   test('a corrupt owner file is never stolen while young (mtime fallback)', () => {

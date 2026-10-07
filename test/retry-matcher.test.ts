@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  isConnectTimeoutError,
   isStatementTimeoutError,
   isLockTimeoutError,
   isRetryableConnError,
@@ -132,5 +133,41 @@ describe('isRetryableError', () => {
 
   test('still false for unrelated errors', () => {
     expect(isRetryableError(new Error('foreign key violation'))).toBe(false);
+  });
+});
+
+describe('isConnectTimeoutError (#5946)', () => {
+  test.each([
+    ['the TCP-socket message with its code', pgError('CONNECT_TIMEOUT', 'write CONNECT_TIMEOUT db.example.test:5432')],
+    ['the post-TLS message with its code', pgError('CONNECT_TIMEOUT', 'write CONNECT_TIMEOUT undefined:undefined')],
+    ['the code on a plain object without a message', { code: 'CONNECT_TIMEOUT' }],
+    ['the message after a wrapper dropped the code', new Error('worker 2: write CONNECT_TIMEOUT 10.0.0.5:6543')],
+  ])('matches %s', (_label, err) => {
+    expect(isConnectTimeoutError(err)).toBe(true);
+  });
+
+  test.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['zero', 0],
+    ['NaN', Number.NaN],
+    ['an empty string', ''],
+    ['a longer token that only contains the name', new Error('metric CONNECT_TIMEOUTS_TOTAL rose')],
+    ['a lowercase mention', new Error('connect_timeout=10 in the URL')],
+    ['a TCP-level ETIMEDOUT', pgError('ETIMEDOUT', 'connect ETIMEDOUT 10.0.0.5:5432')],
+    ['a statement timeout', pgError('57014', 'canceling statement due to statement timeout')],
+    ['a lock timeout', pgError('55P03', 'could not obtain lock on relation')],
+    ['an ended connection', pgError('CONNECTION_ENDED', 'write CONNECTION_ENDED db.example.test:5432')],
+    ['a different code with an unrelated message', pgError('3D000', 'database "gbrain" does not exist')],
+  ])('does not match %s', (_label, err) => {
+    expect(isConnectTimeoutError(err)).toBe(false);
+  });
+
+  test('the general connection matcher still refuses CONNECT_TIMEOUT, so first connects fail fast', () => {
+    for (const where of ['db.example.test:5432', 'undefined:undefined']) {
+      const err = pgError('CONNECT_TIMEOUT', `write CONNECT_TIMEOUT ${where}`);
+      expect(isConnectTimeoutError(err)).toBe(true);
+      expect(isRetryableConnError(err)).toBe(false);
+    }
   });
 });

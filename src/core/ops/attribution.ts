@@ -10,7 +10,8 @@
  * Never import from '../operations.ts' here (cycle).
  */
 import type { BrainEngine } from '../engine.ts';
-import type { AttributedPageVersion, PageVersion, WriteAttributionView } from '../types.ts';
+import type { WriteAttributionView } from '../types.ts';
+import type { PageVersionMetadata } from '../page-state/version-types.ts';
 import { hasScope } from '../scope.ts';
 import { opError, type Operation, type OperationContext } from './contract.ts';
 import type { McpCall } from '../agent-output.ts';
@@ -71,7 +72,9 @@ export async function resolveWriteAttributions(engine: BrainEngine, stored: Stor
 }
 
 /** `get_versions` for trusted and admin callers: each snapshot with its origin and archiving writer. */
-export async function attributeVersions(engine: BrainEngine, versions: PageVersion[]): Promise<AttributedPageVersion[]> {
+export async function attributeVersions<V extends PageVersionMetadata>(
+  engine: BrainEngine, versions: V[],
+): Promise<Array<V & { written_by: WriteAttributionView; archived_by: WriteAttributionView }>> {
   if (!versions.length) return [];
   const rows = await engine.executeRaw<{ id: number; w_req: string | null; w_kind: string | null; w_id: string | null;
     a_req: string | null; a_kind: string | null; a_id: string | null }>(

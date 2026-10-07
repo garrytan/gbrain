@@ -10,8 +10,8 @@
  *   - P0-5: each per-source cycle writes `last_full_cycle_at` in its
  *     `sources.config` JSONB on success (handled in `runCycle` exit hook,
  *     not here — this module just READS it for freshness gating).
- *   - P1-2: explicitly threads `pull: !!source.config.remote_url` so
- *     local-only sources don't try to git-pull.
+ *   - P1-2: automatic pull needs a remote and an unmanaged source
+ *     (`automaticSyncPull`), so local-only and managed sources never git-pull.
  *   - P1-3: PGLite engines default `fanoutMax=1` (PGLite is single-writer;
  *     parallel fan-out would queue uselessly behind the file lock).
  *   - P1-4: enumeration keeps sources with a `local_path`, so pure-DB
@@ -42,7 +42,8 @@ import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from 
 import { CONNECTOR_SOURCE_PHASES } from '../core/cycle/phase-scope.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
 import { attemptedConnectorSourceIds } from '../core/persistence/connector-state.ts';
-import { parseSourceConfig, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
+import { parseSourceConfig, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
+import { automaticSyncPull } from '../core/persistence/automatic-sync-policy.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
@@ -580,7 +581,7 @@ export async function dispatchPerSource(
       );
       const syncDisabled = isSyncDisabledConfig(src.config) || pendingActivation;
       const connector = connectorIds.has(src.id);
-      const shouldPull = sourceConfigHasRemoteUrl(src.config) && !syncDisabled && !connector;
+      const shouldPull = !syncDisabled && !connector && await automaticSyncPull(engine, src);
       const job = await queue.add(
         'autopilot-cycle',
         {

@@ -11,7 +11,7 @@ import {
 } from '../brain-score-recommendations.ts';
 import { loadRecommendationContext } from './context.ts';
 import type { RemediationPlan, RemediationPlanOpts } from './types.ts';
-import { planRepairSteps } from './repairs.ts';
+import { planRepairStepsReport, previewFailureField, type RepairPlanReport } from './repairs.ts';
 import { explicitRepairNotices } from '../repair/registry.ts';
 
 /**
@@ -65,6 +65,10 @@ export async function computeRemediationPlan(
     .filter((c) => c.status === 'blocked')
     .map((c) => ({ check: c.check, reason: c.reason ?? 'prerequisite missing' }));
 
+  const repairReport: RepairPlanReport | undefined = opts.repairs
+    ? await planRepairStepsReport(engine, { noEmbed: opts.repairs.noEmbed })
+    : undefined;
+
   return {
     schema_version: 2,
     brain_score_current: health.brain_score,
@@ -75,6 +79,10 @@ export async function computeRemediationPlan(
     est_total_seconds: estTotalSeconds,
     est_total_usd_cost: Number(estTotalUsd.toFixed(2)),
     blocked,
-    ...(opts.repairs ? { repair_steps: await planRepairSteps(engine, { noEmbed: opts.repairs.noEmbed }), explicit_repairs: explicitRepairNotices() } : {}),
+    ...(repairReport ? {
+      repair_steps: repairReport.steps,
+      explicit_repairs: explicitRepairNotices(),
+      ...previewFailureField(repairReport.previewFailures),
+    } : {}),
   };
 }

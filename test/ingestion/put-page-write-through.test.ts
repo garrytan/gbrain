@@ -587,3 +587,108 @@ describe('put_page write-through — failure isolation', () => {
     expect(page).toBeNull();
   });
 });
+
+// ── #4807 (E-D17): put_page refuses a new .md/.mdx-suffixed slug ─────────────
+
+describe('put_page suffixed slugs (#4807)', () => {
+  const content = '---\ntitle: Report\n---\n\nreport body';
+  async function writeRequests(): Promise<number> {
+    const [row] = await engine.executeRaw<{ n: number }>('SELECT COUNT(*)::int AS n FROM persistence_requests');
+    return Number(row!.n);
+  }
+  async function refusalOf(promise: Promise<unknown>): Promise<OperationError> {
+    try { await promise; } catch (error) { return error as OperationError; }
+    throw new Error('expected a refusal');
+  }
+
+  test('a new suffixed slug is refused before admission: no row, no receipt, no file (x.md.md or x.md)', async () => {
+    const before = await writeRequests();
+    for (const slug of ['inbox/report.md', 'Inbox/Report.MD', 'inbox/report.md.mdx']) {
+      const error = await refusalOf(putPage.handler(makeCtx(), { slug, content }));
+      expect(error).toBeInstanceOf(OperationError);
+      expect(error.code).toBe('invalid_params');
+      expect(error.message).toBe('put_page slugs must not end in .md or .mdx.');
+      expect(error.suggestion).toBe('Write the page as inbox/report: gbrain put inbox/report (the .md file name is added for you).');
+    }
+    expect(await writeRequests()).toBe(before);
+    expect(await engine.getPage('inbox/report.md', { sourceId: 'default' })).toBeNull();
+    expect(fs.existsSync(path.join(brainDir, 'inbox/report.md.md'))).toBe(false);
+    expect(fs.existsSync(path.join(brainDir, 'inbox/report.md'))).toBe(false);
+  });
+
+  test('dry-run refuses the same way, and the corrected bare slug then writes inbox/report.md', async () => {
+    const error = await refusalOf(putPage.handler(makeCtx({ dryRun: true }), { slug: 'inbox/report.md', content }));
+    expect(error.code).toBe('invalid_params');
+    const result = (await putPage.handler(makeCtx(), { slug: 'inbox/report', content })) as { slug_advisory?: string; write_through?: { written: boolean } };
+    expect(result.write_through?.written).toBe(true);
+    expect(result.slug_advisory).toBeUndefined();
+    expect(fs.readFileSync(path.join(brainDir, 'inbox/report.md'), 'utf8')).toContain('report body');
+  });
+
+  test('rendered contract: CLI and MCP envelopes carry why, a read-only get_page fix and verify on the bare slug', async () => {
+    const { toAgentError, cliRenderContext } = await import('../../src/core/agent-output.ts');
+    const cli = toAgentError(await refusalOf(putPage.handler(makeCtx(), { slug: 'inbox/report.md', content })),
+      { transport: 'cli', command: 'put', render: cliRenderContext() });
+    expect(cli).toMatchObject({ code: 'invalid_params', class: 'caller', contract_version: 1 });
+    expect(cli.why).toContain('<slug>.md.md');
+    expect(cli.fix).toMatchObject({ argv: ['gbrain', 'get', 'inbox/report'], next: 'run', verify: { argv: ['gbrain', 'get', 'inbox/report'] } });
+    const remote = await refusalOf(putPage.handler(makeCtx({ remote: true }), { slug: 'inbox/report.md', content }));
+    expect(remote.suggestion).toBe('Call put_page again with slug "inbox/report" and the same content (the .md file name is added for you).');
+    expect(remote.fix?.mcp).toEqual({ tool: 'get_page', arguments: { slug: 'inbox/report' } });
+  });
+
+  test('a live exact foo.md row (chunks, deep-research id) still updates, keeps its id and gets the move advisory; its bare twin is untouched', async () => {
+    const { encodeDeepResearchId, decodeDeepResearchId } = await import('../../src/core/deep-research-id.ts');
+    const legacy = 'notes/legacy.md';
+    await engine.putPage(legacy, { type: 'note', title: 'Legacy', compiled_truth: 'old legacy body', timeline: '' }, { sourceId: 'default' });
+    await engine.putPage('notes/legacy', { type: 'note', title: 'Twin', compiled_truth: 'bare twin body', timeline: '' }, { sourceId: 'default' });
+    await engine.upsertChunks(legacy, [{ chunk_index: 0, chunk_text: 'old legacy body', chunk_source: 'compiled_truth' }], { sourceId: 'default' });
+    const before = (await engine.getPage(legacy, { sourceId: 'default' }))!;
+    const chunkText = async () => (await engine.executeRaw<{ t: string }>(
+      "SELECT c.chunk_text AS t FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug = 'notes/legacy.md' AND p.source_id = 'default'")).map(r => r.t).join(' ');
+    expect(await chunkText()).toContain('old legacy body');
+
+    const snapshot = (await engine.readPageSnapshot(legacy, { sourceId: 'default' }))!;
+    fs.mkdirSync(path.join(brainDir, 'notes'), { recursive: true });
+    fs.writeFileSync(path.join(brainDir, `${legacy}.md`), serializePageToMarkdown(snapshot.page, snapshot.tags));
+    const revision = snapshot.revision;
+    const result = (await putPage.handler(makeCtx(), { slug: legacy, content: '---\ntitle: Legacy\n---\n\nnew legacy body', expected_revision: revision })) as { slug_advisory?: string };
+    expect(result.slug_advisory).toBe('This page\'s slug ends in .md, which new pages cannot use. To move it, put_page its content under "notes/legacy", then delete_page "notes/legacy.md".');
+    const after = (await engine.getPage(legacy, { sourceId: 'default' }))!;
+    expect(after.id).toBe(before.id);
+    expect(after.compiled_truth).toContain('new legacy body');
+    expect(await chunkText()).toContain('new legacy body');
+    const id = encodeDeepResearchId('default', legacy);
+    expect(decodeDeepResearchId(id)).toEqual({ sourceId: 'default', slug: legacy });
+    const fetchOp = operations.find(o => o.name === 'fetch')!;
+    const fetched = (await fetchOp.handler(makeCtx(), { id })) as { id: string; text: string };
+    expect(fetched.text).toContain('new legacy body');
+    expect((await engine.getPage('notes/legacy', { sourceId: 'default' }))!.compiled_truth).toContain('bare twin body');
+  });
+
+  test('a soft-deleted foo.md row does not count as live: re-creating it is refused', async () => {
+    await engine.putPage('notes/gone.md', { type: 'note', title: 'Gone', compiled_truth: 'gone', timeline: '' }, { sourceId: 'default' });
+    await engine.executeRaw("UPDATE pages SET deleted_at = now() WHERE slug = 'notes/gone.md'");
+    const error = await refusalOf(putPage.handler(makeCtx(), { slug: 'notes/gone.md', content }));
+    expect(error.code).toBe('invalid_params');
+  });
+});
+
+describe('file import with a .md-suffixed frontmatter slug (#4807)', () => {
+  test('a frontmatter slug ending in .md that names no live page is held with the same rule; an existing exact row imports', async () => {
+    const { importFile } = await import('../../src/core/import-file.ts');
+    const file = path.join(brainDir, 'notes', 'held.md');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '---\ntitle: Held\nslug: notes/held.md\n---\n\nheld body');
+    const held = await importFile(engine, file, 'notes/held.md', { noEmbed: true, sourceId: 'default' });
+    expect(held).toMatchObject({ status: 'skipped', skip_reason: 'frontmatter_slug_conflict', refusal: { code: 'frontmatter_slug_conflict', key: 'slug' } });
+    expect(held.error).toContain('must not end in .md or .mdx');
+    expect(held.error).not.toContain('slug: notes/held.md');
+    expect(await engine.getPage('notes/held.md', { sourceId: 'default' })).toBeNull();
+
+    await engine.putPage('notes/held.md', { type: 'note', title: 'Held', compiled_truth: 'legacy', timeline: '' }, { sourceId: 'default' });
+    const imported = await importFile(engine, file, 'notes/held.md', { noEmbed: true, sourceId: 'default' });
+    expect(imported.status).toBe('imported');
+    expect(imported.slug).toBe('notes/held.md');
+  });
+});

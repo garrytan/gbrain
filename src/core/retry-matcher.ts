@@ -160,6 +160,23 @@ export function isConnectionEndedError(err: unknown): boolean {
 }
 
 /**
+ * Did postgres.js abandon a connection handshake because its own
+ * `connect_timeout` timer fired? It reports that as code `CONNECT_TIMEOUT`
+ * with the message "write CONNECT_TIMEOUT <host>:<port>" (the host and port
+ * read "undefined:undefined" once the socket has been upgraded to TLS).
+ *
+ * Kept OUT of `isRetryableConnError` on purpose: on a process's first connect
+ * a handshake timeout usually means the host does not route, which
+ * pg-access-classify reports as `network_unreachable`, and retrying cannot
+ * fix that. A caller that has already reached the same URL in this process
+ * opts in through connectWithRetry's `retryConnectTimeout`.
+ */
+export function isConnectTimeoutError(err: unknown): boolean {
+  if (getCode(err) === 'CONNECT_TIMEOUT') return true;
+  return /\bCONNECT_TIMEOUT\b/.test(getMessage(err));
+}
+
+/**
  * Convenience: is this error retryable for ANY reason (connection drop OR
  * statement timeout)? Backfill uses this — callers that need finer-grained
  * dispatch (different backoff per kind) call the dedicated predicates.

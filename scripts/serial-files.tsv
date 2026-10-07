@@ -125,6 +125,7 @@ test/doctor-revision-backfill-journey.serial.test.ts	global-state	global-state: 
 test/dream-drain-failure-summary.serial.test.ts	R2	R2: mock.module(../src/core/cycle/extract-atoms-drain.ts) replaces modules for every file in the process
 test/dream-owner-id-threading.serial.test.ts	R2	R2: mock.module(../src/core/cycle.ts) replaces modules for every file in the process
 test/dream-postgres.serial.test.ts	global-state	global-state: spyOn process.exit, console.error
+test/dream-publication-hold.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.ts, ../src/core/cycle/synthesize-concepts.ts, ../src/core/cycle/synthesize.ts, ../src/core/persistence/prepared-maintenance.ts, ../src/core/minions/wait-for-completion.ts) replaces modules for every file in the process
 test/dream-synthesize-chunking.serial.test.ts	R1	R1: mutates process.env (ANTHROPIC_API_KEY)
 test/embed-backfill-cli-admission.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; patches process stdout/stderr/console
 test/embed-exit-code-3037.serial.test.ts	global-state	global-state: binds local servers/ports

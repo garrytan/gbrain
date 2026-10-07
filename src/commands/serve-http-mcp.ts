@@ -21,7 +21,7 @@ import { createSkillResources } from '../mcp/skill-resources.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
-import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, type ToolResult } from '../mcp/dispatch.ts';
+import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, requestMetaSessionId, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, type ToolResult } from '../mcp/dispatch.ts';
 import { toAgentError } from '../core/agent-output.ts';
 import { STATUS_TOOL_NAME, statusModeOf, statusToolResult } from '../mcp/status-mode.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
@@ -375,6 +375,11 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
   let argsDigest = 'none';
   try { argsDigest = createHash('sha256').update(JSON.stringify(params ?? null)).digest('hex').slice(0, 16); } catch { /* unserializable */ }
   process.stderr.write(`[gbrain-serve] dispatch op=${name} args_sha256=${argsDigest}\n`);
+  // CX2-11 parity with stdio: the request-level `_meta.session_id` (a sibling
+  // of `arguments`) becomes OperationContext.sessionId, so the hot-memory
+  // metaHook and every other session consumer key per remote session. Identity
+  // only, never a trust surface.
+  const sessionId = requestMetaSessionId(request.params);
   let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
   try {
     toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
@@ -382,6 +387,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       // WP1/D7: network transport — the dispatch-layer localOnly
       // backstop keys off this marker.
       transport: 'http',
+      ...(sessionId ? { sessionId } : {}),
       takesHoldersAllowList: tokenAllowList,
       sourceId: tokenSourceId,
       ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),

@@ -61,9 +61,9 @@ describe('anchor scan — bracketed preamble no longer hijacks the parse', () =>
 
   test('preamble recovery: a parseable-but-WRONG array ahead of the real one is skipped', () => {
     // `["a","b"]` parses cleanly but yields no atom, so the scan moves on and
-    // recovers the real payload below. NOTE: this passes with OR without the
-    // shape gate (the first-bracket offset fails to parse either way), so it
-    // pins recovery, not the gate — the gate is pinned directly further down.
+    // recovers the real payload below. The first-bracket offset parses on its
+    // own (bounded to `["a","b"]`) and the SHAPE GATE rejects it, so this pins
+    // recovery; the gate itself is pinned directly further down.
     const raw = 'Candidate labels were ["a","b"] before I settled on:\n' + ATOM_ARRAY;
     const atoms = atomsOf(raw);
     expect(atoms).toHaveLength(1);
@@ -135,6 +135,42 @@ describe('anchor scan — preserved behaviour', () => {
 
   test('trailing prose after a valid array is still recovered', () => {
     expect(atomsOf(ATOM_ARRAY + '\n\nThose are the atoms I found.')).toHaveLength(1);
+  });
+
+  test('trailing prose containing a bracketed citation does not hijack the recovery boundary', () => {
+    // Last-`]` trim-back included the citation in the re-parse, so a valid
+    // array was reported `unparseable JSON array`.
+    const raw = ATOM_ARRAY + '\nSee [Source: alice-example, agent session, 2026-09-03].';
+    expect(atomsOf(raw)).toHaveLength(1);
+    expect(atomsOf(raw)[0]!.title).toBe(ATOM.title);
+  });
+
+  test('trailing prose with an unmatched trailing bracket after a valid array is still recovered', () => {
+    const raw = ATOM_ARRAY + '\nas noted above]';
+    expect(atomsOf(raw)).toHaveLength(1);
+  });
+
+  test('recovery still finds the true boundary when the array body has escaped quotes, brackets inside strings, and a nested array', () => {
+    const nestedAtom = {
+      title: 'Escapes and nesting inside the array body',
+      atom_type: 'insight' as const,
+      body: 'She said \\"data is in [brackets]\\" and listed refs [1, 2].',
+      tags: ['[a]', '[b]'],
+    };
+    const raw = JSON.stringify([nestedAtom]) + '\nSee [Source: alice-example, 2026-09-03].';
+    const atoms = atomsOf(raw);
+    expect(atoms).toHaveLength(1);
+    expect(atoms[0]!.title).toBe(nestedAtom.title);
+  });
+
+  test('two complete top-level arrays: the FIRST one wins, pinning the anchor scan precedence', () => {
+    // Not a prompted shape, but the anchor scan's first-candidate-wins policy
+    // now applies because each candidate ends at its own closing bracket.
+    const secondAtom = { ...ATOM, title: 'A later, different array' };
+    const raw = ATOM_ARRAY + '\nCorrected answer:\n' + JSON.stringify([secondAtom]);
+    const atoms = atomsOf(raw);
+    expect(atoms).toHaveLength(1);
+    expect(atoms[0]!.title).toBe(ATOM.title);
   });
 
   test('an empty array after BRACKETED prose is a zero-yield success (#4948 rule holds at any offset)', () => {

@@ -376,6 +376,17 @@ export function isUndefinedTableError(error: unknown): boolean {
   return /relation .* does not exist|no such table|undefined table/i.test(message);
 }
 
+/**
+ * SQLSTATE 22007 / 22008: a date or timestamp the database could not parse.
+ * On a read path that is the caller's input, never a degraded result or a
+ * server fault: list_pages reports it as invalid_params and the hybrid
+ * lexical arms rethrow it instead of failing open.
+ */
+export function isDatetimeInputError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === '22007' || code === '22008';
+}
+
 const _warnedKeys = new Set<string>();
 
 /**

@@ -15,6 +15,8 @@ import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
 import { inferenceNote } from '../facts/subject-infer-write.ts';
+import { normalizeTargetFences } from '../fence-repair/import-step.ts';
+import { pageFencesNormalized } from '../fence-repair/report.ts';
 
 function receiptFix(row: WriteRequest): Action {
   return row.principal_kind === 'local_cli'
@@ -88,17 +90,17 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const validFrom = new Date(String(p.valid_from));
   const context = p.entity_inferred ? appendContextNote(null, inferenceNote(p.entity_inferred as InferredVia)) : undefined;
   const fact: NewFact = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
-    confidence: 1, embedding, embedding_model, ...(context ? { context } : {}) };
+    confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
+    ...(context ? { context } : {}) };
   let page: PreparedMutation | undefined;
   let rowNum: number | undefined;
+  let fencesNormalized: Record<string, unknown> = {};
   if (p.fence === true && snapshot) {
-    const parsed = parseFactsFence(snapshot.page.compiled_truth);
-    if (parsed.warnings.length) {
-      throw opError('storage_error', 'The entity facts fence is malformed; repair it before appending memory.',
-        `The ## Facts table on ${row.slug} in source ${row.source_id} does not parse, so request ${row.request_id} saved nothing. Fix that table on the page (or ask the user to), then remember the fact again.`,
-        { fix: readFix(`Shows page ${row.slug} with its Facts table, read-only.`, { argv: ['gbrain', 'get', '--source', row.source_id, '--', row.slug] }) });
-    }
-    const appended = upsertFactRow(snapshot.page.compiled_truth, { claim: input.fact, kind: input.kind, visibility: input.visibility,
+    // #6188 (D20): the stored fence is normalized in this same write; a residual refuses typed `target_fence_malformed`.
+    const target = await normalizeTargetFences(engine, { sourceId: row.source_id, slug: row.slug, kind: 'facts', page: snapshot.page });
+    if (target.fixes.length) fencesNormalized = { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: target.fixes,
+      writer: row.principal_kind, path: snapshot.page.source_path ?? null, remote: row.authority.remote }) };
+    const appended = upsertFactRow(target.page.compiled_truth, { claim: input.fact, kind: input.kind, visibility: input.visibility,
       confidence: 1, notability: 'medium', validFrom: formatFenceDate(validFrom),
       validUntil: validUntil ? formatFenceDate(validUntil) : undefined, source: fact.source, context });
     rowNum = appended.rowNum;
@@ -109,7 +111,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
         ? { ...f, active: false, supersededBy: rowNum, context: `superseded by #${rowNum}` } : f);
       body = replaceOrInsertFactsFence(body, renderFactsTable(rows));
     }
-    const content = serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags);
+    const content = serializePageToMarkdown({ ...snapshot.page, compiled_truth: body, timeline: target.page.timeline }, snapshot.tags);
     // Reuse the canonical parser/chunker and durable filesystem publication.
     // The original caller revision was checked above; this CAS binds this render.
     page = await preparePageMutation(engine, { ...row, intent: { ...p, content, expected_revision: observedRevision, force: false } }, config, undefined, signal);
@@ -132,6 +134,6 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     }
     if (decision.status === 'superseded') await tx.executeRaw(`UPDATE facts SET expired_at=now(),superseded_by=$3
       WHERE id=$1 AND source_id=$2 AND expired_at IS NULL`, [decision.candidate!.id, row.source_id, id]);
-    return outcome(id, decision.status, input.entity_slug, validUntil, degraded, p, decision.status === 'superseded' ? decision.candidate!.id : undefined);
+    return { ...outcome(id, decision.status, input.entity_slug, validUntil, degraded, p, decision.status === 'superseded' ? decision.candidate!.id : undefined), ...fencesNormalized };
   } };
 }

@@ -14,7 +14,7 @@ import { findingSource, runWaveChecks, waveRepairKind, type WaveFinding } from '
 import { repairPreviewCommand, repairSpec } from '../../core/repair/registry.ts';
 import { readConnectorSourceStatuses } from '../../core/persistence/connector-status.ts';
 import { legacyDefaultSpendBannerNote, legacyJobAuthorityBannerNote } from './checks/legacy-job-authority.ts';
-import { frontmatterHoldsBannerNote } from './checks/git-holds.ts';
+import { fenceHoldsBannerNote, frontmatterHoldsBannerNote } from './checks/git-holds.ts';
 
 /** #5686: connector sources that re-walk their window once, or resumed from a pre-upgrade checkpoint. */
 async function connectorRewalkNote(engine: BrainEngine): Promise<string | null> {
@@ -31,15 +31,16 @@ async function connectorRewalkNote(engine: BrainEngine): Promise<string | null> 
  * of connector sources that will re-walk once after a checkpoint migration).
  * Each returns null when it has nothing to say.
  */
-export const POST_UPGRADE_NOTES: Array<(engine: BrainEngine) => Promise<string | null>> = [connectorRewalkNote, legacyJobAuthorityBannerNote, legacyDefaultSpendBannerNote, frontmatterHoldsBannerNote];
+export const POST_UPGRADE_NOTES: Array<(engine: BrainEngine) => Promise<string | null>> = [connectorRewalkNote, legacyJobAuthorityBannerNote, legacyDefaultSpendBannerNote, frontmatterHoldsBannerNote, fenceHoldsBannerNote];
 
-/** One banner line for a non-ok wave finding. */
+/** One banner line for a non-ok wave finding (a check's `bannerHow` refines the parenthetical, e.g. fences the maintenance run repairs). */
 export function bannerFindingLine({ spec, check, state }: WaveFinding): string {
   if (state === 'unknown') return `[AGENT]   ${spec.id}: could not be checked (health unknown)`;
   const kind = waveRepairKind(spec);
-  const how = kind && repairSpec(kind).explicit_only ? `explicit_kind_required; preview with: ${repairPreviewCommand(kind, { source: findingSource({ check }) })}`
+  const source = findingSource({ check });
+  const how = kind && repairSpec(kind).explicit_only ? `explicit_kind_required; preview with: ${repairPreviewCommand(kind, { source })}`
     : spec.resolution === 'repair' ? 'repairable after the user agrees' : spec.resolution === 'operator' ? 'needs an operator action' : 'reported only; no command clears it yet';
-  return `[AGENT]   ${spec.id}: ${spec.count(check.details ?? {})} (${how})`;
+  return `[AGENT]   ${spec.id}: ${spec.count(check.details ?? {})} (${spec.bannerHow ? spec.bannerHow(check.details ?? {}, how, source) : how})`;
 }
 
 export async function postUpgradeRecoveryBanner(engine: BrainEngine, brainLabel: string): Promise<string[]> {

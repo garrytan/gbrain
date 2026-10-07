@@ -13,6 +13,7 @@
  * `docs/guides/error-codes.md#<code>`.
  */
 import type { Action, Actor, Effect, ErrorClass } from './agent-output.ts';
+import { FENCE_REASON_CODES } from './fence-repair/reasons.ts';
 
 export interface CodeEntry {
   class: ErrorClass;
@@ -155,6 +156,7 @@ export const CODES = {
   feedback_disabled: { class: 'host_only', summary: "Retrieval feedback is off (or not learning) on this brain, so ratings are not recorded.", docs: 'docs/guides/retrieval-feedback.md#feedback_disabled' },
   feedback_not_authorized: { class: 'host_only', summary: "This caller may not change the brain's shared ranking for that source.", docs: 'docs/guides/retrieval-feedback.md#feedback_not_authorized' },
   fetch_failed: { class: 'retryable', summary: "Fetching the upstream failed." },
+  fix_not_writable: { class: 'host_only', summary: "A gbrain lint fix was not applied because the file refused the write (EACCES, EPERM or EROFS); the file was left unchanged.", why: "Lint repairs files in place, and this file's permissions or a read-only mount stopped the write; lint reports it and continues with the remaining files.", docs: 'docs/guides/repair.md#fix-not-writable', suggestion: "Make the file writable by the user running gbrain, or pass its directory or file name to gbrain lint --exclude, then lint again." },
   file_removed_during_scan: { class: 'retryable', summary: "A file lint listed was removed before lint read it, so it was not linted.", why: "Another process deleted or renamed the file during the run; lint reports it and continues with the remaining files.", docs: 'docs/guides/repair.md#file-removed-during-scan', suggestion: "Re-run gbrain lint on the same target; it lints the files present now." },
   file_too_large: { class: 'caller', summary: "The file is over the import size limit (5 MB for Markdown and code, 10 MiB for any sync read), so it was not imported.", why: "Size limits bound parsing, chunking and embedding cost. The same bytes refuse on every retry.", suggestion: 'Split the file into smaller files, or leave it out of the source (sync.exclude), then sync or import again.' },
   follow_approval_required: { class: 'caller', summary: "Following a brain's shared skills needs the user's explicit follow approval.", docs: 'docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately' },
@@ -193,6 +195,7 @@ export const CODES = {
   invalid_acknowledgment: { class: 'caller', summary: "The shared-skills delivery acknowledgment does not match a batch issued to this enrollment.", docs: 'docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover' },
   invalid_client: { class: 'caller', summary: "Google connect credential error: invalid client.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   invalid_connector_text: { class: 'caller', summary: "Invalid connector text." },
+  invalid_fence: { class: 'caller', summary: "A facts or takes fence in the page cannot be imported without dropping or guessing rows, so the page (or the file) was not written.", why: "Facts and takes fences are the page's structured rows. Importing a fence that does not parse, repeats a marker or reuses a row number would silently drop or renumber rows, so coordinated writers refuse it and managed sync holds the one file while the rest of the source syncs.", reasons: FENCE_REASON_CODES, legacy_error: 'invalid_params', docs: 'docs/guides/write-refusals.md#invalid_fence', suggestion: 'A refused write: fix the fence the message names (fence, section and rows; the reason says what is wrong) and send the page again with a new request_id, or write rows with remember / takes_add. A held file or stored page: the maintenance run repairs it; preview it now with gbrain repair fences --source <id> on the brain host.' },
   invalid_frontmatter: { class: 'caller', summary: "The file's YAML frontmatter cannot be read without guessing, so it was not imported.", why: "gbrain imports frontmatter it can read exactly (quoting an unquoted value at most). Guessing could store a wrong title, merge a duplicate, or read a protected key such as `visibility` as a broader value.", reasons: ['yaml_parse', 'needs_interpretation', 'ambiguous_identity_key', 'ambiguous_protected_key'], suggestion: 'Fix the named line in the file (one line per key, the whole value quoted), then commit and sync or import again.' },
   invalid_grant_clock_skew: { class: 'caller', summary: "Google connect credential error: invalid grant clock skew.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   invalid_grant_revoked: { class: 'caller', summary: "Google connect credential error: invalid grant revoked.", docs: 'docs/guides/google-connect.md#troubleshooting' },
@@ -398,4 +401,5 @@ export const NOTICE_CODES = {
   relational_chain: { kind: 'degraded', summary: 'A typed relationship chain found no complete answer (start page not visible, no typed edges, an empty hop) or hit a cap; the notice names the hop and the next call.' },
   held_files: { kind: 'degraded', summary: 'Sync holds files in the read scope it cannot import: held new files are missing and pages whose newer file is held are stale; the fix is the repair preview on the brain host.' },
   recovered_frontmatter: { kind: 'coaching', summary: 'Files imported only after quoting unquoted frontmatter values; the generator writing them should quote values (the fix is the repair preview).' },
+  fence_normalized: { kind: 'coaching', summary: 'A write\'s facts or takes fence was rewritten losslessly (rows and classes named, never values): the stored page differs from what was sent, so re-read it with get_page before editing; remember and takes_add write rows that never need it.' },
 } as const satisfies Record<string, NoticeEntry>;

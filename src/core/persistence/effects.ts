@@ -34,7 +34,7 @@ import { commitGitTargets, publishGitEffect, pushGitRoot } from './effect-git.ts
 import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
 import { dispatchFactsBackstopEffect } from './effect-facts.ts';
 import { runLinksEffect } from './effect-links.ts';
-import { PARK_AFTER_FAILURES, type EffectRecovery, type PersistenceEffect, type SkippedTarget } from './effect-model.ts';
+import { PARK_AFTER_FAILURES, type EffectRecovery, type GitCommitNote, type PersistenceEffect, type SkippedTarget } from './effect-model.ts';
 import { SYNC_SKIP_FILES } from '../sync.ts';
 import { recoveryStagingFile } from './staging.ts';
 import { selectEffectRecoveries } from './effect-recovery-scan.ts';
@@ -208,6 +208,12 @@ async function singleFileGitTarget(engine: BrainEngine, effect: PersistenceEffec
   return relative(binding.local_path, path).split(sep).join('/');
 }
 
+/** The commit metadata a single-file Git effect's preparer recorded, if any. */
+function gitCommitNote(effect: PersistenceEffect): GitCommitNote | undefined {
+  const { commit_subject: subject, commit_line: line } = effect.data;
+  return typeof subject === 'string' && typeof line === 'string' ? { subject, line } : undefined;
+}
+
 async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: WorktreeBinding | null, opts: EffectWorkerOptions,
   attempt: EffectAttempt, hardened: boolean | undefined): Promise<void> {
   if (!binding?.local_path) { await completeEffect(engine, effect, { git: 'skipped', reason: 'no_repo_configured' }); return; }
@@ -216,7 +222,7 @@ async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: 
   const root = binding.local_path;
   if (!targetedWithdrawalEffect(effect) && !effect.data.source_scan) {
     const target = await singleFileGitTarget(engine, effect, { ...binding, local_path: root }, attempt);
-    if (target !== null) await completeEffect(engine, effect, await publishGitEffect(root, target, opts.signal, hardened));
+    if (target !== null) await completeEffect(engine, effect, await publishGitEffect(root, target, opts.signal, hardened, gitCommitNote(effect)));
     return;
   }
   // Only a page walk reads snapshots; a single-file effect completes by its recorded hash.
@@ -578,7 +584,8 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
           if (path !== null) targets.push({ effect, path, attempt });
         } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target); }
       }
-      const outcomes = targets.length ? await commitGitTargets(binding.local_path, targets.map(t => t.path), opts.signal) : new Map();
+      const notes = new Map(targets.flatMap(({ effect, path }) => { const note = gitCommitNote(effect); return note ? [[path, note] as const] : []; }));
+      const outcomes = targets.length ? await commitGitTargets(binding.local_path, targets.map(t => t.path), opts.signal, notes) : new Map();
       const pending = unpushed.get(binding.local_path) ?? { binding, items: [] };
       for (const { effect, path, attempt } of targets) {
         const outcome = outcomes.get(path)!;

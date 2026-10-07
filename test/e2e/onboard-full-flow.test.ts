@@ -7,13 +7,16 @@
 //   - The runRemediation library refuses --auto without --max-usd
 //   - The onboard CLI gates work as documented
 //
-// Full DATABASE_URL-gated end-to-end (real Postgres, actual extractions
-// firing through Minion handlers) is deferred to a v0.42.1 follow-up
-// once the Minion worker test harness lands the per-handler stub seam.
+// One block needs DATABASE_URL: a real extract job run inline on Postgres,
+// which proves the remediation impact row (#6109) lands with its JSONB
+// details as an object (PGLite cannot show a double-encoded string). Other
+// handlers firing on Postgres still wait on the per-handler stub seam.
 
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { computeRemediationPlan } from '../../src/core/remediation/index.ts';
+import { computeRemediationPlan, runRemediation } from '../../src/core/remediation/index.ts';
+import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import { captureMetric } from '../../src/core/onboard/impact-capture.ts';
 import { buildOnboardReport, toOnboardRecommendation } from '../../src/core/onboard/render.ts';
 import { runAllOnboardChecks } from '../../src/core/onboard/checks.ts';
@@ -50,6 +53,50 @@ describe('onboard E2E — captureMetric', () => {
   test('captureMetric returns 0 for takes_count on empty brain', async () => {
     const v = await captureMetric(engine, 'takes_count');
     expect(v).toBe(0);
+  });
+});
+
+(hasDatabase() ? describe : describe.skip)('onboard E2E — remediation impact row on Postgres (#6109)', () => {
+  let pg: PostgresEngine;
+
+  beforeAll(async () => {
+    pg = await setupDB();
+  }, 60_000);
+
+  afterAll(async () => {
+    await teardownDB();
+  });
+
+  test('an executed extract step stores its orphan delta with object-shaped details', async () => {
+    await pg.putPage('notes/kickoff-example', {
+      type: 'note', title: 'Kickoff', compiled_truth: 'Met [[people/carol-example]] and [[companies/delta-example]].',
+    });
+    await pg.putPage('people/carol-example', { type: 'person', title: 'Carol Example', compiled_truth: 'An engineer.' });
+    await pg.putPage('companies/delta-example', { type: 'company', title: 'Delta Example', compiled_truth: 'A company.' });
+
+    const result = await runRemediation(pg, { targetScore: 0, inlineJobs: true });
+    const step = result.submitted.find((s) => s.id === 'extract.stale');
+    expect(step?.status).toBe('completed');
+
+    // migration_impact_log is not in the E2E truncate list; scope to this run.
+    const rows = await pg.executeRaw<{
+      remediation_id: string; metric_name: string; metric_before: string; metric_after: string;
+      job_id: string; details_type: string; details: Record<string, unknown>;
+    }>(
+      `SELECT remediation_id, metric_name, metric_before, metric_after, job_id,
+              jsonb_typeof(details) AS details_type, details
+         FROM migration_impact_log
+        WHERE details->>'doctor_run_id' = $1`,
+      [result.doctor_run_id],
+    );
+    expect(rows).toHaveLength(1);
+    const [row] = rows;
+    expect(row!.remediation_id).toBe('extract.stale');
+    expect(row!.metric_name).toBe('orphan_count');
+    expect([Number(row!.metric_before), Number(row!.metric_after)]).toEqual([3, 0]);
+    expect(Number(row!.job_id)).toBe(step!.job_id!);
+    expect(row!.details_type).toBe('object');
+    expect(row!.details).toEqual({ job: 'extract', status: 'completed', doctor_run_id: result.doctor_run_id });
   });
 });
 

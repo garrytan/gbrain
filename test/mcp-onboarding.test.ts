@@ -15,8 +15,9 @@ import { withEnv } from './helpers/with-env.ts';
 import { operations } from '../src/core/operations.ts';
 import { allowedOpNames, isReadOnlyOperation, STARTER_OPS } from '../src/mcp/surface.ts';
 import { dispatchToolCall, dispatchRenderContext, __resetBackupNoticeForTests, type ToolResult } from '../src/mcp/dispatch.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import {
-  ONBOARD_CALL_AFFINITY, mcpOnboardingNotices, startOnboardingRefresher,
+  ONBOARD_CALL_AFFINITY, collectOnboardOpportunities, mcpOnboardingNotices, startOnboardingRefresher,
   __awaitOnboardingRefreshForTests, __resetMcpOnboardingForTests, __warmOnboardingCacheForTests,
 } from '../src/core/onboard/mcp-onboarding.ts';
 import { processNoticeLedger, setNoticeMuted } from '../src/core/notice-ledger.ts';
@@ -346,5 +347,19 @@ describe('first-run decisions over stdio', () => {
       await call('list_pages', {});
       expect(firstRun(await call('list_pages', {}))).toBeUndefined();
     });
+  });
+});
+
+describe('stale-chunk count (#5256)', () => {
+  test('counts only chunks the embedder would pick up: embed_skip and soft-deleted pages are not backlog', async () => {
+    for (const slug of ['notes/stale-example', 'notes/skip-example', 'notes/deleted-example']) {
+      await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: slug, timeline: '' });
+      await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: `${slug} body`, chunk_source: 'compiled_truth', token_count: 2 }]);
+    }
+    await engine.executeRaw(`UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"embed_skip": true}'::jsonb WHERE slug = 'notes/skip-example'`);
+    await engine.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'notes/deleted-example'`);
+    const counts = await collectOnboardOpportunities(engine, new AbortController().signal);
+    expect(counts.staleChunks).toBe(await engine.countStaleChunks());
+    expect(counts.staleChunks).toBe(1);
   });
 });

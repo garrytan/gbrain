@@ -19,7 +19,7 @@ import {
 import type { RemediationStep } from '../remediation-step.ts';
 import { loadRecommendationContext } from './context.ts';
 import { computeRemediationPlan } from './plan.ts';
-import { planRepairSteps, runRepairSteps, type RepairPlanStep, type RepairStepResult } from './repairs.ts';
+import { planRepairStepsReport, previewFailureField, runRepairSteps, type RepairPlanStep, type RepairPreviewFailure, type RepairStepResult } from './repairs.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { RemediationCheckpoint } from '../remediation-checkpoint.ts';
 import type {
@@ -131,9 +131,10 @@ export async function runRemediation(
   const ctx = await loadRecommendationContext(engine);
   const extraRemediations = opts.extraRemediations ?? [];
   const brainId = repairs ? (await (await import('../repair/core.ts')).resolveRepairScope(engine)).brain_id : undefined;
+  let previewFailures: RepairPreviewFailure[] = [];
   const synthetic = (score: number, extra: Partial<RemediationResult> = {}): RemediationResult => ({
     doctor_run_id: crypto.randomUUID(), brain_score_initial: score, brain_score_final: score, brain_score_target: targetScore,
-    target_reached: false, submitted: [], aborted_count: 0, ...extra,
+    target_reached: false, submitted: [], aborted_count: 0, ...previewFailureField(previewFailures), ...extra,
   });
 
   // Resume loads its checkpoint first: a checkpoint that records a manifest
@@ -164,9 +165,9 @@ export async function runRemediation(
   // Pre-flight ceiling check via the shared plan computation. The score target
   // governs job steps only; repair steps are planned independently of it.
   const initialPlan = await computeRemediationPlan(engine, { targetScore, extraRemediations });
-  let repairSteps: RepairPlanStep[] = repairs
-    ? await planRepairSteps(engine, { noEmbed: repairs.noEmbed, kinds: manifest ? manifest.repair_kinds as RepairPlanStep['kind'][] : undefined })
-    : [];
+  const repairReport = repairs ? await planRepairStepsReport(engine, { noEmbed: repairs.noEmbed, kinds: manifest ? manifest.repair_kinds as RepairPlanStep['kind'][] : undefined, registry: repairs.registry }) : { steps: [], previewFailures: [] };
+  let repairSteps: RepairPlanStep[] = repairReport.steps;
+  previewFailures = repairReport.previewFailures;
   // Embeddings a budget stop left behind after re-sealing; the re-sealed pages no longer show up in a repair plan.
   let pendingEmbedSources = includeRepairs && manifest ? [...(cp?.pending_embed_sources ?? [])] : [];
   const initialHealth = await engine.getHealth();
@@ -250,6 +251,7 @@ export async function runRemediation(
   const repairResults: RepairStepResult[] = [];
 
   const { MinionQueue } = await import('../minions/queue.ts');
+  const { openStepImpact, closeStepImpact } = await import('../onboard/impact-capture.ts');
   const isPGLite = engine.kind === 'pglite';
   const queue = new MinionQueue(engine);
   const waitStep = stepWaiter(engine, queue, opts.inlineJobs === true);
@@ -263,7 +265,7 @@ export async function runRemediation(
   // so in-process spend, reserved effect estimates and job spend all draw on one cumulative cap.
   const repairTracker = new BudgetTracker({ label: 'remediation.repairs', maxCostUsd: remainingCap, capSource: opts.capSource });
   let jobTracker: InstanceType<typeof BudgetTracker> | undefined;
-  // Effect kinds embed in the persistence consumer, outside any tracker, so their estimate is reserved up front.
+  // Effect kinds embed outside any tracker, so their estimate is reserved up front; paid-model spend no tracker here metered is charged once its step reports it.
   let reservedUsd = 0;
   let trackerExhausted = false;
   const stepTrackers: Array<InstanceType<typeof BudgetTracker>> = [];
@@ -330,8 +332,8 @@ export async function runRemediation(
     }
     if (repairSteps.length === 0) return;
     for (const step of repairSteps) hooks.onRepairStepStart?.(step);
-    const results = await runRepairSteps(engine, repairSteps, { remote: repairs.remote, noEmbed: repairs.noEmbed, remainingUsd,
-      charge: (usd) => { reservedUsd += usd; }, exhausted: () => trackerExhausted,
+    const results = await runRepairSteps(engine, repairSteps, { remote: repairs.remote, noEmbed: repairs.noEmbed, remainingUsd, registry: repairs.registry,
+      charge: (usd) => { reservedUsd += usd; }, spentUsd: spentThisRun, exhausted: () => trackerExhausted,
       stepBudget: async (run) => {
         const tracker = new BudgetTracker({ label: 'remediation.repair-step', maxCostUsd: remainingUsd(), capSource: opts.capSource });
         stepTrackers.push(tracker);
@@ -377,6 +379,7 @@ export async function runRemediation(
 
       hooks.onStepStart?.(stepCount, totalSteps, step);
       try {
+        const impact = await openStepImpact(engine, step);
         const isProtected = !!step.protected;
         const submitWith = (key: string) =>
           queue.add(
@@ -414,9 +417,8 @@ export async function runRemediation(
 
         const terminal = await waitStep(job.id, { pollMs: isPGLite ? 250 : 1000, timeoutMs: (step.est_seconds + 60) * 1000 });
         submittedResult.status = terminal.status;
-        if (terminal.status !== 'completed') {
-          abortedIds.add(step.id);
-        }
+        if (impact) await closeStepImpact(engine, impact, step, { jobId: job.id, status: terminal.status, doctorRunId });
+        if (terminal.status !== 'completed') abortedIds.add(step.id);
         hooks.onStepEnd?.(submittedResult);
       } catch (e) {
         if (e instanceof BudgetExhausted) {
@@ -518,5 +520,6 @@ export async function runRemediation(
       repairs: repairResults, repairs_skipped: skippedRepairs,
       budget: { max_usd: maxUsd ?? null, spent_usd: settledUsd(), include_repairs: includeRepairs, plan_hash: planHash },
     } : {}),
+    ...previewFailureField(previewFailures),
   };
 }

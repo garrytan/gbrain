@@ -188,7 +188,7 @@ source id. Full per-asset detail (which repo, which fix) is local-only:
 - A source repo with no remote:
   `git remote add origin git@github.com:you/your-brain-repo.git && git push -u origin main`,
   then `gbrain sources harden <source-id>` for auto-push durability.
-- Unpushed workspace work: `gbrain sources push --path <workspace>`.
+- Unpushed workspace work: for a managed canonical worktree, inspect the managed writer with `gbrain sources writer status --probe --json` (legacy bulk push is refused there); otherwise `gbrain sources push --path <workspace>`.
 - db_only pages: `gbrain export --source <id> --dir BACKUP_DIR/<id>` for
   each source the row names, with `BACKUP_DIR` replaced by a directory
   outside the gitignored dirs (another disk, another repo, anywhere durable). One directory per source:

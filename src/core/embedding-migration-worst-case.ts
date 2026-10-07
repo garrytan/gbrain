@@ -45,9 +45,11 @@ export const RERANKER_PROBE = {
 } as const;
 /** The drain's projection-readiness probe and its signature-drift probe. */
 const DRAIN_PROBES = 2;
-/** verifySearchRoundTrip embeds up to 3 sample queries of at most 160 UTF-16 units (≤ 3 UTF-8 bytes each). */
+/** verifySearchRoundTrip embeds up to 3 sample queries: the page title (≤ 160 UTF-16 units), a newline and the chunk (≤ 512), at ≤ 3 UTF-8 bytes per unit. */
 const SMOKE_QUERIES = 3;
-const SMOKE_QUERY_MAX_TOKENS = 160 * 3;
+export const SMOKE_QUERY_TITLE_UNITS = 160;
+export const SMOKE_QUERY_CHUNK_UNITS = 512;
+const SMOKE_QUERY_MAX_TOKENS = (SMOKE_QUERY_TITLE_UNITS + 1 + SMOKE_QUERY_CHUNK_UNITS) * 3;
 /** embedStaleFacts' default batch size. */
 const FACT_BATCH = 100;
 const SCAN_PAGE = 2000;

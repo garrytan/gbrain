@@ -27,7 +27,7 @@ import { softDeleteSyncPages } from '../src/core/company-brain/profile.ts';
 import { makeIngestCaptureHandler } from '../src/core/minions/handlers/ingest-capture.ts';
 import { writeDerivedFacts } from '../src/core/persistence/derived-facts.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -46,6 +46,7 @@ beforeAll(async () => {
   }
 }, 120_000);
 afterAll(async () => {
+  resetGateway(); // R5: restore the preload baseline for later files in this shard
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
   await closePostgres?.();
   rmSync(scratch, { recursive: true, force: true });

@@ -92,6 +92,8 @@ export interface AgentEnvelope {
   notices?: RenderedNotice[];
   contract_version: 1;
   detail?: string; protocol_version?: 1; write_request?: unknown; write_error?: string;
+  /** #6188: a fence refusal's location and blocking issues (location and class only). */
+  fence?: Record<string, unknown>; fence_issues?: Array<Record<string, unknown>>;
 }
 
 export interface RenderContext {
@@ -351,6 +353,8 @@ export interface EnvelopeParts {
   write_request?: unknown;
   write_error?: string;
   retryable?: boolean;
+  fence?: Record<string, unknown>;
+  fence_issues?: Array<Record<string, unknown>>;
 }
 
 /** Replace each occurrence of `bare` that is a whole command (not followed by a word, path or more flags). */
@@ -397,6 +401,8 @@ export function buildEnvelope(p: EnvelopeParts, ctx: RenderContext): AgentEnvelo
     ...(p.protocol_version !== undefined ? { protocol_version: p.protocol_version } : {}),
     ...(p.write_request !== undefined ? { write_request: p.write_request } : {}),
     ...(p.write_error !== undefined ? { write_error: p.write_error } : {}),
+    ...(p.fence !== undefined ? { fence: p.fence } : {}),
+    ...(p.fence_issues?.length ? { fence_issues: p.fence_issues } : {}),
     ...(p.reason !== undefined ? { reason: p.reason } : {}),
     ...(p.why !== undefined ? { why: p.why } : {}),
     ...(fix ? { fix } : {}),
@@ -538,6 +544,7 @@ const ROWS: Row[] = [
         reason: e.reason, why: e.why, fix, docs: e.docs, notices: e.notices, detail: e.detail,
         protocol_version: e.protocolVersion === 1 ? 1 : undefined,
         write_request: j.write_request, write_error: e.writeError,
+        ...(e.fence ? { fence: e.fence } : {}), ...(e.fenceIssues?.length ? { fence_issues: e.fenceIssues } : {}),
       };
     },
   },

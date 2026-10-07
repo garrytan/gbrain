@@ -23,6 +23,7 @@ export const MANAGED_PHASE_TABLE: Readonly<Record<CyclePhase, ManagedPhaseEntry>
   lint: { class: 'writes', reason: 'Lint repairs publish through the maintenance coordinator, one page per repair; a file with no indexed page is reported and left for the next cycle.' },
   backlinks: { class: 'no_coordinated_write', reason: 'Audit-only: counts missing back-links and never writes files.' },
   sync: { class: 'writes', reason: 'Managed sync admits each changed file through the coordinator.' },
+  fence_repair: { class: 'writes', reason: 'Fence repairs publish through managed_file_repair (managed sources), a revision-bound put_page (database-only pages) or the legacy confined write, one coordinated write per repaired file or page.' },
   synthesize: { class: 'writes', reason: 'Dream synthesis publishes pages through the maintenance coordinator.' },
   extract: { class: 'writes', reason: 'Derived links and unrecorded timeline rows commit inside revision-bound coordinated transactions.' },
   extract_facts: { class: 'writes', reason: 'Fence facts are re-projected through coordinated maintenance writes.' },

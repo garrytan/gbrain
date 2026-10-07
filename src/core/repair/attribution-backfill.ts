@@ -25,6 +25,26 @@ import type { RepairHandler, RepairItem, RepairScope } from './core.ts';
 
 const BATCH = 1000;
 
+/**
+ * The proofs join the journal on an outcome key no index covers
+ * (`outcome->>'revision'` for pages and page versions, `outcome->>'id'` for
+ * facts), so a nested loop with the journal on its inner side reads all of it
+ * once per outer row. The planner picks one whenever it takes few rows for
+ * unattributed, as it does after v193's metadata-only ADD COLUMN left the
+ * attribution columns without statistics (#6000); a hash join reads the
+ * journal once.
+ */
+async function withoutNestedLoops<T>(engine: BrainEngine, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  return engine.transaction(async tx => {
+    const [{ prior }] = await tx.executeRaw<{ prior: string }>("SELECT current_setting('enable_nestloop') AS prior");
+    await tx.executeRaw('SET LOCAL enable_nestloop = off');
+    const result = await fn(tx);
+    // SET LOCAL outlives a released savepoint, so a nested caller gets its own setting back.
+    await tx.executeRaw("SELECT set_config('enable_nestloop', $1, true)", [prior]);
+    return result;
+  });
+}
+
 const FACT_ID = "CASE WHEN r.outcome->>'id' ~ '^[0-9]{1,18}$' THEN (r.outcome->>'id')::bigint END";
 
 /** A committed request that changed the page to the revision it reports. */
@@ -82,7 +102,7 @@ interface BatchRange { phase: number; first: number; last: number; source_ids: s
 async function fillBatch(engine: BrainEngine, range: BatchRange): Promise<number> {
   const phase = PHASES[range.phase];
   const params = [range.source_ids, range.first, range.last];
-  return engine.transaction(async tx => {
+  return withoutNestedLoops(engine, async tx => {
     const rows = await tx.executeRaw<{ source_id: string; slug: string }>(provenSql(phase, true), params);
     if (!rows.length) return 0;
     const keys = rows.flatMap(row => { try { validateSlug(row.slug); return [{ sourceId: row.source_id, slug: row.slug }]; } catch { return []; } });
@@ -105,7 +125,8 @@ export const attributionBackfillRepair: RepairHandler = {
     const items: RepairItem[] = [];
     const residuals: Record<string, number> = {};
     for (const [index, phase] of PHASES.entries()) {
-      const ids = (await engine.executeRaw<{ target_id: number | string }>(`${provenSql(phase, false)} ORDER BY target_id`, [scope.source_ids]))
+      const ids = (await withoutNestedLoops(engine, tx =>
+        tx.executeRaw<{ target_id: number | string }>(`${provenSql(phase, false)} ORDER BY target_id`, [scope.source_ids])))
         .map(row => Number(row.target_id));
       const [{ n: unfilled }] = await engine.executeRaw<{ n: number }>(phase.unfilled, [scope.source_ids]);
       if (Number(unfilled) > ids.length) residuals[`unrecorded_${phase.table}`] = Number(unfilled) - ids.length;

@@ -55,6 +55,10 @@ describe('CANONICAL_PRICING — table integrity', () => {
     expect(CANONICAL_PRICING['anthropic:claude-sonnet-5-5']).toMatchObject({ input: 2.0, output: 10.0, cache_read: 0.2 });
   });
 
+  test('gpt-6.1-sol present at its $2/$10 list rate (the fence repair default meters exactly, #6188)', () => {
+    expect(CANONICAL_PRICING['openai:gpt-6.1-sol']).toMatchObject({ input: 2.0, output: 10.0 });
+  });
+
   test('Fable 5 present at $10/$50', () => {
     expect(CANONICAL_PRICING['anthropic:claude-fable-5']).toMatchObject({ input: 10.0, output: 50.0 });
   });

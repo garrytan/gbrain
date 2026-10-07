@@ -229,6 +229,8 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     let nextId = 100;
     const engine = {
       kind: 'postgres' as const,
+      // An unmanaged brain with no worktree bindings: automatic pull follows remote_url (#5463).
+      executeRaw: async (sql: string) => (sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []),
       listAllSources: async () => {
         if (opts?.listError) throw opts.listError;
         if (opts?.listThrows) throw new Error('sources table missing');
@@ -445,7 +447,10 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     const claimed = src('claimed-5198', undefined, { remote_url: 'https://github.com/x/y' });
     const normal = src('normal-5198', undefined, { remote_url: 'https://github.com/x/y' });
     const { engine, queue, added, events, fanoutOpts } = makeStubs([claimed, normal]);
-    (engine as unknown as { executeRaw: () => Promise<unknown[]> }).executeRaw = async () => [{ source_id: 'claimed-5198' }];
+    // Unmanaged brain; claimed-5198 is bound (activation pending), normal-5198 is not.
+    (engine as unknown as { executeRaw: (sql: string, params?: unknown[]) => Promise<unknown[]> }).executeRaw = async (sql, params) =>
+      sql.startsWith('SELECT enabled FROM persistence_brain') ? [{ enabled: false }]
+        : sql.includes('WHERE s.source_id=$1') && params?.[0] !== 'claimed-5198' ? [] : [{ source_id: 'claimed-5198' }];
     await dispatchPerSource(engine, queue, fanoutOpts);
     const byId = new Map<string, AddedJob>(
       added.map(j => [(j.data as Record<string, unknown>).source_id as string, j]),

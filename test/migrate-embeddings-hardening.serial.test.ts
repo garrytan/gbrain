@@ -875,6 +875,47 @@ describe('marker integrity across surfaces', () => {
 });
 
 describe('smoke-check miss + heartbeat resilience', () => {
+  test('verifySearchRoundTrip samples one representative chunk per distinct eligible page (#5334)', async () => {
+    const targetModel = 'openai:text-embedding-3-small';
+    const sig = `${targetModel}:${TO_DIMS}`;
+    const titles = ['Distinct canary 0', `Distinct canary 1${' long title'.repeat(100)}`, 'Distinct canary 2'];
+    const vector = '[' + new Array(TO_DIMS).fill(0).map((_, i) => Math.sin(i) * 0.01 + 0.001).join(',') + ']';
+    const seed = async (slug: string, title: string, chunks: string[], signature: string) => {
+      await engine.putPage(slug, { type: 'note', title, compiled_truth: `# ${title}\n\nbody` });
+      await installFixtureChunks(engine, slug, chunks.map((chunk_text, chunk_index) => ({ chunk_index, chunk_text, chunk_source: 'compiled_truth', token_count: 30 })));
+      await engine.setPageEmbeddingSignature(slug, { signature });
+      await engine.executeRaw(`UPDATE content_chunks SET embedding = $1::vector, model = $2, embedded_at = now(), embedded_text_hash = md5(chunk_text)
+        WHERE page_id = (SELECT id FROM pages WHERE slug = $3)`, [vector, targetModel, slug]);
+    };
+    const body = (page: number, chunk: number) =>
+      `${'Recommendation: review this imported evidence. '.repeat(4)}distinct page ${page} chunk ${chunk} ${'More useful context. '.repeat((chunk + 1) * 20)}`;
+    try {
+      await seed('srm-diverse-a', titles[0], [0, 1, 2].map(c => body(0, c)), sig);
+      await seed('srm-diverse-b', titles[1], [0, 1, 2].map(c => body(1, c)), sig);
+      // The newest chunks all belong to one page: the old ORDER BY chunk id
+      // sampled it three times.
+      await seed('srm-diverse-c', titles[2], [2, 1, 0, 0, 0, 0].map(c => body(2, c)), sig);
+      // A newer page in another embedding space is never a sample.
+      await seed('srm-diverse-stale', 'Stale space', [body(9, 2)], 'old:model:1536');
+
+      embeddedTexts = [];
+      const outcome = await verifySearchRoundTrip(engine, { samples: 3 });
+      const ids = Object.fromEntries((await engine.executeRaw<{ slug: string; id: number }>(
+        "SELECT slug, id FROM pages WHERE slug LIKE 'srm-diverse-%'")).map(r => [r.slug, Number(r.id)]));
+      expect(outcome.samples.map(sample => sample.page_id)).toEqual([ids['srm-diverse-c'], ids['srm-diverse-b'], ids['srm-diverse-a']]);
+      expect(embeddedTexts).toHaveLength(3);
+      for (const page of [0, 1, 2]) {
+        expect(embeddedTexts.some(text => text.startsWith(`${titles[page].slice(0, 160)}\n`) && text.includes(`distinct page ${page} chunk 2`))).toBe(true);
+      }
+      expect(embeddedTexts.every(text => text.length <= 160 + 1 + 512)).toBe(true);
+      expect(JSON.stringify(outcome)).not.toContain('distinct page');
+    } finally {
+      await engine.executeRaw(`DELETE FROM content_chunks WHERE page_id IN (SELECT id FROM pages WHERE slug LIKE 'srm-diverse-%')`);
+      await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'srm-diverse-%'`);
+      embeddedTexts = [];
+    }
+  }, 60000);
+
   test('verifySearchRoundTrip reports warn/self_retrieval_miss with content-free samples', async () => {
     const canary = 'sealed-privacy-canary-text';
     const targetModel = 'openai:text-embedding-3-small';

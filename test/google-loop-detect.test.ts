@@ -44,6 +44,8 @@ interface MsgSpec {
   listUnsub?: boolean;
   /** iCalendar method — non-null marks Google Calendar system mail. */
   calendarMethod?: string | null;
+  /** RFC 3834 Auto-Submitted other than "no". */
+  autoSubmitted?: boolean;
   /** Explicit internalDateMs override (0 = the all-zero-date case). */
   dateMs?: number;
 }
@@ -63,6 +65,7 @@ function msg(spec: MsgSpec): GmailMessageMeta {
     dateIso: new Date(Math.max(internalDateMs, 0)).toISOString(),
     internalDateMs,
     calendarMethod: spec.calendarMethod ?? null,
+    ...(spec.autoSubmitted !== undefined ? { autoSubmitted: spec.autoSubmitted } : {}),
     labelIds: spec.sent ? ['SENT'] : ['INBOX'],
     listUnsubscribe: spec.listUnsub ?? false,
     bodyText: spec.body ?? 'Can you review the plan?',
@@ -617,6 +620,30 @@ describe('N7 open-loops wave regressions', () => {
       NOW,
     );
     expect(out.open[0].openedMs).toBe(ask.internalDateMs);
+  });
+});
+
+describe('#5586: RFC 3834 auto-submitted mail', () => {
+  const detect = (messages: GmailMessageMeta[]): ThreadLoopVerdict =>
+    detectThreadLoop(thread(messages), MY, NOW);
+
+  test('a tracker notice addressed to me opens no inbound loop', () => {
+    const v = detect([msg({ from: 'tracker@acme-example.test', to: ['me@example.com'], ageHours: 100, autoSubmitted: true })]);
+    expect(v.open).toEqual([]);
+  });
+
+  test('an auto-reply does NOT close my real outbound loop', () => {
+    const v = detect([
+      msg({ from: 'me@example.com', to: ['bob@example.com'], ageHours: 200, sent: true, body: 'Can you confirm the budget?' }),
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 100, body: 'I am out of office until Monday.', autoSubmitted: true }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_outbound']);
+    expect(v.close).toEqual(['unanswered_inbound']);
+  });
+
+  test('the same sender writing by hand (Auto-Submitted: no) still opens a loop', () => {
+    const v = detect([msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 100, autoSubmitted: false })]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
   });
 });
 

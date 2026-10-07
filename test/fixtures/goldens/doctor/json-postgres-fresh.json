@@ -1710,6 +1710,78 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/write-refusals.md#invalid_fence",
+            "model_repair": {
+              "max_usd_per_day": 1,
+              "max_usd_per_page": 0.3,
+              "reserved_today_usd": 0,
+              "spent_today_usd": 0
+            },
+            "partial": false,
+            "partial_sources": [],
+            "sources": [
+              {
+                "by_tier": {
+                  "deterministic": 0,
+                  "llm": 0,
+                  "manual": 0,
+                  "resolver": 0,
+                  "total": 0
+                },
+                "files": {
+                  "deterministic": 0,
+                  "llm": 0,
+                  "manual": 0,
+                  "resolver": 0,
+                  "total": 0
+                },
+                "holds": {
+                  "deterministic": 0,
+                  "llm": 0,
+                  "manual": 0,
+                  "resolver": 0,
+                  "total": 0
+                },
+                "oldest_hold_at": null,
+                "pages": {
+                  "deterministic": 0,
+                  "llm": 0,
+                  "manual": 0,
+                  "resolver": 0,
+                  "total": 0
+                },
+                "sample": [],
+                "scan": {
+                  "backfill_done": true,
+                  "checked_at": "<ts>",
+                  "complete": true,
+                  "fresh_at": "<ts>",
+                  "walking": false
+                },
+                "source_id": "default",
+                "total": 0
+              }
+            ],
+            "timeout_ms": "<volatile>",
+            "total": 0,
+            "trend": [
+              {
+                "by_day": [],
+                "normalized_7d": 0,
+                "source_id": "default",
+                "top_writers": []
+              }
+            ],
+            "uncommitted_repairs": 0,
+            "warn_at_normalized_7d": 20
+          },
+          "message": "No malformed facts or takes fence is held, stored or waiting in a checkout (1 source(s) scanned).",
+          "name": "fence_integrity",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
           "name": "search_mode",
@@ -1841,7 +1913,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 12,
+              "global": 13,
               "mixed": 2,
               "source": 12
             },
@@ -1859,6 +1931,7 @@
               "extract_atoms": "source",
               "extract_facts": "source",
               "facts_drain": "global",
+              "fence_repair": "global",
               "grade_takes": "global",
               "lint": "source",
               "orphans": "global",
@@ -1874,7 +1947,7 @@
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 12 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 13 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },

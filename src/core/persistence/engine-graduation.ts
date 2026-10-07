@@ -16,7 +16,7 @@
  * Graduation is CLI-only: no operations.ts entry, no remote caller.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -43,7 +43,7 @@ import {
 } from './graduation-custody.ts';
 import {
   drainTimeoutError, embeddingDimensionMismatchError, foreignHostBindingError, inProgressError, interruptedError, planArgv as planArgvOf,
-  resumeArgv, rollbackWritesLostError, runArgv as runArgvOf, sourceWriterHeldError, statusArgv, targetAuthFailedError, targetNotEmptyError,
+  resumeArgv, retainedCopyMissingError, rollbackWritesLostError, runArgv as runArgvOf, sourceWriterHeldError, statusArgv, targetAuthFailedError, targetNotEmptyError,
   targetUnsupportedError, unsupportedPlatformError, verifyFailedError,
 } from './graduation-errors.ts';
 import { rollbackLosses, type RollbackLoss } from './graduation-losses.ts';
@@ -1233,6 +1233,8 @@ async function rollbackBeforeCutover(run: Run): Promise<GraduationRollbackResult
 
 async function rollbackAfterCutover(run: Run, opts: RunOptions): Promise<GraduationRollbackResult> {
   const from = run.m.state;
+  const noRetainedCopy = () => retainedCopyMissingError({ runId: run.m.runId, retainedPath: graduatedPath(run.dataDir, run.m.runId) });
+  if (!retainedDatastore(run, from)) throw noRetainedCopy();
   const hadAuthority = from === 'authoritative' || from === 'graduated';
   await openTargets(run);
   if (hadAuthority) {
@@ -1251,6 +1253,7 @@ async function rollbackAfterCutover(run: Run, opts: RunOptions): Promise<Graduat
   try {
     await claimPause(run);
     await takeKernelLock(run);
+    if (!retainedDatastore(run, from)) throw noRetainedCopy();
     if (hadAuthority) losses = await detectRollbackLosses(run);
   } catch (error) {
     if (hadAuthority) await returnToAuthority(run);
@@ -1272,6 +1275,26 @@ async function rollbackAfterCutover(run: Run, opts: RunOptions): Promise<Graduat
   await approveAndRestore(run);
   return { state: 'rolled_back', restoredPath: run.dataDir,
     dropped: losses.filter(l => l.lossKind === 'operational').map(l => ({ relation: l.relation, rows: l.rows, lossKind: l.lossKind })) };
+}
+
+/**
+ * Where the PGLite datastore a post-cutover rollback would restore is right
+ * now, or null when it no longer exists. Cutover renames it to
+ * `<dataDir>.graduated-<run>`; only a run interrupted in `cutover` before that
+ * rename still has it at the data dir itself, and there it must be a
+ * directory (from `tombstoned` on, the data dir path is the tombstone file).
+ * Without it, finishRollback would open a fresh empty PGLite brain at the old
+ * path and route this machine to it.
+ */
+function retainedDatastore(run: Run, from: ManifestState): string | null {
+  const renamed = graduatedPath(run.dataDir, run.m.runId);
+  if (existsSync(renamed)) return renamed;
+  if (from !== 'cutover') return null;
+  try {
+    return lstatSync(run.dataDir).isDirectory() ? run.dataDir : null;
+  } catch {
+    return null;
+  }
 }
 
 async function approveAndRestore(run: Run): Promise<void> {

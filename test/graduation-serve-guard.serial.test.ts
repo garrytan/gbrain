@@ -22,6 +22,9 @@ import { probeStatus, statusPayload, initialStatusState } from '../src/mcp/statu
 import { graduationStateCheck } from '../src/commands/doctor/checks/engine-graduation.ts';
 import { assessPgliteLeftovers } from '../src/core/pglite-leftovers-check.ts';
 import { inspectLockHolder } from '../src/core/pglite-lock.ts';
+import { homeDirInWorktreeEntry } from '../src/commands/doctor/checks/local-audits.ts';
+import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import type { Check } from '../src/commands/doctor.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 const target = { id: 'tid', host: 'db.acme-example.test', port: 5432, database: 'brain', user: 'alice' };
@@ -140,6 +143,17 @@ describe('doctor and engine status', () => {
     expect(a.message).toContain('private memory and access-token hashes');
     expect(assessPgliteLeftovers('postgres', join(home, '.gbrain'), undefined, { inFlight: true }).status).toBe('skip');
     expect(assessPgliteLeftovers('pglite', join(home, '.gbrain')).status).toBe('skip');
+  });
+
+  test('doctor pglite_leftovers says a rollback refuses once the copy is deleted, and names no discard flag', async () => {
+    writeTombstone();
+    writeConfig({ engine: 'postgres', database_url: 'postgresql://alice@db.acme-example.test:5432/brain' });
+    const checks = (await inHome(() => homeDirInWorktreeEntry.run({} as DoctorContext))) as Check[];
+    const leftovers = checks.find(c => c.name === 'pglite_leftovers')!;
+    expect(leftovers.status).toBe('warn');
+    expect(leftovers.fix).toMatchObject({ argv: ['rm', '-rf', `${dataDir}.graduated-run-1`], consent: ['destructive'] });
+    expect(String((leftovers.fix as { why?: string }).why)).toContain('a rollback to PGLite refuses with not_found');
+    expect(JSON.stringify(leftovers)).not.toContain('--discard-source');
   });
 
   test('engine status --json carries the graduation block', async () => {

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 206694,
-    "stdoutSha256": "fad8a83c0ce9f493ab007225aa1098c96dcd3df13702d91049e86be2b03e93c5",
+    "stdoutBytes": 207549,
+    "stdoutSha256": "ba03674e7846f4d445030acf6a2bb53cd5544abdff7f8d28e480903f1e852586",
     "toolNames": [
       "remember",
       "entity",
@@ -2104,17 +2104,27 @@
         "scope": "admin"
       },
       {
-        "description": "Page version history. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it).",
+        "description": "Page version history, newest snapshot first. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). `limit` returns only the newest N; `include_body: false` returns metadata only.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "get_versions",
         "parameters": {
+          "include_body": "boolean?",
+          "limit": "number?",
           "slug": "string"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
+            "include_body": {
+              "description": "false omits compiled_truth and timeline from every version (metadata only). Default true.",
+              "type": "boolean"
+            },
+            "limit": {
+              "description": "Return only the newest N versions (a positive integer). Omit for the full history.",
+              "type": "number"
+            },
             "slug": {
               "description": "Slug of the page whose version history to list.",
               "type": "string"
@@ -6374,6 +6384,7 @@
           "as_of": "string?",
           "counterparty": "string?",
           "group_by": "string?",
+          "id": "number?",
           "include_context": "boolean?",
           "limit": "number?",
           "loop_type": "string?",
@@ -6403,6 +6414,10 @@
               ],
               "type": "string"
             },
+            "id": {
+              "description": "Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`.",
+              "type": "number"
+            },
             "include_context": {
               "description": "Attach the counterparty entity card per group (trusted local only). Default true.",
               "type": "boolean"
@@ -6427,7 +6442,7 @@
               "type": "string"
             },
             "status": {
-              "description": "Default 'open'.",
+              "description": "Default 'open', except with `id`, where any status matches.",
               "enum": [
                 "open",
                 "done",

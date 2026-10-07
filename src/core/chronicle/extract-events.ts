@@ -10,6 +10,7 @@
 // failure (no provider, provider error, refusal, truncation, unparseable
 // output) so none is ever recorded as a genuine no_events answer.
 import type { BrainEngine } from '../engine.ts';
+import { matchingCloseBracket } from '../llm-json.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
 import { parseConversation } from '../conversation-parser/parse.ts';
 import { chroniclePageDate } from './eligibility.ts';
@@ -352,6 +353,8 @@ export function defaultJudge(engine: BrainEngine): ChronicleJudge {
  * #2606: returns `null` on parse FAILURE (empty text, no `[...]` found,
  * JSON.parse throw, non-array result) so callers can distinguish "the model
  * said no events" (a legitimate `[]`) from "the response was unusable".
+ * The slice ends at the array's own closing bracket (`matchingCloseBracket`),
+ * not the last `]` in the reply, so a citation after it cannot widen it.
  */
 export function parseJudgeJson(text: string): ChronicleEventProposal[] | null {
   if (!text) return null;
@@ -359,8 +362,8 @@ export function parseJudgeJson(text: string): ChronicleEventProposal[] | null {
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) s = fence[1].trim();
   const start = s.indexOf('[');
-  const end = s.lastIndexOf(']');
-  if (start === -1 || end === -1 || end < start) return null;
+  const end = matchingCloseBracket(s, start);
+  if (end === -1) return null;
   try {
     const arr = JSON.parse(s.slice(start, end + 1));
     return Array.isArray(arr) ? arr : null;

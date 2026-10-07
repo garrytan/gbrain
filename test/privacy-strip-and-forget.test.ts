@@ -395,16 +395,18 @@ describe('#4548 row-level visibility-aware fence merge (remote write-back)', () 
       );
       await putPageOp().handler(makeCtx({ remote: false }), { slug, content: fence });
       warnSpy.mockClear();
-      // The caller mangles the visible row's kind — the incoming fence now
-      // parses with warnings, so the merge refuses to rewrite it (it can't
-      // re-render rows it couldn't parse without losing caller content).
-      // The managed publication refuses malformed content and retains the hidden row.
-      await expect(remoteRoundTrip(slug, (c) => c.replace('| fact |', '| banana |'))).rejects.toMatchObject({code:'invalid_params'});
+      // The caller mangles the visible row's visibility into a word no synonym
+      // maps (#6188: an invented kind is now normalized losslessly, see
+      // test/fence-write-verbs.test.ts E7), so the incoming fence stays
+      // malformed. The managed publication refuses it typed before the merge
+      // runs (nothing is written, so there is no gap to warn about) and the
+      // hidden row is retained.
+      await expect(remoteRoundTrip(slug, (c) => c.replace('| world |', '| banana |'))).rejects.toMatchObject({code:'invalid_params', reason:'enum_unmapped'});
 
       const warnedGap = warnSpy.mock.calls.some(
         (c) => String(c[0]).includes('#2044 gap') && String(c[0]).includes(slug),
       );
-      expect(warnedGap).toBe(true);
+      expect(warnedGap).toBe(false);
       const raw = await engine.getPage(slug, { sourceId: 'default' });
       expect((raw?.compiled_truth ?? '')).toContain('SECRET_MAL');
     } finally {

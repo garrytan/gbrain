@@ -4,13 +4,13 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import type { Action } from '../agent-output.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { publicationHold } from '../persistence/accepted-pending.ts';
 import { authorizeStoredRequest } from '../persistence/authority.ts';
 import { digest } from '../persistence/digest.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { writeResponse } from '../persistence/service.ts';
-import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
 import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource, type GroundingPass } from './synthesize-verify.ts';
@@ -109,7 +109,7 @@ export async function postprocessManagedSynthesis(
     try {
       await publishMaintenancePage(engine, authority, ref.slug, content, { requestId, expectedRevision: revision });
     } catch (error) {
-      if (!acceptedPendingReceipt(error)) throw error;
+      deferPublishOrThrow(error, `${ref.slug} (request ${requestId})`);
       pending++;
       continue;
     }
@@ -120,10 +120,24 @@ export async function postprocessManagedSynthesis(
   return { writtenRefs, finalizedRefs, stats, pending };
 }
 
+/**
+ * A publish that is still pending after its wait (#5854) or whose admission
+ * gave up on database contention without recording anything (#6051) is
+ * deferred, never failed: the next cycle derives the same request id. Every
+ * other error is rethrown. A contended publish writes one stderr line naming it.
+ */
+export function deferPublishOrThrow(error: unknown, what: string): void {
+  const deferral = publicationHold(error);
+  if (!deferral) throw error;
+  if (deferral === 'contention') {
+    process.stderr.write(`[dream] synthesize: ${what} deferred, write admission blocked by database contention; the next cycle admits it\n`);
+  }
+}
+
 export const SYNTH_PUBLISH_DEFERRED = 'publish deferred (writer busy); finishes next cycle, no action needed';
 
 /**
- * #5854: an output publish still pending after its wait is deferred, never
+ * #5854/#6051: an output publish deferred by deferPublishOrThrow is never
  * counted as written: the phase warns, the cooldown stays unstamped, and the
  * next cycle resumes the same request id.
  */

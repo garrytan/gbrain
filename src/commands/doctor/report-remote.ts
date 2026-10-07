@@ -65,6 +65,7 @@ import {
   multiSourceDriftCheck,
   multiSourceDriftNotVerified,
 } from './schema-pack-checks.ts';
+import { managedPersistenceEnabled } from '../../core/persistence/ownership.ts';
 import { brainScorePlanFix, checkError } from './check-fix.ts';
 import type { RenderContext } from '../../core/agent-output.ts';
 
@@ -308,7 +309,7 @@ export async function doctorReportRemote(
         engine,
         nonDefaultWithPath.map(s => ({ id: s.id, local_path: s.local_path as string })),
       );
-      checks.push(multiSourceDriftCheck(result, nonDefaultWithPath.length, 'remote'));
+      checks.push(multiSourceDriftCheck(result, nonDefaultWithPath.length, 'remote', await managedPersistenceEnabled(engine).catch(() => false)));
     }
   } catch (e) {
     // Best-effort, but the check reports that it verified nothing (#5432).

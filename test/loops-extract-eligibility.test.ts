@@ -27,6 +27,7 @@ interface MsgSpec {
   labels?: string[];
   listUnsub?: boolean;
   calendarMethod?: string | null;
+  autoSubmitted?: boolean;
   body?: string;
   subject?: string;
 }
@@ -46,6 +47,7 @@ function msg(spec: MsgSpec): GmailMessageMeta {
     labelIds: spec.labels ?? ['INBOX'],
     listUnsubscribe: spec.listUnsub ?? false,
     calendarMethod: spec.calendarMethod ?? null,
+    ...(spec.autoSubmitted !== undefined ? { autoSubmitted: spec.autoSubmitted } : {}),
     bodyText: spec.body ?? 'Some body text.',
   };
 }
@@ -102,6 +104,24 @@ const ROWS: Row[] = [
     messages: [msg({ from: 'kate@example.com', calendarMethod: 'REQUEST' })],
     eligible: false,
     reason: 'no_substantive_messages',
+  },
+  {
+    name: '#5586: a tracker thread marked Auto-Submitted (no List-Unsubscribe) is not eligible',
+    messages: [msg({ from: 'tracker@acme-example.test', autoSubmitted: true }), msg({ from: 'tracker@acme-example.test', autoSubmitted: true })],
+    eligible: false,
+    reason: 'no_substantive_messages',
+  },
+  {
+    name: '#5586: my own auto-reply is not owner participation',
+    messages: [msg({ from: 'tracker@acme-example.test', autoSubmitted: true }), msg({ from: 'me@example.com', labels: ['SENT'], autoSubmitted: true })],
+    eligible: false,
+    reason: 'no_substantive_messages',
+  },
+  {
+    name: '#5586: a human message beside an auto-submitted one keeps the thread eligible',
+    messages: [msg({ from: 'tracker@acme-example.test', autoSubmitted: true }), msg({ from: 'bob@example.com', autoSubmitted: false })],
+    eligible: true,
+    reason: 'human_correspondence',
   },
   {
     name: 'a human "Notification: ..." thread with no calendar part is eligible',

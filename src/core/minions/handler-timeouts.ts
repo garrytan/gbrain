@@ -106,6 +106,10 @@ export const HANDLER_DEFAULT_LOCK_DURATION_MS: Readonly<Record<string, number>> 
   'connector-sync': FIVE_MIN_MS,
   'autopilot-cycle': FIVE_MIN_MS,
   'autopilot-global-maintenance': FIVE_MIN_MS,
+  // A sync job's synchronous git helpers (sync-git.ts, 30s timeout each) can
+  // hold the event loop for a full 30s worker lease on their own, so a
+  // healthy sync would lose its lock without a longer default.
+  sync: FIVE_MIN_MS,
   contextual_reindex_per_chunk: FIVE_MIN_MS,
   chronicle_extract: TWO_MIN_MS,
   'facts-absorb': TWO_MIN_MS,

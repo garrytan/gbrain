@@ -25,6 +25,9 @@ import {
   checkDbOnlyCollectorCollision,
 } from '../../src/commands/doctor.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
+import { operations } from '../../src/core/operations.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const SKIP_PG = !hasDatabase();
 const describePg = SKIP_PG ? describe.skip : describe;
@@ -67,7 +70,10 @@ describe('wrong-root import produces content_hash_duplicates (#2250, PGLite)', (
   }, 120_000);
 
   afterAll(async () => {
-    if (engine) await engine.disconnect();
+    if (engine) {
+      await disposePersistenceConsumer(engine);
+      await engine.disconnect();
+    }
   }, 60_000);
 
   test('correct-root import alone → check is ok', async () => {
@@ -79,7 +85,7 @@ describe('wrong-root import produces content_hash_duplicates (#2250, PGLite)', (
     expect(c.status).toBe('ok');
   });
 
-  test('re-import from a root one level too deep → warn with pairs + purge remediation', async () => {
+  test('re-import from a root one level too deep → warn with pairs + delete remediation', async () => {
     // The wrong-root mistake: import rooted inside people/ and projects/, so
     // the relative path (and therefore the slug) loses its directory prefix.
     for (const rel of ['people/alice-example.md', 'projects/widget-co.md']) {
@@ -94,9 +100,56 @@ describe('wrong-root import produces content_hash_duplicates (#2250, PGLite)', (
     expect(c.status).toBe('warn');
     expect(c.message).toContain('alice-example <-> people/alice-example');
     expect(c.message).toContain('widget-co <-> projects/widget-co');
-    expect(c.message).toContain('gbrain pages delete <bare-slug>');
-    expect(c.message).toContain('gbrain pages purge-deleted --older-than 0');
+    expect(c.message).toContain('Fix: GBRAIN_SOURCE=default gbrain delete <bare-slug> --force for each pair.');
+    expect(c.message).not.toContain('purge-deleted');
     expect((c.details as any).pair_count).toBe(2);
+  });
+
+  // #3697 class 3 / #5018: a remediation that names a command which then
+  // fails. Follow the printed fix LITERALLY: parse `GBRAIN_SOURCE=<id> gbrain
+  // <verb> <bare-slug> <flags>` out of the rendered message, resolve the verb
+  // through the ops' CLI names, map the env pin to the active source and the
+  // flags to params, and run it for every bare slug. Page writes are
+  // revisioned, so a delete naming neither --force nor --expected-revision is
+  // refused with revision_conflict, and `gbrain pages delete` does not exist.
+  // The fix must soft-delete only the duplicates: an unrelated tombstone in
+  // the brain survives (no hard purge of every tombstone).
+  test('following the remediation literally soft-deletes the duplicates and keeps an unrelated tombstone', async () => {
+    const home = makeDir('gbrain-dup-remediation-home-');
+    const ctx = (sourceId: string) => ({ engine, config: { engine: 'pglite', embedding_disabled: true },
+      logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId }) as any;
+    const run = (op: (typeof operations)[number], sourceId: string, params: Record<string, unknown>) =>
+      withEnv({ GBRAIN_HOME: home }, () => op.handler(ctx(sourceId), params)) as Promise<Record<string, any>>;
+    const byCliName = (verb: string) => operations.find(o => (o.cliHints?.name ?? o.name) === verb);
+
+    await engine.putPage('notes/unrelated-example', { type: 'note', title: 'Unrelated', compiled_truth: 'An unrelated page deleted earlier.' }, { sourceId: 'default' });
+    expect((await run(byCliName('delete')!, 'default', { slug: 'notes/unrelated-example', force: true })).state).toBe('committed');
+
+    const c = await checkContentHashDuplicates(engine);
+    const printed = String(c.message).match(/Fix: GBRAIN_SOURCE=([a-z0-9-]+) gbrain ([a-z-]+) <bare-slug>((?: --[a-z-]+)*) for each pair\./);
+    expect(printed).not.toBeNull();
+    const [, sourceId, verb, flagText] = printed!;
+    const op = byCliName(verb!);
+    expect(op?.name).toBe('delete_page');
+    const flags = flagText!.trim().split(/\s+/).filter(Boolean);
+    const bareSlugs = ((c.details as any).sample_pairs as string[]).map(p => p.split(' <-> ')[0]);
+    expect(bareSlugs.sort()).toEqual(['alice-example', 'widget-co']);
+    for (const slug of bareSlugs) {
+      const params: Record<string, unknown> = { slug };
+      for (const flag of flags) params[flag.slice(2).replace(/-/g, '_')] = true;
+      expect((await run(op!, sourceId!, params)).state).toBe('committed');
+    }
+
+    expect((await checkContentHashDuplicates(engine)).status).toBe('ok');
+    const rows = await engine.executeRaw<{ slug: string; deleted: boolean }>(
+      `SELECT slug, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id = 'default' ORDER BY slug`);
+    expect(rows).toEqual([
+      { slug: 'alice-example', deleted: true },
+      { slug: 'notes/unrelated-example', deleted: true },
+      { slug: 'people/alice-example', deleted: false },
+      { slug: 'projects/widget-co', deleted: false },
+      { slug: 'widget-co', deleted: true },
+    ]);
   });
 });
 

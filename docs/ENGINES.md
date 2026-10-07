@@ -187,7 +187,7 @@ bound params). An RLS policy can then filter rows by
 
 **Default off.** With the env var unset, reads call through on the shared pool
 with no per-read transaction and no pool-slot hold (the search methods keep
-their own transaction for `SET LOCAL statement_timeout`).
+their own transaction for `SET LOCAL statement_timeout` and `jit = off`).
 
 **Enabling it** (operator-managed SQL; gbrain ships no DDL for this):
 

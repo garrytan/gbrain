@@ -189,7 +189,9 @@ export type PushLockResult =
   | { acquired: false; holderPid: number | null };
 
 export function pushLockDir(repoRoot: string): string {
-  const hash = createHash('sha256').update(repoRoot).digest('hex').slice(0, 16);
+  let canonical = repoRoot;
+  try { canonical = realpathSync(repoRoot); } catch { /* absent or unresolvable: hash the raw path */ }
+  const hash = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
   return join(ensureGbrainHome(), 'locks', `push-${hash}.lock`);
 }
 

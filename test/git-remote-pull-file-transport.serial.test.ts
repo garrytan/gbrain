@@ -72,18 +72,18 @@ describe('#3836 durableSsrfFlags env toggle (unit)', () => {
 });
 
 describe('#3836 pullRepo honors the file-transport escape hatch', () => {
-  test('default posture: pull over the file transport still refuses', () => {
+  test('default posture: pull over the file transport still refuses', async () => {
     const { writer, reader } = makeTrio();
     pushSecondCommit(writer);
-    expect(() => pullRepo(reader)).toThrow(GitOperationError);
+    await expect(pullRepo(reader)).rejects.toThrow(GitOperationError);
     expect(existsSync(join(reader, 'NEW.md'))).toBe(false);
   });
 
-  test('GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1: sync-style pull succeeds and lands the new commit', () => {
+  test('GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1: sync-style pull succeeds and lands the new commit', async () => {
     const { writer, reader } = makeTrio();
     pushSecondCommit(writer);
     process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT = '1';
-    pullRepo(reader);
+    await pullRepo(reader);
     expect(readFileSync(join(reader, 'NEW.md'), 'utf-8')).toContain('second commit');
   });
 

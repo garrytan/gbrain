@@ -250,6 +250,30 @@ describe('parseExtractorOutput', () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.claim_text).toBe('Z');
   });
+
+  // #5209: recovery must stop at the value's own closing bracket; the last
+  // `]`/`}` in the reply can belong to prose after it.
+  const take = (claim: string, kind = 'take') => JSON.stringify({ claim_text: claim, kind, holder: 'brain', weight: 0.7 });
+
+  test('an array followed by a numbered citation keeps its takes', () => {
+    const out = parseExtractorOutput(`[${take('Pricing beats features')},${take('Hiring lags plan', 'bet')}]\n[1] board memo`);
+    expect(out.map(t => [t.claim_text, t.kind])).toEqual([['Pricing beats features', 'take'], ['Hiring lags plan', 'bet']]);
+  });
+
+  test('a lone object followed by a stray `]` is recovered', () => {
+    const out = parseExtractorOutput(`${take('Churn is seasonal', 'hunch')}\n]`);
+    expect(out.map(t => t.claim_text)).toEqual(['Churn is seasonal']);
+  });
+
+  test('brackets, braces and an escaped quote inside claim_text', () => {
+    const claim = 'Ratio {a]/[b} is "stable"';
+    const out = parseExtractorOutput(`[${take(claim)}] per [[companies/acme-example]]`);
+    expect(out.map(t => t.claim_text)).toEqual([claim]);
+  });
+
+  test('control: a cut-off array followed by a citation still yields nothing', () => {
+    expect(parseExtractorOutput(`[${take('A')},{"claim_text":"B"\nSee [Source: memo]`)).toEqual([]);
+  });
 });
 
 // ─── isWellFormedEmptyExtraction ────────────────────────────────────

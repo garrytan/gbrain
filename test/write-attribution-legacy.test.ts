@@ -27,7 +27,7 @@ import { extractTakes } from '../src/core/cycle/extract-takes.ts';
 import { runRepairCommand } from '../src/commands/repair.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { renderTakesFence } from '../src/core/takes-fence.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -44,6 +44,7 @@ beforeAll(async () => {
   }
 }, 120_000);
 afterAll(async () => {
+  resetGateway(); // R5: restore the preload baseline for later files in this shard
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
   await closePostgres?.();
   rmSync(scratch, { recursive: true, force: true });

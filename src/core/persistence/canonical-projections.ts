@@ -11,8 +11,29 @@ import { extractTimelineFromContent, type ExtractedTimelineEntry } from '../time
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
 import { materializedMarker, materializedMarkerHash, timelineKey, timelineKeyHash } from '../timeline-marker.ts';
-import { opError, OperationError } from '../ops/contract.ts';
-import { readFix } from '../ops/op-fix.ts';
+import type { OperationError } from '../ops/contract.ts';
+import { protectedRegions } from '../fence-scan.ts';
+import { FENCE_ROWS_MAX, fenceOperationError, scanCanonicalFences } from '../fence-repair/refusal.ts';
+import type { FenceSection } from '../fence-repair/types.ts';
+
+const FENCE_PAIRS=[{begin:FACTS_FENCE_BEGIN,end:FACTS_FENCE_END},{begin:TAKES_FENCE_BEGIN,end:TAKES_FENCE_END}];
+
+/**
+ * Rows held by fences whose begin sits in markdown code, keyed `row_num:text`,
+ * with the section each sits in. Readers treat such a fence as an example and
+ * project nothing from it, so a real fence wrapped in code would silently
+ * delete the rows it holds.
+ */
+function quotedFenceRows(fields:Array<[FenceSection,string]>):{facts:Map<string,FenceSection>,takes:Map<string,FenceSection>} {
+  const facts=new Map<string,FenceSection>(),takes=new Map<string,FenceSection>();
+  for(const [section,field] of fields) for(const region of protectedRegions(field,FENCE_PAIRS).regions) {
+    if(region.read) continue;
+    const text=field.slice(region.start,region.end);
+    if(region.pair===0) for(const f of parseFactsFence(text).facts) facts.set(`${f.rowNum}:${f.claim}`,section);
+    else for(const t of parseTakesFence(text).takes) takes.set(`${t.rowNum}:${t.claim}`,section);
+  }
+  return {facts,takes};
+}
 
 type CanonicalBody = Pick<ParsedPage, 'compiled_truth' | 'timeline'>;
 
@@ -218,29 +239,46 @@ function canonicalTakeRows(body: CanonicalBody): Set<number> {
   return new Set([body.compiled_truth, body.timeline ?? ''].flatMap(field => parseTakesFence(field).takes.map(t => t.rowNum)));
 }
 
-/** Validate a canonical body and compile its provider-free projections. */
-function fenceError(message: string, slug: string, sourceId: string, what: string) {
-  return opError('invalid_params', message, `${what} on page ${slug} in source ${sourceId}, so it was not written. Fix the fence in the page body, then write the page again.`,
-    { fix: readFix(`Shows page ${slug} with its fences, read-only.`, { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] }) });
-}
-
+/**
+ * Validate a canonical body and compile its provider-free projections. A fence
+ * the shared scan refuses throws typed `invalid_fence` (wire `invalid_params`)
+ * naming the first defect's fence, section and reason.
+ */
 export function compileCanonicalProjections(page: ParsedPage, slug: string, sourceId: string) {
-  const fields=[page.compiled_truth,page.timeline ?? ''];
-  for(const field of fields) for(const marker of [FACTS_FENCE_BEGIN,FACTS_FENCE_END,TAKES_FENCE_BEGIN,TAKES_FENCE_END]) {
-    if(field.split(marker).length>2) throw fenceError('Each canonical body section must contain at most one facts fence and one takes fence.', slug, sourceId, 'A body section repeats a facts or takes fence marker');
-  }
-  const factSets=fields.map(parseFactsFence),takeSets=fields.map(parseTakesFence);
-  if ([...factSets,...takeSets].some(set=>set.warnings.length)) throw fenceError('A canonical facts or takes fence cannot be parsed losslessly.', slug, sourceId, 'A facts or takes table does not parse cleanly');
-  const facts=factSets.flatMap(set=>set.facts),takes=takeSets.flatMap(set=>set.takes);
-  for(const rows of [facts,takes]) if(new Set(rows.map(row=>row.rowNum)).size!==rows.length) {
-    throw fenceError('Canonical row numbers must be unique across the entire page.', slug, sourceId, 'Two facts or takes rows share a row number');
-  }
-  return { factRows: extractFactsFromFenceText(facts,slug,sourceId), takes };
+  const scan=scanCanonicalFences(page);
+  if(scan.defects.length) throw fenceOperationError(scan.defects[0]!, slug, sourceId);
+  const fields:Array<[FenceSection,string]>=[['body',page.compiled_truth],['timeline',page.timeline ?? '']];
+  return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null };
 }
 
-function takeCollision(): OperationError {
-  return new OperationError('take_row_collision', 'A takes fence row number is already used by a different take that is not in this page\'s canonical fence.',
-    'Renumber the new takes row, or add the existing take to the fence with a revision-bound put_page.');
+/**
+ * Refuse, rather than silently delete, rows a fence quoted in markdown code
+ * still holds: readers project nothing from such a fence, so a real fence
+ * wrapped in a code block would otherwise expire its facts and drop its takes.
+ */
+async function refuseQuotedFenceLoss(tx: BrainEngine, pageId: number, quoted: { facts: Map<string, FenceSection>; takes: Map<string, FenceSection> },
+  takeRowsGone: number[], factRows: ReturnType<typeof extractFactsFromFenceText>, slug: string, sourceId: string): Promise<void> {
+  const refuse = (fence: 'facts' | 'takes', lost: Array<{ row_num: number; section: FenceSection }>) => fenceOperationError({ reason: 'quoted_fence_rows', fence,
+    section: lost[0]!.section, rows: [...new Set(lost.map(r => Number(r.row_num)))].slice(0, FENCE_ROWS_MAX), columns: [], line: null }, slug, sourceId);
+  if (quoted.takes.size && takeRowsGone.length) {
+    const gone = await tx.executeRaw<{ row_num: number; claim: string }>('SELECT row_num,claim FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])', [pageId, takeRowsGone]);
+    const lost = gone.flatMap(r => { const section = quoted.takes.get(`${r.row_num}:${r.claim}`); return section ? [{ row_num: r.row_num, section }] : []; });
+    if (lost.length) throw refuse('takes', lost);
+  }
+  if (quoted.facts.size) {
+    const kept = new Set(factRows.map(f => `${f.row_num}:${f.fact}:${f.visibility}`));
+    const live = await tx.executeRaw<{ row_num: number; fact: string; visibility: string }>(`SELECT row_num,fact,visibility FROM facts
+      WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL`, [sourceId, slug]);
+    const lost = live.flatMap(r => { const section = kept.has(`${r.row_num}:${r.fact}:${r.visibility}`) ? undefined : quoted.facts.get(`${r.row_num}:${r.fact}`);
+      return section ? [{ row_num: r.row_num, section }] : []; });
+    if (lost.length) throw refuse('facts', lost);
+  }
+}
+
+/** A new fence row's number already names a different stored take: typed `invalid_fence`, wire `take_row_collision` (E4). */
+function takeCollision(rows: number[], sections: Map<number, FenceSection>, slug: string, sourceId: string): OperationError {
+  return fenceOperationError({ reason: 'stored_row_collision', fence: 'takes', section: sections.get(rows[0]!) ?? 'body', rows: rows.slice(0, FENCE_ROWS_MAX), columns: [], line: null },
+    slug, sourceId, { legacy_error: 'take_row_collision' });
 }
 
 /**
@@ -251,7 +289,7 @@ function takeCollision(): OperationError {
  */
 export async function prepareCanonicalProjections(engine: BrainEngine, page: ParsedPage, slug: string, sourceId: string,
   prior: PageSnapshot | null, writer: ProjectionWriter): Promise<(tx: BrainEngine, pageId?: number) => Promise<void>> {
-  const { factRows, takes } = compileCanonicalProjections(page, slug, sourceId);
+  const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId);
   const { timeline, exactIncoming, pinned } = classifyTimeline(prior ? await storedTimeline(engine, prior.page.id) : [],
     page, prior?.page ?? null, slug, writer);
   const deletions = JSON.stringify(pinned.filter(row => row.action === 'delete')
@@ -260,18 +298,28 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     .map(row => ({ id: row.id, detail: row.detail, next: exactIncoming.get(exactTimelineKey(row)) }))
     .filter(row => row.next !== row.detail));
   const priorTakes = prior ? canonicalTakeRows(prior.page) : new Set<number>();
-  const newTakes = JSON.stringify(takes.filter(t => !priorTakes.has(t.rowNum)).map(t => ({ row_num: t.rowNum, claim: t.claim, kind: t.kind, holder: t.holder })));
+  // TE1 (#6188): when the prior takes fence does not parse, its stored rows count as prior canonical rows, so a
+  // row Tier 1 normalized (same number, holder `system` -> `brain`) updates its stored take instead of colliding.
+  const priorCanonical = prior && [prior.page.compiled_truth, prior.page.timeline ?? ''].some(field => parseTakesFence(field).warnings.length)
+    ? new Set([...priorTakes, ...(await engine.executeRaw<{ row_num: number }>('SELECT row_num FROM takes WHERE page_id=$1', [prior.page.id])).map(r => Number(r.row_num))])
+    : priorTakes;
+  const newTakes = JSON.stringify(takes.filter(t => !priorCanonical.has(t.rowNum)).map(t => ({ row_num: t.rowNum, claim: t.claim, kind: t.kind, holder: t.holder })));
   const takeRowsGone = [...priorTakes].filter(n => !takes.some(t => t.rowNum === n));
-  const collides = async (db: BrainEngine, pageId: number) => (await db.executeRaw(`SELECT 1 FROM takes k
+  const collisions = async (db: BrainEngine, pageId: number) => (await db.executeRaw<{ row_num: number }>(`SELECT k.row_num FROM takes k
     JOIN jsonb_to_recordset($2::text::jsonb) AS n(row_num integer,claim text,kind text,holder text) ON n.row_num=k.row_num
-    WHERE k.page_id=$1 AND (k.claim,k.kind,k.holder) IS DISTINCT FROM (n.claim,n.kind,n.holder) LIMIT 1`, [pageId, newTakes])).length > 0;
-  if (prior && await collides(engine, prior.page.id)) throw takeCollision();
+    WHERE k.page_id=$1 AND (k.claim,k.kind,k.holder) IS DISTINCT FROM (n.claim,n.kind,n.holder) ORDER BY k.row_num LIMIT $3`, [pageId, newTakes, FENCE_ROWS_MAX])).map(r => Number(r.row_num));
+  const refuseCollisions = async (db: BrainEngine, pageId: number) => {
+    const rows = await collisions(db, pageId);
+    if (rows.length) throw takeCollision(rows, sections.takes, slug, sourceId);
+  };
+  if (prior) await refuseCollisions(engine, prior.page.id);
   // #5984: `pageId` is the caller's own read of the page in this transaction. The
   // statements are issued as pipelines; an engine call that sends more than one
   // statement (insertFacts, addTakesBatch) ends one, so order is kept.
   return async (tx, pageId) => {
     const id = pageId ?? (await tx.readPageSnapshot(slug, { sourceId }))?.page.id;
     if (id == null) return;
+    if (quoted) await refuseQuotedFenceLoss(tx, id, quoted, takeRowsGone, factRows, slug, sourceId);
     // Fact IDs in permanent receipts remain meaningful when a canonical row is
     // removed/replaced. Expire and detach its row position instead of deleting it.
     // Conversation-extractor rows share the page coordinate without a fence
@@ -291,7 +339,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       [sourceId, slug, fact.row_num, fact.kind, fact.notability, fact.context, fact.valid_from?.toISOString() ?? null,
         fact.valid_until?.toISOString() ?? null, fact.expired_at?.toISOString() ?? null, fact.source, fact.confidence,
         fact.claim_metric ?? null, fact.claim_value ?? null, fact.claim_unit ?? null, fact.claim_period ?? null, fact.attributed_to ?? null]));
-    const checkTakes = async () => { if (await collides(tx, id)) throw takeCollision(); };
+    const checkTakes = () => refuseCollisions(tx, id);
     const dropTakes = () => tx.executeRaw('DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])', [id, takeRowsGone]);
     // Full canonical versions include resolution fields; a revert restores those
     // fields from Markdown too, without the ordinary immutable-resolution API.

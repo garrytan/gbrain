@@ -1,5 +1,6 @@
 import type { WriteRequest } from './model.ts';
 import type { WithdrawalTarget } from '../facts/withdrawal-discovery.ts';
+import { fenceRepairCommitSubject } from '../fence-repair/receipt.ts';
 
 export type EffectKind = 'git' | 'embedding' | 'withdrawal-mirror' | 'facts-backstop' | 'links';
 /** Brain config key gating the remote mention-links effect; unset is on, false/0/no/off turns it off. */
@@ -8,6 +9,16 @@ export const REMOTE_AUTO_LINKS_KEY = 'mcp.remote_auto_links';
 export const REMOTE_MENTION_LINK_SOURCE = 'mcp-remote-mention';
 /** Operations whose remote publications queue a `links` effect. */
 export const REMOTE_MENTION_OPERATIONS: readonly string[] = ['put_page', 'capture', 'edit_page'];
+/**
+ * Commit metadata a trusted local preparer attaches to a page file target
+ * (a fence repair): the subject when the file commits alone, and its body
+ * line when it commits with other files. Location only, never page text.
+ */
+export interface GitCommitNote { subject: string; line: string }
+/** A fence-repaired file's note: `fenceRepairCommitSubject` alone, `<path> (<classes>)` as its line in a batched commit. */
+export function fenceRepairCommit(path: string, classes: readonly string[]): GitCommitNote {
+  return { subject: fenceRepairCommitSubject(path, classes), line: `${path.replace(/[\u0000-\u001f\u007f]/g, '?')} (${classes.join(', ')})` };
+}
 export interface ParkedTarget { slug?: string; error_code: string }
 export interface SkippedTarget { slug: string; reason: 'metafile' | 'file_database_drift' }
 /** A Git or withdrawal target parks after this many consecutive execution failures. */
@@ -37,6 +48,9 @@ export interface PersistenceEffect {
   source_incarnation: string;
   worktree_id: string | null;
   data: { version?: 2; targets?: WithdrawalTarget[]; slug?: string; page_id?: number; relative_path?: string; expected_hash?: string | null; after_slug?: string; source_id?: string; source_scan?: boolean; visibility?: 'private' | 'world'; embedding_attempt_base?: number; embedding_retry_base?: number;
+    /** A single-file Git target's GitCommitNote, when its preparer gave one. */
+    commit_subject?: string;
+    commit_line?: string;
     /** Consecutive execution failures of the current Git or withdrawal target. */
     target_failures?: number;
     /** The target `target_failures` belongs to; a different target starts from zero. */

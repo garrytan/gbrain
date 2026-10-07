@@ -116,10 +116,10 @@ export interface SyncResult {
   holds_fix?: import('../core/agent-output.ts').Action;
   /** Requests of a blocked cursor this run converted in place (held, or re-frozen after the file was fixed). */
   converted_from_failed?: string[];
-  /** Files imported by quoting unquoted frontmatter values, cumulative for the run. */
-  recovered_frontmatter?: import('../core/persistence/sync-holds.ts').RecoveredFrontmatter;
-  /** Dry run: files the run would hold, and entries the screen could not judge (never holds). */
-  dry_run?: true;
+  /** Files imported by quoting unquoted frontmatter values, and (#6188) files whose fences Tier 1 rewrote, cumulative for the run. */
+  recovered_frontmatter?: import('../core/persistence/sync-holds.ts').RecoveredFrontmatter; fences_normalized?: import('../core/fence-repair/report.ts').FencesNormalized; fence_issues?: ReturnType<ReturnType<typeof import('../core/fence-repair/report.ts').importFenceTally>['fields']>['fence_issues'];
+  /** Dry run: files the run would hold or (#6188) normalize, and entries the screen could not judge (never holds). */
+  dry_run?: true; would_normalize?: Array<{ path: string; classes: string[] }>; would_normalize_count?: number;
   would_hold?: import('../core/persistence/sync-holds.ts').GitHoldItem[];
   would_hold_count?: number;
   screen_skipped?: Array<{ path: string; code: string }>;

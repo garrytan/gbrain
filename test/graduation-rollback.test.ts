@@ -10,16 +10,21 @@
  * refusal; durable substeps reconcile after a crash (back to authority before
  * approval, forward to rolled_back after it). Regressions that fail it: a
  * timestamp-based security check (revocations delete rows), a refusal that
- * strands the target fenced, a crash after approval that restores authority.
+ * strands the target fenced, a crash after approval that restores authority,
+ * and a post-cutover rollback that proceeds when the PGLite datastore it must
+ * restore is gone (it would open an empty brain at the old path and route
+ * this machine to it), including the copy disappearing at the fence.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   planGraduation, readGraduationManifest, reconcileGraduation, rollbackGraduation, runGraduation, type GraduationOptions,
 } from '../src/core/persistence/engine-graduation.ts';
 import { assertGraduationConnectAllowed, readIntentMarker, readTombstone } from '../src/core/persistence/graduation-custody.ts';
+import { retainedCopyMissingError } from '../src/core/persistence/graduation-errors.ts';
 import { graduationFenceStatus, readGraduationRow } from '../src/core/persistence/graduation-schema.ts';
+import { cliRenderContext, toAgentError } from '../src/core/agent-output.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
 import { crashAt, makeHarness, openPglite, probeRows, SOURCE_TOKEN_ID, TARGET_URL, type Harness } from './helpers/graduation-harness.ts';
 
@@ -107,6 +112,76 @@ for (const [label, postgresUrl] of targets) {
       });
     }, 120_000);
 
+    const retainedDir = () => `${h.dataDir}.graduated-${manifest().runId}`;
+    /** A missing-copy refusal must leave graduation exactly where it was: graduated, routed to Postgres, nothing recreated. */
+    async function expectUntouchedAfterMissingCopy(refused: Awaited<ReturnType<typeof refusal>>, copyPath: string): Promise<void> {
+      expect(refused.code).toBe('not_found');
+      expect(refused.message).toContain(copyPath);
+      expect(refused.fix?.argv).toBeUndefined();
+      expect(manifest().state).toBe('graduated');
+      expect(config()).toMatchObject({ engine: 'postgres' });
+      expect(existsSync(copyPath)).toBe(false);
+      expect(readTombstone(h.dataDir)?.runId).toBe(manifest().runId);
+      await assertTargetAuthoritative();
+    }
+
+    test('retained copy gone before the rollback starts: not_found before any fence, nothing recreated', async () => {
+      await fresh();
+      await h.inHome(async () => {
+        await graduate();
+        const copyPath = retainedDir();
+        rmSync(copyPath, { recursive: true, force: true });
+        let reachedFence = false;
+        const refused = await refusal(rollbackGraduation(rollbackOpts({ pauseAt: 'rollback_fenced', pauseHook: async () => { reachedFence = true; } })));
+        expect(reachedFence).toBe(false);
+        await expectUntouchedAfterMissingCopy(refused, copyPath);
+      });
+    }, 120_000);
+
+    test('a copy left by a different run does not stand in for this run\'s copy', async () => {
+      await fresh();
+      await h.inHome(async () => {
+        await graduate();
+        const copyPath = retainedDir();
+        const otherRun = `${h.dataDir}.graduated-some-earlier-run`;
+        renameSync(copyPath, otherRun);
+        const refused = await refusal(rollbackGraduation(rollbackOpts()));
+        await expectUntouchedAfterMissingCopy(refused, copyPath);
+        expect(lstatSync(otherRun).isDirectory()).toBe(true);
+      });
+    }, 120_000);
+
+    test('retained copy deleted while the rollback waits at its fence: refused under the kernel lock, target back to authority', async () => {
+      await fresh();
+      await h.inHome(async () => {
+        await graduate();
+        const copyPath = retainedDir();
+        const deleteWhenFenced = async (step: string) => {
+          if (step !== 'rollback_fenced') return;
+          expect((await readGraduationRow(h.target))?.state).toBe('rollback_fenced');
+          rmSync(copyPath, { recursive: true, force: true });
+        };
+        const refused = await refusal(rollbackGraduation(rollbackOpts({ pauseAt: 'rollback_fenced', pauseHook: deleteWhenFenced })));
+        await expectUntouchedAfterMissingCopy(refused, copyPath);
+      });
+    }, 120_000);
+
+    test('a run interrupted in cutover before the move-aside still rolls back from the datastore at the old path', async () => {
+      await fresh();
+      await h.inHome(async () => {
+        const hash = (await planGraduation(runOpts(''))).planHash;
+        await expect(runGraduation(runOpts(hash, { pauseAt: 'source_cutover', pauseHook: crashAt('source_cutover') }))).rejects.toThrow();
+        expect(manifest().state).toBe('cutover');
+        expect(existsSync(retainedDir())).toBe(false);
+        expect(lstatSync(h.dataDir).isDirectory()).toBe(true);
+        const result = await rollbackGraduation(rollbackOpts());
+        expect(result.state).toBe('rolled_back');
+        expect(manifest().state).toBe('rolled_back');
+        expect(lstatSync(h.dataDir).isDirectory()).toBe(true);
+        expect(config()).toMatchObject({ engine: 'pglite', database_path: h.dataDir });
+      });
+    }, 120_000);
+
     test('a target page-style edit is listed and rolls back only with the expect hash; it is never written back', async () => {
       await fresh();
       await h.inHome(async () => {
@@ -185,3 +260,27 @@ for (const [label, postgresUrl] of targets) {
     }, 120_000);
   });
 }
+
+describe('retainedCopyMissingError', () => {
+  const retainedPath = '/home/alice-example/.gbrain/brain.pglite.graduated-run-7';
+  const rendered = () => toAgentError(retainedCopyMissingError({ runId: 'run-7', retainedPath }),
+    { transport: 'cli', command: 'migrate', render: cliRenderContext() });
+
+  test('is a report-only not_found that names the run and the missing path', () => {
+    const env = rendered();
+    expect(env.code).toBe('not_found');
+    expect(env.message).toContain('run-7');
+    expect(env.message).toContain(retainedPath);
+    expect(env.fix?.next).toBe('report');
+    expect(env.fix?.argv).toBeUndefined();
+    expect(env.docs).toEndWith('docs/guides/move-to-postgres.md#check-resume-or-roll-back');
+  });
+
+  test('verifies read-only and tells the user the brain stays on Postgres', () => {
+    const env = rendered();
+    expect(env.fix?.verify?.argv).toEqual(['gbrain', 'migrate', '--status', '--json']);
+    expect(env.why).toContain('before changing anything');
+    expect(env.fix?.user_message).toContain('stays on Postgres');
+    expect(JSON.stringify(env)).not.toMatch(/discard-source|rm -rf/);
+  });
+});

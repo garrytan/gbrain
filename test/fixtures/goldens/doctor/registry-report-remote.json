@@ -223,6 +223,10 @@
       },
       {
         "category": "brain",
+        "name": "fence_integrity"
+      },
+      {
+        "category": "brain",
         "name": "unbound_source"
       },
       {

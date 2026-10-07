@@ -82,7 +82,7 @@ lane (`gbrain transcripts ingest <export-file>`). Verify with
         │                              ▼
         │                    runTranscriptsIngest  (redact → slug → split → import)
         ▼                              │
-  watermark (config scalar) ◀──────────┘  advance ONLY on a fully clean run
+  watermark (config scalar) ◀──────────┘  advance once nothing still holds it back
   connectors.<p>.watermark_iso           receipt → ingest_log; stamp last_sync_at
 ```
 
@@ -98,10 +98,18 @@ imported. Later runs list newest-first and stop at `watermark − windowDays`
 - a conversation edited just behind the watermark (within the trailing window)
   is re-listed and re-imported in place — no silent gap.
 
-The watermark advances **only on a fully clean run** (no fetch errors, no
-`--limit` cap, clean ingest). A `partial` run leaves it untouched so the next run
-heals. Re-imports are free (content-hash idempotency), so re-running is always
-safe.
+The watermark moves forward only when nothing in the run still holds it back:
+the conversation list loaded completely, no `--limit` cap cut the run short,
+the run was not aborted, and every conversation that failed to fetch or ingest
+has now failed three times at its current update time. That last case is
+quarantine. On its third failure at the same `updatedAt` a conversation is
+listed under `quarantined` in the sync result (`--json`) and stops blocking the
+watermark, so a run whose status is `partial` (the status still counts those
+errors) can advance it. Normal syncs skip a quarantined conversation until the
+provider reports a newer update time for it; `--full` lists and retries every
+conversation, quarantined ones included. Any other failed conversation keeps
+the watermark where it is, so the next run lists it and tries again.
+Re-imports are free (content-hash idempotency), so re-running is safe.
 
 The watermark is deliberately a config scalar, **not** `op_checkpoint`:
 `op_checkpoint` stores a completed-key set (no scalar timestamp) and GCs rows
@@ -197,7 +205,7 @@ the export-file lane (`conversation-archive`) — it always works.
 | `forbidden` | Cloudflare/bot challenge on server-side fetch | Use the official export + `gbrain transcripts ingest` | user (downloads the export); agent ingests it | none | `gbrain connectors status --json` |
 | `auth_required` | cookie expired/invalid | Re-copy a fresh Cookie header, `gbrain connectors auth` | user (copies a fresh Cookie header) | `credentials` | `gbrain connectors status --json` |
 | `connectors auth` exits 1 with an `[AGENT]` cookie checklist | no credential and nobody at the terminal ([headless lane](#headless-lane-an-agent-without-a-terminal)) | Relay the `[SHOW USER]` checklist; the user pipes the cookie into `gbrain connectors auth <provider> --cookie -` | user (copies the cookie) | `credentials` | `gbrain connectors status --json` |
-| `partial` | some fetches failed | Watermark not advanced; just re-run | agent | `egress` (fetches from the provider again) | `gbrain connectors status --json` |
+| `partial` | a conversation failed to fetch or import, the conversation list failed, or `--limit` capped the run | Re-run. A failed conversation is retried and holds the watermark until it imports. One that failed three times at the same update time is quarantined instead: normal syncs skip it and it no longer holds the watermark, until the provider shows a newer update time or you run with `--full` | agent | `egress` (fetches from the provider again) | `gbrain connectors status --json` |
 | receipt shows drift | provider API shape changed | Affected threads skipped (not lost); export lane still works | agent (reports it) | none | `gbrain connectors status --json` |
 
 ## v2 roadmap

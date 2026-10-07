@@ -13,6 +13,7 @@ import { pendingWriteHint } from './health.ts';
 import { receiptDeliveredHint } from './connector-errors.ts';
 import type { PgAccessReason } from '../pg-access-classify.ts';
 import { contentRefusalFromReceipt } from '../import-screen.ts';
+import { fenceIssuesFromDetail, fenceLocationFromDetail } from '../fence-repair/refusal.ts';
 import { heldFileDiagnostic } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
 
@@ -276,6 +277,13 @@ export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number 
   if (content) {
     if (content.code !== reason) error.canonical = content.code;
     if (content.reason) error.reason = content.reason;
+    // #6188: the stored fence location and blocking issues (the caller's own rows; refused before any merge).
+    if (content.code === 'invalid_fence') {
+      const fence = fenceLocationFromDetail(row.error_detail) ?? content.fence;
+      if (fence) error.fence = { ...fence };
+      const issues = fenceIssuesFromDetail(row.error_detail);
+      if (issues.length) error.fenceIssues = issues;
+    }
     if (content.key || content.line !== undefined) error.detail = [content.key ? `key ${content.key}` : '', content.line !== undefined ? `line ${content.line}` : ''].filter(Boolean).join(', ');
   }
   if (reason === 'page_identity_changed' && isMissingPageMessage(row.error_message)) error.canonical = 'page_not_found';

@@ -14,7 +14,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
-import { configureGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { embedQuery } from '../src/core/embedding.ts';
 import { runThink } from '../src/core/think/index.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -44,6 +44,7 @@ beforeEach(() => {
   }) as never);
 });
 afterEach(() => { __setEmbedTransportForTests(null); });
+afterAll(() => { resetGateway(); }); // R5: restore the preload baseline for later files in this shard
 
 function ctxOf(engine: BrainEngine, meta: Array<{ key: string; value: unknown }>): OperationContext {
   return { engine: engine as never, config: { engine: engine.kind } as never, logger: console as never, dryRun: false, remote: false, sourceId: 'default',

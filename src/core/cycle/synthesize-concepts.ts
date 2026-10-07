@@ -46,8 +46,8 @@ import { derivedWriteThrough } from './derived-write-through.ts';
 import {
   addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcept, stripFenceSections,
 } from './concept-publication.ts';
+import { readPhaseConfigNumber, SYNTHESIZE_CONCEPTS_BUDGET_KEY, SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD } from './phase-config-values.ts';
 
-const DEFAULT_BUDGET_USD = 1.5;
 // Miss policy for the shared resolver (`priceFor`: operator overrides, the
 // claude-cli → Anthropic sibling, canonical rows): assume Sonnet-tier
 // pricing for a model nothing prices, and name it in the phase details
@@ -69,6 +69,17 @@ function narrativePricing(model: string, overrides: PricingOverrides | undefined
     console.error(`[synthesize_concepts] ${model} has no pricing; metering it at Sonnet-tier rates against the $${budgetUsd.toFixed(2)} phase budget. To meter its real price, look it up and register it: ${pricingSetCommand(model, 'chat')}`);
   }
   return FALLBACK_PRICING;
+}
+
+/** #4907: the run's named-key budget warnings (invalid stored budget, groups refused at the cap), each echoed once to stderr. */
+function budgetWarnings(configWarning: string | undefined, capped: number, budgetUsd: number): string[] {
+  const warnings = configWarning ? [configWarning] : [];
+  if (capped > 0) {
+    warnings.push(`${capped} LLM-eligible concept(s) got no model narrative because the $${budgetUsd.toFixed(2)} phase budget was reached; they retry next run. ` +
+      `Raise the cap: gbrain config set ${SYNTHESIZE_CONCEPTS_BUDGET_KEY} <usd>. Verify: gbrain config get ${SYNTHESIZE_CONCEPTS_BUDGET_KEY}`);
+  }
+  for (const warning of warnings) console.error(`[synthesize_concepts] ${warning}`);
+  return warnings;
 }
 
 const TIER_T1_MIN = 10;
@@ -257,7 +268,9 @@ export async function runPhaseSynthesizeConcepts(
   // 4. Per group: synthesize narrative (LLM for T1/T2, deterministic for T3+)
   let conceptsWritten = 0;
   let estimatedSpendUsd = 0;
-  const budgetCap = DEFAULT_BUDGET_USD;
+  const budget = await readPhaseConfigNumber(engine, SYNTHESIZE_CONCEPTS_BUDGET_KEY);
+  const budgetCap = budget.value ?? SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD;
+  let budgetCapped = 0;
   const failures: Array<{ concept: string; error: string }> = [];
   // #4589 provenance-link problems. Kept OUT of `failures`: that list means
   // "the LLM call failed → template fallback" downstream (summary wording,
@@ -365,6 +378,7 @@ export async function runPhaseSynthesizeConcepts(
       if (estimatedSpendUsd >= budgetCap) {
         narrative = deterministicNarrative(group);
         synthesisMode = 'budget_fallback';
+        budgetCapped++;
       } else {
         try {
           const result = await chat({
@@ -547,6 +561,7 @@ export async function runPhaseSynthesizeConcepts(
   // survives only as the fallback for legacy unscoped callers. Receipt only
   // fires when concepts were actually written; rollup always fires so doctor
   // sees the phase ran.
+  const warnings = budgetWarnings(budget.warning, budgetCapped, budgetCap);
   // Managed brains skip the receipt page (a legacy putPage), like extract_atoms;
   // the rollup row below still records the run for doctor.
   if (!opts.dryRun && !maintenance && conceptsWritten > 0) {
@@ -589,6 +604,7 @@ export async function runPhaseSynthesizeConcepts(
       `synthesize_concepts: ${conceptsWritten} concepts ` +
       `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3})` +
       (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : '') +
+      (budgetCapped > 0 ? ` (${budgetCapped} over the $${budgetCap.toFixed(2)} budget → template fallback)` : '') +
       (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : '') +
       (skippedHumanOwned.length > 0 ? ` (${skippedHumanOwned.length} human-owned page(s) left untouched)` : '') +
       (skippedUnchanged.length > 0 ? ` (${skippedUnchanged.length} unchanged)` : '') +
@@ -604,6 +620,7 @@ export async function runPhaseSynthesizeConcepts(
       atoms_seen: atoms.length,
       failures,
       link_warnings: linkWarnings,
+      warnings,
       skipped_human_owned: skippedHumanOwned,
       skipped_unchanged: skippedUnchanged,
       rehashed,

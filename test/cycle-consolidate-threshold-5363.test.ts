@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { parseClusterThreshold, runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
 
 let engine: PGLiteEngine;
@@ -28,6 +28,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  resetGateway(); // R5: restore the preload baseline for later files in this shard
   await engine.disconnect();
 });
 

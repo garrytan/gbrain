@@ -12,6 +12,9 @@ import type { WriteRequest } from './model.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
+import { normalizeTargetFences } from '../fence-repair/import-step.ts';
+import { scanCanonicalFences, targetFenceRefusal } from '../fence-repair/refusal.ts';
+import { pageFencesNormalized } from '../fence-repair/report.ts';
 
 /** Server-derived values are frozen after replay lookup, before admission. */
 export async function normalizeTakesIntent(ctx: OperationContext, params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -56,7 +59,13 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
     `Page ${row.slug} was deleted or replaced after the takes request was accepted.`);
   const p = row.intent!;
   if (p.expected_revision !== undefined) assertPageRevision(snapshot,engineMutationPrecondition(parseMutationPrecondition(p)));
-  const body = serializePageToMarkdown(snapshot.page,snapshot.tags);
+  // #6188 (D19, D20): takes_add / takes_update normalize the stored takes fence in this write; every other
+  // takes write refuses typed `target_fence_malformed` (location only) while the fence does not compile.
+  const appends = row.operation === 'takes_add' || row.operation === 'takes_update';
+  const defect = appends ? undefined : scanCanonicalFences(snapshot.page).defects.find(d => d.fence === 'takes');
+  if (defect) throw targetFenceRefusal(defect, row.slug, row.source_id);
+  const target = appends ? await normalizeTargetFences(engine, { sourceId: row.source_id, slug: row.slug, kind: 'takes', page: snapshot.page }) : null;
+  const body = serializePageToMarkdown(target ? { ...snapshot.page, ...target.page } : snapshot.page,snapshot.tags);
   const parsed = parseTakesFence(body);
   edit.assertFenceRoundTrips(parsed);
   for (const key of ['claim','kind','holder','source','evidence','unit','resolved_by']) {
@@ -129,6 +138,9 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
       result={slug:row.slug,row_num:number,...(row.operation==='takes_resolve'?{quality:p.quality,resolved_by:p.resolved_by}:{})};
     }
   }
+  // Rows Tier 1 rewrote are re-indexed with the row this write changes.
+  const normalizedRows=new Set((target?.fixes ?? []).filter(f=>f.fence==='takes' && f.row!==null).map(f=>f.row!));
+  if (normalizedRows.size) changed=[...changed,...parseTakesFence(next).takes.filter(t=>normalizedRows.has(t.rowNum) && !changed.some(c=>c.rowNum===t.rowNum))];
   for (const holder of requiredHolders) await authorizeTakeHolder(engine,row.authority,holder);
   const prepared=await preparePageMutation(engine,row,config,{content:next,expectedRevision:snapshot.revision});
   return {...prepared,validate:async tx=>{
@@ -151,6 +163,8 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
         await tx.executeRaw('UPDATE takes SET resolved_at=$3::timestamptz WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,t.rowNum,t.resolvedAt]);
       }
     }
-    return {...outcome,...result,mirror_written:!!prepared.file};
+    return {...outcome,...result,mirror_written:!!prepared.file,...(target?.fixes.length?{fences_normalized:pageFencesNormalized({sourceId:row.source_id,slug:row.slug,
+      // A remote caller may not see every holder's rows, so its report names classes and columns, never row numbers.
+      fixes:row.authority.remote?target.fixes.map(f=>({...f,row:null})):target.fixes,writer:row.principal_kind,path:snapshot.page.source_path ?? null,remote:row.authority.remote})}:{})};
   }};
 }

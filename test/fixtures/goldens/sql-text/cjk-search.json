@@ -11,6 +11,12 @@
           {
             "lane": "tx",
             "params": [],
+            "sql": "SET LOCAL jit = off",
+            "textSha256": "3286993e90f6ecea02245803a4da85e7814ccb11a1cde6dea0cb4e8e77877b4c"
+          },
+          {
+            "lane": "tx",
+            "params": [],
             "sql": "SET LOCAL statement_timeout = '8s'",
             "textSha256": "7346ddf58ceeb31a31fd4f44990faf92a5bf015f93c675513e2bc17e5c3619db"
           },
@@ -42,6 +48,12 @@
           {
             "event": "begin",
             "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SET LOCAL jit = off",
+            "textSha256": "3286993e90f6ecea02245803a4da85e7814ccb11a1cde6dea0cb4e8e77877b4c"
           },
           {
             "lane": "tx",
@@ -85,6 +97,12 @@
           {
             "lane": "tx",
             "params": [],
+            "sql": "SET LOCAL jit = off",
+            "textSha256": "3286993e90f6ecea02245803a4da85e7814ccb11a1cde6dea0cb4e8e77877b4c"
+          },
+          {
+            "lane": "tx",
+            "params": [],
             "sql": "SET LOCAL statement_timeout = '8s'",
             "textSha256": "7346ddf58ceeb31a31fd4f44990faf92a5bf015f93c675513e2bc17e5c3619db"
           },
@@ -115,6 +133,12 @@
           {
             "event": "begin",
             "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SET LOCAL jit = off",
+            "textSha256": "3286993e90f6ecea02245803a4da85e7814ccb11a1cde6dea0cb4e8e77877b4c"
           },
           {
             "lane": "tx",

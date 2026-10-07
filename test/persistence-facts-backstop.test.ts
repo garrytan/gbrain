@@ -13,6 +13,7 @@ import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { claimPersistenceEffect, publicEffectsForRequest } from '../src/core/persistence/effect-journal.ts';
 import { authorizeFactsBackstop, dispatchFactsBackstopEffect, readFactsBackstopJobPage } from '../src/core/persistence/effect-facts.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -32,7 +33,7 @@ async function prepare(overrides: Partial<OperationContext> = {}, params: Record
   const ctx: OperationContext = { engine, config, dryRun: false, remote: false, sourceId: 'default', logger: { info() {}, warn() {}, error() {} }, ...overrides };
   const authority = await submissionAuthority(ctx, 'put_page', 'default', source.incarnation, 'notes/example');
   const intent = { content, ...params };
-  const current = await engine.readPageSnapshot('notes/example', { sourceId: 'default' });
+  const current = await engine.readPageSnapshot('notes/example', { sourceId: 'default', includeDeleted: true });
   await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
     sourceIncarnation: source.incarnation, slug: 'notes/example', pageId: current?.page.id ?? null, requestId: randomUUID(), callerIntent: intent, intent });
   const row = (await claimNextWrite(engine, localHostId()))!;
@@ -126,6 +127,112 @@ test('confined writers and disabled extraction never receive a queued claim', ()
   const updated = await prepare({}, { content: `${content}\nAdditional content`, expected_revision: current.revision });
   const disabled = await publishMutation(engine, updated.row, updated.prepared);
   expect(disabled.outcome?.facts_backstop).toEqual({ skipped: 'extraction_disabled' });
+}));
+
+// #6042: a rewrite that keeps compiled_truth (the only text the extractor reads) of an extracted page.
+const retitled = (title: string) => content.replace('title: Field notes', `title: ${title}`);
+const withTimeline = (body: string) => `${body}\n\n--- timeline ---\n\n- **2026-08-02** | A synthetic dated event.\n`;
+
+/** Hands every pending facts effect to its job, then records the jobs as finished: no extraction of the page is pending. */
+async function finishExtractions() {
+  await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at = now() + interval '1 hour' WHERE kind <> 'facts-backstop'");
+  for (;;) {
+    const effect = await claimPersistenceEffect(engine, localHostId());
+    if (!effect) break;
+    await dispatchFactsBackstopEffect(engine, effect, localHostId());
+  }
+  await engine.executeRaw("UPDATE minion_jobs SET status = 'completed', finished_at = now() WHERE name = 'facts-absorb'");
+}
+/** Publishes `body` against the page's current revision, deleted pages included. */
+async function rewrite(body: string) {
+  const before = (await engine.readPageSnapshot('notes/example', { sourceId: 'default', includeDeleted: true }))!;
+  const input = await prepare({}, { content: body, expected_revision: before.revision });
+  const row = await publishMutation(engine, input.row, input.prepared);
+  expect(row.state).toBe('committed');
+  const effectQueued = (await publicEffectsForRequest(engine, row.id)).some(effect => effect.kind === 'facts-backstop');
+  return { status: row.outcome?.facts_backstop, effectQueued };
+}
+
+test('#6042: title-only and timeline-only rewrites of an extracted page record body_unchanged and queue no effect', () => fixture(async () => {
+  expect((await publish()).outcome?.facts_backstop).toEqual({ queued: true });
+  await finishExtractions();
+  expect(await rewrite(retitled('Renamed once'))).toEqual({ status: { skipped: 'body_unchanged' }, effectQueued: false });
+  expect(await rewrite(withTimeline(retitled('Renamed once')))).toEqual({ status: { skipped: 'body_unchanged' }, effectQueued: false });
+  expect(await jobs()).toHaveLength(1);
+}));
+
+test('#6042 control: a rewrite that changes compiled_truth still queues extraction', () => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  expect(await rewrite(`${content}A further substantive sentence about the project schedule.\n`)).toEqual({ status: { queued: true }, effectQueued: true });
+}));
+
+test('#6042: an extraction still in the outbox is superseded by the rewrite, so the rewrite queues in its place', () => fixture(async () => {
+  await publish();
+  expect(await rewrite(retitled('Renamed before extraction'))).toEqual({ status: { queued: true }, effectQueued: true });
+}));
+
+test.each(['waiting', 'delayed', 'paused', 'waiting-children', 'active'])('#6042: a facts-absorb job that is %s still counts as pending', (status) => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  // A move to active is a claim, which the queue protocol trigger requires to advance claim_generation.
+  await engine.executeRaw(`UPDATE minion_jobs SET status = $1::text,
+    claim_generation = claim_generation + CASE WHEN $1::text = 'active' THEN 1 ELSE 0 END WHERE name = 'facts-absorb'`, [status]);
+  expect(await rewrite(retitled('Renamed during the job'))).toEqual({ status: { queued: true }, effectQueued: true });
+}));
+
+test.each(['completed', 'failed', 'dead', 'cancelled'])('#6042: on an extracted page, a later facts-absorb job that is %s no longer blocks the skip', (status) => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  const { page } = (await engine.readPageSnapshot('notes/example', { sourceId: 'default' }))!;
+  const later = await new MinionQueue(engine).add('facts-absorb', { slug: 'notes/example', sourceId: 'default', page_id: page.id }, { queue: 'default' });
+  await engine.executeRaw('UPDATE minion_jobs SET status = $1 WHERE id = $2', [status, later.id]);
+  expect((await rewrite(retitled('Renamed after the job'))).status).toEqual({ skipped: 'body_unchanged' });
+}));
+
+test('#6042: only an extraction bound to this page row blocks the skip, not one for the same slug elsewhere', () => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  const { page } = (await engine.readPageSnapshot('notes/example', { sourceId: 'default' }))!;
+  await new MinionQueue(engine).add('facts-absorb', { slug: 'notes/example', sourceId: 'elsewhere', page_id: page.id + 1000 }, { queue: 'default' });
+  expect((await rewrite(retitled('Renamed beside a foreign job'))).status).toEqual({ skipped: 'body_unchanged' });
+}));
+
+test('#6042: a page that was ineligible before the write is offered when it becomes eligible with the same body', () => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  const asConcept = content.replace('type: note', 'type: concept');
+  expect((await rewrite(asConcept)).status).toEqual({ skipped: 'kind:concept' });
+  expect(await rewrite(content)).toEqual({ status: { queued: true }, effectQueued: true });
+}));
+
+test('#6042: rewriting a soft-deleted page with its old body queues extraction again', () => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  await engine.softDeletePage('notes/example', { sourceId: 'default' });
+  expect(await rewrite(content)).toEqual({ status: { queued: true }, effectQueued: true });
+}));
+
+test('#6071: a body-preserving rewrite of an extracted page queues no extraction', () => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  const before = (await jobs()).length;
+  expect(await rewrite(retitled('Renamed after extraction'))).toEqual({ status: { skipped: 'body_unchanged' }, effectQueued: false });
+  expect(await jobs()).toHaveLength(before);
+}));
+
+test('#6071: a body-preserving rewrite of a never-extracted eligible page still queues extraction', () => fixture(async () => {
+  await engine.setConfig('facts.extraction_enabled', 'false');
+  expect((await publish()).outcome?.facts_backstop).toEqual({ skipped: 'extraction_disabled' });
+  await engine.setConfig('facts.extraction_enabled', 'true');
+  expect(await rewrite(retitled('Renamed after enabling'))).toEqual({ status: { queued: true }, effectQueued: true });
+}));
+
+test('#6071: an extraction that did not complete does not count as extracted', () => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  await engine.executeRaw("UPDATE minion_jobs SET status = 'failed' WHERE name = 'facts-absorb'");
+  expect(await rewrite(retitled('Renamed after a failed extraction'))).toEqual({ status: { queued: true }, effectQueued: true });
 }));
 
 test('a slug-bound writer\'s backstop refusal says the page was written and who widens the grant', async () => {

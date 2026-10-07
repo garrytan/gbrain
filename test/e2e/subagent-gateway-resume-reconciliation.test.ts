@@ -149,12 +149,40 @@ describe('gateway resume reconciliation', () => {
         expect(row.request_id).toBe(id);
         return { request_id: id, state: pending ? 'queued' : 'committed', retry_after_ms: pending ? 100 : null };
       } }];
-    await expect(buildHandler(registry)(ctx)).rejects.toMatchObject({ code: 'write_pending' });
+    // 40 s from its deadline the job is inside the replay reserve, so the pending write leaves at once (#5474).
+    await expect(buildHandler(registry)({ ...ctx, deadlineAtMs: Date.now() + 40_000 })).rejects.toMatchObject({ code: 'write_pending' });
     expect((await engine.executeRaw<{ status: string }>('SELECT status FROM subagent_tool_executions WHERE job_id=$1', [jobId]))[0].status).toBe('pending');
     pending = false;
     await buildHandler(registry)(ctx);
     expect(turns).toBe(2); expect(identities).toHaveLength(2); expect(identities[1]).toBe(identities[0]);
     expect((await engine.executeRaw<{ status: string }>('SELECT status FROM subagent_tool_executions WHERE job_id=$1', [jobId]))[0].status).toBe('complete');
+  });
+
+  it('a resumed dispatch keeps replaying a still-pending write until it commits (#5474)', async () => {
+    let turns = 0; let pendingReplies = 0; const seen: unknown[] = [];
+    __setChatTransportForTests(async () => {
+      turns++;
+      return { text: '', blocks: turns === 1
+        ? [{ type: 'tool-call', toolCallId: 'resume-call', toolName: 'brain_put_page', input: { slug: 'notes/resume-fixture', content: 'fixture' } }]
+        : [{ type: 'text', text: 'finished' }], stopReason: turns === 1 ? 'tool_calls' : 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'openai:gpt-4o', providerId: 'openai' } satisfies ChatResult;
+    });
+    const { jobId, ctx } = await makeJob('persist after resume', 'openai:gpt-4o');
+    const registry: ToolDef[] = [{ name: 'brain_put_page', description: 'p', input_schema: { type: 'object' }, idempotent: true,
+      execute: async input => {
+        const request_id = (input as Record<string, unknown>).request_id; seen.push(request_id);
+        return pendingReplies-- > 0 ? { request_id, state: 'running', retry_after_ms: 15 } : { request_id, state: 'committed', retry_after_ms: null };
+      } }];
+    pendingReplies = Number.MAX_SAFE_INTEGER;
+    await expect(buildHandler(registry)({ ...ctx, deadlineAtMs: Date.now() + 40_000 })).rejects.toMatchObject({ code: 'write_pending' });
+    pendingReplies = 3;
+    await buildHandler(registry)(ctx);
+    expect(turns).toBe(2);
+    expect(seen).toHaveLength(5);
+    expect(new Set(seen).size).toBe(1);
+    const statuses = await engine.executeRaw<{ status: string }>('SELECT status FROM subagent_tool_executions WHERE job_id=$1', [jobId]);
+    expect(statuses.map(row => row.status)).toEqual(['complete']);
   });
 
   it('forward-persists the tool-result user turn (idx 2) in a 2-turn flow', async () => {

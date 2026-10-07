@@ -10,8 +10,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND links_attendance_blocked_revision = knowledge_revision",
-            "textSha256": "bcdc72f48530635a4b8db91ba0f824aba03d83fe223ce1220f6d93b816f38353"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND links_attendance_blocked_revision = knowledge_revision",
+            "textSha256": "002fabcfde69b77bcdf854b15c11e46e4c797cde1be1973e34ab73df3d327bd7"
           }
         ],
         "attendance-exclude": [
@@ -20,16 +20,16 @@
             "params": [
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision",
-            "textSha256": "4f36f46e2e698e8ff1fc46efb3026fdb71f0d8be893c1cdfa2572d453aefeeda"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision",
+            "textSha256": "e568ead5dc5191a909c2e58fea58356a5acde8fcda59cd40b091727b964fb6a3"
           }
         ],
         "default": [
           {
             "lane": "pool",
             "params": [],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at))",
-            "textSha256": "499866fec60ad4c64ed01fef287a6c63bcabfeaa9170969a560ce4296554afc3"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at))",
+            "textSha256": "2288e7b188811bbaa877f1d9a13e4148bbee4ed200d7ba438a12737c69ef72e5"
           }
         ],
         "versionTs+sourceId": [
@@ -39,8 +39,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2",
-            "textSha256": "8fe8e241a5f7eaba51b12975460431f21f886ed318a72a8ef976c2f28a66549e"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2",
+            "textSha256": "57ff70c7578ba9ff9e97f7d18593cb82a92ede5115e7cbf45e9b6d29a8aa2a3b"
           }
         ]
       },
@@ -298,8 +298,8 @@
             "params": [
               "string"
             ],
-            "sql": "SELECT pv.id, pv.page_id, pv.compiled_truth, pv.frontmatter, pv.snapshot_at, pv.knowledge_revision, pv.timeline, pv.title, pv.type, pv.tags, pv.is_deleted, pv.source_path FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 ORDER BY pv.snapshot_at DESC",
-            "textSha256": "2968a1918d83184a9281aac18f262f12558b9676fc0fa85413b764eb0d5d910c"
+            "sql": "SELECT pv.id, pv.page_id, pv.compiled_truth, pv.frontmatter, pv.snapshot_at, pv.knowledge_revision, pv.timeline, pv.title, pv.type, pv.tags, pv.is_deleted, pv.source_path FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 ORDER BY pv.snapshot_at DESC, pv.id DESC",
+            "textSha256": "32879564166486f18b4931ad6f8c763b6869c5d116a8286665d44cb37271049c"
           }
         ],
         "excludePrivate": [
@@ -308,8 +308,31 @@
             "params": [
               "string"
             ],
-            "sql": "SELECT pv.id, pv.page_id, pv.compiled_truth, pv.frontmatter, pv.snapshot_at, pv.knowledge_revision, pv.timeline, pv.title, pv.type, pv.tags, pv.is_deleted, pv.source_path FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN NOT EXISTS (SELECT 1 FROM pages chronicle_origin WHERE chronicle_origin.source_id = p.source_id AND chronicle_origin.slug = p.frontmatter->'event'->>'depth' AND COALESCE(chronicle_origin.frontmatter->>'visibility', CASE WHEN (chronicle_origin.type = 'atom' OR (chronicle_origin.type = 'concept' AND chronicle_origin.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN jsonb_typeof(chronicle_origin.frontmatter->'derived_from') IN ('array', 'string') THEN EXISTS ( SELECT 1 FROM pages declared_origin WHERE declared_origin.source_id = chronicle_origin.source_id AND declared_origin.frontmatter->>'visibility' = 'private' AND declared_origin.slug IN ( SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(chronicle_origin.frontmatter->'derived_from') = 'array' THEN chronicle_origin.frontmatter->'derived_from' ELSE jsonb_build_array(chronicle_origin.frontmatter->'derived_from') END) AS declared(slug))) ELSE false END)) ELSE false END) AND NOT (CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') IN ('array', 'string') THEN EXISTS ( SELECT 1 FROM pages declared_origin WHERE declared_origin.source_id = p.source_id AND declared_origin.frontmatter->>'visibility' = 'private' AND declared_origin.slug IN ( SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') = 'array' THEN p.frontmatter->'derived_from' ELSE jsonb_build_array(p.frontmatter->'derived_from') END) AS declared(slug))) ELSE false END)) AND COALESCE(pv.frontmatter->>'visibility', CASE WHEN (pv.type = 'atom' OR (pv.type = 'concept' AND pv.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' ORDER BY pv.snapshot_at DESC",
-            "textSha256": "c2ec5cf6dbd26923230987037168c8e5f0dd67035a401b5bb512788256a069f2"
+            "sql": "SELECT pv.id, pv.page_id, pv.compiled_truth, pv.frontmatter, pv.snapshot_at, pv.knowledge_revision, pv.timeline, pv.title, pv.type, pv.tags, pv.is_deleted, pv.source_path FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND (COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN p.type = 'atom' THEN EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id AND derived_origin.slug = p.frontmatter->>'source_slug' AND derived_origin.frontmatter->>'visibility' = 'private') WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN EXISTS (SELECT 1 FROM links derived_input_link JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id WHERE derived_input_link.from_page_id = p.id AND derived_input_link.link_source = 'concept-provenance' AND derived_input_link.link_type = 'synthesized_from' AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private' OR EXISTS (SELECT 1 FROM pages derived_input_origin WHERE derived_input_origin.source_id = derived_input.source_id AND derived_input_origin.slug = derived_input.frontmatter->>'source_slug' AND derived_input_origin.frontmatter->>'visibility' = 'private'))) WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN NOT EXISTS (SELECT 1 FROM pages chronicle_origin WHERE chronicle_origin.source_id = p.source_id AND chronicle_origin.slug = p.frontmatter->'event'->>'depth' AND COALESCE(chronicle_origin.frontmatter->>'visibility', CASE WHEN (chronicle_origin.type = 'atom' OR (chronicle_origin.type = 'concept' AND chronicle_origin.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' AND NOT (CASE WHEN jsonb_typeof(chronicle_origin.frontmatter->'derived_from') IN ('array', 'string') THEN EXISTS ( SELECT 1 FROM pages declared_origin WHERE declared_origin.source_id = chronicle_origin.source_id AND declared_origin.frontmatter->>'visibility' = 'private' AND declared_origin.slug IN ( SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(chronicle_origin.frontmatter->'derived_from') = 'array' THEN chronicle_origin.frontmatter->'derived_from' ELSE jsonb_build_array(chronicle_origin.frontmatter->'derived_from') END) AS declared(slug))) ELSE false END)) ELSE false END) AND NOT (CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') IN ('array', 'string') THEN EXISTS ( SELECT 1 FROM pages declared_origin WHERE declared_origin.source_id = p.source_id AND declared_origin.frontmatter->>'visibility' = 'private' AND declared_origin.slug IN ( SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text( CASE WHEN jsonb_typeof(p.frontmatter->'derived_from') = 'array' THEN p.frontmatter->'derived_from' ELSE jsonb_build_array(p.frontmatter->'derived_from') END) AS declared(slug))) ELSE false END)) AND COALESCE(pv.frontmatter->>'visibility', CASE WHEN (pv.type = 'atom' OR (pv.type = 'concept' AND pv.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private' ORDER BY pv.snapshot_at DESC, pv.id DESC",
+            "textSha256": "61ec852c6f4e094a4c57383807bd27a368f129ff38931e2d318d1ce177b5164f"
+          }
+        ],
+        "limit": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number"
+            ],
+            "sql": "SELECT pv.id, pv.page_id, pv.compiled_truth, pv.frontmatter, pv.snapshot_at, pv.knowledge_revision, pv.timeline, pv.title, pv.type, pv.tags, pv.is_deleted, pv.source_path FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND p.source_id = $2 ORDER BY pv.snapshot_at DESC, pv.id DESC LIMIT $3",
+            "textSha256": "9839ece55c3a9571965051d0380fd26c9ac4b11e70b44b9a5c44731f4d9e7087"
+          }
+        ],
+        "metadataOnly": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "array<string>"
+            ],
+            "sql": "SELECT pv.id, pv.page_id, pv.frontmatter, pv.snapshot_at, pv.knowledge_revision, pv.title, pv.type, pv.tags, pv.is_deleted, pv.source_path FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) ORDER BY pv.snapshot_at DESC, pv.id DESC",
+            "textSha256": "58fb695b83a4ff6bf64add66f0caf4d76515e10bc88e43e9148c070ec41d9ce0"
           }
         ],
         "sourceId": [
@@ -319,8 +342,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT pv.id, pv.page_id, pv.compiled_truth, pv.frontmatter, pv.snapshot_at, pv.knowledge_revision, pv.timeline, pv.title, pv.type, pv.tags, pv.is_deleted, pv.source_path FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND p.source_id = $2 ORDER BY pv.snapshot_at DESC",
-            "textSha256": "96b8bd58257e4f3bfd04fc5e6987e996bbc9fed3546454cfffd62612071d7b16"
+            "sql": "SELECT pv.id, pv.page_id, pv.compiled_truth, pv.frontmatter, pv.snapshot_at, pv.knowledge_revision, pv.timeline, pv.title, pv.type, pv.tags, pv.is_deleted, pv.source_path FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND p.source_id = $2 ORDER BY pv.snapshot_at DESC, pv.id DESC",
+            "textSha256": "b42549daaa1a104ab1da4c06e09b4f47a80d14f75a3ea85a198d76b4e47f3847"
           }
         ],
         "sourceIds": [
@@ -330,8 +353,8 @@
               "string",
               "array<string>"
             ],
-            "sql": "SELECT pv.id, pv.page_id, pv.compiled_truth, pv.frontmatter, pv.snapshot_at, pv.knowledge_revision, pv.timeline, pv.title, pv.type, pv.tags, pv.is_deleted, pv.source_path FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) ORDER BY pv.snapshot_at DESC",
-            "textSha256": "46dfc6cd0b414fd9fd8447c464925076c5237bfe80b14a2dd19354776bb5f9bf"
+            "sql": "SELECT pv.id, pv.page_id, pv.compiled_truth, pv.frontmatter, pv.snapshot_at, pv.knowledge_revision, pv.timeline, pv.title, pv.type, pv.tags, pv.is_deleted, pv.source_path FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) ORDER BY pv.snapshot_at DESC, pv.id DESC",
+            "textSha256": "45b816d8e527a6e0e92fee18a95d7c02fa86fcb30e5295d2d9e47aa56d2bedfb"
           }
         ]
       },
@@ -615,8 +638,8 @@
               "number",
               "number"
             ],
-            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND id > $3 ORDER BY id LIMIT $4",
-            "textSha256": "7526d404e57e5724991d62594d6144f4a88954151d0b0cfaa102e95fc2eeb9fe"
+            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND id > $3 ORDER BY id LIMIT $4",
+            "textSha256": "22fb498ad7872c970f05a3905d04bebef7df2790c417bea32d6a214eb0ae4505"
           }
         ],
         "default": [
@@ -625,8 +648,8 @@
             "params": [
               "number"
             ],
-            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) ORDER BY id LIMIT $1",
-            "textSha256": "93aa0563d8be26fed0f4f1659d84d722cbc73232da783346541080b925558e95"
+            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) ORDER BY id LIMIT $1",
+            "textSha256": "27cc368fcbecffffad33b5d8542adbc3d0fcd24e6700ce7b5d351ec5e2103a57"
           }
         ]
       },

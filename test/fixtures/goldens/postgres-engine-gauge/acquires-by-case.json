@@ -154,6 +154,8 @@
     "getTimelineForDate#week+sourceId": {},
     "getVersions#default": {},
     "getVersions#excludePrivate": {},
+    "getVersions#limit": {},
+    "getVersions#metadataOnly": {},
     "getVersions#sourceId": {},
     "getVersions#sourceIds": {},
     "insertFact#default": {},

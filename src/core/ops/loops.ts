@@ -322,7 +322,8 @@ const open_loops: Operation = {
     'answer as partial and name the held items and their retry command.',
   params: {
     group_by: { type: 'string', enum: ['counterparty', 'none'], description: "Default 'counterparty' (ranked groups)." },
-    status: { type: 'string', enum: ['open', 'done', 'dropped', 'stale'], description: "Default 'open'." },
+    status: { type: 'string', enum: ['open', 'done', 'dropped', 'stale'], description: "Default 'open', except with `id`, where any status matches." },
+    id: { type: 'number', description: 'Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`.' },
     loop_type: { type: 'string', enum: ['commitment_owed_by_me', 'commitment_owed_to_me', 'unanswered_inbound', 'unanswered_outbound', 'decision_pending'], description: 'Filter to one loop type.' },
     counterparty: { type: 'string', description: 'Filter to one counterparty (slug or email).' },
     limit: { type: 'number', description: 'Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit.' },
@@ -341,7 +342,9 @@ const open_loops: Operation = {
         { def: open_loops.params.as_of, example: '2026-04-03T09:00:00Z' });
     }
     const groupBy = (p.group_by as string | undefined) ?? 'counterparty';
-    const status = ((p.status as string | undefined) ?? 'open') as LoopStatus;
+    const loopId = requestedLoopId(ctx, p.id);
+    let status = (p.status ?? undefined) as LoopStatus | undefined;
+    if (status === undefined && loopId === undefined) status = 'open';
     // Per-call scope via the canonical trust+grant resolver: an MCP caller
     // whose transport is bound to another source can point this read at the
     // google source (`source_id`) or, trusted-local, span the brain
@@ -390,6 +393,7 @@ const open_loops: Operation = {
       status,
       ...(p.loop_type ? { loopType: p.loop_type as LoopType } : {}),
       ...(p.counterparty ? { counterparty: p.counterparty as string } : {}),
+      ...(loopId === undefined ? {} : { loopId }),
       limit: 500,
     });
     const freshness = await googleSourceFreshness(ctx, scope);
@@ -495,10 +499,25 @@ const open_loops: Operation = {
       no_google_sources: noGoogleSources,
       redacted: !trusted,
       as_of: new Date(nowMs).toISOString(),
-      ...(trusted ? { text: renderText(groups, freshness.stale, noGoogleSources, coverage, nowMs, partialStaleSources) } : {}),
+      ...(trusted && loopId === undefined
+        ? { text: renderText(groups, freshness.stale, noGoogleSources, coverage, nowMs, partialStaleSources) }
+        : {}),
     };
   },
 };
+
+/**
+ * open_loops `id`: absent or null means a list read. Anything else must be a
+ * positive safe integer. The refusal never echoes the raw value. The digest
+ * stays off for a lookup because it describes the open list ("waiting on
+ * you", "You are clean"), which is false for a closed or missing loop.
+ */
+function requestedLoopId(ctx: OperationContext, raw: unknown): number | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 1) return raw;
+  throw invalidParam(ctx, 'open_loops', 'id', 'open_loops: id must be a whole number of 1 or more.',
+    { def: open_loops.params.id, example: 42 });
+}
 
 function grantedSources(ctx: OperationContext): string[] {
   const allowed = ctx.auth?.allowedSources;

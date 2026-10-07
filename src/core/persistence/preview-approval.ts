@@ -40,7 +40,7 @@ export const PREVIEW_APPROVAL_OP = 'repair-approval';
 /** The default `purgeStaleCheckpoints` TTL; an older approved set may already be gone. */
 export const APPROVAL_MAX_AGE_DAYS = 7;
 
-export type PreviewApprovalCommand = 'authorize-legacy' | 'jobs-cancel' | 'stale-atoms' | 'extractor-facts' | 'captured-facts' | 'loop-facts' | 'failed-writes' | 'frontmatter';
+export type PreviewApprovalCommand = 'authorize-legacy' | 'jobs-cancel' | 'stale-atoms' | 'extractor-facts' | 'captured-facts' | 'loop-facts' | 'failed-writes' | 'frontmatter' | 'fences';
 
 export interface ApprovedSetKey {
   command: PreviewApprovalCommand;

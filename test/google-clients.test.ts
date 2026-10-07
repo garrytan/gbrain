@@ -668,6 +668,36 @@ describe('GmailClient', () => {
     expect(third.labelIds).toEqual(['SENT']);
   });
 
+  test('#5586: getThread stamps RFC 3834 Auto-Submitted: any keyword but "no", case-insensitive, parameters and comments ignored', async () => {
+    const cases: Array<[string | null, boolean]> = [
+      ['auto-generated', true], ['Auto-Replied', true], [' AUTO-NOTIFIED ; owner-email="x@example.com"', true],
+      ['auto-generated (tracker)', true], ['x-custom-robot', true],
+      ['no', false], ['No', false], [' no ; reason=human', false], ['no (sent by a person)', false], ['', false], [null, false],
+    ];
+    const rawThread = {
+      id: '17aa9999ffff0000',
+      messages: cases.map(([value], i) => ({
+        id: `18c2f4a9b3d21f${String(i).padStart(2, '0')}`,
+        threadId: '17aa9999ffff0000',
+        labelIds: [],
+        internalDate: String(Date.parse('2026-08-10T09:00:00Z') + i * 60_000),
+        payload: {
+          mimeType: 'text/plain',
+          headers: [
+            { name: 'From', value: 'Tracker <tracker@example.com>' },
+            { name: 'To', value: 'a@example.com' },
+            { name: 'Subject', value: `Issue #${i}` },
+            ...(value === null ? [] : [{ name: i % 2 ? 'auto-submitted' : 'Auto-Submitted', value }]),
+          ],
+          body: { data: b64url('Status changed.') },
+        },
+      })),
+    };
+    const h = makeHarness(() => json(rawThread));
+    const thread = await new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID).getThread('17aa9999ffff0000', 'a@example.com');
+    expect(thread.messages.map((m) => m.autoSubmitted)).toEqual(cases.map(([, expected]) => expected));
+  });
+
   test('getThread stamps calendarMethod from a real-shape text/calendar part; plain messages get null', async () => {
     const rawThread = {
       id: '17aa7777eeee8888',

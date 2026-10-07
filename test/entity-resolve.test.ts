@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import {
   resolveEntitySlug,
   resolveEntitySlugWithSource,
+  looksLikeSlug,
   slugify,
   type ResolutionSource,
 } from '../src/core/entities/resolve.ts';
@@ -39,6 +40,8 @@ beforeAll(async () => {
     { slug: 'people/charlie-example', title: 'Charlie Example', type: 'person' },
     { slug: 'people/charlie-bankcroft', title: 'Charlie Bankcroft', type: 'person' },
     { slug: 'people/dave-example', title: 'Dave Example', type: 'person' },
+    { slug: 'people/한글-예시', title: '한글 예시', type: 'person' },
+    { slug: '한글-개념', title: '한글 개념', type: 'concept' },
     { slug: 'companies/stripe', title: 'Stripe', type: 'company' },
     { slug: 'companies/stripe-atlas', title: 'Stripe Atlas', type: 'company' },
     { slug: 'companies/benton-capital', title: 'Benton Capital', type: 'company' },
@@ -137,6 +140,11 @@ describe('resolveEntitySlug — prefix expansion', () => {
   it('exact match still works for fully-qualified slugs', async () => {
     const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'people/alice-example');
     expect(result).toBe('people/alice-example');
+  });
+
+  it('exact match works for fully-qualified Unicode slugs', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'people/한글-예시');
+    expect(result).toBe('people/한글-예시');
   });
 
   it('multi-word input does NOT trigger prefix expansion', async () => {
@@ -470,7 +478,7 @@ describe('alias_exact — liveness before uniqueness (v0.46.15 codex ship-review
   });
 });
 
-// Slugs keep letters of every script (ADR-0001), so an exact non-ASCII slug
+// Slugs keep letters of every script, so an exact non-ASCII slug
 // is a normal resolver input and must take the exact_page branch — not fall
 // through to fuzzy / fallback_slugify (#9).
 describe('resolveEntitySlugWithSource — exact_page for non-ASCII slugs', () => {
@@ -534,5 +542,47 @@ describe('resolveEntitySlugWithSource — exact_page for non-ASCII slugs', () =>
   it('a capitalized Cyrillic slug is not taken for a slug', async () => {
     const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'people/Мария-пример');
     expect(r!.source).not.toBe<ResolutionSource>('exact_page');
+  });
+});
+
+describe('Unicode slug shape (#5421)', () => {
+  it('a non-Latin slug without a slash takes the exact-match path', async () => {
+    expect(await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', '한글-개념'))
+      .toEqual({ slug: '한글-개념', source: 'exact_page' });
+  });
+
+  it('a fully-qualified non-Latin slug takes the exact-match path', async () => {
+    expect(await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'people/한글-예시'))
+      .toEqual({ slug: 'people/한글-예시', source: 'exact_page' });
+  });
+
+  it('accepts Unicode letters and numbers but still rejects uppercase, whitespace and punctuation', () => {
+    expect(looksLikeSlug('people/한글-예시')).toBe(true);
+    expect(looksLikeSlug('한글_예시2')).toBe(true);
+    expect(looksLikeSlug('people/alice-example')).toBe(true);
+    expect(looksLikeSlug('People/Alice-Example')).toBe(false);
+    expect(looksLikeSlug('people/Alice-example')).toBe(false);
+    expect(looksLikeSlug('people/한글 예시')).toBe(false);
+    // Dots are deliberately accepted here (not rejected): sync.ts:slugifySegment
+    // keeps them in path slugs like `notes/v1.0.0`, so the exact-slug shape
+    // check must accept dots too, or such a slug would never take the
+    // exact_page branch — see the dotted-path case above.
+    expect(looksLikeSlug('people/alice.example')).toBe(true);
+  });
+
+  it('mixed-case Latin input never takes the exact-match path', async () => {
+    const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'People/Alice-Example');
+    expect(r!.source).not.toBe<ResolutionSource>('exact_page');
+  });
+
+  it('a non-Latin slug that exists only in another source never wins', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('unicode-other', 'Unicode other')`);
+    await engine.putPage('people/다른-예시', {
+      type: 'person', title: '다른 예시', compiled_truth: 'Other source', frontmatter: {},
+    }, { sourceId: 'unicode-other' });
+    const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'people/다른-예시');
+    expect(r!.source).not.toBe<ResolutionSource>('exact_page');
+    expect(await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'unicode-other', 'people/다른-예시'))
+      .toEqual({ slug: 'people/다른-예시', source: 'exact_page' });
   });
 });

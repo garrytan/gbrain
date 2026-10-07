@@ -1394,6 +1394,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.dream.synthesize',
   'models.dream.extract_atoms',
   'cycle.extract_atoms.budget_usd',
+  // #4907: synthesize_concepts phase budget (finite USD > 0, default 1.5); cycle/phase-config-values.ts.
+  'cycle.synthesize_concepts.budget_usd',
   'cycle.extract_atoms.max_source_chars',
   'cycle.extract_atoms.page_discovery_budget',
   // #4540: per-item extractor caps (defaults 50000 chars / 4096 tokens) plus
@@ -1409,7 +1411,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.dream.triage',
   'models.drift',
   'models.auto_think',
-  'models.think',
+  'models.think', 'models.fence_repair', // models.fence_repair: #6188 Tier 3 fence repair model (fence-repair/llm.ts), tier deep
   'models.subagent',
   'models.expansion',
   'models.contextual_synopsis',
@@ -1514,6 +1516,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // inside maxTokens, so the hardcoded defaults truncated every dense page.
   'dream.propose_takes.max_tokens',
   'dream.propose_takes.retry_max_tokens',
+  // #5958: per-call extractor timeout (whole ms 1000..300000; unset scales with the output cap); cycle/phase-config-values.ts.
+  'dream.propose_takes.call_timeout_ms',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
   // #2782-family: patterns-phase subagent timeouts (mirror of the
@@ -1666,6 +1670,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync.hold_escalate_count',
   'sync.hold_escalate_pct',
   'sync.parser_regression',
+  'fences.normalize', // #6188: inline Tier 1 fence normalization (fence-repair/config.ts); default on
+  'fences.repair.enabled', 'fences.repair.llm', // #6188: the fence_repair cycle phase and its Tier 3 model step (fence-repair/config.ts); default on
+  'fences.repair.max_usd_per_page', 'fences.repair.max_usd_per_day', // #6188: Tier 3 fence repair caps; 0 = no model spend
   // #2179: clamp window for DCR-requested per-client token TTLs. Read by
   // `gbrain serve --http` at startup; unset min defaults to 300s, unset max
   // defaults fail-closed to max(--token-ttl, min).
@@ -1709,7 +1716,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
  * Levenshtein suggestion in `gbrain config set`.
  */
 export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
-  'search.',           // search.* (mode, cache.*, etc.)
+  'search.',           // search.* (mode, cache.*, etc.); config set refuses unregistered leaves (commands/config/enumerated-keys.ts)
   'graph.',            // graph.edge_validity (temporal typed-edge read policy, src/core/link-validity.ts)
   'models.',           // models.* (tier, aliases, per-task)
   'dream.',            // dream.synthesize.*, dream.patterns.*
@@ -1717,7 +1724,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'embedding_columns.', // per-column overrides
   'provider_base_urls.', // per-provider base URL overrides
   'provider_chat_options.', // per-provider / per-model chat providerOptions
-  'content_sanity.',    // v0.41 content-sanity tunables
+  'content_sanity.',    // v0.41 content-sanity tunables; enumerated like search.
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
   'chronicle.',         // Life Chronicle knobs; config set refuses leaves outside CHRONICLE_CONFIG_KEYS (#5876)

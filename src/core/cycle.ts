@@ -66,6 +66,7 @@ export { anyAbortSignal } from './abort-signals.ts';
 
 export type CyclePhase =
   | 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'extract_facts'
+  | 'fence_repair' // #6188: repairs held and stored malformed facts/takes fences (global maintenance lane)
   | 'resolve_symbol_edges'
   | 'patterns' | 'recompute_emotional_weight' | 'consolidate'
   // v0.36.1.0 Hindsight calibration wave:
@@ -121,6 +122,8 @@ export const ALL_PHASES: CyclePhase[] = [
   'lint',
   'backlinks',
   'sync',
+  // #6188: right after sync, so a fence the sync just held is repaired before extract and extract_facts read the page.
+  'fence_repair',
   'synthesize',
   'extract',
   // v0.32.2 — reconcile DB facts index from the `## Facts` fence on
@@ -319,6 +322,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'lint',
   'backlinks',
   'sync',
+  'fence_repair', // #6188: writes repaired fences through coordinated writes
   'synthesize',
   'extract',
   // v0.32.2 — wipes + re-inserts facts per affected page.
@@ -2223,6 +2227,12 @@ export async function runCycle(
         progress.finish();
       }
       await safeYield(opts.yieldBetweenPhases);
+    }
+
+    if (phases.includes('fence_repair')) { // #6188: one bounded run of the `fences` repair kind (src/core/cycle/fence-repair.ts)
+      checkAborted(cycleSignal);
+      const { result, duration_ms } = await timePhase(async () => (await import('./cycle/fence-repair.ts')).runFenceRepairPhase(engine, { dryRun, signal: cycleSignal, deadlineAtMs: opts.deadlineAtMs ?? null }), 'fence_repair');
+      phaseResults.push({ ...result, duration_ms }); await safeYield(opts.yieldBetweenPhases);
     }
 
     // ── Phase 4: synthesize (v0.23) ─────────────────────────────

@@ -1,6 +1,9 @@
 import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { withRetry, BULK_RETRY_OPTS, RetryAbortError } from './retry.ts';
+import { FENCE_REPAIR_ATTEMPT_OP } from './fence-repair/attempts.ts';
+import { FENCE_CANDIDATE_OP, FENCE_SCAN_OP } from './fence-repair/census-store.ts';
+import { FENCE_UNCOMMITTED_OP } from './fence-repair/uncommitted.ts';
 
 /** Max paths per append-INSERT round-trip; bounds the param-array size. */
 const APPEND_CHUNK = 1000;
@@ -486,9 +489,11 @@ export function syncFingerprint(p: { sourceId?: string; lastCommit: string }): s
  * deliberately generous — any reasonable long-running op finishes inside
  * that window, and the row is cheap (few KB). Durable state is exempt: Git
  * sync holds, their summary while it counts any, retry requests, sync
- * import provenance and the blocked-cursor conversion log of a live source
- * incarnation leave only on resolution (or with the incarnation),
- * and connector hold-retry requests never expire (#5988).
+ * import provenance, the blocked-cursor conversion log, and the #6188 fence
+ * census (candidates and scan cursors), paid fence-repair attempt claims
+ * and memos, and uncommitted legacy fence-repair notices of a live source
+ * incarnation leave only on resolution (or with
+ * the incarnation), and connector hold-retry requests never expire (#5988).
  */
 export async function purgeStaleCheckpoints(
   engine: BrainEngine,
@@ -504,7 +509,7 @@ export async function purgeStaleCheckpoints(
          WHERE updated_at < now() - ($1 || ' days')::interval
            AND op NOT IN ('managed-atoms','managed-atoms-generation','managed-connector','managed-connector-retry','managed-connector-state','managed-connector-migration')
            AND op<>'connector-hold-retry'
-           AND NOT (op IN ('sync-hold','sync-hold-retry','sync-import-provenance','sync-hold-summary','sync-conversions')
+           AND NOT (op IN ('sync-hold','sync-hold-retry','sync-import-provenance','sync-hold-summary','sync-conversions','${FENCE_CANDIDATE_OP}','${FENCE_SCAN_OP}','${FENCE_REPAIR_ATTEMPT_OP}','${FENCE_UNCOMMITTED_OP}')
              AND NOT (op='sync-hold-summary' AND COALESCE((completed_keys->0->>'count')::int,0)=0)
              AND EXISTS (SELECT 1 FROM sources s WHERE s.id=op_checkpoints.completed_keys->0->>'source_id'
                AND s.incarnation::text=op_checkpoints.completed_keys->0->>'incarnation'))

@@ -19,13 +19,18 @@ export function printSyncHelp(): void {
 Sync the brain repo's text content into the engine, then embed.
 
 A file whose content refuses deterministically (frontmatter gbrain cannot
-read without guessing, a conflicting frontmatter slug, over-size, or a
-content_sanity reject) is held: the rest of the source imports, the
-checkpoint advances, and each hold prints its code, line, key and next
-command. Inspect holds with 'gbrain sources status <id>'; preview the fix
-with 'gbrain repair frontmatter --source <id>'. A source a file blocked
-before this release recovers on its next sync ('--no-pull' on a managed
-brain). 'gbrain config set sync.holds fail' restores fail-closed blocking.
+read without guessing, a conflicting frontmatter slug, over-size, a
+content_sanity reject, or on a managed brain a facts or takes fence that
+cannot be imported) is held: the rest of the source imports, the
+checkpoint advances, and each hold prints its code, location and next
+command. Inspect holds with 'gbrain sources status <id>'. Preview a
+frontmatter fix with 'gbrain repair frontmatter --source <id>'. A fence hold
+(invalid_fence) is repaired by the next maintenance run when one is active;
+preview it with 'gbrain repair fences --source <id>' (read-only, no model
+call), which prints the apply command, or the exact edit for a fence gbrain
+will not guess. A source a file blocked before this release recovers on its
+next sync ('--no-pull' on a managed brain).
+'gbrain config set sync.holds fail' restores fail-closed blocking.
 
 Options:
   --no-embed           Skip the embed step. Use this when the embed
@@ -152,7 +157,8 @@ See also:
   gbrain embed --stale    Re-embed all stale chunks (post --no-embed).
   gbrain doctor           Diagnose dim mismatches and other sync issues.
   gbrain sources status <id>              Held files with their next command.
-  gbrain repair frontmatter --source <id> Preview the fix for held files.
+  gbrain repair frontmatter --source <id> Preview the fix for frontmatter holds.
+  gbrain repair fences --source <id>      Preview the repair of fence holds.
   docs/guides/repair.md#held-files        Walkthrough.
 `);
 }

@@ -6,11 +6,20 @@
  * content is loaded. `sync_parser_regression` stops the run only when the
  * page's import provenance proves the exact bytes imported validated before.
  * Dry runs screen every pending import read-only with batched Git reads.
+ * #6188: the screen runs with `fences: 'coordinated'` (see `screenSyncImport`):
+ * a fence Tier 1 rewrites losslessly is admitted (publication commits the
+ * normalized file; a dry run lists it in `would_normalize`), and a residual
+ * fence is held as `invalid_fence`.
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
-import { loadImportSanityConfig, type ImportSanityConfig } from '../import-screen.ts';
-import { RECOVERY_VERSION } from '../markdown.ts';
+import { loadImportSanityConfig, screenNormalized, type ImportSanityConfig } from '../import-screen.ts';
+import { fencesNormalizeEnabled } from '../fence-repair/config.ts';
+import type { FenceFix } from '../fence-repair/types.ts';
+import { parseMarkdown, RECOVERY_VERSION } from '../markdown.ts';
+import { fenceMessage, type FenceMessageLocation } from '../fence-repair/reasons.ts';
+import { completeFenceLocation, FENCE_VERSION, type ReceiptFenceLocation } from '../fence-repair/refusal.ts';
+import { fenceFileLine } from '../fence-repair/hold-fix.ts';
 import { slugConflictHoldMessage } from '../import-file.ts';
 import { isImageFilePath, resolveSlugForPath } from '../sync.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
@@ -25,14 +34,19 @@ import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHold
 type Snapshot = Awaited<ReturnType<BrainEngine['readPageSnapshot']>>;
 export type HeldEntry = Pick<GitHoldRecord, 'path' | 'source_path' | 'slug' | 'page_id' | 'code' | 'message' | 'upstream_version' | 'meta'>;
 
-/** Per-run screen state; null when `sync.holds=fail` restores fail-closed blocking. */
-export interface SyncScreenRun { policy: SyncHoldPolicy; sanity: ImportSanityConfig; activePack: SyncImportScreenInput['activePack'] }
+/**
+ * Per-run screen state; null when `sync.holds=fail` restores fail-closed
+ * blocking. `normalize` reads `fences.normalize` once, the first time a file
+ * has a fence Tier 1 would rewrite (#6188).
+ */
+export interface SyncScreenRun { policy: SyncHoldPolicy; sanity: ImportSanityConfig; activePack: SyncImportScreenInput['activePack']; normalize: () => Promise<boolean> }
 
 export async function loadSyncScreenRun(engine: BrainEngine, sourceId: string, processingOptions: SyncProcessingOptions | undefined, remote: boolean): Promise<SyncScreenRun | null> {
   const policy = await readSyncHoldPolicy(engine);
   if (policy.mode === 'fail') return null;
   const activePack = processingOptions?.noSchemaPack ? undefined : (await loadActivePackForEngine(engine, { remote, sourceId }).catch(() => null))?.manifest;
-  return { policy, sanity: await loadImportSanityConfig(engine), activePack };
+  let normalize: Promise<boolean> | undefined;
+  return { policy, sanity: await loadImportSanityConfig(engine), activePack, normalize: () => normalize ??= fencesNormalizeEnabled(engine) };
 }
 
 /** True for `readSyncFile`'s refusal of a working-tree file over the sync read bound. */
@@ -46,13 +60,29 @@ export function pinnedBlob(discovery: Pick<SyncDiscovery, 'root' | 'gitRoot' | '
   return readTreeBlobs(discovery.gitRoot, discovery.target, [gitPath]).get(gitPath) ?? null;
 }
 
-function heldEntry(entry: SyncEntry, slug: string, pageId: number | null, refusal: { code: GitHoldRecord['code']; reason?: GitHoldRecord['meta']['reason']; key?: string; line?: number; message: string },
-  content: string | null, blob: TreeBlob | null | undefined): HeldEntry {
+function heldEntry(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null,
+  refusal: { code: GitHoldRecord['code']; reason?: GitHoldRecord['meta']['reason']; key?: string; line?: number; message: string; fence?: FenceMessageLocation },
+  content: string | null, blob: Pick<TreeBlob, 'oid'> | null | undefined): HeldEntry {
+  const line = refusal.line ?? (refusal.fence && content !== null ? fenceFileLine(content, parseMarkdown(content, entry.path), refusal.fence) ?? undefined : undefined);
   return { path: entry.path, source_path: entry.sourcePath, slug, page_id: pageId, code: refusal.code, message: refusal.message,
     upstream_version: content === null ? null : sha256(content),
-    meta: { ...(refusal.reason ? { reason: refusal.reason } : {}), ...(refusal.key ? { key: refusal.key } : {}), ...(refusal.line !== undefined ? { line: refusal.line } : {}),
-      recovery_version: RECOVERY_VERSION, ...(blob ? { blob_oid: blob.oid } : {}), ...(entry.working ? { working: true } : {}),
+    meta: { ...(refusal.reason ? { reason: refusal.reason } : {}), ...(refusal.key ? { key: refusal.key } : {}), ...(line !== undefined ? { line } : {}),
+      recovery_version: RECOVERY_VERSION, ...(refusal.fence ? { fence: refusal.fence, fence_version: FENCE_VERSION } : {}),
+      ...(blob ? { blob_oid: blob.oid } : {}), ...(entry.working ? { working: true } : {}),
       ...(entry.renameFrom ?? entry.renameHeld ? { rename_from: entry.renameFrom ?? entry.renameHeld } : {}) } };
+}
+
+/**
+ * #6188: the hold a failed fence refusal earns when the screen admitted the
+ * same bytes (the refusal depended on stored rows: a stored-row collision, a
+ * withdrawn claim, rows quoted in code). Reason `prepare_time`; the receipt's
+ * own reason stays in `meta.fence`. Location-only, rebuilt from the receipt.
+ */
+export function prepareTimeFenceHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null,
+  receipt: ReceiptFenceLocation, content: string, blobOid: string | null | undefined): HeldEntry {
+  // An older gbrain's receipt named no section: take it from the refused bytes themselves.
+  const fence = completeFenceLocation(receipt, parseMarkdown(content, `${slug}.md`));
+  return heldEntry(entry, slug, pageId, { code: 'invalid_fence', reason: 'prepare_time', fence, message: fenceMessage(fence) }, content, blobOid ? { oid: blobOid } : null);
 }
 
 /**
@@ -74,6 +104,8 @@ export interface FrozenImportScreen {
   blob?: TreeBlob | null; oversize?: { size: number | null };
   /** The `--retry-failed` command that resumes after a parser-regression fix. */
   retryCommand: string;
+  /** #6188 dry run: told the fixes when Tier 1 admits the file by rewriting a fence. */
+  onNormalized?: (fixes: FenceFix[]) => void;
 }
 
 /**
@@ -93,8 +125,12 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
   }
   const moved = entry.renameFrom && entry.renameFrom.slug !== slug ? entry.renameFrom : undefined;
   const base = moved ? await engine.readPageSnapshot(moved.slug, { sourceId: input.cursor.sourceId, includeDeleted: true }) : snapshot;
-  const { screen } = screenSyncImport({ content, rawHash: input.rawHash, lineEndingOnly: input.lineEndingOnly, slug, sourcePath: entry.sourcePath, path: entry.path,
-    root: input.cursor.root, snapshot, base, renamed: !!moved, activePack: run.activePack, sanity: run.sanity });
+  const screenInput: SyncImportScreenInput = { content, rawHash: input.rawHash, lineEndingOnly: input.lineEndingOnly, slug, sourcePath: entry.sourcePath, path: entry.path,
+    root: input.cursor.root, snapshot, base, renamed: !!moved, activePack: run.activePack, sanity: run.sanity };
+  let { screen } = screenSyncImport(screenInput);
+  // #6188: a fence Tier 1 rewrites is admitted (publication writes the normalized file back); with fences.normalize=false it is held.
+  if (screenNormalized(screen) && !await run.normalize()) ({ screen } = screenSyncImport({ ...screenInput, normalize: false }));
+  if (screen.status === 'importable' && screen.fences?.fixes.length) input.onNormalized?.(screen.fences.fixes);
   if (screen.status !== 'refused') return null;
   const refusal = screen.refusal;
   if (refusal.code === 'invalid_frontmatter' && snapshot && snapshot.page.deleted_at == null) {
@@ -120,13 +156,15 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
  * judge are reported in `screen_skipped`, never as holds.
  */
 export async function dryRunScreen(engine: BrainEngine, discovery: SyncDiscovery & { index?: number }, run: SyncScreenRun | null, retryCommand: string): Promise<{
-  dry_run: true; would_hold?: GitHoldItem[]; would_hold_count?: number; screen_skipped?: Array<{ path: string; code: string }> }> {
+  dry_run: true; would_hold?: GitHoldItem[]; would_hold_count?: number; would_normalize?: Array<{ path: string; classes: string[] }>; would_normalize_count?: number;
+  screen_skipped?: Array<{ path: string; code: string }> }> {
   if (!run || discovery.companyPlan) return { dry_run: true };
   const entries = discovery.entries.slice(discovery.index ?? 0).filter(entry => entry.action === 'import' && entry.slug);
   const committed = entries.filter(entry => !entry.working);
   const blobs = readTreeBlobs(discovery.gitRoot, discovery.target, committed.map(entry => syncGitPath(discovery, entry.path)));
   const contents = readBlobContents(discovery.gitRoot, [...blobs.values()]);
   const held: GitHoldItem[] = [];
+  const normalized: Array<{ path: string; classes: string[] }> = [];
   const skipped: Array<{ path: string; code: string }> = [];
   const observed = new Date().toISOString();
   for (const entry of entries) {
@@ -146,7 +184,8 @@ export async function dryRunScreen(engine: BrainEngine, discovery: SyncDiscovery
       const snapshot = await engine.readPageSnapshot(entry.slug!, { sourceId: discovery.sourceId, includeDeleted: true });
       const lineEndingOnly = bytes !== null && content !== null && bytes.equals(Buffer.from(bytes.toString('utf8'))) && bytes.toString('utf8').replace(/\r\n/g, '\n') === content.replace(/\r\n/g, '\n');
       const hold = await screenFrozenImport(engine, { cursor: discovery, entry, slug: entry.slug!, pageId: entry.pageId ?? null, snapshot, content,
-        rawHash: bytes === null ? null : sha256(bytes), lineEndingOnly, blob, oversize, retryCommand }, run);
+        rawHash: bytes === null ? null : sha256(bytes), lineEndingOnly, blob, oversize, retryCommand,
+        onNormalized: fixes => normalized.push({ path: entry.path, classes: [...new Set(fixes.map(fix => fix.class))] }) }, run);
       if (hold) held.push(gitHoldItem({ version: 1, source_id: discovery.sourceId, incarnation: discovery.incarnation, ...hold,
         observed_at: observed, held_at: observed, updated_at: observed, run_id: null, mode: 'managed' }));
     } catch (error) {
@@ -154,5 +193,6 @@ export async function dryRunScreen(engine: BrainEngine, discovery: SyncDiscovery
     }
   }
   return { dry_run: true, ...(held.length ? { would_hold: held.slice(0, run.policy.cap), would_hold_count: held.length } : {}),
+    ...(normalized.length ? { would_normalize: normalized.slice(0, run.policy.cap), would_normalize_count: normalized.length } : {}),
     ...(skipped.length ? { screen_skipped: skipped } : {}) };
 }

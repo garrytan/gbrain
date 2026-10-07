@@ -82,6 +82,9 @@ export class OperationError extends Error {
   public fix?: Action;
   /** Agent contract v1: advice that rides the error (rendered into the envelope's `notices`). */
   public notices?: Notice[];
+  /** #6188 (D16, D18): a fence refusal's location and its blocking issues; location and class only, never a cell value. */
+  public fence?: Record<string, unknown>;
+  public fenceIssues?: Array<Record<string, unknown>>;
   /** Set to 1 by opError(); toJSON() emits `contract_version` only when set. */
   public contractVersion?: 1;
   /**
@@ -142,6 +145,8 @@ export class OperationError extends Error {
       ...(this.why !== undefined ? { why: this.why } : {}),
       ...(this.fix ? { fix: wireRenderer ? wireRenderer.fix(this.fix) : this.fix } : {}),
       ...(this.notices?.length ? { notices: this.notices.map(n => wireRenderer ? wireRenderer.notice(n) : n) } : {}),
+      ...(this.fence ? { fence: this.fence } : {}),
+      ...(this.fenceIssues?.length ? { fence_issues: this.fenceIssues } : {}),
       ...(this.contractVersion !== undefined ? { contract_version: this.contractVersion } : {}),
     };
   }

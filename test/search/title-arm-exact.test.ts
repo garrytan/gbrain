@@ -17,7 +17,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { hybridSearch, hybridSearchCached } from '../../src/core/search/hybrid.ts';
-import { configureGateway } from '../../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -47,7 +47,7 @@ for (const kind of testBackends()) {
 
     afterAll(async () => {
       await close?.();
-      configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: DIM, env: { ...process.env } });
+      resetGateway(); // R5: restore the preload baseline for later files in this shard
     });
 
     beforeEach(async () => {

@@ -153,6 +153,11 @@ describe('rankOpenAIChatModels — newest PRICED family, tier ladder', () => {
     const { tiers } = rankOpenAIChatModels(['gpt-9.9', 'gpt-5.6']);
     expect(tiers?.deep).toBe('openai:gpt-5.6');
   });
+
+  test('gpt-6.1-sol is priced for metering only: it never becomes a discovered tier default', () => {
+    const { tiers } = rankOpenAIChatModels(['gpt-6.1-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
+    expect(tiers).toMatchObject({ utility: 'openai:gpt-5.6-luna', reasoning: 'openai:gpt-5.6-terra', deep: 'openai:gpt-5.6-sol' });
+  });
 });
 
 describe('refresh + cache + resolution overlay', () => {

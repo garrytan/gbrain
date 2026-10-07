@@ -1,5 +1,6 @@
 import { OperationError } from '../ops/contract.ts';
 import { writerStamp } from './writer-versions.ts';
+import type { FenceFailureDetail } from '../fence-repair/refusal.ts';
 
 /**
  * #5974: a database refusal during preparation or publication becomes a
@@ -22,7 +23,9 @@ export interface PublicationFailureDetail {
   /** Owner-only: the build and host that executed the failed attempt. */
   attempt?: { consumer_version: string; consumer_host_id: string | null };
 }
-export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail }
+/** #6188: a typed fence refusal's location (`fence-repair/refusal.ts`), plus the attempt stamp. */
+export type FenceRefusalDetail = FenceFailureDetail & Pick<PublicationFailureDetail, 'stage' | 'attempt'>;
+export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail }
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_.:-]{0,79}$/;
 const ident = (value: unknown) => typeof value === 'string' && IDENT.test(value) ? value : undefined;
@@ -76,9 +79,19 @@ export function withAttempt(failure: PublicationFailure, stage: PublicationStage
   return { ...failure, detail: { ...failure.detail, stage, attempt: { consumer_version: stamp.version, consumer_host_id: stamp.hostId } } };
 }
 
-/** The receipt view any caller may read: fixed enums only, no source identifiers, host or build. */
+/**
+ * The receipt view any caller may read: fixed enums only, no source
+ * identifiers, host or build. A fence location keeps its fence, section,
+ * reason and problem classes; its row numbers stay owner-side (they can
+ * number rows a remote caller never saw).
+ */
 export function publicFailureDetail(detail: unknown): Record<string, unknown> | undefined {
   if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return undefined;
   const { sources: _sources, attempt: _attempt, ...rest } = detail as PublicationFailureDetail;
+  if ((rest as { origin?: unknown }).origin === 'fence') {
+    const { rows: _rows, issues, ...fence } = ((rest as unknown as FenceFailureDetail).fence ?? {}) as FenceFailureDetail['fence'];
+    const publicIssues = Array.isArray(issues) ? issues.map(({ row: _row, ...issue }) => issue) : undefined;
+    return { ...rest, fence: { ...fence, ...(publicIssues?.length ? { issues: publicIssues } : {}) } } as unknown as Record<string, unknown>;
+  }
   return rest as unknown as Record<string, unknown>;
 }

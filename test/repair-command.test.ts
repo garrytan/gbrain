@@ -23,6 +23,8 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { runCli } from './helpers/cli-spawn.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
+
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -97,6 +99,33 @@ describe('gbrain repair timeline', () => {
       expect(await markedPages(engine, source)).toEqual(['notes/a']);
       const again = await runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true });
       expect(again).toMatchObject({ affected: 0, applied: 0, complete: true });
+    });
+  }, 120_000);
+
+  test('#6042: materializing timeline rows into an already-extracted page queues no facts extraction', async () => {
+    await brain(async (engine, [source]) => {
+      const body = 'A synthetic field report with enough substantive text that the facts backstop treats it as eligible for extraction.';
+      await submitPageMutation(ctxFor(engine, source), { operation: 'put_page', params: { slug: 'notes/report', content: page(body), request_id: randomUUID() } });
+      await engine.transaction(tx => withCoordinatedWrite(tx, [source], () => tx.executeRaw(
+        `INSERT INTO timeline_entries(page_id,date,source,summary,detail) SELECT id,'2026-08-02','legacy','A dated event','' FROM pages WHERE source_id=$1 AND slug='notes/report'`,
+        [source]), TEST_WRITE_ATTRIBUTION));
+      // Stand-in for the page's own extraction having run: its outbox entry is settled.
+      await disposePersistenceConsumer(engine);
+      await engine.executeRaw(`UPDATE persistence_effects SET state='committed' WHERE kind='facts-backstop' AND source_id=$1`, [source]);
+      const [{ id: pageId }] = await engine.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE source_id=$1 AND slug='notes/report'`, [source]);
+      const done = await new MinionQueue(engine).add('facts-absorb', { slug: 'notes/report', sourceId: source, page_id: pageId }, { queue: 'default' });
+      await engine.executeRaw(`UPDATE minion_jobs SET status='completed', finished_at=now() WHERE id=$1`, [done.id]);
+      const receipts = async () => engine.executeRaw<{ id: string; facts: unknown }>(
+        `SELECT id, outcome->'facts_backstop' AS facts FROM persistence_requests
+          WHERE source_id=$1 AND slug='notes/report' AND operation='put_page' AND state='committed' ORDER BY created_at`, [source]);
+      expect((await receipts()).map(r => r.facts)).toEqual([{ queued: true }]);
+      const scope = await resolveRepairScope(engine);
+      const repaired = await runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true });
+      expect(repaired).toMatchObject({ applied: 1, complete: true });
+      expect(await markedPages(engine, source)).toEqual(['notes/report']);
+      const [, repairWrite] = await receipts();
+      expect(repairWrite.facts).toEqual({ skipped: 'body_unchanged' });
+      expect(await engine.executeRaw(`SELECT 1 FROM persistence_effects WHERE request_id=$1::uuid AND kind='facts-backstop'`, [repairWrite.id])).toEqual([]);
     });
   }, 120_000);
 
@@ -175,7 +204,7 @@ describe('gbrain repair timeline', () => {
       } finally { console.log = log; }
       const json = JSON.parse(out[0]);
       expect(json.scope.source_ids).toEqual([source]);
-      expect(json.results.map((r: { kind: string }) => r.kind)).toEqual(['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats']);
+      expect(json.results.map((r: { kind: string }) => r.kind)).toEqual(['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'fences']);
       expect(json.results[0]).toMatchObject({ mode: 'dry_run', affected: 1 });
       expect(out[1]).toContain(`Scope: brain `);
       expect(out[1]).toContain(`sources ${source}`);

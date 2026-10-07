@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { fenceNormalizedNotice, type FencesNormalized } from '../fence-repair/report.ts';
+import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
+import { suffixedSlugAdmission } from './suffixed-slug.ts';
 import { defaultSlug, detectBinaryNullByte, explicitCaptureType, mergeCaptureFrontmatter, normalizeForHash } from '../capture-content.ts';
 import { computeContentHash } from '../ingestion/types.ts';
 import { resolveSlugForPath } from '../sync.ts';
@@ -133,6 +136,12 @@ function pendingAwareResponse(ctx: OperationContext, row: WriteRequest): Record<
   return writeResponse(row, { retryAfterMs: estimatedRetryAfterMs(ctx.engine, 1) });
 }
 
+/** #6188 (D21): a write whose fence Tier 1 rewrote carries one `fence_normalized` coaching notice. */
+export function emitFenceNotice(ctx: Pick<OperationContext, 'emitNotice'>, response: Record<string, unknown>, slug?: string): void {
+  const report = response.fences_normalized as FencesNormalized | undefined;
+  if (report) ctx.emitNotice?.(fenceNormalizedNotice(report, slug));
+}
+
 /** Owner-internal `put_page` kinds the trusted local file writers (import, frontmatter repair) submit; every other caller is refused them. */
 const OWNER_FILE_INTENTS: ReadonlySet<string> = new Set(['managed_file_import', 'managed_file_repair']);
 
@@ -151,7 +160,8 @@ export async function submitPageMutation(ctx: OperationContext,
   if (prepared.prior) return pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs()));
   const row = await admitWrite(ctx.engine, prepared.admission);
   const response = pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs()));
-  return prepared.typeWarning ? { ...response, type_warning: prepared.typeWarning } : response;
+  emitFenceNotice(ctx, response, row.slug);
+  return { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) };
 }
 
 /**
@@ -161,13 +171,18 @@ export async function submitPageMutation(ctx: OperationContext,
  */
 export async function preparePageAdmission(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember }
-): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null }> {
+): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null }> {
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
       ['preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
       throw new OperationError('invalid_params', 'Reserved persistence fields cannot be submitted through put_page. Use trusted local reconciliation administration.',
         'Drop kind, preview and backup_reference from put_page; reconciling a canonical file runs through gbrain sources reconcile on the brain host.');
     }
+  }
+  // #6188: a fence repair's receipt is recorded only by the trusted local fence repair, never by a caller.
+  if (Object.hasOwn(input.params, 'fence_repair') && (input.operation !== 'put_page' || ctx.remote !== false || !parseFenceRepairReceipt(input.params.fence_repair))) {
+    throw new OperationError('invalid_params', 'fence_repair is reserved for the trusted fence repair.',
+      'Drop fence_repair and submit the page without it; gbrain repair fences records its own receipt on the brain host. To fix a malformed facts or takes fence, correct it in content (or write facts with remember and takes with takes_add); a held file is repaired by the brain host operator with gbrain repair fences, so ask the user to run it.');
   }
   const { page_batch: _forged, ...params } = input.params;
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
@@ -238,6 +253,8 @@ export async function preparePageAdmission(ctx: OperationContext,
   const authority = await submissionAuthority(ctx, input.operation, sourceId, source.incarnation, slug);
   await assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug });
   const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
+  const slugAdvisory = input.operation === 'put_page' && input.managedFileImport !== true
+    ? suffixedSlugAdmission(ctx, slug, !!snapshot && !snapshot.page.deleted_at) : null;
   // #5616: typed edit refusals before admission; publication repeats them on the locked snapshot.
   if (input.operation === 'edit_page') {
     const { applyPageEdits, assertEditRevision, parsePageEdits } = await import('./page-edit.ts');
@@ -292,7 +309,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     && !publishesDatabaseOnly(join(binding.local_path, binding.relative_path), slug, snapshot)) {
     throw colonSlugWindowsRefusal(slug, sourceId);
   }
-  return { typeWarning, admission: { principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
+  return { typeWarning, slugAdvisory, admission: { principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent, intent, authority,
     ...(input.operation === 'edit_page' ? { terminalReservation: Math.max(16_384, Buffer.byteLength(JSON.stringify(authority)) + 8192)
       + (await import('./page-edit.ts')).EDIT_PAGE_RECEIPT_RESERVE } : {}),

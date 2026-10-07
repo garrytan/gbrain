@@ -15,6 +15,7 @@ A supported transport is distinct from a tested vendor session. The new Grok Bot
 | grok-bot | local-cli, thin-cli | thin-cli | 1 hour | [Guide](../../docs/guides/grok-bot.md) |
 | muse | local-cli, thin-cli | thin-cli | 1 hour | [Guide](../../docs/guides/muse.md) |
 | muse-code | stdio, http | Follow client settings | 1 hour | [Guide](../../docs/guides/muse.md#muse-code-is-a-different-product) |
+| hermes | stdio | Follow client settings | 1 hour | [Guide](../../docs/mcp/HERMES.md) |
 | cursor | http | Follow client settings | 1 hour | [Guide](../../docs/guides/hosted-harness-access.md) |
 | perplexity | http | Follow client settings | 1 hour | [Guide](../../docs/guides/hosted-harness-access.md) |
 | chatgpt | http | Follow client settings | 1 hour | [Guide](../../docs/guides/hosted-harness-access.md) |

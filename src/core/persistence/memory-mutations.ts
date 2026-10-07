@@ -9,7 +9,7 @@ import { rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { inferFactSubject, isEntityInferenceEnabled, type InferredVia } from '../facts/subject-infer.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { excludesPrivateWrites } from './page-visibility.ts';
-import { initializeLocalPersistence, requestPrincipalForContext } from './page-mutations.ts';
+import { emitFenceNotice, initializeLocalPersistence, requestPrincipalForContext } from './page-mutations.ts';
 import { authorizeStoredRequest, submissionAuthority } from './authority.ts';
 import { admitWrite, admitWriteInTransaction, assertPageRequestIdentity, assertReplayIntent, completeWrite, getWriteRequest, intentDigest } from './journal.ts';
 import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, writeResponse } from './service.ts';
@@ -168,10 +168,15 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   }
   const row = await admitWrite(ctx.engine, { principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent,
+    // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
+    // it, so recall's session_id filter finds single facts too. Identity only — never a trust surface.
     intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
-      ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}) },
+      ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}),
+      session_id: ctx.sessionId ?? null },
     authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
-  return writeResponse(await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs));
+  const response = writeResponse(await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs));
+  emitFenceNotice(ctx, response, row.slug);
+  return response;
 }
 
 interface WithdrawalTarget { id: number; entity_slug: string | null; source_markdown_slug: string | null; expired_at: Date | null; }

@@ -80,7 +80,7 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
       delta: (r.metric_before === null || r.metric_after === null)
         ? null
         : Number(r.metric_after) - Number(r.metric_before),
-      applied_at: r.applied_at,
+      applied_at: new Date(r.applied_at).toISOString(),
     }));
     if (jsonOutput) {
       process.stdout.write(JSON.stringify({

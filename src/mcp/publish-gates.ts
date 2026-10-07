@@ -23,6 +23,9 @@ import { operations, type Operation } from '../core/operations.ts';
 
 export type PublishGateKey = NonNullable<Operation['publishGateKey']>;
 
+/** Every config key an operation's publish gate reads; `config get` resolves these DB-first like the gate (#5358). */
+export const PUBLISH_GATE_KEYS: ReadonlySet<PublishGateKey> = new Set(operations.flatMap(op => (op.publishGateKey ? [op.publishGateKey] : [])));
+
 /**
  * Gates that default ON for the owner's stdio pipe when neither plane sets
  * them (agent contract v1, F7): the read-only advisor is coaching the local

@@ -1373,19 +1373,20 @@ async function embedAll(
     }
   }
 
-  // v0.41.15.0: sliding worker pool extracted into src/core/worker-pool.ts.
-  // Throughput characteristics unchanged from the prior inline pool — N
-  // workers atomically claim the next page; the helper is the canonical
-  // primitive. embedOnePage handles its own per-page errors via try/catch
-  // and stderr log (no rethrow), so we don't need failures[] here and
-  // omitting onError means the default 'continue' policy applies cleanly
-  // even though no errors should reach the pool's catch.
+  // Sliding worker pool (src/core/worker-pool.ts). #3037: embedOnePage reads the snapshot before its own
+  // try, so a failed read lands here as a page that never embedded; count it unless the run is aborting.
   await runSlidingPool({
     items: pages,
     workers: CONCURRENCY,
     ...(signal && { signal }), // #1737: pool stops claiming pages once aborted
     onItem: (page) => embedOnePage(page),
     failureLabel: (page) => page.slug,
+    onError: (e, page) => {
+      if (isAborted(signal)) return 'continue';
+      recordFailure(result, 1, page.slug, e);
+      serr(`\n  Error embedding ${page.slug}: ${e instanceof Error ? e.message : e}`);
+      return 'continue';
+    },
   });
 
   // Stdout summary preserved for scripts/tests that grep for counts.

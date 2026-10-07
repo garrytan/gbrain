@@ -168,7 +168,7 @@ Every non-localOnly operation on the MCP surface: 140 tools across 23 areas. **S
 | `get_chunks` | Return a page's indexed content chunks (the units search ranks). | read |  |  |
 | `get_page` | Read a page by slug (fuzzy optional; renamed slugs redirect). | read | yes |  |
 | `get_raw_data` | Retrieve raw data for a page. | read |  |  |
-| `get_versions` | Page version history. | read |  |  |
+| `get_versions` | Page version history, newest snapshot first. | read |  |  |
 | `get_write_request` | Read your write's receipt by request_id (after write_pending or a lost reply). | write | yes |  |
 | `list_pages` | List pages with filters. | read | yes |  |
 | `list_write_requests` | List your write receipts in one source, newest first. | write | yes |  |

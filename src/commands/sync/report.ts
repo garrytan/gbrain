@@ -1,5 +1,5 @@
 /** Post-sync human reporting and best-effort nudges for the sync CLI. */
-import { formatManagedSyncFailure } from '../../core/persistence/sync-failures.ts';
+import { formatManagedSyncFailure, managedSyncRetryCommand } from '../../core/persistence/sync-failures.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { isEmbeddingInfraCode } from '../../core/sync.ts';
 import { serr } from '../../core/console-prefix.ts';
@@ -126,7 +126,10 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
       if (result.runId) {
         write(`Sync BLOCKED at ${result.toCommit}: committed counts are cumulative for run ${result.runId}.`);
         for (const failure of result.failures ?? []) write(`  ${formatManagedSyncFailure(failure)}`);
-        write('  Fix the cause, then run gbrain sync --no-pull --retry-failed with the same source and options; this admits a fresh run after active work drains.');
+        const retries = [...new Set((result.failures ?? []).map(failure => managedSyncRetryCommand(failure)))];
+        write(retries.length
+          ? `  Fix the cause, then run: ${retries.join(' ; ')} (this admits a fresh run after active work drains).`
+          : '  Fix the cause, then run gbrain sync --no-pull --retry-failed with the same source and options; this admits a fresh run after active work drains.');
         break;
       }
       write(`Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed.`);

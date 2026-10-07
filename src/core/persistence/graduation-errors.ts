@@ -278,6 +278,17 @@ export function rollbackWritesLostError(opts: { losses: readonly { relation: str
         user_message: `Going back to PGLite would lose what changed on Postgres since the move: ${listed}. Should I go back anyway? If not, nothing changes and Postgres stays in use.` } });
 }
 
+/** `not_found`: a post-cutover rollback has no retained PGLite datastore left to restore. */
+export function retainedCopyMissingError(opts: { runId: string; retainedPath: string }): OperationError {
+  const docs = `${GRADUATION_GUIDE}#check-resume-or-roll-back`;
+  const why = `Rolling back means restoring the local PGLite datastore that graduation run ${opts.runId} set aside at ${opts.retainedPath}, and no datastore is there any more. The rollback stopped before changing anything: Postgres is still the authoritative brain and this machine still routes to it.`;
+  return opError('not_found', `Cannot roll back graduation run ${opts.runId}: its retained PGLite datastore (${opts.retainedPath}) no longer exists.`,
+    'Nothing changed; carry on with the Postgres brain.',
+    { why, docs,
+      fix: { consent: [], actor: 'agent', requires_exclusive: false, docs, verify: STATUS_VERIFY, why,
+        user_message: 'Going back to the local PGLite brain is no longer possible because its saved copy was deleted. Your brain stays on Postgres and keeps working.' } });
+}
+
 /** `graduation_target_auth_failed`: the recorded target URL no longer authenticates. */
 export function targetAuthFailedError(opts: { host: string; urlEnv?: string }): OperationError {
   const docs = GRADUATION_DOCS.graduation_target_auth_failed;

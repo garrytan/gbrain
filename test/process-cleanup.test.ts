@@ -22,6 +22,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
+  abortOnCleanupPass,
   registerCleanup,
   registerSignalOwner,
   triggerCleanupAndExit,
@@ -167,6 +168,33 @@ describe('triggerCleanupAndExit', () => {
 
     expect(fired).toEqual(['kept']);
     expect(codes).toEqual([0]);
+  });
+});
+
+describe('abortOnCleanupPass', () => {
+  function swallowExit(): () => void {
+    const real = process.exit;
+    (process as any).exit = () => {};
+    return () => { (process as any).exit = real; };
+  }
+
+  test('aborts its signal when the cleanup pass runs', async () => {
+    const shutdown = abortOnCleanupPass('child-work');
+    expect(shutdown.signal.aborted).toBe(false);
+    const restore = swallowExit();
+    try { await triggerCleanupAndExit(143); } finally { restore(); }
+    expect(shutdown.signal.aborted).toBe(true);
+  });
+
+  test('a released signal is deregistered and stays live through a later cleanup pass', async () => {
+    const shutdown = abortOnCleanupPass('finished-work');
+    expect(_registeredCleanupCountForTests()).toBe(1);
+    shutdown.release();
+    shutdown.release();
+    expect(_registeredCleanupCountForTests()).toBe(0);
+    const restore = swallowExit();
+    try { await triggerCleanupAndExit(143); } finally { restore(); }
+    expect(shutdown.signal.aborted).toBe(false);
   });
 });
 

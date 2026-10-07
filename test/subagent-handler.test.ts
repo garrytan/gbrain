@@ -23,6 +23,8 @@ import {
 } from '../src/core/minions/handlers/subagent.ts';
 import type { ToolDef, MinionJobContext } from '../src/core/minions/types.ts';
 import type Anthropic from '@anthropic-ai/sdk';
+import { OperationError } from '../src/core/ops/contract.ts';
+import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -1437,5 +1439,120 @@ describe('handler-entry capability gate on the resolved model', () => {
       await engine.unsetConfig('models.subagent');
       await engine.unsetConfig('agent.use_gateway_loop');
     }
+  });
+});
+
+describe('legacy loop: an accepted tool write that is still pending (#5474)', () => {
+  // A deadline this far out leaves a replay window well past every case below.
+  const farDeadline = () => Date.now() + 10 * 60_000;
+  /** A put_page whose write is pending for `pendingFor` dispatches, then lands in `settles`. */
+  function stagedWrite(pendingFor: number, opts: { throwPending?: boolean; settles?: 'committed' | 'failed'; retryAfterMs?: number } = {}) {
+    const requestIds: unknown[] = [];
+    const tool: ToolDef = { ...makeEchoTool('brain_put_page'), async execute(input) {
+      const request_id = (input as Record<string, unknown>).request_id; requestIds.push(request_id);
+      if (requestIds.length > pendingFor) return { request_id, state: opts.settles ?? 'committed', retry_after_ms: null };
+      const receipt = { request_id, state: 'queued', retry_after_ms: opts.retryAfterMs ?? 10 };
+      if (!opts.throwPending) return receipt;
+      const pending = new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read its receipt.');
+      pending.writeRequest = receipt as never; pending.writeError = 'write_pending';
+      throw pending;
+    } };
+    return { tool, requestIds };
+  }
+  const oneWriteThenDone = () => new FakeMessagesClient([
+    { content: [{ type: 'tool_use', id: 'tu_w', name: 'brain_put_page', input: { slug: 'notes/staged-example', content: 'x' } } as any], stop_reason: 'tool_use' as any },
+    { content: [{ type: 'text', text: 'done' }] as any, stop_reason: 'end_turn' },
+  ]);
+  const rowStatuses = async (jobId: number) =>
+    (await engine.executeRaw<{ status: string }>('SELECT status FROM subagent_tool_executions WHERE job_id = $1', [jobId])).map(r => r.status);
+
+  for (const throwPending of [false, true]) {
+    test(`a ${throwPending ? 'thrown write_pending' : 'returned queued receipt'} is replayed under one request id until it commits`, async () => {
+      const { tool, requestIds } = stagedWrite(4, { throwPending });
+      const client = oneWriteThenDone();
+      const ctx = { ...(await makeCtx({ prompt: 'go' })), deadlineAtMs: farDeadline() };
+      const result = await makeSubagentHandler({ engine, client, toolRegistry: [tool] })(ctx);
+      expect(result.stop_reason).toBe('end_turn');
+      expect(client.calls.length).toBe(2);
+      expect(requestIds).toHaveLength(5);
+      expect(new Set(requestIds).size).toBe(1);
+      expect(await rowStatuses(ctx.id)).toEqual(['complete']);
+    });
+  }
+
+  test('the replay window follows the job deadline, not the shorter maintenance wait', async () => {
+    const restore = __setMaintenanceWriteWaitForTests(0);
+    try {
+      const { tool, requestIds } = stagedWrite(3);
+      const ctx = { ...(await makeCtx({ prompt: 'go' })), deadlineAtMs: farDeadline() };
+      const result = await makeSubagentHandler({ engine, client: oneWriteThenDone(), toolRegistry: [tool] })(ctx);
+      expect(result.stop_reason).toBe('end_turn');
+      expect(requestIds).toHaveLength(4);
+    } finally { restore(); }
+  });
+
+  test('a job without a deadline replays only for the maintenance wait, then stays pending', async () => {
+    const restore = __setMaintenanceWriteWaitForTests(120);
+    try {
+      const { tool, requestIds } = stagedWrite(Number.MAX_SAFE_INTEGER);
+      const client = oneWriteThenDone();
+      const ctx = await makeCtx({ prompt: 'go' });
+      const started = Date.now();
+      const failure = await makeSubagentHandler({ engine, client, toolRegistry: [tool] })(ctx).then(() => null, (e: unknown) => e);
+      expect(failure).toMatchObject({ code: 'write_pending', writeRequest: { request_id: requestIds[0] } });
+      expect(Date.now() - started).toBeGreaterThanOrEqual(100);
+      expect(Date.now() - started).toBeLessThan(3_000);
+      expect(requestIds.length).toBeGreaterThan(2);
+      expect(new Set(requestIds).size).toBe(1);
+      expect(client.calls.length).toBe(1);
+      expect(await rowStatuses(ctx.id)).toEqual(['pending']);
+    } finally { restore(); }
+  });
+
+  test('a job already inside its deadline reserve does not replay', async () => {
+    const { tool, requestIds } = stagedWrite(Number.MAX_SAFE_INTEGER);
+    const ctx = { ...(await makeCtx({ prompt: 'go' })), deadlineAtMs: Date.now() + 40_000 };
+    await expect(makeSubagentHandler({ engine, client: oneWriteThenDone(), toolRegistry: [tool] })(ctx)).rejects.toMatchObject({ code: 'write_pending' });
+    expect(requestIds).toHaveLength(1);
+    expect(await rowStatuses(ctx.id)).toEqual(['pending']);
+  });
+
+  test('cancelling the job ends a long pause with the pending receipt and dispatches nothing more', async () => {
+    const { tool, requestIds } = stagedWrite(Number.MAX_SAFE_INTEGER, { retryAfterMs: 20_000 });
+    const cancel = new AbortController();
+    const ctx = { ...(await makeCtx({ prompt: 'go' })), deadlineAtMs: farDeadline(), signal: cancel.signal };
+    const started = Date.now();
+    const settled = makeSubagentHandler({ engine, client: oneWriteThenDone(), toolRegistry: [tool] })(ctx).then(() => null, (e: unknown) => e);
+    setTimeout(() => cancel.abort(new Error('example cancel')), 80);
+    expect(await settled).toMatchObject({ code: 'write_pending', writeRequest: { request_id: requestIds[0], state: 'queued' } });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(requestIds).toHaveLength(1);
+    expect(await rowStatuses(ctx.id)).toEqual(['pending']);
+  });
+
+  test('a write that ended failed is reported to the model, not replayed', async () => {
+    const { tool, requestIds } = stagedWrite(0, { settles: 'failed' });
+    const client = oneWriteThenDone();
+    const ctx = { ...(await makeCtx({ prompt: 'go' })), deadlineAtMs: farDeadline() };
+    const result = await makeSubagentHandler({ engine, client, toolRegistry: [tool] })(ctx);
+    expect(result.stop_reason).toBe('end_turn');
+    expect(requestIds).toHaveLength(1);
+    expect(client.calls.length).toBe(2);
+    expect(await rowStatuses(ctx.id)).toEqual(['failed']);
+  });
+
+  test('a tool that is not a journal mutation passes a queued-looking result straight through', async () => {
+    let dispatches = 0;
+    const lookalike: ToolDef = { ...makeEchoTool('brain_search'), async execute() {
+      dispatches++; return { request_id: '00000000-0000-4000-8000-000000000000', state: 'queued', retry_after_ms: 10 };
+    } };
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'tool_use', id: 'tu_s', name: 'brain_search', input: { query: 'x' } } as any], stop_reason: 'tool_use' as any },
+      { content: [{ type: 'text', text: 'done' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const ctx = { ...(await makeCtx({ prompt: 'go' })), deadlineAtMs: farDeadline() };
+    expect((await makeSubagentHandler({ engine, client, toolRegistry: [lookalike] })(ctx)).stop_reason).toBe('end_turn');
+    expect(dispatches).toBe(1);
   });
 });

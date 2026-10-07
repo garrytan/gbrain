@@ -4,7 +4,8 @@ import { getCompanyBrainProfile } from '../../core/company-brain/profile.ts';
 import { slog, withSourcePrefix } from '../../core/console-prefix.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { msysToNativePath } from '../../core/path-confine.ts';
-import { syncFailureJsonFields, readManagedSyncFailures } from '../../core/persistence/sync-failures.ts';
+import { syncFailureJsonFields, readManagedSyncFailures, managedSyncRetryCommand } from '../../core/persistence/sync-failures.ts';
+import { managedSyncCursorKey } from '../../core/persistence/sync-run.ts';
 import { syncHoldJsonFields } from '../../core/persistence/sync-holds.ts';
 import { printHoldNotes } from '../sync-diagnostics.ts';
 import { getDefaultSourcePath } from '../../core/source-resolver.ts';
@@ -786,8 +787,19 @@ async function runSingleSourceSync(
     // v0.42.42.0 (#2139, D13C): scope the retry count to THIS source — rows
     // carry source_id (#1939), so a single-source retry shouldn't report
     // another source's failures.
+    // A managed retry resumes only the cursor its own options select; failures under other options are named, not counted.
     const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-    const failures = brain?.enabled ? await readManagedSyncFailures(engine, [sourceId]) : unacknowledgedSyncFailures().filter(f => f.source_id === sourceId);
+    let failures: Array<{ source_id: string }> = unacknowledgedSyncFailures().filter(f => f.source_id === sourceId);
+    if (brain?.enabled) {
+      const managed = await readManagedSyncFailures(engine, [sourceId]);
+      const key = await managedSyncCursorKey(engine, opts).catch(() => null);
+      const other = key ? managed.filter(f => f.cursor_key !== key) : [];
+      failures = key ? managed.filter(f => f.cursor_key === key) : managed;
+      if (other.length) {
+        slog(`${other.length} previously-failed file(s) of this source belong to a run with different sync options and are not retried by this invocation. Retry them with:`);
+        for (const command of new Set(other.map(f => managedSyncRetryCommand(f)))) slog(`  ${command}`);
+      }
+    }
     if (failures.length === 0) {
       slog('No local ledger entries; checking the durable sync cursor for unfinished or failed writes.');
     } else {

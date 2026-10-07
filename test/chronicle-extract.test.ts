@@ -173,6 +173,35 @@ describe('parseJudgeJson failure signalling (#2606)', () => {
   });
 });
 
+// #5209: the judge reply's array ends at its own `]`. Slicing to the last `]`
+// in the reply pulled a trailing footnote or wikilink into the JSON and lost
+// a valid answer as parse_failed.
+describe('parseJudgeJson ignores brackets in prose after the array (#5209)', () => {
+  const meeting = (what: string) => JSON.stringify({ when: '2027-03-02', who: ['alice-example'], what, kind: 'meeting' });
+
+  test('a footnote marker after the array', () => {
+    expect(parseJudgeJson(`[${meeting('kickoff')}]\nBased on the transcript [1].`)).toEqual([JSON.parse(meeting('kickoff'))]);
+  });
+
+  test('two events, then a wikilink line', () => {
+    const out = parseJudgeJson(`Events:\n[${meeting('kickoff')},${meeting('retro')}]\nAlso see [[projects/acme-example]]`);
+    expect(out?.map(e => e.what)).toEqual(['kickoff', 'retro']);
+  });
+
+  test('a closing bracket and an escaped quote inside a field', () => {
+    const out = parseJudgeJson(`[${meeting('she said "ship it]" twice')}] (refs: [a], [b])`);
+    expect(out?.[0]?.what).toBe('she said "ship it]" twice');
+  });
+
+  test('control: a cut-off array followed by a citation is still a failure', () => {
+    expect(parseJudgeJson(`[${meeting('kickoff')}, {"when":"2027-03-03"\n[Source: notes]`)).toBeNull();
+  });
+
+  test('control: prose with brackets but no JSON array is still a failure', () => {
+    expect(parseJudgeJson('No events found [see policy].')).toBeNull();
+  });
+});
+
 // #5876 (E2): the default judge used to map a thrown provider error and a
 // refusal to `{events: []}`, so a failed call was recorded as no_events and
 // its content never retried.

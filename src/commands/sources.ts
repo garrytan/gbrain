@@ -1248,6 +1248,8 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const backlog = new Map((await drainMod.readManagedSyncBacklog(engine).catch(() => [])).map(b => [b.source_id, b]));
   const sharedSkillsView = await import('../core/shared-skills/source-opt-out.ts');
   const sharedSkills = new Map(await Promise.all(sources.map(async source => [source.id, await sharedSkillsView.readSharedSkillsSourceView(engine, source.id).catch(() => null)] as const)));
+  const uncommittedView = await import('../core/fence-repair/uncommitted.ts');
+  const uncommitted = await uncommittedView.uncommittedFenceRepairsBySource(engine, sources.map(source => source.id));
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,
@@ -1258,6 +1260,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
       ...(backlog.get(m.source_id) ? { managed_backlog: backlog.get(m.source_id) } : {}),
       ...(gitHolds.get(m.source_id) ? { git_holds: gitHolds.get(m.source_id) } : {}),
       ...(sharedSkills.get(m.source_id) ? { shared_skills: sharedSkills.get(m.source_id) } : {}),
+      ...(uncommitted.get(m.source_id) ? { fence_repairs_uncommitted: uncommitted.get(m.source_id) } : {}),
     }));
     console.log(JSON.stringify({ schema_version: 1, sources: enriched }, null, 2));
     return;
@@ -1298,6 +1301,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   for (const [sourceId, status] of connectors) for (const line of statusView.connectorStatusLines(sourceId, status)) console.log(line);
   for (const [sourceId, status] of gitHolds) for (const line of statusView.gitHoldStatusLines(sourceId, status)) console.log(line);
   for (const b of backlog.values()) console.log(`  ${drainMod.formatManagedSyncBacklog(b)}`);
+  for (const [sourceId, notices] of uncommitted) for (const line of uncommittedView.uncommittedFenceRepairLines(sourceId, notices)) console.log(line);
   for (const view of sharedSkills.values()) if (view && (only || view.configured === false || view.parked)) for (const line of sharedSkillsView.sharedSkillsStatusLines(view)) console.log(`  ${line}`);
   for (const m of metrics) {
     const warns: string[] = [];
@@ -1995,8 +1999,8 @@ Subcommands:
                                     default_source_local_path check.
   retry-held <id> [--dry-run] [--json]
                                     Re-attempt a connector source's held items, or re-screen a Git source's held files, on its next sync.
-                                    Runs nothing now. Most Git holds re-screen by themselves (file changed or
-                                    deleted, newer gbrain); fix the files with gbrain repair frontmatter --source <id>.
+                                    Runs nothing now. Most Git holds re-screen by themselves (file changed or deleted, newer gbrain); fix
+                                    frontmatter holds with gbrain repair frontmatter --source <id>; preview fence holds (invalid_fence) with gbrain repair fences --source <id>.
   shared-skills <id> on|off|status [--json]
                                     Opt a source out of (or back into) shared-skills adoption; status explains its effective policy.
   set-path <id> --clear             Clear a connector source's (google, github)

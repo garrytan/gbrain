@@ -42,6 +42,9 @@ import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, CYCLE_DEADLINE_RESERVE_MS, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { defaultTimeoutMsFor } from '../minions/handler-timeouts.ts';
+import {
+  PROPOSE_TAKES_CALL_TIMEOUT_KEY, PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS, PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS, readPhaseConfigNumber,
+} from './phase-config-values.ts';
 import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
@@ -50,6 +53,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { upsertExtractRollup, classifyRunStop } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
 import { isConfigTruthy } from '../config.ts';
+import { matchingCloseBracket } from '../llm-json.ts';
 import { TAKE_KIND_VALUES } from '../takes-fence.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -194,6 +198,10 @@ export type ProposeTakesExtractor = (input: {
   /** #4494: escalated cap for the one truncation retry (default
    *  PROPOSE_TAKES_RETRY_MAX_TOKENS; clamped to >= maxTokens). */
   retryMaxTokens?: number;
+  /** #5958: operator-set bound (ms) for each extractor call, base and retry
+   *  alike. The phase reads dream.propose_takes.call_timeout_ms and caps it
+   *  by the phase time left. Absent: extractorCallTimeoutMs(maxTokens). */
+  callBoundMs?: number;
   /** #5425: include EXTRACT_TAKES_ATTRIBUTION_RULES (opt-in). */
   attributionRules?: boolean;
   /**
@@ -402,6 +410,16 @@ function extractorCallTimeoutMs(maxTokens: number): number {
 }
 
 /**
+ * #5958: the configured per-call bound, held to the phase time left so it
+ * never outlasts the phase deadline (never below the default 90s floor, which
+ * the unconfigured path already allows). Unset: no override.
+ */
+function phaseBoundedCallTimeout(configuredMs: number | undefined, phaseRemainingMs: number): { callBoundMs?: number } {
+  if (configuredMs === undefined) return {};
+  return { callBoundMs: Math.min(configuredMs, Math.max(EXTRACTOR_CALL_TIMEOUT_MS, phaseRemainingMs)) };
+}
+
+/**
  * #3763 — halt streak for a dead extractor lane. When EVERY extractor call in
  * the run has failed (zero successes) and the failure count reaches this
  * streak, the page loop halts instead of burning an LLM call (and its input
@@ -454,13 +472,32 @@ export async function defaultExtractor(
   // full gateway default (GBRAIN_AI_CHAT_TIMEOUT_MS, 300s) x pageLimit. The
   // caller already catches per-page errors, logs a warning, and continues.
   // The bound scales with maxTokens so an escalated or configured larger cap
-  // gets time to generate what it allows.
-  const call = (maxTokens: number) => gatewayChat({
-    messages: [{ role: 'user', content: prompt }],
-    ...(input.modelHint ? { model: input.modelHint } : {}),
-    maxTokens,
-    abortSignal: AbortSignal.timeout(extractorCallTimeoutMs(maxTokens)),
-  });
+  // gets time to generate what it allows. An operator bound (callBoundMs)
+  // takes its place for every call: claude-cli never reports a truncation,
+  // so on that route the retry and its longer scaled bound never happen.
+  const call = (maxTokens: number) => {
+    const boundMs = input.callBoundMs ?? extractorCallTimeoutMs(maxTokens);
+    const ownBound = AbortSignal.timeout(boundMs);
+    return gatewayChat({
+      messages: [{ role: 'user', content: prompt }],
+      ...(input.modelHint ? { model: input.modelHint } : {}),
+      maxTokens,
+      abortSignal: ownBound,
+    }).catch((err: unknown) => {
+      // Reword only what our own bound stopped; any other failure, including
+      // the gateway's shorter chat timeout, keeps its error untouched. The
+      // provider's abort text alone names neither the bound nor the key.
+      if (!ownBound.aborted) throw err;
+      const providerText = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `propose_takes extractor: ${input.pagePath} timed out after ${boundMs} ms, the per-call bound ` +
+        `(${providerText}). To move it, set ${PROPOSE_TAKES_CALL_TIMEOUT_KEY} to whole ms from ` +
+        `${PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS} to ${PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS}. ` +
+        `No tombstone was written; the page is retried next cycle.`,
+        { cause: err },
+      );
+    });
+  };
   let result = await call(baseMaxTokens);
 
   // #3763: a truncated response (stopReason 'length' — e.g. reasoning tokens
@@ -571,19 +608,13 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
   try {
     parsed = JSON.parse(text.slice(start));
   } catch {
-    // Fallback: truncate at last ] or } to handle trailing noise (e.g. leftover
-    // markdown fences after <think> stripping). Try array-closing first.
-    const sliced = text.slice(start);
-    const lastArr = sliced.lastIndexOf(']');
-    const lastObj = sliced.lastIndexOf('}');
-    const end = Math.max(lastArr, lastObj);
-    if (end > 0) {
-      try {
-        parsed = JSON.parse(sliced.slice(0, end + 1));
-      } catch {
-        return [];
-      }
-    } else {
+    // Trailing noise (a leftover fence, a `[Source: X]` citation): parse only
+    // up to the value's own closing bracket, never the last bracket in the text.
+    const end = matchingCloseBracket(text, start);
+    if (end === -1) return [];
+    try {
+      parsed = JSON.parse(text.slice(start, end + 1));
+    } catch {
       return [];
     }
   }
@@ -760,6 +791,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       if (retryCap != null) extractorRetryMaxTokens = Math.floor(retryCap);
     } catch { /* keep defaults */ }
     extractorRetryMaxTokens = Math.max(extractorMaxTokens, extractorRetryMaxTokens);
+    const callTimeout = await readPhaseConfigNumber(engine, PROPOSE_TAKES_CALL_TIMEOUT_KEY); // #5874
 
     // With the default (gateway) extractor, skip cheaply when the resolved
     // model's provider can't run — same probe semantics as patterns.ts /
@@ -829,7 +861,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       budget_exhausted: false,
       llm_calls_succeeded: 0,
       llm_calls_failed: 0,
-      warnings: [],
+      warnings: callTimeout.warning ? [callTimeout.warning] : [],
       deadline_hit: false,
     };
 
@@ -927,6 +959,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           // #4494: configurable output caps (see resolution above).
           maxTokens: extractorMaxTokens,
           retryMaxTokens: extractorRetryMaxTokens,
+          ...phaseBoundedCallTimeout(callTimeout.value, deadlineMs - (Date.now() - phaseStartMs)),
           attributionRules, dateGrounding,
         });
       } catch (err) {

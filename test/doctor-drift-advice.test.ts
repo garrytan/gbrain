@@ -27,8 +27,17 @@ describe('#1123 — multiSourceDriftAdvice references only real surfaces', () =>
   });
 
   test('delete advice pins the source explicitly instead of implying delete targets default', () => {
-    expect(advice).toContain('GBRAIN_SOURCE=default gbrain delete <slug>');
+    expect(advice).toContain('GBRAIN_SOURCE=default gbrain delete <slug> --force');
     expect(advice).not.toContain('delete --source');
+  });
+
+  // Page writes are revisioned (v0.51): a `gbrain delete` naming neither
+  // --expected-revision nor --force is refused with revision_conflict, so the
+  // advice must carry one of them or its last step cannot run.
+  test('delete advice names a revision precondition the op accepts', () => {
+    const m = advice.match(/gbrain delete <slug>((?: --[a-z-]+)*)/);
+    expect(m).not.toBeNull();
+    expect(/--force|--expected-revision/.test(m![1])).toBe(true);
   });
 
   // #4490: the advice used to name only two causes, then recommend a delete.
@@ -43,5 +52,28 @@ describe('#1123 — multiSourceDriftAdvice references only real surfaces', () =>
     const deleteIdx = advice.indexOf('gbrain delete <slug>');
     expect(flagIdx).toBeGreaterThan(-1);
     expect(deleteIdx).toBeGreaterThan(flagIdx);
+  });
+
+  // #5477: managed sync refuses a git pull and --include-gitignored, so the
+  // managed advice names `--no-pull` and drops the ignored-file walk, while
+  // the unmanaged advice stays byte-identical.
+  test('managed advice names --no-pull and no --include-gitignored', () => {
+    const managed = multiSourceDriftAdvice(45, 'foo (intended=wiki)', true);
+    expect(managed).toContain("'gbrain sync --source <id> --no-pull --full'");
+    expect(managed).not.toContain('--include-gitignored');
+    expect(managed).toContain("'GBRAIN_SOURCE=default gbrain delete <slug> --force'");
+  });
+
+  test('unmanaged advice is byte-identical to the default', () => {
+    expect(multiSourceDriftAdvice(45, 'foo (intended=wiki)', false)).toBe(advice);
+    expect(advice).toBe(
+      "45 page slug(s) appear at 'default' but NOT at the intended source (e.g., foo (intended=wiki)). " +
+      'Three possible causes: (1) pre-v0.30.3 putPage misroutes; (2) the intended source never completed initial sync and the default page is unrelated; ' +
+      '(3) the file behind the slug is not git-tracked in the source repo — the sync walker reads through git objects, so a re-sync imports nothing for it. ' +
+      "Verify with 'gbrain sources status', then re-sync with 'gbrain sync --source <id> --full' (reconciles drift without deleting data); " +
+      "for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' (full filesystem walk that also picks up ignored/untracked syncable files). " +
+      "Only if a misrouted default-source row remains after that, remove it with 'GBRAIN_SOURCE=default gbrain delete <slug> --force' — delete targets the active source, " +
+      "so pin it to 'default' explicitly (--force: page writes are revisioned, and a delete naming neither --force nor --expected-revision is refused with revision_conflict).",
+    );
   });
 });

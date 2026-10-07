@@ -12,6 +12,17 @@
  * this process, not affected by `--no-embed`); `inline` kinds embed in this
  * process unless `--no-embed` is given.
  *
+ * `spends: 'llm'` kinds may also call a paid chat model; every surface that
+ * counts paid work (`repairMaySpend`, the remediation plan's `paid` and
+ * `est_usd_cost`) includes that spend, and `repairRunner` passes a run's
+ * remaining allowance through as `maxLlmUsd`.
+ *
+ * `preview_bound` kinds print a preview hash, and `--apply --expect <hash>`
+ * applies exactly the previewed set (`changed_since_preview` for anything that
+ * moved); it is independent of `explicit_only`, so a preview-bound kind that
+ * is not explicit-only also runs from `--all`, the remediation plan and the
+ * maintenance cycle with a bare `--apply` (the current plan).
+ *
  * `explicit_only` kinds run only when the operator names them
  * (`gbrain repair <kind>`): `--all`, the remediation plan and run, and the
  * post-upgrade banner list them with their preview command
@@ -42,6 +53,7 @@ import { failedWritesRepair } from './failed-writes.ts';
 import { frontmatterRepair } from './frontmatter.ts';
 import { attributionBackfillRepair } from './attribution-backfill.ts';
 import { plannerStatsRepair } from './planner-stats.ts';
+import { fencesRepair } from './fences.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
 import type { OperationError } from '../ops/contract.ts';
 
@@ -56,8 +68,12 @@ export interface RepairKindSpec {
   checks: string[];
   /** Runs only when named on the command line; never from `--all`, the remediation plan or a supplied step. */
   explicit_only?: true;
+  /** The preview prints a hash and `--apply --expect <hash>` applies exactly that set (accepted with or without `explicit_only`). */
+  preview_bound?: true;
   /** `destructive`: the apply rewrites user files, so it also needs the user's consent (`--yes` with the preview hash, or a terminal prompt). */
   consent?: 'destructive';
+  /** `llm`: the kind may call a paid chat model; its spend is metered by the daily USD ledger and reported in `cost.llm_usd`. */
+  spends?: 'llm';
 }
 
 const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
@@ -176,6 +192,15 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'select files. Preview-bound: --apply --expect <hash> --yes writes exactly the previewed bytes, imports them and clears the hold (managed '
       + 'sources commit through the Git effect; legacy sources back up first and print the commit step). Files no rule fixes are listed with the exact manual fix.',
   },
+  fences: {
+    handler: fencesRepair, embeds: 'effect', checks: ['fence_integrity'], preview_bound: true, spends: 'llm',
+    summary: 'Repair malformed facts and takes fences (#6188) that sync held or that pages store: per file or page the free tiers first (the lossless '
+      + 'Tier 1 rules, then holder names verified against people/ and companies/ pages), then, for rows only a model can realign, the configured '
+      + 'chat model (models.fence_repair) sees only the header and those rows under the fences.repair caps. Every proposal passes the validation gates '
+      + '(a)-(g) and is a Tier 1 fixed point, or it is not written. Managed sources commit through the Git effect, legacy sources back up and print '
+      + 'the commit step, database-only pages take a revision-bound write. --only/--skip <path> and --slug <slug> select; --no-llm keeps to the free '
+      + 'tiers; --max-usd <n> lowers the model cap for this run. Preview-bound: --apply --expect <hash> applies exactly the previewed set.',
+  },
   'planner-stats': {
     handler: plannerStatsRepair, embeds: 'none', checks: ['planner_stats_stale'],
     summary: 'ANALYZE the hot tables (pages, links, facts, takes, content_chunks, timeline_entries) whose planner statistics are stale (F4b), '
@@ -187,8 +212,13 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
 export const REPAIR_REGISTRY: readonly RepairKindSpec[] = REPAIR_KINDS.map(kind => ({ kind, ...SPECS[kind] }));
 
 /** Whether a kind may spend on embeddings under these flags (before knowing whether a model is configured). */
-export function repairMaySpend(spec: RepairKindSpec, noEmbed?: boolean): boolean {
+export function repairMayEmbed(spec: RepairKindSpec, noEmbed?: boolean): boolean {
   return spec.embeds === 'effect' || (spec.embeds === 'inline' && !noEmbed);
+}
+
+/** Whether a kind may spend at all under these flags: on embeddings, or on a paid chat model (`spends: 'llm'`). */
+export function repairMaySpend(spec: RepairKindSpec, noEmbed?: boolean): boolean {
+  return spec.spends === 'llm' || repairMayEmbed(spec, noEmbed);
 }
 
 /** The kinds `--all`, the remediation plan and `gbrain repair` with no kind run, in dependency order. */
@@ -197,8 +227,15 @@ export const AUTO_REPAIR_REGISTRY: readonly RepairKindSpec[] = REPAIR_REGISTRY.f
 /** The explicit-only kinds, listed by those surfaces with their preview command but never run by them. */
 export const EXPLICIT_REPAIR_REGISTRY: readonly RepairKindSpec[] = REPAIR_REGISTRY.filter(spec => spec.explicit_only);
 
-export function repairSpec(kind: RepairKind): RepairKindSpec {
-  return REPAIR_REGISTRY.find(spec => spec.kind === kind)!;
+/** The kinds whose `--apply` accepts `--expect <hash>`: explicit-only kinds and preview-bound ones. */
+export const PREVIEW_BOUND_REPAIR_REGISTRY: readonly RepairKindSpec[] = REPAIR_REGISTRY.filter(spec => spec.explicit_only || spec.preview_bound);
+
+/** The kinds that may call a paid chat model, the only ones `--max-usd` applies to. */
+export const LLM_REPAIR_REGISTRY: readonly RepairKindSpec[] = REPAIR_REGISTRY.filter(spec => spec.spends === 'llm');
+
+/** `registry`: the kinds to look in; production callers use the registered ones, tests pass stub specs. */
+export function repairSpec(kind: RepairKind, registry: readonly RepairKindSpec[] = REPAIR_REGISTRY): RepairKindSpec {
+  return registry.find(spec => spec.kind === kind)!;
 }
 
 /** `gbrain repair <kind> [--source <id>]`, the read-only preview of one kind. */
@@ -234,21 +271,27 @@ export function repairApplyCommand(kind: RepairKind, opts: { source?: string; no
  * One local, trusted repair context shared by `gbrain repair` and the doctor
  * remediation run: the same config, embedding model and `--no-embed` handling,
  * so a kind previews and applies identically from either entry point.
+ * `registry` replaces the registered kinds (tests register stub specs here).
  */
-export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; noEmbed?: boolean; logger?: OperationContext['logger'] }) {
+export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; noEmbed?: boolean; logger?: OperationContext['logger']; registry?: readonly RepairKindSpec[] }) {
   const config = loadConfig() ?? { engine: engine.kind };
   let embeddingModel: string | undefined;
   try { embeddingModel = config.embedding_disabled ? undefined : (await import('../ai/gateway.ts')).getEmbeddingModel(); } catch { embeddingModel = undefined; }
   const logger = opts.logger ?? { info: console.error, warn: console.error, error: console.error };
   return {
     embeddingModel,
-    /** `explicit`: the operator named `kind`; required for explicit-only kinds. */
-    async run(kind: RepairKind, scope: RepairScope, run: { limit?: number; sourceFlag?: string; explicit?: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[] } = {}): Promise<RepairResult> {
+    /**
+     * `explicit`: the operator named `kind`; required for explicit-only kinds.
+     * `maxLlmUsd`: what this run may spend on a paid chat model (`spends: 'llm'` kinds; undefined = no run cap).
+     */
+    async run(kind: RepairKind, scope: RepairScope, run: { limit?: number; sourceFlag?: string; explicit?: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[];
+      slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0] } as OperationContext;
-      const spec = repairSpec(kind);
-      return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag,
+      const spec = repairSpec(kind, opts.registry);
+      return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,
         embed: !opts.noEmbed && embeddingModel !== undefined, applyArgs: opts.noEmbed && spec.embeds === 'inline' ? ['--no-embed'] : [],
-        explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, only: run.only, skip: run.skip });
+        explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
+        maxLlmUsd: run.maxLlmUsd, deadline: run.deadline });
     },
   };
 }

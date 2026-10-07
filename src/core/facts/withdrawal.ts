@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { OperationError } from '../ops/contract.ts';
+import { fenceOperationError } from '../fence-repair/refusal.ts';
 import { withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
 import { ambiguousFenceClaims, discoverWithdrawalTargets, withdrawalDiscoveryFailure } from './withdrawal-discovery.ts';
 
@@ -162,8 +163,9 @@ export async function assertPreparedFactWithdrawals(engine: BrainEngine, sourceI
       'Read the current page revision, then submit the updated import with a new request_id.');
   }
   if (blocked) {
-    throw new OperationError('invalid_params', 'A malformed fact fence contains a withdrawn claim.',
-      'Repair the matching fence row, then retry the import.');
+    // Typed invalid_fence, wire invalid_params (E6): a managed sync holds this file instead of blocking.
+    const section = await ambiguousFenceMatchesWithdrawal(engine, sourceId, [body], subject ?? null) ? 'body' : 'timeline';
+    throw fenceOperationError({ reason: 'withdrawn_claim_in_malformed_fence', fence: 'facts', section, rows: [], columns: [], line: null }, subject, sourceId);
   }
 }
 

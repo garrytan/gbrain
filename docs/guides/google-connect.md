@@ -127,6 +127,30 @@ re-lists the new calendar from a fresh window instead of replaying the old
 calendar's delta. Pages already imported from the previous calendar stay in
 the brain until you remove them — they are not reconciled automatically.
 
+## Calendar window
+
+Calendar pages cover events from `--history-days` ago up to 60 days from
+now, and each sweep applies that range on its own. That matters for
+incremental syncs: after any edit to a recurring series, Google sends back
+the series' instances for years before and after, and only those inside the
+range are kept. Because the 60-day edge moves forward daily, the sweep also
+lists the days it has newly reached, so future instances of a series nobody
+touched still appear. If a meeting moves beyond 60 days out, its page goes
+away until the meeting is back within range. Meetings that have aged out of
+the range keep their pages.
+
+`gbrain sync --source <id> --full` re-lists the whole window and removes the
+pages of events that start inside it but are no longer listed (cancelled or
+deleted since). It never removes a page whose event starts before the window,
+so shrinking `--history-days` keeps your history. More than 200 removals in
+one run are refused and the run is reported partial; if that many are
+genuinely gone, run it once with `GBRAIN_ALLOW_MASS_RECONCILE=1`. Pages a
+source wrote beyond the horizon before the window existed are not removed
+automatically.
+
+**Say to your agent:** *"re-sync my calendar from scratch"* (your agent runs
+`gbrain sync --source <id> --full`).
+
 ## Continuous sync
 
 Google sources are ordinary gbrain sources: `gbrain sync --source <id>`,

@@ -16,6 +16,8 @@ import { upsertOpenLoop } from '../src/core/loops/loops-store.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { put, waveBrain } from './helpers/wave-fixture.ts';
+import { bannerFindingLine } from '../src/commands/doctor/upgrade-banner.ts';
+import { WAVE_CHECKS } from '../src/commands/doctor/wave-checks.ts';
 
 /** A CLAUDE_CONFIG_DIR holding one gbrain claude-cli scratch-project transcript (session `sess-self`). */
 function selfCaptureHost(): string {
@@ -80,6 +82,32 @@ describe('post-upgrade recovery banner', () => {
     });
   }, 180_000);
 
+});
+
+describe('fence findings in the banner (#6188, D7)', () => {
+  const spec = (id: string) => WAVE_CHECKS.find(entry => entry.id === id)!;
+  const line = (id: string, details: Record<string, unknown>) => bannerFindingLine({ spec: spec(id), check: { name: id, status: 'warn', message: '', details }, state: 'finding' });
+  const sources = [{ by_tier: { manual: 1 } }, { by_tier: { manual: 0 } }];
+
+  test('fence_integrity is repaired automatically by the next maintenance run while one is active, and says why not otherwise', () => {
+    expect(line('fence_integrity', { total: 3, sources, auto_repair: { enabled: true, active: true } }))
+      .toBe('[AGENT]   fence_integrity: 3 (repaired automatically by the next maintenance run, except 1 that need a manual edit; preview with: gbrain repair fences)');
+    expect(line('fence_integrity', { total: 3, sources, auto_repair: { enabled: true, active: false } }))
+      .toBe('[AGENT]   fence_integrity: 3 (not repaired automatically (no maintenance run is active); preview with: gbrain repair fences)');
+    expect(line('fence_integrity', { total: 3, sources, auto_repair: { enabled: false, active: false } })).toContain('(not repaired automatically (fences.repair.enabled is false)');
+    for (const details of [{ total: 3, auto_repair: { active: true } }, { total: 3, auto_repair: { active: false } }]) {
+      expect(line('fence_integrity', details)).not.toMatch(/after the user agrees|--apply|--yes/);
+    }
+  });
+
+  test('a fence-only git_held_files finding names the fence repair; a mixed one names both previews', () => {
+    const fenceOnly = line('git_held_files', { held: 2, fences: 2, source_ids: ['notes-example'], auto_repair: { enabled: true, active: true } });
+    expect(fenceOnly).toBe('[AGENT]   git_held_files: 2 (fence holds: repaired automatically by the next maintenance run; preview with: gbrain repair fences --source notes-example)');
+    const mixed = line('git_held_files', { held: 3, fences: 1, source_ids: ['notes-example'], auto_repair: { enabled: true, active: false } });
+    expect(mixed).toContain('explicit_kind_required; preview with: gbrain repair frontmatter --source notes-example');
+    expect(mixed).toContain('fence holds: not repaired automatically (no maintenance run is active); preview with: gbrain repair fences --source notes-example');
+    expect(line('git_held_files', { held: 2, source_ids: ['notes-example'] })).toBe('[AGENT]   git_held_files: 2 (explicit_kind_required; preview with: gbrain repair frontmatter --source notes-example)');
+  });
 });
 
 describe('gbrain post-upgrade', () => {

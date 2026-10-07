@@ -47,6 +47,9 @@ import {
 import { _resetLlmCacheForTests } from '../src/core/conversation-parser/llm-base.ts';
 import { BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
 import { loadOpCheckpoint } from '../src/core/op-checkpoint.ts';
+import { runIngestFacts } from '../src/core/transcripts/ingest-facts.ts';
+import { runTranscripts } from '../src/commands/transcripts.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 
 // ---------------------------------------------------------------------------
 // pageTypesForAllowed — logical→concrete page-type expansion.
@@ -329,6 +332,7 @@ describe('runExtractConversationFactsCore', () => {
   let mainChatCalls = 0;
   let chatStopReason: ChatResult['stopReason'] = 'end';
   let chatTextOverride: string | null = null;
+  let chatMalformedOnCall: number | null = null;
   let embeddedTexts: string[] = [];
   let fallbackCalls = 0;
   let fallbackContents: string[] = [];
@@ -389,8 +393,10 @@ describe('runExtractConversationFactsCore', () => {
       chatHook = null;
       if (hook) await hook();
       callIndex++;
+      const malformedCall = chatMalformedOnCall !== null &&
+        (mainChatCalls === chatMalformedOnCall || mainChatCalls === chatMalformedOnCall + 1);
       return {
-        text: chatTextOverride ?? JSON.stringify({
+        text: malformedCall ? JSON.stringify({ facts: [{ fact: 123, kind: 'fact' }] }) : chatTextOverride ?? JSON.stringify({
           facts: [{
             fact: `synthetic fact #${callIndex}`,
             kind: 'event',
@@ -435,6 +441,7 @@ describe('runExtractConversationFactsCore', () => {
     mainChatCalls = 0;
     chatStopReason = 'end';
     chatTextOverride = null;
+    chatMalformedOnCall = null;
     embeddedTexts = [];
     fallbackCalls = 0;
     fallbackContents = [];
@@ -452,6 +459,7 @@ describe('runExtractConversationFactsCore', () => {
     await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'conversations/%' OR slug LIKE 'people/alice%'`);
     // Set facts.extraction_enabled=true so kill-switch doesn't refuse.
     await engine.setConfig('facts.extraction_enabled', 'true');
+    await engine.unsetConfig('facts.default_visibility');
     await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
     await engine.setConfig('sync.repo_path', repoDir);
     // Seed test pages.
@@ -1161,6 +1169,88 @@ describe('runExtractConversationFactsCore', () => {
     expect(Number(terminalRows[0]?.count ?? 0)).toBe(1);
   });
 
+  // #5430 item E.3: completion means every in-scope segment was processed.
+  // A page with exactly --segment-limit segments is complete; a page cut
+  // short by the limit is a partial run that advances its checkpoint but
+  // never writes the terminal audit row.
+  test.each([
+    { name: 'unlimited (0) on a two-segment page', slug: 'conversations/imessage/alice-example', limit: 0, segments: 2, terminal: 1 },
+    { name: 'limit 1 on a two-segment page (partial)', slug: 'conversations/imessage/alice-example', limit: 1, segments: 1, terminal: 0 },
+    { name: 'limit 2 on a two-segment page (exact boundary)', slug: 'conversations/imessage/alice-example', limit: 2, segments: 2, terminal: 1 },
+    { name: 'limit 3 on a two-segment page', slug: 'conversations/imessage/alice-example', limit: 3, segments: 2, terminal: 1 },
+    { name: 'limit 1 on a one-segment page (exact boundary)', slug: 'conversations/imessage/one-segment-example', limit: 1, segments: 1, terminal: 1 },
+  ])('segment limit: $name (#5430)', async (c) => {
+    await engine.putPage('conversations/imessage/one-segment-example', {
+      type: 'conversation',
+      title: 'iMessage: One segment example',
+      compiled_truth: [
+        fmt('Alice Example', '2024-03-15', '9:00 AM', 'Shipping the report today.'),
+        fmt('Bob Demo', '2024-03-15', '9:02 AM', 'Thanks, I will review it.'),
+      ].join('\n'),
+      timeline: '',
+      frontmatter: {},
+    });
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: c.slug,
+      segmentLimit: c.limit,
+      sleepMs: 0,
+    });
+    expect(result).toMatchObject({ pages_processed: 1, pages_failed: 0, segments_processed: c.segments });
+    const terminalRows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_markdown_slug = $2`,
+      [TERMINAL_AUDIT_SOURCE, c.slug],
+    );
+    expect(Number(terminalRows[0]?.count ?? 0)).toBe(c.terminal);
+    const checkpoint = await loadOpCheckpoint(engine, {
+      op: 'extract-conversation-facts',
+      fingerprint: extractConversationFactsFingerprint({ sourceId: 'default' }),
+    });
+    expect(checkpoint.filter(entry => entry.includes(c.slug))).toHaveLength(1);
+  });
+
+  // facts.default_visibility applies to extracted conversation facts, never
+  // to the terminal or non-extractable audit rows.
+  async function visibilitiesBySource(slug: string): Promise<Record<string, string[]>> {
+    const rows = await engine.executeRaw<{ source: string; visibility: string }>(
+      `SELECT source, visibility FROM facts WHERE source_markdown_slug = $1 ORDER BY source, row_num`,
+      [slug],
+    );
+    const out: Record<string, string[]> = {};
+    for (const row of rows) (out[row.source] ??= []).push(row.visibility);
+    return out;
+  }
+
+  test.each([
+    { name: 'world', value: 'world', expected: 'world' },
+    { name: 'unset', value: null, expected: 'private' },
+    { name: 'invalid', value: 'everyone', expected: 'private' },
+  ])('facts.default_visibility $name: extracted rows are $expected, the terminal row stays private', async (c) => {
+    if (c.value !== null) await engine.setConfig('facts.default_visibility', c.value);
+    const slug = 'conversations/imessage/alice-example';
+    const result = await runExtractConversationFactsCore(engine, { sourceId: 'default', slug, sleepMs: 0 });
+    expect(result.facts_inserted).toBe(2);
+    expect(await visibilitiesBySource(slug)).toEqual({
+      [PER_SEGMENT_SOURCE_PREFIX]: [c.expected, c.expected],
+      [TERMINAL_AUDIT_SOURCE]: ['private'],
+    });
+  });
+
+  test('facts.default_visibility world: the non-extractable audit row stays private', async () => {
+    await engine.setConfig('facts.default_visibility', 'world');
+    const slug = 'conversations/imessage/one-message-example';
+    await engine.putPage(slug, {
+      type: 'conversation',
+      title: 'iMessage: One message example',
+      compiled_truth: fmt('Alice Example', '2024-03-15', '9:00 AM', 'Only one message here.'),
+      timeline: '',
+      frontmatter: {},
+    });
+    const result = await runExtractConversationFactsCore(engine, { sourceId: 'default', slug, sleepMs: 0 });
+    expect(result.pages_marked_non_extractable).toBe(1);
+    expect(await visibilitiesBySource(slug)).toEqual({ [NON_EXTRACTABLE_AUDIT_SOURCE]: ['private'] });
+  });
+
   test('canonicalizes a raw LLM entity display name before writing facts.entity_slug', async () => {
     chatTextOverride = JSON.stringify({
       facts: [{
@@ -1469,6 +1559,129 @@ describe('runExtractConversationFactsCore', () => {
       [TERMINAL_AUDIT_SOURCE],
     );
     expect(Number(terminals[0]?.count ?? 0)).toBe(0);
+  });
+
+  // #6033: one failed page in an explicit slug batch is contained, counted
+  // and left unfinished; the rest of the batch still runs.
+  async function seedBatch(slugs: string[]): Promise<void> {
+    for (const slug of slugs) {
+      await engine.putPage(slug, {
+        type: 'conversation',
+        title: slug,
+        compiled_truth: [
+          fmt('Alice Example', '2024-03-15', '9:00 AM', 'We signed the contract.'),
+          fmt('Bob Demo', '2024-03-15', '9:01 AM', 'The contract is signed.'),
+        ].join('\n'),
+        timeline: '',
+        frontmatter: {},
+      });
+    }
+  }
+
+  async function captureStderr<T>(fn: () => Promise<T>): Promise<{ value: T; err: string }> {
+    const writes: string[] = [];
+    const originalWrite = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      return { value: await fn(), err: writes.join('') };
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+  }
+
+  test('explicit slugs continue after a malformed page and leave it unfinished (#6033)', async () => {
+    const slugs = ['conversations/batch-first', 'conversations/batch-malformed', 'conversations/batch-last'];
+    await seedBatch(slugs);
+    chatMalformedOnCall = 2;
+
+    const { value: result, err } = await captureStderr(() =>
+      runExtractConversationFactsCore(engine, { sourceId: 'default', slugs, sleepMs: 0 }));
+    expect(result.pages_failed).toBe(1);
+    expect(result.pages_processed).toBe(2);
+    expect(err).toContain('conversations/batch-malformed failed (malformed_output) and stays unfinished; ' +
+      'retry: gbrain extract-conversation-facts --source-id default --slug conversations/batch-malformed');
+    const terminal = await engine.executeRaw<{ slug: string }>(
+      `SELECT source_markdown_slug AS slug FROM facts WHERE source = $1 ORDER BY source_markdown_slug`,
+      [TERMINAL_AUDIT_SOURCE],
+    );
+    expect(terminal.map(r => r.slug)).toEqual(['conversations/batch-first', 'conversations/batch-last']);
+
+    chatMalformedOnCall = null;
+    const retry = await runExtractConversationFactsCore(engine, { sourceId: 'default', slugs, sleepMs: 0 });
+    expect(retry.pages_processed).toBe(1);
+    expect(retry.pages_skipped_completed).toBe(2);
+    expect(retry.pages_failed).toBe(0);
+  });
+
+  test('explicit-slug failure log omits provider error details (#6033)', async () => {
+    chatFailure = new Error('provider response included api_key=private-value');
+    const { value: result, err } = await captureStderr(() => runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slugs: ['conversations/imessage/alice-example'],
+      sleepMs: 0,
+    }));
+    expect(result.pages_failed).toBe(1);
+    expect(err).toContain('conversations/imessage/alice-example failed (provider_error)');
+    expect(err).not.toContain('private-value');
+  });
+
+  test('a budget stop in an explicit slug batch halts the batch instead of counting failures (#6033)', async () => {
+    const slugs = ['conversations/batch-first', 'conversations/batch-last'];
+    await seedBatch(slugs);
+    chatFailure = new BudgetExhausted('reserve denied', { reason: 'cost', spent: 5, cap: 5 });
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, async () => {
+      const result = await runExtractConversationFactsCore(engine, { sourceId: 'default', slugs, sleepMs: 0 });
+      expect(result.budget_exhausted).toBe(true);
+      expect(result.pages_failed).toBe(0);
+      expect(mainChatCalls).toBe(1);
+    });
+  });
+
+  test('caller cancellation in an explicit slug batch stops the batch (#6033)', async () => {
+    const slugs = ['conversations/batch-first', 'conversations/batch-last'];
+    await seedBatch(slugs);
+    const controller = new AbortController();
+    const cancellation = Object.assign(new Error('caller cancelled'), { name: 'AbortError' });
+    chatHook = async () => { controller.abort(cancellation); };
+    await expect(
+      runExtractConversationFactsCore(engine, { sourceId: 'default', slugs, sleepMs: 0 }, controller.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(mainChatCalls).toBe(1);
+  });
+
+  test('transcript ingest reports failed explicit-slug extraction (#6033)', async () => {
+    chatTextOverride = JSON.stringify({ facts: [{ fact: 123, kind: 'fact' }] });
+    const result = await runIngestFacts(engine, {
+      sourceId: 'default',
+      slugs: ['conversations/imessage/alice-example'],
+      quiet: true,
+    });
+    expect(result).toMatchObject({ pages: 1, pagesFailed: 1 });
+  });
+
+  test.each([
+    { name: 'a failed page exits 1', malformed: true, exit: 1, failed: 1 },
+    { name: 'no failed page exits 0', malformed: false, exit: 0, failed: 0 },
+  ])('transcripts ingest --facts: $name (#6033)', async (c) => {
+    if (c.malformed) chatTextOverride = JSON.stringify({ facts: [{ fact: 123, kind: 'fact' }] });
+    const fixture = join(import.meta.dir, 'fixtures', 'transcripts', 'codex-rollout.jsonl');
+    const out: string[] = [];
+    const originalLog = console.log;
+    console.log = (...a: unknown[]) => { out.push(a.map(String).join(' ')); };
+    _resetCliExitVerdictForTests();
+    try {
+      await captureStderr(() => runTranscripts(engine, ['ingest', fixture, '--facts', '--source-id', 'default', '--json']));
+      const doc = JSON.parse(out.join('\n')) as { facts: { pages: number; pagesFailed: number } };
+      expect(doc.facts).toMatchObject({ pages: 1, pagesFailed: c.failed });
+      expect(currentExitCode()).toBe(c.exit);
+    } finally {
+      console.log = originalLog;
+      _resetCliExitVerdictForTests();
+      process.exitCode = 0;
+    }
   });
 
   test('insert failure leaves no terminal and retries from a clean replay', async () => {

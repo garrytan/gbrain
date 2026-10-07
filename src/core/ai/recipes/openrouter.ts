@@ -107,13 +107,54 @@ function withSystemCacheControl(body: unknown): unknown {
 }
 
 /**
+ * OpenRouter reports upstream rate limits and some provider outages inside
+ * an HTTP 200 body: `{ error: { message, code, metadata? } }` (#5473). The
+ * AI SDK validates that body against the chat-completion schema and throws
+ * an `APICallError` with `statusCode: 200`, so neither the SDK's
+ * status-keyed retry nor gbrain's status-keyed classification sees the real
+ * condition.
+ *
+ * Only a 200 `application/json` body whose integer `error.code` is 429 or
+ * 5xx gets that code as its HTTP status. A success payload, an unparseable
+ * body, a 4xx code, a non-integer code and any non-JSON (SSE) response pass
+ * through untouched. An existing `Retry-After` header is kept as it is; a
+ * finite non-negative `error.metadata.retry_after`/`retryAfter` is promoted
+ * to one when absent. Fail-open: any parse problem returns the original
+ * response.
+ */
+async function rewriteOpenRouterErrorEnvelopeStatus(res: Response): Promise<Response> {
+  if (res.status !== 200) return res;
+  if (!(res.headers.get('content-type') ?? '').includes('application/json')) return res;
+  try {
+    const text = await res.clone().text();
+    const error = JSON.parse(text)?.error;
+    const code = error?.code;
+    if (!Number.isInteger(code)) return res;
+    if (code !== 429 && (code < 500 || code >= 600)) return res;
+    const headers = new Headers(res.headers);
+    if (!headers.has('retry-after')) {
+      const meta = error.metadata;
+      const retryAfter = meta?.retry_after ?? meta?.retryAfter;
+      if (typeof retryAfter === 'number' && Number.isFinite(retryAfter) && retryAfter >= 0) {
+        headers.set('retry-after', String(retryAfter));
+      }
+    }
+    return new Response(text, { status: code, statusText: res.statusText, headers });
+  } catch {
+    return res;
+  }
+}
+
+/**
  * Compat fetch: (1) honors the OPENROUTER_CACHE_HEADER marker by splicing an
  * Anthropic cache_control breakpoint onto the system block, then strips the
  * marker; (2) composes the native DeepSeek `reasoning_content` promote so
  * OpenRouter-hosted thinking models (DeepSeek V4, etc.) do not arrive at the
- * AI SDK adapter as empty `content` (#4753). Fail-open: any parse problem
- * sends the original body unchanged. Tool-call turns are never promoted
- * (that logic lives in `deepseekReasoningContentCompatFetch`).
+ * AI SDK adapter as empty `content` (#4753); (3) gives an HTTP-200
+ * rate-limit or outage envelope its real status (#5473, see
+ * `rewriteOpenRouterErrorEnvelopeStatus`). Fail-open: any parse problem
+ * sends the original body or response unchanged. Tool-call turns are never
+ * promoted (that logic lives in `deepseekReasoningContentCompatFetch`).
  *
  * @internal exported for tests. Cast through `unknown` because TS's
  * `typeof fetch` includes a `preconnect` member (matches azure-openai.ts).
@@ -122,8 +163,10 @@ export const openrouterCompatFetch = (async (
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> => {
-  const promote = (nextInit?: RequestInit) =>
-    deepseekReasoningContentCompatFetch(input as any, nextInit as any);
+  const promote = async (nextInit?: RequestInit): Promise<Response> =>
+    rewriteOpenRouterErrorEnvelopeStatus(
+      await deepseekReasoningContentCompatFetch(input as any, nextInit as any),
+    );
   if (!init?.headers) return promote(init);
   const headers = new Headers(init.headers as any);
   if (!headers.has(OPENROUTER_CACHE_HEADER)) return promote(init);

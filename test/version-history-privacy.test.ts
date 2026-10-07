@@ -75,8 +75,8 @@ test('legacy NULL and absent timeline fields stay unchanged while their body sti
     // of fabricating an empty timeline that a caller could mistake for data.
     const original = engine.getVersions;
     engine.getVersions = async function (this: BrainEngine, ...args: Parameters<BrainEngine['getVersions']>) {
-      return (await original.apply(this, args)).map(({ timeline: _timeline, ...version }) => version);
-    };
+      return ((await original.apply(this, args)) as PageVersion[]).map(({ timeline: _timeline, ...version }) => version);
+    } as BrainEngine['getVersions'];
     try {
       const [absent] = await history(engine, slug, true);
       expect(absent.timeline).toBeUndefined(); expect(Object.hasOwn(absent, 'timeline')).toBe(false);

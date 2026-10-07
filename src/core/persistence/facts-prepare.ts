@@ -18,6 +18,8 @@ import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import type { ManagedFactIntent, FrozenExtractedFact } from './facts-maintenance.ts';
 import { assertManagedFactsEmbedding } from './facts-maintenance.ts';
+import { normalizeTargetFences } from '../fence-repair/import-step.ts';
+import { pageFencesNormalized } from '../fence-repair/report.ts';
 
 const requestFix = (row: WriteRequest): Action => row.principal_kind === 'local_cli'
   ? readFix(`Reads fact request ${row.request_id}'s durable receipt: its state and recorded error, read-only.`, { argv: ['gbrain', 'write-request', '--', row.request_id] })
@@ -114,13 +116,10 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     throw factsRefusal('invalid_params', 'The prepared facts do not match their entity.', row,
       `The request holds no facts, or facts attributed to a page other than ${row.slug}, so none were published.`);
   }
-  let body = snapshot?.page.compiled_truth ?? '';
+  // #6188 (D20): the entity's stored fence is normalized in this same write; a residual refuses typed `target_fence_malformed`.
+  const target = snapshot ? await normalizeTargetFences(engine, { sourceId: row.source_id, slug: row.slug, kind: 'facts', page: snapshot.page }) : null;
+  let body = target?.page.compiled_truth ?? '';
   const parsed = parseFactsFence(body);
-  if (parsed.warnings.length) throw factsRefusal('invalid_params', 'The entity facts fence is malformed.', row,
-    `The ## Facts table on page ${row.slug} does not parse (${parsed.warnings.length} problem(s)), so no fact rows were added to it.`,
-    `read ${row.slug}, repair its ## Facts table, and run extract_facts again with a new request_id.`,
-    readFix(`Shows page ${row.slug} in source ${row.source_id} with its ## Facts table, read-only.`,
-      { argv: ['gbrain', 'get', '--source', row.source_id, '--', row.slug], mcp: { tool: 'get_page', arguments: { slug: row.slug, source_id: row.source_id } } }));
   const [maximum] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
   let nextRow = Math.max(maximum?.n ?? 0, ...parsed.facts.map(fact => fact.rowNum)) + 1;
   const entries: Array<{ fact: typeof facts[number]; duplicateId: number | null; rowNum?: number; duplicateOf?: number; supersedes?: FactCandidate }> = [];
@@ -161,7 +160,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   let page: PreparedMutation | undefined;
   if (snapshot && entries.some(entry => entry.rowNum !== undefined)) {
     page = await preparePageMutation(engine, { ...row, intent: { ...p,
-      content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags) } }, config);
+      content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body, timeline: target!.page.timeline }, snapshot.tags) } }, config);
     if (page.observedRevision !== snapshot.revision) throw factsRefusal('revision_conflict', 'The fact entity changed during preparation.', row,
       `Entity page ${row.slug} changed while its ## Facts table was being prepared, so none of these facts were published.`);
   }
@@ -198,6 +197,8 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
         }
       }
       return { status: 'completed', inserted, duplicate: entries.length - inserted, superseded, fact_ids: ids,
-        fenced: page !== undefined, kind: p.kind, batch_key: p.batchKey, input_digest: p.inputDigest };
+        fenced: page !== undefined, kind: p.kind, batch_key: p.batchKey, input_digest: p.inputDigest,
+        ...(page && target?.fixes.length ? { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: target.fixes,
+          writer: row.principal_kind, path: snapshot?.page.source_path ?? null, remote: row.authority.remote }) } : {}) };
     } };
 }

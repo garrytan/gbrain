@@ -864,6 +864,9 @@
         "affectsRecall",
         "assertNever",
         "isCRMode"
+      ],
+      "./version": [
+        "VERSION"
       ]
     }
   },

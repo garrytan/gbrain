@@ -1,12 +1,19 @@
 import type { SyncResult } from './sync.ts';
 import type { GitHoldItem } from '../core/persistence/sync-holds.ts';
+import { fenceWhere } from '../core/fence-repair/refusal.ts';
 
 const HOLD_LINES = 20;
 
 export function holdLine(item: GitHoldItem, verb: string): string {
-  const where = [item.line !== undefined ? `line ${item.line}` : '', item.key ? `key "${item.key}"` : ''].filter(Boolean).join(', ');
+  const where = item.fence ? '' : [item.line !== undefined ? `line ${item.line}` : '', item.key ? `key "${item.key}"` : ''].filter(Boolean).join(', ');
   const page = item.stale ? 'its page keeps its last good revision and is read-only for put_page until the file is repaired' : 'its page is missing until the file imports';
-  return `  ${verb} ${item.path}: ${item.code}${item.reason ? ` (${item.reason})` : ''}${where ? ` at ${where}` : ''}; ${page}. Next: ${item.fix.argv?.join(' ') ?? item.fix.why} (${item.docs})`;
+  // #6188 (D16): a fence hold names fence, section, rows, columns and its file line (never a cell), then the step its state calls for.
+  const fence = item.fence ? ` in ${fenceWhere({ ...item.fence, line: item.line ?? item.fence.line })}${item.reason === 'prepare_time' ? ` (${item.fence.reason})` : ''}` : '';
+  const then = item.fix.then?.argv ? `, then ${item.fix.then.argv.join(' ')}` : '';
+  const next = item.fix.argv?.join(' ') ?? item.fix.why;
+  const step = item.fence?.auto_retry ? `No action needed: the next maintenance run repairs it. Preview: ${next}`
+    : item.fix.consent.includes('paid') ? `Ask the user first, then: ${next}` : item.fix.actor === 'host_admin' ? `On the owner host: ${next}` : `Next: ${next}`;
+  return `  ${verb} ${item.path}: ${item.code}${item.reason ? ` (${item.reason})` : ''}${fence}${where ? ` at ${where}` : ''}; ${page}. ${step}${then} (${item.docs})`;
 }
 
 /**
@@ -24,11 +31,18 @@ export function printHoldNotes(result: SyncResult, write: (line: string) => void
   const shown = Math.min(result.held?.length ?? 0, HOLD_LINES);
   if ((result.held_count ?? 0) > shown) write(`  ... and ${(result.held_count ?? 0) - shown} more held this run (--json lists ${result.holds_truncated ? 'the first ones' : 'them all'}).`);
   const fix = result.holds_fix;
-  if (fix) write(`  ${result.holds_escalated ? 'HOLDS ESCALATED: ' : ''}${fix.user_message ?? `${fix.why} Preview the repair: ${fix.argv!.join(' ')}`}`);
+  if (fix) write(`  ${result.holds_escalated ? 'HOLDS ESCALATED: ' : ''}${fix.user_message ?? `${fix.why} ${fix.argv?.[1] === 'repair' ? 'Preview the repair' : 'Next'}: ${fix.argv!.join(' ')}`}`);
   if (result.converted_from_failed?.length) write(`  Converted ${result.converted_from_failed.length} failed request(s) of the blocked cursor in place: ${result.converted_from_failed.join(', ')}.`);
   const recovered = result.recovered_frontmatter?.fix;
   if (recovered) write(`  ${recovered.why} Preview: ${recovered.argv!.join(' ')}`);
+  // #6188: lossless fence rewrites (committed), and in a dry run the ones a real run would make.
+  if (result.fences_normalized) write(`  Normalized fences in ${result.fences_normalized.count} file(s) (${classList(result.fences_normalized.by_class)}). ${result.fences_normalized.fix.why}`);
+  if (result.fence_issues) write(`  ${result.fence_issues.why} ${result.fence_issues.sample.slice(0, 5).map(item => item.path).join(', ')}`);
+  for (const item of (result.would_normalize ?? []).slice(0, HOLD_LINES)) write(`  Would normalize ${item.path}: ${item.classes.join(', ')} (rewritten losslessly and committed; preparation may pick other new row numbers).`);
+  if ((result.would_normalize_count ?? 0) > HOLD_LINES) write(`  ... and ${result.would_normalize_count! - HOLD_LINES} more would be normalized (--json lists them).`);
 }
+
+const classList = (byClass: Record<string, number | undefined>) => Object.entries(byClass).map(([cls, n]) => `${cls} x${n}`).join(', ');
 
 export function printManagedSyncDiagnostic(result: SyncResult, sink: NodeJS.WriteStream): boolean {
   const d = result.managedWrite;

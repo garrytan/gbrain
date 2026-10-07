@@ -255,6 +255,48 @@ function numericStatusOf(e: unknown): number | undefined {
 }
 
 /**
+ * The layers of a thrown provider error, outermost first. chat() throws the
+ * gateway's normalized error with the provider's own error on `cause`; the AI
+ * SDK's RetryError keeps the final attempt on `lastError` instead. Objects
+ * only, and the walk stops after `limit` layers or at a layer already seen,
+ * so a self-referencing chain cannot loop.
+ */
+function* wrappedErrorLayers(err: unknown, limit = 5): Generator<Record<string, unknown>> {
+  const seen = new Set<object>();
+  let layer = err;
+  while (layer !== null && typeof layer === 'object' && seen.size < limit && !seen.has(layer)) {
+    seen.add(layer);
+    const fields = layer as Record<string, unknown>;
+    yield fields;
+    layer = fields.cause ?? fields.lastError;
+  }
+}
+
+/** What a thrown provider error reports about itself once its wrappers are opened (#5964). */
+export interface ProviderFailureSignals {
+  /** The first finite numeric HTTP status on any layer (see numericStatusOf), outermost first. */
+  status: number | undefined;
+  /** String `name` values on the layers, outermost first (e.g. `TimeoutError`). */
+  names: string[];
+  /** String `code` values on the layers, outermost first (e.g. `ECONNRESET`). */
+  codes: string[];
+}
+
+export function readProviderFailureSignals(err: unknown): ProviderFailureSignals {
+  const signals: ProviderFailureSignals = { status: undefined, names: [], codes: [] };
+  try {
+    for (const layer of wrappedErrorLayers(err)) {
+      signals.status ??= numericStatusOf(layer);
+      if (typeof layer.name === 'string') signals.names.push(layer.name);
+      if (typeof layer.code === 'string') signals.codes.push(layer.code);
+    }
+  } catch {
+    // A throwing getter on a wrapped error ends the walk; what was read stands.
+  }
+  return signals;
+}
+
+/**
  * Did the provider refuse the request BECAUSE of its `response_format:
  * json_schema` (an Ollama build predating structured outputs, a strict proxy
  * rejecting the schema shape) — as opposed to failing for any other reason?
@@ -270,12 +312,9 @@ const STRUCTURED_OUTPUT_REJECTION_RE = /response_format|json_schema|structured[ 
 export function isStructuredOutputRejection(err: unknown): boolean {
   let status: number | undefined;
   let named = false;
-  let cur: unknown = err;
-  for (let depth = 0; cur && typeof cur === 'object' && depth < 5; depth++) {
-    const e = cur as { message?: unknown; responseBody?: unknown; cause?: unknown; lastError?: unknown };
-    status ??= numericStatusOf(e);
-    named ||= [e.message, e.responseBody].some(t => typeof t === 'string' && STRUCTURED_OUTPUT_REJECTION_RE.test(t));
-    cur = e.cause ?? e.lastError;
+  for (const layer of wrappedErrorLayers(err)) {
+    status ??= numericStatusOf(layer);
+    named ||= [layer.message, layer.responseBody].some(t => typeof t === 'string' && STRUCTURED_OUTPUT_REJECTION_RE.test(t));
   }
   if (status !== undefined && (status < 400 || status >= 500 || status === 429)) return false;
   return named;
@@ -300,7 +339,9 @@ function statusToClass(status: number): GlobalLlmErrorClass | null {
  * halt instead of accumulating one swallowed warning per item.
  *
  * Matching is conservative by design: numeric status properties on the error
- * (or its `cause` chain), STRUCTURED status forms in the message, or specific
+ * (or its `cause` chain, falling back to RetryError's `lastError`, where the
+ * AI SDK keeps the final attempt's status once its retries are spent:
+ * #5473), STRUCTURED status forms in the message, or specific
  * provider phrases. Plain 400s (context length, malformed request) stay
  * per-item — they can genuinely differ page to page. Billing phrases outrank
  * a 429 status because a monthly spend limit surfaces as 429 but is a billing
@@ -316,7 +357,8 @@ export function classifyGlobalLlmError(err: unknown): GlobalLlmErrorClass | null
     else if (typeof (cur as { message?: unknown }).message === 'string') {
       messages.push((cur as { message: string }).message);
     }
-    cur = (cur as { cause?: unknown }).cause;
+    const next = cur as { cause?: unknown; lastError?: unknown };
+    cur = next.cause ?? next.lastError;
   }
   const message = messages.join('\n');
   // Phrase regexes (and the prose-shaped status forms) only see text BEFORE

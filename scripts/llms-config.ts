@@ -313,6 +313,13 @@ export const SECTIONS: DocSection[] = [
         includeInFull: false,
       },
       {
+        title: "docs/guides/fence-format.md",
+        description:
+          "Facts and takes fence format, generated from the parser: markers, columns and layouts, allowed values, holders, row-number rules, one valid example per fence, what gbrain fixes by itself and what it never guesses, and the repair gates.",
+        path: "docs/guides/fence-format.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/integrations/reliability-repair.md",
         description: "Data integrity recovery.",
         path: "docs/integrations/reliability-repair.md",

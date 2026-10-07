@@ -15,7 +15,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { readManagedConnectorState, type ConnectorRunCounts, type UpgradeRecovery } from './connector-state.ts';
 import { managedBrain, readAllSourceHolds } from '../connectors/item-holds-store.ts';
 import type { ItemHoldRecord } from '../connectors/item-holds.ts';
-import { gitHoldItem, readGitHoldListing, readSyncConversions, readSyncHoldPolicy, type GitHoldItem, type SyncConversion } from './sync-holds.ts';
+import { fenceAutoRepairFor, gitHoldItem, readGitHoldListing, readSyncConversions, readSyncHoldPolicy, type GitHoldItem, type SyncConversion } from './sync-holds.ts';
 import { holdLine } from '../../commands/sync-diagnostics.ts';
 
 /** Fix wave 4: `sources status` lists this many held items per source, then "+N more". */
@@ -117,11 +117,12 @@ export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw'
   const [sources, conversions] = await Promise.all([readGitHoldListing(engine, sourceIds, cap), readSyncConversions(engine, sourceIds, CONVERSION_STATUS_LIMIT)]);
   if (!sources.length && !conversions.size) return out;
   const managed = await managedBrain(engine);
+  const auto = await fenceAutoRepairFor(engine, sources.flatMap(source => source.holds));
   const counts = new Map(sources.map(source => [source.sourceId, source]));
   for (const sourceId of sourceIds) {
     const source = counts.get(sourceId), converted = conversions.get(sourceId);
     if (!source && !converted) continue;
-    const items = (source?.holds ?? []).map(gitHoldItem);
+    const items = (source?.holds ?? []).map(hold => gitHoldItem(hold, auto));
     out.set(sourceId, { count: source?.count ?? 0, items, ...((source?.count ?? 0) > items.length ? { truncated: true as const } : {}),
       ...(converted ? { recent_conversions: converted } : {}),
       sync_argv: ['gbrain', 'sync', '--source', sourceId, ...(managed ? ['--no-pull'] : [])] });

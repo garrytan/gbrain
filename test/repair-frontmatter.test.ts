@@ -225,6 +225,21 @@ test('a held modified file: put_page stays refused for drift, the repair writes 
   expect((await s.sync()).held_count ?? 0).toBe(0);
 }), 180_000);
 
+test('#6188: a held fence file is never rewritten by frontmatter repair; its resolution defers to that file\'s gbrain repair fences preview', () => each(async engine => {
+  const takes = '<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|\n'
+    + '| 1 | Sentinelclaimq93 renews | take | Sentinelholderq93 Example | 0.7 | 2026-01 | chat |\n<!--- gbrain:takes:end -->';
+  const s = await managed(engine, { 'notes/a.md': note('A'), 'people/fenced.md': note('Fenced', `A synthetic page.\n\n${takes}`) });
+  await s.sync();
+  expect((await s.holds()).map(hold => [hold.path, hold.code])).toEqual([['people/fenced.md', 'invalid_fence']]);
+  const before = s.read('people/fenced.md');
+  const review = details(await s.run()).needs_review.find(entry => entry.path === 'people/fenced.md');
+  expect(review).toMatchObject({ code: 'invalid_fence' });
+  expect(review!.resolution).toContain(`gbrain repair fences --source ${s.id} --only people/fenced.md`);
+  expect(review!.resolution).toContain('frontmatter repair does not change fences');
+  for (const secret of ['Sentinelclaimq93', 'Sentinelholderq93']) expect(JSON.stringify(review)).not.toContain(secret);
+  expect(s.read('people/fenced.md')).toBe(before);
+}), 180_000);
+
 test('a repaired file whose import would keep a database-only tag is needs_review (canonical overlay), never written', () => each(async engine => {
   const s = await managed(engine, { 'notes/post.md': note('Original') });
   await s.sync();

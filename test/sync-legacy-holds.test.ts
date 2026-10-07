@@ -311,3 +311,33 @@ test('escalation fires past the configured hold count', () => eachEngine(async (
     await engine.setConfig('sync.hold_escalate_count', '50');
   }
 }), 120_000);
+
+test('#6188 (T5): legacy sync imports a page with a malformed fence as before and never holds it', async () => eachEngine(async () => {
+  const fence = '<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|\n'
+    + '| 1 | Synthetic take | take | brain | 0.7 | 2026-01 | chat |\n| 2 | Another take | sentinelkindzq7 | brain | 0.5 | 2026-01 | chat |\n<!--- gbrain:takes:end -->\n';
+  const { id, root } = await source({ 'notes/fenced.md': `---\ntitle: Fenced\n---\nA synthetic page.\n\n${fence}`, 'notes/ok.md': good('Ok') });
+  const result = await sync(id, root);
+  expect(result.status).toBe('first_sync');
+  expect(await holds(id)).toEqual([]);
+  expect(result.held_count ?? 0).toBe(0);
+  // Stored as written: the legacy path never refuses or rewrites a fence.
+  expect((await engine.getPage('notes/fenced', { sourceId: id }))?.compiled_truth).toContain('| 2 | Another take | sentinelkindzq7 |');
+}));
+
+test('#6188 (T5): legacy sync stores a fixable fence normalized (the file is untouched) and reports a residual one as fence_issues', async () => eachEngine(async () => {
+  const facts = '<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n'
+    + '| 1 | Sentinellegacyzq8 claim | partnership | 1.0 | private | medium | 2026-01-01 |  | chat |  |\n<!--- gbrain:facts:end -->\n';
+  const residual = '<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|\n'
+    + '| 1 | Synthetic take | sentinelkindzq7 | brain | 0.5 | 2026-01 | chat |\n<!--- gbrain:takes:end -->\n';
+  const fixableFile = `---\ntitle: Fixable\n---\nA synthetic page.\n\n${facts}`;
+  const { id, root } = await source({ 'notes/fixable.md': fixableFile, 'notes/residual.md': `---\ntitle: Residual\n---\nA synthetic page.\n\n${residual}`, 'notes/ok.md': good('Ok') });
+  const result = await sync(id, root);
+  expect(result.status).toBe('first_sync');
+  expect(await holds(id)).toEqual([]);
+  expect(result.fences_normalized).toMatchObject({ count: 1, by_class: { kind_map: 1 }, sample_paths: ['notes/fixable.md'] });
+  expect(result.fence_issues).toMatchObject({ files: 1, sample: [{ path: 'notes/residual.md', fence_issues: [{ fence: 'takes', row: 1, column: 'kind', class: 'takes_kind_unsupported' }] }] });
+  expect((await engine.getPage('notes/fixable', { sourceId: id }))?.compiled_truth).toContain('| fact |');
+  expect(execFileSync('cat', [join(root, 'notes/fixable.md')], { encoding: 'utf8' })).toBe(fixableFile);
+  const out = JSON.stringify(syncHoldJsonFields(result)) + printed(result);
+  for (const secret of ['Sentinellegacyzq8', 'partnership', 'sentinelkindzq7']) expect(out).not.toContain(secret);
+}));

@@ -24,6 +24,8 @@ import {
   type ChatOpts,
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
+import { APICallError, RetryError } from 'ai';
+import { normalizeAIError } from '../src/core/ai/errors.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
 import { mockEmbedProjectionEngine } from './helpers/embed-projection-mock.ts';
@@ -345,6 +347,40 @@ describe('per-chunk synopsis concurrency', () => {
 
     expect(out.result.kind).toBe('page_fallback');
     expect(started).toBeLessThanOrEqual(3);
+  });
+
+  // #5964: chat() hands the service a normalized error with the provider's
+  // status on a wrapped layer. A provider outage must leave the page's mode
+  // alone (transient, retried by the job), while a request-shaped 400 still
+  // takes the page-level fall-back.
+  const exhaustedRetries = (statusCode: number) => normalizeAIError(new RetryError({
+    message: `Failed after 2 attempts (${statusCode})`,
+    reason: 'maxRetriesExceeded',
+    errors: [1, 2].map(() => new APICallError({
+      message: `upstream said ${statusCode}`, url: 'https://llm.example.invalid/v1', requestBodyValues: {},
+      statusCode, isRetryable: statusCode >= 500,
+    })),
+  }), 'chat(anthropic:claude-haiku-4-5)');
+
+  test('a provider 503 behind RetryError stays transient and embeds nothing (#5964)', async () => {
+    const out = await runWithChatStub({
+      chunks: makeChunks(['chunk-a', 'chunk-b', 'chunk-c']),
+      concurrency: 1,
+      chat: async () => { throw exhaustedRetries(503); },
+    });
+
+    expect(out.result).toMatchObject({ kind: 'transient_error', cause: 'provider_5xx' });
+    expect(out.embeddedChunks).toEqual([]);
+  });
+
+  test('control: a request-shaped 400 behind RetryError still falls back at page level', async () => {
+    const out = await runWithChatStub({
+      chunks: makeChunks(['chunk-a', 'chunk-b']),
+      concurrency: 1,
+      chat: async () => { throw exhaustedRetries(400); },
+    });
+
+    expect(out.result.kind).toBe('page_fallback');
   });
 
   test('fenced code chunks bypass synopsis calls and leases', async () => {

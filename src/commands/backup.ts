@@ -16,6 +16,8 @@
  */
 
 import { OperationError, opError } from '../core/ops/contract.ts';
+import { redactUrlsInText } from '../core/url-redact.ts';
+import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { getBackupStatus } from '../core/backup/coverage.ts';
@@ -42,6 +44,27 @@ const BACKUP_USAGE: Record<string, { usage: string; example: string }> = {
 function backupUsageError(sub: string, message: string): OperationError {
   const u = BACKUP_USAGE[sub] ?? BACKUP_USAGE.create!;
   return opError('invalid_params', message, `Usage: ${u.usage}. Example: ${u.example}`);
+}
+
+const SAFE_ERROR_FIELD = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+/**
+ * A nonempty diagnostic for a failed create/restore (#5312). An error's own
+ * message is used, URL- and connection-redacted. A message-less thrown value
+ * (PGLite's ErrnoError) is described only by its bounded name/code/errno,
+ * never `String(object)`, which prints `[object Object]` or serializes
+ * whatever the object carries.
+ */
+export function backupFailureMessage(error: unknown): string {
+  const e = (typeof error === 'object' && error !== null ? error : {}) as { message?: unknown; name?: unknown; code?: unknown; errno?: unknown };
+  const own = typeof error === 'string' ? error : typeof e.message === 'string' ? e.message : '';
+  if (own.trim()) return redactConnectionInfo(redactUrlsInText(own));
+  const fields = [
+    typeof e.name === 'string' && SAFE_ERROR_FIELD.test(e.name) && e.name !== 'Error' ? e.name : null,
+    typeof e.code === 'string' && SAFE_ERROR_FIELD.test(e.code) ? `code ${e.code}` : null,
+    typeof e.errno === 'number' && Number.isInteger(e.errno) ? `errno ${e.errno}` : null,
+  ].filter((f): f is string => f !== null);
+  return fields.length ? `Backup failed with no error message (${fields.join(', ')}).` : 'Backup failed with no error message.';
 }
 
 export interface BackupCliResult {
@@ -170,9 +193,16 @@ export async function runBackupCli(
         writeCliError(error, 'backup', { json, legacy: { ok: false, reason: 'invalid_params', message: error.message } });
         return { exitCode: 2 };
       }
-      const detail = error as Error & { code?: string; retryable?: boolean };
-      if (json) console.log(JSON.stringify({ ok: false, reason: detail.code ?? 'backup_failed', message: detail.message, ...(detail.retryable ? { retryable: true } : {}) }));
-      else console.error(detail.message);
+      const detail = (typeof error === 'object' && error !== null ? error : {}) as { code?: unknown; retryable?: unknown };
+      const reason = typeof detail.code === 'string' && SAFE_ERROR_FIELD.test(detail.code) ? detail.code : 'backup_failed';
+      const message = backupFailureMessage(error);
+      const { writeCliError } = await import('../cli/cli-error.ts');
+      writeCliError(opError('storage_error', message,
+        'Tell the user the backup failed with this message, then run `gbrain doctor --json` to check storage and locks before retrying.', {
+          why: `gbrain backup ${sub} stopped on a database or filesystem error before it finished.`,
+          fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+            why: 'Doctor reports the brain\'s storage, lock and connection state, read-only.', verify: { argv: ['gbrain', 'doctor', '--json'] } },
+        }), 'backup', { json, legacy: { ok: false, reason, message, ...(detail.retryable === true ? { retryable: true } : {}) } });
       return { exitCode: 1 };
     }
   }

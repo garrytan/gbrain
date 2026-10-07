@@ -1,8 +1,7 @@
 import { observationDateLine, observationDateRule } from '../ai/date-grounding.ts';
 import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
-import { postprocessManagedSynthesis, withPublishPending } from './synthesize-postprocess.ts';
-import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
+import { deferPublishOrThrow, postprocessManagedSynthesis, withPublishPending } from './synthesize-postprocess.ts';
 /**
  * Synthesize phase (v0.23; #4152 two-stage cascade) — conversation-to-brain
  * pipeline. Cheap-model triage gates frontier-model synthesis:
@@ -1178,7 +1177,7 @@ async function runPhaseSynthesizeInner(
     if (SUMMARY_SLUG_RE.test(summarySlug) && !publishPending) {
       const preserveSummary = maintenance && !writtenRefs.length && await engine.readPageSnapshot(summarySlug, { sourceId: cycleSourceId });
       if (!preserveSummary) await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, finalizedRefs.map(r => r.slug), childOutcomes, cycleSourceId, opts.signal, maintenance)
-        .catch((e: unknown) => { if (!acceptedPendingReceipt(e)) throw e; publishPending++; });
+        .catch((e: unknown) => { deferPublishOrThrow(e, summarySlug); publishPending++; });
     }
 
     // #4077: nothing below runs for a cancelled cycle — no phase-end embed

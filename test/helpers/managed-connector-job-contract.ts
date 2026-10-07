@@ -403,7 +403,16 @@ async function runJobs(engine: BrainEngine, jobs: Array<{ name: string; data: Re
   return drainQueue(engine, ids, timeoutMs);
 }
 
+/**
+ * Runs `ids` on a real worker until every one is terminal. Every other
+ * claimable (`waiting`/`delayed`) job is cancelled first: a follow-up queued
+ * earlier in the case (the sweep's loops_extract) would otherwise be claimed
+ * by this worker once `ids` finish, and its writes and embedding effects land
+ * after the case's check. Active and claimed jobs are left alone. The brain is
+ * this file's own, and runCase cancels each case's leftovers.
+ */
 async function drainQueue(engine: BrainEngine, ids: number[], timeoutMs = 60_000) {
+  await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE status IN ('waiting','delayed') AND NOT (id = ANY($1::int[]))", [ids]);
   const worker = new MinionWorker(engine, { pollInterval: 20, healthCheckInterval: 0, stalledInterval: 600_000 });
   await registerBuiltinHandlers(worker, engine, { quiet: true });
   const running = worker.start();
@@ -548,19 +557,11 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
   async cycle_extract(state) {
     await gmailSweep(state);
     const { engine } = state.brain;
-    // Settle the jobs the sweep queued (loops_extract) first: the cycle's worker would
-    // otherwise run them beside the extract phase and leave a page rewritten after it.
-    const queued = await engine.executeRaw<{ id: number }>("SELECT id FROM minion_jobs WHERE status IN ('waiting','delayed')");
-    if (queued.length) await drainQueue(engine, queued.map(row => Number(row.id)));
     await submitPageMutation(state.ctx, { operation: 'put_page', params: { slug: 'notes/plan-review', request_id: randomUUID(),
       content: '---\ntitle: Plan review\ntype: note\n---\nReviewed with [[people/alice-example]].\n' } });
     await engine.executeRaw("DELETE FROM links WHERE from_page_id IN (SELECT id FROM pages WHERE source_id=$1 AND slug='notes/plan-review')", [state.sourceId]);
     await engine.executeRaw("UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1", [state.sourceId]);
     expect(await staleCount(state)).toBeGreaterThan(0);
-    // The sweep queued loops_extract (priority 5). Left waiting, the cycle's worker can
-    // claim it once the cycle job finishes; its commitment fact then republishes
-    // people/alice-example after the extract phase stamped it, and that page reads stale.
-    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
     const [job] = await runJobs(engine, [{ name: 'autopilot-cycle', data: { source_id: state.sourceId, phases: ['extract'] } }], 120_000);
     requireCompleted([job]);
     const extract = (job.result as { report?: { phases?: Array<{ phase: string; status: string; details?: Record<string, unknown> }> } }).report?.phases?.find(p => p.phase === 'extract');
@@ -582,7 +583,6 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
   async cycle_extract_loops_race(state) {
     await gmailSweep(state);
     const { engine } = state.brain;
-    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
     await engine.executeRaw("UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1", [state.sourceId]);
     const cycle = async () => {
       const [job] = await runJobs(engine, [{ name: 'autopilot-cycle', data: { source_id: state.sourceId, phases: ['extract'] } }], 120_000);
@@ -595,7 +595,6 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     const competing = await extractLoops(state);
     expect(competing.result).toMatchObject({ status: 'extracted', commitments: 1 });
     expect(await staleCount(state)).toBeGreaterThan(0);
-    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
     await cycle();
     expect(await staleCount(state)).toBe(0);
   },

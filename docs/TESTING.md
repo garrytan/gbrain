@@ -1259,7 +1259,7 @@ there even though they pass on Linux and macOS.
 
 ### CI vs local: intentionally divergent file sets
 
-- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 8 shards partitioned by weight-aware LPT bin-packing (`scripts/sharding.ts`; unweighted files get the p75 weight) and includes `*.slow.test.ts` files without a dedicated job (`eval-longmemeval-e2e.slow.test.ts` runs inside the shards; entity-resolve-perf, entity-card-perf, export-scale and brainbench-e2e have dedicated jobs, and the `reconcile-crash-*.slow.test.ts` files run only in persistence-validation) plus keyless-allowlisted `evals/**/*.test.ts` (`test/scripts/evals-collection.test.ts`). Every Bun job activates the PGLite schema snapshot (built in-runner, cached across jobs with the runner's hash check authoritative). Serial files run across four `serial-tests` workers via `bun run test:serial`; `verify` and the BrainBench memory-conformance gate (`scripts/ci-brainbench-gate.sh`, compared against `evals/brainbench/baselines/main.json`) have their own jobs, all aggregated by `test-status`. `e2e.yml` aggregates through `e2e-status`, with jsonb-parity gating Tier 2's token spend; scheduled runs also require the full-corpus lanes. Both aggregates reject failures, cancellations and unexpected skips, and successful test results are never reused. CI is the ground truth for "did everything pass."
+- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 8 shards partitioned by weight-aware LPT bin-packing (`scripts/sharding.ts`; unweighted files get the p75 weight) and includes `*.slow.test.ts` files without a dedicated job (`eval-longmemeval-e2e.slow.test.ts` runs inside the shards; entity-resolve-perf, entity-card-perf, export-scale and brainbench-e2e have dedicated jobs, and the `reconcile-crash-*.slow.test.ts` files runs only in persistence-validation) plus keyless-allowlisted `evals/**/*.test.ts` (`test/scripts/evals-collection.test.ts`). Shards keep planned file order (`test-shard.sh --dry-run-list <i> 8`). Every Bun job activates the PGLite schema snapshot (built in-runner, cached across jobs with the runner's hash check authoritative). Serial files run across four `serial-tests` workers via `bun run test:serial`; `verify` and the BrainBench memory-conformance gate (`scripts/ci-brainbench-gate.sh`, compared against `evals/brainbench/baselines/main.json`) have their own jobs, all aggregated by `test-status`. `e2e.yml` aggregates through `e2e-status`, with jsonb-parity gating Tier 2's token spend; scheduled runs also require the full-corpus lanes. Both aggregates reject failures, cancellations and unexpected skips, and successful test results are never reused. CI is the ground truth for "did everything pass."
 - **Local fast loop** (`scripts/run-unit-shard.sh` via the parallel wrapper) uses the same weighted partitioner as CI and EXCLUDES `*.slow.test.ts` AND `*.serial.test.ts`. Each shard runs its complete ordered selection with a fresh Bun process per file, without adding workers. Later groups still run after failures; missing summaries or file-completion evidence fail the shard. Local trades coverage for inner-loop speed; CI catches what local skips.
 
 This divergence is intentional; the two scripts solve different problems.
@@ -1443,18 +1443,17 @@ cross-subsystem duplicate entries, and byte caps for the entry docs and referenc
 
 ### Test-isolation lint and helpers
 
-**This section is the canonical home of the test-isolation discipline** — CONTRIBUTING.md and other docs link here rather than restating the rules.
-
-The cross-file flake class is enforced statically by `scripts/check-test-isolation.sh`, wired into `bun run verify`. Rules (non-serial unit files only; `*.serial.test.ts` and `test/e2e/*` are skipped):
+**The canonical home of the test-isolation rules** (other docs link here). `scripts/check-test-isolation.sh` (in `bun run verify`) enforces them on non-serial unit files; `*.serial.test.ts` and `test/e2e/*` are skipped:
 
 | Rule | What it bans | Fix |
 |---|---|---|
-| **R1** | `process.env.X = ...`, bracket assignment, `delete process.env.X`, `Object.assign(process.env, ...)`, `Reflect.set(process.env, ...)` | Use `withEnv()` from `test/helpers/with-env.ts`, OR rename file to `*.serial.test.ts` |
-| **R2** | `mock.module(...)` anywhere in the file | Rename file to `*.serial.test.ts` (no DI on production code for testability) |
+| **R1** | `process.env.X = ...`, bracket assignment, `delete`, `Object.assign(process.env, ...)`, `Reflect.set(process.env, ...)` | `withEnv()` (`test/helpers/with-env.ts`) or `*.serial.test.ts` |
+| **R2** | `mock.module(...)` anywhere in the file | `*.serial.test.ts` (no DI on production code for testability) |
 | **R3** | `new PGLiteEngine(` outside ~50 lines after a `beforeAll(` line | Use the canonical block (below) inside `beforeAll(` |
-| **R4** | Files creating `new PGLiteEngine(` without `engine.disconnect(` inside an `afterAll(` block | Add `afterAll(() => engine.disconnect())` |
+| **R4** | `new PGLiteEngine(` without `engine.disconnect(` in an `afterAll(` block | Add `afterAll(() => engine.disconnect())` |
+| **R5** | `configureGateway(` with no `resetGateway(` (comments ignored): the global gateway leaks to later files | `afterAll(() => resetGateway())`; a child-script-only call takes `isolation-lint: R5-subprocess-only` |
 
-Files that violated these rules at the isolation-lint baseline are listed in `scripts/check-test-isolation.allowlist`. **The allow-list MUST shrink over time** — never add new entries.
+Files that violated these rules at the lint baseline are listed in `scripts/check-test-isolation.allowlist`. **The allow-list MUST shrink over time**: never add entries.
 
 #### Opt-in naming rule
 

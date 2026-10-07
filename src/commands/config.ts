@@ -11,6 +11,7 @@ import {
 } from '../core/search/embedding-column.ts';
 
 import { redactPgUrl } from '../core/url-redact.ts';
+import { PUBLISH_GATE_KEYS } from '../mcp/publish-gates.ts';
 import { isConsentConfigKey, setConsentPreapproval, unsetConsentPreapproval } from '../core/consent-preapproval.ts';
 import { WRITER_ADMIN_LOCK_KEY } from '../core/persistence/admin-contract.ts';
 import {
@@ -132,6 +133,7 @@ const MEMORY_DUAL_PLANE_KEYS: ReadonlySet<string> = new Set(
  * audience must be readable by the ENGINE-FREE bootstrap-harness lane so a
  * shared-declared brain never gets the enable-nudge advisory. */
 const BRAIN_AUDIENCE_KEY = 'brain.audience';
+
 
 /** `embedding_disabled` is dual-plane too: the DB row is authoritative (a
  * mounted brain has no other plane) and the host's file mirror keeps the
@@ -377,7 +379,13 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
     const err = validateDecideConfigValue(key, value);
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
+  (await import('./config/enumerated-keys.ts')).refuseUnregisteredEnumeratedKey(key, force);
   if (key === 'auto_chronicle' || key.startsWith('chronicle.')) await refuseInvalidChronicleValue(key, value, force);
+  if (key.startsWith('fences.')) {
+    const { validateFenceConfigValue } = await import('../core/fence-repair/config.ts');
+    const err = validateFenceConfigValue(key, value);
+    if (err) { console.error(`[config] ${err}`); process.exit(1); }
+  }
   if (key.startsWith('facts.drain_')) {
     const { validateFactsDrainConfigValue } = await import('../core/facts/drain-config.ts');
     const err = validateFactsDrainConfigValue(key, value);
@@ -876,7 +884,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // serves the previous DB value — exactly the lie the off switch's
     // non-zero exit exists to prevent. Everything else keeps the #2120
     // file/env-wins resolution.
-    const dbAuthoritative = MEMORY_DUAL_PLANE_KEYS.has(key) || key === BRAIN_AUDIENCE_KEY;
+    // Publish-gate keys (#5358) are DB-authoritative too: readPublishGate
+    // resolves DB > file, so a file-first answer would print a stale mirror
+    // while the gate already hides the tools.
+    const dbAuthoritative = MEMORY_DUAL_PLANE_KEYS.has(key) || key === BRAIN_AUDIENCE_KEY || (PUBLISH_GATE_KEYS as ReadonlySet<string>).has(key);
     // File-plane keys have no DB reader: a DB row is a stale pre-routing
     // write, never the answer (#5489).
     const fileOnly = isFilePlaneDottedKey(key);
@@ -1183,6 +1194,13 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     const { INVENTORY_LIMIT_KEYS, parseInventoryLimitValue } = await import('../core/shared-skills/inventory-limits.ts');
     if (INVENTORY_LIMIT_KEYS.includes(key)) {
       try { parseInventoryLimitValue(key, value); }
+      catch (error) { (await import('../cli/cli-error.ts')).exitCliError(error, 'config'); }
+    }
+
+    // #4907: a phase knob the phase would ignore is refused before the write.
+    const { PHASE_CONFIG_KEYS, parsePhaseConfigValue } = await import('../core/cycle/phase-config-values.ts');
+    if (PHASE_CONFIG_KEYS.includes(key)) {
+      try { parsePhaseConfigValue(key, value); }
       catch (error) { (await import('../cli/cli-error.ts')).exitCliError(error, 'config'); }
     }
 

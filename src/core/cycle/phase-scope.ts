@@ -16,6 +16,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   lint: 'source',
   backlinks: 'source',
   sync: 'source',
+  fence_repair: 'global',
   synthesize: 'mixed',
   extract: 'source',
   extract_facts: 'source',
