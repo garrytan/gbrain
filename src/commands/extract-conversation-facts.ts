@@ -102,6 +102,7 @@ import { upsertExtractRollup, classifyRunStop } from '../core/extract/rollup-wri
 import { ALLOWED_TYPES, ALLOWED_TYPE_ALIASES, isConversationFactsEligiblePage, pageTypesForAllowed, requireParseableConversationFlag, type AllowedType } from '../core/facts/conversation-types.ts';
 import { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE } from '../core/facts/audit-sources.ts';
 import { resolveDefaultVisibility, type FactVisibility } from '../core/facts/visibility.ts';
+import { segmentText, splitSegmentForExtraction } from '../core/facts/conversation-windows.ts';
 import {
   emptySaveTimeResolutionCounts,
   formatSaveTimeResolutionCounts,
@@ -134,10 +135,8 @@ export const DEFAULT_SEGMENT_GAP_MINUTES = 30;
 
 /**
  * Hard cap on messages per segment, regardless of timing.
- * Tuned down from PR's 50 → 30 (Eng-v2 T5): combined with the 6500-char
- * SEGMENT_TEXT_CHAR_LIMIT, this keeps headroom under extract.ts's
- * MAX_TURN_TEXT_CHARS = 8000 so tail facts in dense Slack/email
- * segments don't vanish silently.
+ * Character-aware windows separately bound the rendered text; a message
+ * count alone cannot bound a dense conversation or an oversized turn.
  */
 export const DEFAULT_SEGMENT_MAX_MESSAGES = 30;
 
@@ -457,42 +456,37 @@ export function splitIntoSegments(
     ? messages.filter((m) => Date.parse(m.timestamp) > sinceMs)
     : messages.slice();
 
+  if (!Number.isSafeInteger(maxMessages) || maxMessages < MIN_SEGMENT_MESSAGES) {
+    throw new Error('maxMessages must be an integer of at least two');
+  }
   const out: ConversationSegment[] = [];
   let cur: ConversationMessage[] = [];
   let lastTs: number | null = null;
-
   const flush = () => {
-    if (cur.length < MIN_SEGMENT_MESSAGES) {
-      cur = [];
-      return;
-    }
-    const seen = new Set<string>();
-    const participants: string[] = [];
-    for (const m of cur) {
-      if (!seen.has(m.speaker)) {
-        seen.add(m.speaker);
-        participants.push(m.speaker);
+    // Eligibility belongs to the time group, not an artificial size boundary.
+    if (cur.length >= MIN_SEGMENT_MESSAGES) {
+      for (let from = 0; from < cur.length;) {
+        const remaining = cur.length - from;
+        // Rebalance 30+1 to 29+2 without exceeding the message cap. For a
+        // two-message cap an odd group's singleton remainder still belongs
+        // to an eligible group and must not be discarded.
+        const count = remaining === maxMessages + 1 && maxMessages > 2
+          ? maxMessages - 1 : maxMessages;
+        const messages = cur.slice(from, from + count);
+        out.push({ messages, startIso: messages[0].timestamp,
+          endIso: messages[messages.length - 1].timestamp,
+          participants: [...new Set(messages.map(m => m.speaker))] });
+        from += count;
       }
     }
-    out.push({
-      messages: cur,
-      startIso: cur[0].timestamp,
-      endIso: cur[cur.length - 1].timestamp,
-      participants,
-    });
     cur = [];
   };
-
   for (const m of filtered) {
     const ts = Date.parse(m.timestamp);
     if (!Number.isFinite(ts)) continue;
     if (lastTs !== null && ts - lastTs > gapMs) flush();
     cur.push(m);
     lastTs = ts;
-    if (cur.length >= maxMessages) {
-      flush();
-      lastTs = null;
-    }
   }
   flush();
   return out;
@@ -531,20 +525,13 @@ export function renderSegmentForExtraction(
   pageTitle: string,
   segment: ConversationSegment,
 ): string {
-  const header = [
-    `Page: ${pageTitle}`,
-    `Conversation between ${segment.participants.join(' and ')} from ${segment.startIso} to ${segment.endIso}`,
-    '---',
-  ].join('\n');
-  const body = segment.messages
-    .map((m) => `${m.speaker} (${m.timestamp}): ${m.text}`)
-    .join('\n');
-  const full = `${header}\n${body}`;
-  if (full.length <= SEGMENT_TEXT_CHAR_LIMIT) return full;
-  // Truncate from the end of the body, keeping the header intact so the
-  // extractor still sees the topical anchor.
-  const slack = SEGMENT_TEXT_CHAR_LIMIT - header.length - 16;
-  return `${header}\n${body.slice(0, Math.max(0, slack))}\n…(truncated)`;
+  const text = segmentText(pageTitle, segment);
+  // The production caller plans bounded windows before cleanup or model work.
+  // Refuse an unplanned oversize input instead of silently dropping its tail.
+  if (text.length > SEGMENT_TEXT_CHAR_LIMIT) {
+    throw new Error('conversation extraction segment exceeds the input budget; split it into windows first');
+  }
+  return text;
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,7 +1053,8 @@ async function processPage(
   const gapMinutes = pageSegmentGapMinutes(page) ??
     (parseResult.matched_pattern_id === 'email-thread-heading' ? MAX_PAGE_SEGMENT_GAP_MINUTES : undefined);
   const allSegments = splitIntoSegments(messages, { gapMinutes });
-  const segments = splitIntoSegments(messages, { gapMinutes, sinceIso });
+  const segments = splitIntoSegments(messages, { gapMinutes, sinceIso }).flatMap(segment =>
+    splitSegmentForExtraction(page.title || page.slug, segment, SEGMENT_TEXT_CHAR_LIMIT));
   if (segments.length === 0) {
     state.result.pages_skipped++;
     if (!declinedUnrecognizedSpeaker && !terminalSkip) {

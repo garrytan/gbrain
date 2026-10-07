@@ -197,9 +197,10 @@ describe('splitIntoSegments', () => {
     }
     const msgs = parseConversationMessages(lines.join('\n'));
     const segs = splitIntoSegments(msgs, { maxMessages: 3 });
-    // 7 messages / 3 per segment → 2 full + 1 leftover (dropped: <2 messages).
+    // A size boundary must not discard the final turn of an eligible group.
     expect(segs.length).toBeGreaterThanOrEqual(2);
     for (const s of segs) expect(s.messages.length).toBeLessThanOrEqual(3);
+    expect(segs.flatMap(s => s.messages)).toEqual(msgs);
   });
 
   test('drops segments shorter than the minimum', () => {
@@ -256,7 +257,7 @@ describe('renderSegmentForExtraction', () => {
     expect(text).toContain('2024-03-15T09:05:00Z');
   });
 
-  test('truncates oversize segments but keeps the header intact', () => {
+  test('refuses unwindowed oversize segments instead of discarding the ending', () => {
     const big = Array.from({ length: 500 }, (_, i) => {
       const mm = String(i % 60).padStart(2, '0');
       const hh = String(9 + Math.floor(i / 60)).padStart(2, '0');
@@ -264,10 +265,7 @@ describe('renderSegmentForExtraction', () => {
     }).join('\n');
     const msgs = parseConversationMessages(big);
     const seg = splitIntoSegments(msgs, { maxMessages: 500 })[0];
-    const text = renderSegmentForExtraction('big-page', seg);
-    expect(text.length).toBeLessThanOrEqual(SEGMENT_TEXT_CHAR_LIMIT + 32);
-    expect(text.startsWith('Page: big-page')).toBe(true);
-    expect(text).toContain('Conversation between');
+    expect(() => renderSegmentForExtraction('big-page', seg)).toThrow('split it into windows first');
   });
 });
 

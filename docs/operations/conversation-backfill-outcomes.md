@@ -91,6 +91,31 @@ Single-page `--slug` runs use the same under-lock path.
 
 ## Strict extraction success
 
+### Input coverage and bounded windows
+
+The command first identifies eligible multi-message time groups, then bounds
+their message count and rendered input. A size boundary retains a final turn
+even when it would otherwise form a singleton remainder. A genuinely isolated
+single-message time group remains non-extractable.
+
+Each extraction window contains at most 6,500 characters, including the page,
+participant and date header. Whole messages stay together when they fit a fresh
+window. An oversized message continues across windows with its original speaker
+and timestamp repeated; its text is neither clipped nor duplicated. Every
+continuation retains the parent segment's participant/date anchor. Metadata that
+cannot fit the budget fails before prior-fact cleanup or extraction.
+
+`--dry-run` and `segments_processed` count these bounded windows. Long inputs can
+therefore require more model calls than before; preview the selected scope before
+processing it. The existing fact-selection limit, prompts and cost controls are
+unchanged. Complete input coverage does not promise extraction of every fact or
+resolution of contradictions across windows.
+
+Every planned window must succeed before a page receives its terminal outcome.
+A segment limit, failed continuation or exhausted budget leaves the page
+unfinished. Existing v2 outcomes certify the work performed by their original
+run; an upgrade does not automatically invalidate or replay them.
+
 The general `extractFactsFromTurn` API remains best-effort for interactive
 callers. It returns an empty array for both a legitimate zero-fact
 answer and several model failures.
@@ -169,6 +194,23 @@ limit.
 `--force` bypasses durable outcome selection and clears the page checkpoint.
 It still uses delete-first replay, strict extraction outcomes, advisory locks,
 and snapshot verification. Force means "recompute" rather than "relax safety."
+
+For a previously completed page whose extraction input was clipped, inspect the
+original and preserve the relevant derived state, then preview and recompute only
+that exact source/slug:
+
+```bash
+gbrain extract-conversation-facts --source-id codex --types conversation \
+  --slug conversations/example --force --dry-run --json
+gbrain extract-conversation-facts --source-id codex --types conversation \
+  --slug conversations/example --force --yes --json
+```
+
+The applied command replaces its own derived rows for that page. Review the new
+facts against the original and repeat without `--force` to confirm that the
+unchanged page skips. Do not clear all outcomes or force the whole archive merely
+to correct one page. The normal extraction-enabled setting still applies; these
+examples do not bypass it.
 
 ## Operator signals
 
