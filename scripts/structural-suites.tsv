@@ -123,7 +123,7 @@ test\doctor.test.ts	stub_guard_24h check (v0.34.5)	5	doctor-source-helper
 test\doctor.test.ts	supervisor crash classifier wiring (v0.35.x)	4	doctor-source-helper,source-surface-helper
 test\doctor.test.ts	sync_freshness — clone-unavailable content-lag fallback	6	doctor-source-helper
 test\doctor.test.ts	v0.31.8 — wedge migration force-retry hint (D19)	4	doctor-source-helper
-test\doctor.test.ts	v0.32.4 — sync_freshness check	12	doctor-source-helper
+test\doctor.test.ts	v0.32.4 — sync_freshness check	13	doctor-source-helper
 test\doctor.test.ts	v0.40.4 — graph_signals_coverage check	7	doctor-source-helper
 test\doctor.test.ts	v0.41.27.0 — sync_freshness git short-circuit	9	doctor-source-helper
 test\doctor.test.ts	v0.41.32.0 — commit-relative staleness	5	doctor-source-helper
@@ -158,6 +158,9 @@ test\facts-backstop-remedy-verb.test.ts	facts backstop thin-client-fallback reme
 test\facts-relink.test.ts	relink reasons	1	readFileSync
 test\features.test.ts	CLI routing	2	source-surface-helper
 test\fence-extraction.test.ts	Layer 8 D2 — markdown fence extraction	18	readFileSync
+test\fence-format-reference.test.ts	docs/guides/fence-format.md	3	readFileSync
+test\fence-format-reference.test.ts	write-refusals fence reason rows	3	readFileSync
+test\fence-refusal.test.ts	every PR1 reason routes to the fence repair, never to frontmatter repair	3	readFileSync
 test\files.test.ts	collectFiles (production import)	9	readFileSync
 test\files.test.ts	files upload-raw git-storage branch (#2297)	6	readFileSync
 test\files.test.ts	files verify git lane (per-source root resolution)	1	readFileSync
@@ -178,7 +181,7 @@ test\frontmatter-install-hook.test.ts	frontmatter install-hook (B13)	25	readFile
 test\gbrain-owned-page-types.test.ts	#5881 gbrain-owned page types are declared by gbrain-base-v2	3	readFileSync
 test\get-page-federated-scope.test.ts	#2555 get_chunks federated scope	5	source-surface-helper
 test\get-page-federated-scope.test.ts	#4275 alias hop scope: archived sources, include_deleted, fuzzy precedence, grant precedence	5	source-surface-helper
-test\harness-onboarding.test.ts	harness identity and private handoff	5	readFileSync
+test\harness-onboarding.test.ts	harness identity and private handoff	6	readFileSync
 test\hook-command.serial.test.ts	user-prompt	16	source-surface-helper
 test\hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync
 test\hook-push-spawn-env.test.ts	tryExecAsync env handoff	1	readFileSync
