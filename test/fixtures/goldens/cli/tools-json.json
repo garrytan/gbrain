@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 208759,
-    "stdoutSha256": "5de3a39404e4ab9c60d0a87de666fadafb6e96795bc53031c1507238e64787ad",
+    "stdoutBytes": 208738,
+    "stdoutSha256": "f0d7ddb98466882484ff212040f7970e921989f074683aae476be22ad75b2ee0",
     "toolNames": [
       "remember",
       "entity",
@@ -238,7 +238,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "source_id": {
@@ -345,7 +345,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "semantic_review": {
@@ -462,7 +462,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "slug": {
@@ -524,7 +524,7 @@
               "type": "boolean"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "slug": {
@@ -636,7 +636,7 @@
               "type": "boolean"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "slug": {
@@ -731,7 +731,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "slug": {
@@ -833,7 +833,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "slug": {
@@ -855,7 +855,7 @@
         "scope": "write"
       },
       {
-        "description": "Write up to 50 complete Markdown pages (8 MB total) in one call; use instead of put_page for more than 3 pages. Each page replaces its whole page, like put_page. Keep one request_id UUID per batch: replaying the identical call never writes twice, and put_pages with ONLY request_id reports progress without resending content. Waits up to wait_ms (default 25000) for commits; follow the returned `next`. Needs put_page permission.",
+        "description": "Write up to 50 complete Markdown pages (8 MB total) in one call; use instead of put_page for more than 3 pages. Each page replaces its whole page, like put_page. Keep one request_id per batch: replaying the identical call never writes twice, and put_pages with ONLY request_id reports progress without resending content. Waits up to wait_ms (default 25000) for commits; follow the returned `next`. Needs put_page permission.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -904,7 +904,7 @@
               "type": "array"
             },
             "request_id": {
-              "description": "Batch UUID; reuse it to replay or poll.",
+              "description": "Batch id; reuse only to replay or poll.",
               "type": "string"
             },
             "source_id": {
@@ -936,7 +936,7 @@
         "schema": {
           "properties": {
             "request_id": {
-              "description": "The UUID you sent with the write.",
+              "description": "The id you sent, or the receipt's.",
               "type": "string"
             }
           },
@@ -993,7 +993,7 @@
         "schema": {
           "properties": {
             "request_id": {
-              "description": "The UUID you sent with the write.",
+              "description": "The id you sent, or the receipt's.",
               "type": "string"
             }
           },
@@ -1558,7 +1558,7 @@
         "schema": {
           "properties": {
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "slug": {
@@ -1593,7 +1593,7 @@
         "schema": {
           "properties": {
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "slug": {
@@ -2012,7 +2012,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "slug": {
@@ -2191,7 +2191,7 @@
               "type": "boolean"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "slug": {
@@ -4075,7 +4075,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "since": {
@@ -4128,7 +4128,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "row_num": {
@@ -4199,7 +4199,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "resolved_by": {
@@ -4276,7 +4276,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "row_num": {
@@ -4329,7 +4329,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             },
             "row_num": {
@@ -5389,7 +5389,7 @@
               "type": "boolean"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout. Managed extraction returns durable receipts; when omitted, each call gets a new UUID. Unmanaged extraction retains its legacy non-journaled behavior.",
+              "description": "Optional; reuse only to retry. Managed extraction returns durable receipts; when omitted, each call gets a new UUID. Unmanaged extraction retains its legacy non-journaled behavior.",
               "type": "string"
             },
             "session_id": {
@@ -5635,7 +5635,7 @@
               "type": "string"
             },
             "request_id": {
-              "description": "UUID; retry with it on timeout.",
+              "description": "Optional; reuse only to retry.",
               "type": "string"
             }
           },

@@ -116,7 +116,7 @@ export const GRADUATION_INVENTORY: Inventory = {
       ],
     }),
     carry('persistence_local_writers', 'security', 'Local writer credentials (cli/stdio) and revocations.'),
-    carry('persistence_requests', 'user_data', 'Write requests: idempotency records and outcomes, so replays return the stored outcome.'),
+    carry('persistence_requests', 'user_data', 'Write requests: idempotency records and outcomes, so replays return the stored outcome; client_request_id keeps the client\'s original id beside its UUIDv5.'),
     carry('persistence_source_bindings', 'user_data', 'Source to worktree bindings.'),
     carry('persistence_topology_changes', 'user_data', 'Topology change journal.'),
     carry('persistence_worktree_refreshes', 'user_data', 'Worktree refresh journal.'),

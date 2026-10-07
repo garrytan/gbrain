@@ -2,6 +2,7 @@ import { searchAnswerFeedback } from '../feedback/record.ts';
 import { parseRelationalPlan } from '../search/relational-plan.ts';
 import { loadSearchModeConfig, resolveSearchMode } from '../search/mode.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
+import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, type DeliveryMeta, type EvidencePlan } from '../search/evidence-delivery.ts';
 import { randomUUID } from 'node:crypto';
 import { readHolders } from './context.ts';
@@ -120,7 +121,7 @@ const extract_facts: Operation = {
     const r = await runFactsPipeline(p.turn_text as string, {
       engine: ctx.engine,
       operationContext: ctx,
-      requestId: typeof p.request_id === 'string' ? p.request_id : randomUUID(),
+      requestId: parseWriteRequestId(p.request_id) ?? randomUUID(),
       requestIntent: { ...p, request_id: undefined },
       sourceId,
       sessionId: typeof p.session_id === 'string' ? p.session_id : null,

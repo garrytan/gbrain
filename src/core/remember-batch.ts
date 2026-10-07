@@ -21,6 +21,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { OperationContext } from './operations.ts';
 import { OperationError } from './ops/contract.ts';
+import { clientRequestIdOf, parseWriteRequestId } from './persistence/preconditions.ts';
 
 export const REMEMBER_BATCH_MAX = 20;
 const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'replaces']);
@@ -76,11 +77,14 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
     }
   }
   if (ctx.dryRun) return { dry_run: true, action: 'remember', items: normalized.length, protocol_version: 1 };
-  const requestId = typeof p.request_id === 'string' && p.request_id ? p.request_id : randomUUID();
+  // F6: child ids derive from the root string the client sent (as before the upgrade), so an accepted batch replays to the same receipts.
+  const rootId = typeof p.request_id === 'string' && p.request_id ? p.request_id : randomUUID();
+  const requestId = parseWriteRequestId(rootId)!;
+  const clientRequestId = clientRequestIdOf(rootId);
   const results: BatchItemResult[] = [];
   const hints = new Set<string>();
   for (const [index, item] of normalized.entries()) {
-    const child = childRequestId(requestId, index);
+    const child = childRequestId(rootId, index);
     try {
       const out = await single(ctx, { ...item, request_id: child }) as Record<string, unknown>;
       // Compact per-item receipt: a batch lands in the agent's context, so it carries what the agent acts on, not the full single-fact envelope.
@@ -102,6 +106,7 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
   return {
     protocol_version: 1,
     request_id: requestId,
+    ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
     items: results,
     saved: results.length - failed,
     failed,

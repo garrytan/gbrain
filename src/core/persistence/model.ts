@@ -87,6 +87,8 @@ export interface WriteRequest {
   /** #5974 structured failure (publication-failure.ts); receipts expose only its public view. */
   error_detail?: Record<string, unknown> | null;
   blocked_reason: string | null;
+  /** F6: the non-UUID request_id the client sent (request_id is its UUIDv5); outside the intent digest, kept through compaction. */
+  client_request_id?: string | null;
   compacted: boolean;
   publication_started: boolean;
   created_at: Date | string;

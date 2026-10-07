@@ -22,7 +22,7 @@ import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
 import { currentVerifiedLocalWriter, localHostId, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import type { BrainEngine } from '../engine.ts';
 import { claimWorktree, getWorktreeBinding, managedPersistenceEnabled } from './ownership.ts';
-import { parseMutationPrecondition } from './preconditions.ts';
+import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import type { Principal, WriteRequest } from './model.ts';
 import { normalizeSubagentPageInput, undeclaredPageTypeWarning, type PageTypeWarning } from './page-input.ts';
@@ -328,7 +328,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     throw colonSlugWindowsRefusal(slug, sourceId);
   }
   return { typeWarning, slugAdvisory, admission: { principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
-    slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent, intent, authority,
+    slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId: input.batch ? undefined : clientRequestIdOf(params.request_id), callerIntent, intent, authority,
     ...(input.operation === 'edit_page' ? { terminalReservation: Math.max(16_384, Buffer.byteLength(JSON.stringify(authority)) + 8192)
       + (await import('./page-edit.ts')).EDIT_PAGE_RECEIPT_RESERVE } : {}),
     worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null } };

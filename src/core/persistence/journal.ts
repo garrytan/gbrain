@@ -33,6 +33,8 @@ export interface WriteAdmission {
   worktreeId?: string | null;
   topologyGeneration?: string | number | null;
   requestId?: string;
+  /** F6: the client's non-UUID request_id, stored beside the canonical id and never digested. */
+  clientRequestId?: string;
   /** Normalized caller intent, excluding server-generated timestamp/TTL defaults. */
   callerIntent: Record<string, unknown>;
   intent: Record<string, unknown>;
@@ -126,8 +128,11 @@ export function intentDigest(a: Pick<WriteAdmission, 'operation' | 'sourceId' | 
   return digest({ operation: a.operation, source_id: a.sourceId, slug: a.slug, intent: a.callerIntent });
 }
 export function assertReplayIntent(row: WriteRequest, expectedDigest: string): WriteRequest {
-  if (row.digest !== expectedDigest) throw new OperationError('idempotency_conflict',
-    'This request_id was already accepted with different intent.', 'Replay the original request, or allocate a new request_id for a new intent.');
+  if (row.digest !== expectedDigest) throw opError('idempotency_conflict', 'This request_id was used for a different write; send a new one or omit it.',
+    'A request_id is reused only to retry the same write. Send this write again with a new request_id or without one; the earlier write keeps its receipt.',
+    { fix: readFix(`Reads the earlier write's receipt (request ${row.request_id}), read-only.`, row.principal_kind === 'local_cli'
+      ? { argv: ['gbrain', 'write-request', '--', row.request_id] }
+      : { mcp: { tool: 'get_write_request', arguments: { request_id: row.client_request_id ?? row.request_id } } }) });
   return row;
 }
 export async function admitWrite(engine: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>): Promise<WriteRequest> {
@@ -193,12 +198,12 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       INSERT INTO persistence_requests
       (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
        worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
-       admitter_version,admitter_host_id)
-      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid)
+       admitter_version,admitter_host_id,client_request_id)
+      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid,$21)
       RETURNING *`, [input.principal.kind, input.principal.id, requestId, input.operation, input.sourceId,
       input.sourceIncarnation, input.pageId ?? null, input.slug, input.worktreeId ?? null, input.topologyGeneration ?? null,
       fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), bytes, terminalBytes, input.targetKind ?? 'page', input.protocolVersion ?? 1,
-      stamp.version, stamp.hostId, counters.map(c => c.key)]);
+      stamp.version, stamp.hostId, counters.map(c => c.key), input.clientRequestId ?? null]);
     return row;
   } };
 }
@@ -262,14 +267,14 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
     const rows = await tx.executeRaw<WriteRequest>(`INSERT INTO persistence_requests
       (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
        worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
-       admitter_version,admitter_host_id)
+       admitter_version,admitter_host_id,client_request_id)
       SELECT $1,$2,(e->>'request_id')::uuid,$3,$4,$5::uuid,(e->>'page_id')::integer,e->>'slug',$6::uuid,$7,e->>'digest',e->'intent',$8::text::jsonb,
-        (e->>'intent_bytes')::bigint,(e->>'terminal_reservation')::bigint,'page',1,$9,$10::uuid
+        (e->>'intent_bytes')::bigint,(e->>'terminal_reservation')::bigint,'page',1,$9,$10::uuid,e->>'client_request_id'
       FROM jsonb_array_elements($11::text::jsonb) WITH ORDINALITY AS t(e,n) ORDER BY n
       RETURNING *`, [first.principal.kind, first.principal.id, first.operation, first.sourceId, first.sourceIncarnation, first.worktreeId ?? null,
       first.topologyGeneration ?? null, JSON.stringify(first.authority), stamp.version, stamp.hostId,
       JSON.stringify(fresh.map(item => ({ request_id: item.requestId, page_id: item.input.pageId ?? null, slug: item.input.slug, digest: item.fingerprint,
-        intent: item.input.intent, intent_bytes: item.bytes, terminal_reservation: item.terminalBytes })))]);
+        intent: item.input.intent, intent_bytes: item.bytes, terminal_reservation: item.terminalBytes, client_request_id: item.input.clientRequestId ?? null })))]);
     for (const row of rows) priors.set(row.request_id, row);
     await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count+$4,
       intent_bytes=intent_bytes+$2,lifetime_ids=lifetime_ids+$4,terminal_bytes=terminal_bytes+$3 WHERE key=ANY($1::text[])`,
@@ -666,7 +671,7 @@ export async function compactWriteReceipts(engine: BrainEngine, retentionDays?: 
     if(unfinished.length) return 0;
     const [effects]=await tx.executeRaw<{bytes:string}>(`SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0)::text AS bytes
       FROM persistence_effects WHERE request_id=$1::uuid`,[row.id]);
-    const retained=Math.min(Number(current.terminal_reservation),jsonBytes(current.authority)+jsonBytes(current.outcome??{})+(current.error_detail?jsonBytes(current.error_detail):0)+Number(effects.bytes)+1024);
+    const retained=Math.min(Number(current.terminal_reservation),jsonBytes(current.authority)+jsonBytes(current.outcome??{})+(current.error_detail?jsonBytes(current.error_detail):0)+(current.client_request_id?.length??0)+Number(effects.bytes)+1024);
     await tx.executeRaw('UPDATE persistence_requests SET intent=NULL,compacted=true,error_message=NULL,terminal_reservation=$2 WHERE id=$1::uuid',[row.id,retained]);
     for(const key of keys) await tx.executeRaw('UPDATE persistence_counters SET terminal_bytes=terminal_bytes-$2 WHERE key=$1',[key,Number(current.terminal_reservation)-retained]);
     return 1;
@@ -677,7 +682,7 @@ export function receiptFor(row: WriteRequest, facts?: WriteHealthFacts, now = Da
   return {
     ...(row.outcome ?? {}),
     ...(row.outcome ? { outcome: row.outcome } : {}),
-    request_id: row.request_id, state: row.state,
+    request_id: row.request_id, ...(row.client_request_id ? { client_request_id: row.client_request_id } : {}), state: row.state,
     ...writeHealth(row, facts, now),
     ...(row.error_code ? { write_error: row.error_code } : {}),
     ...(row.error_detail ? { write_error_detail: publicFailureDetail(row.error_detail) } : {}),

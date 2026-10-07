@@ -9046,15 +9046,16 @@ fact, so it goes on its item; passing both `fact` and `items`, or a top-level
 
 Every item is validated before any is written: one invalid item refuses the
 whole call with `items[<i>]` in the message. Each item is then saved as its own
-write with a child `request_id` derived from the call's `request_id` and the
-item index, so replaying the same `request_id` replays each child's outcome and
+write with a child `request_id` derived from the call's `request_id` (the
+string the caller sent, so a batch accepted by an older server replays to the
+same receipts) and the item index, so replaying the same `request_id` replays each child's outcome and
 writes nothing twice.
 
-Response: `{ protocol_version, request_id, items[], saved, failed, partial,
+Response: `{ protocol_version, request_id, client_request_id?, items[], saved, failed, partial,
 hints?, next? }`. Each `items[]` entry is a compact receipt `{ index,
 request_id, status, id?, entity_slug?, warnings?, valid_until?, state? }`
 (`state` and `retry_after_ms` only when the write is not yet committed), or
-`{ index, request_id, status: "failed", error: { code, message } }`. Hints the
+`{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Hints the
 single-fact response would repeat per item appear once in `hints`. `partial: true` means some items saved and some failed; resend
 only the failed items, in a new call with a new `request_id`.
 
@@ -9244,7 +9245,7 @@ empty list means no close match was found, not that every rewording is gone.
 #### Durable write receipts (additive)
 
 Write receipts distinguish accepted work from committed memory. Their public
-shape is `{request_id, state, retry_after_ms, revision?, outcome?, persistence?,
+shape is `{request_id, client_request_id?, state, retry_after_ms, revision?, outcome?, persistence?,
 compacted?, created_at?, updated_at?, diagnostic?}`. States are `queued`, `running`,
 `recovering`, `committed`, `conflict`, `failed`, and `cancelled`. Terminal
 receipts have `retry_after_ms: null`. `persistence.mode` distinguishes a
@@ -9267,10 +9268,19 @@ the detailed concurrency reason without changing the frozen protocol error
 enum. A committed receipt retains the original memory-verb success fields.
 Compaction may remove diagnostics, but must preserve those frozen result fields.
 
-The optional caller-generated UUID `request_id` identifies one write intent.
-Retry the same verb with the original arguments and the same ID to recover
-its outcome, including on the verbs-only surface. A terminal request is never
-executed again. Corrected input requires a new ID. Clients that lose a response
+The optional caller-chosen `request_id` identifies one write intent; reuse it
+only to retry the same write. Any id of 1 to 128 printable ASCII characters
+(0x21 to 0x7E, no spaces) is accepted. A UUID is used as is (lowercased); any
+other id maps to a deterministic UUIDv5 under one fixed gbrain namespace, so
+`request_id` in every response stays a UUID and the id the caller sent comes
+back as `client_request_id`, which is kept for the life of the receipt. The
+receipt helpers find a write by either id. Retry the same verb with the original
+arguments and the same ID to recover its outcome, including on the verbs-only
+surface. A terminal request is never executed again. Corrected input requires a
+new ID: reusing an id for a different write is refused with
+`idempotency_conflict` ("this request_id was used for a different write; send a
+new one or omit it"), which `remember` reports as `invalid_params` with
+`write_error: "idempotency_conflict"`. Clients that lose a response
 without retaining its request ID cannot assume that retrying content is an
 exactly-once write. A receipt never contains queued content, recovery paths or
 execution credentials.

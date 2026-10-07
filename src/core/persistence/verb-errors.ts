@@ -142,6 +142,7 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
     const diagnostic = error.code === 'source_changed' ? writeFailureDiagnostic(error.code, error.message) : null;
     const frozen = verbError(code,diagnostic?.message ?? error.message,diagnostic?.suggestion ?? error.suggestion ?? 'Inspect writer status before retrying.');
     if (diagnostic) frozen.detail = diagnostic.reason;
+    if (error.code === 'idempotency_conflict' && error.fix) frozen.fix = error.fix;
     if (isWriteErrorCode(error.code)) frozen.writeError=error.code;
     throw frozen;
   }

@@ -17,7 +17,7 @@ import { claimWorktree } from './ownership.ts';
 import { declareDurablePersistence } from './protocol.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
-import { parseMutationPrecondition } from './preconditions.ts';
+import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { requestAttribution } from './attribution.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
@@ -56,7 +56,7 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
     await authorizeStoredRequest(ctx.engine, prior);
     assertReplayIntent(prior, intentDigest({ operation, sourceId, slug: prior.slug, callerIntent }));
   }
-  return { p, requestId, sourceId, principal, callerIntent, prior };
+  return { p, requestId, clientRequestId: clientRequestIdOf(params.request_id), sourceId, principal, callerIntent, prior };
 }
 
 type RememberSource = { incarnation: string; archived: boolean; local_path: string | null; kind: string | null };
@@ -145,7 +145,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   registerMutationPreparer('remember', prepareMemoryMutation);
   const sub = await submission(ctx, 'remember', params);
   if (sub.prior) return writeResponse(await waitForWrite(ctx.engine, sub.prior, ctx.config, waitMs ?? ctx.writeWaitMs));
-  const { p, sourceId, principal, callerIntent, requestId } = sub;
+  const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
   const [source] = await ctx.engine.executeRaw<RememberSource>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) throw sourceInactive(sourceId);
@@ -168,7 +168,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   }
   await assertFactNotWithdrawn(ctx.engine, sourceId, factIntent);
   const row = await admitWrite(ctx.engine, { principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,
-    slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent,
+    slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId, callerIntent,
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
     // it, so recall's session_id filter finds single facts too. Identity only — never a trust surface.
     intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
@@ -186,7 +186,7 @@ interface WithdrawalTarget { id: number; entity_slug: string | null; source_mark
 export async function submitForgetMutation(ctx: OperationContext, operation: 'forget' | 'forget_fact', params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const sub = await submission(ctx, operation, params);
   if (sub.prior) return withSimilarActive(ctx, operation, sub.sourceId, sub.p, writeResponse(sub.prior));
-  const { p, sourceId, principal, callerIntent, requestId } = sub;
+  const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
   const semanticReview = p.semantic_review !== false;
   const id = Number(p.id);
   const rawId = String(p.id).trim();
@@ -220,7 +220,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     enforceClientSlugFence(ctx, slug, operation); enforceSubagentSlugFence(ctx, slug, operation);
     const authority = await submissionAuthority({ ...ctx, engine: tx }, operation, sourceId, source.incarnation, slug);
     const row = await admitWriteInTransaction(tx, { principal, operation, sourceId, sourceIncarnation: source.incarnation,
-      slug, requestId, callerIntent, intent: { ...callerIntent, reason }, authority });
+      slug, requestId, clientRequestId, callerIntent, intent: { ...callerIntent, reason }, authority });
     if (isTerminal(row)) return row;
     return withCoordinatedWrite(tx, [sourceId], async () => {
       // Even an expired legacy fact acquires a ledger so a stale import cannot

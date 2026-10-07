@@ -25,7 +25,7 @@ import { isTerminal, type WriteRequest } from './model.ts';
 import { estimatedRetryAfterMs, waitForWrites, writeResponse } from './service.ts';
 import { initializeLocalPersistence, pageMutationSource, preparePageAdmission, requestPrincipalForContext, withBatchAdmission } from './page-mutations.ts';
 import type { PageTypeWarning } from './page-input.ts';
-import { parseWriteRequestId } from './preconditions.ts';
+import { clientRequestIdOf, parseWriteRequestId } from './preconditions.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
 
 export const PAGE_BATCH_MAX_PAGES = 50;
@@ -122,7 +122,7 @@ async function batchLinks(ctx: OperationContext, sourceId: string, results: Page
     ...(done.length < effects.length ? { why: 'Mention links from [[wikilinks]] to existing pages are built after commit; read this batch again with put_pages {request_id} to see them settle. Do not add them by hand.' } : {}) };
 }
 
-function batchReceipt(ctx: OperationContext, batchId: string, sourceId: string, results: PageResult[], links: Record<string, unknown>): Record<string, unknown> {
+function batchReceipt(ctx: OperationContext, batchId: string, sourceId: string, results: PageResult[], links: Record<string, unknown>, clientRequestId?: string): Record<string, unknown> {
   const pages = results.map(pageEntry);
   const committed = pages.filter(page => page.state === 'committed').length;
   const pending = pages.filter(page => ['queued', 'running', 'recovering'].includes(String(page.state))).length;
@@ -138,7 +138,7 @@ function batchReceipt(ctx: OperationContext, batchId: string, sourceId: string, 
   // #6188 (D12, D21): one `fences_normalized` and one coaching notice for every page whose fence Tier 1 rewrote.
   const fences = mergeFencesNormalized(pages.flatMap(page => page.fences_normalized ? [page.fences_normalized as FencesNormalized] : []));
   if (fences) ctx.emitNotice?.(fenceNormalizedNotice(fences));
-  return { batch_request_id: batchId, source_id: sourceId, state, terminal: pending === 0, counts: { total: pages.length, committed, pending, failed },
+  return { batch_request_id: batchId, ...(clientRequestId ? { client_request_id: clientRequestId } : {}), source_id: sourceId, state, terminal: pending === 0, counts: { total: pages.length, committed, pending, failed },
     ...(retryAfterMs !== null ? { retry_after_ms: retryAfterMs } : {}), next, links, pages, ...(fences ? { fences_normalized: fences } : {}) };
 }
 
@@ -201,7 +201,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   const batchId = parseWriteRequestId(params.request_id);
   if (!batchId) {
     throw invalid('put_pages requires request_id; nothing was written.',
-      'Generate one UUID for this batch, pass it as request_id, and keep it: replaying the same call with it never writes twice, and put_pages with only that request_id reports progress.');
+      'Pass one request_id for this batch (any id up to 128 printable characters) and keep it: replaying the same call with it never writes twice, and put_pages with only that request_id reports progress.');
   }
   const sourceId = pageMutationSource(ctx, params, 'put_pages');
   await initializeLocalPersistence(ctx);
@@ -218,7 +218,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
       const row = byIndex.get(index);
       return { index, slug: row?.slug ?? '', ...(row ? { row } : {}) };
     });
-    return batchReceipt(ctx, batchId, sourceId, results, await batchLinks(ctx, sourceId, results));
+    return batchReceipt(ctx, batchId, sourceId, results, await batchLinks(ctx, sourceId, results), clientRequestIdOf(params.request_id));
   }
   const pages = parsePages(params.pages);
   const existing = await readBatch(ctx, batchId);
@@ -261,6 +261,6 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   const journaled = results.filter(result => result.row);
   const settled = await waitForWrites(ctx.engine, journaled.map(result => result.row!), ctx.config, remaining());
   journaled.forEach((result, position) => { result.row = settled[position]!; });
-  return batchReceipt(ctx, batchId, sourceId, results, await batchLinks(ctx, sourceId, results));
+  return batchReceipt(ctx, batchId, sourceId, results, await batchLinks(ctx, sourceId, results), clientRequestIdOf(params.request_id));
 }
 

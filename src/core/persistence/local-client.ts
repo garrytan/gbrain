@@ -11,6 +11,7 @@ import { resolveSourceIdEngineFree } from '../source-resolver.ts';
 import { opError, opOwnsSource, OperationError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { parseWriteRequestId } from './preconditions.ts';
+import { isWriteRequestId } from './types.ts';
 import {
   isPersistenceIpcMutation, isPersistenceIpcOperation, isPersistenceIpcRegistration,
   persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
@@ -59,7 +60,7 @@ export function residentPersistenceConfig(hostConfig: GBrainConfig | null, cwd =
 /** Reads an existing registration only. Revocation/missing credentials never create a new principal. */
 export function readPersistenceCliRegistration(brainId: string): PersistenceIpcRegistration {
   // Capability validation has already constrained this filename component to a UUID.
-  const id = parseWriteRequestId(brainId);
+  const id = isWriteRequestId(brainId) ? brainId.toLowerCase() : undefined;
   if (!id) {
     throw opError('permission_denied', 'Missing durable brain identity.',
       'The resident owner reported no durable brain identity, so this CLI cannot select its writer registration. Check the brain\'s persistence state; if an older owner is running, the user restarts it after upgrading.',

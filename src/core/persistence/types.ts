@@ -38,6 +38,8 @@ export interface WriteDiagnostic {
 
 export interface WriteReceipt {
   request_id: string;
+  /** F6: the client's non-UUID request_id when it sent one; request_id is its canonical UUIDv5. */
+  client_request_id?: string;
   state: WriteRequestState;
   /** Milliseconds until polling is useful; null for terminal outcomes. */
   retry_after_ms: number | null;
@@ -100,6 +102,7 @@ export function isWriteReceipt(value: unknown): value is WriteReceipt {
   const retry = value.retry_after_ms;
   if (retry !== null && (typeof retry !== 'number' || !Number.isSafeInteger(retry) || retry < 0)) return false;
   if (isTerminalWriteState(value.state as WriteRequestState) && retry !== null) return false;
+  if (value.client_request_id !== undefined && (typeof value.client_request_id !== 'string' || !value.client_request_id)) return false;
   if (value.revision !== undefined && (typeof value.revision !== 'string' || !value.revision)) return false;
   if (value.compacted !== undefined && typeof value.compacted !== 'boolean') return false;
   if (value.outcome !== undefined && !isRecord(value.outcome)) return false;
@@ -131,6 +134,7 @@ export function admittedPendingReceipt(envelope: unknown): WriteReceipt | null {
 export function publicWriteReceipt(receipt: WriteReceipt): WriteReceipt {
   return {
     request_id: receipt.request_id,
+    ...(receipt.client_request_id !== undefined ? { client_request_id: receipt.client_request_id } : {}),
     state: receipt.state,
     retry_after_ms: receipt.retry_after_ms,
     ...(receipt.revision !== undefined ? { revision: receipt.revision } : {}),
