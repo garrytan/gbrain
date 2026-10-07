@@ -38,7 +38,8 @@ import { stripCodeBlocks, isCrossSourceLinksEnabled } from './link-extraction.ts
 // #4222: shared generic-token reject list — same list gates enrichEntity
 // minting and drives the junk_entity_hubs doctor check.
 import { isGenericEntityToken } from './entity-name-quality.ts';
-import { ALWAYS_LINKABLE_TYPES, linkableTypesFor, loadSourcePack, readMentionPolicy, type MentionPolicy } from './mentions/policy.ts';
+import { ALWAYS_LINKABLE_TYPES, linkableTypesFor, loadSourcePack, readMentionPolicy, type MentionPolicy, type PackTypes } from './mentions/policy.ts';
+import { siblingVerdict, type SiblingCandidate } from './mentions/siblings.ts';
 
 /**
  * The four types that are always linkable, whatever the schema pack says. The
@@ -88,6 +89,11 @@ export interface GazetteerEntry {
   caseTokens?: string[];
   /** Spelling being matched (the alias, not the display title, for aliases). */
   matchText?: string;
+  /**
+   * Set on a name two or three identity siblings claim (mentions/siblings.ts):
+   * a match links to every sibling with the same tokens instead of one.
+   */
+  shared?: true;
 }
 
 /**
@@ -111,7 +117,7 @@ export function hashGazetteer(gazetteer: Gazetteer): string {
     for (const e of bucket) entries.push(`${e.source_id}\0${e.slug}\0${e.title}\0${e.tokens.join(' ')}\0${e.matchText ?? ''}${e.caseTokens ? `\0${e.caseTokens.join(' ')}` : ''}`);
   }
   // Matching semantics are part of the resume identity, not just DB contents.
-  return createHash('sha256').update('hangul-boundaries-v2\n').update(entries.sort().join('\n')).digest('hex').slice(0, 8);
+  return createHash('sha256').update('shared-sibling-names-v3\n').update(entries.sort().join('\n')).digest('hex').slice(0, 8);
 }
 
 /** One row of the saved entry set the mention pass diffs (mention_gazetteer_entries). */
@@ -473,8 +479,10 @@ export async function buildGazetteer(
   const drop = (d: DroppedName) => { dropped?.push(d); };
   const sources = await engine.executeRaw<{ id: string }>('SELECT DISTINCT source_id AS id FROM pages WHERE deleted_at IS NULL', []);
   const typesBySource = new Map<string, Set<string>>();
+  const packBySource = new Map<string, PackTypes | null>();
   for (const { id } of sources) {
     const pack = await loadSourcePack(engine, id, { strict: opts.strict });
+    packBySource.set(id, pack);
     typesBySource.set(id, new Set(linkableTypesFor(pack, policy)));
   }
   const allTypes = [...new Set([...typesBySource.values()].flatMap(set => [...set]))];
@@ -557,10 +565,10 @@ export async function buildGazetteer(
   //   - a case-sensitive row (a single-token declared alias) matches only
   //     the original-case text
   let aliasRows: Array<{ alias_norm: string; slug: string; source_id: string | null; title: string | null; type: string | null;
-    origin: string | null; case_sensitive: boolean | null; alias_text: string | null }> = [];
+    origin: string | null; case_sensitive: boolean | null; alias_text: string | null; identity: unknown }> = [];
   try {
     aliasRows = (await engine.executeRaw<typeof aliasRows[number]>(
-      `SELECT pa.alias_norm, pa.slug, pa.source_id, p.title, p.type, pa.origin, pa.case_sensitive, pa.alias_text
+      `SELECT pa.alias_norm, pa.slug, pa.source_id, p.title, p.type, pa.origin, pa.case_sensitive, pa.alias_text, p.frontmatter->>'identity' AS identity
        FROM page_aliases pa
        JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
        WHERE p.type = ANY($1::text[])
@@ -594,13 +602,19 @@ export async function buildGazetteer(
     const prev = bestPerPage.get(k);
     if (!prev || rank(a.origin) < rank(prev.origin)) bestPerPage.set(k, a);
   }
-  const claims = new Map<string, { rank: number; slugs: Set<string> }>();
+  const claims = new Map<string, { rank: number; slugs: Set<string>; pages: SiblingCandidate[]; shared?: boolean }>();
   for (const a of bestPerPage.values()) {
     const k = `${a.source_id ?? 'default'} ${a.alias_norm}`;
     const r = rank(a.origin);
     const c = claims.get(k);
-    if (!c || r < c.rank) claims.set(k, { rank: r, slugs: new Set([a.slug]) });
-    else if (r === c.rank) c.slugs.add(a.slug);
+    const page = { slug: a.slug, title: a.title, type: a.type, identity: a.identity };
+    if (!c || r < c.rank) claims.set(k, { rank: r, slugs: new Set([a.slug]), pages: [page] });
+    else if (r === c.rank && !c.slugs.has(a.slug)) { c.slugs.add(a.slug); c.pages.push(page); }
+  }
+  // A name identity siblings share (the subject of "Account sheet: X" and
+  // "CRM record: X", or a code both declare) links to every sibling.
+  for (const [k, c] of claims) {
+    if (c.slugs.size > 1) c.shared = siblingVerdict(c.pages, packBySource.get(k.slice(0, k.indexOf(' '))) ?? null, policy) === 'group';
   }
   const aliasEntries: Array<{ entry: GazetteerEntry; base: Omit<DroppedName, 'reason'> }> = [];
   for (const a of bestPerPage.values()) {
@@ -613,7 +627,7 @@ export async function buildGazetteer(
     const claim = claims.get(`${src} ${alias}`)!;
     if (rank(a.origin) > claim.rank) continue;
     if (excludedSlugs.has(a.slug)) { drop({ ...base, reason: 'excluded_slug' }); continue; }
-    if (claim.slugs.size > 1) { drop({ ...base, reason: 'alias_collision' }); continue; }
+    if (claim.slugs.size > 1 && !claim.shared) { drop({ ...base, reason: 'alias_collision' }); continue; }
     if (alias.length < MIN_NAME_LENGTH && !hasCJK(alias)) { drop({ ...base, reason: 'below_min_length' }); continue; }
     if (hasCJK(alias) && cjkCharCount(alias) < MIN_CJK_NAME_LENGTH) { drop({ ...base, reason: 'below_min_length' }); continue; }
     if (ignoreLc.has(alias.toLowerCase())) { drop({ ...base, reason: 'ignored' }); continue; }
@@ -625,7 +639,7 @@ export async function buildGazetteer(
     if (tokens.length === 1 && isGenericEntityToken(tokens[0]!)) { drop({ ...base, reason: 'generic_token' }); continue; }
     const caseTokens = a.case_sensitive && a.alias_text ? caseTokensOf(a.alias_text) : undefined;
     const entry: GazetteerEntry = { slug: a.slug, source_id: src, title: a.title, tokens, origin, matchText: alias,
-      ...(caseTokens && caseTokens.length === tokens.length ? { caseTokens } : {}) };
+      ...(caseTokens && caseTokens.length === tokens.length ? { caseTokens } : {}), ...(claim.shared ? { shared: true as const } : {}) };
     noteFirstWord(src, tokens);
     aliasEntries.push({ entry, base });
   }
@@ -812,13 +826,22 @@ export function findMentionedEntities(
       continue;
     }
 
-    out.push({
-      slug: matched.slug,
-      source_id: matched.source_id,
-      name: matched.title,
-      offset: head.offset,
-    });
-    seenTargets.add(target);
+    // A shared sibling name links every sibling, unless the scanning page is one of them.
+    const want = matched.tokens;
+    const group = matched.shared
+      ? bucket.filter(e => e.shared && e.source_id === matched!.source_id && e.tokens.length === want.length
+        && e.tokens.every((t, k) => t === want[k]) && caseMatches(e, i))
+      : [matched];
+    if (group.length > 1 && group.some(e => e.source_id === opts.fromSourceId && e.slug === opts.fromSlug)) {
+      i += matchedTokens;
+      continue;
+    }
+    for (const e of group) {
+      const key = `${e.source_id}\0${e.slug}`;
+      if (seenTargets.has(key)) continue;
+      out.push({ slug: e.slug, source_id: e.source_id, name: e.title, offset: head.offset });
+      seenTargets.add(key);
+    }
     i += matchedTokens;
   }
 

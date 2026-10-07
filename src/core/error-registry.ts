@@ -378,6 +378,8 @@ export const NOTICE_CODES = {
   unknown_param: { kind: 'info', summary: 'The call passed a parameter the tool does not declare; it was ignored.' },
   listing_truncated: { kind: 'info', summary: 'A listing returned a full page and more rows match; the fix is the next-page call.' },
   former_relationships_hidden: { kind: 'info', summary: 'A graph read returned live relationships only and left out ended ones; the fix repeats the call with status: "all" (or as_of) to see history.' },
+  identity_siblings_capped: { kind: 'info', summary: 'More than three pages share an entity\'s title subject, so the card shows no identity siblings; the fix (for the user) lists them with `gbrain extract mentions --explain`.' },
+  alias_fanout: { kind: 'info', summary: 'search fanned out over an entity\'s other names and stopped at the per-call cap; the skipped names are listed and can be searched directly.' },
   mention_index: { kind: 'degraded', summary: 'The entity mention index is pending, off, failed or does not cover this page type, so references listed for an entity may be incomplete.' },
   degraded_recall: { kind: 'degraded', summary: 'A retrieval stage that affects recall did not run; an empty or thin result is not proof of absence. A failed rerank names its reason (timeout, budget, rate_limited, unreachable, auth, provider_error), the fused-order fallback and the session\'s count of reranker-degraded calls; timeout and rate_limited say to repeat the call after a delay, the rest point at doctor\'s reranker_health.' },
   source_binding_narrowed: { kind: 'info', summary: "A GBRAIN_SOURCE / .gbrain-source binding narrowed an unqualified read that came back empty; the fix reads another source explicitly." },

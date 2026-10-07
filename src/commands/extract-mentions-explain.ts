@@ -7,7 +7,9 @@
  * `ambiguous_first_word`, `below_min_length`, `generic_token`,
  * `alias_collision`, `case_mismatch`, `type_not_linkable`,
  * `linking_disabled`, `pending`, `ignored_by_page`, `ignored_by_config`,
- * `excluded_by_config`, `not_a_known_name`. Only `pending` suggests a sweep; a policy rejection
+ * `excluded_by_config`, `denied_by_config`, `not_a_known_name`. With a slug it also lists every
+ * name the page derives (origin and declaring line), the rejected candidates
+ * with their reasons, and the identity-sibling decision. Only `pending` suggests a sweep; a policy rejection
  * names the setting or the page text that would change it.
  */
 
@@ -15,11 +17,13 @@ import type { BrainEngine } from '../core/engine.ts';
 import { buildGazetteer, findMentionedEntities, tokenizeTitle, type DroppedName, type GazetteerEntry } from '../core/by-mention.ts';
 import { isCrossSourceLinksEnabled } from '../core/link-extraction.ts';
 import { linkableTypesFor, loadSourcePack, parseNameList, readMentionPolicy } from '../core/mentions/policy.ts';
-import { deriveEntityAliases } from '../core/mentions/aliases.ts';
+import { deriveEntityAliases, type RejectedAlias } from '../core/mentions/aliases.ts';
+import { aliasOptsOf } from '../core/mentions/pass.ts';
+import { readIdentitySiblings } from '../core/mentions/siblings.ts';
 import { MENTION_EXTRACTOR_VERSION } from '../core/mentions/pass.ts';
 
 export type ExplainReason = 'ambiguous_first_word' | 'below_min_length' | 'generic_token' | 'alias_collision' | 'case_mismatch'
-  | 'type_not_linkable' | 'linking_disabled' | 'pending' | 'ignored_by_page' | 'ignored_by_config' | 'excluded_by_config' | 'not_a_known_name';
+  | 'type_not_linkable' | 'linking_disabled' | 'pending' | 'ignored_by_page' | 'ignored_by_config' | 'excluded_by_config' | 'denied_by_config' | 'not_a_known_name';
 
 export interface MentionExplanation {
   query: string;
@@ -31,6 +35,12 @@ export interface MentionExplanation {
   message: string;
   page?: { slug: string; linked: boolean };
   next?: string;
+  /** With a slug: every name the page's text derives, with its origin and declaring line. */
+  aliases?: Array<{ alias: string; origin: string; line?: string }>;
+  /** With a slug: candidate names the derivation rejected, with the reason and line. */
+  rejected?: RejectedAlias[];
+  /** With a slug: the identity-sibling decision (mentions/siblings.ts). */
+  siblings?: { pages: string[]; capped: boolean; verdict: string };
 }
 
 const DROP_REASON: Record<DroppedName['reason'], ExplainReason> = {
@@ -50,6 +60,7 @@ const MESSAGES: Record<ExplainReason, string> = {
   ignored_by_page: 'The page lists this name in its frontmatter `mention_ignore`.',
   ignored_by_config: 'The name is on an ignore list (`mentions.ignore` or the built-in ambiguous-brand list).',
   excluded_by_config: 'The page is listed in `mentions.exclude_slugs`, so none of its names link.',
+  denied_by_config: 'The name is on `mentions.alias_deny` or the page\'s frontmatter `alias_deny`, so it is never derived as an alias.',
   not_a_known_name: 'No linkable entity page has this title, title subject or alias in this source.',
 };
 
@@ -75,6 +86,7 @@ export async function explainMention(engine: BrainEngine, query: string, opts: {
     if (!types.includes(asPage.type ?? '')) return done(base, 'type_not_linkable');
   }
   base.entries = entries.map(view);
+  if (asPage) Object.assign(base, await pageNames(engine, sourceId, asPage.slug, policy));
   if (!entries.length) {
     const drop = dropped.find(d => d.source_id === sourceId && (asPage ? d.slug === asPage.slug : tokenizeTitle(d.name).join(' ') === key));
     if (drop) return done(base, DROP_REASON[drop.reason]);
@@ -116,15 +128,33 @@ export async function explainMention(engine: BrainEngine, query: string, opts: {
     : 'The page text does not contain this name.');
 }
 
+/** Every name a page derives (with origin and declaring line), the rejected candidates and the sibling decision. */
+async function pageNames(engine: BrainEngine, sourceId: string, slug: string, policy: Awaited<ReturnType<typeof readMentionPolicy>>):
+  Promise<Pick<MentionExplanation, 'aliases' | 'rejected' | 'siblings'>> {
+  const [p] = await engine.executeRaw<{ title: string | null; compiled_truth: string | null; timeline: string | null; frontmatter: Record<string, unknown> | null }>(
+    'SELECT title, compiled_truth, timeline, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, slug]);
+  if (!p) return {};
+  const derived = deriveEntityAliases(p, aliasOptsOf(policy));
+  const fm = await engine.executeRaw<{ alias_norm: string }>(
+    `SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 AND origin = 'frontmatter' ORDER BY alias_norm`, [sourceId, slug]).catch(() => []);
+  const sib = await readIdentitySiblings(engine, sourceId, { slug, title: p.title }, { excludePrivate: false, policy });
+  return {
+    aliases: [...fm.map(r => ({ alias: r.alias_norm, origin: 'frontmatter' })),
+      ...derived.aliases.map(a => ({ alias: a.alias_text, origin: a.origin, ...(derived.lines.has(a.alias_norm) ? { line: derived.lines.get(a.alias_norm) } : {}) }))],
+    rejected: derived.rejected,
+    siblings: { pages: sib.pages.map(s => s.slug), capped: sib.capped, verdict: sib.pages.length ? 'group' : sib.verdict ?? 'none' },
+  };
+}
+
 /** A declaration the alias derivation rejected (e.g. a 3-character code), found on a linkable entity page. */
 async function rejectedDeclaration(engine: BrainEngine, sourceId: string, name: string, policy: Awaited<ReturnType<typeof readMentionPolicy>>): Promise<ExplainReason | null> {
   const types = linkableTypesFor(await loadSourcePack(engine, sourceId), policy);
-  const pages = await engine.executeRaw<{ title: string | null; compiled_truth: string | null; timeline: string | null }>(
-    `SELECT title, compiled_truth, timeline FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])
+  const pages = await engine.executeRaw<{ title: string | null; compiled_truth: string | null; timeline: string | null; frontmatter: Record<string, unknown> | null }>(
+    `SELECT title, compiled_truth, timeline, frontmatter FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])
         AND (compiled_truth ILIKE $3 OR title ILIKE $3) LIMIT 50`, [sourceId, types, `%${name.replace(/[\\%_]/g, m => `\\${m}`)}%`]);
   for (const p of pages) {
-    const hit = deriveEntityAliases(p).rejected.find(r => r.alias.toLowerCase() === name.toLowerCase());
-    if (hit) return hit.reason;
+    const hit = deriveEntityAliases(p, aliasOptsOf(policy)).rejected.find(r => r.alias.toLowerCase() === name.toLowerCase());
+    if (hit) return hit.reason === 'denied' ? 'denied_by_config' : hit.reason;
   }
   return null;
 }
@@ -142,6 +172,9 @@ export async function runExtractMentionsExplain(engine: BrainEngine, args: strin
   console.log(`${r.query} (source ${r.source_id}): ${r.reason ?? 'links'}`);
   for (const e of r.entries) console.log(`  entry: "${e.name}" → ${e.slug} (${e.origin}${e.case_sensitive ? ', case-sensitive' : ''})`);
   if (r.page) console.log(`  page ${r.page.slug}: ${r.page.linked ? 'linked' : 'not linked'}`);
+  for (const a of r.aliases ?? []) console.log(`  alias: "${a.alias}" (${a.origin})${a.line ? ` from "${a.line}"` : ''}`);
+  for (const x of r.rejected ?? []) console.log(`  rejected: "${x.alias}" (${x.origin}): ${x.reason}${x.line ? ` from "${x.line}"` : ''}`);
+  if (r.siblings) console.log(`  identity siblings: ${r.siblings.pages.length ? r.siblings.pages.join(', ') : 'none'} (${r.siblings.capped ? 'capped: more than 3 pages share the subject' : r.siblings.verdict})`);
   console.log(`  ${r.message}`);
   if (r.next) console.log(`  next: ${r.next}`);
 }

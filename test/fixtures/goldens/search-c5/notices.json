@@ -2,13 +2,13 @@
   "with": {
     "search NULA billing contact": {
       "content": [
-        "[{\"slug\":\"crm/numbat-labs\",\"title\":\"CRM record: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Account record. Account code: NULA. Segment: mid-market. Billing contact: Old Person.\",\"chunk_id\":1,\"score\":1,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"keyword_exact\",\"create_safety\":\"probable\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY3JtL251bWJhdC1sYWJzIl0\"},{\"slug\":\"contracts/amendment-one\",\"title\":\"Amendment No. 1: NULA\",\"type\":\"note\",\"chunk_text\":\"Executed amendment for NULA: payment terms change to Net 30.\",\"chunk_id\":3,\"score\":1,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"weak_semantic\",\"create_safety\":\"unknown\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL2FtZW5kbWVudC1vbmUiXQ\"},{\"slug\":\"contracts/numbat-labs-msa\",\"title\":\"MSA: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Master services agreement with Numbat Labs (account code NULA). Payment terms: Net 45.\",\"chunk_id\":2,\"score\":0.9836065573770493,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"weak_semantic\",\"create_safety\":\"unknown\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL251bWJhdC1sYWJzLW1zYSJd\"},{\"slug\":\"notes/renewal-playbook\",\"title\":\"Renewal playbook\",\"type\":\"note\",\"chunk_text\":\"Confirm the billing contact, check payment terms, send the renewal quote 60 days before the term ends.\",\"chunk_id\":5,\"score\":0.4838709677419355,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"weak_semantic\",\"create_safety\":\"unknown\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0Iiwibm90ZXMvcmVuZXdhbC1wbGF5Ym9vayJd\"}]",
+        "[{\"slug\":\"crm/numbat-labs\",\"title\":\"CRM record: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Account record. Account code: NULA. Segment: mid-market. Billing contact: Old Person.\",\"chunk_id\":1,\"score\":1,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"keyword_exact\",\"create_safety\":\"probable\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY3JtL251bWJhdC1sYWJzIl0\"},{\"slug\":\"contracts/amendment-one\",\"title\":\"Amendment No. 1: NULA\",\"type\":\"note\",\"chunk_text\":\"Executed amendment for NULA: payment terms change to Net 30.\",\"chunk_id\":3,\"score\":1,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"weak_semantic\",\"create_safety\":\"unknown\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL2FtZW5kbWVudC1vbmUiXQ\"},{\"slug\":\"contracts/numbat-labs-msa\",\"title\":\"MSA: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Master services agreement with Numbat Labs (account code NULA). Payment terms: Net 45.\",\"chunk_id\":2,\"score\":0.14590249955654144,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"matched_alias\":\"Numbat Labs\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL251bWJhdC1sYWJzLW1zYSJd\"}]",
         "Other names in these results (documents may use either; search the one you have not tried): NULA = Numbat Labs (declared in contracts/numbat-labs-msa).",
         "Saved facts (remember) matching this query, newest first; recall returns more:\n- The billing contact for Numbat Labs is New Person. [entity: numbat-labs; saved 2026-09-01; provenance: user update]",
         "[gbrain notice degraded_recall kind=degraded]\nwhy: Recall was degraded (embed_unavailable): semantic (vector) search did not run, so matches phrased differently from the query can be missing. Treat a thin or empty result as \"not found with a degraded search\", never as \"the brain has nothing on this\".\nfix: gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024\nnext: tell_user_to_run\nuser_message: Semantic search needs an embedding API key. Voyage AI works with this brain; if you add a key (<provider key>), I can turn it on. Embedding costs a little per page; your notes and facts stay as they are."
       ],
       "retrieval": {
-        "returned_count": 4,
+        "returned_count": 3,
         "retrieved_count": 2,
         "vector_enabled": false,
         "expansion_applied": false,
@@ -46,12 +46,25 @@
             "slug": "contracts/numbat-labs-msa"
           }
         ],
+        "fanout": {
+          "resolved_entity": null,
+          "aliases_searched": [
+            {
+              "alias": "Numbat Labs",
+              "page": "crm/numbat-labs",
+              "hits": 1,
+              "truncated": false
+            }
+          ],
+          "aliases_skipped": [],
+          "truncated": false
+        },
         "rows": "lean"
       }
     },
     "search Numbat Labs payment terms": {
       "content": [
-        "[{\"slug\":\"contracts/numbat-labs-msa\",\"title\":\"MSA: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Master services agreement with Numbat Labs (account code NULA). Payment terms: Net 45.\",\"chunk_id\":2,\"score\":1,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"keyword_exact\",\"create_safety\":\"probable\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL251bWJhdC1sYWJzLW1zYSJd\"},{\"slug\":\"crm/numbat-labs\",\"title\":\"CRM record: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Account record. Account code: NULA. Segment: mid-market. Billing contact: Old Person.\",\"chunk_id\":1,\"score\":0.5948760330578512,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"weak_semantic\",\"create_safety\":\"unknown\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY3JtL251bWJhdC1sYWJzIl0\"},{\"slug\":\"contracts/amendment-one\",\"title\":\"Amendment No. 1: NULA\",\"type\":\"note\",\"chunk_text\":\"Executed amendment for NULA: payment terms change to Net 30.\",\"chunk_id\":3,\"score\":1,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"keyword_exact\",\"create_safety\":\"probable\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL2FtZW5kbWVudC1vbmUiXQ\"}]",
+        "[{\"slug\":\"contracts/numbat-labs-msa\",\"title\":\"MSA: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Master services agreement with Numbat Labs (account code NULA). Payment terms: Net 45.\",\"chunk_id\":2,\"score\":1,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"keyword_exact\",\"create_safety\":\"probable\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL251bWJhdC1sYWJzLW1zYSJd\"},{\"slug\":\"crm/numbat-labs\",\"title\":\"CRM record: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Account record. Account code: NULA. Segment: mid-market. Billing contact: Old Person.\",\"chunk_id\":1,\"score\":0.5948760330578512,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"weak_semantic\",\"create_safety\":\"unknown\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY3JtL251bWJhdC1sYWJzIl0\"},{\"slug\":\"contracts/amendment-one\",\"title\":\"Amendment No. 1: NULA\",\"type\":\"note\",\"chunk_text\":\"Executed amendment for NULA: payment terms change to Net 30.\",\"chunk_id\":3,\"score\":0.14590249955654144,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"matched_alias\":\"NULA\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL2FtZW5kbWVudC1vbmUiXQ\"}]",
         "Other names in these results (documents may use either; search the one you have not tried): NULA = Numbat Labs (declared in crm/numbat-labs).",
         "[gbrain notice degraded_recall kind=degraded]\nwhy: Recall was degraded (embed_unavailable): semantic (vector) search did not run, so matches phrased differently from the query can be missing. Treat a thin or empty result as \"not found with a degraded search\", never as \"the brain has nothing on this\".\nfix: gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024\nnext: tell_user_to_run\nuser_message: Semantic search needs an embedding API key. Voyage AI works with this brain; if you add a key (<provider key>), I can turn it on. Embedding costs a little per page; your notes and facts stay as they are."
       ],
@@ -84,6 +97,19 @@
             "slug": "crm/numbat-labs"
           }
         ],
+        "fanout": {
+          "resolved_entity": null,
+          "aliases_searched": [
+            {
+              "alias": "NULA",
+              "page": "crm/numbat-labs",
+              "hits": 3,
+              "truncated": false
+            }
+          ],
+          "aliases_skipped": [],
+          "truncated": false
+        },
         "rows": "lean"
       }
     },
@@ -133,6 +159,19 @@
             "slug": "crm/ocelot-freight"
           }
         ],
+        "fanout": {
+          "resolved_entity": null,
+          "aliases_searched": [
+            {
+              "alias": "Ocelot Freight",
+              "page": "crm/ocelot-freight",
+              "hits": 1,
+              "truncated": false
+            }
+          ],
+          "aliases_skipped": [],
+          "truncated": false
+        },
         "rows": "lean"
       }
     },
@@ -168,7 +207,7 @@
     },
     "query Numbat Labs payment terms": {
       "content": [
-        "[{\"slug\":\"contracts/numbat-labs-msa\",\"title\":\"MSA: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Master services agreement with Numbat Labs (account code NULA). Payment terms: Net 45.\",\"chunk_id\":2,\"score\":1,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"keyword_exact\",\"create_safety\":\"probable\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL251bWJhdC1sYWJzLW1zYSJd\"},{\"slug\":\"crm/numbat-labs\",\"title\":\"CRM record: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Account record. Account code: NULA. Segment: mid-market. Billing contact: Old Person.\",\"chunk_id\":1,\"score\":0.5948760330578512,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"weak_semantic\",\"create_safety\":\"unknown\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY3JtL251bWJhdC1sYWJzIl0\"},{\"slug\":\"contracts/amendment-one\",\"title\":\"Amendment No. 1: NULA\",\"type\":\"note\",\"chunk_text\":\"Executed amendment for NULA: payment terms change to Net 30.\",\"chunk_id\":3,\"score\":1,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"keyword_exact\",\"create_safety\":\"probable\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL2FtZW5kbWVudC1vbmUiXQ\"}]",
+        "[{\"slug\":\"contracts/numbat-labs-msa\",\"title\":\"MSA: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Master services agreement with Numbat Labs (account code NULA). Payment terms: Net 45.\",\"chunk_id\":2,\"score\":1,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"keyword_exact\",\"create_safety\":\"probable\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL251bWJhdC1sYWJzLW1zYSJd\"},{\"slug\":\"crm/numbat-labs\",\"title\":\"CRM record: Numbat Labs\",\"type\":\"note\",\"chunk_text\":\"Account record. Account code: NULA. Segment: mid-market. Billing contact: Old Person.\",\"chunk_id\":1,\"score\":0.5948760330578512,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"evidence\":\"weak_semantic\",\"create_safety\":\"unknown\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY3JtL251bWJhdC1sYWJzIl0\"},{\"slug\":\"contracts/amendment-one\",\"title\":\"Amendment No. 1: NULA\",\"type\":\"note\",\"chunk_text\":\"Executed amendment for NULA: payment terms change to Net 30.\",\"chunk_id\":3,\"score\":0.14590249955654144,\"source_id\":\"default\",\"effective_date\":\"DATE\",\"matched_alias\":\"NULA\",\"id\":\"gbrain-page:v1:WyJkZWZhdWx0IiwiY29udHJhY3RzL2FtZW5kbWVudC1vbmUiXQ\"}]",
         "Other names in these results (documents may use either; search the one you have not tried): NULA = Numbat Labs (declared in crm/numbat-labs).",
         "[gbrain notice degraded_recall kind=degraded]\nwhy: Recall was degraded (embed_unavailable): semantic (vector) search did not run, so matches phrased differently from the query can be missing. Treat a thin or empty result as \"not found with a degraded search\", never as \"the brain has nothing on this\".\nfix: gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024\nnext: tell_user_to_run\nuser_message: Semantic search needs an embedding API key. Voyage AI works with this brain; if you add a key (<provider key>), I can turn it on. Embedding costs a little per page; your notes and facts stay as they are."
       ],
@@ -205,6 +244,19 @@
           "confidence": "moderate",
           "reason": "keyword_exact_top",
           "query_shape": "factual"
+        },
+        "fanout": {
+          "resolved_entity": null,
+          "aliases_searched": [
+            {
+              "alias": "NULA",
+              "page": "crm/numbat-labs",
+              "hits": 3,
+              "truncated": false
+            }
+          ],
+          "aliases_skipped": [],
+          "truncated": false
         },
         "rows": "lean"
       }
@@ -248,6 +300,19 @@
           "confidence": "moderate",
           "reason": "keyword_exact_top",
           "query_shape": "factual"
+        },
+        "fanout": {
+          "resolved_entity": null,
+          "aliases_searched": [
+            {
+              "alias": "Ocelot Freight",
+              "page": "crm/ocelot-freight",
+              "hits": 1,
+              "truncated": false
+            }
+          ],
+          "aliases_skipped": [],
+          "truncated": false
         },
         "rows": "lean"
       }

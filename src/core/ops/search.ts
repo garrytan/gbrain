@@ -41,6 +41,8 @@ import { resolveBoostMap, resolveHardExcludes } from '../search/source-boost.ts'
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION } from '../operations-descriptions.ts';
 import { declaredNames, titleName } from '../mentions/aliases.ts';
+import { withAliasFanOut, type FanoutMeta } from '../search/alias-fanout.ts';
+import { mentionCoverageNotice, readMentionCoverage } from '../mentions/coverage.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
@@ -302,28 +304,22 @@ export class DeclarationMemo {
 }
 
 /**
- * When the evidence declares another name for the entity the query names,
- * also search under that name and splice the new pages in after the top two
- * results, so documents that use only the other name are not left for the
- * agent to discover (most agents did not act on the notice alone). Nothing is
- * dropped: cutting the tail to make room lost the page that answered
- * (gbrain-evals Cat 40, family B).
+ * Notices for an alias fan-out: the model-visible line when it stopped at its
+ * cap (the skipped names can be searched directly), and the `mention_index`
+ * notice when the resolved entity's source is not fully indexed yet (its
+ * aliases may be incomplete until the catch-up sweep finishes).
  */
-async function withDeclaredNameFanOut(results: SearchResult[], queryText: string, memo: DeclarationMemo,
-  run: (query: string, limit: number) => Promise<SearchResult[]>): Promise<SearchResult[]> {
-  const [first] = memo.scan(results, queryText);
-  if (!first) return results;
-  const nameAt = indexOfName(queryText, first.name, false);
-  const [from, to, at] = nameAt >= 0
-    ? [first.name, first.alias, nameAt]
-    : [first.alias, first.name, indexOfName(queryText, first.alias, true)];
-  const alt = queryText.slice(0, at) + to + queryText.slice(at + from.length);
-  let extra: SearchResult[];
-  try { extra = await run(alt, 5); } catch { return results; }
-  const seen = new Set(results.map(r => `${r.source_id ?? ''}\u0000${r.slug}`));
-  const fresh = extra.filter(r => !seen.has(`${r.source_id ?? ''}\u0000${r.slug}`));
-  if (fresh.length === 0) return results;
-  return [...results.slice(0, 2), ...fresh, ...results.slice(2)];
+async function emitFanoutNotices(ctx: OperationContext, fanout: FanoutMeta | undefined, scope: SourceScope): Promise<void> {
+  if (!fanout) return;
+  if (fanout.truncated) {
+    const notice: Notice = { code: 'alias_fanout', kind: 'info',
+      why: `Also searched ${fanout.aliases_searched.map(a => `"${a.alias}"`).join(', ')}; not searched (cap reached): ${fanout.aliases_skipped.map(a => `"${a}"`).join(', ')}. Search those names directly before a history or as-of answer.` };
+    ctx.emitNotice?.(notice);
+  }
+  if (!fanout.resolved_entity) return;
+  const coverage = await readMentionCoverage(ctx.engine, scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default']).catch(() => null);
+  const notice = coverage ? mentionCoverageNotice(coverage) : null;
+  if (notice) ctx.emitNotice?.(notice);
 }
 
 export interface SavedFactMatch { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string; source: string }
@@ -729,15 +725,19 @@ const search: Operation = {
       ...searchOpts, onMeta: (m) => { capturedMeta = m; }, explain: p.explain === true, explainTarget: explainPrep?.trace,
     });
     const declarations = new DeclarationMemo();
-    const results = (await withDeclaredNameFanOut(primary, queryText, declarations,
-      (alt, altLimit) => hybridSearchCached(ctx.engine, alt, { ...searchOpts, limit: altLimit, offset: 0 }))).map(r => ({ ...r }));
+    const fanned = offset === 0
+      ? await withAliasFanOut(ctx.engine, primary, queryText, { ...scope, excludePrivate },
+        { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...scope }, () => declarations.scan(primary, queryText))
+      : { results: primary };
+    const results = fanned.results.map(r => ({ ...r }));
+    await emitFanoutNotices(ctx, fanned.fanout, scope);
     stampDeepResearchIds(results);
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap,
-      async rows => withExplainTarget(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search' }), finishExplainTarget(ctx, p, explainPrep, results, 'search')));
+      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search' })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search')));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'search', positional: ['query'] },
@@ -972,10 +972,11 @@ const query: Operation = {
       explain: p.explain === true, explainTarget: explainPrep?.trace,
     });
     const declarations = new DeclarationMemo();
-    results = await withDeclaredNameFanOut(results, queryText, declarations, (alt, altLimit) => hybridSearchCached(ctx.engine, alt, {
-      limit: altLimit, excludePrivate, requireSafeChunks: ctx.remote !== false, takesHoldersAllowList: readHolders(ctx),
-      expansion: false, types, ...querySourceScope,
-    }));
+    const primaryRows = results;
+    const fanned = await withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
+      { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...querySourceScope }, () => declarations.scan(primaryRows, queryText));
+    results = fanned.results;
+    await emitFanoutNotices(ctx, fanned.fanout, querySourceScope);
     // #1663 — CRAG confidence gate. Grade what retrieval returned (zero-LLM;
     // reads the stamped honesty signals: evidence, exact_lookup, rerank
     // score), attach grade + query shape to the retrieval meta on EVERY call,
@@ -1135,7 +1136,7 @@ const query: Operation = {
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
     return evidenceOutput(ctx, p, results, plan, { ...querySourceScope, excludePrivate, detail }, capturedMeta, snippetCap,
-      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query' })), crag }, finishExplainTarget(ctx, p, explainPrep, results, 'query')));
+      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query' })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query')));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },

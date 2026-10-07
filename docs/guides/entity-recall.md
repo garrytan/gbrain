@@ -124,16 +124,40 @@ agent never reads a short list as "nothing else exists".
   (alias `crm`), `organization` and `entity`. Other packs add their own
   `primitive: entity` types.
 - Put the name in the title, or after a prefix: `CRM record: Acme Example`.
-- Declare codes in the body: `Account code: ACMX`, `also known as`, `aka`,
-  `short name`, `ticker`, `code name`. A one-word code links only as written
-  (`ACMX`, not `acmx`).
+- Declare other names in the body (see [How gbrain learns an alias](#how-gbrain-learns-an-alias)).
 - Or list names in frontmatter `aliases: [Acme, Acme Inc]`.
 
 Names are never linked when they are shorter than 4 characters, a generic word
 ("Will", "Team"), the first word of a longer entity name ("Quormiro" alone when
-"Quormiro Capital" and "Quormiro Labs" both exist), claimed by two pages, or
-inside a private facts or takes fence. Contracts and other non-entity pages
-that repeat a code do not claim it.
+"Quormiro Capital" and "Quormiro Labs" both exist), claimed by two unrelated
+pages, or inside a private facts or takes fence. Contracts and other non-entity
+pages that repeat a code do not claim it.
+
+## How gbrain learns an alias
+
+**Say to your agent:** *"Make sure gbrain knows every name the Acme account goes by."*
+
+```markdown
+Acme Example (formerly Gearbox Labs), also known as Blue Harbor, goes by ACMX.
+Internal nickname: Copper Fox
+| Former legal name | Gearbox Labs Inc |
+```
+
+gbrain reads prose cues (`also known as`, `aka`, `nicknamed`, `goes by`,
+`formerly`, `doing business as`, ...), label lines and table rows whose label
+names an alias field (`nickname`, `alias`, `trading name`, `account code`, ...),
+and a quoted defined term after the page's own name. A name is a quoted name or
+up to 4 capitalized or code words; lowercase words, possessives, common words
+(`the Board`, `Q3 Plan`) and names after `competitor`/`partner`/... are
+rejected. The full list is the [alias conventions spec](../designs/ALIAS_CONVENTIONS.md).
+`mentions.alias_deny` (or frontmatter `alias_deny:`) drops a name. The card's
+`identity_excerpt` shows other name-like lines verbatim.
+
+**Identity siblings.** `Account sheet: Acme Example` and `CRM record: Acme
+Example` are shown together (`identity_siblings`, never merged); a document
+naming only "Acme Example" links to both. People are never siblings; frontmatter
+`identity: separate` keeps a page out. **Search** also searches up to 4 other
+names of the entity a query names; those rows carry `matched_alias`.
 
 ## When a name does not link
 
@@ -150,8 +174,12 @@ acmx (source default): case_mismatch
 
 The reason codes are `ambiguous_first_word`, `below_min_length`,
 `generic_token`, `alias_collision`, `case_mismatch`, `type_not_linkable`,
-`linking_disabled`, `pending`, `ignored_by_page`, `ignored_by_config` and
-`not_a_known_name`. Only `pending` is fixed by running `gbrain extract --stale`.
+`linking_disabled`, `pending`, `ignored_by_page`, `ignored_by_config`,
+`excluded_by_config`, `denied_by_config` and `not_a_known_name`. Only `pending`
+is fixed by running `gbrain extract --stale`. Given a slug
+(`gbrain extract mentions --explain crm/acme-example`), it also lists every name
+the page derives with its origin and declaring line, each rejected candidate
+with its reason, and the identity-sibling decision.
 
 ## Settings
 
@@ -162,6 +190,10 @@ The reason codes are `ambiguous_first_word`, `below_min_length`,
 | `mentions.ignore` | none | Names never linked, comma-separated or a JSON array. |
 | `mentions.exclude_slugs` | none | Pages never linked by any of their names (title or alias), comma-separated or a JSON array of slugs. Use it for an entity whose name is also a common word, such as a person titled 인하 against "로 인하여" ("due to"). The next sweep removes mention links already written to the page. |
 | frontmatter `mention_ignore: [names]` | none | Names not linked from that one page. |
+| `mentions.alias_deny` | none | Names never derived as an alias (comma list or JSON array); frontmatter `alias_deny:` does the same for one page. |
+| `mentions.multiword_aliases` | `true` | `false` derives one-word declared aliases only. |
+| `mentions.sibling_merge` | `true` | `false` stops showing identity siblings and linking a shared name to each sibling; frontmatter `identity: separate` does it for one page. |
+| `search.alias_fanout_max` | `4` | Other names search and query also search per call; `0` turns the fan-out off. |
 
 Mention links written inside a longer Hangul word, or across a space, by a
 matcher older than the Hangul boundary rule (#5829) are stale:

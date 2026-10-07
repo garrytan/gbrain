@@ -224,6 +224,10 @@ const entity: Operation = {
       const notice = mentionCoverageNotice(coverage, result.card?.entity.type);
       if (notice) ctx.emitNotice?.(notice);
     }
+    if (result.card?.identity_siblings?.capped) {
+      const { siblingsCappedNotice } = await import('./verbs/entity-card-identity.ts');
+      ctx.emitNotice?.(siblingsCappedNotice(result.card.entity.slug));
+    }
     return {
       protocol_version: MEMORY_VERBS_VERSION,
       found: result.found,

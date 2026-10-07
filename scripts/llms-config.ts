@@ -134,13 +134,13 @@ export const SECTIONS: DocSection[] = [
         includeInFull: false,
       },
       {
-        // Re-inlined: the CLAUDE.md resolver restructure (per-file index moved to
-        // docs/architecture/KEY_FILES.md, link-only) freed ~530KB of bundle
-        // headroom, so this value-explainer rides the single-fetch bundle again.
+        // Link-only: the bundle reached FULL_SIZE_BUDGET; this value-explainer is
+        // the least operational inlined doc, so it gives way to protocol docs.
         title: "docs/what-schemas-unlock.md",
         description:
           "Why schemas matter: 7 killer use cases (4000 invisible meetings, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) + the structural argument for typed page kinds. Read this before pitching schema authoring.",
         path: "docs/what-schemas-unlock.md",
+        includeInFull: false,
       },
       {
         title: "docs/schema-author-tutorial.md",

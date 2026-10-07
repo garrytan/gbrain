@@ -19,6 +19,9 @@ import { extractStaleFromDB } from '../../src/commands/extract.ts';
 import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
 import { readReferrerPage } from '../../src/core/mentions/referrers.ts';
 import { loadSourcePack } from '../../src/core/mentions/policy.ts';
+import { importFromContent } from '../../src/core/import-file.ts';
+import { serializeMarkdown } from '../../src/core/markdown.ts';
+import { resolveQueryEntity, searchAliasRequired } from '../../src/core/search/alias-fanout.ts';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 
 const SKIP_PG = !hasDatabase();
@@ -34,6 +37,12 @@ async function seed(engine: BrainEngine): Promise<void> {
   for (let i = 0; i < 14; i++) await put(`tickets/t${String(i).padStart(2, '0')}`, 'ticket', `Ticket ${i}`, `Customer: QUCO\nStatus: ${i === 3 ? 'Open' : 'Closed'}`);
   await put('meetings/m1', 'meeting', 'Meeting: QULA renewal prep', 'Quormiro asked about Dana Example.');
   await put('notes/lower', 'note', 'Lowercase', 'quco is not a code here');
+  // Identity siblings: the account sheet declares a nickname; a note names only the shared subject.
+  await put('accounts/quormiro-capital', 'account', 'Account sheet: Quormiro Capital', 'Internal nickname: Copper Fox');
+  await put('notes/subject-only', 'note', 'Renewal call', 'Quormiro Capital called about the renewal.');
+  const doc = (slug: string, body: string) => importFromContent(engine, slug, serializeMarkdown({}, body, '', { type: 'note', title: slug, tags: [] }), { noEmbed: true, forceRechunk: true });
+  await doc('docs/cf1', 'Copper Fox renewal slipped; refund pending.');
+  await doc('docs/cf2', 'Copper Fox renewal closed on time.');
   // Distinct referrer dates: both engines order the newest-first page identically,
   // independent of how many writes share one clock tick.
   await engine.executeRaw(
@@ -63,6 +72,10 @@ async function snapshot(engine: BrainEngine) {
       coverage: card.coverage!.state },
     page: { total: first.total, truncated: first.truncated, rows: first.rows.map(r => r.slug) },
     columns: columns.map(r => r.column_name),
+    siblings: card.identity_siblings?.pages.map(p => `${p.slug}:${p.aka.join('|')}`),
+    excerpt: card.identity_excerpt?.map(l => `${l.slug}:${l.line}`),
+    fanout: (await searchAliasRequired(engine, 'Copper Fox', ['refund'], { sourceId: 'default', limit: 5 })).map(r => r.slug),
+    resolved: (await resolveQueryEntity(engine, 'Quormiro Capital renewal', { sourceId: 'default', excludePrivate: true }))?.pages.map(p => p.slug).sort(),
   };
 }
 
@@ -82,7 +95,12 @@ describe('entity mention index (PGLite half)', () => {
     expect(pgliteSnap.mentions).toEqual({ state: 'complete', remaining: 0 });
     expect(pgliteSnap.links).toContain('meetings/m1->crm/124');
     expect(pgliteSnap.links).not.toContain('notes/lower->crm/123');
-    expect(pgliteSnap.card).toEqual({ slug: 'crm/123', count: 14, groups: ['ticket:14:10'], coverage: 'complete' });
+    expect(pgliteSnap.card).toEqual({ slug: 'crm/123', count: 15, groups: ['note:1:1', 'ticket:14:10'], coverage: 'complete' });
+    expect(pgliteSnap.links).toEqual(expect.arrayContaining(['notes/subject-only->crm/123', 'notes/subject-only->accounts/quormiro-capital']));
+    expect(pgliteSnap.siblings).toEqual(['accounts/quormiro-capital:Copper Fox|Quormiro Capital']);
+    expect(pgliteSnap.excerpt).toContain('accounts/quormiro-capital:Internal nickname: Copper Fox');
+    expect(pgliteSnap.fanout).toEqual(['docs/cf1', 'docs/cf2']);
+    expect(pgliteSnap.resolved).toEqual(['accounts/quormiro-capital', 'crm/123']);
     expect(pgliteSnap.page).toMatchObject({ total: 14, truncated: true });
     expect(pgliteSnap.columns).toEqual(expect.arrayContaining(['origin', 'case_sensitive', 'alias_text']));
   });

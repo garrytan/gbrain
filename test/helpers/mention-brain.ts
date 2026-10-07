@@ -26,7 +26,8 @@ export async function resetMentionBrain(engine: BrainEngine): Promise<void> {
   await engine.executeRaw('DELETE FROM mention_gazetteer_entries');
   await engine.executeRaw('DELETE FROM mention_index_status');
   await engine.executeRaw("DELETE FROM sources WHERE id <> 'default'");
-  for (const key of ['auto_link', 'mentions.auto_link', 'mentions.entity_types', 'mentions.ignore', 'link_resolution.cross_source', 'entity_identity.union']) {
+  for (const key of ['auto_link', 'mentions.auto_link', 'mentions.entity_types', 'mentions.ignore', 'link_resolution.cross_source', 'entity_identity.union',
+    'mentions.exclude_slugs', 'mentions.alias_deny', 'mentions.multiword_aliases', 'mentions.sibling_merge', 'search.alias_fanout_max', 'search.demote_generated']) {
     await engine.unsetConfig(key);
   }
 }

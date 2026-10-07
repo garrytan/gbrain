@@ -4,10 +4,14 @@
  * names. Read from the per-source status row the mention pass maintains plus
  * the due pages written since its last count (an indexed read over recent
  * pages per source), never a whole-brain scan, and never another source's
- * state.
+ * state. A row counted by a binary with other extractor versions (its
+ * version stamp differs) is recounted once and the count saved on the row,
+ * so a version bump shows every version-behind page as pending, whatever its
+ * `updated_at`, until the sweep reaches it.
  *
  * States: `complete`; `pending` (pages written or invalidated since the last
- * pass, or no pass yet); `disabled` (auto_link or mentions.auto_link is off);
+ * pass, pages behind the binary's mention or alias version, or no pass yet);
+ * `disabled` (auto_link or mentions.auto_link is off);
  * `type_not_linkable` (cards only: nothing links to this page type by
  * mention); `failed` (the last pass could not build the index). Any state but
  * `complete` carries `degraded: true` and a `[gbrain notice mention_index]`.
@@ -15,8 +19,8 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { Notice } from '../agent-output.ts';
-import { readMentionPolicy } from './policy.ts';
-import { MENTION_EXTRACTOR_VERSION } from './pass.ts';
+import { linkableTypesFor, loadSourcePack, readMentionPolicy } from './policy.ts';
+import { INDEX_VERSION_STAMP, MENTION_EXTRACTOR_VERSION, countIndexDuePages, splitStoredFingerprint } from './pass.ts';
 
 export type CoverageState = 'complete' | 'pending' | 'disabled' | 'type_not_linkable' | 'failed';
 
@@ -36,8 +40,8 @@ const toIso = (v: unknown): string | null => {
 /** Coverage over `sourceIds` (the caller's permitted sources). */
 export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, sourceIds: string[]): Promise<MentionCoverage> {
   const policy = await readMentionPolicy(engine);
-  const rows = await engine.executeRaw<{ source_id: string; state: string; pending: number; counted_at: unknown; last_pass_at: unknown }>(
-    `SELECT source_id, state, pending, counted_at, last_pass_at FROM mention_index_status WHERE source_id = ANY($1::text[])`, [sourceIds]);
+  const rows = await engine.executeRaw<{ source_id: string; state: string; pending: number; counted_at: unknown; last_pass_at: unknown; policy_fingerprint: string | null }>(
+    `SELECT source_id, state, pending, counted_at, last_pass_at, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])`, [sourceIds]);
   const bySource = new Map(rows.map(r => [r.source_id, r]));
   let pending = 0;
   let failed = false;
@@ -53,6 +57,18 @@ export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw'
       continue;
     }
     if (row.state === 'failed') failed = true;
+    const stored = splitStoredFingerprint(row.policy_fingerprint);
+    if (stored.versions !== INDEX_VERSION_STAMP) {
+      // Counted by another binary: recount once (pages behind this binary's versions are due whatever their updated_at) and save it.
+      const due = await countIndexDuePages(engine, sourceId, linkableTypesFor(await loadSourcePack(engine, sourceId), policy));
+      await engine.executeRaw(
+        `UPDATE mention_index_status SET pending = $2, counted_at = now(), policy_fingerprint = $3, updated_at = now(),
+                state = CASE WHEN state = 'complete' AND $2::int > 0 THEN 'pending' ELSE state END
+          WHERE source_id = $1 AND policy_fingerprint IS NOT DISTINCT FROM $4`,
+        [sourceId, due, `${stored.hash ?? ''};${INDEX_VERSION_STAMP}`, row.policy_fingerprint]).catch(() => undefined);
+      pending += due;
+      continue;
+    }
     // Pages written at or after the last count that are not scanned at their current content (the index on updated_at keeps it small).
     const [since] = await engine.executeRaw<{ n: number }>(
       `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id

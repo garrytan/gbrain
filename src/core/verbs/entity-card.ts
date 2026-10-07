@@ -31,6 +31,7 @@ import type { Link, SearchResult } from '../types.ts';
 import { loadLinkableTypes } from '../mentions/policy.ts';
 import { readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
 import { encodeCursor, readReferrerGroups, PAGE_DEFAULT_LIMIT, type ReferenceRow } from '../mentions/referrers.ts';
+import { readCardIdentity, type CardIdentity } from './entity-card-identity.ts';
 
 const EDGE_CAP = 10;
 const OPEN_THREADS_CAP = 3;
@@ -97,6 +98,16 @@ export interface EntityCard {
   referenced_by?: ReferenceGroupView[];
   /** Whether every page in this source has been scanned for this entity's names. `entity` verb only. */
   coverage?: MentionCoverage;
+  /** Parallel to `aka`: each entry's origin (frontmatter, declared, subject) and the page that declares it. `entity` verb only. */
+  aka_sources?: CardIdentity['aka_sources'];
+  /** Pages naming the same subject under another title prefix, with their own aliases; never merged into this card. `entity` verb only. */
+  identity_siblings?: CardIdentity['identity_siblings'];
+  /** Verbatim lines of this page and its siblings that may carry other names (label lines, codes, declarations), with the page slug. `entity` verb only. */
+  identity_excerpt?: CardIdentity['identity_excerpt'];
+  /** Pages whose qualifying lines did not fit the excerpt budget. */
+  identity_excerpt_omitted?: string[];
+  /** What `aka` covers and which names to search before a history or as-of answer. `entity` verb only. */
+  alias_guidance?: CardIdentity['alias_guidance'];
 }
 
 export interface ReferenceGroupView {
@@ -269,7 +280,10 @@ export async function buildEntityCard(
   }));
 
   const card = await assembleCard(engine, sourceId, best.row, opts.remote, excludePrivate);
-  if (opts.includeReferences) Object.assign(card, await cardReferences(engine, sourceId, best.row, opts, excludePrivate, entityTypes));
+  if (opts.includeReferences) {
+    Object.assign(card, await cardReferences(engine, sourceId, best.row, opts, excludePrivate, entityTypes),
+      await readCardIdentity(engine, sourceId, best.row, { excludePrivate, surfaceCeiling: opts.surfaceCeiling, aka: card.aka }));
+  }
   return {
     found: true,
     card,

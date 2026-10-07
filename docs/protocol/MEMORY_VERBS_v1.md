@@ -387,6 +387,17 @@ The `entity` verb adds three optional card fields (ambient callers,
 - `open_threads` (best-effort in v1): active commitment-kind facts + timeline
   entries from the last 90 days, capped at 3.
 
+#### entity identity fields (additive)
+
+The `entity` verb also adds: `aka_sources[]` (`{ origin, slug }` per `aka`
+entry; `aka` is unchanged and never claims completeness); `identity_siblings`
+(`{ pages[{ slug, title, type, aka[] }], capped }`: same subject under another
+title prefix, shown, never merged; more than 3 is `capped` with an
+`identity_siblings_capped` notice); `identity_excerpt[]` (`{ slug, line }`,
+verbatim name-like lines from the remote-sanitized body, 600 characters per
+page and 1,200 per card, `identity_excerpt_omitted[]`); `alias_guidance`
+(`{ text, requires_surface? }`).
+
 #### entity open_threads loop backing (additive)
 
 On brains running the open-loop engine, `open_threads` entries may
