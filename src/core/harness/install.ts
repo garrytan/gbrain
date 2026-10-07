@@ -5,7 +5,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { acquireBootstrapLock } from '../bootstrap/lock.ts';
-import { claudeUserMcpConfigPath, codexConfigPath, opencodeGlobalConfigPath, opencodeGlobalSiblingPath, CODEX_TOML_BLOCK_BEGIN } from '../bootstrap/host-specs.ts';
+import { claudeUserMcpConfigPath, codexConfigPath, opencodeGlobalConfigPath, opencodeGlobalSiblingPath, piMcpConfigPath, CODEX_TOML_BLOCK_BEGIN } from '../bootstrap/host-specs.ts';
 import { writeCodexHttpServerBlock, removeCodexHttpServerBlock } from '../bootstrap/codex-toml.ts';
 import { writeOpencodeMcpEntry, removeOpencodeMcpEntry, parseOpencodeConfig } from '../bootstrap/opencode-json.ts';
 import { renderAgentLauncher } from '../agent-install/launcher.ts';
@@ -104,7 +104,8 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
       remote_membership_pending: 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true };
   }
   const configPath = opts.configPath ?? (adapter.connection === 'codex-toml' ? codexConfigPath()
-    : adapter.connection === 'claude-json' ? claudeUserMcpConfigPath() : opencodeGlobalConfigPath());
+    : adapter.connection === 'claude-json' ? claudeUserMcpConfigPath()
+      : adapter.connection === 'pi-json' ? piMcpConfigPath() : opencodeGlobalConfigPath());
   assertNoSymlinks(configPath);
   mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
   const lock = await acquireBootstrapLock(dirname(configPath));

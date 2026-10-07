@@ -88,6 +88,7 @@ import {
   type HarnessDetectOverrides,
 } from '../core/bootstrap/harness.ts';
 import { refreshHarnessSkills } from '../core/bootstrap/harness-skills.ts';
+import { isPiBootstrapSubcommand, runPiBootstrap } from '../core/bootstrap/pi-bootstrap.ts';
 import { claudeUserSettingsPath, codexConfigPath, opencodeConfigDir, opencodeGlobalConfigPath, opencodeProjectConfigPath } from '../core/bootstrap/host-specs.ts';
 import {
   opencodeEntryKind,
@@ -138,6 +139,8 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
                                   with a sharing warning). --seat credits captured
                                   sessions to this agent seat (kept on re-install;
                                   --no-seat clears it; --seat off records none).
+                                  --harness pi: user-global pi extension + mcp.json entry,
+                                  no workspace needed (also status/verify/uninstall --harness pi).
   repo                            Create the dedicated PRIVATE GitHub repo (or adopt
                                   an EMPTY private repo you created under your own
                                   account), verify the privacy bit via the API, push.
@@ -205,7 +208,8 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     'gbrain bootstrap hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
     '                       [--seat <label> | --no-seat] [--surface verbs|starter|full]\n' +
     '  Register MCP (--surface starter unless given; a replaced entry keeps its surface) (+ per-turn hooks on Claude Code, ON by default; --no-hooks opts out).\n' +
-    '  --seat credits captured sessions to this agent seat (kept on re-install; --no-seat clears it; --seat off records none).',
+    '  --seat credits captured sessions to this agent seat (kept on re-install; --no-seat clears it; --seat off records none).\n' +
+    '  --harness pi [--source ID] [--no-mcp] [--url U [--mcp-auth-command CMD]]: user-global pi extension + mcp.json entry (docs/mcp/PI.md).',
   verify:
     'gbrain bootstrap verify [--json]\n' +
     '  The whole install contract (round-trip, graph floor, magic moment, scans, hooks smoke). Exit 0 or not done.',
@@ -2016,6 +2020,9 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
     console.log(SUBCOMMAND_HELP[sub]);
     return 0;
   }
+
+  // pi wiring is user-global and workspace-free (pi-bootstrap.ts): routed before workspace resolution.
+  if (flagValue(rest, '--harness') === 'pi' && isPiBootstrapSubcommand(sub)) return runPiBootstrap(sub, rest);
 
   if (sub === 'cloud-setup-script') {
     // Pure print [D16]: the paste-ready cloud environment setup script.

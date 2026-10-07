@@ -6,7 +6,7 @@ export interface HarnessAdapter {
   label: string;
   aliases: readonly string[];
   modes: readonly HarnessMode[];
-  connection: 'codex-toml' | 'claude-json' | 'opencode-json' | 'thin-cli' | 'manual';
+  connection: 'codex-toml' | 'claude-json' | 'opencode-json' | 'pi-json' | 'thin-cli' | 'manual';
   renewable: boolean;
   /** Compatibility: legacy agent register supports only these adapters. */
   legacyRegister?: boolean;
@@ -31,6 +31,9 @@ export const HARNESS_ADAPTERS: readonly HarnessAdapter[] = [
   { id: 'opencode', legacyRegister: true, label: 'opencode', aliases: [], modes: ['local-cli', 'stdio', 'http'], connection: 'opencode-json', renewable: false,
     guide: 'docs/mcp/OPENCODE.md', reload: 'Restart opencode and inspect its MCP connections.', nativeInstructions: 'existing',
     evidence: dated(['https://opencode.ai/docs/mcp-servers/']) },
+  { id: 'pi', label: 'pi', aliases: ['pi-coding-agent'], modes: ['local-cli', 'stdio', 'http'], connection: 'pi-json', renewable: false,
+    guide: 'docs/mcp/PI.md', reload: 'Restart pi (or run /reload) and inspect /mcp.', nativeInstructions: 'manual',
+    evidence: { documentedAt: '2026-10-07', runtimeTestedAt: null, references: ['@earendil-works/pi-coding-agent 1.0.4 docs/mcp.md', `${repo}docs/mcp/PI.md`] } },
   { id: 'openclaw', legacyRegister: true, label: 'OpenClaw', aliases: [], modes: ['local-cli', 'thin-cli'], connection: 'thin-cli', renewable: true,
     guide: 'docs/mcp/OPENCLAW.md', reload: 'Load the generated GBrain instructions in a new agent session.', nativeInstructions: 'existing',
     evidence: dated([`${repo}docs/mcp/OPENCLAW.md`]) },

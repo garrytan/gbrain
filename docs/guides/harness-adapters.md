@@ -10,6 +10,7 @@ A supported transport is distinct from a tested vendor session. The new Grok Bot
 | claude-desktop | stdio, http | Follow client settings | 1 hour | [Guide](../../docs/mcp/CLAUDE_DESKTOP.md) |
 | codex | local-cli, stdio, http | codex-toml | 30 days | [Guide](../../docs/mcp/CODEX.md) |
 | opencode | local-cli, stdio, http | opencode-json | 30 days | [Guide](../../docs/mcp/OPENCODE.md) |
+| pi | local-cli, stdio, http | pi-json | 30 days | [Guide](../../docs/mcp/PI.md) |
 | openclaw | local-cli, thin-cli | thin-cli | 1 hour | [Guide](../../docs/mcp/OPENCLAW.md) |
 | grok-build | local-cli, stdio, http | Follow client settings | 1 hour | [Guide](../../docs/mcp/GROK.md) |
 | grok-bot | local-cli, thin-cli | thin-cli | 1 hour | [Guide](../../docs/guides/grok-bot.md) |
