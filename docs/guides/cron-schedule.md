@@ -115,6 +115,14 @@ it nightly and Phase 4 below (plus most of Phase 2's hygiene checks) is
 covered. The pseudocode that follows is the harness-side variant for agents
 that also do LLM-driven entity sweeps and memory consolidation on top.
 
+On Postgres, autopilot already schedules brain-wide maintenance; a separate
+nightly dream is optional. If both are scheduled, cycles selecting mutating
+mixed/global phases share the `gbrain-cycle` lease, even when dream resolves a
+source. The later run skips with `cycle_already_running` rather than running
+synthesis or patterns concurrently. Source-only cycles on different sources
+remain concurrent; a full source cycle also holds its source lease. On PGLite,
+the existing global file lock still serializes all mutating cycles.
+
 Nightly summaries land on the calendar day you actually lived: the cycle
 buckets by explicit `--date` > `cycle.timezone` config > the host's IANA
 timezone > UTC, so a run scheduled after local midnight lands on the day

@@ -24,6 +24,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runCycle } from '../src/core/cycle.ts';
+import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { mkdtempSync, writeFileSync, existsSync, mkdirSync, statSync, unlinkSync } from 'fs';
 import { tmpdir, homedir } from 'os';
 import { join } from 'path';
@@ -70,6 +71,46 @@ async function seed(id: string): Promise<void> {
 }
 
 describe('PGLite cycle: file lock + per-source DB lock ordering', () => {
+  test('source-scoped maintenance skips a held global lock and releases its source/file locks', async () => {
+    await seed('default');
+    const maintenance = await tryAcquireDbLock(engine, 'gbrain-cycle', 5);
+    expect(maintenance).not.toBeNull();
+    try {
+      const report = await runCycle(engine, { brainDir, sourceId: 'default', phases: ['patterns'] });
+      expect(report.status).toBe('skipped');
+      expect(report.reason).toBe('cycle_already_running');
+      expect(report.lock_holder?.id).toBe('gbrain-cycle');
+      expect(report.phases).toEqual([]);
+      const rows = await engine.executeRaw<{ id: string }>('SELECT id FROM gbrain_cycle_locks ORDER BY id');
+      expect(rows.map(row => row.id)).toEqual(['gbrain-cycle']);
+      expect(existsSync(join(gbrainHome, '.gbrain', 'cycle.lock'))).toBe(false);
+    } finally {
+      await maintenance!.release();
+    }
+  });
+
+  test('a named cycle holds source and shared maintenance leases until exit', async () => {
+    await seed('alpha');
+    const observed: string[][] = [];
+    const competitorsEntered: boolean[] = [];
+    await runCycle(engine, {
+      brainDir, sourceId: 'alpha', phases: ['lint', 'patterns'],
+      yieldBetweenPhases: async () => {
+        const rows = await engine.executeRaw<{ id: string }>('SELECT id FROM gbrain_cycle_locks ORDER BY id');
+        observed.push(rows.map(row => row.id));
+        // The other direction: unscoped autopilot maintenance cannot enter.
+        const competitor = await tryAcquireDbLock(engine, 'gbrain-cycle', 5);
+        competitorsEntered.push(competitor !== null);
+        await competitor?.release();
+      },
+    });
+    expect(observed.length).toBeGreaterThan(0);
+    for (const ids of observed) expect(ids).toEqual(['gbrain-cycle', 'gbrain-cycle:alpha']);
+    expect(competitorsEntered).toEqual(observed.map(() => false));
+    expect(await engine.executeRaw('SELECT id FROM gbrain_cycle_locks')).toEqual([]);
+    expect(existsSync(join(gbrainHome, '.gbrain', 'cycle.lock'))).toBe(false);
+  });
+
   test('global file lock acquired during PGLite cycle (codex P0-C invariant)', async () => {
     await seed('alpha');
     // Inspect the cycle.lock file existence during a running cycle.

@@ -49,7 +49,8 @@ import { gbrainPath, loadConfig } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
-import { tryAcquireDbLock, reapDeadHolderLocks, inspectLock, LockStolenError, type DbLockHandle } from './db-lock.ts';
+import { tryAcquireDbLock, reapDeadHolderLocks, inspectLock, LockStolenError } from './db-lock.ts';
+import { acquireCycleLockSet } from './cycle/lock-set.ts';
 import { timeContainedPhase } from './cycle/phase-containment.ts';
 import { isManagedBrain } from './cycle/phase-table.ts';
 import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
@@ -549,15 +550,14 @@ export interface CycleOpts {
    * When unset, the legacy global lock is used (back-compat for autopilot
    * + every existing caller).
    *
-   * **Note for follow-up waves:** this only scopes the LOCK. Several
+   * Several
    * cycle phases (`embed`, `purge`, `resolve_symbol_edges`, `grade_takes`,
    * `calibration_profile`) still operate brain-wide regardless of sourceId
    * — see the `PHASE_SCOPE` taxonomy. `orphans` uses the resolved source
    * for its candidate set when one exists, but it remains in the serialized
-   * global lane for autopilot scheduling. Per-source cycle locks let two
-   * cycles RUN, but the global-scoped phases inside each will still touch
-   * the same rows. Genuine per-source fan-out requires the deferred TODOs
-   * in the plan.
+   * global lane for autopilot scheduling. Source-only cycles can run in
+   * parallel; mutating mixed/global selections additionally hold the shared
+   * maintenance lease, so they cannot race other sources or autopilot.
    *
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
@@ -689,39 +689,23 @@ function cycleLockIdLabelFor(sourceId?: string): string {
 }
 
 /**
- * Acquire the DB-backed cycle lock for a given source.
- *
- * Pre-v0.38 this file had its own copy of the UPSERT-with-TTL SQL for both
- * the postgres and pglite engines (`acquirePostgresLock` + `acquirePGLiteLock`).
- * That duplicated `src/core/db-lock.ts:tryAcquireDbLock` which was extracted
- * in v0.22.13. Codex eng-review caught the DRY violation. This is now a thin
- * adapter that:
- *   - calls `tryAcquireDbLock` with the per-source lock ID,
- *   - returns the existing `LockHandle` shape (decouples cycle.ts's internal
- *     handle type from db-lock.ts's `DbLockHandle` so refactors stay local).
- *
- * Deliberately uses `tryAcquireDbLock` and NOT `withRefreshingLock`:
- *   - `tryAcquireDbLock` returns `null` on busy lock → cycle returns
- *     `{status: 'skipped', reason: 'cycle_already_running'}` (existing
- *     contract — codex r2 P0-A regression guard).
- *   - `withRefreshingLock` THROWS on busy → would convert busy cycles into
- *     failures.
- *   - The auto-refresh timer in `withRefreshingLock` would also run
- *     `SELECT 1 + UPDATE` against the same engine while phases are
- *     executing (risky for PGLite's single connection — codex r2 P1-A)
- *     AND skip Minion job-lock renewal (codex r2 P0-B: yieldBetweenPhases
- *     handles BOTH DB lock refresh AND Minion job-lock renewal at phase
- *     boundaries; replacing it with a background timer drops the Minion
- *     side).
+ * Acquire the source lease plus the shared lease for mixed/global mutation.
+ * Busy acquisition is non-throwing and rolls back partial ownership, preserving
+ * `cycle_already_running`. Refresh/release compose every fence into the existing
+ * LockHandle, so both phase yields and the background refresher renew the set;
+ * Minion job-lock renewal remains in the outer yield hook.
  */
-async function acquireDbCycleLock(engine: BrainEngine, sourceId?: string): Promise<LockHandle | null> {
+async function acquireDbCycleLock(engine: BrainEngine, sourceId: string | undefined, phases: CyclePhase[]) {
   const lockId = cycleLockIdFor(sourceId);
-  const handle: DbLockHandle | null = await tryAcquireDbLock(engine, lockId, LOCK_TTL_MINUTES);
-  if (handle === null) return null;
-  return {
-    refresh: handle.refresh,
-    release: handle.release,
-  };
+  // Keep source-only work concurrent, but mixed/global mutation must serialize
+  // with autopilot maintenance and every other source's explicit dream run.
+  // Retain the source lease too, so a freshness run on this source cannot race
+  // a full cycle. Undefined source already uses the global lease; deduplicate it.
+  const sharedMaintenance = phases.some(p => NEEDS_LOCK_PHASES.has(p) && PHASE_SCOPE[p] !== 'source');
+  return acquireCycleLockSet(
+    sharedMaintenance ? [lockId, LEGACY_CYCLE_LOCK_ID] : [lockId],
+    id => tryAcquireDbLock(engine, id, LOCK_TTL_MINUTES),
+  );
 }
 
 /**
@@ -1932,9 +1916,8 @@ export async function runCycle(
       // ordering invariant (file → DB; release-both-on-failure; release
       // both on exit) is documented in section 5 of the plan.
       //
-      // Postgres engines skip the file lock entirely — per-source DB lock
-      // IDs are the full granularity, and there's no single-writer
-      // constraint to enforce.
+      // Postgres skips the file lock. Source-only runs use their source row;
+      // mixed/global mutation additionally holds the shared maintenance row.
       let pgliteFileLock: LockHandle | null = null;
       if (engine.kind === 'pglite') {
         pgliteFileLock = acquireFileLock();
@@ -1953,11 +1936,12 @@ export async function runCycle(
       }
 
       let dbLock: LockHandle | null = null;
+      let busyLockId = cycleLockIdLabelFor(opts.sourceId);
       try {
-        // v0.38: per-source lock ID when opts.sourceId is set; legacy
-        // `gbrain-cycle` otherwise (autopilot still passes nothing).
-        // cycleLockIdFor validates the sourceId via assertValidSourceId.
-        dbLock = await acquireDbCycleLock(engine, opts.sourceId);
+        // Validate source IDs and acquire all required leases before any phase.
+        const acquired = await acquireDbCycleLock(engine, opts.sourceId, phases);
+        dbLock = acquired.handle;
+        if (acquired.handle === null) busyLockId = acquired.busyLockId;
       } catch (e) {
         // Lock acquisition failed catastrophically (e.g., migration missing).
         // Release the PGLite file lock before returning so it doesn't strand
@@ -1987,12 +1971,12 @@ export async function runCycle(
       }
 
       if (dbLock === null) {
-        // Busy DB lock (another cycle for the same source already running).
+        // Busy source or shared maintenance lease; partial DB acquisition was released.
         // Release the file lock before returning skipped.
         if (pgliteFileLock) {
           try { await pgliteFileLock.release(); } catch { /* best effort */ }
         }
-        const holder = await inspectLock(engine, cycleLockIdFor(opts.sourceId)).catch(() => null);
+        const holder = await inspectLock(engine, busyLockId).catch(() => null);
         return {
           schema_version: '1',
           timestamp,
