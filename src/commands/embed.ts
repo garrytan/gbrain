@@ -1647,9 +1647,9 @@ async function embedAllStale(
     if (isAborted(externalSignal) || Date.now() >= (readinessOptions.deadline ?? Infinity)) return await noteBudgetStop();
   }
   if (readiness.blocked && !dryRun) {
-    result.failures += readiness.blocked;
-    result.failure_samples.push('Projection recovery remains blocked; rerun embed --stale for bounded recovery or restore unsupported media with its source importer.');
-    return;
+    // The guarded stale cursor isolates unavailable snapshots and names/counts
+    // their failed chunks. Continue healthy work without double-counting pages.
+    result.failure_samples.push('Projection recovery remains blocked for some pages; healthy pages can progress. Restore unsupported media with its source importer.');
   }
 
   // Chunkless-page safety net: pre-flight count mirrors the countStaleChunks

@@ -111,6 +111,29 @@ for (const kind of backends) {
         FROM pages p WHERE p.source_id=$1 ORDER BY p.id`, [sourceId]);
       return { sourceId, snapshot };
     }
+    test('blocked projection batch does not starve recovery or healthy stale drain (#6223)', async () => {
+      for (const slug of ['images/blocked-a', 'images/blocked-b', 'notes/repairable', 'notes/healthy']) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Synthetic ${slug} content.` });
+        await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: `Synthetic ${slug} content.` }]);
+      }
+      await engine.executeRaw("UPDATE pages SET text_projection_revision=NULL WHERE slug <> 'notes/healthy'");
+      await engine.executeRaw("UPDATE pages SET page_kind='image' WHERE slug LIKE 'images/%'");
+      expect(await prepareEmbeddingProjections(engine, { repair: true, limit: 2, activeSourcesOnly: true }))
+        .toEqual({ rebuilt: 1, blocked: 2 });
+      const inputs: string[] = [];
+      __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
+        inputs.push(...values);
+        return { values, warnings: [], embeddings: values.map(() => Array.from({ length: dimensions }, () => 0.1)), usage: { tokens: 8 } };
+      });
+      const result = await runEmbedCore(engine, { stale: true, quiet: true, catchUp: true, batchSize: 1 });
+      expect(result.embedded).toBe(2);
+      expect(result.total_chunks).toBe(4);
+      expect(result.failures).toBe(2);
+      expect(result.failure_samples.join(' ')).toContain('images/blocked-a');
+      expect(result.failure_samples.join(' ')).toContain('images/blocked-b');
+      expect(inputs.some(text => text.includes('Synthetic images/'))).toBe(false);
+      expect(await engine.countStaleChunks()).toBe(2);
+    });
     describe('archived eligibility boundary', () => {
     afterEach(async () => {
       await truncateCascade(engine, ['pages']);

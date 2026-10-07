@@ -28,7 +28,7 @@ test('projection readiness propagates count failures', async () => {
   await expect(prepareEmbeddingProjections(engine)).rejects.toThrow('synthetic count failure');
 });
 
-test('projection recovery stops after a batch makes no progress', async () => {
+test('projection recovery visits an unavailable candidate once', async () => {
   let batches = 0;
   const engine = mockEmbedProjectionEngine({
     readPageSnapshot: async () => null,
@@ -36,11 +36,30 @@ test('projection recovery stops after a batch makes no progress', async () => {
       if (sql.startsWith('SELECT count(')) return [{ n: 1 }];
       if (sql.startsWith('SELECT p.slug,p.source_id')) {
         batches++;
-        return [{ slug: 'synthetic-unavailable', source_id: 'default' }];
+        return [{ id: 1, slug: 'synthetic-unavailable', source_id: 'default' }];
       }
       return [];
     },
   });
   expect(await prepareEmbeddingProjections(engine, { repair: true })).toEqual({ rebuilt: 0, blocked: 1 });
   expect(batches).toBe(1);
+});
+
+test('projection recovery terminates after multiple full unavailable batches', async () => {
+  const cursors: number[] = [];
+  const engine = mockEmbedProjectionEngine({
+    readPageSnapshot: async () => null,
+    executeRaw: async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith('SELECT count(')) return [{ n: 4 }];
+      if (sql.startsWith('SELECT p.slug,p.source_id')) {
+        const after = params![params!.length - 2] as number;
+        cursors.push(after);
+        return [1, 2, 3, 4].filter(id => id > after).slice(0, 2)
+          .map(id => ({ id, slug: `synthetic-unavailable-${id}`, source_id: 'default' }));
+      }
+      return [];
+    },
+  });
+  expect(await prepareEmbeddingProjections(engine, { repair: true, limit: 2 })).toEqual({ rebuilt: 0, blocked: 4 });
+  expect(cursors).toEqual([0, 2, 4]);
 });

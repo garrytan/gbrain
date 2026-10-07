@@ -46,10 +46,15 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
   };
   let rebuilt = 0;
   let blocked = await countBlocked();
+  // Visit each candidate once. An unsupported first batch must not hide
+  // repairable pages behind it, nor be retried forever in catch-up runs.
+  let afterPageId = 0;
   while (opts.repair && blocked > 0 && !opts.signal?.aborted && Date.now() < (opts.deadline ?? Infinity)) {
-    const previousBlocked = blocked;
-    const rows = await engine.executeRaw<{ slug: string; source_id: string }>(`SELECT p.slug,p.source_id FROM pages p
-      JOIN sources s ON s.id=p.source_id WHERE ${where} AND NOT s.archived ORDER BY p.id LIMIT $${params.length + 1}`, [...params, limit]);
+    const rows = await engine.executeRaw<{ id: number; slug: string; source_id: string }>(`SELECT p.slug,p.source_id,p.id FROM pages p
+      JOIN sources s ON s.id=p.source_id WHERE ${where} AND NOT s.archived
+      AND p.id > $${params.length + 1} ORDER BY p.id LIMIT $${params.length + 2}`, [...params, afterPageId, limit]);
+    if (rows.length === 0) break;
+    afterPageId = rows[rows.length - 1].id;
     for (const row of rows) {
       if (opts.signal?.aborted || Date.now() >= (opts.deadline ?? Infinity)) break;
       await opts.assertOwned?.();
@@ -86,7 +91,7 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
     }
     await opts.assertOwned?.();
     blocked = await countBlocked();
-    if (blocked >= previousBlocked) break;
+    if (rows.length < limit) break;
   }
   return { rebuilt, blocked };
 }

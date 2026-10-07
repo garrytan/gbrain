@@ -24,6 +24,7 @@ import { installFixtureChunks } from './helpers/page-projection.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { runEmbedCore } from '../src/commands/embed.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { prepareEmbeddingProjections } from '../src/core/embedding-readiness.ts';
 
 const DIMS = 1536;
 let engine: PGLiteEngine;
@@ -77,6 +78,32 @@ async function nullVectors(slug: string): Promise<number> {
 }
 
 describe('embed --stale with a projection snapshot that becomes unavailable mid-run (#5804)', () => {
+  test.each([false, true])('blocked media does not starve healthy chunks (catchUp=%s, #6223)', async catchUp => {
+    await stalePage('images/blocked');
+    await engine.executeRaw("UPDATE pages SET page_kind='image', text_projection_revision=NULL WHERE slug='images/blocked'");
+    await stalePage('notes/healthy');
+    const before = await engine.getChunks('images/blocked');
+    const result = await runEmbedCore(engine, { stale: true, quiet: true, catchUp, batchSize: 1 });
+    expect(result.embedded).toBe(1);
+    expect(result.total_chunks).toBe(2);
+    expect(result.failures).toBe(1);
+    expect(result.failure_samples.join(' ')).toContain('images/blocked');
+    expect(await nullVectors('notes/healthy')).toBe(0);
+    expect(await engine.getChunks('images/blocked')).toEqual(before);
+    expect(await engine.countStaleChunks()).toBe(1);
+  });
+
+  test('projection recovery visits repairable pages behind a wholly blocked batch (#6223)', async () => {
+    for (const slug of ['images/blocked-a', 'images/blocked-b', 'notes/repairable']) await stalePage(slug);
+    await engine.executeRaw("UPDATE pages SET text_projection_revision=NULL");
+    await engine.executeRaw("UPDATE pages SET page_kind='image' WHERE slug LIKE 'images/%'");
+    const result = await prepareEmbeddingProjections(engine, { repair: true, limit: 2, activeSourcesOnly: true });
+    expect(result).toEqual({ rebuilt: 1, blocked: 2 });
+    const snapshot = await engine.readPageSnapshot('notes/repairable');
+    expect(snapshot?.page.text_projection_revision).toBe(snapshot?.revision);
+    expect((await engine.readPageSnapshot('images/blocked-a'))?.page.text_projection_revision).toBeNull();
+  });
+
   test('edited pages are counted failures with one batch summary; untouched pages still embed', async () => {
     await stalePage('notes/tagged-mid-run');
     await stalePage('notes/edited-mid-run');
