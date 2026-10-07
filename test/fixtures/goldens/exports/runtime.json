@@ -846,7 +846,8 @@
         "persistSynthesis",
         "runThink",
         "salvageThinkEnvelope",
-        "stripGapsSection"
+        "stripGapsSection",
+        "synthesisSlug"
       ],
       "./transcription": [
         "transcribe"

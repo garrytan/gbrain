@@ -7473,6 +7473,13 @@
         "signature": [
           "(answer: string) => string"
         ]
+      },
+      {
+        "kind": "function",
+        "name": "synthesisSlug",
+        "signature": [
+          "(question: string, date: string) => string"
+        ]
       }
     ],
     "./transcription": [
