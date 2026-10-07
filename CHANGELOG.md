@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.105.0] - 2026-10-07
+
+### Fixed
+
+- **Conversation fact extraction now reads eligible conversations through their endings.** Long turns continue through bounded inputs instead of losing their tails, and a final reply at the message-count boundary stays included. Speaker and date context follows each continuation. Short conversations keep their existing path, and a failed or limited run cannot mark unseen input complete.
+
+Long conversations may use more model calls. This preserves input; the existing fact-selection limit and model interpretation still apply. Previously completed pages are not replayed automatically. Inspect and preview an affected exact source/slug before using native `--force` to recompute its derived facts, then review the result against the original.
+
+To take advantage of v0.60.105.0: run `gbrain upgrade`. No configuration or schema change is required.
+
 ## [0.60.103.0] - 2026-10-07
 
 **A legacy access token's first burst of reads converts it to the unified grant columns reliably, and the last nightly Test reds are fixed at their cause.**
