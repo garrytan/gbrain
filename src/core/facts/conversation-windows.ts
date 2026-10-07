@@ -74,4 +74,3 @@ export function splitSegmentForExtraction(
   flush();
   return out;
 }
-
