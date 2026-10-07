@@ -143,6 +143,37 @@ function startSource(reason: unknown): string {
   return "startup";
 }
 
+/**
+ * Join the session-start digest and the per-turn context without repeats. On
+ * the first prompt both hooks can return the same block (e.g. the same
+ * "Hot memory" section under the same envelope comment), and a plain join
+ * makes the model read it twice. Splits each part into sections that start at
+ * an HTML-comment line or a markdown heading, and keeps the first copy of each
+ * section (compared whitespace-normalized). Order is otherwise preserved.
+ */
+export function mergeContextParts(parts: string[]): string {
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const part of parts) {
+    const sections: string[][] = [];
+    for (const line of part.split("\n")) {
+      const t = line.trim();
+      const starts = /^<!--.*-->$/.test(t) || /^#{1,6} /.test(t);
+      if (starts || sections.length === 0) sections.push([]);
+      sections[sections.length - 1]!.push(line);
+    }
+    for (const lines of sections) {
+      const text = lines.join("\n").trim();
+      if (!text) continue;
+      const key = text.replace(/\s+/g, " ");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      kept.push(text);
+    }
+  }
+  return kept.join("\n\n");
+}
+
 export default function (pi: ExtensionAPI) {
   if (process.env.GBRAIN_HOOKS === "0") return;
 
@@ -180,7 +211,7 @@ export default function (pi: ExtensionAPI) {
     record("user-prompt", r, context ? `${context.length} chars` : "no context");
     if (context) parts.push(context);
     if (systemMessage && ctx.hasUI) ctx.ui.notify(systemMessage, "warning");
-    const content = parts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
+    const content = mergeContextParts(parts).slice(0, MAX_CONTEXT_CHARS);
     if (!content) return;
     return { message: { customType: CONTEXT_CUSTOM_TYPE, content, display: false } };
   });
