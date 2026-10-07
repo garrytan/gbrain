@@ -848,6 +848,8 @@ export interface SearchResult {
   matched_alias?: string;
   /** `search` `match: "keyword"`: an enumerated page whose text did not fit the evidence budget keeps its row, without text. */
   evidence_omitted?: boolean;
+  /** `generated` on pages gbrain wrote (dream_generated, extract_receipt); `generated_demotion` when ranked below a primary record (search/provenance-demotion.ts). */
+  provenance?: 'generated'; generated_demotion?: number;
   /**
    * Extraction quarantine lane (issue #160): true when the result's page is
    * an unverified auto-extracted entity stub (frontmatter
