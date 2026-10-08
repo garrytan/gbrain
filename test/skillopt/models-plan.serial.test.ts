@@ -32,9 +32,9 @@ import {
 import { StructuredAgentError } from '../../src/core/errors.ts';
 import type { BenchmarkTask } from '../../src/core/skillopt/types.ts';
 
-const OPUS = 'anthropic:claude-opus-4-7';
-const SONNET = 'anthropic:claude-sonnet-4-6';
-const HAIKU = 'anthropic:claude-haiku-4-5-20251001';
+const OPUS = 'anthropic:claude-opus-5-5';
+const SONNET = 'anthropic:claude-sonnet-5-5';
+const HAIKU = 'anthropic:claude-haiku-5-5';
 
 let engine: PGLiteEngine;
 let tmpHome: string;
@@ -139,7 +139,7 @@ describe('buildModelsPlan', () => {
 
       const banner = formatModelsBanner(plan, { skill: 'widget-example' });
       expect(banner).toContain('[skillopt] Models for widget-example:');
-      expect(banner).toContain('[skillopt]   optimizer  anthropic:claude-opus-4-7  (models.tier.deep)\n');
+      expect(banner).toContain('[skillopt]   optimizer  anthropic:claude-opus-5-5  (models.tier.deep)\n');
       expect(banner).toContain('judge      openai:gpt-5.2  (benchmark judge.model, 2 tasks)');
       expect(banner).toContain('embedding  openai:text-embedding-3-large  (embedding_model (config.json))');
       expect(banner).not.toContain(' *');
@@ -174,8 +174,8 @@ describe('buildModelsPlan', () => {
       await engine.setConfig('models.default', SONNET);
       const plan = await buildModelsPlan(engine, await resolveSkillOptModels(engine));
       const banner = formatModelsBanner(plan);
-      expect(banner).toContain('optimizer  anthropic:claude-sonnet-4-6  (models.default) *');
-      expect(banner).toContain('expansion  anthropic:claude-haiku-4-5-20251001  (unrecorded: gateway not resolved against this brain) *');
+      expect(banner).toContain('optimizer  anthropic:claude-sonnet-5-5  (models.default) *');
+      expect(banner).toContain('expansion  anthropic:claude-haiku-5-5  (unrecorded: gateway not resolved against this brain) *');
       expect(banner).toContain('* not chosen by touchpoint-specific configuration');
       expect(plan.find((e) => e.touchpoint === 'expansion')!.source).toBe('unknown');
     });
@@ -266,7 +266,7 @@ describe('strict mode', () => {
 
       const err = modelsStrictError(verdict) as StructuredAgentError;
       expect(err.envelope.code).toBe('models_strict_violation');
-      expect(err.envelope.message).toContain('  expansion  anthropic:claude-sonnet-4-6  (models.default)');
+      expect(err.envelope.message).toContain('  expansion  anthropic:claude-sonnet-5-5  (models.default)');
       expect(err.envelope.message).toContain(`    gbrain config set models.tier.utility ${SONNET}`);
     });
   });

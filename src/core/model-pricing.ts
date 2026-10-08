@@ -117,6 +117,10 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'anthropic:claude-sonnet-5-5':          anthro( 2.00, 10.00),
   'anthropic:claude-sonnet-5':            anthro( 2.00, 10.00),
   'anthropic:claude-sonnet-4-6':          anthro( 3.00, 15.00),
+  // Haiku 5.5 (released 2026-10-07): $0.10 in / $0.50 out for prompts up
+  // to 100K tokens. Longer prompts bill $0.50 / $2.50; that rate card is
+  // not modeled, so estimates on >100K prompts run low.
+  'anthropic:claude-haiku-5-5':           anthro( 0.10,  0.50),
   // Haiku 4.5 — both the dateless canonical id and the dated snapshot.
   'anthropic:claude-haiku-4-5':           anthro( 1.00,  5.00),
   'anthropic:claude-haiku-4-5-20251001':  anthro( 1.00,  5.00),

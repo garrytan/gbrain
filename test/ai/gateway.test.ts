@@ -53,7 +53,7 @@ describe('gateway configuration', () => {
     configureGateway({ env: {} });
     expect(getEmbeddingModel()).toBe('voyage:voyage-4');
     expect(getEmbeddingDimensions()).toBe(1024);
-    expect(getExpansionModel()).toBe('anthropic:claude-haiku-4-5-20251001');
+    expect(getExpansionModel()).toBe('anthropic:claude-haiku-5-5');
   });
 });
 

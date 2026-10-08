@@ -389,7 +389,7 @@ describe('runPhaseGradeTakes ensemble — auto-apply rules', () => {
       ensembleJudges: [],
     });
     const insert = captured.find(c => c.sql.includes('INSERT INTO take_grade_cache'));
-    expect(insert!.params[2]).toBe('claude-sonnet-4-6'); // single-judge model id
+    expect(insert!.params[2]).toBe('claude-sonnet-5-5'); // single-judge model id
   });
 });
 

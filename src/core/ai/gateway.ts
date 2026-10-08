@@ -123,8 +123,8 @@ import {
 import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
 import { rerankViaDecide } from './decide/rerank-adapter.ts';
 import { runDecide, type DecideContext, type DecideRequest, type DecideResult } from './decide/index.ts';
-const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
-const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
+const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-5-5';
+const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-5-5';
 // v0.35.0.0+: reranker runtime fallback. Used only when search.reranker.enabled
 // is set AND no explicit reranker_model is configured. #3657 seam: the value is
 // `DEFAULT_RERANKER_MODEL` imported from ./defaults.ts (ONE constant, shared with

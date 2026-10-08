@@ -234,9 +234,9 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
 describe('chat touchpoint — gateway config plumbing', () => {
   beforeEach(() => resetGateway());
 
-  test('default chat_model is anthropic:claude-sonnet-4-6', () => {
+  test('default chat_model is anthropic:claude-sonnet-5-5', () => {
     configureGateway({ env: {} });
-    expect(getChatModel()).toBe('anthropic:claude-sonnet-4-6');
+    expect(getChatModel()).toBe('anthropic:claude-sonnet-5-5');
   });
 
   test('explicit chat_model overrides the default', () => {
