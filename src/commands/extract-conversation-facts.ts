@@ -1309,6 +1309,17 @@ function nonExtractableAuditFact(
   };
 }
 
+/** A result with every counter at zero, the starting point of a run or an aggregate. */
+export function emptyExtractConversationFactsResult(): ExtractConversationFactsResult {
+  return {
+    pages_considered: 0, pages_processed: 0, pages_skipped: 0, pages_skipped_unparsed: 0, pages_skipped_type_mismatch: 0,
+    pages_skipped_insufficient_turns: 0, pages_skipped_since: 0, pages_skipped_too_large: 0, pages_skipped_disappeared: 0,
+    pages_skipped_completed: 0, pages_skipped_non_extractable: 0, pages_marked_non_extractable: 0, pages_skipped_unrecognized_speaker: 0,
+    pages_failed: 0, failed_pages: [], pages_llm_fallback: 0, pages_lock_skipped: 0, orphan_facts_cleaned: 0, segments_processed: 0,
+    facts_extracted: 0, facts_inserted: 0, fallback_slugify_count: 0, resolution_errors: 0,
+  };
+}
+
 /**
  * Core entry point — one source per call. Caller (CLI / Minion / cycle
  * phase) handles multi-source iteration externally.
@@ -1330,31 +1341,7 @@ export async function runExtractConversationFactsCore(
   }
   const managed = await managedConversationPublisher(engine, sourceId, opts);
 
-  const result: ExtractConversationFactsResult = {
-    pages_considered: 0,
-    pages_processed: 0,
-    pages_skipped: 0,
-    pages_skipped_unparsed: 0,
-    pages_skipped_type_mismatch: 0,
-    pages_skipped_insufficient_turns: 0,
-    pages_skipped_since: 0,
-    pages_skipped_too_large: 0,
-    pages_skipped_disappeared: 0,
-    pages_skipped_completed: 0,
-    pages_skipped_non_extractable: 0,
-    pages_marked_non_extractable: 0,
-    pages_skipped_unrecognized_speaker: 0,
-    pages_failed: 0,
-    failed_pages: [],
-    pages_llm_fallback: 0,
-    pages_lock_skipped: 0,
-    orphan_facts_cleaned: 0,
-    segments_processed: 0,
-    facts_extracted: 0,
-    facts_inserted: 0,
-    fallback_slugify_count: 0,
-    resolution_errors: 0,
-  };
+  const result = emptyExtractConversationFactsResult();
 
   // F2: honor brain-wide kill-switch unless overridden.
   if (!opts.overrideDisabled) {
@@ -1997,31 +1984,7 @@ export async function runExtractConversationFacts(
   }
 
   // Aggregate result across all sources.
-  const aggregate: ExtractConversationFactsResult = {
-    pages_considered: 0,
-    pages_processed: 0,
-    pages_skipped: 0,
-    pages_skipped_unparsed: 0,
-    pages_skipped_type_mismatch: 0,
-    pages_skipped_insufficient_turns: 0,
-    pages_skipped_since: 0,
-    pages_skipped_too_large: 0,
-    pages_skipped_disappeared: 0,
-    pages_skipped_completed: 0,
-    pages_skipped_non_extractable: 0,
-    pages_marked_non_extractable: 0,
-    pages_skipped_unrecognized_speaker: 0,
-    pages_failed: 0,
-    failed_pages: [],
-    pages_llm_fallback: 0,
-    pages_lock_skipped: 0,
-    orphan_facts_cleaned: 0,
-    segments_processed: 0,
-    facts_extracted: 0,
-    facts_inserted: 0,
-    fallback_slugify_count: 0,
-    resolution_errors: 0,
-  };
+  const aggregate = emptyExtractConversationFactsResult();
   let totalSpent = 0;
   let anyBudgetExhausted = false;
   const unpricedModels = new Set<string>();
