@@ -111,6 +111,27 @@ describe('edge_contradictions', () => {
     expect(parseEdgeJudgeOutput('{"pairs":[{"a":1,"b":2,"conflict":true,"confidence":2}]}', 2)).toEqual([{ a: 1, b: 2, conflict: true, confidence: 1 }]);
   });
 
+  test('a judge error is retried next cycle and the verdict replaces the error row', async () => {
+    await engine.setConfig('dream.edge_contradictions.mode', 'propose');
+    await seed(DATED);
+    const failed = await runPhaseEdgeContradictions(engine, { judge: async () => { throw new Error('anthropic 529 overloaded'); } });
+    expect(failed.totals).toMatchObject({ errors: 1, judged: 1 });
+    const [errRow] = await engine.executeRaw<{ status: string; detail: string }>(`SELECT status, detail FROM link_edge_proposals`);
+    expect(errRow.status).toBe('error');
+    expect(errRow.detail).toContain('anthropic 529 overloaded');
+
+    calls = 0;
+    const retried = await runPhaseEdgeContradictions(engine, { judge: counting(conflict) });
+    expect(calls).toBe(1);
+    expect(retried.totals).toMatchObject({ judged: 1, proposed: 1, errors: 0, skipped_known: 0 });
+    expect(retried.status).toBe('complete');
+    expect((await proposals()).map(p => ({ status: p.status, close_date: p.close_date }))).toEqual([{ status: 'proposed', close_date: '2024-05-01' }]);
+
+    calls = 0;
+    await runPhaseEdgeContradictions(engine, { judge: counting(conflict) });
+    expect(calls).toBe(0);
+  });
+
   test('zero budget spends nothing', async () => {
     await seed(DATED);
     await engine.setConfig('dream.edge_contradictions.max_usd', '0');

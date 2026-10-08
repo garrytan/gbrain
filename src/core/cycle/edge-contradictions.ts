@@ -257,11 +257,14 @@ export async function runPhaseEdgeContradictions(engine: BrainEngine, opts: Edge
 
   for (const g of groups) {
     // Skip subjects whose every pair already has a proposal for this evidence.
+    // An 'error' row is not a verdict: a judge failure (5xx, timeout, bad JSON)
+    // stays eligible for the next cycle instead of hiding the pair until the
+    // evidence changes.
     const pairs: Array<[CandidateRow, CandidateRow]> = [];
     for (let i = 0; i < g.rels.length; i++) for (let j = i + 1; j < g.rels.length; j++) pairs.push(ordered(g.rels[i], g.rels[j]));
     const known = new Set((await engine.executeRaw<{ a: number; b: number }>(
       `SELECT a_to_page_id AS a, b_to_page_id AS b FROM link_edge_proposals
-        WHERE from_page_id = $1 AND link_type = $2 AND evidence_hash = ANY($3::text[])`,
+        WHERE from_page_id = $1 AND link_type = $2 AND evidence_hash = ANY($3::text[]) AND status <> 'error'`,
       [g.fromId, g.linkType, pairs.map(([a, b]) => pairHash(a, b))])).map(r => `${r.a}:${r.b}`));
     const fresh = pairs.filter(([a, b]) => !known.has(`${a.to_page_id}:${b.to_page_id}`));
     if (fresh.length === 0) { totals.skipped_known++; continue; }
@@ -278,14 +281,18 @@ export async function runPhaseEdgeContradictions(engine: BrainEngine, opts: Edge
     if (!check.allowed) { budgetExhausted = true; break; }
 
     let verdict: JudgePair[] | null = null;
+    let judgeFailure = 'judge output missing or malformed';
     try { verdict = await judge({ subject: g, relationships, modelHint: model, maxOutputTokens: JUDGE_MAX_OUTPUT_TOKENS }); }
-    catch (e) { process.stderr.write(`[edge_contradictions] judge failed for ${g.slug}: ${(e as Error).message}\n`); }
+    catch (e) {
+      judgeFailure = `judge failed: ${(e as Error).message}`.slice(0, 500);
+      process.stderr.write(`[edge_contradictions] judge failed for ${g.slug}: ${(e as Error).message}\n`);
+    }
     totals.judged++;
     for (const [a, b] of fresh) {
       const hash = pairHash(a, b);
       const ia = g.rels.indexOf(a) + 1, ib = g.rels.indexOf(b) + 1;
       if (!verdict) {
-        await recordProposal(engine, g, a, b, hash, { status: 'error', model, detail: 'judge output missing or malformed' });
+        await recordProposal(engine, g, a, b, hash, { status: 'error', model, detail: judgeFailure });
         totals.errors++;
         continue;
       }
@@ -393,7 +400,11 @@ async function recordProposal(
     `INSERT INTO link_edge_proposals (source_id, from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash, status,
        ending_to_page_id, close_date, born_closed, model, confidence, generated_line, detail)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12, $13, $14)
-     ON CONFLICT (from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash) DO NOTHING
+     ON CONFLICT (from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash) DO UPDATE SET
+       status = EXCLUDED.status, ending_to_page_id = EXCLUDED.ending_to_page_id, close_date = EXCLUDED.close_date,
+       born_closed = EXCLUDED.born_closed, model = EXCLUDED.model, confidence = EXCLUDED.confidence,
+       generated_line = EXCLUDED.generated_line, detail = EXCLUDED.detail, updated_at = now()
+       WHERE link_edge_proposals.status = 'error'
      RETURNING id`,
     [g.sourceId, g.fromId, Number(a.to_page_id), Number(b.to_page_id), g.linkType, hash, p.status,
       p.endingTo ?? null, p.closeDate ?? null, p.bornClosed ?? false, p.model, p.confidence ?? null, p.line ?? null, p.detail ?? null]);
