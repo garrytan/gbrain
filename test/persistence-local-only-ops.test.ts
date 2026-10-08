@@ -1,7 +1,8 @@
 /**
  * #5864: the trusted local CLI reaches the four localOnly skill-administration
- * operations, and `gbrain takes remove` (#5167), while a serve owns the PGLite
- * brain. Authoring gate: (1) protects
+ * operations, `gbrain takes remove` (#5167) and `gbrain takes rebuild` (W9F
+ * item 8: it hung on the owner's lock until killed), while a serve owns the
+ * PGLite brain. Authoring gate: (1) protects
  * the delegated route for get_skill_retention, prune_skill_revisions,
  * retain_skill_revision and import_skill_proposal, and keeps remote callers
  * refused; (2) fails when the resident owner answers `unknown_tool` to the
@@ -28,9 +29,9 @@ import { withEnv } from './helpers/with-env.ts';
 
 const LOCAL_ONLY_IPC = ['get_skill_retention', 'import_skill_proposal', 'prune_skill_revisions', 'retain_skill_revision'];
 
-test('the localOnly operations on persistence IPC are the four skill-admin ops, takes_remove and the provider-served transcript read', () => {
+test('the localOnly operations on persistence IPC are the four skill-admin ops, takes_remove, takes_rebuild and the provider-served transcript read', () => {
   const ipc = new Set<string>(PERSISTENCE_IPC_OPERATIONS);
-  expect(operations.filter(op => op.localOnly && ipc.has(op.name)).map(op => op.name).sort()).toEqual([...LOCAL_ONLY_IPC, 'takes_remove', 'get_recent_transcripts'].sort());
+  expect(operations.filter(op => op.localOnly && ipc.has(op.name)).map(op => op.name).sort()).toEqual([...LOCAL_ONLY_IPC, 'takes_remove', 'takes_rebuild', 'get_recent_transcripts'].sort());
 });
 
 describe('localOnly skill administration through a resident owner', () => {
@@ -121,8 +122,29 @@ describe('localOnly skill administration through a resident owner', () => {
     expect(indexed.map(row => [row.row_num, row.claim])).toEqual([[1, 'Keep one']]);
   }, 120_000);
 
+  test('gbrain takes rebuild (W9F item 8) runs through the resident owner and prints what a local rebuild returns', async () => {
+    const slug = 'notes/ipc-takes-rebuild';
+    expect((await call('put_page', { slug, content: '---\ntitle: IPC takes rebuild\ntype: note\n---\nAbout the rebuild path.\n' })).code).toBe(0);
+    for (const claim of ['First claim', 'Second claim']) {
+      expect((await call('takes_add', { slug, claim, kind: 'take', holder: 'world' })).code).toBe(0);
+    }
+    const started = Date.now();
+    const rebuilt = await cli(['takes', 'rebuild', slug, '--json']);
+    expect(Date.now() - started).toBeLessThan(30_000);
+    expect(rebuilt.output).not.toContain('unknown_tool');
+    expect(rebuilt.code, rebuilt.output).toBe(0);
+    const { extractTakes } = await import('../src/core/cycle/extract-takes.ts');
+    const local = { slug, source_id: 'default', ...await extractTakes(engine, { source: 'db', slugs: [slug], sourceId: 'default', rebuild: true }) };
+    expect(JSON.parse(rebuilt.stdout)).toEqual(JSON.parse(JSON.stringify(local)));
+    // A managed page already in sync admits no takes request (wave 9 follow-ups receipts), so neither rebuild rewrites its two rows.
+    expect(local).toMatchObject({ pagesScanned: 1, pagesWithTakes: 1, takesUpserted: 0 });
+    const missing = await cli(['takes', 'rebuild', 'notes/ipc-no-such-page', '--json']);
+    expect(missing.code).toBe(1);
+    expect(JSON.parse(missing.stdout)).toMatchObject({ pagesScanned: 0 });
+  }, 120_000);
+
   test('remote callers are still refused', async () => {
-    for (const operation of [...LOCAL_ONLY_IPC, 'takes_remove']) {
+    for (const operation of [...LOCAL_ONLY_IPC, 'takes_remove', 'takes_rebuild']) {
       const http = await dispatchToolCall(engine, operation, {}, { remote: true, transport: 'http' });
       expect(http.isError).toBe(true);
       expect(http.content[0]!.text).toContain('unknown_tool');
@@ -131,4 +153,41 @@ describe('localOnly skill administration through a resident owner', () => {
       expect(stdio.content[0]!.text).not.toContain('"error":"unknown_tool"');
     }
   });
+});
+
+describe('gbrain takes rebuild without a resident owner (W9F item 8)', () => {
+  const slug = 'notes/local-takes-rebuild';
+  let dir: string;
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'gbrain-takes-rebuild-local-'));
+    const config = { engine: 'pglite' as const, database_path: join(dir, 'db') };
+    await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      const local = new PGLiteEngine();
+      await local.connect(config);
+      await local.initSchema();
+      await local.putPage(slug, { type: 'note', title: 'Local takes rebuild', compiled_truth: [
+        'About the local rebuild path.', '', '## Takes', '', '<!--- gbrain:takes:begin -->',
+        '| # | claim | kind | who | weight | since | source |', '|---|-------|------|-----|--------|-------|--------|',
+        '| 1 | Local claim | take | world | 0.5 | 2026-10 | test |', '<!--- gbrain:takes:end -->',
+      ].join('\n') }, { sourceId: 'default' });
+      await local.disconnect();
+    });
+    mkdirSync(join(dir, '.gbrain'), { recursive: true });
+    writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify(config));
+  }, 120_000);
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  test('runs on the local engine and prints the rebuild result', async () => {
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), 'takes', 'rebuild', slug, '--json'], {
+      cwd: dir,
+      env: { ...process.env, GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host', GBRAIN_NO_BANNER: '1', GBRAIN_BACKUP_CHECK: '0', GBRAIN_SKIP_UPGRADE_CHECK: '1',
+        GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+      stdout: 'pipe', stderr: 'pipe',
+    });
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 60_000);
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    clearTimeout(timeout);
+    expect(code, stdout + stderr).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({ slug, source_id: 'default', pagesScanned: 1, takesUpserted: 1, warnings: [] });
+  }, 120_000);
 });

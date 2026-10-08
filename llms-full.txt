@@ -9324,6 +9324,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 
 | Symptom | Next step | Who acts | Consent | Verify |
 |---|---|---|---|---|
+| Recall returns conversation facts like "Date said …", "Attendees said …" or "Summary said …" | `gbrain repair conversation-labels` previews them ([conversation labels](repair.md#conversation-labels)); apply the printed command with `--yes` | agent, after the user agrees | `destructive` | `gbrain doctor --only conversation_label_facts --json` is ok |
+| Conversation facts are dated 1970-01-01 | same preview: `gbrain repair conversation-labels` (an undated page's pre-fix facts carry a `segment 1970-01-01` context); add a `date:` to the page frontmatter before re-extracting it | agent, after the user agrees | `destructive` | `gbrain doctor --only conversation_label_facts --json` is ok |
 | A gbrain call failed with a code you don't recognize | follow `fix.next` ([protocol](../protocol/AGENT_OPERATOR_v1.md)); `gbrain errors <code>` | agent | as the fix's `consent` | the fix's `verify` |
 | A graph read omits a relationship you know existed, or says someone still works somewhere they left | the default read returns relationships true today: repeat with `status: "all"` or `as_of`; to record an end, add a dated timeline line (`Ended works_at [[companies/x]]`) or `add_link ... valid_until` ([temporal edges](temporal-edges.md)) | agent | none | `gbrain doctor --only edge_validity --json` |
 | A command exited 3 (`confirmation_required`) | relay `user_message`; run `fix.command` only after the user agrees | agent, after the user agrees | the payload's `effects` | the fix's `verify` |
@@ -10695,6 +10697,80 @@ The preview warns, naming the host, when a consumer older than v0.60.11.0
 published writes after `writer_version_cutoff`: an old consumer expires
 restored facts again. Upgrade and restart it first.
 
+<a id="conversation-labels"></a>
+### Conversation labels
+
+Before v0.60.69 the conversation parser read meeting-note labels such as
+`**Date:**`, `**Attendees:**` and `**Summary:**` as speakers, so
+`gbrain extract-conversation-facts` stored facts like "Date said the review is
+on Monday", dated at 1970-01-01 when the page had no date. The parser is
+fixed, but those pages stay marked complete, so an upgrade never re-extracts
+them. `gbrain repair conversation-labels` retires those facts. It is
+explicit-only, preview-bound and destructive (it needs the user's consent),
+and it makes no model calls.
+
+**Say to your agent:** *"Doctor says some conversation facts came from
+meeting-note labels. Show me which ones before removing anything."* The agent
+runs the preview, shows you the list and, after you agree, runs the printed
+apply command with `--yes`.
+
+```bash
+gbrain doctor                                          # conversation_label_facts
+gbrain repair conversation-labels                      # preview: every candidate, per-page outcome, hash
+gbrain repair conversation-labels --apply --expect <hash> --yes
+gbrain extract-conversation-facts --source-id <id> --slugs <pages> --dry-run      # printed by the preview
+gbrain extract-conversation-facts --source-id <id> --slugs <pages> --max-cost-usd <n>
+gbrain doctor
+```
+
+Candidates are active conversation-extractor facts on pages that carry a bold
+metadata label line. Each gets one class:
+
+| Class | Meaning | Retired |
+| --- | --- | --- |
+| `evidenced` | Its context names a `segment 1970-01-01` window, which only the pre-fix parser wrote (the fixed one records an undated page as not extractable). | By `--apply --expect <hash> --yes` |
+| `ambiguous` | Any other fact of a label page: a post-fix transcript with a `**Date:**` header, a model-written context, a fact that legitimately mentions a label. Nothing on the row proves the misattribution. | Only with `--include-ambiguous` and that preview's hash |
+| `excluded:<reason>` | `current_extractor` (the page's outcome carries `extractor_version`, so the fixed parser extracted it), `withdrawn`, `superseded`, `superseded_by_reference` (another fact names it), `open_loop_reference` (an open loop points at it). | Never |
+
+The preview also gives each page its outcome:
+
+| Outcome | What the apply does | Cost |
+| --- | --- | --- |
+| `non_extractable` | Retires the facts, expires the completion marker and records the page as not extractable (prose notes, an undated page, a single email), as the fixed parser would. | $0 |
+| `awaiting_reextraction` | Retires the facts and expires the completion marker; the page re-enters the ordinary extraction backlog. | The next extraction, under its own cap |
+| `cleaned` | Retires the facts; the page had no completion marker. | $0 |
+
+A per-fact apply outcome of `changed_since_preview` means the fact changed (it
+was edited, withdrawn, superseded or already expired); it stays as it is.
+
+There is no `--reextract` or `--max-usd` here: `gbrain repair` never spends.
+The preview prints the hand-off, one dry run and one capped run per 50 pages
+waiting for extraction:
+`gbrain extract-conversation-facts --source-id <id> --slugs <a,b,…> --dry-run`,
+then the same command with `--max-cost-usd <n>` (default $5 when omitted; the
+opt-in `cycle.conversation_facts_backfill` also picks them up at $1 per run and
+$5 in total). Nothing re-extracts automatically.
+
+Retired facts are expired, not deleted: each keeps its id and gains
+`retired: conversation-labels <hash>` in its context, recall stops returning
+it, and a later extraction, its orphan cleanup and `gbrain repair
+extractor-facts` leave it alone. To bring a page's facts back, re-extract the
+page with the commands above. Pages apply in batches of up to 25: on a
+managed brain each batch publishes one database-only
+`managed_maintenance_conversation_label_retire` request (one receipt for the
+batch, each page rechecked on its own), and a rerun after a crash skips
+batches whose request already committed. A non-interactive
+apply without `--yes` exits 3 with the consent payload and changes nothing;
+`preview_changed` means the hash names no saved preview, the preview is older
+than 7 days, or the apply's `--source` or `--include-ambiguous` differs from
+the preview's. Under a live `gbrain serve` on PGLite the command is refused at
+once: stop the serve, run the repair, then restart the serve (the refusal's
+`fix` names the steps).
+
+Conversation outcomes now record the parser version (`extractor_version=<n>`
+in the outcome row). Doctor `conversation_outcomes_stale` counts outcomes a
+later parser version would reconsider; they are never reopened automatically.
+
 <a id="captured-facts"></a>
 ### Captured facts
 
@@ -11605,6 +11681,7 @@ Then recover what doctor names, in this order (skip a step whose check is ok):
 | `[gbrain] warning: OPENAI_API_KEY in this process's environment differs from openai_api_key …`; doctor `embedding_key_source` warns | `embedding_key_source` ([provider key source](#embedding-key-source)) | `gbrain doctor` (`embedding_key_source`) | remove the variable and restart that process, or `gbrain config unset openai_api_key` | the warning no longer prints; `gbrain doctor` shows `embedding_key_source` ok | user (owns the key) | `credentials` |
 | `The OpenAI embedding provider rejected its key (HTTP 401)` | [`embedding_auth_failed`](write-refusals.md#embedding_auth_failed) | `gbrain doctor` (`embedding_key_source`, `embedding_provider`) | the printed fix for the key source in effect, then `gbrain embed --stale` | `gbrain doctor` shows `embedding_provider` ok | user (owns the key) | `credentials`; `paid` for `embed --stale` |
 | Conversation facts missing from recall after managed writes | `extractor_facts_expired` | `gbrain repair extractor-facts` | `gbrain repair extractor-facts --apply --expect <hash>` (ambiguous: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | `destructive` (rewrites expired facts) |
+| Recall returns conversation facts such as "Date said …" or "Attendees said …", or facts dated 1970-01-01; doctor `conversation_label_facts` warns; the upgrade banner prints `conversation_label_facts: N (explicit_kind_required; …)` | `gbrain repair conversation-labels` (ambiguous: add `--include-ambiguous`) | `gbrain repair conversation-labels --apply --expect <hash> --yes`, then the printed `gbrain extract-conversation-facts --slugs … --dry-run` | `gbrain doctor --only conversation_label_facts --json` | brain host, after the user agrees | `destructive` (retires facts; no model calls) |
 
 
 ### Upgrading to v0.60.20.0

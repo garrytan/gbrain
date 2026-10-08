@@ -122,6 +122,7 @@ const LEDGER: Record<string, string> = {
   takes_resolve: 'test/takes-write-ops.test.ts',
   takes_supersede: 'test/takes-write-ops.test.ts',
   takes_remove: 'test/takes-verbs-5167-5214.test.ts',
+  takes_rebuild: 'test/persistence-local-only-ops.test.ts',
   whoami: 'test/whoami.test.ts',
   sources_add: 'test/sources-mcp.test.ts',
   sources_list: 'test/sources-mcp.test.ts',

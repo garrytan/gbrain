@@ -27,6 +27,14 @@
 #      after a reshuffle ran a LiteLLM-configuring file first. Comments do
 #      not count either way. A file whose only calls run inside a spawned
 #      child's script string carries `isolation-lint: R5-subprocess-only`.
+#  R6: a file whose code reads the CLI exit verdict (`currentExitCode(`)
+#      must set its own baseline outside an after-hook: a
+#      `_resetCliExitVerdictForTests(` or `setCliExitVerdict(0)` call in a
+#      before-hook or before its run. The verdict is one value per process
+#      and any command a test drives can leave it at 1 (doctor, remediate,
+#      connectors sync), so a reset only in afterEach still reads the
+#      previous file's verdict in its first test: edge-proposals-json-bigint
+#      failed this way three times after a shard reshuffle.
 #
 # Scope:
 #  - Recursively scans `test/**/*.test.ts`.
@@ -125,6 +133,31 @@ GATEWAY_OPT_OUT='isolation-lint: R5-subprocess-only'
 # the line start, whitespace or punctuation (so a URL's :// survives).
 # Block comments opening mid-line are left alone: a glob such as
 # 'test/*.ts' would otherwise swallow the rest of the file.
+VERDICT_PATTERN='currentExitCode[[:space:]]*\('
+# R6: same comment removal as GATEWAY_CODE_SCAN; a reset inside an
+# afterEach/afterAll block (tracked by brace depth from the hook's line)
+# does not count as a baseline. Prints the reads when no baseline is left.
+VERDICT_CODE_SCAN='
+  in_block {
+    if (index($0, "*/") == 0) next
+    in_block = 0
+    next
+  }
+  /^[[:space:]]*\/\*/ {
+    if (index(substr($0, index($0, "/*") + 2), "*/") == 0) in_block = 1
+    next
+  }
+  {
+    code = $0
+    sub(/(^|[[:space:];,(){}])\/\/.*$/, "", code)
+    opens = gsub(/\{/, "{", code); closes = gsub(/\}/, "}", code)
+    if (in_after) { depth += opens - closes; if (depth <= 0) in_after = 0; next }
+    if (code ~ /after(Each|All)[[:space:]]*\(/) { depth = opens - closes; if (depth > 0) in_after = 1; next }
+    if (code ~ /_resetCliExitVerdictForTests[[:space:]]*\(|setCliExitVerdict[[:space:]]*\([[:space:]]*0[[:space:]]*\)/) baseline = 1
+    if (code ~ /currentExitCode[[:space:]]*\(/ && code !~ /import/) reads = reads NR ":" $0 "\n"
+  }
+  END { if (reads != "" && !baseline) printf "%s", reads }
+'
 GATEWAY_CODE_SCAN='
   in_block {
     if (index($0, "*/") == 0) next
@@ -143,7 +176,7 @@ GATEWAY_CODE_SCAN='
   }
   END { if (calls != "" && !restored) printf "%s", calls }
 '
-CANDIDATES="$(guard_candidates -E -e "$ENV_MUTATION_PATTERN" -e "$MODULE_MOCK_PATTERN" -e "$ENGINE_PATTERN" -e "$GATEWAY_PATTERN" <<< "$FILE_LIST")"
+CANDIDATES="$(guard_candidates -E -e "$ENV_MUTATION_PATTERN" -e "$MODULE_MOCK_PATTERN" -e "$ENGINE_PATTERN" -e "$GATEWAY_PATTERN" -e "$VERDICT_PATTERN" <<< "$FILE_LIST")"
 
 violations=0
 file_count=0
@@ -217,6 +250,14 @@ while IFS= read -r f; do
       emit_violation "$f" "R5" "configureGateway() with no resetGateway(); the gateway is process-global, so this config reaches every later file in the shard. Add afterAll(() => resetGateway()) or rename to *.serial.test.ts" "$unrestored"
     fi
   fi
+
+  # R6: the CLI exit verdict is read with no baseline outside an after-hook.
+  if grep -qE "$VERDICT_PATTERN" "$f" 2>/dev/null; then
+    unbased=$(awk "$VERDICT_CODE_SCAN" "$f" 2>/dev/null || true)
+    if [ -n "$unbased" ]; then
+      emit_violation "$f" "R6" "currentExitCode() read with no baseline; the verdict is process-global, so the first test reads whatever the previous file in the shard left. Call _resetCliExitVerdictForTests() in beforeEach (or before the run it checks), not only in afterEach" "$unbased"
+    fi
+  fi
 done <<EOF
 $FILE_LIST
 EOF
@@ -232,6 +273,8 @@ if [ $violations -gt 0 ]; then
   echo "    test/helpers/reset-pglite.ts JSDoc and CLAUDE.md."
   echo "  - For configureGateway(), call resetGateway() in afterAll; it"
   echo "    puts back the preload's baseline gateway for the next file."
+  echo "  - For currentExitCode(), reset the verdict in beforeEach (or right"
+  echo "    before the run it checks) with _resetCliExitVerdictForTests()."
   echo
   echo "Or, if this is a baseline file from before the lint shipped,"
   echo "add it to scripts/check-test-isolation.allowlist (with a TODO"

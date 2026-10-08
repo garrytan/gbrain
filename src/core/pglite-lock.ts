@@ -75,6 +75,14 @@ export function readPidNs(): string | null {
 export function readBootId(): string | null {
   try { return readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() || null; } catch { return null; }
 }
+/** Kernel start time of `pid` (Linux /proc clock ticks), or null when unknowable. */
+export function processStartTime(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return fields[19] ?? null;
+  } catch { return null; }
+}
 
 /** Resolve existing ancestors without creating the datastore during inspection. */
 function canonicalPath(path: string): string {

@@ -211,6 +211,20 @@ describe('runner — budget cap (codex review #4)', () => {
     // the cycle ran, not the verdict.
     expect(r.receipt.cycles_run).toBe(1);
   });
+
+  test('a model that cannot turn thinking off is projected at the output cap its call sends (W9F item 5)', async () => {
+    // openai:gpt-5 ($5/$20) keeps a `minimal` reasoning floor under thinking
+    // off, so chat() sends the 32000-token headroom cap, not 2000. Projected:
+    // 2000-token pricing = $0.065 (fits $0.30), 32000-token = $0.665 (does not).
+    chatHandler = async (_opts) => {
+      throw new Error('chat should not be called when the projection exceeds the cap');
+    };
+
+    const r = await runEval(engine, { limit: 5, cycles: 1, models: ['openai:gpt-5'], budgetUsd: 0.30 });
+
+    expect(r.budgetAborted).toBe(true);
+    expect(r.receipt.cycles_run).toBe(0);
+  });
 });
 
 describe('runner — pricing gate (new models must run)', () => {

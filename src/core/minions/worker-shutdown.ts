@@ -6,19 +6,34 @@
  * until its lease expires and the stall sweep charges a stall.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { MinionJob } from './types.ts';
+import { UnrecoverableError, type MinionJob } from './types.ts';
 
-/** Hand one claim back to `waiting`. False when the claim already moved on. */
-export async function releaseShutdownClaim(engine: BrainEngine, id: number, lockToken: string): Promise<boolean> {
+/**
+ * Whether an in-process handler error ended because of the shutdown
+ * (Decision 7, W9F item 6): shutdown was requested and the job's own abort
+ * did not fire. Cooperative handlers throw plain errors when they bail, so
+ * any error counts, except UnrecoverableError, which is deterministic and
+ * dead-letters with its own text.
+ */
+export function endedByShutdown(err: unknown, shutdown: AbortSignal, job: AbortSignal): boolean {
+  return shutdown.aborted && !job.aborted && !(err instanceof UnrecoverableError);
+}
+
+/**
+ * Hand one claim back to `waiting`. False when the claim already moved on.
+ * `errorText` is the handler's own error, kept after the `worker_shutdown`
+ * marker so the reason the handler gave is not lost.
+ */
+export async function releaseShutdownClaim(engine: BrainEngine, id: number, lockToken: string, errorText?: string): Promise<boolean> {
   const rows = await engine.executeRaw<{ id: number }>(
     `UPDATE minion_jobs SET
       status = 'waiting',
-      error_text = 'worker_shutdown',
+      error_text = $3,
       started_at = NULL, timeout_at = NULL,
       lock_token = NULL, lock_until = NULL, updated_at = now()
      WHERE id = $1 AND status = 'active' AND lock_token = $2
      RETURNING id`,
-    [id, lockToken],
+    [id, lockToken, errorText ? `worker_shutdown: ${errorText}` : 'worker_shutdown'],
   );
   return rows.length > 0;
 }
@@ -36,7 +51,7 @@ export async function settleShutdownInterruptedJob(
     return;
   }
   try {
-    const released = await releaseShutdownClaim(engine, job.id, lockToken);
+    const released = await releaseShutdownClaim(engine, job.id, lockToken, errorText);
     console.log(`Job ${job.id} (${job.name}) ${released ? 'handed back to the queue' : 'claim already moved on'} after worker shutdown (${errorText}; no attempt burned)`);
   } catch (e) {
     console.error(`[worker] shutdown release failed for job ${job.id}: ${e instanceof Error ? e.message : String(e)}`);

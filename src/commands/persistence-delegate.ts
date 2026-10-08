@@ -87,8 +87,9 @@ export async function runDeferredPersistenceCommand(
   const getEngine = async () => connected ??= await connect();
   try {
     if (command === 'takes') {
-      const { runTakesMutation } = await import('./takes-mutation.ts');
-      await runTakesMutation(getEngine, args);
+      const { runTakesMutation, runTakesRebuild } = await import('./takes-mutation.ts');
+      if (args[0] === 'rebuild') await runTakesRebuild(getEngine, args.slice(1));
+      else await runTakesMutation(getEngine, args);
     } else if (command === 'sources') {
       if (args[0] === 'reconcile') {
         const { runReconcileCli } = await import('./source-reconcile.ts');

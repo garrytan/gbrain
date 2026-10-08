@@ -130,7 +130,7 @@ describe('markdown code map', () => {
 
 describe('takes fence markers quoted in code are documentation', () => {
   test('parse ignores a fenced example and still reads the real fence after it', () => {
-    expect(parseTakesFence(`doc\n\n${takesExample}\n`)).toEqual({ takes: [], warnings: [] });
+    expect(parseTakesFence(`doc\n\n${takesExample}\n`)).toEqual({ takes: [], warnings: [], reservedRowNums: [] });
     const body = `doc\n\n${takesExample}\n\n${realTakes('REAL-CLAIM')}`;
     expect(parseTakesFence(body).takes.map(t => t.claim)).toEqual(['REAL-CLAIM']);
   });
@@ -161,7 +161,7 @@ describe('remote privacy boundary', () => {
     // Readers no longer treat the mention as a fence, but the privacy boundary
     // only ever changes toward hiding more, so the tail stays protected.
     const body = `intro\n\nThe marker is \`${TAKES_FENCE_BEGIN}\` on its own line.\n\nPRIVATE TAIL`;
-    expect(parseTakesFence(body)).toEqual({ takes: [], warnings: [] });
+    expect(parseTakesFence(body)).toEqual({ takes: [], warnings: [], reservedRowNums: [] });
     expect(sanitizeRemoteBody(body)).not.toContain('PRIVATE TAIL');
     expect(stripTakesFence(body)).not.toContain('PRIVATE TAIL');
   });

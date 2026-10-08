@@ -46,6 +46,27 @@ function maintenanceRequestId(value: unknown): string {
   return `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
 }
 
+/**
+ * The cheap up-front part of a managed maintenance preflight, for runs that
+ * resolve `maintenancePreflight` lazily at their first write: refuses a
+ * caller the coordinator cannot accept (a remote job or writer) and an
+ * inactive source before any provider work, dry runs included. Returns
+ * whether the brain is managed; needs no canonical owner.
+ */
+export async function maintenanceCallerPreflight(engine: BrainEngine, sourceId: string): Promise<boolean> {
+  if (!await managedPersistenceEnabled(engine)) return false;
+  assertPersistenceAccepting(engine);
+  const job = currentSubmissionAuthority();
+  if (job && job.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
+    throw trustedCliRequired('Managed fact maintenance requires a local writer; remote maintenance jobs are not supported.');
+  }
+  const [source] = await engine.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1', [sourceId]);
+  if (!source || source.archived) throw opError('source_changed', 'The maintenance source is not active.',
+    `Source '${sourceId}' is missing or archived, so maintenance submitted nothing and no model was called. Check it with the command in fix; restore an archived source with gbrain sources restore ${sourceId} before running maintenance on it.`,
+    { fix: readFix('Lists registered sources, archived ones included.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
+  return true;
+}
+
 export async function maintenancePreflight(engine: BrainEngine, sourceId: string, root?: string,
   opts: { deadlineAtMs?: number | null } = {}): Promise<MaintenanceAuthority | null> {
   if (!await managedPersistenceEnabled(engine)) return null;
@@ -122,8 +143,13 @@ async function submitMaintenance(engine: BrainEngine, authority: MaintenanceAuth
     return writeResponse(wait.observe(await waitForWrite(engine, prior, loadConfig() ?? { engine: engine.kind }, wait.ms())));
   }
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: authority.writer.sourceId, includeDeleted: true });
+  // A deleted-page intent (extract_facts expiring a soft-deleted page's facts) admits only a page that is still soft-deleted.
+  if (intent.deleted_page === true && !snapshot?.page.deleted_at) {
+    throw opError('page_identity_changed', 'The deleted page was restored or purged before maintenance admitted its request.',
+      `Page ${slug} in '${authority.writer.sourceId}' is no longer soft-deleted, so nothing was submitted for it. Run maintenance again to plan from the current pages.`);
+  }
   // #5876: only a Life Chronicle event its extractor retired may be restored by a later generation.
-  if (snapshot?.page.deleted_at && !(intent.restore_retired === true && snapshot.page.frontmatter?.retired_by === 'life-chronicle')) {
+  if (snapshot?.page.deleted_at && intent.deleted_page !== true && !(intent.restore_retired === true && snapshot.page.frontmatter?.retired_by === 'life-chronicle')) {
     throw opError('page_not_found', 'Maintenance cannot restore a deleted page.',
       `Page ${slug} in '${authority.writer.sourceId}' was deleted after maintenance read it, and maintenance never recreates deleted pages; nothing was submitted. Run maintenance again to plan from the current pages.`);
   }
@@ -339,6 +365,12 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
   if (row.authority.remote) throw trustedCliRequired('Remote maintenance publication is not supported.');
   if (row.intent?.kind === 'managed_maintenance_restore_extractor_facts') return (await import('../repair/extractor-facts.ts')).prepareExtractorFactsRestore(engine, row);
   if (row.intent?.kind === 'managed_maintenance_expire_captured_facts') return (await import('../repair/captured-facts.ts')).prepareCapturedFactsExpiry(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_conversation_label_retire') return (await import('../repair/conversation-labels.ts')).prepareConversationLabelRetirement(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_conversation_facts') return (await import('../facts/conversation-publication.ts')).prepareConversationFactsPublication(engine, row, config);
+  if (row.intent?.kind === 'managed_maintenance_fence_facts') return (await import('../cycle/extract-facts.ts')).prepareFenceFactsReconcile(engine, row, config);
+  if (row.intent?.kind === 'managed_maintenance_deleted_page_facts_expire') return (await import('../cycle/extract-facts.ts')).prepareDeletedPageFactsExpiry(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_takes_reextract') return (await import('../cycle/extract-takes.ts')).prepareTakesReextract(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_take_reproject') return (await import('../repair/take-supersession.ts')).prepareTakeReprojection(engine, row);
   if (row.intent?.kind === 'managed_maintenance_timeline_extract') return (await import('../../commands/extract-timeline-db.ts')).prepareTimelineExtract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_page') {
     const prepared = await preparePageMutation(engine, row.intent.expected_revision === null

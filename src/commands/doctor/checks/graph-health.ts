@@ -297,6 +297,8 @@ export const timelineHistoryEntry: DoctorEntry = {
     'stale_embedding_effects',
     'google_file_modes',
     'extractor_facts_expired',
+    'conversation_label_facts',
+    'conversation_outcomes_stale',
     'captured_facts_active',
     'loop_facts_drift',
     'ontology_facts_fenced',

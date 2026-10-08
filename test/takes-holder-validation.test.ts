@@ -40,7 +40,7 @@ describe('isValidHolder — canonical forms', () => {
   });
 
   test('companies/<slug> is valid', () => {
-    expect(isValidHolder('companies/clipboard-health')).toBe(true);
+    expect(isValidHolder('companies/acme-example')).toBe(true);
   });
 
   test('codex #3: dots in slug are valid (companies/acme.io)', () => {

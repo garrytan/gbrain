@@ -246,6 +246,8 @@ describe('mcpOperations filter — localOnly ops are excluded from the HTTP-expo
       'retain_skill_revision',
       'sources_inspect',
       'sync_brain',
+      // W9F item 8: the CLI delegates rebuild to a resident owner over IPC.
+      'takes_rebuild',
       'takes_remove',
     ];
     const derived = operations.filter(o => o.localOnly).map(o => o.name).sort();

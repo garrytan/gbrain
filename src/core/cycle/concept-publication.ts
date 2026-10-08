@@ -9,7 +9,8 @@
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import { preservedConceptSections, stripPreservedConceptSections } from './concept-sections.ts';
 import type { Page } from '../types.ts';
-import { serializeMarkdown, parseMarkdown } from '../markdown.ts';
+import { serializeMarkdown, parseMarkdown, type ParsedMarkdown } from '../markdown.ts';
+import { digest } from '../persistence/digest.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, replaceOrInsertFactsFence, stripFactsFence } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, stripTakesFence } from '../takes-fence.ts';
 import { isDbOnly, loadStorageConfig } from '../storage-config.ts';
@@ -25,8 +26,10 @@ import { writeDerivedPageThrough } from './derived-write-through.ts';
 export const CONCEPT_PRESERVATION_CODE = 'concept_preservation_hold';
 /** Codes that mean the page moved under a concurrent writer; the next run retries. */
 export const CONCEPT_DEFERRAL_CODES = new Set(['revision_conflict', 'page_identity_changed']);
+/** Error code for a concept whose database row published but whose file write failed. */
+export const CONCEPT_WRITE_THROUGH_FAILED_CODE = 'concept_write_through_failed';
 /** Codes that hold a concept until an operator imports or repairs its page. */
-export const CONCEPT_HOLD_CODES = new Set(['source_changed', CONCEPT_PRESERVATION_CODE]);
+export const CONCEPT_HOLD_CODES = new Set(['source_changed', CONCEPT_PRESERVATION_CODE, CONCEPT_WRITE_THROUGH_FAILED_CODE]);
 
 function conceptHoldError(message: string): Error { return Object.assign(new Error(message), { code: CONCEPT_PRESERVATION_CODE }); }
 
@@ -159,28 +162,50 @@ export function stripFenceSections(body: string): string {
     .replace(/\n{3,}/g, '\n\n').trim();
 }
 
-/** The page's markdown file, when it has one and write-through is not off: the fence writers write it first. */
-async function conceptFile(engine: BrainEngine, slug: string, sourceId: string): Promise<Pick<Page, 'compiled_truth' | 'timeline'> | null> {
+/**
+ * The page's markdown file when write-through is not off: its raw bytes (null
+ * when absent), which bind the later file write to this read, and, when it
+ * exists, its parse. The fence writers write the file first.
+ */
+async function conceptFile(engine: BrainEngine, slug: string, sourceId: string): Promise<{ bytes: string | null; parsed: ParsedMarkdown | null } | null> {
   if (await isWriteThroughDisabled(engine)) return null;
   const target = await resolvePageWriteTarget(engine, slug, sourceId);
-  if (!target.ok || !existsSync(target.filePath)) return null;
-  const parsed = parseMarkdown(readFileSync(target.filePath, 'utf-8'), target.filePath);
-  return { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline };
+  if (!target.ok) return null;
+  if (!existsSync(target.filePath)) return { bytes: null, parsed: null };
+  const bytes = readFileSync(target.filePath, 'utf-8');
+  return { bytes, parsed: parseMarkdown(bytes, target.filePath) };
+}
+
+/**
+ * Whether the page's file holds the database row in every part publication
+ * takes from the row: the narrative (fences aside, which publication carries
+ * from the file), frontmatter, tags, type and title. Formatting differs
+ * freely; any edit the database has not imported does not match.
+ */
+function fileHoldsPage(file: ParsedMarkdown, page: Page, tags: string[]): boolean {
+  const owned = (p: { compiled_truth: string; type: string; title: string; frontmatter: Record<string, unknown> }, t: string[]) => digest({
+    narrative: stripFenceSections(p.compiled_truth), type: p.type, title: p.title.trim(), frontmatter: p.frontmatter, tags: [...new Set(t)].sort(),
+  });
+  return owned({ ...file, type: file.typeExplicit ? file.type : page.type }, file.tags) === owned(page, tags);
 }
 
 /**
  * Publish one concept page on an unmanaged brain (D-N3). Under the page lock
  * the fence writers take, the page is re-read: when its narrative changed
- * since `baseline` (the narrative the synthesis started from) or another
- * writer took it over, nothing is written and the concept is deferred
- * (`revision_conflict`) to the next run. Otherwise the new narrative is
- * composed with the latest `## Facts` / `## Takes` fences, timeline, tags and
- * frontmatter, so a take or fact appended during synthesis survives. The
- * page's file is rewritten when it already has one (a stale file would
- * otherwise be synced back over the new narrative) or when
- * `cycle.synthesize_concepts.write_through` is on (#5041). `importPage`
- * writes the composed markdown to the database. Returns the narrative now on
- * the page (the next call's baseline).
+ * since `baseline` (the narrative the synthesis started from), another
+ * writer took it over, or its file holds an edit the database has not
+ * imported (narrative, frontmatter or tags), nothing is written and the
+ * concept is deferred (`revision_conflict`) to the next run; sync imports the
+ * edit first. Otherwise the new narrative is composed with the latest
+ * `## Facts` / `## Takes` fences, timeline, tags and frontmatter, so a take
+ * or fact appended during synthesis survives. The page's file is rewritten
+ * when it already has one (a stale file would otherwise be synced back over
+ * the new narrative) or when `cycle.synthesize_concepts.write_through` is on
+ * (#5041). `importPage` writes the composed markdown to the database; the
+ * file write is then bound to the bytes read under the lock, so an edit made
+ * while the import ran is kept and the concept deferred, and a failed file
+ * write holds the concept (`concept_write_through_failed`). Returns the
+ * narrative now on the page (the next call's baseline).
  */
 export async function publishClassicConcept(engine: BrainEngine, slug: string, sourceId: string,
   synthesized: Record<string, unknown>, narrative: string, baseline: string,
@@ -195,12 +220,25 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
       throw Object.assign(new Error('The concept narrative changed during synthesis.'), { code: 'revision_conflict' });
     }
     const title = slug.split('/').pop()!.replace(/-/g, ' ');
-    const file = page ? await conceptFile(engine, slug, sourceId) : null;
+    const file = await conceptFile(engine, slug, sourceId);
+    const existing = page && file?.parsed ? file.parsed : null;
+    if (existing && !fileHoldsPage(existing, page!, snapshot!.tags)) {
+      throw Object.assign(new Error('The concept file holds an edit the database has not imported.'), { code: 'revision_conflict' });
+    }
     const markdown = page
-      ? composeConceptRepublication({ ...page, ...file }, snapshot!.tags, synthesized, narrative)
+      ? composeConceptRepublication({ ...page, ...(existing ? { compiled_truth: existing.compiled_truth, timeline: existing.timeline } : {}) },
+        snapshot!.tags, synthesized, narrative)
       : serializeMarkdown(synthesized, narrative, '', { type: 'concept', title, tags: [] });
     await opts.importPage(markdown);
-    if (file || opts.writeThrough) await writeDerivedPageThrough(engine, slug, sourceId);
+    if (existing || opts.writeThrough) {
+      const written = await writeDerivedPageThrough(engine, slug, sourceId, file ? { expectedFileBytes: file.bytes } : {});
+      if (written.skipped === 'file_changed') {
+        throw Object.assign(new Error('The concept file changed while the page was published; the edit was kept.'), { code: 'revision_conflict' });
+      }
+      if (written.error) {
+        throw Object.assign(new Error(`The concept file was not written: ${written.error}`), { code: CONCEPT_WRITE_THROUGH_FAILED_CODE });
+      }
+    }
     return narrative;
   } finally {
     await lock.release();

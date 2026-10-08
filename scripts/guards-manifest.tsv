@@ -44,7 +44,7 @@ check-gateway-routed-no-direct-anthropic.sh	scanner	yes	no runtime @anthropic-ai
 check-engine-dynamic-import.sh	scanner	yes	.ts companion is its implementation, not a separate guard; scans engine façades, their module dirs, engine-sql/ and schema-migrations/; GBRAIN_GUARD_ROOT seam
 check-key-files-current-state.sh	scanner	todo
 check-trailing-newline.sh	scanner	yes	tracked src/test/root text files end with a newline (guard fixtures excluded); GBRAIN_GUARD_ROOT seam scans with find
-check-test-isolation.sh	scanner	yes	allowlist data file: check-test-isolation.allowlist; fixture mode (GBRAIN_GUARD_ROOT) lints *.test.fixture.ts (bad: R5, bad-r1: R1)
+check-test-isolation.sh	scanner	yes	allowlist data file: check-test-isolation.allowlist; fixture mode (GBRAIN_GUARD_ROOT) lints *.test.fixture.ts (bad: R5, bad-r1: R1, bad-r6: R6)
 check-compile-autoload.sh	scanner	yes	every `bun build --compile` invocation (CLI one-liners + TS spawn arrays) in package.json/.github/scripts/docs/CLAUDE.md/CONTRIBUTING.md must carry --no-compile-autoload-bunfig (a cwd bunfig.toml preload runs before cli-preflight in a compiled binary); also every curated help record in src/cli/command-table.ts loads its src/cli/help/<name>.ts module through a literal () => import() (D3), and every spec module has a record
 check-admin-build.sh	buildfresh	exempt	runs the admin build; the build is the test
 check-admin-embedded.sh	buildfresh	exempt	embed freshness diff; not in verify CHECKS: duplicates check:admin-build's build

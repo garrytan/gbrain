@@ -20,7 +20,7 @@
  * (the CLI wires receipt-write after the runner returns).
  */
 import type { BrainEngine } from '../engine.ts';
-import { chat } from '../ai/gateway.ts';
+import { chat, thinkingOffOutputCap } from '../ai/gateway.ts';
 import { parseModelJSON } from '../eval-shared/json-repair.ts';
 import { aggregate, slotFormatFailure, type SlotResult, type AggregateResult } from './aggregate.ts';
 import {
@@ -34,6 +34,7 @@ import {
 } from './receipt-name.ts';
 import type { TakesQualityCorrection, TakesQualityReceipt } from './receipt.ts';
 import { estimateCost, getPricing, unpricedUnderCapError, unpricedWarning } from './pricing.ts';
+import type { PricingOverrides } from '../budget/reservation-cost.ts';
 import { loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { DEFAULT_CYCLES_NONTTY } from '../eval/cycle-default.ts';
 
@@ -52,6 +53,16 @@ function correctionPrompt(prompt: string, formatFailure: string): string {
   return `${prompt}\n\nYour previous response failed validation: ${formatFailure}\n` +
     'Return a complete replacement in the requested JSON shape, with a score for every dimension. ' +
     'Do not invent scores when evidence is insufficient.';
+}
+
+/** Each judge call's requested output cap; `judgeCallCostUsd` prices the cap `chat()` actually sends. */
+export const JUDGE_MAX_TOKENS = 2000;
+/** Assumed judge prompt size for the pre-call projection (real usage is counted after each call). */
+const PROJECTED_INPUT_TOKENS = 5000;
+
+/** Worst-case price of one judge call (or correction) to `modelId`, or null when unpriced. */
+export function judgeCallCostUsd(modelId: string, overrides?: PricingOverrides): number | null {
+  return estimateCost(modelId, PROJECTED_INPUT_TOKENS, thinkingOffOutputCap(modelId, JUDGE_MAX_TOKENS), overrides);
 }
 
 export const DEFAULT_MODEL_PANEL = [
@@ -137,7 +148,7 @@ async function callOneModel(
       model: modelId,
       system: 'You are an evaluation judge. Return strict JSON in the requested shape. Do not include markdown fences in your final response.',
       messages: [{ role: 'user', content: systemPrompt }],
-      maxTokens: 2000,
+      maxTokens: JUDGE_MAX_TOKENS,
       abortSignal,
       allowFallback: false,
       thinking: 'off',
@@ -188,6 +199,13 @@ export async function runEval(engine: BrainEngine, opts: RunOpts = {}): Promise<
     if (budgetUsd !== null) throw unpricedUnderCapError(m, budgetUsd);
     process.stderr.write(`${unpricedWarning(m)}\n`);
   }
+  for (const m of models) {
+    const cap = thinkingOffOutputCap(m, JUDGE_MAX_TOKENS);
+    if (cap === JUDGE_MAX_TOKENS) continue;
+    process.stderr.write(
+      `[eval takes-quality] note: ${m} cannot turn thinking off; its calls send and are priced at a ${cap}-token output cap\n`,
+    );
+  }
 
   // Sample the corpus.
   const { takesText, nTakes } = await sampleTakesAsText(engine, { limit, slugPrefix: opts.slugPrefix ?? null });
@@ -213,14 +231,14 @@ export async function runEval(engine: BrainEngine, opts: RunOpts = {}): Promise<
       break;
     }
 
-    // Project the worst-case spend for this cycle if budget is set. We
-    // assume the prompt is ~5k tokens input + ~2k output per model; the
-    // cap fires before the call if the projection would exceed remaining
-    // budget. (Real usage is captured post-call from result.usage.)
+    // Project the worst-case spend for this cycle if budget is set: ~5k
+    // input tokens plus the output cap each call sends. The cap fires before
+    // the call if the projection would exceed remaining budget. (Real usage
+    // is captured post-call from result.usage.)
     if (budgetUsd !== null) {
       let projected = 0;
       for (const m of models) {
-        projected += estimateCost(m, 5000, 2000, overrides) ?? 0;
+        projected += judgeCallCostUsd(m, overrides) ?? 0;
       }
       if (cumulativeCost + projected > budgetUsd) {
         process.stderr.write(
@@ -256,7 +274,7 @@ export async function runEval(engine: BrainEngine, opts: RunOpts = {}): Promise<
       if (!firstError) continue;
       const m = models[i]!;
       const skipped = opts.abortSignal?.aborted ? 'aborted'
-        : budgetUsd !== null && cumulativeCost + (estimateCost(m, 5000, 2000, overrides) ?? 0) > budgetUsd ? 'budget'
+        : budgetUsd !== null && cumulativeCost + (judgeCallCostUsd(m, overrides) ?? 0) > budgetUsd ? 'budget'
         : null;
       if (skipped) {
         corrections.push({ cycle, modelId: m, first_error: firstError, corrected: null, skipped_reason: skipped });

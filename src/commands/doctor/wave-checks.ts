@@ -239,6 +239,21 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/extractor-facts.ts')).extractorFactsCheck(engine, scope.sourceIds),
   },
   {
+    id: 'conversation_label_facts', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Retiring label-misattributed conversation facts is a host-side, explicit-only repair.',
+    count: d => Number(d.evidenced ?? 0),
+    impact: 'Some conversation facts were extracted from meeting-note labels read as speakers by an older parser, and recall still returns them',
+    run: async (engine, scope) => (await import('./checks/conversation-outcomes.ts')).conversationLabelFactsCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'conversation_outcomes_stale', resolution: 'operator', registration: 'wave',
+    hostOnly: 'Re-extracting conversation facts spends model calls on the brain host.',
+    instruction: 'Preview re-extracting a page the check names with gbrain extract-conversation-facts --source-id <id> --slug <slug> --force --dry-run, then run it without --dry-run after the user agrees to the spend.',
+    count: d => Number(d.stale ?? 0),
+    impact: 'Some conversation pages keep an extraction outcome recorded by an older conversation parser, which is never reopened automatically',
+    run: async (engine, scope) => (await import('./checks/conversation-outcomes.ts')).conversationOutcomesStaleCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'captured_facts_active', resolution: 'repair', registration: 'wave',
     hostOnly: 'Classifying captured facts reads harness transcripts and the session corpus on the brain host; the repair is explicit-only.',
     count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),

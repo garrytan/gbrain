@@ -10,6 +10,64 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.108.0] - 2026-10-08
+
+**Wave 9 follow-ups: managed brains get receipts for every fact and take they write, old "Date:" facts can be cleaned up for free, and a handful of quiet overwrites and false "done" reports stop.**
+
+Every fresh `gbrain init` brain is managed: each write is supposed to carry a receipt saying who wrote it and when. Facts pulled from meeting notes and transcripts, facts absorbed from a fence during sync, and several takes paths skipped that receipt, and on managed brains email-thread facts were simply switched off. They all write through receipts now, batched so a big brain doesn't burn through its writer's limits. Facts an older parser credited to a "Date" or "Attendees" speaker can be previewed and retired without any model call. A removed take's number is never handed to a new take, a concept you edit by hand mid-cycle is no longer overwritten, `takes rebuild` works while `gbrain serve` is running, and eval judges on Gemini and GPT finally turn thinking off where the model allows it.
+
+### How to use it
+
+```bash
+gbrain extract-conversation-facts --source-id <id> --dry-run   # preview what a managed run would extract
+gbrain repair conversation-labels --source <id>                # preview label-misattributed facts (no model calls)
+gbrain repair conversation-labels --source <id> --apply --expect <hash> --yes
+gbrain extract-conversation-facts --slugs <a,b> --dry-run      # exactly the named pages
+gbrain takes rebuild <slug>                                    # now also while gbrain serve owns a PGLite brain
+gbrain doctor --only conversation_label_facts,conversation_outcomes_stale
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Conversation facts on managed brains | Meetings, transcripts and email threads are extracted and published in receipted batches: up to 25 pages per request, at most 10 of them with facts, at most 8 MiB. A crash after the batch was accepted replays it on the next run with no model call; a page that changed meanwhile is skipped and retried; a page that keeps failing is blocked until it changes. Single emails, prose notes and undated pages are recorded as not extractable for good instead of rescanned every run. |
+| Writer capacity | A managed extraction stops with `maintenance_backpressure` (exit 12) before the writer passes 80% of its outstanding requests, reserved receipt bytes or permanent request ids, and names a `--limit` that fits. On a 50,000-page brain a full backfill uses about 1.5% of the writer's lifetime request ids. |
+| Fence facts, takes and supersession on managed brains | The cycle's `## Facts` reconcile and its deleted-page expiry, `gbrain extract takes --source db`, `gbrain takes rebuild` and `gbrain repair take-supersession` publish receipted requests. A page already in sync writes nothing. |
+| `gbrain repair conversation-labels` | New, explicit-only. Lists facts the parser before v0.60.74 took from `**Date:**`, `**Attendees:**` and similar labels, by class with a hash; `--apply` expires them (kept in history), records prose pages as not extractable and prints the capped re-extract commands for the rest. Facts dated 1970-01-01 are the default set; the rest sit behind `--include-ambiguous`. It never runs from `repair --all`, doctor remediation or an upgrade. |
+| Doctor | `conversation_label_facts` counts what the repair would retire; `conversation_outcomes_stale` counts pages last processed by an older extractor version (nothing reruns on its own). |
+| Take numbers | `gbrain takes remove` leaves a struck `(removed)` placeholder row, and every new take number comes from one page-wide allocator, so `slug#N` links never start pointing at a different claim. |
+| Concepts (unmanaged brains) | A dream-cycle concept whose file holds an edit the database hasn't imported yet is deferred (`revision_conflict`) and published after sync imports it; a failed file write holds the concept instead of reporting success. |
+| Worker shutdown | An `UnrecoverableError` thrown while a worker shuts down dead-letters with its own message instead of being re-queued for another (possibly paid) run; other errors are still handed back, now keeping the handler's message. |
+| `gbrain jobs supervisor stop` | A recycled worker pid no longer reads as still running, a run that crossed the weekly audit boundary no longer reports a false `drained`, a run with no `started` record reports `unverified`, and a stale PID file whose pid now belongs to another process is never signaled (`stale_pid_file`). |
+| `gbrain takes rebuild` | Works while `gbrain serve` owns a PGLite brain (it used to hang on the lock); same JSON and exit codes as a local rebuild. |
+| Eval judges | With `thinking: off`, Gemini 2.5 Flash sends `thinkingBudget: 0` and GPT-5.1+ sends `reasoningEffort: none`. Models that can't turn reasoning off (Gemini 2.5 Pro and 3.x, gpt-5/-mini/-nano, o-series) run at their lowest setting with a 32,000-token reply cap, and the takes-quality and cross-modal preflights price that cap instead of underestimating it 8-16x. |
+
+### Things to watch
+
+- **Managed brains now extract email threads.** Nothing runs on its own: the backfill stays opt-in (`cycle.conversation_facts_backfill`) and spend stays under `--max-cost-usd` (default $5) and the backfill's $1 per run / $5 total caps. A two-message thread is one segment, about $0.006 on Haiku 4.5.
+- **Managed extraction needs the source's owner on this host** once a page actually needs work; the backfill phase skips a managed source another host owns and says so in its summary.
+- **Take numbering is page-wide:** the first take on a page whose facts fence holds rows 1-5 is #6. Existing rows are never renumbered.
+- **Scripts:** a shutdown hand-back's `error_text` is `worker_shutdown: <message>` (match the prefix); the supervisor PID file has a second line on Linux (read the first); judge budgets that passed before can refuse earlier.
+- **Not fixed here:** stall detection for subagent turns, receipts for the pages/timeline/alias derived writers, production fail-closed receipt enforcement, and the judge-panel refresh. See TODOS.md.
+
+### Itemized changes
+
+- `src/core/facts/conversation-publication.ts`: `managed_maintenance_conversation_facts` batch requests with per-page generation identity, replay of accepted batches, resubmission of failed ones from their stored entries, blocking after a deterministic failure or three failed batches; outcome rows stay private under `facts.default_visibility=world`; the run's preflight, embedding signature, capacity check and batch index resolve at its first page with managed work. The `replaceDerivedFactsForPage` managed path is gone.
+- `maintenance_backpressure` (exit 12) also guards reserved receipt bytes and permanent request ids; the up-front check counts the run's planned batches.
+- `src/core/cycle/extract-facts.ts`: `managed_maintenance_fence_facts` and `managed_maintenance_deleted_page_facts_expire`; `src/core/cycle/extract-takes.ts`: `managed_maintenance_takes_reextract`; `src/core/repair/take-supersession.ts`: `managed_maintenance_take_reproject`.
+- `test/receipt-coverage.test.ts` lists every coordinated write site with its receipt status; the managed-connector contract harness refuses an unreceipted facts or takes write.
+- Conversation outcome rows record `extractor_version=<n>`. A conversation page whose completion marker was expired is extracted again; re-extraction keeps facts an open loop or a superseding fact references, as expired history.
+- `src/core/repair/conversation-labels.ts` (`managed_maintenance_conversation_label_retire`, batches of 25 pages), with the CLI write wait on a replayed batch.
+- `conversation_facts_backfill` reports a managed source this host doesn't own as skipped (`sources_skipped_not_owner`), not failed.
+- `nextFreeRowNum` for every new take row; `takes remove` writes the reservation row.
+- `publishClassicConcept` rechecks the file under the lock and writes with `expectedFileBytes`; `concept_write_through_failed`.
+- Worker shutdown error matrix; supervisor stop pairs exits with spawns by pid and kernel start time.
+- `takes_rebuild` is a local-only operation delegated to the resident owner.
+- `src/core/ai/thinking-off.ts`: a per-model thinking capability table that `chat()`, the judge estimates and the fence-repair model tier all read.
+- The brain filing rules skill (and its plugin copies), the takes-fence doc comment and the takes holder test fixtures use placeholder people and companies (`people/alice-example`, `companies/acme-example`) instead of real names.
+- `check-test-isolation` rule R6: a unit test that reads the CLI exit verdict sets its own baseline, so a verdict another file left in the same test process can't fail it.
+
 ## [0.60.107.0] - 2026-10-08
 
 **A page the quarantine gate hid stays hidden: no more planted markers, no facts mined from it, and no body handed to remote agents.**

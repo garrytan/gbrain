@@ -34,7 +34,7 @@ async function capture(engine: BrainEngine, args: string[]): Promise<string> {
   return lines.join('\n');
 }
 
-beforeEach(() => { _resetCliExitVerdictForTests(); process.exitCode = 0; });
+beforeEach(() => { _resetCliExitVerdictForTests(); });
 afterEach(() => { _resetCliExitVerdictForTests(); process.exitCode = 0; });
 
 describe('#6193 edge-proposals --json with BigInt ids', () => {

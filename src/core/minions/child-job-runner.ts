@@ -163,7 +163,10 @@ export async function runJobInChild(opts: RunJobInChildOpts): Promise<unknown> {
     if (configurationError) throw configurationError;
     if (isLocalConfigurationError(error)) throw error;
     const abortReason = opts.abortSignal.reason instanceof Error ? opts.abortSignal.reason.message : String(opts.abortSignal.reason ?? '');
-    if (opts.shutdownSignal.aborted && (isLocalConfigurationError(opts.shutdownSignal.reason) || !PER_JOB_ABORT_REASONS.has(abortReason))) {
+    // An UnrecoverableError from a child whose stop is confirmed dead-letters
+    // (W9F Decision 7); an unconfirmed stop keeps the claim off the queue.
+    if (opts.shutdownSignal.aborted && !(error instanceof UnrecoverableError && executionStopped)
+      && (isLocalConfigurationError(opts.shutdownSignal.reason) || !PER_JOB_ABORT_REASONS.has(abortReason))) {
       throw new ChildWorkerShutdownError('Job child stopped reporting during worker shutdown; cleanup evidence determines whether its claim can be released.', executionStopped);
     }
     throw error;
@@ -445,8 +448,9 @@ async function runJobChildProcess(opts: RunJobInChildOpts): Promise<unknown> {
     // and report an error): release with no attempt burned rather than
     // punishing exactly the well-behaved handlers on every deploy
     // (adversarial-review P2). Worst case a genuinely-failing job that
-    // coincided with a deploy gets one free retry — bounded and benign.
-    if (isShutdownClass) {
+    // coincided with a deploy gets one free retry — bounded and benign. An
+    // UnrecoverableError is deterministic, so it dead-letters as usual.
+    if (isShutdownClass && !(handlerError instanceof UnrecoverableError)) {
       throw new ChildWorkerShutdownError(
         'Job child reported an error during worker shutdown; execution stop is unconfirmed, so lease expiry remains the fallback.',
       );

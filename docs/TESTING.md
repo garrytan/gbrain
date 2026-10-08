@@ -1443,15 +1443,16 @@ cross-subsystem duplicate entries, and byte caps for the entry docs and referenc
 
 ### Test-isolation lint and helpers
 
-**The canonical home of the test-isolation rules** (other docs link here). `scripts/check-test-isolation.sh` (in `bun run verify`) enforces them on non-serial unit files; `*.serial.test.ts` and `test/e2e/*` are skipped:
+**The canonical home of the test-isolation rules.** `scripts/check-test-isolation.sh` (in `bun run verify`) enforces them on non-serial unit files; `*.serial.test.ts` and `test/e2e/*` are skipped:
 
 | Rule | What it bans | Fix |
 |---|---|---|
-| **R1** | `process.env.X = ...`, bracket assignment, `delete`, `Object.assign(process.env, ...)`, `Reflect.set(process.env, ...)` | `withEnv()` (`test/helpers/with-env.ts`) or `*.serial.test.ts` |
-| **R2** | `mock.module(...)` anywhere in the file | `*.serial.test.ts` (no DI on production code for testability) |
-| **R3** | `new PGLiteEngine(` outside ~50 lines after a `beforeAll(` line | Use the canonical block (below) inside `beforeAll(` |
-| **R4** | `new PGLiteEngine(` without `engine.disconnect(` in an `afterAll(` block | Add `afterAll(() => engine.disconnect())` |
+| **R1** | `process.env` writes: assignment, `delete`, `Object.assign`, `Reflect.set` | `withEnv()` (`test/helpers/with-env.ts`) or `*.serial.test.ts` |
+| **R2** | `mock.module(...)` anywhere in the file | `*.serial.test.ts` |
+| **R3** | `new PGLiteEngine(` outside ~50 lines after a `beforeAll(` line | The canonical block (below) in `beforeAll(` |
+| **R4** | `new PGLiteEngine(` without `engine.disconnect(` in an `afterAll(` block | `afterAll(() => engine.disconnect())` |
 | **R5** | `configureGateway(` with no `resetGateway(` (comments ignored): the global gateway leaks to later files | `afterAll(() => resetGateway())`; a child-script-only call takes `isolation-lint: R5-subprocess-only` |
+| **R6** | `currentExitCode(` with no verdict reset outside an after-hook | `beforeEach(() => _resetCliExitVerdictForTests())` |
 
 Files that violated these rules at the lint baseline are listed in `scripts/check-test-isolation.allowlist`. **The allow-list MUST shrink over time**: never add entries.
 

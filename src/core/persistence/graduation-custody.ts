@@ -14,7 +14,7 @@ import { closeSync, constants, existsSync, fsyncSync, lstatSync, openSync, readF
 import { basename, dirname, join, resolve } from 'node:path';
 import type { OperationError } from '../ops/contract.ts';
 import { engineGraduatedError, inProgressError, interruptedError, splitBrainError } from './graduation-errors.ts';
-import { inspectLockHolder, isProcessAlive, readBootId, readPidNs, type LockHandle } from '../pglite-lock.ts';
+import { inspectLockHolder, isProcessAlive, processStartTime, readBootId, readPidNs, type LockHandle } from '../pglite-lock.ts';
 import { moveHeldPglite } from './maintenance.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { flushDirectory } from '../fs-durable.ts';
@@ -89,14 +89,7 @@ export function allowGraduationInspection(dataDir: string): () => void {
 
 // ── process identity (marker liveness) ─────────────────────────────────────
 
-/** Kernel start time of `pid` (Linux /proc clock ticks), or null when unknowable. */
-export function processStartTime(pid: number): string | null {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-    return fields[19] ?? null;
-  } catch { return null; }
-}
+export { processStartTime };
 
 export function currentProcessIdentity(): Pick<IntentMarker, 'pid' | 'bootId' | 'pidNs' | 'processStart'> {
   return { pid: process.pid, bootId: readBootId(), pidNs: readPidNs(), processStart: processStartTime(process.pid) };

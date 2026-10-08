@@ -26,7 +26,7 @@
  * Why new: the fences kind is new in PR4.
  * Seams: __setChatTransportForTests (no provider call); test/postgres-unit-arms.txt runs the Postgres arm.
  */
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -104,6 +104,7 @@ beforeAll(async () => {
   legacyEngine = new PGLiteEngine(); await legacyEngine.connect({}); await legacyEngine.initSchema();
 }, 120_000);
 
+beforeEach(() => { _resetCliExitVerdictForTests(); });
 afterEach(() => { __setChatTransportForTests(null); _resetCliExitVerdictForTests(); });
 
 afterAll(async () => {

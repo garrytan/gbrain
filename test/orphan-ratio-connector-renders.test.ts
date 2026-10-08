@@ -58,7 +58,6 @@ async function doctorCheck(args: string[]) {
   } finally {
     console.log = log; console.error = err; (process as { exit: unknown }).exit = exit;
     _resetCliExitVerdictForTests();
-    process.exitCode = 0;
   }
   for (let i = out.length - 1; i >= 0; i--) {
     try {
