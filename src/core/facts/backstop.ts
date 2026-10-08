@@ -189,19 +189,11 @@ const DEDUP_CANDIDATE_LIMIT = 5;
 /** Lowest top-candidate cosine that asks the classifier; the consolidate phase's default cluster threshold. */
 const CLASSIFY_FLOOR = 0.85;
 
-/**
- * Id of the active fact on `entitySlug` that `f` restates, or null. Cosine at
- * 0.95 or above is a duplicate on explicit lanes (capture lanes never drop by
- * cosine, #5888). Between CLASSIFY_FLOOR and 0.95 explicit lanes ask the
- * classifier, because re-extracting an edited page rewords its claims into
- * that band (#6333). A failed classifier call keeps the 0.95 rule, so the band
- * only ever skips an insert.
- */
+/** Id of the active fact on `entitySlug` that `f` restates by cosine (cosineVerdict), or null. */
 async function findDuplicateByEmbedding(
   ctx: FactsBackstopCtx,
   entitySlug: string,
-  f: Pick<ExtractedFact, 'fact' | 'kind' | 'embedding_model' | 'attributed_to'> & { embedding: Float32Array },
-  abortSignal?: AbortSignal,
+  f: Pick<ExtractedFact, 'fact' | 'embedding_model' | 'attributed_to'> & { embedding: Float32Array },
 ): Promise<number | null> {
   const candidates = await ctx.engine.findCandidateDuplicates(ctx.sourceId, entitySlug, f.fact,
     { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null });
@@ -211,12 +203,42 @@ async function findDuplicateByEmbedding(
     const s = cosineSimilarity(f.embedding, c.embedding);
     if (!top || s > top.score) top = { id: c.id, score: s, fact: c.fact };
   }
-  if (!top) return null;
-  if (cosineVerdict(ctx.source, top.score, f.fact, top.fact) === 'duplicate') return top.id;
-  if (top.score < CLASSIFY_FLOOR || isCaptureLane(ctx.source)) return null;
-  const verdict = await classifyAgainstCandidates({ fact: f.fact, kind: f.kind ?? 'fact', embedding: f.embedding }, candidates,
-    { model: ctx.model, fallbackThreshold: EXPLICIT_DUPLICATE_THRESHOLD, abortSignal });
-  return verdict.decision === 'duplicate' ? verdict.matched_id : null;
+  return top && cosineVerdict(ctx.source, top.score, f.fact, top.fact) === 'duplicate' ? top.id : null;
+}
+
+/**
+ * #6333: re-extracting an edited page rewords its claims, and the rewordings
+ * score between CLASSIFY_FLOOR and the 0.95 cosine rule. On explicit lanes the
+ * classifier decides that band before either writer runs: a "duplicate"
+ * verdict drops the fact and returns the matched id, like the capture-lane
+ * drops. Any other verdict, or a failed classifier call (which keeps the 0.95
+ * rule), leaves the fact to the writer's own dedup. Only same-visibility
+ * candidates count; inferred subjects and capture lanes are skipped.
+ */
+async function dropRewordedDuplicates<T extends ExtractedFact & { entity_inferred?: unknown }>(
+  ctx: FactsBackstopCtx, facts: T[], visibility: 'private' | 'world',
+  resolveEntity: (engine: BrainEngine, sourceId: string, raw: string) => Promise<{ slug: string; source: string } | null>,
+  abortSignal?: AbortSignal,
+): Promise<{ facts: T[]; dropped: number[] }> {
+  if (isCaptureLane(ctx.source)) return { facts, dropped: [] };
+  const kept: T[] = [];
+  const dropped: number[] = [];
+  for (const f of facts) {
+    const embedding = f.entity_inferred ? null : f.embedding;
+    const resolved = embedding && f.entity_slug ? await resolveEntity(ctx.engine, ctx.sourceId, f.entity_slug) : null;
+    if (!embedding || !resolved || resolved.source === 'fallback_slugify') { kept.push(f); continue; }
+    const candidates = (await ctx.engine.findCandidateDuplicates(ctx.sourceId, resolved.slug, f.fact,
+      { embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null }))
+      .filter(c => c.visibility === visibility);
+    const top = Math.max(-1, ...candidates.map(c => (c.embedding ? cosineSimilarity(embedding, c.embedding) : -1)));
+    const verdict = top >= CLASSIFY_FLOOR && top < EXPLICIT_DUPLICATE_THRESHOLD
+      ? await classifyAgainstCandidates({ fact: f.fact, kind: f.kind ?? 'fact', embedding }, candidates,
+        { model: ctx.model, fallbackThreshold: EXPLICIT_DUPLICATE_THRESHOLD, abortSignal })
+      : null;
+    if (verdict?.decision === 'duplicate') dropped.push(verdict.matched_id);
+    else kept.push(f);
+  }
+  return { facts: kept, dropped };
 }
 
 /**
@@ -711,8 +733,10 @@ async function runPipelineBodyInner(
   // facts.default_visibility (fail-closed to 'private').
   const { resolveDefaultVisibility } = await import('./visibility.ts');
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
-  // #5888: one exact-duplicate check for the capture lanes, before either writer.
-  const { facts, dropped } = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
+  // #5888: one exact-duplicate check for the capture lanes, before either writer; #6333: the reworded band for explicit lanes.
+  const captured = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
+  const { facts, dropped: reworded } = await dropRewordedDuplicates(ctx, captured.facts, visibility, resolveEntitySlugWithSource, abortSignal);
+  const dropped = [...captured.dropped, ...reworded];
   if (!managed) await assertAmbientCaptureAdmissible(ctx.engine, ctx.source);
   if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug) : null);
 
@@ -755,7 +779,7 @@ async function runPipelineBodyInner(
     const exact = resolvedSlug ? await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility, attributed_to: f.attributed_to ?? null }, null) : null;
     let matchedExistingId: number | null = exact?.candidate?.id ?? null;
     if (matchedExistingId === null && resolvedSlug && f.embedding && !f.entity_inferred) {
-      matchedExistingId = await findDuplicateByEmbedding(ctx, resolvedSlug, { ...f, embedding: f.embedding }, abortSignal);
+      matchedExistingId = await findDuplicateByEmbedding(ctx, resolvedSlug, { ...f, embedding: f.embedding });
     }
 
     if (matchedExistingId !== null) {
