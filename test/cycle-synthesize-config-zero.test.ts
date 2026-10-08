@@ -117,7 +117,7 @@ describe('loadSynthConfig — triage model resolution chain (#4152 2A)', () => {
 
   test('all keys unset → tier utility default', async () => {
     const cfg = await __testing.loadSynthConfig(stubEngine({}));
-    expect(cfg.triage.model).toBe('anthropic:claude-haiku-4-5-20251001');
+    expect(cfg.triage.model).toBe('anthropic:claude-haiku-5-5');
   });
 });
 

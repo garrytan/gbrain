@@ -172,7 +172,7 @@ describe('refresh + cache + resolution overlay', () => {
     expect(resolveTierDefault('deep', { OPENAI_API_KEY: 'sk-test' })).toBe('openai:gpt-5.6-sol');
     // Anthropic-first is untouched by the overlay.
     expect(resolveTierDefault('reasoning', { ANTHROPIC_API_KEY: 'sk-ant', OPENAI_API_KEY: 'sk-test' }))
-      .toBe('anthropic:claude-sonnet-4-6');
+      .toBe('anthropic:claude-sonnet-5-5');
   });
 
   test('no cache → static recipe-ranked fallback', () => {

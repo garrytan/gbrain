@@ -643,14 +643,14 @@ describe('resolveMaxOutputTokens (#2778)', () => {
 });
 
 describe('subagent handler output-token cap (#2778)', () => {
-  test('default: SDK call carries max_tokens=8192 (was hardcoded 4096)', async () => {
+  test('default: SDK call carries the thinking-model cap 32000 for the default Claude 5 model', async () => {
     const client = new FakeMessagesClient([
       { content: [{ type: 'text', text: 'ok' }] as any, stop_reason: 'end_turn' },
     ]);
     const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
     const ctx = await makeCtx({ prompt: 'hi' });
     await handler(ctx);
-    expect(client.calls[0]!.max_tokens).toBe(8192);
+    expect(client.calls[0]!.max_tokens).toBe(32000);
   });
 
   test('data.max_tokens flows to the SDK call', async () => {
@@ -1227,7 +1227,7 @@ describe('oneshot mode dispatch (#4216)', () => {
     await engine.executeRaw(
       `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks, tokens_out)
        VALUES ($1, 0, 'user', '[{"type":"text","text":"synthesize"}]'::jsonb, NULL),
-              ($1, 1, 'assistant', '[{"type":"text","text":"truncated partial outp"}]'::jsonb, 8192)`,
+              ($1, 1, 'assistant', '[{"type":"text","text":"truncated partial outp"}]'::jsonb, 32000)`,
       [ctx.id],
     );
     await expect(handler(ctx)).rejects.toThrow(/did not finish cleanly.*max_tokens/);
