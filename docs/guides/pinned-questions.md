@@ -26,7 +26,8 @@ receipt described below. The command exits 1 when the answer is blocked.
 
 The same operations exist over MCP: `questions_pin`, `questions_list`,
 `questions_status`, `questions_refresh` and `questions_unpin`. They are on the
-full tool surface (not the starter surface).
+full tool surface, the one gbrain's MCP registrations use; a harness narrowed
+to `starter` finds them through `request_tools`.
 
 | Tool | Scope | What it does |
 |---|---|---|

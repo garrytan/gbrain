@@ -24,7 +24,7 @@ User guide: [docs/guides/pinned-questions.md](../../guides/pinned-questions.md).
 
 - `src/core/questions/auto-think-migration.ts` — Maps the seven `dream.auto_think` keys onto pins without creating consent (disabled or zero budget → inactive; `auto_commit=false` → draft; cooldown and model per pin; budget, max and allow_unpriced seed `cycle.standing_questions.*` only when unset). Config reads and inserts only; idempotent. `autoThinkReplacement` is what `gbrain config get|set` prints for an old key.
 
-- `src/core/ops/questions.ts` — `questions_pin`, `questions_refresh`, `questions_unpin` (write, `writeInference` `explicit_llm` / `none`) and `questions_list`, `questions_status` (read). Full surface only (not `STARTER_OPS`). CLI equivalents in `src/core/ops/cli-equivalent.ts`.
+- `src/core/ops/questions.ts` — `questions_pin`, `questions_refresh`, `questions_unpin` (write, `writeInference` `explicit_llm` / `none`) and `questions_list`, `questions_status` (read). On the full surface registrations pin (not `STARTER_OPS`). CLI equivalents in `src/core/ops/cli-equivalent.ts`.
 
 - `src/commands/questions.ts` — `gbrain questions pin|list|status|refresh|unpin` through `handleToolCall` (trusted local); exit 1 when the answer is blocked or a refresh did not publish.
 

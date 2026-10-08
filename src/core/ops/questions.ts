@@ -1,8 +1,8 @@
 /**
  * questions_* ops: pinned questions (standing answers kept current from
  * evidence). Owner-private in v1: every op refuses callers that cannot read
- * private pages (src/core/questions/service.ts). Full MCP surface only (not
- * in STARTER_OPS); `gbrain questions <verb>` is the CLI.
+ * private pages (src/core/questions/service.ts). On the full MCP surface that
+ * registrations pin, not in STARTER_OPS; `gbrain questions <verb>` is the CLI.
  */
 import type { Operation, ParamDef } from './contract.ts';
 
