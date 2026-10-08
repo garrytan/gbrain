@@ -25,7 +25,6 @@ import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 import { maybeRefreshPlannerStats } from '../planner-stats.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { faultPoint } from './fault-points.ts';
-import { OperationError } from '../ops/contract.ts';
 import { releaseAbandonedClaims } from './effect-journal.ts';
 import { readWriteSwitches, writeSwitchOn } from './switches.ts';
 
