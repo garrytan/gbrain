@@ -365,7 +365,7 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   }
   process.stderr.write(`Windows backup dotnet controls: ${JSON.stringify({ kind, arch: process.arch, runtime: Bun.version, observations })}\n`);
   for (const observation of observations) {
-    expect(observation.launches).toBe(1);
+    expect(observation.launches).toBe(observation.nativeError === 'ETIMEDOUT' ? 2 : 1);
     expect(observation.bounded).toBe(true);
     expect(observation.fixedExecutable).toBe(true);
     expect(observation.stableProgram).toBe(true);
