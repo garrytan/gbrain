@@ -256,6 +256,7 @@ test/model-config.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN
 test/models-newer-hint.serial.test.ts	R1	R1: mutates process.env (GBRAIN_MODEL)
 test/models-nightly-probe-routes.serial.test.ts	global-state	global-state: patches process stdout/stderr/console and the process-global gateway
 test/models-per-task-extract-atoms.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
+test/models-per-task-facts-extraction.serial.test.ts	global-state	global-state: patches process stdout and mutates process.env through withEnv
 test/models-probe-max-output-tokens.serial.test.ts	global-state	global-state: binds local servers/ports
 test/native-base-url-fold.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, OPENAI_BASE_URL)
 test/nightly-probe-compiled-binary.serial.test.ts	global-state	global-state: compiles a probe harness with bun build --compile and runs it plus a source-mode copy as subprocesses
