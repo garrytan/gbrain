@@ -35,6 +35,7 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
       const route = coverageRoute(source);
       const steps = holdRepairSteps(source.source_id, route, auto);
       return { source_id: source.source_id, held: source.missing + source.stale, stale: source.stale, missing: source.missing, ...(route.fences ? { fences: route.fences } : {}), ...(route.concurrent ? { concurrent: route.concurrent } : {}),
+        ...(route.stalled ? { stalled: route.stalled } : {}),
         first: (listing.get(source.source_id) ?? []).map(hold => ({ path: hold.path, code: hold.code, ...(hold.meta.reason ? { reason: hold.meta.reason } : {}), why: gitHoldFix(hold, auto).why })),
         escalated: source.missing + source.stale - (images.get(source.source_id) ?? 0) > policy.escalateCount,
         status: `gbrain sources status ${source.source_id}`, repair: steps.commands.join('; '),
@@ -47,24 +48,30 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
     const escalated = sources.filter(source => source.escalated);
     const single = sources.length === 1 ? sources[0]! : undefined;
     const fenceOnly = sources.every(source => source.fences === source.held);
+    // #6278: stalled holds are the writer's, not the files': the fix is writer status, never a file repair.
+    const stalledOnly = sources.every(source => source.stalled === source.held);
+    const stalled = sources.reduce((sum, source) => sum + (source.stalled ?? 0), 0);
     const lines = sources.map(source => `${source.source_id}: ${source.held} held (${source.stale} page(s) keep an older revision, ${source.missing} file(s) have no page), `
       + `first: ${source.first.map(hold => `${hold.path} [${hold.code}${hold.reason ? `/${hold.reason}` : ''}]`).join(', ')}`);
     return {
       name: 'git_held_files', status: escalated.length ? 'fail' : 'warn', details,
       message: `${held} file(s) in Git sources are held and not imported; the rest of each sync continues. ${lines.join('; ')}. `
-        + (escalated.length ? `Escalated: ${escalated.map(source => source.source_id).join(', ')} hold more than ${policy.escalateCount} files (sync.hold_escalate_count), so a generator or an upgrade is likely writing or reading them wrong; fix the cause first. ` : '')
+        + (escalated.length ? `Escalated: ${escalated.map(source => source.source_id).join(', ')} hold more than ${policy.escalateCount} files (sync.hold_escalate_count), so ${stalled * 2 > held
+          ? 'the write owner (not the files) is the likely cause; inspect it with writer status' : 'a generator or an upgrade is likely writing or reading them wrong; fix the cause'} first. ` : '')
         + 'A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. '
         + `Inspect with ${sources.map(source => source.status).join('; ')}; `
-        + (sources.some(source => source.fences) ? `then ${sources.map(source => `${source.source_id}: ${source.next}`).join('; ')}.` : `preview the fix with ${sources.map(source => source.repair).join('; ')}.`),
+        + (sources.some(source => source.fences || source.stalled) ? `then ${sources.map(source => `${source.source_id}: ${source.next}`).join('; ')}.` : `preview the fix with ${sources.map(source => source.repair).join('; ')}.`),
       fix: single
         ? agentFix(single.argv, fenceOnly ? `Previews the fence repair of each held file of ${single.source_id} (read-only, no model call): ${single.next}.`
-          : 'Previews the minimal line fix for each held file (or names the line to fix by hand) and prints the hash-bound apply command; it writes nothing.',
-        'git_held_files', { docs: fenceOnly ? 'docs/guides/repair.md#fences' : 'docs/guides/repair.md#held-files' })
-        : agentFix(fenceOnly ? ['gbrain', 'repair', 'fences'] : ['gbrain', 'repair', 'frontmatter'],
+          : stalledOnly ? `Shows what the write owner of ${single.source_id} was stuck on (read-only); the held files are fine. ${single.next}.`
+            : 'Previews the minimal line fix for each held file (or names the line to fix by hand) and prints the hash-bound apply command; it writes nothing.',
+        'git_held_files', { docs: fenceOnly ? 'docs/guides/repair.md#fences' : stalledOnly ? 'docs/guides/write-refusals.md#preparation_stalled' : 'docs/guides/repair.md#held-files' })
+        : agentFix(fenceOnly ? ['gbrain', 'repair', 'fences'] : stalledOnly ? ['gbrain', 'sources', 'writer', 'status', '--json'] : ['gbrain', 'repair', 'frontmatter'],
           fenceOnly ? `Previews the fence repair of every held file (read-only, no model call) with each one's planned repair or exact edit, and prints the apply command with --expect <hash>. ${fenceAutoSentence(auto)}`
-            : 'Previews the minimal line fix for each held file (or names the line to fix by hand) and prints the hash-bound apply command; it writes nothing. '
-              + `Fence holds are previewed by gbrain repair fences instead. ${fenceAutoSentence(auto)}`,
-          'git_held_files', { docs: fenceOnly ? 'docs/guides/repair.md#fences' : 'docs/guides/repair.md#held-files' }),
+            : stalledOnly ? 'Shows every source\'s write owner and what it was stuck on (read-only); the held files are fine. Fix what it names or upgrade gbrain, then gbrain sources retry-held <id> and the same sync per source.'
+              : 'Previews the minimal line fix for each held file (or names the line to fix by hand) and prints the hash-bound apply command; it writes nothing. '
+              + `Fence holds are previewed by gbrain repair fences instead${stalled ? ', and preparation-stalled holds need no file repair (see each source\'s next step)' : ''}. ${fenceAutoSentence(auto)}`,
+          'git_held_files', { docs: fenceOnly ? 'docs/guides/repair.md#fences' : stalledOnly ? 'docs/guides/write-refusals.md#preparation_stalled' : 'docs/guides/repair.md#held-files' }),
     };
   } catch (error) {
     return { name: 'git_held_files', status: 'warn', fix_unavailable_reason: 'check_errored',

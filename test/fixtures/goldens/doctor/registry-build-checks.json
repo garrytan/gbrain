@@ -398,6 +398,10 @@
         "name": "persistence_write_stall"
       },
       {
+        "category": "ops",
+        "name": "persistence_session_timeouts"
+      },
+      {
         "category": "brain",
         "name": "connector_held_items"
       },

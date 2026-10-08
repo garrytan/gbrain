@@ -18,6 +18,25 @@
  * Seams: none; real PGLite (and Postgres through the e2e registration),
  * `runCycle` with `phases: ['extract_facts']`, the shared `managedBrain` and
  * legacy managed fixture.
+ *
+ * #6278 (plan 2.1, 2.2, Decision 57): the fence codec is the adoption's
+ * oracle. Protects: a legacy claim with surrounding whitespace or CRLF is
+ * adopted with the fence's parsed text written back into `facts.fact` under
+ * the SAME id (vectors and provenance kept, no second row inserted); a row
+ * the codec would change further (whitespace-only, `~~x~~`, a literal
+ * `<br>`) or whose normalized claim and source the page already carries is
+ * left exactly as it was (row_num NULL, active, text byte-identical),
+ * recorded by location in the stable `FACTS_FENCE_FAILED: <slug>
+ * (fence_unrenderable: N row(s), <class>; duplicate_claim: N row(s))` token,
+ * while the other rows of the page still adopt; only that page skips
+ * destructive reconciliation, another page in the same run reconciles; a
+ * withdrawal recorded against the normalized claim still expires the adopted
+ * row (the trigger fires on `UPDATE OF fact`); a second cycle changes
+ * nothing. Fails when: the adoption refuses the whole page (the pre-#6278
+ * `invalid_params` round-trip mismatch, nine refusals per pass in #6278),
+ * the write-back is missing (the projection expires the adopted row and
+ * inserts a new id), a rejected row is deleted, expired or rewritten, or the
+ * source-wide guard skips every page.
  */
 import { expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -99,8 +118,163 @@ async function unmanagedBrain(databaseUrl: string | undefined, run: (brain: { en
   } finally { rmSync(home, { recursive: true, force: true }); }
 }
 
+/** Legacy rows in every shape the fence codec changes (#6278), on `slug`; returns ids keyed by shape. */
+async function seedCodecShapes(engine: BrainEngine, slug: string, source = 'mcp:remember'): Promise<Record<string, number>> {
+  const shapes: Record<string, string> = {
+    trailing: 'Alice example likes tea ',
+    crlf: 'Alice example works\r\nremotely',
+    nbsp: '\u00a0Alice example runs marathons',
+    whitespace_only: '   ',
+    struck: '~~Alice example left Acme example~~',
+    br: 'Alice example<br>uses tabs',
+    duplicate: 'Alice example likes tea',
+  };
+  const ids: Record<string, number> = {};
+  for (const [shape, fact] of Object.entries(shapes)) {
+    const [row] = await engine.executeRaw<{ id: number }>(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, context)
+       VALUES ('default', $1, $2, 'fact', 'world', 'medium', '2026-03-01', $3, 0.8, 'from a call') RETURNING id`, [slug, fact, source]);
+    ids[shape] = Number(row.id);
+  }
+  return ids;
+}
+
+const UNADOPTABLE_TOKEN = (slug: string) => `FACTS_FENCE_FAILED: ${slug} (fence_unrenderable: 3 row(s), empty, line_break_markup, struck; duplicate_claim: 1 row(s))`;
+
+async function rowsById(engine: BrainEngine, ids: number[]) {
+  return engine.executeRaw<{ id: number; fact: string; row_num: number | null; source_markdown_slug: string | null; expired: boolean; embedding: string | null; source_session: string | null }>(
+    `SELECT id, fact, row_num, source_markdown_slug, expired_at IS NOT NULL AS expired, embedding::text AS embedding, source_session
+       FROM facts WHERE id = ANY($1::integer[]) ORDER BY id`, [ids]);
+}
+
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+
+  test(`${backend}: unmanaged: codec shapes: whitespace rows adopt with normalized text under their ids, the rest stay legacy rows, the other page still reconciles`, async () => {
+    await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
+      const ids = await seedCodecShapes(engine, SLUG);
+      // A second page with a stale fence-owned row only the reconcile walk can expire.
+      const OTHER = 'companies/acme-example';
+      const other = await engine.putPage(OTHER, { type: 'company', title: 'Acme Example', compiled_truth: `# Acme Example\n\n${FENCE_ROW_1.replace('Alice example joined Acme example', 'Acme example ships widgets')}` });
+      await engine.executeRaw('UPDATE pages SET source_path = $1 WHERE id = $2', [`${OTHER}.md`, other.id]);
+      const otherSnapshot = (await engine.readPageSnapshot(OTHER, { sourceId: 'default' }))!;
+      mkdirSync(dirname(join(root, `${OTHER}.md`)), { recursive: true });
+      writeFileSync(join(root, `${OTHER}.md`), serializePageToMarkdown(otherSnapshot.page, otherSnapshot.tags));
+      const [stale] = await engine.executeRaw<{ id: number }>(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, row_num, source_markdown_slug)
+         VALUES ('default', $1, 'Acme example used to ship gadgets', 'fact', 'world', 'high', '2024-01-01', 'linkedin', 1.0, 9, $1) RETURNING id`, [OTHER]);
+      const before = await rowsById(engine, Object.values(ids));
+      const [{ n: factCount }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts');
+
+      const first = await extractFactsPhase(engine, root);
+      expect(first.status).toBe('warn');
+      expect(first.details).toMatchObject({ legacyRowsPending: 4, unfencedRowsFenced: 5 });
+      expect(first.summary).toMatch(new RegExp(`^[1-9]\\d* fact\\(s\\) reconciled across [1-9]\\d* page\\(s\\); skipped 1 page\\(s\\) holding 4 unfenced fact row\\(s\\) that could not be fenced: ${SLUG} `));
+      const warnings = (first.details as { warnings: string[] }).warnings;
+      expect(warnings).toContain(UNADOPTABLE_TOKEN(SLUG));
+      // Location only: no rejected claim text reaches the warnings.
+      expect(warnings.join('\n')).not.toContain('left Acme example');
+      expect(warnings.join('\n')).not.toContain('uses tabs');
+
+      const file = readFileSync(join(root, `${SLUG}.md`), 'utf8');
+      expect(parseFactsFence(file).facts.map(f => [f.rowNum, f.claim])).toEqual([
+        [1, 'Alice example joined Acme example'], [2, 'Alice example moved to Lisbon'], [3, 'Alice example prefers async updates'],
+        [4, 'Alice example likes tea'], [5, 'Alice example works\nremotely'], [6, 'Alice example runs marathons'],
+      ]);
+      const after = await rowsById(engine, Object.values(ids));
+      const byId = new Map(after.map(r => [Number(r.id), r]));
+      // Adopted under the same id, with the fence's parsed text written back.
+      expect(byId.get(ids.trailing)).toMatchObject({ fact: 'Alice example likes tea', row_num: 4, source_markdown_slug: SLUG, expired: false });
+      expect(byId.get(ids.crlf)).toMatchObject({ fact: 'Alice example works\nremotely', row_num: 5, source_markdown_slug: SLUG, expired: false });
+      expect(byId.get(ids.nbsp)).toMatchObject({ fact: 'Alice example runs marathons', row_num: 6, source_markdown_slug: SLUG, expired: false });
+      // Rejected rows are exactly as they were.
+      for (const shape of ['whitespace_only', 'struck', 'br', 'duplicate']) {
+        expect(byId.get(ids[shape])).toEqual(before.find(r => Number(r.id) === ids[shape])!);
+        expect(byId.get(ids[shape])!.row_num).toBeNull();
+        expect(byId.get(ids[shape])!.expired).toBe(false);
+      }
+      // No row was inserted for an adopted claim (the write-back keeps the projection from re-deriving it).
+      const [{ n: afterCount }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts');
+      expect(afterCount).toBe(factCount + 1); // the acme page's fence row, inserted by the reconcile below
+      // The other page reconciled in the same run: its stale row expired, its fence row indexed.
+      const [staleRow] = await engine.executeRaw<{ expired: boolean; row_num: number | null }>('SELECT expired_at IS NOT NULL AS expired, row_num FROM facts WHERE id = $1', [stale.id]);
+      expect(staleRow).toMatchObject({ expired: true, row_num: null });
+      expect(await engine.executeRaw('SELECT 1 FROM facts WHERE source_markdown_slug = $1 AND row_num = 1 AND expired_at IS NULL', [OTHER])).toHaveLength(1);
+
+      const second = await extractFactsPhase(engine, root);
+      expect(second.status).toBe('warn');
+      expect(second.details).toMatchObject({ legacyRowsPending: 4, unfencedRowsFenced: 0 });
+      expect((second.details as { warnings: string[] }).warnings).toContain(UNADOPTABLE_TOKEN(SLUG));
+      expect(readFileSync(join(root, `${SLUG}.md`), 'utf8')).toBe(file);
+      expect(await rowsById(engine, Object.values(ids))).toEqual(after);
+    });
+  }, 120_000);
+
+  test(`${backend}: managed: codec shapes adopt through the coordinator under their ids with normalized text, rejected rows stay, another page reconciles, a withdrawal still matches`, async () => {
+    let seed!: LegacySeed;
+    let ids!: Record<string, number>;
+    let withdrawnId!: number;
+    let staleId!: number;
+    const OTHER = 'people/bob-example';
+    await managedBrain(async ({ engine: managed, root: managedRoot }) => {
+      const before = await rowsById(managed, [...Object.values(ids), withdrawnId]);
+      const first = await extractFactsPhase(managed, managedRoot);
+      expect(first.status).toBe('warn');
+      expect(first.details).toMatchObject({ legacyRowsPending: 4, unfencedRowsFenced: 7 });
+      expect((first.details as { warnings: string[] }).warnings).toContain(UNADOPTABLE_TOKEN(LEGACY_FILE_SLUG));
+
+      const after = await rowsById(managed, [...Object.values(ids), withdrawnId]);
+      const byId = new Map(after.map(r => [Number(r.id), r]));
+      expect(byId.get(ids.trailing)).toMatchObject({ fact: 'Alice example likes tea', source_markdown_slug: LEGACY_FILE_SLUG, expired: false });
+      expect(byId.get(ids.crlf)).toMatchObject({ fact: 'Alice example works\nremotely', source_markdown_slug: LEGACY_FILE_SLUG, expired: false });
+      expect(byId.get(ids.nbsp)).toMatchObject({ fact: 'Alice example runs marathons', source_markdown_slug: LEGACY_FILE_SLUG, expired: false });
+      for (const shape of ['trailing', 'crlf', 'nbsp']) expect(byId.get(ids[shape])!.row_num).not.toBeNull();
+      for (const shape of ['whitespace_only', 'struck', 'br', 'duplicate']) {
+        expect(byId.get(ids[shape])).toEqual(before.find(r => Number(r.id) === ids[shape])!);
+      }
+      // The seeded legacy rows (with vectors) adopted in place too.
+      const seeded = await rowsById(managed, seed.legacyFactIds);
+      expect(seeded.every(r => r.row_num !== null && !r.expired && r.embedding !== null)).toBe(true);
+      // The withdrawal recorded against the normalized claim fires on the write-back: adopted, then expired by the trigger.
+      expect(byId.get(withdrawnId)).toMatchObject({ fact: 'Alice example drinks tea', source_markdown_slug: LEGACY_FILE_SLUG, expired: true });
+      expect(byId.get(withdrawnId)!.row_num).not.toBeNull();
+      // The file carries the normalized claims and none of the rejected ones.
+      const file = readFileSync(join(managedRoot, `${LEGACY_FILE_SLUG}.md`), 'utf8');
+      const claims = parseFactsFence(file).facts.map(f => f.claim);
+      expect(claims).toEqual(expect.arrayContaining(['Alice example likes tea', 'Alice example works\nremotely', 'Alice example runs marathons', 'Alice example drinks tea']));
+      expect(claims.filter(c => c === 'Alice example likes tea')).toHaveLength(1);
+      expect(claims.some(c => c.includes('left Acme') || c.includes('uses tabs') || c === '')).toBe(false);
+      // No second fence-owned row for any adopted claim (the legacy duplicate keeps its text, unfenced).
+      expect(await managed.executeRaw(`SELECT id FROM facts WHERE fact = 'Alice example likes tea' AND row_num IS NOT NULL`)).toHaveLength(1);
+      expect((await managed.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE fact = 'Alice example likes tea' AND row_num IS NULL`)).map(r => Number(r.id))).toEqual([ids.duplicate]);
+      // Another page of the source reconciled in the same run.
+      const [staleRow] = await managed.executeRaw<{ expired: boolean }>('SELECT expired_at IS NOT NULL AS expired FROM facts WHERE id = $1', [staleId]);
+      expect(staleRow.expired).toBe(true);
+
+      const second = await extractFactsPhase(managed, managedRoot);
+      expect(second.details).toMatchObject({ legacyRowsPending: 4, unfencedRowsFenced: 0 });
+      expect(await rowsById(managed, [...Object.values(ids), withdrawnId])).toEqual(after);
+      expect(readFileSync(join(managedRoot, `${LEGACY_FILE_SLUG}.md`), 'utf8')).toBe(file);
+    }, { databaseUrl, setup: async ({ engine: managed, root: managedRoot }) => {
+      seed = await seedLegacyManagedContent(managed, managedRoot);
+      ids = await seedCodecShapes(managed, LEGACY_FILE_SLUG);
+      const [withdrawn] = await managed.executeRaw<{ id: number }>(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence)
+         VALUES ('default', $1, '  Alice example drinks tea  ', 'fact', 'world', 'medium', '2026-03-01', 'mcp:remember', 0.8) RETURNING id`, [LEGACY_FILE_SLUG]);
+      withdrawnId = Number(withdrawn.id);
+      await managed.executeRaw(`INSERT INTO fact_withdrawals (source_id, visibility, subject, fact_hash, withdrawn_at)
+        VALUES ('default', 'world', '*', gbrain_fact_fingerprint('Alice example drinks tea'), '2026-04-01T00:00:00Z')`);
+      const page = await managed.putPage(OTHER, { type: 'person', title: 'Bob Example', compiled_truth: `# Bob Example\n\n${FENCE_ROW_1.replace('Alice example joined Acme example', 'Bob example advises Acme example')}` });
+      await managed.executeRaw('UPDATE pages SET source_path=$1 WHERE id=$2', [`${OTHER}.md`, page.id]);
+      const snapshot = (await managed.readPageSnapshot(OTHER, { sourceId: 'default' }))!;
+      mkdirSync(dirname(join(managedRoot, `${OTHER}.md`)), { recursive: true });
+      writeFileSync(join(managedRoot, `${OTHER}.md`), serializePageToMarkdown(snapshot.page, snapshot.tags));
+      const [stale] = await managed.executeRaw<{ id: number }>(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, row_num, source_markdown_slug)
+         VALUES ('default', $1, 'Bob example used to advise Widget co', 'fact', 'world', 'high', '2024-01-01', 'linkedin', 1.0, 9, $1) RETURNING id`, [OTHER]);
+      staleId = Number(stale.id);
+    } });
+  }, 180_000);
 
   test(`${backend}: unmanaged: one cycle fences row_num-NULL facts onto the page file, reconciles, and a second cycle changes nothing`, async () => {
     await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
@@ -144,7 +318,7 @@ for (const backend of testBackends()) {
       const before = await factState(engine);
       const result = await extractFactsPhase(engine, root);
       expect(result.status).toBe('warn');
-      expect(result.summary).toBe('extract_facts skipped: 2 unfenced fact row(s) could not be fenced');
+      expect(result.summary).toBe(`0 fact(s) reconciled across 0 page(s); skipped 1 page(s) holding 2 unfenced fact row(s) that could not be fenced: ${SLUG} (2 warning(s))`);
       const warnings = (result.details as { warnings: string[] }).warnings;
       expect(warnings.some(w => w.startsWith(`FACTS_FENCE_FAILED: ${SLUG} (canonical file `) && w.includes('does not exist on this host'))).toBe(true);
       expect(warnings.some(w => w.includes('v0.31') || w.includes('force-retry'))).toBe(false);

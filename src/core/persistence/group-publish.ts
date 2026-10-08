@@ -38,11 +38,12 @@ import { localHostId } from './identity.ts';
 import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease } from './ownership.ts';
 import { awaitLaneBegin, awaitLaneTurn, LaneAbort, laneApplyBegin, laneClaimed, laneFinished, lanePolicy, stepDownLanes, type LaneState } from './sync-lanes.ts';
 import { cancelRows, windowPredecessor } from './sync-window.ts';
-import { clearResolvedRecoveries, completeWrite, ENSURE_COUNTERS_SQL, getWriteRequestById, LOCK_COUNTERS_SQL, markRecovering, prepareRecoveries,
+import { clearResolvedRecoveries, completeWrite, ENSURE_COUNTERS_SQL, getWriteRequestById, LOCK_COUNTERS_SQL, markDispatched, markRecovering, prepareRecoveries,
   foregroundPriority, publicationGroupKey, reclaimReleasedWrite, releaseUnpublishedClaim, renewGroupClaims } from './journal.ts';
 import { principalKey, requestPrincipal, type FileRecoveryRecord, type WriteRequest } from './model.ts';
 import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
-import { claimPhaseStamp, enterClaimPhase, startClaimPhase } from './claim-phase.ts';
+import { claimPhaseStamp, enterClaimPhase, startClaimPhase, type ClaimPhaseClock } from './claim-phase.ts';
+import { DEFAULT_PREPARATION_POLICY, preparationBudgetMs, startPreparation, type PreparationPolicy, type PreparationRun } from './preparation-budget.ts';
 import { setMemberAttribution, withCoordinatedWrite } from './context.ts';
 import { requestAttribution } from './attribution.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
@@ -54,7 +55,7 @@ import { authorizePageVisibility } from './page-visibility.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
-import { decoratePublicationOutcome, finishUnpublishedFailure, pageRecoveryRecord, persistenceFileHash, publicationPostimage, publishMutation,
+import { decoratePublicationOutcome, finishPreparationStalled, finishUnpublishedFailure, pageRecoveryRecord, persistenceFileHash, preparationAbortReason, publicationPostimage, publishMutation,
   publishPersistenceFile, recoverPublication, type PreparedMutation } from './coordinator.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { jsonBytes } from './digest.ts';
@@ -144,7 +145,7 @@ const STABLE_IN_PREPARATION = new Set([
  * publication re-checks what it relies on under its locks. It lives only for
  * one group's preparation; a failed read is not kept.
  */
-function preparationReads(engine: BrainEngine): BrainEngine {
+export function preparationReads(engine: BrainEngine): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
     let value = reads.get(id) as Promise<T> | undefined;
@@ -152,8 +153,11 @@ function preparationReads(engine: BrainEngine): BrainEngine {
     return value;
   };
   return new Proxy(engine, { get(target, key) {
-    if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
-      STABLE_IN_PREPARATION.has(flat(sql)) && !opts?.signal ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
+    // A shared read takes no member's signal: a caller's own signal bypasses the memo, and (#6278) a bounded preparation read
+    // (`timeoutMs`, whose signal only covers its connection wait) is answered once with the member's bound and signal dropped.
+    if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
+      STABLE_IN_PREPARATION.has(flat(sql)) && (!opts?.signal || opts.timeoutMs !== undefined)
+        ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params)) : target.executeRaw(sql, params, opts);
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
     if (key === 'getAllConfig') return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     const value = Reflect.get(target, key, target);
@@ -449,7 +453,7 @@ export async function completeGroup(tx: BrainEngine, rows: WriteRequest[], outco
       ), done AS (
         UPDATE persistence_requests r SET state='committed',outcome=m.outcome::jsonb,error_code=NULL,error_message=NULL,
           completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
-          consumer_version=$6,consumer_host_id=$7::uuid,published_at=now()
+          consumer_version=$6,consumer_host_id=$7::uuid,published_at=now(),preparation_attempts=0
         FROM m LEFT JOIN e ON e.request_id=m.id
         WHERE r.id=m.id AND r.execution_token=m.token AND r.state='running' AND m.need+COALESCE(e.bytes,0)<=r.terminal_reservation
         RETURNING r.*,m.principal_key
@@ -471,19 +475,34 @@ export async function completeGroup(tx: BrainEngine, rows: WriteRequest[], outco
 export interface GroupExecution {
   /** #5984 lanes: the open lane run this group belongs to in this process. */
   lane?: LaneState | null;
-  /** `engine` answers the members' repeated preparation reads once (see preparationReads). */
-  prepare(row: WriteRequest, engine: BrainEngine): Promise<PreparedMutation>;
+  /** `engine` answers the members' repeated preparation reads once (see preparationReads); `signal` and `clock` (#6278) are the member's own. */
+  prepare(row: WriteRequest, engine: BrainEngine, signal?: AbortSignal, clock?: ClaimPhaseClock): Promise<PreparedMutation>;
   settled(row: WriteRequest): void;
   hostId: string;
   hooks?: GroupHooks;
   /** #5373: renewal timing for the group's claims (default DEFAULT_CLAIM_LEASE_TIMING). */
   lease?: ClaimLeaseTiming;
+  /** #6278: the budgets, ceiling, attempt limit and switch in effect (default: the defaults with deadlines on). */
+  policy?: PreparationPolicy & { deadlines: boolean };
+  /** #6278: the foreground (remember/put_page/edit_page) budget, the consumer's `preparationMs` (default 30 s). */
+  foregroundMs?: number;
   /**
    * #5373: receives work still running when the group lets go of its claims: the
-   * renewal in flight, or (`blocksRoot`) the preparation abandoned after a lost claim.
+   * renewal in flight, or (`blocksRoot`) a preparation abandoned after a lost claim
+   * or (#6278) a deadline; `abandoned` names the member and its clock for the ceiling.
    */
-  leftRunning?(work: Promise<unknown>, blocksRoot: boolean): void;
+  leftRunning?(work: Promise<unknown>, blocksRoot: boolean, abandoned?: { row: WriteRequest; clock: ClaimPhaseClock }): void;
 }
+
+/**
+ * The memo rule (#6278): `preparationReads` and `groupReads` answer a read
+ * once for every member, so a member's own signal never reaches a shared
+ * read (the memo skips itself for a signalled statement, and an aborted
+ * member must never reject a sibling's read). A member that must give up on a
+ * shared read races its own signal against the shared promise instead:
+ * `enterClaimStep` at its next boundary throws the member's abort reason.
+ */
+type MemberOutcome = { ok: PreparedMutation } | { error: unknown } | { released: 'preparation_deadline' | 'group_member_waiting' | 'claim_lost' };
 
 /**
  * Prepares a claimed group (four members at a time), publishes it in one
@@ -497,46 +516,127 @@ export interface GroupExecution {
  * another consumer took over keeps its new claim) and the unfinished
  * preparation goes to `leftRunning`, never to publication. Returns whether
  * any member settled.
+ *
+ * #6278: each member's budget clock starts when its wave dispatches it (the
+ * wave is marked durably first), and the lease renews the mutable set of
+ * members still held, so one release never reads as a lost group lease. When
+ * member k expires: no later wave is dispatched, the in-flight suffix is
+ * aborted, k is released `preparation_deadline` (charged; finished
+ * `preparation_stalled` when that reaches the limit) and the later members
+ * `group_member_waiting` (not charged), and the contiguous prepared prefix
+ * 0..k-1 publishes. An independent `batch:` group releases only k. An
+ * abandoned member's preparation goes to `leftRunning` with its clock.
  */
 export async function executeClaimedGroup(engine: BrainEngine, rows: WriteRequest[], run: GroupExecution): Promise<boolean> {
-  const clock = startClaimPhase();
-  const lease = startClaimLease(async signal => (await renewGroupClaims(engine, rows, 30_000, signal, claimPhaseStamp(clock, null))).size === rows.length,
-    run.lease ?? DEFAULT_CLAIM_LEASE_TIMING);
+  const policy = run.policy ?? { ...DEFAULT_PREPARATION_POLICY, deadlines: true };
+  const foregroundMs = run.foregroundMs ?? 30_000;
+  const groupClock = startClaimPhase();
+  const clocks: Array<ClaimPhaseClock | undefined> = rows.map(() => undefined);
+  const held = new Set(rows.map(row => row.id));
+  const inFlight = new Map<number, PreparationRun<PreparedMutation>>();
+  const preps: Array<PreparationRun<PreparedMutation> | undefined> = rows.map(() => undefined);
+  const stampOf = (i: number) => clocks[i] ? claimPhaseStamp(clocks[i]!, rows[i]!.execution_token) : null;
+  const lease = startClaimLease(async signal => {
+    const live = rows.map((row, i) => [row, i] as const).filter(([row]) => held.has(row.id));
+    if (!live.length) return true;
+    return (await renewGroupClaims(engine, live.map(([row]) => row), 30_000, signal, live.map(([, i]) => stampOf(i)))).size === live.length;
+  }, run.lease ?? DEFAULT_CLAIM_LEASE_TIMING, () => { for (const prep of inFlight.values()) prep.abort({ code: 'claim_lost' }); });
   if (run.lane) laneClaimed(run.lane, rows);
+  // A put_pages batch is independent page writes: one page's failure never cancels its siblings.
+  const independent = publicationGroupKey(rows[0]!)?.startsWith('batch:') === true;
+  const prepared: MemberOutcome[] = new Array(rows.length);
+  // The first member whose deadline passed in an ordered group: nothing after it is dispatched or published this pass.
+  let cut: number | null = null;
+  const abandon = (i: number, work: Promise<unknown>) => run.leftRunning?.(work, true, { row: rows[i]!, clock: clocks[i]! });
   try {
-    const prepared: Array<{ ok: PreparedMutation } | { error: unknown }> = new Array(rows.length);
     const reads = preparationReads(engine);
     // A put_pages group prepares all of its (at most PAGE_BATCH_GROUP_MAX) pages at once.
-    const width = publicationGroupKey(rows[0]!)?.startsWith('batch:') ? PAGE_BATCH_GROUP_MAX : 4;
+    const width = independent ? PAGE_BATCH_GROUP_MAX : 4;
     const preparing = (async () => {
-      for (let start = 0; start < rows.length; start += width) {
-        await Promise.all(rows.slice(start, start + width).map(async (row, offset) => {
-          try { prepared[start + offset] = { ok: await run.prepare(row, reads) }; } catch (error) { prepared[start + offset] = { error }; }
+      for (let start = 0; start < rows.length && (independent || cut === null); start += width) {
+        const wave = rows.slice(start, start + width);
+        const now = Date.now();
+        const cancels = wave.map(() => new AbortController());
+        const budgets = wave.map(row => policy.deadlines ? preparationBudgetMs(row, policy, foregroundMs) : undefined);
+        wave.forEach((_row, offset) => { clocks[start + offset] = startClaimPhase(now, cancels[offset]!.signal, budgets[offset]); });
+        if (policy.deadlines) await markDispatched(engine, wave.map((row, offset) => ({ row, stamp: stampOf(start + offset)! })));
+        const wavePreps = wave.map((row, offset) => {
+          const i = start + offset;
+          const budget = budgets[offset];
+          // The member's signal reaches its preparer through its clock (enterClaimStep), never as a blanket statement signal: see the memo rule.
+          const prep = startPreparation(async signal => {
+            signal.addEventListener('abort', () => cancels[offset]!.abort(signal.reason), { once: true });
+            await faultPoint('consumer:preparing', { requestId: row.request_id, sourceId: row.source_id, operation: row.operation, signal });
+            return run.prepare(row, reads, undefined, clocks[i]);
+          }, budget, { onDeadline: () => {
+            if (independent) return;
+            if (cut === null || i < cut) cut = i;
+            for (const [j, other] of inFlight) if (j > i) other.abort({ code: 'group_member_waiting' });
+          } });
+          inFlight.set(i, prep);
+          preps[i] = prep;
+          return prep;
+        });
+        await Promise.all(wavePreps.map(async (prep, offset) => {
+          const i = start + offset;
+          try {
+            const outcome = policy.deadlines ? await prep.outcome : await prep.work.then(result => ({ result }));
+            prepared[i] = 'deadline' in outcome ? { released: 'preparation_deadline' } : { ok: outcome.result };
+          } catch (error) {
+            const reason = preparationAbortReason(error, prep.signal);
+            // #6278: a bounded read the server ended inside the budget reports the deadline itself; it cuts the group like the timer would.
+            if (reason === 'preparation_deadline' && policy.deadlines) prep.expire();
+            prepared[i] = reason === 'preparation_deadline' || reason === 'group_member_waiting' || reason === 'claim_lost' ? { released: reason } : { error };
+          } finally { inFlight.delete(i); }
         }));
       }
     })();
     if (await lease.whileHeld(preparing) === CLAIM_LOST) {
-      run.leftRunning?.(preparing, true);
+      run.leftRunning?.(preparing, true, { row: rows[0]!, clock: groupClock });
       await endLostLease(lease);
-      for (const row of rows) await releaseUnpublishedClaim(engine, row, 'claim_lost');
+      for (const row of rows) if (held.has(row.id)) await releaseUnpublishedClaim(engine, row, 'claim_lost');
       return false;
     }
-    enterClaimPhase(clock, 'publishing');
-    // A put_pages batch is independent page writes: one page's failure never cancels its siblings.
-    const independent = publicationGroupKey(rows[0]!)?.startsWith('batch:') === true;
+    let progressed = false;
+    // #6278: the members the deadline took off this pass leave the held set before their release statement runs.
+    const released = new Set<string>();
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]!, outcome = prepared[i];
+      const expired = outcome !== undefined && 'released' in outcome && outcome.released === 'preparation_deadline';
+      const after = !independent && cut !== null && i > cut;
+      if (!expired && !after) continue;
+      held.delete(row.id); released.add(row.id);
+      // A dispatched member the deadline or the suffix abort took off this pass may still run: it blocks the root until it settles or the ceiling passes.
+      if (outcome !== undefined && 'released' in outcome && preps[i]) abandon(i, preps[i]!.work);
+      if (!expired) { await releaseUnpublishedClaim(engine, row, 'group_member_waiting'); continue; }
+      if ((row.preparation_attempts ?? 0) + 1 >= policy.maxAttempts) {
+        const done = await finishPreparationStalled(engine, row, { step: clocks[i]!.step, waiting_on: clocks[i]!.waitingOn, limit: policy.maxAttempts }, true);
+        run.settled(done); progressed = true;
+        continue;
+      }
+      await releaseUnpublishedClaim(engine, row, 'preparation_deadline', { charge: true });
+    }
+    for (const clock of clocks) if (clock) enterClaimPhase(clock, 'publishing');
+    enterClaimPhase(groupClock, 'publishing');
+    const live = rows.map((row, i) => ({ row, i })).filter(({ row }) => !released.has(row.id));
+    if (!live.length) return progressed;
+    const liveRows = live.map(({ row }) => row);
     let requeued = new Set<string>();
-    if (prepared.every(p => 'ok' in p)) {
-      const result = await publishGroup(engine, rows, prepared.map(p => (p as { ok: PreparedMutation }).ok), run.hostId, run.hooks, run.lane ?? null);
+    if (live.every(({ i }) => 'ok' in prepared[i]!)) {
+      // #6278 lanes: a prefix publishes under the original group's order key, then drops its own begun mark.
+      if (run.lane && liveRows.length < rows.length) await awaitLaneBegin(run.lane, rows);
+      const result = await publishGroup(engine, liveRows, live.map(({ i }) => (prepared[i] as { ok: PreparedMutation }).ok), run.hostId, run.hooks, run.lane ?? null);
+      if (run.lane && liveRows.length < rows.length) run.lane.begun.delete(liveRows.at(-1)!.request_id);
       if (result.done) { for (const row of result.done) run.settled(row); return true; }
       requeued = new Set(result.requeued);
-      if (run.lane) { const settled = await laneFallback(engine, rows, result.reason, run); if (settled !== null) return settled; }
+      if (run.lane) { const settled = await laneFallback(engine, liveRows, result.reason, run); if (settled !== null) return settled || progressed; }
     } else if (run.lane) {
-      const settled = await laneFallback(engine, rows, 'failed', run);
-      if (settled !== null) return settled;
+      const settled = await laneFallback(engine, liveRows, 'failed', run);
+      if (settled !== null) return settled || progressed;
     }
-    let progressed = false, stop: 'cancel' | 'release' | null = null;
-    for (let i = 0; i < rows.length; i++) {
-      let row = rows[i]!;
+    let stop: 'cancel' | 'release' | null = null;
+    for (const { row: member, i } of live) {
+      let row = member;
       let current = await getWriteRequestById(engine, row.id);
       // A claim the group's file restoration released is taken back, in order, while this pass still owns the worktree.
       if (current?.state === 'queued' && requeued.has(row.id) && stop === null) {
@@ -555,6 +655,8 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
         run.settled(cancelled); progressed = true; continue;
       }
       const p = prepared[i]!;
+      // #6278: a member aborted by our own cancellation (never a deadline here) is released, not failed.
+      if ('released' in p) { await releaseUnpublishedClaim(engine, row, p.released === 'claim_lost' ? 'claim_lost' : 'group_member_waiting'); stop ??= independent ? null : 'release'; continue; }
       const done = 'ok' in p ? await publishMutation(engine, row, p.ok, run.hostId) : await finishUnpublishedFailure(engine, current, p.error, 'preparation');
       run.settled(done);
       if (done.state === 'committed') { progressed = true; continue; }

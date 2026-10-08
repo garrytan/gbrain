@@ -230,6 +230,7 @@
       "persistence_local_writers.persistence_local_writers_lane_check": "c CHECK ((lane = ANY (ARRAY['cli'::text, 'stdio'::text])))",
       "persistence_local_writers.persistence_local_writers_pkey": "p PRIMARY KEY (id)",
       "persistence_requests.persistence_requests_pkey": "p PRIMARY KEY (id)",
+      "persistence_requests.persistence_requests_preparation_attempts_check": "c CHECK ((preparation_attempts >= 0))",
       "persistence_requests.persistence_requests_principal_kind_check": "c CHECK ((principal_kind = ANY (ARRAY['oauth_client'::text, 'legacy_token'::text, 'local_cli'::text, 'local_stdio'::text, 'application'::text])))",
       "persistence_requests.persistence_requests_principal_kind_principal_id_request_id_key": "u UNIQUE (principal_kind, principal_id, request_id)",
       "persistence_requests.persistence_requests_protocol_version_check": "c CHECK ((protocol_version = ANY (ARRAY[1, 2])))",
@@ -2582,7 +2583,8 @@
           "37 consumer_host_id uuid/uuid NULL",
           "38 published_at timestamp with time zone/timestamptz NULL",
           "39 error_detail jsonb/jsonb NULL",
-          "40 claim_phase jsonb/jsonb NULL"
+          "40 claim_phase jsonb/jsonb NULL",
+          "41 preparation_attempts integer/int4 NOT NULL DEFAULT 0"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

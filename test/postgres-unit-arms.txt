@@ -60,6 +60,7 @@ test/managed-sync-group-completion.test.ts
 test/managed-sync-group-uncommitted-head.test.ts
 test/managed-sync-images-5493.test.ts
 test/managed-sync-lanes.test.ts
+test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
 test/pack-relation-direction-engine.test.ts
@@ -101,10 +102,13 @@ test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
 test/source-retire-missing-checkout.test.ts
 test/stats-health-source-scope.test.ts
+test/sync-drain-claims.test.ts
+test/sync-drain-write-capacity.test.ts
 test/sync-frontmatter-recovery.test.ts
 test/sync-frontmatter-slug-conflict.test.ts
 test/sync-group-member-order.test.ts
 test/sync-legacy-holds.test.ts
+test/sync-waiver-budget.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts

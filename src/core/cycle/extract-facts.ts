@@ -30,16 +30,22 @@
  * DB-only fallback keeps producing such rows, so no manual migration retry
  * is needed.
  *
- * Empty-fence guard (Codex R2-#7; #2484; #2646): rows the fence step could
- * not fence this run (a page whose file is not on this host, a malformed
- * fence, a held page lock) still block the destructive reconciliation pass
- * — in THIS run's source only (`source_id = sourceId`, the source-isolation
- * invariant). A row counts when `row_num IS NULL`, its `entity_slug`
- * resolves to a live page in this source, it is not soft-expired
- * (`expired_at IS NULL`; `forget_fact` drains rows that way) and the source
- * has a `local_path`. Status returns `warn` naming each failed page. Rows
- * with no backing page or checkout (slugify-floor / stub-guard-blocked
- * slugs from the inline writer) are structurally unfenceable and never gate.
+ * Empty-fence guard (Codex R2-#7; #2484; #2646; per page since #6278): rows
+ * the fence step could not fence this run (a page whose file is not on this
+ * host, a malformed fence, a held page lock, a claim the fence codec cannot
+ * render) keep THEIR page out of the destructive reconciliation pass, while
+ * every other page of the run's source reconciles. Reconciliation lists a
+ * page's active `row_num IS NULL` rows and would classify them as stale, so
+ * a source-wide count that merely tolerated them would expire the very rows
+ * the fence step promised to keep. The guard is still source-scoped
+ * (`source_id = sourceId`, the source-isolation invariant): a row counts when
+ * `row_num IS NULL`, its `entity_slug` resolves to a live page in this
+ * source, it is not soft-expired (`expired_at IS NULL`; `forget_fact` drains
+ * rows that way) and the source has a `local_path`. `legacyRowsPending`,
+ * `guardTriggered` and the halt rollup still report the run; status returns
+ * `warn` naming each failed page. Rows with no backing page or checkout
+ * (slugify-floor / stub-guard-blocked slugs from the inline writer) are
+ * structurally unfenceable and never gate.
  */
 
 import { isQuarantined } from '../quarantine.ts';
@@ -611,6 +617,8 @@ export interface ExtractFactsResult {
   factsDeleted: number;
   /** Unfenced rows (`row_num IS NULL`, live entity page) still pending after this run's fence step. */
   legacyRowsPending: number;
+  /** Pages (sorted slugs) that still hold those rows; they skip reconciliation while the other pages reconcile (#6278). */
+  legacyPages: string[];
   /** Unfenced rows this run appended to their page's fence and stamped with a row number (#5299). */
   unfencedRowsFenced: number;
   /** Active fence-owned rows expired because their page was soft-deleted. */
@@ -698,6 +706,44 @@ function timelineHasGenuineFactsFenceMarker(timeline: string): boolean {
 }
 
 /**
+ * Empty-fence guard (Codex R2-#7; #2484; #2646; per page, #6278): the active
+ * unfenced rows the fence step left on live pages of this source, per page.
+ * A row counts only when `row_num IS NULL`, its `entity_slug` resolves to a
+ * LIVE page in THIS run's source (#3526 source isolation), it is not
+ * soft-expired (#2646: `forget_fact` drains rows by soft-expiring them), the
+ * source has a `local_path` (#2763), and it is not an ontology observation
+ * (`dimension IS NULL`, #6264: those are never fenced, so they must not gate
+ * either). Rows without a page or checkout (#2484: the inline writer's
+ * slugify-floor / stub-guard-blocked slugs) are structurally unfenceable and
+ * never gate.
+ */
+async function pendingLegacyRows(engine: BrainEngine, sourceId: string): Promise<{ count: number; slugs: Set<string> }> {
+  const legacy = await engine.executeRaw<{ entity_slug: string; n: string }>(
+    `SELECT f.entity_slug, COUNT(*) AS n
+       FROM facts f
+      WHERE f.source_id = $1
+        AND f.row_num IS NULL
+        AND f.dimension IS NULL
+        AND f.entity_slug IS NOT NULL
+        AND f.expired_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM pages p
+           WHERE p.source_id = f.source_id
+             AND p.slug = f.entity_slug
+             AND p.deleted_at IS NULL
+        )
+        AND EXISTS (
+          SELECT 1 FROM sources s
+           WHERE s.id = f.source_id
+             AND s.local_path IS NOT NULL
+        )
+      GROUP BY f.entity_slug`,
+    [sourceId],
+  );
+  return { count: legacy.reduce((sum, row) => sum + parseInt(row.n ?? '0', 10), 0), slugs: new Set(legacy.map(row => row.entity_slug)) };
+}
+
+/**
  * Run the extract_facts phase against the current brain state. Returns
  * an ExtractFactsResult envelope; status mapping (ok / warn / fail)
  * happens in the cycle.ts caller.
@@ -721,6 +767,7 @@ export async function runExtractFacts(
     factsUpdated: 0,
     factsDeleted: 0,
     legacyRowsPending: 0,
+    legacyPages: [],
     unfencedRowsFenced: 0,
     factsExpiredForDeletedPages: 0,
     pagesFailed: 0,
@@ -753,53 +800,27 @@ export async function runExtractFacts(
     }
   }
 
-  // ── Empty-fence guard (Codex R2-#7; #2484; #2646) ──────────────
-  // Rows the fence step could not fence this run still block the destructive
-  // reconciliation pass. A row counts only when `row_num IS NULL`, its
-  // `entity_slug` resolves to a LIVE page in THIS run's source (#3526 source
-  // isolation), it is not soft-expired (#2646: `forget_fact` drains rows by
-  // soft-expiring them), the source has a `local_path` (#2763), and it is
-  // not an ontology observation (`dimension IS NULL`, #6264: those are never
-  // fenced, so they must not gate either). Rows without a page or checkout
-  // (#2484: the inline writer's slugify-floor / stub-guard-blocked slugs)
-  // are structurally unfenceable and never gate.
-  const legacy = await engine.executeRaw<{ n: string }>(
-    `SELECT COUNT(*) AS n
-       FROM facts f
-      WHERE f.source_id = $1
-        AND f.row_num IS NULL
-        AND f.dimension IS NULL
-        AND f.entity_slug IS NOT NULL
-        AND f.expired_at IS NULL
-        AND EXISTS (
-          SELECT 1 FROM pages p
-           WHERE p.source_id = f.source_id
-             AND p.slug = f.entity_slug
-             AND p.deleted_at IS NULL
-        )
-        AND EXISTS (
-          SELECT 1 FROM sources s
-           WHERE s.id = f.source_id
-             AND s.local_path IS NOT NULL
-        )`,
-    [sourceId],
-  );
-  const legacyCount = parseInt(legacy[0]?.n ?? '0', 10);
+  // ── Empty-fence guard (per page, #6278) ─────────────────────────
+  // Rows the fence step could not fence this run keep their own page out of
+  // the destructive reconciliation pass; the other pages reconcile.
+  const { count: legacyCount, slugs: legacySlugs } = await pendingLegacyRows(engine, sourceId);
   result.legacyRowsPending = legacyCount;
+  result.legacyPages = [...legacySlugs].sort();
   if (legacyCount > 0) {
     result.guardTriggered = true;
     result.warnings.push(
-      `extract_facts: ${legacyCount} unfenced fact row(s) in source "${sourceId}" (entity page present, row_num NULL) ` +
+      `extract_facts: ${legacyCount} unfenced fact row(s) on ${legacySlugs.size} page(s) in source "${sourceId}" (entity page present, row_num NULL) ` +
       (opts.dryRun
-        ? 'would be fenced by this phase; a dry run writes nothing, so reconciliation is skipped.'
-        : 'could not be fenced this run, so reconciliation is skipped. The FACTS_FENCE_FAILED warnings name each page and why; ' +
-          'a page whose canonical file does not exist on this host is fenced by the cycle on the host that holds the file. ' +
+        ? 'would be fenced by this phase; a dry run writes nothing, so those pages skip reconciliation.'
+        : 'could not be fenced this run, so those pages keep their fact index and skip reconciliation while the other pages reconcile. ' +
+          'The FACTS_FENCE_FAILED warnings name each page and why; ' +
+          'a page whose canonical file does not exist on this host is fenced by the cycle on the host that holds the file; ' +
+          'a row the fence codec cannot render stays active and searchable (doctor fence_integrity lists it); the phantom-redirect pass waits until the source has no unfenced rows. ' +
           'Individual rows can instead be drained via `forget_fact`.'),
     );
-    // #3683: book the halt BEFORE the early return. The end-of-run rollup
-    // write below is unreachable from this path, so a guard-triggered run
-    // must record its halt here for doctor extract_health's halt_rate.
-    // upsertExtractRollup is best-effort internally (never throws).
+    // #3683: a guard-triggered run books its halt here for doctor
+    // extract_health's halt_rate (the completion rollup below is skipped for
+    // it). upsertExtractRollup is best-effort internally (never throws).
     if (!opts.dryRun) {
       await upsertExtractRollup(engine, {
         kind: 'facts.fence',
@@ -809,7 +830,6 @@ export async function runExtractFacts(
         halt_delta: 1,
       });
     }
-    return result;
   }
 
   // ── v0.35.5: phantom-redirect pre-pass ──────────────────────────
@@ -821,8 +841,11 @@ export async function runExtractFacts(
   // Idempotency-by-construction: phantom predicate filters out `deleted_at
   // IS NOT NULL` so a half-redirected page (soft-deleted, .md still on
   // disk) won't be re-redirected.
+  // #6278: the pass moves rows by their fence position and would strand a
+  // legacy row (no position) on a deleted phantom, so it still waits for the
+  // whole source to be fenced; the reconcile walk below is per page.
   let phantomResult: PhantomPassResult = emptyPhantomPassResult();
-  if (opts.brainDir) {
+  if (opts.brainDir && legacyCount === 0) {
     try {
       phantomResult = await runPhantomRedirectPass(
         engine,
@@ -904,6 +927,9 @@ export async function runExtractFacts(
     slugs = Array.from(new Set([...slugs, ...await selectFactsReconcileDrain(engine, sourceId, opts.drain)]));
   }
   const drainDeadline = Date.now() + (opts.drain?.budgetMs ?? FACTS_DRAIN_BUDGET_MS);
+  // #6278 (Decision 57): a page still holding unadopted legacy rows keeps its
+  // index as it is; reconciling it would classify those rows as stale.
+  slugs = slugs.filter(slug => !legacySlugs.has(slug));
 
   // ── Reconcile each page ───────────────────────────────────────
   // Each page reconciles independently: 'stop' ends the walk (cancellation),
@@ -1068,10 +1094,9 @@ export async function runExtractFacts(
       console.error(`[extract_facts] receipt write failed: ${(err as Error).message}`);
     }
   }
-  if (!opts.dryRun) {
-    // #3683: guard-triggered runs return early above (and book their halt
-    // there), so this path is always a completed round — the old
-    // `result.guardTriggered ? … : …` ternaries were dead in their true arm.
+  if (!opts.dryRun && !result.guardTriggered) {
+    // #3683: a guard-triggered run booked its halt above (one rollup per
+    // run), so this path is always a completed round.
     await upsertExtractRollup(engine, {
       kind: 'facts.fence',
       source_id: sourceId,

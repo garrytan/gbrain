@@ -4,8 +4,10 @@ import type { JournalLimits } from './model.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { writeHealth } from './health.ts';
-import { claimStateOf, type ClaimRow } from './claim-phase.ts';
+import { claimStall, claimStateOf, type ClaimRow } from './claim-phase.ts';
 import type { WriteRequestState } from './types.ts';
+import { preparationBudgetMs } from './preparation-budget.ts';
+import { readWriteSwitchSnapshot } from './switches.ts';
 import { DATABASE_REFUSAL_HINT, DATABASE_TRIGGER_HINT } from './connector-errors.ts';
 
 export const WRITER_NEXT_ACTIONS: Record<string, string> = {
@@ -26,6 +28,9 @@ export const WRITER_NEXT_ACTIONS: Record<string, string> = {
   source_changed: 'Inspect the source incarnation and worktree binding; queued requests cannot follow a recreated source.',
   permission_denied: 'Inspect the durable principal and current source, operation, and namespace grants.',
   writer_coordinator_required: DATABASE_REFUSAL_HINT,
+  // #6278: a preparation the budget cut off, and the terminal give-up at the attempt limit.
+  preparation_deadline: 'Keep the same request_id: the owner cut this preparation off at its budget and will claim it again; a second cut-off finishes it preparation_stalled. Read claim.stall on the running blocker for the step and what it waited on.',
+  preparation_stalled: 'Do not resubmit under the same request_id. The receipt names the last recorded step; for a sync file run gbrain sources retry-held <source> after the cause is fixed, then the same gbrain sync with the same options; a foreground write needs a new request_id.',
 };
 export function writerNextAction(reason: string | null | undefined): string {
   return reason && WRITER_NEXT_ACTIONS[reason] || 'Inspect the sanitized receipt and owner diagnostics before retrying with the same request_id.';
@@ -63,9 +68,11 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     FROM persistence_worktrees w LEFT JOIN persistence_requests r ON r.worktree_id=w.id
     GROUP BY w.id ORDER BY w.id`);
   const counters = await engine.executeRaw<Counter>(`SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,terminal_bytes::text,recovery_bytes::text FROM persistence_counters ORDER BY key`);
-  const blockers = await engine.executeRaw<{ request_id: string; worktree_id: string | null; state: WriteRequestState; created_at: Date | string; blocked_reason: string | null; error_code: string | null }
-    & Omit<ClaimRow, 'state'>>(
-    `SELECT request_id,worktree_id,state,blocked_reason,error_code,created_at,claim_phase,execution_token,claim_expires_at<now() AS claim_lapsed,publication_started
+  // #6278: the operation and intent kind say which budget applies and tell a sync member from a maintenance write; the owner process comes from the live claim's stamp.
+  const blockers = await engine.executeRaw<{ request_id: string; worktree_id: string | null; state: WriteRequestState; created_at: Date | string; blocked_reason: string | null; error_code: string | null;
+    operation: string; intent_kind: string | null; preparation_attempts: number | null } & Omit<ClaimRow, 'state'>>(
+    `SELECT request_id,worktree_id,state,blocked_reason,error_code,created_at,claim_phase,execution_token,claim_expires_at<now() AS claim_lapsed,publication_started,
+      operation,intent->>'kind' AS intent_kind,preparation_attempts
     FROM persistence_requests WHERE state IN ('queued','running','recovering') OR blocked_reason IS NOT NULL ORDER BY sequence LIMIT 100`);
   const queue = await engine.executeRaw(`SELECT state,COUNT(*)::integer AS count,COALESCE(SUM(intent_bytes),0)::text AS intent_bytes,
     MIN(created_at) AS oldest_request_at,
@@ -80,6 +87,10 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     `SELECT request_id,operation,source_id,state,error_code,error_detail,completed_at FROM persistence_requests
     WHERE error_detail IS NOT NULL AND COALESCE(error_detail->>'origin','')<>'fence' ORDER BY sequence DESC LIMIT 20`);
   const limits = await readJournalLimits(engine);
+  // #6278: the budgets, ceiling, attempt limit and switch in effect, next to every running blocker's step age.
+  const snapshot = await readWriteSwitchSnapshot(engine).catch(() => null);
+  const preparation_policy = snapshot ? { deadlines: snapshot.switches.preparation_deadlines, sync_preparation_ms: snapshot.preparation.syncMs,
+    maintenance_preparation_ms: snapshot.preparation.maintenanceMs, preparation_ceiling_ms: snapshot.preparation.ceilingMs, max_preparation_attempts: snapshot.preparation.maxAttempts } : null;
   const { persistenceConsumerStatus } = await import('./service.ts');
   // C-NEW-4: the consumer is per process, so this is the answering process's own ingress, never proof the brain's owner is down.
   const local = persistenceConsumerStatus(engine);
@@ -87,14 +98,18 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     ? 'The process that answered has no resident consumer (a one-shot CLI, for example); another process may own writes. See worktrees and bindings for ownership.'
     : 'The resident consumer of the process that answered this status.' };
   return { ...brain, sampled_at: new Date().toISOString(), publication_concurrency: publicationConcurrency(engine),
-    local_process_ingress, worktrees, counters, queue, effects, limits, capacity: capacityDiagnostics(counters, limits),
+    local_process_ingress, worktrees, counters, queue, effects, limits, capacity: capacityDiagnostics(counters, limits), preparation_policy,
     recent_failures: failures.map(row => ({ ...row, next_action: row.error_detail?.origin === 'database_guard' ? DATABASE_REFUSAL_HINT : DATABASE_TRIGGER_HINT })),
     blockers: blockers.map(({ claim_phase: _phase, execution_token: _token, claim_lapsed: _lapsed, publication_started: _started, ...row }) => {
       const health = writeHealth(row);
       const advice = writerNextAction(row.blocked_reason ?? row.error_code);
-      // #6176: a running request names the phase its claim is in and how long it has held it.
-      const claim = claimStateOf({ state: row.state, claim_phase: _phase, execution_token: _token, claim_lapsed: _lapsed, publication_started: _started });
-      return { ...row, ...health, ...(claim ? { claim } : {}), next_action: health.diagnostic?.next_action === 'inspect_owner' && advice !== WRITER_INSPECTION_HINT
+      // #6176: a running request names the phase its claim is in and how long it has held it; #6278: its step, wait cause, owner
+      // process and, past its budget, the `preparation_overdue` verdict (the running state; `preparation_stalled` is only the terminal give-up).
+      const state = claimStateOf({ state: row.state, claim_phase: _phase, execution_token: _token, claim_lapsed: _lapsed, publication_started: _started });
+      const budget = snapshot ? preparationBudgetMs({ operation: row.operation, intent: row.intent_kind ? { kind: row.intent_kind } : null }, snapshot.preparation, 30_000) : null;
+      const stall = state && budget !== null ? claimStall(state, budget) : null;
+      const claim = state ? { ...state, ...(budget === null ? {} : { budget_ms: budget }), stall } : undefined;
+      return { ...row, preparation_attempts: row.preparation_attempts ?? 0, ...health, ...(claim ? { claim } : {}), next_action: health.diagnostic?.next_action === 'inspect_owner' && advice !== WRITER_INSPECTION_HINT
         ? `${WRITER_INSPECTION_HINT} ${advice}` : advice };
     }) };
 }

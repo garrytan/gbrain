@@ -9,6 +9,7 @@
  * remote operation writes config), so a remote caller cannot flip a switch.
  */
 import type { SqlEngine } from './model.ts';
+import { DEFAULT_PREPARATION_POLICY, PREPARATION_BUDGET_CONFIG_KEYS, resolvePreparationPolicy, type PreparationPolicy } from './preparation-budget.ts';
 
 export const WRITE_SWITCHES = {
   /** Phase 4.1/4.3/4.4: single page writes publish as a group of one, the own admission claims directly, publication reuses a warm connection. */
@@ -19,6 +20,8 @@ export const WRITE_SWITCHES = {
   waive_batch: { key: 'sync.waive_batch', env: 'GBRAIN_SYNC_WAIVE_BATCH' },
   /** Phase 4.5: a foreground write goes ahead of queued sync groups that do not name its page; off restores the FIFO and the sync side's pauses. */
   foreground_priority: { key: 'sync.foreground_priority', env: 'GBRAIN_SYNC_FOREGROUND_PRIORITY' },
+  /** #6278: every preparation has a deadline and a counted attempt; off restores the 30 s budget for remember/put_page/edit_page only and never counts. */
+  preparation_deadlines: { key: 'persistence.preparation_deadlines', env: 'GBRAIN_PREPARATION_DEADLINES' },
 } as const;
 export type WriteSwitch = keyof typeof WRITE_SWITCHES;
 export type WriteSwitches = Record<WriteSwitch, boolean>;
@@ -27,16 +30,19 @@ export const SWITCH_TTL_MS = 5000;
 
 const off = (value: string | null | undefined) => typeof value === 'string' && /^(0|false)$/i.test(value.trim());
 const on = (value: string | null | undefined) => typeof value === 'string' && /^(1|true)$/i.test(value.trim());
-const snapshots = new WeakMap<object, { at: number; generation: number; read: Promise<WriteSwitches> }>();
+/** One snapshot read: the switches plus the #6278 preparation budgets (preparation-budget.ts), so a claim never reads config on its own. */
+export interface WriteSwitchSnapshot { switches: WriteSwitches; preparation: PreparationPolicy }
+const snapshots = new WeakMap<object, { at: number; generation: number; read: Promise<WriteSwitchSnapshot> }>();
 let generation = 0;
+const SNAPSHOT_KEYS: readonly string[] = [...WRITE_SWITCH_KEYS, ...PREPARATION_BUDGET_CONFIG_KEYS];
 
-function resolve(configured: Map<string, string>): WriteSwitches {
+function resolve(configured: Map<string, string>): WriteSwitchSnapshot {
   const out = {} as WriteSwitches;
   for (const [name, { key, env }] of Object.entries(WRITE_SWITCHES) as Array<[WriteSwitch, { key: string; env: string }]>) {
     const fromEnv = process.env[env];
     out[name] = off(fromEnv) ? false : on(fromEnv) ? true : !off(configured.get(key));
   }
-  return out;
+  return { switches: out, preparation: resolvePreparationPolicy(configured) };
 }
 
 /** Read-through views of an engine (preparation config, pre-admission cache) and the engine they read through. */
@@ -50,15 +56,23 @@ export function viewedEngine<T extends object>(engine: T): T { return (views.get
  * `signal` cancels a read this call starts (the consumer's tick reads under its phase deadline).
  */
 export function readWriteSwitches(viewed: SqlEngine, opts: { now?: () => number; signal?: AbortSignal } = {}): Promise<WriteSwitches> {
+  return readWriteSwitchSnapshot(viewed, opts).then(snapshot => snapshot.switches);
+}
+/** The switches and the preparation budgets of `engine`'s brain, from the same snapshot. */
+export function readWriteSwitchSnapshot(viewed: SqlEngine, opts: { now?: () => number; signal?: AbortSignal } = {}): Promise<WriteSwitchSnapshot> {
   const now = opts.now ?? Date.now;
   const engine = viewedEngine(viewed);
   const held = snapshots.get(engine);
   if (held && held.generation === generation && now() - held.at < SWITCH_TTL_MS) return held.read;
-  const read = engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config WHERE key = ANY($1::text[])', [WRITE_SWITCH_KEYS], { signal: opts.signal })
+  const read = engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config WHERE key = ANY($1::text[])', [SNAPSHOT_KEYS], { signal: opts.signal })
     .then(rows => resolve(new Map(rows.map(row => [row.key, row.value]))));
   snapshots.set(engine, { at: now(), generation, read });
   read.catch(() => { if (snapshots.get(engine)?.read === read) snapshots.delete(engine); });
   return read;
+}
+/** The preparation budgets in effect (defaults when the read fails). */
+export async function readPreparationPolicy(engine: SqlEngine): Promise<PreparationPolicy> {
+  return readWriteSwitchSnapshot(engine).then(snapshot => snapshot.preparation, () => ({ ...DEFAULT_PREPARATION_POLICY }));
 }
 
 export async function writeSwitchOn(engine: SqlEngine, name: WriteSwitch): Promise<boolean> {

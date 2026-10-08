@@ -664,7 +664,20 @@ connection; `checkout=not_observed conn_wait_ms=<n>` means it had not obtained
 one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
 `loop_lag_ms` is the longest event-loop delay during the phase (a busy or
 starved process). The same fields appear in the consumer's status snapshot
-under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `gbrain sources writer status --json` to see what is waiting. The
+under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `gbrain sources writer status --json` to see what is waiting.
+`phase=preparation` lines name a write whose preparation ran past its budget:
+`reason=deadline_exceeded` (the claim is released with `blocked_reason`
+`preparation_deadline` and one attempt is counted; the budget is
+`persistence.sync_preparation_ms` for a managed sync member,
+`persistence.maintenance_preparation_ms` for every other managed kind and 30 s
+for `remember`, `put_page` and `edit_page`), `reason=preparation_stalled` (the
+request reached `persistence.max_preparation_attempts` and was finished
+`failed` instead of being claimed again) and `reason=ceiling_exceeded` (the
+preparation ignored cancellation past `persistence.preparation_ceiling_ms`; the
+message names the step and what it waited on, and ends `restart_required` when
+this process holds as many such preparations as it tolerates and has stopped
+claiming). The runbook is
+[catch-up stuck](guides/troubleshooting.md#catch-up-stuck). The
 line is rate-limited (one per second, one per phase and code every 30 seconds).
 An idle consumer keeps one ordinary-pool connection for its work probe and
 never holds a direct or session-pooler connection, so a
@@ -674,7 +687,12 @@ idle `gbrain serve` processes.
 <a id="persistence-claim-phase"></a>**Claim phases.** Each claim renewal also records the claimed write's phase
 (`preparing` or `publishing`); `gbrain sources writer status --json` shows it as
 `claim` on running blockers, and doctor `persistence_write_stall` warns past
-`persistence.max_claim_ms` (default 600000, 60000 to 86400000). See
+`persistence.max_claim_ms` (default 600000, 60000 to 86400000). A running
+claim also carries the preparation `step`, how long it has been in it, what it
+waits on (`git`, `fs`, `db`, `pool` or `unknown`) and the owner process (kind,
+pid, gbrain version); past its budget, `claim.stall` reads
+`preparation_overdue`. Each request counts the cut-offs of its preparation in
+`persistence_requests.preparation_attempts`. See
 [troubleshooting](guides/troubleshooting.md#persistence-write-stall).
 
 ## JSONB writes: never double-encode

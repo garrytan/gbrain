@@ -29,7 +29,8 @@ import { readSyncFile, syncGitPath, type SyncDiscovery, type SyncEntry } from '.
 import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { screenSyncImport, type SyncImportScreenInput } from './sync-prepare.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
-import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldItem, type GitHoldRecord, type SyncHoldPolicy } from './sync-holds.ts';
+import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
+import type { WriteRequest } from './model.ts';
 
 type Snapshot = Awaited<ReturnType<BrainEngine['readPageSnapshot']>>;
 export type HeldEntry = Pick<GitHoldRecord, 'path' | 'source_path' | 'slug' | 'page_id' | 'code' | 'message' | 'upstream_version' | 'meta'>;
@@ -83,6 +84,34 @@ export function prepareTimeFenceHold(entry: Pick<SyncEntry, 'path' | 'sourcePath
   // An older gbrain's receipt named no section: take it from the refused bytes themselves.
   const fence = completeFenceLocation(receipt, parseMarkdown(content, `${slug}.md`));
   return heldEntry(entry, slug, pageId, { code: 'invalid_fence', reason: 'prepare_time', fence, message: fenceMessage(fence) }, content, blobOid ? { oid: blobOid } : null);
+}
+
+/** #6278: the receipt fields a `preparation_stalled` hold keeps (the owner's step vocabulary only, never content). */
+export function preparationStallMeta(receipt: Pick<WriteRequest, 'request_id' | 'error_detail'>, syncArgv: string[]): PreparationStallMeta {
+  const detail = receipt.error_detail && typeof receipt.error_detail === 'object' ? receipt.error_detail as Record<string, unknown> : {};
+  const waiting = detail.waiting_on;
+  return { request_id: receipt.request_id, step: typeof detail.step === 'string' ? detail.step.slice(0, 64) : null,
+    waiting_on: typeof waiting === 'string' && ['git', 'fs', 'db', 'pool', 'unknown'].includes(waiting) ? waiting as PreparationStallMeta['waiting_on'] : null,
+    attempts: typeof detail.attempts === 'number' && Number.isFinite(detail.attempts) ? detail.attempts : null, gbrain_version: VERSION, sync_argv: syncArgv };
+}
+
+/**
+ * #6278: the hold a `managed_sync_import` or `managed_sync_delete` member earns
+ * when its owner finished it `failed` with `preparation_stalled` (the
+ * preparation never settled within its attempts). The file is not the
+ * problem, so the hold carries the receipt's step and wait cause and routes
+ * to writer status, then `sources retry-held` and the same sync. A delete
+ * hold has no content (`upstream_version` null) and is marked `deleted`, so
+ * discovery leaves it alone until a retry or a gbrain change.
+ */
+export function preparationStalledHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>, slug: string, pageId: number | null,
+  receipt: Pick<WriteRequest, 'request_id' | 'error_detail'>, content: string | null, blobOid: string | null | undefined, syncArgv: string[]): HeldEntry {
+  const stall = preparationStallMeta(receipt, syncArgv);
+  const where = stall.step ? ` at step ${stall.step}` : '';
+  const held = heldEntry(entry, slug, pageId, { code: 'preparation_stalled',
+    message: `${entry.path}: its ${entry.action === 'delete' ? 'deletion' : 'import'} could not finish preparing${where} (request ${receipt.request_id}), so it is held and the rest of the source synced. `
+      + `Inspect the writer with gbrain sources writer status, then gbrain sources retry-held and the same sync.` }, content, blobOid ? { oid: blobOid } : null);
+  return { ...held, meta: { ...held.meta, stall, ...(entry.action === 'delete' ? { deleted: true as const } : {}) } };
 }
 
 /**

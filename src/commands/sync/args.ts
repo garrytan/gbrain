@@ -29,7 +29,12 @@ frontmatter fix with 'gbrain repair frontmatter --source <id>'. A fence hold
 preview it with 'gbrain repair fences --source <id>' (read-only, no model
 call), which prints the apply command, or the exact edit for a fence gbrain
 will not guess. A source a file blocked before this release recovers on its
-next sync ('--no-pull' on a managed brain).
+next sync ('--no-pull' on a managed brain). On a managed brain a write whose
+preparation never finishes within its attempts is held as
+preparation_stalled: the file is fine, so no repair applies; inspect the
+writer with 'gbrain sources writer status --source <id> --json', fix what it
+names, then 'gbrain sources retry-held <id>' and the same sync. Many such
+stalls in one run stop it with outcome blocked / preparation_systemic.
 'gbrain config set sync.holds fail' restores fail-closed blocking.
 
 Options:
@@ -160,7 +165,11 @@ See also:
   gbrain sources status <id>              Held files with their next command.
   gbrain repair frontmatter --source <id> Preview the fix for frontmatter holds.
   gbrain repair fences --source <id>      Preview the repair of fence holds.
+  gbrain sources writer status --source <id> --json
+                                          What a stalled write was doing (preparation_stalled holds).
   docs/guides/repair.md#held-files        Walkthrough.
+  docs/guides/troubleshooting.md#catch-up-stuck
+                                          Catch-up stuck / held N files runbook.
 `);
 }
 

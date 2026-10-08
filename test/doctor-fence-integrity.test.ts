@@ -17,6 +17,15 @@
  * step, "no action needed" appears with no maintenance run, or a cell value
  * reaches the check.
  * PGLite in-memory ($0); synthetic content only.
+ *
+ * #6278 (2.3): legacy fact rows the fence step cannot adopt are counted under
+ * `unrenderable_legacy_facts` from the planner's read-only result (pages,
+ * fact ids and reason classes, never the claim), the message says the rows
+ * stay active and searchable and nothing is lost and never suggests
+ * forgetting them, the fix has no command (`next: report`) and its verify
+ * re-counts the rows; a brain with none stays ok. Fails when: the count
+ * comes from a receipt (none exists for a row never submitted), the claim
+ * text reaches the output, or the fix tells the agent to run something.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -35,6 +44,7 @@ import { bannerFindingLine } from '../src/commands/doctor/upgrade-banner.ts';
 import { repairForCheck } from '../src/core/repair/registry.ts';
 import { LAST_GLOBAL_MAINTENANCE_KEY } from '../src/core/fence-repair/hold-fix.ts';
 import { LAST_GLOBAL_AT_KEY } from '../src/core/cycle.ts';
+import { cliRenderContext, renderAction } from '../src/core/agent-output.ts';
 
 const T = '<!--- gbrain:takes:begin -->', TE = '<!--- gbrain:takes:end -->';
 const TH = '| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|';
@@ -186,6 +196,41 @@ describe('fence_integrity doctor check', () => {
     const text = JSON.stringify(remote);
     for (const leak of ['notes/held', 'notes/db-only', s.root, ...SECRETS]) expect(text).not.toContain(leak);
     for (const blob of [line, JSON.stringify(check)]) for (const secret of SECRETS) expect(blob).not.toContain(secret);
+  });
+
+  test('legacy fact rows the fence codec cannot render are counted by page and class with next: report, never the claim (#6278)', async () => {
+    const s = await source({ 'people/alice-example.md': md('Alice Example', CLEAN) });
+    const page = await stored(s.id, 'people/alice-example', CLEAN);
+    await engine.executeRaw('UPDATE pages SET source_path = $1 WHERE id = $2', ['people/alice-example.md', page.id]);
+    const STRUCK = '~~Sentinelstruckzq6 left the board~~', TRAILING = 'Sentineltrailingzq6 keeps bees ';
+    const insert = (fact: string) => engine.executeRaw<{ id: number }>(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence)
+       VALUES ($1, 'people/alice-example', $2, 'fact', 'world', 'medium', '2026-03-01', 'mcp:remember', 0.8) RETURNING id`, [s.id, fact]);
+    const [[struck], [blank], [trailing]] = [await insert(STRUCK), await insert('   '), await insert(TRAILING)];
+    const check = await result();
+    expect(check.status).toBe('warn');
+    const found = (check.details as any).unrenderable_legacy_facts;
+    // The trailing-whitespace row is adoptable (not counted); the struck and blank rows are not.
+    expect(found).toEqual({ total: 2, complete: true, pages: [{ source_id: s.id, slug: 'people/alice-example', rows: [
+      { fact_id: Number(struck.id), reason: 'fence_unrenderable', class: 'struck' },
+      { fact_id: Number(blank.id), reason: 'fence_unrenderable', class: 'empty' }] }] });
+    expect(check.message).toContain('2 legacy fact row(s) on 1 page(s) cannot be adopted into their facts fence: people/alice-example');
+    expect(check.message).toContain('empty, struck');
+    expect(check.message).toContain('stay active and searchable and nothing is lost');
+    expect(check.message).not.toContain('forget_fact');
+    const rendered = renderAction(check.fix!, cliRenderContext());
+    expect(rendered.next).toBe('report');
+    expect(rendered.command).toBeUndefined();
+    expect(rendered.verify).toEqual({ argv: ['gbrain', 'doctor', '--only', 'fence_integrity', '--json'] });
+    expect(rendered.docs).toContain('write-refusals.md#fence_unrenderable');
+    const text = JSON.stringify(check);
+    for (const leak of ['Sentinelstruckzq6', 'Sentineltrailingzq6', 'left the board', 'keeps bees', ...SECRETS]) expect(text).not.toContain(leak);
+    // Nothing was written: the rows are exactly as inserted.
+    const rows = await engine.executeRaw<{ id: number; fact: string; row_num: number | null; expired: boolean }>(
+      'SELECT id, fact, row_num, expired_at IS NOT NULL AS expired FROM facts WHERE id = ANY($1::integer[]) ORDER BY id', [[struck.id, blank.id, trailing.id]]);
+    expect(rows.map(r => [r.fact, r.row_num, r.expired])).toEqual([[STRUCK, null, false], ['   ', null, false], [TRAILING, null, false]]);
+    await engine.executeRaw('DELETE FROM facts WHERE source_id = $1', [s.id]);
+    expect((await result()).status).toBe('ok');
   });
 
   test('a census the scan did not finish is partial and never ok, even with nothing found so far', async () => {

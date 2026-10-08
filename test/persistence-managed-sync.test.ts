@@ -736,7 +736,7 @@ test.each(['restore', 'rename', 'database-only'] as const)('an unfinished %s req
         slug: kind === 'rename' ? 'a-renamed' : 'a', pageId: kind === 'rename' ? null : page.id,
         worktreeId: kind === 'database-only' ? null : binding.worktree_id, topologyGeneration: kind === 'database-only' ? null : binding.topology_generation,
         principal: authority.writer.principal, authority: authority.writer, callerIntent: intent, intent });
-      expect(await engine.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, [binding.worktree_id, binding.source_incarnation, f.id, 'a', page.id, String(page.id)])).toHaveLength(1);
+      expect(await engine.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, [binding.worktree_id, binding.source_incarnation, f.id, 'a', page.id, String(page.id), 'a.md', 'a.md'])).toHaveLength(1);
       const abort = new AbortController();
       const admitted = waitFor(async () => (await deleteRequests(engine, f.id)).length > 0, { timeoutMs: 30_000 }).then(() => abort.abort());
       const result = await performManagedSync(engine, { sourceId: f.id, ...WAIVER_OPTS, signal: abort.signal });
@@ -864,7 +864,7 @@ test('the waiver lookup for unfinished page requests is served by the request in
     const plan = await engine.transaction(async tx => {
       await tx.executeRaw('SET LOCAL enable_seqscan=off');
       return tx.executeRaw<Record<string, string>>(`EXPLAIN ${UNFINISHED_PAGE_REQUEST_SQL}`,
-        [randomUUID(), randomUUID(), 'example-source', 'notes/example', 1, '1']);
+        [randomUUID(), randomUUID(), 'example-source', 'notes/example', 1, '1', 'notes/example.md', 'notes/example.md']);
     });
     const text = plan.map(row => Object.values(row)[0]).join('\n');
     // Every branch (worktree pending, worktree recovery, database-only pending) is an index scan; the planner may

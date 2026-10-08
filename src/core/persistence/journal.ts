@@ -8,11 +8,12 @@ import type { Action } from '../agent-output.ts';
 import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
 import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetentionDays } from './limits.ts';
-import { retryWriteAdmission } from './admission-retry.ts';
+import { outstandingCapacityDetail, retryWriteAdmission } from './admission-retry.ts';
 import { PreadmitBrainChanged } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
 import { writerStamp } from './writer-versions.ts';
+import { claimPhaseStamp, startClaimPhase } from './claim-phase.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear } from './worktree-refresh-schema.ts';
@@ -60,9 +61,16 @@ function ownerStatusFix(sourceId: string): Action {
 }
 const lifecycleIdConflict = (requestId: string) => opError('idempotency_conflict', 'This request_id belongs to a source lifecycle operation.',
   `Request ID ${requestId} is already recorded for a source lifecycle change of this CLI writer, so this page write was not admitted and nothing changed. Submit the page write with a new request_id.`);
-export function capacityError(resource: string): OperationError {
-  return new OperationError('queue_capacity', `Write capacity exhausted: ${resource}.`,
+/**
+ * `outstanding` (#6278): the outstanding-request cap carries its counts on `detail`
+ * (`outstandingCapacityDetail`), so a caller that can wait for the other
+ * requests to settle (the managed drain) knows how many stand in its way.
+ */
+export function capacityError(resource: string, outstanding?: { used: number; limit: number }): OperationError {
+  const error = new OperationError('queue_capacity', `Write capacity exhausted: ${resource}.`,
     'Inspect writer status and configured persistence limits. Existing requests retain their reserved completion space.');
+  if (outstanding) error.detail = outstandingCapacityDetail(outstanding.used, outstanding.limit);
+  return error;
 }
 /** Cumulative caps name their config key and a value that covers one more year at the current admission rate. */
 async function cumulativeCapacityError(tx: SqlEngine, resource: string, scope: string, setting: keyof JournalLimits, used: number, limit: number): Promise<OperationError> {
@@ -195,7 +203,8 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
     for (const row of counters) {
       const brain = row.key === 'brain';
-      if (Number(row.outstanding_count) + 1 > (brain ? limits.brainOutstanding : limits.principalOutstanding)) throw capacityError(`${brain ? 'brain' : 'principal'} outstanding requests`);
+      const outstandingLimit = brain ? limits.brainOutstanding : limits.principalOutstanding;
+      if (Number(row.outstanding_count) + 1 > outstandingLimit) throw capacityError(`${brain ? 'brain' : 'principal'} outstanding requests`, { used: Number(row.outstanding_count), limit: outstandingLimit });
       if (Number(row.intent_bytes) + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
       const scope = brain ? 'brain' : 'principal';
       if (Number(row.lifetime_ids) + 1 > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
@@ -274,7 +283,8 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
     const bytes = fresh.reduce((sum, item) => sum + item.bytes, 0), terminalBytes = fresh.reduce((sum, item) => sum + item.terminalBytes, 0);
     for (const row of counters) {
       const brain = row.key === 'brain', scope = brain ? 'brain' : 'principal';
-      if (Number(row.outstanding_count) + fresh.length > (brain ? limits.brainOutstanding : limits.principalOutstanding)) throw capacityError(`${scope} outstanding requests`);
+      const outstandingLimit = brain ? limits.brainOutstanding : limits.principalOutstanding;
+      if (Number(row.outstanding_count) + fresh.length > outstandingLimit) throw capacityError(`${scope} outstanding requests`, { used: Number(row.outstanding_count), limit: outstandingLimit });
       if (Number(row.intent_bytes) + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${scope} intent bytes`);
       if (Number(row.lifetime_ids) + fresh.length > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
         row.key, `${scope}LifetimeIds`, Number(row.lifetime_ids), limits[`${scope}LifetimeIds`]);
@@ -322,30 +332,70 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
   if (!head.worktree_id || max <= 0) return [];
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
-    const next = await tx.executeRaw<{ id: string; state: string; grp: string | null; recovering: boolean }>(`SELECT id,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering
+    const next = await tx.executeRaw<{ id: string; state: string; grp: string | null; recovering: boolean; claim_phase: unknown }>(`SELECT id,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering,claim_phase
       FROM persistence_requests WHERE worktree_id=$1::uuid AND sequence>$2 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL)
       ORDER BY sequence LIMIT $3 FOR UPDATE`, [head.worktree_id, head.sequence, max]);
     const members: string[] = [];
+    const previous = new Map<string, unknown>();
     for (const row of next) {
       if (row.grp !== group || row.state !== 'queued' || row.recovering) break;
       members.push(row.id);
+      previous.set(row.id, row.claim_phase);
     }
     if (!members.length) return [];
     const tokens = members.map(() => randomUUID());
+    // #6278: a follower carries no stamp of its claim until its wave dispatches it (`markDispatched`), so an undispatched follower is never charged.
     return tx.executeRaw<WriteRequest>(`UPDATE persistence_requests r SET state='running',execution_token=t.token,
-      claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL
+      claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL,claim_phase=NULL
       FROM unnest($1::uuid[],$2::uuid[]) AS t(id,token) WHERE r.id=t.id AND r.state='queued' RETURNING r.*`, [members, tokens, leaseMs])
-      .then(rows => rows.sort((a, b) => Number(BigInt(a.sequence) - BigInt(b.sequence))));
+      .then(rows => rows.sort((a, b) => Number(BigInt(a.sequence) - BigInt(b.sequence))).map(row => ({ ...row, previous_claim_phase: previous.get(row.id) })));
   });
 }
 
-/** Renews every claim of a group in one statement; returns the ids still held. */
-export async function renewGroupClaims(engine: SqlEngine, rows: WriteRequest[], leaseMs = 30_000, signal?: AbortSignal, phase: string | null = null): Promise<Set<string>> {
+/**
+ * Renews every claim of a group in one statement; returns the ids still held.
+ * `stamps` (#6176/#6278) are the members' `claimPhaseStamp`s in `rows` order
+ * (null keeps a member's recorded stamp, for one not yet dispatched); a single
+ * string is stamped on every member with its own token.
+ */
+export async function renewGroupClaims(engine: SqlEngine, rows: WriteRequest[], leaseMs = 30_000, signal?: AbortSignal,
+  stamps: string | null | Array<string | null> = null): Promise<Set<string>> {
+  const perMember = Array.isArray(stamps) ? stamps.map(stamp => stamp ?? null) : rows.map(() => stamps);
   const held = await engine.executeRaw<{ id: string }>(`UPDATE persistence_requests r SET claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),
-    claim_phase=COALESCE(jsonb_set($4::text::jsonb,'{token}',to_jsonb(t.token::text)),r.claim_phase)
-    FROM unnest($1::uuid[],$2::uuid[]) AS t(id,token) WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING r.id`,
-  [rows.map(row => row.id), rows.map(row => row.execution_token), leaseMs, phase], { signal });
+    claim_phase=COALESCE(jsonb_set(t.stamp::jsonb,'{token}',to_jsonb(t.token::text)),r.claim_phase)
+    FROM unnest($1::uuid[],$2::uuid[],$4::text[]) AS t(id,token,stamp) WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING r.id`,
+  [rows.map(row => row.id), rows.map(row => row.execution_token), leaseMs, perMember], { signal });
   return new Set(held.map(row => row.id));
+}
+/**
+ * #6278: a group's dispatch mark. Before a wave of members starts preparing,
+ * each member's `preparing` stamp (its own token, start and step) is stored,
+ * so a kill before the first renewal still charges exactly the members that
+ * were preparing (the expired-claim reclaim, consumer.ts and effect-journal.ts)
+ * and never an undispatched follower. Returns the ids whose claim still held.
+ */
+export async function markDispatched(engine: SqlEngine, members: Array<{ row: WriteRequest; stamp: string }>, signal?: AbortSignal): Promise<Set<string>> {
+  if (!members.length) return new Set();
+  const marked = await engine.executeRaw<{ id: string }>(`UPDATE persistence_requests r SET claim_phase=jsonb_set(t.stamp::jsonb,'{token}',to_jsonb(t.token::text))
+    FROM unnest($1::uuid[],$2::uuid[],$3::text[]) AS t(id,token,stamp) WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING r.id`,
+  [members.map(m => m.row.id), members.map(m => m.row.execution_token), members.map(m => m.stamp)], { signal });
+  return new Set(marked.map(row => row.id));
+}
+/**
+ * #6278: an abandoned preparation overran the hard ceiling, which proves it
+ * ignored cancellation: its request's counter is set to the limit so the next
+ * claim finishes it `preparation_stalled`. Token-free (the claim was released
+ * at the budget), terminal rows are left alone.
+ */
+export async function floorPreparationAttempts(engine: SqlEngine, id: string, limit: number): Promise<void> {
+  await engine.executeRaw(`UPDATE persistence_requests SET preparation_attempts=GREATEST(preparation_attempts,$2::integer),updated_at=now()
+    WHERE id=$1::uuid AND state IN ('queued','running') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [id, limit]);
+}
+/** #6278: charges one preparation attempt to a claim this owner still holds (before finishing it `preparation_stalled`). */
+export async function chargePreparationAttempt(engine: SqlEngine, row: WriteRequest): Promise<number> {
+  const [charged] = await engine.executeRaw<{ preparation_attempts: number }>(`UPDATE persistence_requests SET preparation_attempts=preparation_attempts+1,updated_at=now()
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING preparation_attempts`, [row.id, row.execution_token]);
+  return charged?.preparation_attempts ?? (row.preparation_attempts ?? 0) + 1;
 }
 
 /**
@@ -486,13 +536,15 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
     ]) as [unknown, WriteRequest[]];
     if (!row) return null;
     // `passed_sync`: the claimed row went ahead of a queued sync row of its root.
+    // #6278: the claim stamps its own `preparing` phase, so a kill before the first renewal is charged like any other.
+    const token = randomUUID();
     const [claimed] = await tx.executeRaw<WriteRequest & { passed_sync: boolean }>(`UPDATE persistence_requests SET state='running',
       execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
-      updated_at=now(),blocked_reason=NULL WHERE id=$1::uuid RETURNING *,EXISTS (SELECT 1 FROM persistence_requests earlier
+      updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid RETURNING *,EXISTS (SELECT 1 FROM persistence_requests earlier
         WHERE earlier.worktree_id=persistence_requests.worktree_id AND earlier.sequence<persistence_requests.sequence
         AND earlier.state='queued' AND ${SYNC_KIND('earlier')}) AS passed_sync`,
-    [row.id, randomUUID(), leaseMs]);
-    return claimed ?? null;
+    [row.id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token)]);
+    return claimed ? { ...claimed, previous_claim_phase: row.claim_phase } : null;
   });
 }
 /**
@@ -534,10 +586,12 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
             AND c.state='committed' AND NOT ${SYNC_KIND('c')}))
       ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, [hostId, worktreeId, run, seenSequence]);
     if (!row) return null;
+    const token = randomUUID();
     const [claimed] = await tx.executeRaw<WriteRequest & { seen_sequence: string }>(`UPDATE persistence_requests SET state='running',
       execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
-      updated_at=now(),blocked_reason=NULL WHERE id=$1::uuid RETURNING *,(SELECT max(sequence) FROM persistence_requests)::text AS seen_sequence`, [row.id, randomUUID(), leaseMs]);
-    return claimed;
+      updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid RETURNING *,(SELECT max(sequence) FROM persistence_requests)::text AS seen_sequence`,
+    [row.id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token)]);
+    return claimed ? { ...claimed, previous_claim_phase: row.claim_phase } : claimed;
   });
 }
 /** `phase` (claim-phase.ts `claimPhaseStamp`, #6176) records the claim's current phase with the renewal. */
@@ -547,10 +601,12 @@ export async function renewWriteClaim(engine: SqlEngine, id: string, token: stri
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [id, token, leaseMs, phase], { signal });
   return rows.length === 1;
 }
-export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: string): Promise<void> {
+/** `charge` (#6278): a `preparation_deadline` release counts one preparation attempt; `claim_lost`, `consumer_stopping` and the rest never do. */
+export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: string, opts: { charge?: boolean } = {}): Promise<void> {
   await engine.executeRaw(`UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
-    blocked_reason=$3,updated_at=now() WHERE id=$1::uuid AND execution_token=$2::uuid
-    AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason]);
+    blocked_reason=$3,updated_at=now(),preparation_attempts=preparation_attempts+CASE WHEN $4::boolean THEN 1 ELSE 0 END
+    WHERE id=$1::uuid AND execution_token=$2::uuid
+    AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason, opts.charge === true]);
 }
 
 /** Called while holding the root lock; the durable record precedes any rename. */
@@ -643,9 +699,10 @@ export async function clearResolvedRecoveries(engine: BrainEngine, rows: WriteRe
 
 /** #6007: claims again a request this owner pass released to the queue itself, while it still holds the worktree's native lock. */
 export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leaseMs = 30_000): Promise<WriteRequest | null> {
+  const token = randomUUID();
   const [claimed] = await engine.executeRawDirect<WriteRequest>(`UPDATE persistence_requests SET state='running',execution_token=$2::uuid,
-    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL
-    WHERE id=$1::uuid AND state='queued' AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [id, randomUUID(), leaseMs]);
+    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb
+    WHERE id=$1::uuid AND state='queued' AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token)]);
   return claimed ?? null;
 }
 
@@ -681,7 +738,8 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
       error_code=$4,error_message=$5,error_detail=COALESCE($8::text::jsonb,error_detail),completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
       consumer_version=CASE WHEN $2='committed' THEN $6 ELSE consumer_version END,
       consumer_host_id=CASE WHEN $2='committed' THEN $7::uuid ELSE consumer_host_id END,
-      published_at=CASE WHEN $2='committed' THEN now() ELSE published_at END
+      published_at=CASE WHEN $2='committed' THEN now() ELSE published_at END,
+      preparation_attempts=CASE WHEN $2='committed' THEN 0 ELSE preparation_attempts END
       WHERE id=$1::uuid AND $9::bigint+(SELECT bytes FROM effects)<=terminal_reservation RETURNING *),
     released AS (UPDATE persistence_counters SET outstanding_count=outstanding_count-1,intent_bytes=intent_bytes-$11
       WHERE key=ANY($10::text[]) AND EXISTS (SELECT 1 FROM done))

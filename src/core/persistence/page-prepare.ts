@@ -1,4 +1,6 @@
 import { isEmbedSkipped } from '../embed-skip.ts';
+import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
+import { boundedReads } from './bounded-reads.ts';
 import { isQuarantined, quarantineOutcome } from '../quarantine.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -253,10 +255,17 @@ async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteRequest,
  * `coordinated`: the caller publishes this mutation itself through the coordinator, whose
  * page guard and revision check on `row.slug` cover this import (the put_page apply diet).
  */
-export async function preparePageMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig,
+/**
+ * `options.clock` (#6278): the claim's phase clock; each await boundary names its step through `enterClaimStep`, and the
+ * preparation's raw reads run bounded by its remaining budget (`boundedReads`; a statement carrying the foreground `signal` keeps it).
+ */
+export async function preparePageMutation(unbounded: BrainEngine, row: WriteRequest, _config: GBrainConfig,
   preparedIntent?: { content: string; expectedRevision: string; tags?: string[] }, signal?: AbortSignal,
-  options: { allowMissingFile?: boolean; coordinated?: boolean } = {}): Promise<PreparedMutation> {
+  options: { allowMissingFile?: boolean; coordinated?: boolean; clock?: ClaimPhaseClock } = {}): Promise<PreparedMutation> {
   signal?.throwIfAborted();
+  const clock = options.clock;
+  const engine = boundedReads(unbounded, clock);
+  enterClaimStep(clock, 'page_snapshot', undefined, 'db');
   if (!row.intent) throw pageRefusal('storage_error', 'A pending write lost its normalized intent.', row,
     `The request has no stored intent for ${row.slug} (its payload was compacted or never recorded), so it cannot be published and wrote nothing.`);
   const p = row.intent;
@@ -269,6 +278,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     () => loadActivePackForEngine(engine, { remote: row.authority.remote, sourceId: row.source_id }).catch(() => null),
   ]) as [unknown, PageSnapshot | null, Awaited<ReturnType<typeof loadActivePackForEngine>> | null];
   signal?.throwIfAborted();
+  enterClaimStep(clock, 'revision_check');
   assertPageRevision(snapshot, preparedIntent ? { expectedRevision: preparedIntent.expectedRevision } : engineMutationPrecondition(parseMutationPrecondition(p)));
   if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
@@ -288,7 +298,8 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     const purge = p.purge === true;
     const noop = !purge && snapshot.page.deleted_at != null;
     // Always-loaded core pages: a remote caller cannot delete one (owner-only).
-    if (!noop) await prepareCoreGuard(engine, { row, snapshot, incoming: null });
+    if (!noop) { enterClaimStep(clock, 'core_guard', undefined, 'db'); await prepareCoreGuard(engine, { row, snapshot, incoming: null }); }
+    enterClaimStep(clock, 'file_target', undefined, 'fs');
     // Tombstones still own their recorded artifact. Purge always attempts its
     // removal before the guarded hard-delete and receipt commit; failure rolls
     // back to the prior row, and replay survives the eventual absence of that row.
@@ -356,12 +367,14 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     && (preparedIntent !== undefined || typeof p.expected_revision === 'string') ? 'editing' : 'preserving';
   // #5969 (D3): only an ordinary put_page intent carries a timeline section; every other writer keeps the shared policy.
   const timelinePolicy = row.operation === 'put_page' ? timelineWritePolicy(p, row.authority.remote, writer) : undefined;
+  enterClaimStep(clock, 'timeline_policy', undefined, 'db');
   if (timelinePolicy && typeof content === 'string') await assertTimelineNotOmitted(engine, { intent: p, remote: row.authority.remote, writer,
     slug: row.slug, sourceId: row.source_id, content, prior: snapshot });
   // #5567: database-only timeline rows are written back into the page before
   // the no-op check, digest, rendering and chunking see the body.
   if (projected && snapshot && typeof content === 'string') {
     const parsed = parseMarkdown(content,row.slug);
+    enterClaimStep(clock, 'materialize_timeline', undefined, 'db');
     const { timeline, materialized } = await materializeTimeline(engine,parsed,row.slug,snapshot,writer,timelinePolicy);
     if (materialized) content = serializePageToMarkdown({...snapshot.page,...parsed,timeline,type:parsed.typeExplicit ? parsed.type : snapshot.page.type},parsed.tags);
   }
@@ -383,6 +396,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   // The apply diet: the publisher's locked read of row.slug is the import base, and one read after the
   // last page write serves the read-back check, the seal, the core notice and the receipt (as sync does).
   const lean = options.coordinated === true && !targetDeleted && row.operation !== 'restore_page' && !versionTags;
+  enterClaimStep(clock, 'import_content', undefined, 'db');
   const result = await importFromContent(engine, row.slug, content, {
     ...source, noEmbed: true, remote: row.authority.remote, activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean,
     ...(lean ? { existingSnapshot: snapshot } : {}),
@@ -441,6 +455,8 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const autoLinkedPage = ordinaryPage || p.kind === 'managed_maintenance_page';
   const capture = row.operation === 'capture' && typeof p.capture_path === 'string' && typeof p.capture_file_hash === 'string'
     ? { path: p.capture_path, hash: p.capture_file_hash } : undefined;
+  // Projections, advisories, link resolution (links-preparation.ts), the file target and the core guard go out together.
+  enterClaimStep(clock, 'link_resolution', undefined, 'db');
   const [project, advisories, links, target, core] = await pipelined(together, [
     async () => projected ? prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer,timelinePolicy) : undefined,
     async () => noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : preparePageAdvisories(engine,row,ready.parsedPage,snapshot),
@@ -456,6 +472,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const fencesNormalized = shownFixes.length ? { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: shownFixes,
     writer: row.principal_kind, path: snapshot?.page.source_path ?? null, remote: row.authority.remote }) } : {};
   const file = target && fenceRepair ? { ...target, commit: fenceRepairCommit(relative(target.root, target.path).split(sep).join('/'), fenceRepair.classes) } : target;
+  enterClaimStep(clock, 'publication_mode', undefined, 'db');
   const [mintMode, databaseOnly] = await pipelined(together, [
     async () => file && !snapshot?.page.source_path ? scannerSlugRootMode(engine, row.source_id, file.root) : undefined,
     () => pageDatabaseOnlyPublication(engine, row, file),

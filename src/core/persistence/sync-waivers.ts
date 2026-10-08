@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { prepareManagedSyncMutation, type SyncIntent } from './sync-prepare.ts';
+import { startClaimPhase } from './claim-phase.ts';
 import { inspectUnchanged, screeningRequest, type NoopKernelWaiver } from './noop-kernel.ts';
 import { validateSyncAuthority, type SyncAuthority } from './sync-authority.ts';
 import { readSyncFile } from './sync-discovery.ts';
@@ -22,20 +23,75 @@ export interface WaiverCursor { sourceId: string; incarnation: string; root: str
 export interface WaiverEntry { requestId: string; slug: string; pageId: number | null; intent: SyncIntent }
 export interface NoopWaiver { kind: 'import' | 'delete'; kernel: NoopKernelWaiver[] }
 
+/** `persistence.sync_preparation_ms` (preparation-budget.ts validates it): the budget a managed sync member's preparation gets; default 120 s. */
+export const SYNC_PREPARATION_MS_KEY = 'persistence.sync_preparation_ms';
+export const SYNC_PREPARATION_DEFAULT_MS = 120_000;
+const BUDGET_TTL_MS = 5000;
+let budgets = new WeakMap<object, { at: number; read: Promise<number> }>();
+/** The sync preparation budget of `engine`'s brain, read at most every BUDGET_TTL_MS; a failed or malformed read is the default. */
+export function syncPreparationBudgetMs(engine: Pick<BrainEngine, 'getConfig'>, now = Date.now()): Promise<number> {
+  const held = budgets.get(engine);
+  if (held && now - held.at < BUDGET_TTL_MS) return held.read;
+  const read = engine.getConfig(SYNC_PREPARATION_MS_KEY).then(value => {
+    const n = Number(value?.trim());
+    return Number.isInteger(n) && n > 0 ? n : SYNC_PREPARATION_DEFAULT_MS;
+  }, () => SYNC_PREPARATION_DEFAULT_MS);
+  budgets.set(engine, { at: now, read });
+  return read;
+}
+/** Test seam: the next read sees the current config. */
+export function resetSyncPreparationBudget(): void { budgets = new WeakMap(); }
+
+/** The error `raceSyncBudget` rejects with when the budget passes; callers treat it as "cannot decide" and fail open. */
+export class SyncPreparationBudgetExceeded extends Error {
+  constructor(readonly budgetMs: number) { super(`The sync preparation did not finish within ${budgetMs} ms.`); this.name = 'SyncPreparationBudgetExceeded'; }
+}
+/**
+ * #6278 (1.10): a sync preparation run outside the consumer (a waiver screen or
+ * the #5522 origin-equivalence check) runs on the feeder's event loop, where the
+ * consumer's deadline cannot see a hang. This races `work` against the sync
+ * budget and the run's signal: past the budget it rejects with
+ * `SyncPreparationBudgetExceeded` (the caller fails open: nothing is waived,
+ * the origin refusal stands, nothing is counted or held); an aborted signal
+ * rejects with its reason, so run cancellation propagates. The late result is
+ * dropped, never read.
+ */
+export function raceSyncBudget<T>(work: Promise<T>, budgetMs: number, signal?: AbortSignal): Promise<T> {
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new DOMException('The sync was cancelled.', 'AbortError'));
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => { cleanup(); reject(new SyncPreparationBudgetExceeded(budgetMs)); }, budgetMs);
+    timer.unref?.();
+    const onAbort = () => { cleanup(); reject(signal!.reason ?? new DOMException('The sync was cancelled.', 'AbortError')); };
+    const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    work.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+  });
+}
+const rethrowAbort = (error: unknown, signal?: AbortSignal) => { if (signal?.aborted) throw error; };
+
 /** DX-A15: `GBRAIN_SYNC_WAIVE_NOOP=0` admits every entry, for triage. */
 export function noopWaiversEnabled(env: NodeJS.ProcessEnv = process.env): boolean { return env.GBRAIN_SYNC_WAIVE_NOOP !== '0'; }
 
-const PAGE_MATCH = "r.source_id=$3 AND (r.slug=$4 OR r.page_id=$5::bigint OR r.intent->'renameFrom'->>'slug'=$4 OR r.intent->'renameFrom'->>'pageId'=$6)";
+const PAGE_MATCH = `r.source_id=$3 AND (r.slug=$4 OR r.page_id=$5::bigint OR r.intent->'renameFrom'->>'slug'=$4 OR r.intent->'renameFrom'->>'pageId'=$6
+  OR ($7::text IS NOT NULL AND (r.intent->>'path'=$7 OR r.intent->>'sourcePath'=$8 OR r.intent->'renameFrom'->>'sourcePath'=$8)))`;
 /**
  * CEO-A12/A34: an unfinished request for the page, by slug, page id or a rename
- * from it. Each branch matches one partial request index: worktree pending,
- * worktree recovery, and database-only pending by source incarnation.
+ * from it; #6278: also by the entry's file path or origin, or a rename from that
+ * origin (`$7`, `$8`; null skips the path match). Each branch matches one
+ * partial request index: worktree pending, worktree recovery, and
+ * database-only pending by source incarnation.
  */
 export const UNFINISHED_PAGE_REQUEST_SQL = `SELECT 1 FROM (
   (SELECT r.id FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running','recovering') AND ${PAGE_MATCH} LIMIT 1)
   UNION ALL (SELECT r.id FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.recovery IS NOT NULL AND ${PAGE_MATCH} LIMIT 1)
   UNION ALL (SELECT r.id FROM persistence_requests r WHERE r.source_incarnation=$2::uuid AND r.worktree_id IS NULL
     AND r.state IN ('queued','running','recovering') AND ${PAGE_MATCH} LIMIT 1)) unfinished LIMIT 1`;
+
+/** The parameters of `UNFINISHED_PAGE_REQUEST_SQL` for one frozen entry (slug, page id, file path and origin). */
+export function unfinishedPageRequestParams(cursor: Pick<WaiverCursor, 'sourceId' | 'incarnation' | 'binding'>, pending: Pick<WaiverEntry, 'slug' | 'pageId' | 'intent'>): unknown[] {
+  return [cursor.binding.worktree_id, cursor.incarnation, cursor.sourceId, pending.slug, pending.pageId, String(pending.pageId),
+    pending.intent.path ?? null, pending.intent.sourcePath ?? pending.intent.path ?? null];
+}
 
 /**
  * Screens a frozen, unadmitted entry. Returns null to admit, or the cursor that
@@ -44,8 +100,8 @@ export const UNFINISHED_PAGE_REQUEST_SQL = `SELECT 1 FROM (
  * waiver decision.
  */
 export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine, cursor: C, pending: WaiverEntry, config: GBrainConfig, key: string,
-  advance: (tx: BrainEngine, waived: NoopWaiver) => Promise<C>, reread: (tx: BrainEngine) => Promise<C>): Promise<C | null> {
-  const waived = await screenWaiver(engine, cursor, pending, config);
+  advance: (tx: BrainEngine, waived: NoopWaiver) => Promise<C>, reread: (tx: BrainEngine) => Promise<C>, signal?: AbortSignal): Promise<C | null> {
+  const waived = await screenWaiver(engine, cursor, pending, config, signal);
   if (!waived) return null;
   const intent = pending.intent;
   return engine.transaction(async tx => {
@@ -59,7 +115,7 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
       try { await assertSyncPageOrigin(tx, cursor.sourceId, intent.sourcePath!, pending.pageId, true, syncOriginScope(cursor)); }
       catch { return null; }
     } else if (snapshot?.page.id !== pending.pageId || snapshot.page.deleted_at != null || snapshot.revision !== intent.expected_revision) return null;
-    const unfinished = await tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, [cursor.binding.worktree_id, cursor.incarnation, cursor.sourceId, pending.slug, pending.pageId, String(pending.pageId)]);
+    const unfinished = await tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, unfinishedPageRequestParams(cursor, pending));
     if (unfinished.length) return null;
     return advance(tx, waived);
   });
@@ -71,7 +127,7 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
  * already soft-deleted at its frozen revision, or an unchanged import). A
  * revoked sync authority throws.
  */
-export async function screenWaiver(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig): Promise<NoopWaiver | null> {
+export async function screenWaiver(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal): Promise<NoopWaiver | null> {
   if (!noopWaiversEnabled() || pending.pageId === null) return null;
   const intent = pending.intent;
   if (intent.kind === 'managed_sync_delete') {
@@ -81,7 +137,7 @@ export async function screenWaiver(engine: BrainEngine, cursor: WaiverCursor, pe
     await validateSyncAuthority(engine, cursor.authority, pending.slug);
     return { kind: 'delete', kernel: [] };
   }
-  const kernel = await unchangedSyncImport(engine, cursor, pending, config);
+  const kernel = await unchangedSyncImport(engine, cursor, pending, config, signal);
   if (!kernel) return null;
   await validateSyncAuthority(engine, cursor.authority, pending.slug);
   return { kind: 'import', kernel };
@@ -122,7 +178,7 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
       const bySlug = new Map(pages.map(page => [page.slug, page]));
       const scope = syncOriginScope(cursor);
       const checks = await pipelined(tx, run.flatMap(({ pending, waived }) => [
-        () => tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, [cursor.binding.worktree_id, cursor.incarnation, cursor.sourceId, pending.slug, pending.pageId, String(pending.pageId)]),
+        () => tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, unfinishedPageRequestParams(cursor, pending)),
         () => waived.kind === 'delete'
           ? assertSyncPageOrigin(tx, cursor.sourceId, pending.intent.sourcePath!, pending.pageId, true, scope).then(() => true, () => false)
           : Promise.resolve(true),
@@ -147,14 +203,14 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
 }
 
 /** #5984: whether `waiveNoopEntry` would waive this frozen entry now (read-only; the bulk group stops before such an entry). */
-export async function wouldWaiveEntry(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig): Promise<boolean> {
+export async function wouldWaiveEntry(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal): Promise<boolean> {
   if (!noopWaiversEnabled() || pending.pageId === null) return false;
   const intent = pending.intent;
   if (intent.kind === 'managed_sync_delete') {
     if (intent.unownedDeletion || intent.renameFrom || intent.rawHash !== null || typeof intent.path !== 'string' || typeof intent.sourcePath !== 'string') return false;
     return softDeletedAt(await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true }), pending);
   }
-  return (await unchangedSyncImport(engine, cursor, pending, config)) !== null;
+  return (await unchangedSyncImport(engine, cursor, pending, config, signal)) !== null;
 }
 
 function softDeletedAt(snapshot: Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, pending: WaiverEntry): boolean {
@@ -169,15 +225,19 @@ function softDeletedAt(snapshot: Awaited<ReturnType<BrainEngine['readPageSnapsho
  * publication can never resolve (a pending contextual-mode stamp, and file
  * bytes that differ from the prepared content yet parse to the same page), so
  * an unchanged legacy file stops taking a request ID on every run.
+ * #6278: the preparation races the sync budget (`raceSyncBudget`); past it
+ * nothing is waived, and a cancelled run propagates.
  */
-export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig): Promise<NoopKernelWaiver[] | null> {
+export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal): Promise<NoopKernelWaiver[] | null> {
   const intent = pending.intent;
   if (intent.kind !== 'managed_sync_import' || intent.renameFrom || pending.pageId === null || typeof intent.path !== 'string' || typeof intent.content !== 'string') return null;
   try {
     const snapshot = await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
     const row = screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: pending.slug, page_id: pending.pageId,
       worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent, request_id: pending.requestId });
-    const prepared = await prepareManagedSyncMutation(engine, row, config);
+    // #6278 (1.4): the clock carries the budget, so the preparation's lock-prone reads end on the server at it (boundedReads).
+    const budgetMs = await syncPreparationBudgetMs(engine);
+    const prepared = await raceSyncBudget(prepareManagedSyncMutation(engine, row, config, startClaimPhase(Date.now(), undefined, budgetMs)), budgetMs, signal);
     if (prepared.file || prepared.target === 'skill_bundle') return null;
     const file = { root: cursor.root, path: join(cursor.root, intent.path), content: intent.content };
     const inspected = await inspectUnchanged(engine, { prepared: { ...prepared, target: 'page', file }, snapshot, sourcePath: intent.sourcePath, databaseOnly: false,
@@ -186,7 +246,8 @@ export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCur
     if (inspected.admitReason) return null;
     await prepared.validate?.(engine);
     return inspected.waived ?? [];
-  } catch {
+  } catch (error) {
+    rethrowAbort(error, signal);
     return null;
   }
 }

@@ -815,10 +815,27 @@
             "count": 0,
             "docs": "docs/guides/troubleshooting.md#persistence-write-stall",
             "max_claim_ms": "<volatile>",
+            "preparation_policy": {
+              "maintenance_preparation_ms": "<volatile>",
+              "max_preparation_attempts": 2,
+              "preparation_ceiling_ms": "<volatile>",
+              "sync_preparation_ms": "<volatile>"
+            },
             "stalls": []
           },
           "message": "No write request has held its claim longer than persistence.max_claim_ms (600000 ms).",
           "name": "persistence_write_stall",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "applied": null,
+            "configured": "5min",
+            "docs": "docs/guides/troubleshooting.md#session-timeouts-not-applied"
+          },
+          "message": "PGLite has no session to time out.",
+          "name": "persistence_session_timeouts",
           "status": "ok"
         },
         {
@@ -1838,6 +1855,11 @@
               }
             ],
             "uncommitted_repairs": 0,
+            "unrenderable_legacy_facts": {
+              "complete": true,
+              "pages": [],
+              "total": 0
+            },
             "warn_at_normalized_7d": 20
           },
           "message": "No malformed facts or takes fence is held, stored or waiting in a checkout (1 source(s) scanned).",

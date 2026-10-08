@@ -27,3 +27,22 @@ export async function retryWriteAdmission<T>(requestId: string, attempt: (remain
     }
   }
 }
+
+/**
+ * #6278: the outstanding-request cap's `detail`, and its readers. A
+ * `queue_capacity` refused because other requests hold the writer's
+ * outstanding cap clears by itself once they settle, so a caller that can
+ * wait (the managed drain) treats it as a wait; a cumulative cap (permanent
+ * request IDs, receipt bytes) names its config key instead and never is.
+ */
+export const outstandingCapacityDetail = (used: number, limit: number): string => `outstanding=${used} limit=${limit}`;
+const OUTSTANDING_DETAIL = /^outstanding=(\d+) limit=(\d+)$/;
+export function isWriteCapacityWait(error: unknown): error is OperationError {
+  return error instanceof OperationError && error.code === 'queue_capacity' && OUTSTANDING_DETAIL.test(error.detail ?? '');
+}
+/** The counts a write-capacity wait carries: how many requests are outstanding against which cap, and whose cap it is. */
+export function outstandingCapacityOf(error: OperationError): { outstanding: number | null; limit: number | null; scope: 'principal' | 'brain' | null } {
+  const match = OUTSTANDING_DETAIL.exec(error.detail ?? '');
+  const scope = /\bbrain outstanding\b/.test(error.message) ? 'brain' : /\bprincipal outstanding\b/.test(error.message) ? 'principal' : null;
+  return { outstanding: match ? Number(match[1]) : null, limit: match ? Number(match[2]) : null, scope };
+}

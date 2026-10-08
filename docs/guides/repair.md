@@ -892,13 +892,34 @@ with `gbrain repair frontmatter --source <id>`, and `--remediate` never runs the
 repair. `frontmatter_hook` warns when an installed pre-commit hook is older
 than the running gbrain's hook; refresh it with `gbrain frontmatter install-hook --force`.
 
+**A hold that blames the write owner, not the file.** A `preparation_stalled`
+hold means the owner could not finish preparing that file's write within its
+attempts (`persistence.max_preparation_attempts`, each bounded by
+`persistence.sync_preparation_ms`). The file is fine and `gbrain repair` has
+nothing to change in it: `sources status`, `sources retry-held` and doctor
+`git_held_files` route it to the writer instead of to frontmatter or fence
+repair, and a source holding all three kinds prints one route for each. Read
+what the owner was stuck on, fix that, then re-screen the held files and run
+the same sync with the same options (the hold prints them, `--no-embed`
+included). Nothing here is destructive and no hash is involved.
+
+```bash
+gbrain sources status notes --json                  # the held files, each with the step it stalled on
+gbrain sources writer status --source notes --json  # read-only: the owner, its gbrain version, the stuck step
+gbrain sources retry-held notes                     # after the cause is fixed or gbrain is upgraded
+gbrain sync --source notes --no-pull --no-embed     # the option-preserving command retry-held prints
+```
+
+Runbook: [catch-up stuck / held N files](troubleshooting.md#catch-up-stuck);
+reference: [`preparation_stalled`](write-refusals.md#preparation_stalled).
+
 Settings, all read by every sync:
 
 | Key | Default | Effect |
 | --- | --- | --- |
 | `sync.holds` | `hold` | `fail` makes sync fail closed: a content refusal blocks the sync. |
 | `sync.hold_cap` | `500` | How many holds a sync result lists in detail; storage is never capped and valid files always import. |
-| `sync.hold_escalate_count` / `sync.hold_escalate_pct` | `50` / `5` | A source holding more files, or a run holding more than that share of at least 40 screened imports, reports `holds_escalated` and doctor `git_held_files` fails. |
+| `sync.hold_escalate_count` / `sync.hold_escalate_pct` | `50` / `5` | A source holding more files, or a run holding more than that share of at least 40 screened imports, reports `holds_escalated` and doctor `git_held_files` fails. A run whose `preparation_stalled` holds would cross it stops as `preparation_systemic` instead of holding them. |
 | `sync.parser_regression` | `stop` | `hold` holds a file whose exact bytes imported under an earlier gbrain (`parser_regression`) instead of stopping the run with `sync_parser_regression`. |
 
 To prevent new broken files, write brain files through `put_page`/`capture`

@@ -1,12 +1,13 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { claimableWriteSql, foregroundPrioritySql, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, compactWriteReceipts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues } from './journal.ts';
-import { finishUnpublishedFailure, recoverPublication, type PreparedMutation } from './coordinator.ts';
+import { claimableWriteSql, foregroundPrioritySql, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, compactWriteReceipts, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues } from './journal.ts';
+import { finishPreparationStalled, finishUnpublishedFailure, preparationAbortReason, recoverPublication, type PreparedMutation } from './coordinator.ts';
 import { localHostId } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX, publishSingleWrite, singleWrite } from './group-publish.ts';
 import { preparationConfigView } from './config-snapshot.ts';
 import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
-import { claimPhaseStamp, enterClaimPhase, startClaimPhase } from './claim-phase.ts';
+import { claimPhaseStamp, claimStateOf, EXPIRED_PREPARING_CHARGE_SQL, enterClaimPhase, startClaimPhase, type ClaimPhaseClock, type WaitingOn } from './claim-phase.ts';
+import { DEFAULT_PREPARATION_POLICY, preparationBudgetMs, preparationKind, startPreparation, type PreparationPolicy } from './preparation-budget.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { ownerExceptionLogText } from './publication-failure.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
@@ -26,11 +27,19 @@ import { maybeRefreshPlannerStats } from '../planner-stats.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { faultPoint } from './fault-points.ts';
 import { releaseAbandonedClaims } from './effect-journal.ts';
-import { readWriteSwitches, writeSwitchOn } from './switches.ts';
+import { readWriteSwitchSnapshot, writeSwitchOn } from './switches.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
 type RootHold = { until?: Promise<void> };
+/** #6278: the budgets and switch in effect for this tick's claims; a test may pin them through `opts.preparationBudgets`. */
+export type EffectivePreparationPolicy = PreparationPolicy & { deadlines: boolean };
+/** #6278: an abandoned preparation that outlived the hard ceiling; it pins whatever its await holds until it settles. */
+export interface AbandonedPreparation { request_id: string; operation: string; step: string | null; waiting_on: WaitingOn; claimed_at: string; abandoned_at: string; outlived_ceiling_at: string }
+/** #6278: how long stop() waits on abandoned preparations after their abort before closing the engine. */
+export const ABANDONED_STOP_GRACE_MS = 5_000;
+/** #6278: abandoned preparations past the ceiling this process tolerates before it stops claiming and reports `restart_required`. */
+export const DEFAULT_ZOMBIE_CAP = 1;
 /** When this process started; on PGLite no claim written earlier can belong to a live owner. */
 const PROCESS_STARTED_AT = new Date(performance.timeOrigin);
 /** #5801: the phase a connection checkout belongs to, carried through its async chain. */
@@ -47,6 +56,13 @@ function errorDetail(error: unknown): string | undefined {
   const message = (error as { message?: unknown } | null)?.message;
   if (typeof message !== 'string' || !message.trim()) return undefined;
   return redactConnectionInfo(message).replace(/\s+/g, ' ').replaceAll('"', "'").trim().slice(0, 200);
+}
+
+/** #6278: the token of the stamp the previous claim left, so `claimStateOf` reads its last step. */
+function previousToken(stamp: unknown): string | null {
+  const raw = typeof stamp === 'string' ? (() => { try { return JSON.parse(stamp) as unknown; } catch { return null; } })() : stamp;
+  const token = raw && typeof raw === 'object' ? (raw as { token?: unknown }).token : undefined;
+  return typeof token === 'string' ? token : null;
 }
 
 /**
@@ -72,10 +88,8 @@ const PARKED_WORKER: Promise<void> = Promise.resolve();
 /** `onLane`'s answer when the lane cannot be lent: the caller runs on the pool instead. */
 export const LANE_BUSY = Symbol('gbrain.laneBusy');
 
-export type PrepareMutation = (engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal) => Promise<PreparedMutation>;
-/** Preparation deadlines a write may hit before it fails terminally (the first requeues it). */
-const MAX_PREPARATION_DEADLINES = 2;
-
+/** `clock` (#6278): the claim's phase clock, for `enterClaimStep` at the preparer's await boundaries. */
+export type PrepareMutation = (engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) => Promise<PreparedMutation>;
 export class PersistenceConsumer {
   private stopping = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -95,6 +109,11 @@ export class PersistenceConsumer {
   private active = new Set<Promise<void>>();
   /** #5373: preparations and renewals that outlived their claim; stop() drains them before the engine closes. */
   private outlived = new Set<Promise<void>>();
+  /** #6278: preparations whose claim the budget (or a lost claim, with the switch on) released; stop() gives them ABANDONED_STOP_GRACE_MS. */
+  private abandoned = new Set<Promise<void>>();
+  /** #6278: abandoned preparations past the ceiling, by request row id. */
+  private zombies = new Map<string, AbandonedPreparation>();
+  private policy: EffectivePreparationPolicy = { ...DEFAULT_PREPARATION_POLICY, deadlines: true };
   private activeRoots = new Set<string>();
   /** #5984 Phase 4.5: active roots whose only task is a foreground write publishing beside this process's lane groups. */
   private besideLanes = new Set<string>();
@@ -130,8 +149,6 @@ export class PersistenceConsumer {
   private lastLog: { key: string; at: number } | undefined;
   private lastPhaseError: string | undefined;
   private preparationAttempts = 0;
-  /** Preparation deadlines per request in this process; the second ends the write instead of requeueing it. */
-  private deadlineStrikes = new Map<string, number>();
   private preparing = new Map<string, { request_id: string; started_at: string; deadline_exceeded: boolean; attempt: number }>();
   private executing = new Set<string>();
   private abandonedReleased = false;
@@ -144,7 +161,11 @@ export class PersistenceConsumer {
       claimLeaseMs?: number; onError?: (error: unknown) => void;
       onSettled?: (row: WriteRequest) => void;
       /** Engine graduation drain: claim, recover and publish requests only; effect, projection, topology and maintenance workers never start. */
-      requestsOnly?: boolean } = {}) {
+      requestsOnly?: boolean;
+      /** #6278 test seam: pins budgets, ceiling, attempt limit or the switch over the brain's config. */
+      preparationBudgets?: Partial<EffectivePreparationPolicy>;
+      /** #6278: abandoned preparations past the ceiling before this process stops claiming (default DEFAULT_ZOMBIE_CAP). */
+      zombieCap?: number } = {}) {
     this.hostId = opts.hostId ?? localHostId();
   }
   private get checkoutObservable(): ((listener: () => void) => () => void) | undefined {
@@ -375,8 +396,11 @@ export class PersistenceConsumer {
     }
     // Lane runs size themselves to the pool's long-hold budget; a single write keeps its warm lane.
     // The switches are read under the tick's phase deadline, so a saturated pool cannot hold the tick.
-    const fast = await this.phase('switches', signal => readWriteSwitches(this.engine, { signal }))
-      .then(switches => switches.single_write_group, async error => { await this.releaseIdleLane(); throw error; });
+    const fast = await this.phase('switches', signal => readWriteSwitchSnapshot(this.engine, { signal }))
+      .then(snapshot => {
+        this.policy = { ...snapshot.preparation, deadlines: snapshot.switches.preparation_deadlines, ...this.opts.preparationBudgets };
+        return snapshot.switches.single_write_group;
+      }, async error => { await this.releaseIdleLane(); throw error; });
     if (laneRoots().length || this.engine.kind !== 'postgres' || !fast) await this.releaseIdleLane();
     this.idleDelayMs = this.pollMs;
     this.nextDelayMs = this.pollMs;
@@ -411,7 +435,7 @@ export class PersistenceConsumer {
     // Recover only our owner roots. Kernel exclusion, not elapsed heartbeat,
     // proves that a previous process can no longer be publishing this root.
     if (scan && this.engine.kind === 'pglite' && !this.abandonedReleased) {
-      await this.phase('abandoned_claims', () => releaseAbandonedClaims(this.engine, PROCESS_STARTED_AT));
+      await this.phase('abandoned_claims', () => releaseAbandonedClaims(this.engine, PROCESS_STARTED_AT, this.policy.deadlines));
       this.abandonedReleased = true;
     }
     const now = Date.now();
@@ -440,19 +464,23 @@ export class PersistenceConsumer {
           this.report(error);
         }
       }
+      // #6278: a claim that expired while its owner was preparing (the kill case) counts one preparation attempt.
       await this.phase('expired_claims', signal => this.engine.executeRaw(`WITH expired AS (
         SELECT r.id FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
         AND r.publication_started=false AND r.claim_expires_at<now() AND ${PERSISTENCE_PROTOCOL_PREDICATE}
         AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid))
         ORDER BY r.sequence LIMIT 100 FOR UPDATE OF r SKIP LOCKED)
-        UPDATE persistence_requests r SET state='queued',execution_token=NULL,claim_expires_at=NULL
-        FROM expired WHERE r.id=expired.id`, [this.hostId], { signal }));
+        UPDATE persistence_requests r SET state='queued',execution_token=NULL,claim_expires_at=NULL,
+          preparation_attempts=r.preparation_attempts+CASE WHEN $2::boolean THEN ${EXPIRED_PREPARING_CHARGE_SQL('r')} ELSE 0 END
+        FROM expired WHERE r.id=expired.id`, [this.hostId, this.policy.deadlines], { signal }));
     }
     if (publicationConcurrency(this.engine) === 0) {
       await this.phase('capacity', signal => this.engine.executeRaw(`UPDATE persistence_requests SET blocked_reason='writer_pool_capacity'
         WHERE state='queued' AND blocked_reason IS DISTINCT FROM 'writer_pool_capacity' AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, undefined, { signal }));
       return;
     }
+    // #6278: at the zombie cap this process claims nothing more; status() says restart_required and the drain ends.
+    if (this.restartRequired()) return;
     const concurrency = this.opts.concurrency ?? 2;
     // #5984: on a root whose lane groups run here, only a foreground write is claimed, to publish beside them.
     const laneRootKeys = [...this.laneTasks.keys()];
@@ -533,12 +561,20 @@ export class PersistenceConsumer {
     try { this.opts.onSettled?.(row); } catch (error) { this.report(error); }
     return isTerminal(row);
   }
+  /** #6278: abandoned preparations past the ceiling have reached this process's cap; it claims nothing more until it restarts. */
+  restartRequired(): boolean { return this.zombies.size >= (this.opts.zombieCap ?? DEFAULT_ZOMBIE_CAP); }
   status() {
+    const { deadlines, syncMs, maintenanceMs, ceilingMs, maxAttempts } = this.policy;
     return { accepting: !this.stopping, active_preparations: this.active.size, active_worktrees: this.activeRoots.size,
       sampled_at: new Date().toISOString(), observation_scope: 'current_process_reset_on_restart',
       preparation_attempts: this.preparationAttempts,
       phase: this.phaseObservation ? { ...this.phaseObservation, ...this.phaseTiming(this.phaseObservation, this.phaseStartedAt) } : null,
       preparations: [...this.preparing.values()].map(value => ({ ...value })),
+      // #6278: deadlines in effect, preparations whose claim was released while they still ran, and the zombies past the ceiling.
+      preparation_policy: { deadlines, sync_preparation_ms: syncMs, maintenance_preparation_ms: maintenanceMs, preparation_ceiling_ms: ceilingMs, max_preparation_attempts: maxAttempts },
+      abandoned_preparations: this.abandoned.size,
+      outlived_ceiling: [...this.zombies.values()].map(value => ({ ...value })),
+      restart_required: this.restartRequired(),
       ...(this.lastError ? { last_error: { ...this.lastError } } : {}) };
   }
   /**
@@ -619,49 +655,108 @@ export class PersistenceConsumer {
   private leaseTiming(): ClaimLeaseTiming {
     return { everyMs: this.opts.renewalIntervalMs ?? DEFAULT_CLAIM_LEASE_TIMING.everyMs, deadlineMs: this.opts.phaseMs ?? DEFAULT_CLAIM_LEASE_TIMING.deadlineMs };
   }
+  /**
+   * #6278: tracks a preparation whose claim is gone while it still runs. With
+   * the deadlines switch on it goes to `abandoned` (stop() gives it a short
+   * grace); off, to `outlived` as before (stop() waits for it). The returned
+   * promise never rejects.
+   */
+  private keepAbandoned(work: Promise<unknown>): Promise<void> {
+    if (!this.policy.deadlines) return this.keepUntilSettled(work);
+    const settled = work.then(() => undefined, () => undefined);
+    this.abandoned.add(settled);
+    void settled.then(() => { this.abandoned.delete(settled); });
+    return settled;
+  }
+  /**
+   * #6278: the #5373 root barrier for an abandoned preparation, bounded by the
+   * hard ceiling measured from the claim. At the ceiling the root is freed, the
+   * request's counter is set to the limit (an overrun proves the await ignored
+   * cancellation, so its next claim fails it `preparation_stalled`) and the
+   * zombie stays tracked here and in status() until it settles.
+   */
+  private abandonedRootBlock(row: WriteRequest, clock: ClaimPhaseClock, settled: Promise<void>): Promise<void> {
+    if (!this.policy.deadlines) return settled;
+    let done = false;
+    void settled.then(() => { done = true; });
+    const remaining = Math.max(0, this.policy.ceilingMs - (Date.now() - clock.claimedAt));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ceiling = new Promise<void>(resolve => { timer = setTimeout(resolve, remaining); timer.unref?.(); });
+    return Promise.race([settled, ceiling]).then(async () => {
+      if (timer) clearTimeout(timer);
+      if (done) return;
+      const at = new Date().toISOString();
+      this.zombies.set(row.id, { request_id: row.request_id, operation: row.operation, step: clock.step, waiting_on: clock.waitingOn,
+        claimed_at: new Date(clock.claimedAt).toISOString(), abandoned_at: at, outlived_ceiling_at: at });
+      void settled.then(() => { this.zombies.delete(row.id); });
+      this.log('preparation', 'ceiling_exceeded', `request ${row.request_id} step=${clock.step ?? 'none'} waiting_on=${clock.waitingOn}${this.restartRequired() ? ' restart_required' : ''}`);
+      await floorPreparationAttempts(this.engine, row.id, this.policy.maxAttempts).catch(error => this.report(error));
+    });
+  }
   private async execute(row: WriteRequest, root: RootHold): Promise<boolean> {
     let preparationActive = true;
-    const abort = new AbortController();
     const observation = { request_id: row.request_id, started_at: new Date().toISOString(), deadline_exceeded: false, attempt: ++this.preparationAttempts };
     this.preparing.set(row.id, observation);
     this.executing.add(row.id);
-    const stop = () => abort.abort({ code: 'consumer_stopping' });
+    const policy = this.policy;
+    // #6278: every kind has a budget with the switch on; off, only remember and intent-less put_page/edit_page (#5616) keep the 30 s one.
+    const foregroundMs = this.opts.preparationMs ?? 30_000;
+    const budget = policy.deadlines ? preparationBudgetMs(row, policy, foregroundMs) : preparationKind(row) === 'foreground' ? foregroundMs : undefined;
+    // #6278: the clock carries the preparation's cancellation for `enterClaimStep` and, with the switch on, its deadline for the
+    // server-side bound on lock-prone reads (boundedReads); a query takes the signal only on the foreground path (as before).
+    const cancel = new AbortController();
+    const clock = startClaimPhase(Date.now(), cancel.signal, policy.deadlines ? budget : undefined);
+    // #6278: a request already at the attempt limit (a kill loop charged it at each reclaim) is finished without preparing again.
+    if (policy.deadlines && (row.preparation_attempts ?? 0) >= policy.maxAttempts) {
+      try {
+        const previous = claimStateOf({ state: 'running', claim_phase: row.previous_claim_phase, execution_token: previousToken(row.previous_claim_phase) });
+        const done = await finishPreparationStalled(this.engine, row, { step: previous?.step ?? null, waiting_on: previous?.waiting_on ?? 'unknown', limit: policy.maxAttempts }, false);
+        this.log('preparation', 'preparation_stalled', failureLogText(done));
+        return this.settled(done);
+      } finally { this.preparing.delete(row.id); this.executing.delete(row.id); }
+    }
+    const prep = startPreparation(async signal => {
+      signal.addEventListener('abort', () => cancel.abort(signal.reason), { once: true });
+      await faultPoint('consumer:preparing', { requestId: row.request_id, sourceId: row.source_id, operation: row.operation, signal });
+      // Phase 4.3: a single page write prepares against one config read instead of one per key.
+      return this.prepare(this.engine.kind === 'postgres' && singleWrite(row)
+        && await writeSwitchOn(this.engine, 'single_write_group').catch(() => true) ? await preparationConfigView(this.engine) : this.engine,
+      row, this.config, budget !== undefined && preparationKind(row) === 'foreground' ? signal : undefined, clock);
+    }, budget, { onDeadline: () => { observation.deadline_exceeded = true; this.log('preparation', 'deadline_exceeded'); } });
+    const stop = () => prep.abort({ code: 'consumer_stopping' });
     this.abort.signal.addEventListener('abort', stop, { once: true });
-    // edit_page (#5616) builds its content during preparation like put_page, so it shares the deadline.
-    const bounded = row.operation === 'remember' || (row.operation === 'put_page' || row.operation === 'edit_page') && !row.intent?.kind;
-    const budget = this.opts.preparationMs ?? 30_000;
-    const deadline = performance.now() + budget;
-    const timeout = bounded ? setTimeout(() => {
-      observation.deadline_exceeded = true;
-      abort.abort({ code: 'preparation_deadline' });
-      this.log('preparation', 'deadline_exceeded');
-    }, budget) : undefined;
-    const clock = startClaimPhase();
     const lease = startClaimLease(
       signal => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!, this.opts.claimLeaseMs ?? 30_000,
         this.engine.kind === 'postgres' ? signal : undefined, claimPhaseStamp(clock, row.execution_token)),
-      this.leaseTiming(), () => abort.abort({ code: 'claim_lost' }));
+      this.leaseTiming(), () => prep.abort({ code: 'claim_lost' }));
     const releaseReason = () => !lease.held ? 'claim_lost' : observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping';
+    const stallInfo = () => ({ step: clock.step, waiting_on: clock.waitingOn, limit: policy.maxAttempts });
+    // The budget passed (on the timer, or reported by a bounded read the server ended): the claim is released now, charged,
+    // whether or not the preparer settles; its late result never publishes (#6278).
+    const deadline = async (): Promise<boolean> => {
+      root.until = this.abandonedRootBlock(row, clock, this.keepAbandoned(prep.work));
+      if (!lease.held || this.stopping) { await releaseUnpublishedClaim(this.engine, row, releaseReason()); return false; }
+      if ((row.preparation_attempts ?? 0) + 1 >= policy.maxAttempts) {
+        const done = await finishPreparationStalled(this.engine, row, stallInfo(), true);
+        this.log('preparation', 'preparation_stalled', failureLogText(done));
+        return this.settled(done);
+      }
+      await releaseUnpublishedClaim(this.engine, row, 'preparation_deadline', { charge: true });
+      return false;
+    };
     try {
-      // Phase 4.3: a single page write prepares against one config read instead of one per key.
-      const preparation = (async () => this.prepare(this.engine.kind === 'postgres' && singleWrite(row)
-        && await writeSwitchOn(this.engine, 'single_write_group').catch(() => true) ? await preparationConfigView(this.engine) : this.engine,
-      row, this.config, bounded ? abort.signal : undefined))();
-      const prepared = await lease.whileHeld(preparation);
-      if (prepared === CLAIM_LOST) {
-        root.until = this.keepUntilSettled(preparation);
+      // With the switch on the budget wins the race even against a preparer that ignores its signal; off, the preparer's own settlement decides.
+      const raced = await lease.whileHeld(policy.deadlines ? prep.outcome : prep.work.then(result => ({ result })));
+      if (raced === CLAIM_LOST) {
+        root.until = this.abandonedRootBlock(row, clock, this.keepAbandoned(prep.work));
         await endLostLease(lease);
         await releaseUnpublishedClaim(this.engine, row, 'claim_lost');
         return false;
       }
-      if (timeout) clearTimeout(timeout);
-      if (bounded && performance.now() >= deadline && !abort.signal.aborted) {
-        observation.deadline_exceeded = true;
-        abort.abort({ code: 'preparation_deadline' });
-        this.log('preparation', 'deadline_exceeded');
-      }
-      if (!lease.held || this.stopping || abort.signal.aborted) {
-        if (lease.held && !this.stopping && observation.deadline_exceeded) { const failed = await this.failRepeatedDeadline(row, budget); if (failed) return this.settled(failed); }
+      if ('deadline' in raced) return deadline();
+      const prepared = raced.result;
+      if (budget !== undefined && !prep.signal.aborted && prep.late()) prep.expire();
+      if (!lease.held || this.stopping || prep.signal.aborted) {
         await releaseUnpublishedClaim(this.engine, row, releaseReason()); return false;
       }
       this.preparing.delete(row.id);
@@ -675,9 +770,14 @@ export class PersistenceConsumer {
       }
       return settled ? isTerminal(done) : this.settled(done);
     } catch (error) {
-      if (preparationActive && bounded && performance.now() >= deadline) observation.deadline_exceeded = true;
-      if (preparationActive && (abort.signal.aborted || observation.deadline_exceeded)) {
-        if (lease.held && !this.stopping && observation.deadline_exceeded) { const failed = await this.failRepeatedDeadline(row, budget); if (failed) return this.settled(failed); }
+      if (preparationActive && budget !== undefined && prep.late()) observation.deadline_exceeded = true;
+      // #6278: a bounded read the server ended inside the budget (a shorter session lock_timeout) reports the deadline itself.
+      if (preparationActive && policy.deadlines && !prep.signal.aborted && preparationAbortReason(error, prep.signal) === 'preparation_deadline') {
+        prep.expire();
+        return deadline();
+      }
+      // #6278: the preparer's rejection on our own abort (its reason, an AbortError, a cancelled statement) is a release, never a receipt.
+      if (preparationActive && (prep.signal.aborted || observation.deadline_exceeded || preparationAbortReason(error, prep.signal))) {
         await releaseUnpublishedClaim(this.engine, row, releaseReason());
         return false;
       }
@@ -689,31 +789,10 @@ export class PersistenceConsumer {
       }
       throw error;
     } finally {
-      if (!observation.deadline_exceeded) this.deadlineStrikes.delete(row.id);
       const renewal = lease.end();
       if (renewal) this.keepUntilSettled(renewal);
-      if (timeout) clearTimeout(timeout);
       this.abort.signal.removeEventListener('abort', stop); this.preparing.delete(row.id); this.executing.delete(row.id);
     }
-  }
-  /**
-   * A write whose preparation overruns its budget is requeued once; the second
-   * overrun ends it as a terminal `preparation_deadline` failure with a fix,
-   * so a page that can never prepare in time does not retry forever.
-   */
-  private async failRepeatedDeadline(row: WriteRequest, budgetMs: number): Promise<WriteRequest | null> {
-    const strikes = (this.deadlineStrikes.get(row.id) ?? 0) + 1;
-    this.deadlineStrikes.set(row.id, strikes);
-    if (strikes < MAX_PREPARATION_DEADLINES) return null;
-    this.deadlineStrikes.delete(row.id);
-    const current = await getWriteRequestById(this.engine, row.id);
-    if (!current || isTerminal(current) || current.execution_token !== row.execution_token || current.recovery) return null;
-    const seconds = Math.round(budgetMs / 1000);
-    const done = await finishUnpublishedFailure(this.engine, current, new OperationError('preparation_deadline',
-      `Preparing this ${row.operation} for ${row.slug || 'the page'} ran past the ${seconds}s preparation budget ${strikes} times, so the write stopped instead of retrying; nothing was published. Resubmit the page with a new request_id; if it overruns again, split it into smaller pages and report it as a gbrain bug.`,
-      'Check the writer with gbrain sources writer status --json, then resubmit the page with a new request_id.'), 'preparation');
-    this.log('preparation', 'preparation_deadline', done.error_message ?? undefined);
-    return done;
   }
   /** #5984: a claimed bulk sync head takes its directly following group members along; one row runs the single path. */
   private async executeOrGroup(row: WriteRequest, root: RootHold): Promise<boolean> {
@@ -732,11 +811,15 @@ export class PersistenceConsumer {
     const rows = [row, ...followers];
     for (const member of rows) this.executing.add(member.id);
     try {
-      return await executeClaimedGroup(this.engine, rows, { hostId: this.hostId, lane, prepare: (member, engine) => this.prepare(engine, member, this.config),
-        lease: this.leaseTiming(),
-        leftRunning: (work, blocksRoot) => {
-          const settled = this.keepUntilSettled(work);
-          if (blocksRoot) root.until = settled;
+      return await executeClaimedGroup(this.engine, rows, { hostId: this.hostId, lane,
+        prepare: (member, engine, signal, clock) => this.prepare(engine, member, this.config, signal, clock),
+        lease: this.leaseTiming(), policy: this.policy, foregroundMs: this.opts.preparationMs ?? 30_000,
+        leftRunning: (work, blocksRoot, abandoned) => {
+          if (!blocksRoot) { this.keepUntilSettled(work); return; }
+          // #6278: an abandoned member blocks its root until it settles or the ceiling passes; several abandoned members all hold it.
+          const settled = this.keepAbandoned(work);
+          const block = abandoned ? this.abandonedRootBlock(abandoned.row, abandoned.clock, settled) : settled;
+          root.until = root.until ? Promise.all([root.until, block]).then(() => undefined) : block;
         },
         settled: done => {
           this.executing.delete(done.id);
@@ -756,6 +839,13 @@ export class PersistenceConsumer {
     await this.releaseIdleLane();
     await Promise.allSettled([...this.active]);
     await this.releaseIdleLane();
+    // #6278: abandoned preparations (their claims are released and their signals aborted) get a short grace, not forever;
+    // renewals and publications in `outlived` keep their bounded waits.
+    if (this.abandoned.size) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([Promise.allSettled([...this.abandoned]), new Promise<void>(resolve => { timer = setTimeout(resolve, ABANDONED_STOP_GRACE_MS); })]);
+      if (timer) clearTimeout(timer);
+    }
     while (this.outlived.size) await Promise.all([...this.outlived]);
     await this.projectionWorker;
     await this.effectsWorker;

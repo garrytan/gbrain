@@ -43,7 +43,7 @@ export interface SyncDiscovery { binding: WorktreeBinding; root: string; gitRoot
   discoveredAt?: string;
   /** #5988: held paths that left the source (now excluded); their holds clear when the run checkpoints. */
   releasedHolds?: string[];
-  /** #5988: `sources retry-held` paths this discovery took into its manifest. */
+  /** #5988: `sources retry-held` paths this discovery consumed (screened as an entry or a candidate, or no longer eligible); cleared with the cursor save. */
   retryTaken?: string[]; }
 export interface ManagedSyncContext { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
   source: { last_commit: string | null; config: Record<string, unknown> }; }
@@ -269,7 +269,9 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     for (const path of dirty.deleted) put(path, 'delete', true);
     for (const rename of dirty.renamed) putRename(rename, true);
   }
-  const released: string[] = [], retryTaken: string[] = [];
+  // #6278 (B7): every scheduled path is consumed by this discovery: it is screened as an entry (the file changed in Git),
+  // re-screened as a candidate below, or can never be screened (no longer eligible), so none may outlive the run.
+  const released: string[] = [], retryTaken = [...retry];
   if (holds.length || retry.size) {
     const candidates = [...new Set([...holds.map(hold => hold.path), ...retry])].filter(path => !entries.has(toGitPath(path)));
     for (const path of candidates.filter(path => holdByPath.has(path) && !eligible(toGitPath(path)))) released.push(path);
@@ -291,10 +293,10 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
         present = bytes !== null || changed;
         if (!changed) changed = bytes === null || sha256(bytes.toString('utf8')) !== hold!.upstream_version;
       } else if (!changed) {
-        changed = !blob || (hold!.meta.blob_oid ? blob.oid !== hold!.meta.blob_oid : sha256(contents.get(blob.oid) ?? '') !== hold!.upstream_version);
+        // #6278: a held deletion has no bytes to compare; the file reappearing is the change.
+        changed = hold!.meta.deleted ? !!blob : !blob || (hold!.meta.blob_oid ? blob.oid !== hold!.meta.blob_oid : sha256(contents.get(blob.oid) ?? '') !== hold!.upstream_version);
       }
       if (!changed) continue;
-      if (retry.has(path)) retryTaken.push(path);
       put(gitPath, present ? 'import' : 'delete', workingHold);
     }
   }

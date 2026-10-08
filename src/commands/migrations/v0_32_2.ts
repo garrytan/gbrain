@@ -193,10 +193,13 @@ function fenceFactsResult(outcome: UnfencedFactsOutcome): OrchestratorPhaseResul
     (outcome.skipped_archived > 0 ? ` skipped_archived=${outcome.skipped_archived}` : '') +
     (outcome.failed_pages.length > 0 ? ` failed=${outcome.failed_pages.length}` : '');
   if (outcome.failed_pages.length > 0) {
+    // The same `FACTS_FENCE_FAILED: <slug> (<reason>)` token the extract_facts
+    // cycle phase prints, so an unadoptable row reads the same in both outputs.
+    const failed = outcome.failed_pages.map(page => `FACTS_FENCE_FAILED: ${page}`);
     return {
       name: 'fence_facts',
       status: 'failed',
-      detail: `${detail} :: ${outcome.failed_pages.slice(0, 3).join(' | ')}${outcome.failed_pages.length > 3 ? '...' : ''}`,
+      detail: `${detail} :: ${failed.slice(0, 3).join(' | ')}${failed.length > 3 ? '...' : ''}`,
     };
   }
   return { name: 'fence_facts', status: 'complete', detail };

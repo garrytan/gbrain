@@ -16,6 +16,7 @@ import postgres from '#postgres'
 import { reservedTransactions, type ReservedTransactions } from './postgres-engine/reserved-transactions.ts';
 import { traceSqlOptions } from './sql-trace.ts';
 import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './postgres-engine/cancellation.ts';
+import { runBoundedStatement } from './postgres-engine/bounded-statement.ts';
 export { hasPostgresCancellationCapability } from './postgres-engine/cancellation.ts';
 import type {
   BrainEngine,
@@ -2749,13 +2750,17 @@ export class PostgresEngine implements BrainEngine {
   async executeRaw<T = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; timeoutMs?: number },
   ): Promise<T[]> {
     // try/finally (not .finally on the promise): runUnsafe throws
     // SYNCHRONOUSLY on a pre-aborted signal, which would skip a chained
     // .finally and leak the counter.
     this.checkoutGauge.acquire('raw');
     try {
+      // #6278: a transaction-local statement_timeout, which holds through a transaction-mode pooler (postgres-engine/bounded-statement.ts).
+      if (opts?.timeoutMs !== undefined && !this._pageTransaction) {
+        return await runBoundedStatement<T>(this.sql, sql, params, { ...opts, timeoutMs: opts.timeoutMs }, () => this.checkoutGauge.checkedOut());
+      }
       return await this.runUnsafe<T>(this.sql, sql, params, opts);
     } finally {
       this.checkoutGauge.release('raw');

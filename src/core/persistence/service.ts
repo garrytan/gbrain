@@ -11,6 +11,7 @@ import { registerPgliteReopen } from '../pglite-lifecycle.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { writeSwitchOn } from './switches.ts';
 import { pendingWriteHint } from './health.ts';
+import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
 import { receiptDeliveredHint } from './connector-errors.ts';
 import type { PgAccessReason } from '../pg-access-classify.ts';
 import { contentRefusalFromReceipt } from '../import-screen.ts';
@@ -47,12 +48,17 @@ const preparers = new Map<string, { prepare: PrepareMutation; target: 'page' | '
 export function registerMutationPreparer(operation: string, prepare: PrepareMutation, target: 'page' | 'skill_bundle' = 'page'): void {
   preparers.set(operation, { prepare, target });
 }
-export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest, cfg: GBrainConfig, signal?: AbortSignal) {
+/**
+ * `signal` is the foreground (remember/put_page/edit_page) statement signal, as before; `clock` (#6278) is the claim's
+ * phase clock, which carries the preparation's cancellation to every preparer's `enterClaimStep` boundaries.
+ */
+export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest, cfg: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) {
   assertMutationProtocol(row);
+  enterClaimStep(clock, 'dispatch');
   const registered = preparers.get(row.operation);
   if (registered) {
     if (registered.target !== (row.target_kind ?? 'page')) throw new OperationError('unsupported_mutation_protocol', 'The registered preparer does not support this mutation target.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
-    return registered.prepare(e, row, cfg, signal);
+    return registered.prepare(e, row, cfg, signal, clock);
   }
   if (row.target_kind === 'skill_bundle') {
     if (['put_skill', 'delete_skill'].includes(row.operation)) return (await import('../shared-skills/publication.ts')).prepareSharedSkillMutation(e, row, cfg);
@@ -65,8 +71,8 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (row.operation === 'put_page' && row.intent?.kind === 'canonical_reconcile') return (await import('./reconcile-prepare.ts')).prepareReconcileMutation(e, row, cfg);
   if (row.operation === 'put_page' && row.intent?.kind === 'managed_grandfather') return (await import('./grandfather.ts')).prepareGrandfatherMutation(e, row);
   if (row.operation === 'submit_job' && row.intent?.kind === 'code_projection_reindex') return (await import('./projection-reindex.ts')).prepareCodeReindex(e, row);
-  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_sync_')) return (await import('./sync-prepare.ts')).prepareManagedSyncMutation(e, row, cfg);
-  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_maintenance_')) return (await import('./prepared-maintenance.ts')).prepareMaintenanceMutation(e, row, cfg);
+  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_sync_')) return (await import('./sync-prepare.ts')).prepareManagedSyncMutation(e, row, cfg, clock);
+  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_maintenance_')) return (await import('./prepared-maintenance.ts')).prepareMaintenanceMutation(e, row, cfg, clock);
   if (row.operation === 'put_page' && row.intent?.kind === 'managed_file_import') return (await import('./import-prepare.ts')).prepareManagedImportMutation(e, row, cfg);
   if (row.operation === 'put_page' && row.intent?.kind === 'managed_file_repair') return (await import('./file-repair.ts')).prepareManagedFileRepairMutation(e, row, cfg);
   if (row.operation === 'remember') return (await import('./memory-mutations.ts')).prepareMemoryMutation(e, row, cfg, signal);
@@ -76,7 +82,7 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
   if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal,
-    { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true) });
+    { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock });
   throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
 }
 export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConfig): PersistenceConsumer {

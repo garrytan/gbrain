@@ -250,6 +250,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'persistence_request_growth',
   'persistence_request_indexes',
   'persistence_write_stall',
+  'persistence_session_timeouts',
   'stale_embedding_effects',
   'vector_plan',
   'writer_version',

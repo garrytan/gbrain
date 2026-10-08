@@ -339,6 +339,17 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
 }
 
 /**
+ * The whitespace the codec changes about a claim, and nothing else: cells are
+ * trimmed (JavaScript `trim`, Unicode whitespace including NBSP) and CRLF/CR
+ * come back as LF. Two claims equal under this normalization render and parse
+ * to the same fence row text; the fact adoption (#6278) accepts exactly this
+ * difference between a stored legacy claim and its parsed fence cell.
+ */
+export function normalizeClaimWhitespace(text: string): string {
+  return text.replace(/\r\n?/g, '\n').trim();
+}
+
+/**
  * Render an instant for a `valid_from` / `valid_until` cell. A UTC-midnight
  * value keeps the `YYYY-MM-DD` shape (date-only cells never churn); any other
  * instant is written as a UTC timestamp to the second, so a TTL or a default

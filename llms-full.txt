@@ -1822,7 +1822,15 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   page with `gbrain get --source <id> -- <slug>`, edit only that fence,
   commit, `gbrain sync --source <id> --no-pull`). Raising spend
   (`fences.repair.max_usd_per_day`, `fences.repair.llm true`) is the user's
-  call ([fence holds](docs/guides/write-refusals.md#invalid_fence)).
+  call ([fence holds](docs/guides/write-refusals.md#invalid_fence)). A hold
+  with code `preparation_stalled` (or a managed catch-up that stops
+  `preparation_abandoned` / `preparation_systemic`, or a write receipt with that
+  code) means the write owner stalled, not the file: no repair applies. Run
+  `gbrain sources writer status --source <id> --json` (read-only: the step, what
+  it waited on, the owner and its version), fix that or upgrade the owner, then
+  `gbrain sources retry-held <id>` and the sync it prints with the same options
+  (`--no-embed` stays). Runbook:
+  [catch-up stuck](docs/guides/troubleshooting.md#catch-up-stuck).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes --no-autopilot-install` (manual migration orchestration without service installation).
@@ -5701,7 +5709,20 @@ connection; `checkout=not_observed conn_wait_ms=<n>` means it had not obtained
 one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
 `loop_lag_ms` is the longest event-loop delay during the phase (a busy or
 starved process). The same fields appear in the consumer's status snapshot
-under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `gbrain sources writer status --json` to see what is waiting. The
+under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `gbrain sources writer status --json` to see what is waiting.
+`phase=preparation` lines name a write whose preparation ran past its budget:
+`reason=deadline_exceeded` (the claim is released with `blocked_reason`
+`preparation_deadline` and one attempt is counted; the budget is
+`persistence.sync_preparation_ms` for a managed sync member,
+`persistence.maintenance_preparation_ms` for every other managed kind and 30 s
+for `remember`, `put_page` and `edit_page`), `reason=preparation_stalled` (the
+request reached `persistence.max_preparation_attempts` and was finished
+`failed` instead of being claimed again) and `reason=ceiling_exceeded` (the
+preparation ignored cancellation past `persistence.preparation_ceiling_ms`; the
+message names the step and what it waited on, and ends `restart_required` when
+this process holds as many such preparations as it tolerates and has stopped
+claiming). The runbook is
+[catch-up stuck](guides/troubleshooting.md#catch-up-stuck). The
 line is rate-limited (one per second, one per phase and code every 30 seconds).
 An idle consumer keeps one ordinary-pool connection for its work probe and
 never holds a direct or session-pooler connection, so a
@@ -5711,7 +5732,12 @@ idle `gbrain serve` processes.
 <a id="persistence-claim-phase"></a>**Claim phases.** Each claim renewal also records the claimed write's phase
 (`preparing` or `publishing`); `gbrain sources writer status --json` shows it as
 `claim` on running blockers, and doctor `persistence_write_stall` warns past
-`persistence.max_claim_ms` (default 600000, 60000 to 86400000). See
+`persistence.max_claim_ms` (default 600000, 60000 to 86400000). A running
+claim also carries the preparation `step`, how long it has been in it, what it
+waits on (`git`, `fs`, `db`, `pool` or `unknown`) and the owner process (kind,
+pid, gbrain version); past its budget, `claim.stall` reads
+`preparation_overdue`. Each request counts the cut-offs of its preparation in
+`persistence_requests.preparation_attempts`. See
 [troubleshooting](guides/troubleshooting.md#persistence-write-stall).
 
 ## JSONB writes: never double-encode
@@ -6281,6 +6307,15 @@ every 10 seconds on stderr:
 [sync] 1240/9382 processed (1200 written, 40 waived this run) · 42.1 pages/min · indexing ETA 3h13m
 ```
 
+When nothing commits for 10 seconds while a write is unfinished, the line names
+the stall instead of an ETA: the head write's step, what it waits on, and how
+long a preparation is allowed. It reads the head's claim while the pass runs, so
+it prints during a stall inside a bulk group too:
+
+```
+[sync] 1240/9382 processed · stalled 95s on origin_check (waiting on db) · allowed 2m30s
+```
+
 On Postgres the drain publishes in **bulk groups** of up to 16 page imports and
 deletes, each admitted with the cursor step that records it and published in one
 transaction. Every page still gets its own write request, receipt, attribution
@@ -6323,7 +6358,10 @@ The run ends in exactly one outcome:
 | --- | --- | --- | --- |
 | `synced` | 0 | The cursor reached its target. | Nothing. |
 | `resumable` | 0 | A deadline, `--timeout` or Ctrl-C stopped it; the cursor and accepted writes are intact. | Rerun `next.command`; safe in a loop. |
+| `resumable` / `preparation_abandoned` | 0 | A write this process's own writer holds was still preparing past its allowance (its budget plus 30 s) and cannot be cancelled in-process, so the sync exited to end it; `drain.stall.step` says where. | Rerun `next.command`; safe in a loop. The next pass holds the entry if it stalls again. |
 | `blocked` | 1 | A page failed or the writer needs intervention. | Follow `next.why`, then run `next.command`. See [drain stops](write-refusals.md#managed-sync-drain-stops). |
+| `blocked` / `write_capacity` | 1 | Other writers' requests held the sync writer's outstanding-request cap (`persistence.limits.principal_outstanding`) for the whole no-progress window, so no sync write could be admitted; the drain waited and printed `waiting for write capacity (N outstanding of M)` first. Nothing failed; the cursor is intact. | `gbrain sources writer status --source <id> --json`, let the outstanding requests finish or raise the cap, then rerun the same sync. See [drain stops](write-refusals.md#drain-write-capacity). |
+| `blocked` / `preparation_systemic` | 1 | Too many writes stalled while preparing in one run (the hold-escalation rule, or five in a row with no commit between), so the run stopped with one diagnostic instead of holding every file. | `gbrain sources writer status --source <id> --json`, fix what it names, then rerun the same sync. Runbook: [catch-up stuck](troubleshooting.md#catch-up-stuck). |
 
 **Say to your agent:** *"Catch up my managed brain's sync backlog and tell me
 how long it will take."* or *"My managed sync stopped. Is it safe to rerun?"*
@@ -6336,7 +6374,12 @@ Timing knobs the drain uses:
 | `--hard-deadline <dur>` | Whole process, enforced out of band. | none | The drain stops itself about 15 s early as `resumable`; the watchdog stops a hung process. |
 | `GBRAIN_SYNC_MAX_RUNTIME_SECONDS` | Whole process, non-interactive runs. Extends while pages keep committing. | 3600 (non-TTY) | Stops only after `GBRAIN_SYNC_STALL_ABORT_SECONDS` without progress. |
 | `GBRAIN_SYNC_STALL_ABORT_SECONDS` | Progress window for the deadline above. | 900 | The watchdog stops the run and prints the resume command. |
-| No-progress detector | Awaited write and checkout head unchanged. | 30 s and 3 passes | Stops as `blocked` / `drain_stalled` with diagnostics. |
+| No-progress detector | Awaited write and checkout head unchanged (state, blocked reason and the head claim's phase/step; a lease renewal is not a change). A live preparation is allowed its budget plus 30 s. | 30 s and 3 passes | Stops as `blocked` / `drain_stalled` with `stall.step`, `stall.waiting_on` and `stall.cause`; a preparation this process owns past its allowance stops as `resumable` / `preparation_abandoned`. The progress line prints `stalled <N>s on <step>` meanwhile. |
+| `persistence.sync_preparation_ms` | One sync member's preparation. | 120000 | The claim is released and retried once; the second expiry finishes the request `preparation_stalled` and the sync holds the file. |
+| `persistence.maintenance_preparation_ms` | One maintenance write's preparation (fact-fence adoption, maintenance page writes). | 120000 | As above; a maintenance write gets a terminal `preparation_stalled` receipt (no hold). |
+| `persistence.preparation_ceiling_ms` | Hard ceiling for a preparation that ignores cancellation (any kind), from claim start. | 600000 (60000–3600000, at least the largest budget plus 30 s) | The owner frees the root, sets the request's attempts to the limit (its next claim finishes it `preparation_stalled`), and stops claiming once it holds one such stuck preparation (`restart_required` in its log line). |
+| `persistence.max_preparation_attempts` | Deadline releases (and reclaims after a kill while preparing) one request may spend. | 2 (1–10) | The next claim finishes it `preparation_stalled` without preparing again. |
+| `preparation_deadlines` write switch (`persistence.preparation_deadlines`, `GBRAIN_PREPARATION_DEADLINES`) | Kill switch for the four keys above and the attempt counter. `remember`, `put_page` and `edit_page` keep their own 30 s budget either way. | on | `gbrain config set persistence.preparation_deadlines false` (or `GBRAIN_PREPARATION_DEADLINES=0`) restores the previous behaviour exactly: no deadline on sync or maintenance writes, no counter, no `preparation_stalled` holds. A running `serve` picks the change up within 5 seconds. |
 | Page write wait | One page's (or group's) publication before the drain re-checks. | 30 s inside a drain (5 s, checkpoint 8 s, for a single pass) | The drain re-enters; this is not a stop. |
 | `sync.bulk_max_txn_ms` / `GBRAIN_SYNC_BULK_MAX_TXN_MS` | Target time per bulk group; sizes the next group from the last one's time per page. | 15000 | A smaller next group. |
 | `sync.bulk_size` / `GBRAIN_SYNC_BULK_SIZE` | Largest bulk group. | 16 | — |
@@ -9336,10 +9379,12 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | Low health score | preview `gbrain doctor --remediation-plan --json`; then `gbrain doctor --remediate --yes --target-score 90 --max-usd 5` | agent, after the user agrees | `paid`; `destructive` with `--include-repairs` (approve with `--expect <plan_hash>` from the preview) | `gbrain doctor --json` |
 | [Sync held a file (`Held <path>: invalid_frontmatter …`, `git_held_files`)](#held-files) | `gbrain sources status <id>`, then preview `gbrain repair frontmatter --source <id>` and apply the printed `--apply --expect <hash> --yes` | agent; the apply after the user agrees | `destructive` (rewrites the previewed lines of the files) | `gbrain doctor --only git_held_files --json` |
 | [Sync held a file for its facts or takes fence (`Held <path>: invalid_fence …`)](#held-fence-files) | nothing for most holds: the next maintenance run repairs and commits the fence. To see or do it now, preview `gbrain repair fences --source <id>` and run its printed `--apply --expect <hash>`; to pause automatic repair, `gbrain config set fences.repair.enabled false` (ask the user first). A `manual` reason needs the edit the hold names | agent; the apply needs no extra consent | none (model repair spends within the `fences.repair.*` caps; raising them is `paid`, the user's call) | `gbrain doctor --only fence_integrity --json` |
+| [Managed catch-up stuck, or `Held <path>: preparation_stalled`, or the drain stopped `preparation_abandoned` / `preparation_systemic` / `write_capacity`](#catch-up-stuck) | `gbrain sources writer status --source <id> --json` (what the stuck write was doing: step, `waiting_on`, owner, version), fix what it names or upgrade the owner, then `gbrain sources retry-held <id>` and the same sync with its options | agent; a restart or upgrade of the owner after the user agrees | none to inspect; `persistent_install` when the fix restarts a service | `gbrain sources status <id> --json`, then `gbrain doctor --only git_held_files,persistence_write_stall --json` |
 | [A Google or GitHub item is held (`connector_held_items`)](#held-connector-items) | `gbrain sources status <id>`, fix the cause, then `gbrain sources retry-held <id>` and `gbrain sync --source <id>` | agent, after the user agrees | `egress` (fetches from the provider again) | `gbrain doctor --only connector_held_items --json` |
 | [`gbrain migrate --to` refused with `writer_coordinator_required`](../ENGINES.md#engine-migration-refused) | follow the refusal's `fix`: relay its `user_message` (stay on PGLite and share with `gbrain mcp expose`, or leave the brain as it is) | agent, after the user agrees | `persistent_install`, `egress` (for `gbrain mcp expose`) | `gbrain doctor --no-migrate --json` |
 | [A write was refused with a named reason](#write-refused) | the reason's recovery in [write refusal reasons](write-refusals.md) | as the refusal's `fix` | as the refusal's `fix` | the refusal's `verify` |
 | [Managed sync blocked with `checkpoint_validation_timeout`](#checkpoint-validation-timeout) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <id> --no-pull --retry-failed …` | brain host | none | `gbrain doctor --only persistence_request_indexes --json` |
+| [Doctor warns `persistence_session_timeouts` (`session_timeouts_not_applied`)](#session-timeouts-not-applied) | `ALTER ROLE <gbrain role> SET statement_timeout = '5min'` on the database, or accept it: preparation reads carry their own bound | brain host | none (a role default; `destructive` only in that it changes a server setting) | `gbrain doctor --only persistence_session_timeouts --json` |
 | [`queue_capacity`, `persistence_capacity` or `persistence_request_growth`](#write-capacity) | run the printed `gbrain config set persistence.limits.<limit> <value>` | brain host | none | `gbrain doctor --only persistence_capacity,persistence_request_growth --json` |
 | [`dream_paid_loop`, or dream keeps skipping one transcript](#dream-paid-loop) | fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'` | agent, after the user agrees | `paid` (the key is retried) | `gbrain doctor --only dream_paid_loop --json` |
 | [Search answers look keyword-only on a large Postgres brain](#hybrid-search-returns-only-keyword-hits) | read doctor's `vector_plan`; run the index command it prints | brain host | none | `gbrain doctor --only vector_plan --json` |
@@ -9357,6 +9402,18 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 <a id="held-fence-files"></a>**Sync held a file because of its facts or takes fence (`Held <path>: invalid_fence …`)?** Managed sync succeeded; only that file waits. The hold names the fence, section, row numbers, columns and reason, never a cell, and most holds clear by themselves: the maintenance run's `fence_repair` phase repairs the fence on the owner host and commits the file. To see the plan or do it now, run `gbrain repair fences --source <id>` (a read-only preview with no model call), then the apply command it prints; applying needs no extra consent. Model repair spends only within `fences.repair.max_usd_per_page` and `fences.repair.max_usd_per_day`; raising them, or pausing automatic repair with `gbrain config set fences.repair.enabled false`, is the user's call. A hold whose reason is `manual` needs a person: read the page (`gbrain get --source <id> -- <slug>`), edit only that fence in the file (not the frontmatter; `gbrain repair frontmatter` does not touch fences), commit, and run `gbrain sync --source <id> --no-pull`. A `prepare_time` hold was refused against stored rows (for example a takes row number a stored take already uses): fix it as its `fence.reason` says, and after a database-side fix run `gbrain sources retry-held <id>`. A source a fence blocked before upgrading recovers on its next sync. A fence with one obvious meaning is never held: sync rewrites it losslessly, commits the file and reports `fences_normalized`; a `fence_normalized` notice on a write means re-read the page before editing it. `gbrain doctor --only fence_integrity` counts every malformed fence still waiting (held, stored or unsynced) by tier. See [fence holds](write-refusals.md#invalid_fence), [fence repair](repair.md#fences) and the [fence format](fence-format.md).
 
 <a id="concurrent-write-hold"></a>**Sync held a file with `concurrent_write`?** A Git edit raced a database-only write; nothing was overwritten. Preview `gbrain sources reconcile <id> <slug> --preview`, let the user choose, then `gbrain sources retry-held <id>`. See [concurrent_write](write-refusals.md#concurrent_write).
+
+<a id="catch-up-stuck"></a>**Managed catch-up stuck (one write `running` for minutes while the rest waits), held N files as `preparation_stalled`, or the drain stopped with `preparation_abandoned`, `preparation_systemic` or `write_capacity`?** Every managed write's *preparation* has a deadline (`persistence.sync_preparation_ms`, default 120 s, for sync members; `persistence.maintenance_preparation_ms`, default 120 s, for maintenance writes; a hard ceiling `persistence.preparation_ceiling_ms`, default 600 s; `persistence.max_preparation_attempts`, default 2; all behind the `preparation_deadlines` write switch), so one stuck write costs at most its budget times its attempts and the rest of the source keeps publishing. The runbook branches on what you see; every command below is read-only unless it says otherwise, and the files themselves are never the problem in this branch.
+
+1. **While it is stuck.** The progress line prints `stalled <N>s on <step>` instead of an ETA. Run `gbrain sources writer status --source <id> --json`: the blocked request's `claim.stall` names the step (`origin_check`, `knowledge_publication`, …), `waiting_on` (`git`, `fs`, `db`, `pool`, or an honest `unknown`), `step_age_ms`, the budget, and the owner process (kind, pid, gbrain version). An owner whose version predates this release never gives up: upgrade it and restart it (`gbrain serve`, the jobs worker or autopilot; the drain's own process ends with the drain). Otherwise wait out the budget: the write is released, retried once, then held.
+2. **Held files (`preparation_stalled`).** `gbrain sources status <id> --json` lists them with the step each stalled on; no `gbrain repair` applies. After the cause is fixed (or gbrain upgraded), run `gbrain sources retry-held <id>` and then the same sync with the same options, which the hold's `fix` and `retry-held` print, for example `gbrain sync --source <id> --no-pull --no-embed`. If that sync still has a backlog, it finishes the backlog and then re-screens the scheduled files in the same run. Verify with `gbrain sources status <id> --json` (the held count drops) and `gbrain doctor --only git_held_files --json`. A held deletion keeps its page until that retry. A stalled hold also re-screens by itself when the gbrain version changes.
+3. **The drain stopped `preparation_abandoned` (exit 0).** A preparation in the sync's own process was still running past its allowance (its budget plus 30 s) and cannot be cancelled in-process, so the sync exited to end it; `drain.stall.step` says where. Rerun `next.command` (`safe_to_loop` is true): the next pass holds the entry if it stalls again.
+4. **The drain stopped `preparation_systemic` (exit 1).** Too many writes stalled in one run (more than `sync.hold_escalate_count` / `sync.hold_escalate_pct` of the run's screened imports, or five in a row with no page committed between), so the run stopped with one diagnostic instead of holding every file. `breaker` carries the rule, the counts and the last step. Inspect the writer as in step 1, fix the cause, then rerun the same sync: it re-freezes the stopped entry with a fresh request and re-screens the files that run held.
+5. **The drain stopped `write_capacity` (exit 1).** Other writers' requests held the sync writer's outstanding-request cap (`persistence.limits.principal_outstanding`, default 100; on one host the CLI sync shares the `local_cli` principal with fact-fence adoption and `dream`) for the whole 30 s window, so the sync could not admit its next write. It waited and printed `waiting for write capacity (N outstanding of M)` first; nothing failed and the cursor is intact. `gbrain sources writer status --source <id> --json` lists the outstanding requests. Let them finish, or raise the cap (`gbrain config set persistence.limits.principal_outstanding 200`), then rerun the same sync. Reference: [drain stops](write-refusals.md#drain-write-capacity).
+6. **A `put_page`, `remember` or maintenance write finished `preparation_stalled`.** Nothing is held: the receipt names the step. Read the writer as in step 1, then resubmit a foreground write under a new `request_id`; the next maintenance run submits its write again.
+7. **A manual fence defect among the holds** (`invalid_fence`, reason `manual`, or `repeated_marker`) is a different branch: see [held fence files](#held-fence-files). `gbrain sources status` keeps the kinds apart and routes each to its own command.
+
+Turning the `preparation_deadlines` switch off (`gbrain config set persistence.preparation_deadlines false`) restores the previous behaviour exactly: no deadlines on sync or maintenance writes, no attempt counter, no `preparation_stalled` holds. See [`preparation_stalled`](write-refusals.md#preparation_stalled), [managed sync drain stops](write-refusals.md#managed-sync-drain-stops) and the [timing knobs](live-sync.md#catching-up-a-large-backlog-on-managed-postgres).
 
 <a id="held-connector-items"></a>**A Google or GitHub item is held after repeated failures (doctor `connector_held_items`, `gbrain waiting` says coverage is partial)?** Run `gbrain sources status <id>`, fix the cause, then after the user agrees run `gbrain sources retry-held <id>` and `gbrain sync --source <id>`. See [held items](google-connect.md#held-items).
 
@@ -9392,7 +9449,9 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 
 **`gbrain doctor` warns `slug_collisions`, or sync prints slug collisions?** Two or more files in a source map to the same page slug (for example `notes/Foo Bar.md` and `notes/foo-bar.md`), and only one is indexed. Rename all but one file in each group, commit, then sync.
 
-<a id="persistence-write-stall"></a>**A managed write stays `running` and later writes queue behind it, or doctor warns `persistence_write_stall`?** The owner keeps renewing a hung claim; doctor warns past `persistence.max_claim_ms` (default 600000) and names the request, root, age and phase. Run `gbrain sources writer status --source <id> --json` (read-only), then restart the `gbrain serve` that owns the root and attach that output when reporting it.
+<a id="session-timeouts-not-applied"></a>**Doctor warns `persistence_session_timeouts` with `session_timeouts_not_applied`?** gbrain sets `statement_timeout` (`GBRAIN_STATEMENT_TIMEOUT`, default 5min) and `idle_in_transaction_session_timeout` as connection startup parameters, and a transaction-mode pooler (PgBouncer with `ignore_startup_parameters`, Supavisor) drops them: `SHOW statement_timeout` through the configured URL reads `0`, so a statement outside a transaction has no server-side bound and a relation lock held in another session (a migration's `ALTER TABLE pages` queued behind a long transaction, for example) holds it for as long as the lock lasts. Managed write *preparation* reads are not affected since v0.60.108: they run under a transaction-local `statement_timeout` of the write's remaining preparation budget, so a lock-blocked read ends at the budget and the member is released `preparation_deadline` with no statement left on the server (#6278). For every other autocommit statement, set the default on the role instead of the connection: `ALTER ROLE <gbrain role> SET statement_timeout = '5min'` (read-only to check: `gbrain doctor --only persistence_session_timeouts --json`). Setting `GBRAIN_STATEMENT_TIMEOUT` has no effect through such a pooler.
+
+<a id="persistence-write-stall"></a>**A managed write stays `running` and later writes queue behind it, or doctor warns `persistence_write_stall`?** The owner keeps renewing a hung claim; doctor warns past `persistence.max_claim_ms` (default 600000) and names the request, root, age, phase and, for a preparation, its step and what it waited on. A write stuck *preparing* is released at its deadline and finally held or failed `preparation_stalled` on its own: see [catch-up stuck](#catch-up-stuck). A write stuck *publishing*, or one whose owner predates the deadlines, still needs the owner restarted: run `gbrain sources writer status --source <id> --json` (read-only), then restart the `gbrain serve` that owns the root and attach that output when reporting it.
 
 <a id="write-capacity"></a>**Managed writes refused with `queue_capacity`, or doctor warns `persistence_capacity`?** A per-principal or per-brain write-journal limit (`persistence.limits.*`) is full (`queue_capacity`), or doctor sees lifetime request IDs or receipt bytes at 80% or more (`persistence_capacity`). For the cumulative limits (lifetime request IDs and receipt bytes), the warning and the refusal print a `gbrain config set persistence.limits.<limit> <value>` sized for about one more year; run it on the brain host, then retry with the same request ID. For outstanding-request or queued-byte limits, let outstanding writes finish and check `gbrain sources writer status`. Receipt compaction age is `persistence.receipt_retention_days` (default 30). Limits and defaults: [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).
 
@@ -11095,13 +11154,34 @@ with `gbrain repair frontmatter --source <id>`, and `--remediate` never runs the
 repair. `frontmatter_hook` warns when an installed pre-commit hook is older
 than the running gbrain's hook; refresh it with `gbrain frontmatter install-hook --force`.
 
+**A hold that blames the write owner, not the file.** A `preparation_stalled`
+hold means the owner could not finish preparing that file's write within its
+attempts (`persistence.max_preparation_attempts`, each bounded by
+`persistence.sync_preparation_ms`). The file is fine and `gbrain repair` has
+nothing to change in it: `sources status`, `sources retry-held` and doctor
+`git_held_files` route it to the writer instead of to frontmatter or fence
+repair, and a source holding all three kinds prints one route for each. Read
+what the owner was stuck on, fix that, then re-screen the held files and run
+the same sync with the same options (the hold prints them, `--no-embed`
+included). Nothing here is destructive and no hash is involved.
+
+```bash
+gbrain sources status notes --json                  # the held files, each with the step it stalled on
+gbrain sources writer status --source notes --json  # read-only: the owner, its gbrain version, the stuck step
+gbrain sources retry-held notes                     # after the cause is fixed or gbrain is upgraded
+gbrain sync --source notes --no-pull --no-embed     # the option-preserving command retry-held prints
+```
+
+Runbook: [catch-up stuck / held N files](troubleshooting.md#catch-up-stuck);
+reference: [`preparation_stalled`](write-refusals.md#preparation_stalled).
+
 Settings, all read by every sync:
 
 | Key | Default | Effect |
 | --- | --- | --- |
 | `sync.holds` | `hold` | `fail` makes sync fail closed: a content refusal blocks the sync. |
 | `sync.hold_cap` | `500` | How many holds a sync result lists in detail; storage is never capped and valid files always import. |
-| `sync.hold_escalate_count` / `sync.hold_escalate_pct` | `50` / `5` | A source holding more files, or a run holding more than that share of at least 40 screened imports, reports `holds_escalated` and doctor `git_held_files` fails. |
+| `sync.hold_escalate_count` / `sync.hold_escalate_pct` | `50` / `5` | A source holding more files, or a run holding more than that share of at least 40 screened imports, reports `holds_escalated` and doctor `git_held_files` fails. A run whose `preparation_stalled` holds would cross it stops as `preparation_systemic` instead of holding them. |
 | `sync.parser_regression` | `stop` | `hold` holds a file whose exact bytes imported under an earlier gbrain (`parser_regression`) instead of stopping the run with `sync_parser_regression`. |
 
 To prevent new broken files, write brain files through `put_page`/`capture`
