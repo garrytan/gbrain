@@ -49,7 +49,7 @@ import type { GBrainConfig } from '../config.ts';
 import { isAvailable } from '../ai/gateway.ts';
 import { withAIInvocationPreflight } from '../ai/invocation-guard.ts';
 import { decideSingleFact } from './single-prepare.ts';
-import { cosineVerdict, dedupCapturedFacts, withCaptureDrops } from './capture-dedup.ts';
+import { cosineVerdict, dedupCapturedFacts, EXPLICIT_DUPLICATE_THRESHOLD, isCaptureLane, withCaptureDrops } from './capture-dedup.ts';
 import { assertAmbientCaptureAdmissible, type FactsBackstopSource } from './capture-sources.ts';
 import { appendContextNote, type InferredVia } from './subject-infer.ts';
 import { inferenceNote, inferMissingSubjects } from './subject-infer-write.ts';
@@ -183,6 +183,14 @@ interface ParsedPageInput {
 
 /** k for findCandidateDuplicates — ceiling on candidates considered. */
 const DEDUP_CANDIDATE_LIMIT = 5;
+
+/**
+ * Explicit lanes ask the duplicate classifier when the top candidate scores
+ * at least this but below the 0.95 fast path: re-extracting an edited page
+ * rewords its claims into this band. Same value as the consolidate phase's
+ * default cluster threshold.
+ */
+const CLASSIFY_FLOOR = 0.85;
 
 /**
  * Once-per-process stderr warning memo. v0.32.2 uses this to surface
@@ -602,7 +610,7 @@ async function runPipelineBodyInner(
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason }> {
   const { extractFactsFromTurnWithOutcome, FactsExtractionError } = await import('./extract.ts');
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
-  const { cosineSimilarity } = await import('./classify.ts');
+  const { classifyAgainstCandidates, cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
   const { isFactWithdrawn } = await import('./withdrawal.ts');
 
@@ -735,6 +743,14 @@ async function runPipelineBodyInner(
       }
       if (top && cosineVerdict(ctx.source, top.score, f.fact, top.fact) === 'duplicate') {
         matchedExistingId = top.id;
+      } else if (top && top.score >= CLASSIFY_FLOOR && !isCaptureLane(ctx.source)) {
+        // A failed classifier call keeps the 0.95 rule, so the band only ever skips an insert.
+        const verdict = await classifyAgainstCandidates(
+          { fact: f.fact, kind: f.kind, embedding: f.embedding },
+          candidates,
+          { model: ctx.model, fallbackThreshold: EXPLICIT_DUPLICATE_THRESHOLD, abortSignal },
+        );
+        if (verdict.decision === 'duplicate') matchedExistingId = verdict.matched_id;
       }
     }
 
