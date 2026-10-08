@@ -1376,6 +1376,159 @@ describe('opencode harness target (managed JSONC entry)', () => {
   });
 });
 
+describe('pi harness target (inline-bearer mcp.json entry + hooks extension)', () => {
+  const piPaths = (f: Fake) => {
+    const agent = join(dirname(f.userSettings), 'pi-agent');
+    return { mcp: join(agent, 'mcp.json'), ext: join(agent, 'extensions', 'gbrain-hooks.ts') };
+  };
+  type PiEntry = { url: string; headers?: Record<string, string>; description?: string };
+  const piEntry = (f: Fake): PiEntry | undefined =>
+    (JSON.parse(readFileSync(piPaths(f).mcp, 'utf8')) as { mcpServers?: Record<string, PiEntry> }).mcpServers?.gbrain;
+  const receiptOf = (f: Fake) =>
+    (readHarnessReceiptState(f.home) as { state: string; receipt: HarnessReceipt }).receipt;
+
+  test('apply --harness pi: inline-bearer entry 0600 + the hooks extension, receipt valid and confirmed, no pi CLI exec', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'pi']), f.deps)).toBe(0);
+    const e = piEntry(f)!;
+    expect(e.url).toBe(URL);
+    expect(e.headers?.Authorization).toBe(`Bearer ${TOKEN_A}`);
+    expect(e.description).toContain('gbrain');
+    expect(statSync(piPaths(f).mcp).mode & 0o777).toBe(0o600);
+    const ext = readFileSync(piPaths(f).ext, 'utf8');
+    expect(ext.split('\n')[0]).toContain('gbrain:pi-hooks-v1');
+    expect(ext).toContain('const GBRAIN_BIN: string = "/opt/fake/gbrain";');
+    expect(ext).toContain('"GBRAIN_SOURCE":"default"');
+    // The receipt round-trips (a pi harness token used to make it 'invalid').
+    const state = readHarnessReceiptState(f.home);
+    expect(state.state).toBe('ok');
+    const r = receiptOf(f);
+    expect(r.targets.filter((t) => t.host === 'pi').map((t) => `${t.kind}:${t.state}`)).toEqual(['mcp:confirmed', 'hooks:confirmed']);
+    expect(r.harness_tokens?.pi).toMatchObject({ id: ID_A, minted: true });
+    expect(f.calls.some((argv) => argv[0] === 'pi')).toBe(false);
+    expect(f.out.join('\n')).toMatch(/pi wired: mcpServers\.gbrain HTTP entry with inline bearer/);
+  });
+
+  test('--no-capture wires the MCP entry only (the extension runs capture, so it is not half-wired)', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'pi', '--no-capture']), f.deps)).toBe(0);
+    expect(piEntry(f)?.headers?.Authorization).toBe(`Bearer ${TOKEN_A}`);
+    expect(existsSync(piPaths(f).ext)).toBe(false);
+    expect(receiptOf(f).targets.filter((t) => t.host === 'pi').map((t) => t.kind)).toEqual(['mcp']);
+  });
+
+  test('consent names both pi writes and the reach', async () => {
+    const f = makeFake();
+    await applyHarness(flags(['--harness', 'pi']), f.deps);
+    const out = f.out.join('\n');
+    expect(out).toMatch(/pi \(user-global\): write the mcpServers\.gbrain HTTP entry with the bearer token INLINE/);
+    expect(out).toMatch(/pi hooks: write gbrain's extension/);
+    expect(out).toMatch(/EVERY pi session/);
+    // pi gets no shared-skills router: consent must not promise one.
+    expect(out).toMatch(/Shared skills: not available for pi yet/);
+    expect(out).not.toMatch(/Follow this brain's authorized shared-skills catalog/);
+  });
+
+  test('a hand-made gbrain entry refuses (failed target, exit 1), survives, and the fresh mint is revoked', async () => {
+    const f = makeFake();
+    mkdirSync(dirname(piPaths(f).mcp), { recursive: true });
+    const foreign = JSON.stringify({ mcpServers: { gbrain: { url: 'https://other.example/mcp' }, exa: { url: 'https://mcp.exa.ai/mcp' } } });
+    writeFileSync(piPaths(f).mcp, foreign);
+    expect(await applyHarness(flags(['--harness', 'pi', '--no-hooks']), f.deps)).toBe(1);
+    expect(readFileSync(piPaths(f).mcp, 'utf8')).toBe(foreign);
+    expect(f.err.join('\n')).toMatch(/gbrain did not write/);
+    expect(f.err.join('\n')).not.toContain(TOKEN_A);
+    expect(receiptOf(f).targets.find((t) => t.host === 'pi')?.state).toBe('failed');
+  });
+
+  test('a gbrain-managed entry wired to ANOTHER serve is another install\'s: refused [C8]', async () => {
+    const f = makeFake();
+    mkdirSync(dirname(piPaths(f).mcp), { recursive: true });
+    const other = JSON.stringify({ mcpServers: { gbrain: { url: 'http://127.0.0.1:9999/mcp', description: 'gbrain personal knowledge brain (managed by `gbrain bootstrap hooks --harness pi`)' } } });
+    writeFileSync(piPaths(f).mcp, other);
+    expect(await applyHarness(flags(['--harness', 'pi', '--no-hooks']), f.deps)).toBe(1);
+    expect(readFileSync(piPaths(f).mcp, 'utf8')).toBe(other);
+    expect(f.err.join('\n')).toMatch(/another install's wiring/);
+  });
+
+  test('rotation across a url change: the prior receipt url makes the old entry ours; the previous token is revoked', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'pi', '--no-hooks']), f.deps)).toBe(0);
+    expect(await applyHarness(flags(['--harness', 'pi', '--no-hooks', '--url', 'http://127.0.0.1:4242/mcp']), f.deps)).toBe(0);
+    expect(piEntry(f)).toMatchObject({ url: 'http://127.0.0.1:4242/mcp', headers: { Authorization: `Bearer ${TOKEN_B}` } });
+    expect(f.revoked).toEqual([ID_A]);
+    expect(existsSync(`${piPaths(f).mcp}.gbrain.bak`)).toBe(false); // no token-bearing snapshot left behind
+  });
+
+  test('failed smoke: a fresh entry is removed and the fresh mint revoked', async () => {
+    const f = makeFake({ probeOk: false });
+    expect(await applyHarness(flags(['--harness', 'pi', '--no-hooks']), f.deps)).toBe(1);
+    expect(piEntry(f)).toBeUndefined();
+    expect(f.revoked).toContain(ID_A);
+    expect(f.out.join('\n') + f.err.join('\n')).toMatch(/rolled back to the previous pi config/);
+  });
+
+  test('[X5] failed smoke on a re-apply restores the pi config byte-for-byte; only the fresh mint is revoked', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'pi', '--no-hooks']), f.deps)).toBe(0);
+    const preRun = readFileSync(piPaths(f).mcp, 'utf8');
+    const f2: HarnessDeps = { ...f.deps, probeIdentity: async () => ({ ok: false, reason: 'unreachable', message: 'boom' }) };
+    expect(await applyHarness(flags(['--harness', 'pi', '--no-hooks']), f2)).toBe(1);
+    expect(readFileSync(piPaths(f).mcp, 'utf8')).toBe(preRun);
+    expect(f.revoked).toEqual([ID_B]);
+  });
+
+  test('--status recovers the bearer from the pi entry (url-matched) and verifies it', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'pi']), f.deps)).toBe(0);
+    expect(await statusHarness(parseHarnessArgs(['--status']), f.deps)).toBe(0);
+    expect(f.out.join('\n')).toMatch(/token: OK \('bootstrap-harness' via pi config entry/);
+  });
+
+  test('--remove removes our entry and the extension, keeps other servers, revokes by id', async () => {
+    const f = makeFake();
+    mkdirSync(dirname(piPaths(f).mcp), { recursive: true });
+    writeFileSync(piPaths(f).mcp, JSON.stringify({ mcpServers: { exa: { url: 'https://mcp.exa.ai/mcp' } } }));
+    expect(await applyHarness(flags(['--harness', 'pi']), f.deps)).toBe(0);
+    expect(await removeHarness(parseHarnessArgs(['--remove']), f.deps)).toBe(0);
+    const servers = (JSON.parse(readFileSync(piPaths(f).mcp, 'utf8')) as { mcpServers: Record<string, unknown> }).mcpServers;
+    expect(Object.keys(servers)).toEqual(['exa']);
+    expect(existsSync(piPaths(f).ext)).toBe(false);
+    expect(f.revoked).toContain(ID_A);
+  });
+
+  test('--remove skips an entry another install retargeted (never deletes what is not provably ours)', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'pi', '--no-hooks']), f.deps)).toBe(0);
+    const cfg = JSON.parse(readFileSync(piPaths(f).mcp, 'utf8')) as { mcpServers: Record<string, PiEntry> };
+    cfg.mcpServers.gbrain.url = 'http://127.0.0.1:9999/mcp';
+    writeFileSync(piPaths(f).mcp, JSON.stringify(cfg));
+    expect(await removeHarness(parseHarnessArgs(['--remove']), f.deps)).toBe(0);
+    expect(f.out.join('\n')).toMatch(/points at another serve — owned by another install; skipping/);
+    expect(piEntry(f)?.url).toBe('http://127.0.0.1:9999/mcp');
+  });
+
+  test('--harness all wires pi alongside the others when pi is detected; a sandboxed default never detects it', async () => {
+    const off = makeFake();
+    expect(await applyHarness(flags([]), off.deps)).toBe(0);
+    expect(receiptOf(off).targets.some((t) => t.host === 'pi')).toBe(false);
+    const on = makeFake();
+    expect(await applyHarness(flags([]), { ...on.deps, detectPi: () => true })).toBe(0);
+    expect(receiptOf(on).targets.filter((t) => t.host === 'pi' && t.state === 'confirmed').map((t) => t.kind)).toEqual(['mcp', 'hooks']);
+  });
+
+  test('pi\'s user-scope extension does not block Claude --project hooks (the double-fire check is Claude-only)', async () => {
+    const f = makeFake();
+    const proj = mkdtempSync(join(tmpdir(), 'gb-harness-proj-'));
+    const deps = { ...f.deps, detectPi: () => true };
+    expect(await applyHarness(flags([]), deps)).toBe(0);
+    expect(await removeHarness(parseHarnessArgs(['--remove']), deps)).toBe(0);
+    expect(await applyHarness(flags(['--harness', 'pi']), deps)).toBe(0);
+    expect(await applyHarness(flags(['--project', proj]), deps)).toBe(0);
+    expect(f.err.join('\n')).not.toMatch(/USER-scope harness hooks/);
+  });
+});
+
 describe('ambient-writeback instruction blocks (kind: instructions, WP3)', () => {
   // Engine-free file-plane fake: memory.auto_writeback=salient enables the lane.
   const WB_ON = (): GBrainConfig => ({ engine: 'pglite', memory: { auto_writeback: 'salient' } });

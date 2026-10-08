@@ -68,6 +68,24 @@ gbrain bootstrap hooks --harness pi \
 
 `PI_CODING_AGENT_DIR` moves every path above (pi honors it too).
 
+### Framework-spawned pi (no shell, no Keychain prompt)
+
+When a framework spawns pi headlessly next to a running `gbrain serve --http`,
+use the harness lane, the same one Claude Code, Codex and opencode use:
+
+```bash
+gbrain bootstrap harness --harness pi     # or --harness all: pi is wired when detected
+```
+
+It mints a token for pi (read + write), writes `mcpServers.gbrain` with the
+bearer **inline** in `~/.pi/agent/mcp.json` (the file is forced to 0600: a
+spawned pi inherits no shell env and cannot answer a Keychain prompt), installs
+the hooks extension, smoke-tests the token against the serve, and only then
+revokes the token it replaced. A failed smoke restores the previous
+`mcp.json`. `--no-capture` skips the extension (it runs capture), and
+`--status` / `--remove` work as for the other harnesses. An existing gbrain
+entry that points at a different serve is another install's and is refused.
+
 ## What the hooks do
 
 | pi event | gbrain hook | Effect |

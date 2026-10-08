@@ -234,7 +234,7 @@ export type HarnessTargetKind = 'mcp' | 'permission' | 'hooks' | 'instructions';
 export type HarnessTargetState = 'pending' | 'confirmed' | 'failed';
 
 export interface HarnessTarget {
-  host: 'claude-code' | 'codex' | 'opencode';
+  host: 'claude-code' | 'codex' | 'opencode' | 'pi';
   kind: HarnessTargetKind;
   state: HarnessTargetState;
   /** user scope or a --project dir (hooks); user for mcp/permission. */
@@ -331,7 +331,7 @@ export function readHarnessReceiptState(gbrainHomeDir: string): HarnessReceiptRe
         (parsed.skills_policy === undefined || parsed.skills_policy === 'follow' || parsed.skills_policy === 'memory-only') &&
         (parsed.harness_tokens === undefined || (parsed.harness_tokens !== null && typeof parsed.harness_tokens === 'object' &&
           !Array.isArray(parsed.harness_tokens) && Object.entries(parsed.harness_tokens).every(([host, token]) =>
-            ['claude-code', 'codex', 'opencode'].includes(host) && token && typeof token.name === 'string' &&
+            ['claude-code', 'codex', 'opencode', 'pi'].includes(host) && token && typeof token.name === 'string' &&
             typeof token.minted === 'boolean' && (token.id === undefined || typeof token.id === 'string')))) &&
         (parsed.shared_skills === undefined || (Array.isArray(parsed.shared_skills) && parsed.shared_skills.every(entry =>
           entry && ['claude-code', 'codex', 'opencode'].includes(entry.host) && typeof entry.root === 'string' &&

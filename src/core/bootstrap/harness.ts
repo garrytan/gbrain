@@ -131,6 +131,9 @@ import {
   removeOpencodeMcpEntry,
   writeOpencodeMcpEntry,
 } from './opencode-json.ts';
+import { piAgentDir, piHooksExtensionPath, piMcpConfigPath } from './host-specs.ts';
+import { parsePiEntryBearer } from './pi-mcp.ts';
+import { discardPiBackup, piConsentLines, planPiTargets, removePiTarget, removeStalePiTarget, rollbackPiTargets, wirePiTargets, type PiRollback } from './harness-pi.ts';
 import { isServeOlderThanScopes, probeServeHealth } from './serve-health.ts';
 
 // Peeled façade seam (cathedral-6): the serve probe + scopes version floor
@@ -145,7 +148,7 @@ export {
 
 // ── Flags ───────────────────────────────────────────────────────────────────
 
-export type HarnessSelector = 'claude-code' | 'codex' | 'opencode' | 'all';
+export type HarnessSelector = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'all';
 
 export interface HarnessFlags {
   harness: HarnessSelector;
@@ -206,8 +209,8 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
   };
   const h = value('--harness');
   if (h !== undefined) {
-    if (h !== 'claude-code' && h !== 'codex' && h !== 'opencode' && h !== 'all') {
-      out.error = `unknown --harness '${h}' — pass claude-code, codex, opencode, or all`;
+    if (h !== 'claude-code' && h !== 'codex' && h !== 'opencode' && h !== 'pi' && h !== 'all') {
+      out.error = `unknown --harness '${h}' — pass claude-code, codex, opencode, pi, or all`;
       return out;
     }
     out.harness = h;
@@ -311,6 +314,10 @@ export interface HarnessDeps {
   codexConfig?: string;
   /** Resolved opencode config path (tests point at a temp XDG_CONFIG_HOME). */
   opencodeConfig?: string;
+  /** Resolved pi MCP config (<agent dir>/mcp.json; tests point at a temp PI_CODING_AGENT_DIR). */
+  piConfig?: string;
+  /** Resolved pi hooks extension path (<agent dir>/extensions/gbrain-hooks.ts). */
+  piHooksPath?: string;
   /** Resolved Claude user memory file (~/.claude/CLAUDE.md) — the
    * ambient-writeback block target. Defaults to the sibling of an injected
    * userSettingsPath so a sandboxed test can never touch the real file. */
@@ -350,9 +357,16 @@ export interface HarnessDeps {
   detectClaude?: () => boolean;
   detectCodex?: () => boolean;
   detectOpencode?: () => boolean;
+  detectPi?: () => boolean;
   gbrainBin?: string | null;
   log?: (line: string) => void;
   logError?: (line: string) => void;
+}
+
+/** The directory of an injected host path (a test sandbox), or null in production. */
+function sandboxDir(deps: HarnessDeps): string | null {
+  const injected = deps.userSettingsPath ?? deps.codexConfig ?? deps.opencodeConfig;
+  return injected ? dirname(injected) : null;
 }
 
 export function resolveHarnessDeps(deps: HarnessDeps): Required<Omit<HarnessDeps, 'gbrainBin'>> & { gbrainBin: string | null } {
@@ -366,6 +380,13 @@ export function resolveHarnessDeps(deps: HarnessDeps): Required<Omit<HarnessDeps
     userSettingsPath: deps.userSettingsPath ?? claudeUserSettingsPath(),
     codexConfig: deps.codexConfig ?? codexConfigPath(),
     opencodeConfig: deps.opencodeConfig ?? opencodeGlobalConfigPath(),
+    // Same sandboxing rule as the instruction files: an injected host path
+    // means a test sandbox, so pi's files derive from it and NEVER fall back
+    // to the real <agent dir> (or the real `pi` on PATH, below).
+    piConfig: deps.piConfig ?? (sandboxDir(deps) ? join(sandboxDir(deps)!, 'pi-agent', 'mcp.json') : piMcpConfigPath()),
+    piHooksPath: deps.piHooksPath ?? (deps.piConfig || sandboxDir(deps)
+      ? join(dirname(deps.piConfig ?? join(sandboxDir(deps)!, 'pi-agent', 'mcp.json')), 'extensions', 'gbrain-hooks.ts')
+      : piHooksExtensionPath()),
     // Instruction-file targets derive from an INJECTED settings/config path's
     // directory when one is given: in production the derivation equals the
     // host-specs defaults (CLAUDE.md and AGENTS.md live beside settings.json
@@ -402,6 +423,11 @@ export function resolveHarnessDeps(deps: HarnessDeps): Required<Omit<HarnessDeps
     detectOpencode:
       deps.detectOpencode ??
       (() => whichSafe('opencode') !== null || existsSync(opencodeConfigDir())),
+    detectPi:
+      deps.detectPi ??
+      (() => (deps.piConfig || sandboxDir(deps)
+        ? existsSync(dirname(deps.piConfig ?? join(sandboxDir(deps)!, 'pi-agent', 'mcp.json')))
+        : whichSafe('pi') !== null || existsSync(piAgentDir()))),
     gbrainBin: deps.gbrainBin !== undefined ? deps.gbrainBin : null,
     log: deps.log ?? ((l) => console.log(l)),
     logError: deps.logError ?? ((l) => console.error(l)),
@@ -434,6 +460,7 @@ export interface HarnessDetectOverrides {
   claude?: () => boolean;
   codex?: () => boolean;
   opencode?: () => boolean;
+  pi?: () => boolean;
 }
 
 /** Narrow the overrides to the HarnessDeps keys, omitting absent probes so
@@ -443,6 +470,7 @@ export function harnessDetectDeps(o?: HarnessDetectOverrides): Partial<HarnessDe
     ...(o?.claude ? { detectClaude: o.claude } : {}),
     ...(o?.codex ? { detectCodex: o.codex } : {}),
     ...(o?.opencode ? { detectOpencode: o.opencode } : {}),
+    ...(o?.pi ? { detectPi: o.pi } : {}),
   };
 }
 
@@ -545,6 +573,9 @@ export function buildConsentBlock(p: {
   wireClaude: boolean;
   wireCodex: boolean;
   wireOpencode: boolean;
+  wirePi?: boolean;
+  /** pi's hooks extension is written (not --no-hooks / --no-capture / registrar mode). */
+  piHooks?: boolean;
   hooks: boolean;
   capture: boolean;
   hookScope: string;
@@ -552,6 +583,8 @@ export function buildConsentBlock(p: {
   userSettingsPath: string;
   codexConfig: string;
   opencodeConfig: string;
+  piConfig?: string;
+  piHooksPath?: string;
   /** Instruction files receiving the ambient-writeback managed block (only
    * when memory.auto_writeback is enabled) — consent names every file the
    * apply will write [X7 parity]. */
@@ -573,8 +606,10 @@ export function buildConsentBlock(p: {
           `reads span this brain's federated sources). Any prior harness token is revoked ` +
           `only after the new one is wired and verified.`,
   );
-  if (p.skills) lines.push(p.skills === 'follow'
-    ? `  ${n++}. Follow this brain's authorized shared-skills catalog using an owned native router and private installation receipts. No editor authority, automatic execution, extra capture, or identity changes. Restart sessions after updates; native activation remains unverified. Opt out with --skills memory-only.`
+  const skillsHosts = p.wireClaude || p.wireCodex || p.wireOpencode;
+  if (p.skills === 'follow' && !skillsHosts) lines.push(`  ${n++}. Shared skills: not available for pi yet (no native router) — memory tools only.`);
+  else if (p.skills) lines.push(p.skills === 'follow'
+    ? `  ${n++}. Follow this brain's authorized shared-skills catalog using an owned native router and private installation receipts${p.wirePi ? ' (not pi: it has no native router yet)' : ''}. No editor authority, automatic execution, extra capture, or identity changes. Restart sessions after updates; native activation remains unverified. Opt out with --skills memory-only.`
     : `  ${n++}. Shared skills: memory-only. Do not enroll or install a router; stop any prior owned enrollment without deleting edited files.`);
   if (p.wireClaude) {
     lines.push(
@@ -607,6 +642,7 @@ export function buildConsentBlock(p: {
         `interpolation would resolve empty.`,
     );
   }
+  if (p.wirePi) lines.push(...piConsentLines({ name: p.name, piConfig: p.piConfig!, piHooksPath: p.piHooksPath!, hooks: !!p.piHooks, next: () => n++ }));
   if (p.instructionsPaths && p.instructionsPaths.length > 0) {
     lines.push(
       `  ${n++}. Ambient memory writeback is ENABLED (memory.auto_writeback): install the managed ` +
@@ -622,10 +658,12 @@ export function buildConsentBlock(p: {
     ...(p.wireClaude ? ['Claude Code'] : []),
     ...(p.wireCodex ? ['Codex'] : []),
     ...(p.wireOpencode ? ['opencode'] : []),
+    ...(p.wirePi ? ['pi'] : []),
   ];
   const hosts = `EVERY ${hostNames.join(' and ')} session`;
+  const piHookNote = p.wirePi && p.piHooks ? ' The pi extension runs in every pi session (context injection + transcript capture).' : '';
   const hookLine = !p.wireClaude || !p.hooks
-    ? 'No hooks are wired by this invocation.'
+    ? (piHookNote ? piHookNote.trim() : 'No hooks are wired by this invocation.')
     : p.capture
       ? 'Hooks run in every Claude Code session (context injection + transcript capture); auto-commit/push lanes stay inert outside gbrain agent workspaces.'
       : 'Hooks run in every Claude Code session (context injection only — capture is OFF); auto-commit/push lanes stay inert outside gbrain agent workspaces.';
@@ -636,12 +674,13 @@ export function buildConsentBlock(p: {
     ...(p.wireClaude ? [`\`claude mcp remove ${p.name} --scope user\``] : []),
     ...(p.wireCodex ? ['edit the codex config'] : []),
     ...(p.wireOpencode ? ['edit the opencode config'] : []),
+    ...(p.wirePi ? ['`gbrain bootstrap uninstall --harness pi`'] : []),
   ];
   lines.push(
     '',
     `Reach, plainly: ${hosts} on this machine — any repo, any`,
     'framework-spawned agent — can read AND write this brain through these tools.',
-    hookLine,
+    p.wireClaude && p.hooks ? hookLine + piHookNote : hookLine,
     `Off-ramps: ${offRamps.join(', ')}.`,
   );
   return lines.join('\n');
@@ -769,6 +808,8 @@ async function cleanupStalePriorTargets(
           lk?.release();
         }
         if (r.removed) d.log(`stale opencode entry removed from ${ocPath} (no longer planned).`);
+      } else if (pt.host === 'pi') {
+        await removeStalePiTarget(pt, { log: d.log, priorUrl: prior.url, piConfig: d.piConfig, piHooksPath: d.piHooksPath, heldDir: dirname(d.userSettingsPath) });
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -874,6 +915,46 @@ function logAmbientPostureNotes(
   }
 }
 
+/** [X5] Failed smoke: restore opencode's previous config (restore-guarded) and record the note. Never throws. */
+async function rollbackOpencode(
+  rb: { path: string; backupPath: string | null; replacedPrior: boolean; writtenText: string },
+  targets: HarnessTarget[],
+  ctx: { name: string; url: string; log: (l: string) => void; logError: (l: string) => void; failTarget: (t: HarnessTarget, err: string) => void },
+): Promise<void> {
+  try {
+    let failNote = 'rolled back to the previous opencode config after the failed smoke';
+    const rbLock = await acquireBootstrapLock(dirname(rb.path)); // [X11] parity
+    try {
+      // Restore-guard: the config-dir lock was released before the smoke,
+      // so a NEWER registration (another run's) may have replaced ours —
+      // restoring this run's snapshot over it would clobber that newer
+      // wiring. Only restore when the live file still carries the EXACT
+      // text this run wrote; either way the fresh mint is revoked below.
+      const current = existsSync(rb.path) ? readFileSync(rb.path, 'utf8') : '';
+      if (current !== rb.writtenText) {
+        failNote =
+          'smoke failed; opencode rollback SKIPPED — the config changed after this run wrote it ' +
+          '(a newer registration exists); this run\'s fresh mint is still revoked';
+        ctx.log(failNote + '.');
+      } else if (rb.backupPath && existsSync(rb.backupPath)) {
+        // Atomic restore (codex-lane parity): never a torn config mid-crash.
+        atomicWriteTextFile(rb.path, readFileSync(rb.backupPath, 'utf8'), { forceMode: 0o600 });
+        // Consumed — the unique backup carries the previous bearer and
+        // has no consumer once restored.
+        try { rmSync(rb.backupPath, { force: true }); } catch { /* best-effort */ }
+      } else if (!rb.replacedPrior) {
+        removeOpencodeMcpEntry(rb.path, ctx.name, { url: ctx.url });
+      }
+    } finally {
+      rbLock.release();
+    }
+    const ot = targets.find((t) => t.host === 'opencode' && t.kind === 'mcp');
+    if (ot) ctx.failTarget(ot, failNote);
+  } catch (e) {
+    ctx.logError(`opencode rollback failed: ${e instanceof Error ? e.message : String(e)} — re-run to converge.`);
+  }
+}
+
 export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): Promise<number> {
   const d = resolveHarnessDeps(rawDeps);
   // stdout-for-data discipline: under --json, stdout carries ONLY the final
@@ -906,14 +987,15 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // opencode mirrors codex: an explicit --harness opencode FORCES wiring (the
   // JSONC writer needs no opencode CLI and creates the config file itself).
   const wireOpencode = flags.harness === 'opencode' || (flags.harness === 'all' && d.detectOpencode());
+  const wirePi = flags.harness === 'pi' || (flags.harness === 'all' && d.detectPi());
   if (flags.harness === 'claude-code' && !wireClaude) {
     d.logError('claude CLI not found on PATH — the user-scope MCP registration needs it (it owns ~/.claude.json).');
     return 2;
   }
-  if (!wireClaude && !wireCodex && !wireOpencode) {
+  if (!wireClaude && !wireCodex && !wireOpencode && !wirePi) {
     d.logError(
-      'no harness detected on this box (claude CLI not on PATH; no codex install; no opencode install) — ' +
-        'pass --harness claude-code|codex|opencode explicitly if detection is wrong.',
+      'no harness detected on this box (claude CLI not on PATH; no codex, opencode or pi install) — ' +
+        'pass --harness claude-code|codex|opencode|pi explicitly if detection is wrong.',
     );
     return 2;
   }
@@ -980,6 +1062,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
 
   // 3. Consent (connect --install shape; never the interview/A8 ledger).
   const wireHooks = wireClaude && !flags.noHooks && !registrarMode;
+  const wirePiHooks = wirePi && !flags.noHooks && !flags.noCapture && !registrarMode;
   const priorState = readHarnessReceiptState(d.gbrainHome);
   const prior = priorState.state === 'ok' ? priorState.receipt : null;
   const skillsPolicy = flags.skills ?? prior?.skills_policy ?? (priorState.state === 'absent' ? 'follow' : 'memory-only');
@@ -993,6 +1076,8 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     wireClaude,
     wireCodex,
     wireOpencode,
+    wirePi,
+    piHooks: wirePiHooks,
     hooks: wireHooks,
     capture: !flags.noCapture,
     hookScope,
@@ -1000,10 +1085,12 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     userSettingsPath: d.userSettingsPath,
     codexConfig: d.codexConfig,
     opencodeConfig: d.opencodeConfig,
+    piConfig: d.piConfig,
+    piHooksPath: d.piHooksPath,
     ...(instructionsPaths.length > 0 ? { instructionsPaths } : {}),
   });
   d.log(consent);
-  const harnesses = [wireClaude ? 'Claude Code' : null, wireCodex ? 'Codex' : null, wireOpencode ? 'opencode' : null].filter(Boolean).join(', ');
+  const harnesses = [wireClaude ? 'Claude Code' : null, wireCodex ? 'Codex' : null, wireOpencode ? 'opencode' : null, wirePi ? 'pi' : null].filter(Boolean).join(', ');
   if (!(await askHarnessConsent({ flags, url, harnesses, skillsPolicy, wireHooks, hookScope }, d))) return CONFIRMATION_REQUIRED_EXIT_CODE;
 
   // Prior receipt: carries the previous minted token for post-wire rotation
@@ -1011,10 +1098,10 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // [C6].
   if (prior) {
     const priorProjectHooks = prior.targets.some(
-      (t) => t.kind === 'hooks' && t.scope !== 'user' && t.state !== 'failed',
+      (t) => t.host === 'claude-code' && t.kind === 'hooks' && t.scope !== 'user' && t.state !== 'failed',
     );
     const priorUserHooks = prior.targets.some(
-      (t) => t.kind === 'hooks' && t.scope === 'user' && t.state !== 'failed',
+      (t) => t.host === 'claude-code' && t.kind === 'hooks' && t.scope === 'user' && t.state !== 'failed',
     );
     if (flags.projects.length > 0 && priorUserHooks) {
       d.logError(
@@ -1200,6 +1287,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       mechanism: 'jsonc-entry',
     });
   }
+  if (wirePi) targets.push(...planPiTargets({ name: flags.name, piConfig: d.piConfig, piHooksPath: d.piHooksPath, hooks: wirePiHooks }));
   // [X4] EVERY unrevoked prior minted id is carried — on the --token lane
   // too. A failed rotation must never forget the token before last.
   const carriedPreviousIds = [...new Set([
@@ -1313,6 +1401,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
      * smoke, so a newer registration may have landed since). */
     writtenText: string;
   } | null = null;
+  let piRollback: PiRollback | null = null;
   let cfgLock: Awaited<ReturnType<typeof acquireBootstrapLock>> | null = null;
   if (wireClaude) {
     const cfgDir = dirname(d.userSettingsPath);
@@ -1445,7 +1534,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
           marker: GBRAIN_HARNESS_MARKER_VALUE,
           backupStrategy: 'timestamped',
           refuseOnForeignGbrainMarker: true,
-          identity: harnessHookIdentity(prior, prior?.targets.find((p) => p.kind === 'hooks' && p.path === t.path),
+          identity: harnessHookIdentity(prior, prior?.targets.find((p) => p.host === 'claude-code' && p.kind === 'hooks' && p.path === t.path),
             { launcher: bin, source: hookSource, seat: flags.seat }),
           ...(t.scope === 'user'
             ? { freshMode: 0o600 }
@@ -1638,6 +1727,13 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     }
   }
 
+  // 7c. pi wiring (harness-pi.ts): the inline-bearer mcp entry, then the hooks extension.
+  if (wirePi) piRollback = await wirePiTargets(targets, {
+    log: d.log, name: flags.name, url, priorUrl: prior?.url ?? null, token: tokens.get('pi')!, gbrainBin: flags.gbrainBin ?? d.gbrainBin,
+    env: { ...(hookSource !== null ? { GBRAIN_SOURCE: hookSource } : {}), ...(flags.seat ? { GBRAIN_SEAT: flags.seat } : {}) },
+    confirm, fail: failTarget, redact: (m) => redactToken(m, tokens.get('pi')!),
+  });
+
   // 8. Smoke [C3-enriched message; X10 verbs-surface honesty]. An
   // unknown-tool tool_error means initialize + auth ALREADY succeeded — a
   // serve running a narrowed --surface (e.g. verbs) is verified, not broken.
@@ -1711,42 +1807,8 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         d.logError(`codex rollback failed: ${e instanceof Error ? e.message : String(e)} — re-run to converge.`);
       }
     }
-    if (opencodeRollback) {
-      try {
-        let failNote = 'rolled back to the previous opencode config after the failed smoke';
-        const rbLock = await acquireBootstrapLock(dirname(opencodeRollback.path)); // [X11] parity
-        try {
-          // Restore-guard: the config-dir lock was released before the smoke,
-          // so a NEWER registration (another run's) may have replaced ours —
-          // restoring this run's snapshot over it would clobber that newer
-          // wiring. Only restore when the live file still carries the EXACT
-          // text this run wrote; either way the fresh mint is revoked below.
-          const current = existsSync(opencodeRollback.path)
-            ? readFileSync(opencodeRollback.path, 'utf8')
-            : '';
-          if (current !== opencodeRollback.writtenText) {
-            failNote =
-              'smoke failed; opencode rollback SKIPPED — the config changed after this run wrote it ' +
-              '(a newer registration exists); this run\'s fresh mint is still revoked';
-            d.log(failNote + '.');
-          } else if (opencodeRollback.backupPath && existsSync(opencodeRollback.backupPath)) {
-            // Atomic restore (codex-lane parity): never a torn config mid-crash.
-            atomicWriteTextFile(opencodeRollback.path, readFileSync(opencodeRollback.backupPath, 'utf8'), { forceMode: 0o600 });
-            // Consumed — the unique backup carries the previous bearer and
-            // has no consumer once restored.
-            try { rmSync(opencodeRollback.backupPath, { force: true }); } catch { /* best-effort */ }
-          } else if (!opencodeRollback.replacedPrior) {
-            removeOpencodeMcpEntry(opencodeRollback.path, flags.name, { url });
-          }
-        } finally {
-          rbLock.release();
-        }
-        const ot = targets.find((t) => t.host === 'opencode' && t.kind === 'mcp');
-        if (ot) failTarget(ot, failNote);
-      } catch (e) {
-        d.logError(`opencode rollback failed: ${e instanceof Error ? e.message : String(e)} — re-run to converge.`);
-      }
-    }
+    if (opencodeRollback) await rollbackOpencode(opencodeRollback, targets, { name: flags.name, url, log: d.log, logError: d.logError, failTarget });
+    await rollbackPiTargets(piRollback, targets, { log: d.log, logError: d.logError, name: flags.name, url, fail: failTarget });
     const mt = targets.find((t) => t.host === 'claude-code' && t.kind === 'mcp');
     if (claudeReplaced && oldClaudeReg) {
       await d.runner(['claude', 'mcp', 'remove', flags.name, '--scope', 'user']);
@@ -1824,6 +1886,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // wiring is verified it has no consumer — unlink it so re-runs never
   // accumulate token-bearing snapshots (failed runs consume it via the
   // restore above; skipped restores leave it 0600 for manual recovery).
+  if (smokeOk) discardPiBackup(piRollback); // same for pi: it can carry the previous inline bearer
   if (smokeOk && opencodeRollback?.backupPath) {
     try {
       rmSync(opencodeRollback.backupPath, { force: true });
@@ -1915,6 +1978,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   const currentSkills = new Set<NonNullable<HarnessReceipt['shared_skills']>[number]>();
   if (smokeOk && skillsPolicy === 'follow') {
     for (const host of hosts) {
+      if (host === 'pi') { d.log('shared skills (pi): not enrolled — pi has no native shared-skills router yet; memory tools are unaffected.'); continue; }
       const mcp = targets.find(t => t.host === host && t.kind === 'mcp');
       if (mcp?.state !== 'confirmed') { skillsReady = false; continue; }
       const hostToken = tokens.get(host)!;
@@ -2212,6 +2276,8 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
               : `no managed entry in ${ocPath} — counted as removed.`,
           );
         }
+      } else if (t.host === 'pi') {
+        await removePiTarget(t, { log: d.log, receiptUrl: receipt.url, piConfig: d.piConfig, piHooksPath: d.piHooksPath, heldDir: rmCfgDir });
       }
     } catch (e) {
       anyFailed = true;
@@ -2415,6 +2481,14 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
       if (token) tokenSource = 'opencode config entry';
     }
   }
+  if (!token) {
+    const piMcp = receipt.targets.find((t) => t.host === 'pi' && t.kind === 'mcp');
+    if (piMcp?.path) {
+      // [C8] url-matched: a foreign or rotated-away entry's bearer is never recovered.
+      token = parsePiEntryBearer(piMcp.path, piMcp.name ?? 'gbrain', receipt.url);
+      if (token) tokenSource = 'pi config entry';
+    }
+  }
 
   let tokenLine: string;
   let tokenVerified: boolean | 'unavailable' = 'unavailable';
@@ -2448,6 +2522,8 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
           bearer = parseCodexBlockBearer(readFileSync(target.path, 'utf8'), receipt.url);
         } else if (target.host === 'opencode' && target.path) {
           bearer = parseOpencodeEntryBearer(target.path, target.name ?? 'gbrain', receipt.url);
+        } else if (target.host === 'pi' && target.path) {
+          bearer = parsePiEntryBearer(target.path, target.name ?? 'gbrain', receipt.url);
         }
         const result = bearer ? await d.probeIdentity(receipt.url, bearer) : null;
         harnessTokenStatus.push({ host: target.host, verified: !!result && (result.ok || result.reason === 'tool_error') });

@@ -30,14 +30,27 @@ export const PI_MCP_DEFAULT_NAME = 'gbrain';
 
 export type PiMcpSpec =
   | { kind: 'stdio'; gbrainBin: string; sourceId?: string; gbrainHome?: string; surface?: McpSurface | null }
-  | { kind: 'http'; url: string; /** Whole-value pi `!command` that prints the Authorization header value. */ authCommand?: string };
+  | {
+      kind: 'http';
+      url: string;
+      /** Whole-value pi `!command` that prints the Authorization header value. */
+      authCommand?: string;
+      /**
+       * Bearer token written INLINE (`bootstrap harness`: a framework-spawned
+       * pi inherits no shell env and no Keychain prompt, the codex/opencode
+       * posture). The file is then forced to 0600. Exclusive with authCommand.
+       */
+      bearer?: string;
+    };
 
 export function buildPiMcpEntry(spec: PiMcpSpec): Record<string, unknown> {
   if (spec.kind === 'http') {
     if (!/^https?:\/\//.test(spec.url)) throw new Error(`pi MCP url must be http(s); got: ${spec.url}`);
+    if (spec.authCommand && spec.bearer) throw new Error('pi MCP entry: pass authCommand or bearer, not both');
     return {
       url: spec.url,
       ...(spec.authCommand ? { headers: { Authorization: `!${spec.authCommand}` } } : {}),
+      ...(spec.bearer ? { headers: { Authorization: `Bearer ${spec.bearer}` } } : {}),
       description: PI_MCP_DESCRIPTION,
     };
   }
@@ -107,19 +120,58 @@ export function readPiMcpStatus(opts: { path?: string; name?: string } = {}): Pi
   };
 }
 
+/**
+ * gbrain's entry as the harness lane sees it [C8]: `ours` = gbrain-managed AND
+ * pointing at `url`; `foreign` = a same-name entry that is hand-made, or
+ * gbrain-managed but wired to a different serve (another install's).
+ */
+export function piEntryKind(path: string, name: string, url: string): 'absent' | 'ours' | 'foreign' | 'unreadable' {
+  const r = readPiMcpConfig(path);
+  if (!r.ok) return 'unreadable';
+  const e = r.servers[name];
+  if (e === undefined) return 'absent';
+  return isOwnedEntry(e) && (e as Record<string, unknown>).url === url ? 'ours' : 'foreign';
+}
+
+/** The inline bearer of OUR entry at `url` (never a `!command`, never a foreign entry's). */
+export function parsePiEntryBearer(path: string, name: string, url: string): string | null {
+  const r = readPiMcpConfig(path);
+  if (!r.ok) return null;
+  const e = r.servers[name] as Record<string, unknown> | undefined;
+  if (!e || !isOwnedEntry(e) || e.url !== url) return null;
+  const h = e.headers as Record<string, unknown> | undefined;
+  const v = h && typeof h.Authorization === 'string' ? h.Authorization : '';
+  const m = /^Bearer (\S+)$/.exec(v);
+  return m ? m[1]! : null;
+}
+
 export type WritePiMcpResult =
-  | { ok: true; path: string; changed: boolean; replacedPrior: boolean; backupPath: string | null; notes: string[] }
+  | { ok: true; path: string; changed: boolean; replacedPrior: boolean; backupPath: string | null; notes: string[]; writtenText: string }
   | { ok: false; path: string; reason: 'foreign_entry' | 'unparseable' | 'symlink' | 'not_object'; notes: string[] };
 
-function backup(path: string): string {
+function backup(path: string, forceMode?: number): string {
   const b = `${path}.gbrain.bak`;
   copyFileSync(path, b);
-  chmodSync(b, statSync(path).mode & 0o777);
+  chmodSync(b, forceMode ?? statSync(path).mode & 0o777);
   return b;
 }
 
+/** A file holding an inline bearer (now, or in the version being replaced) is 0600. */
+function holdsInlineBearer(servers: Record<string, unknown>): boolean {
+  return Object.values(servers).some((e) => {
+    const h = e && typeof e === 'object' ? (e as Record<string, unknown>).headers : undefined;
+    return !!h && typeof h === 'object' && Object.values(h as Record<string, unknown>).some((v) => typeof v === 'string' && v.startsWith('Bearer '));
+  });
+}
+
 /** Install or refresh gbrain's entry; foreign same-name entries are refused. */
-export function writePiMcpEntry(opts: { spec: PiMcpSpec; path?: string; name?: string }): WritePiMcpResult {
+export function writePiMcpEntry(opts: {
+  spec: PiMcpSpec;
+  path?: string;
+  name?: string;
+  /** [C8] Harness lane: an owned entry wired to a DIFFERENT url is another install's — refuse. */
+  expectUrl?: string;
+}): WritePiMcpResult {
   const path = opts.path ?? piMcpConfigPath();
   const name = opts.name ?? PI_MCP_DEFAULT_NAME;
   const r = readPiMcpConfig(path);
@@ -131,14 +183,23 @@ export function writePiMcpEntry(opts: { spec: PiMcpSpec; path?: string; name?: s
       notes: [`${path} already has a "${name}" MCP server that gbrain did not write — kept as is. Remove it (or pass --no-mcp) to let gbrain manage the entry.`],
     };
   }
+  if (opts.expectUrl !== undefined && prior !== undefined && (prior as Record<string, unknown>).url !== opts.expectUrl) {
+    return {
+      ok: false, path, reason: 'foreign_entry',
+      notes: [`${path}: the gbrain-managed "${name}" MCP server points at ${String((prior as Record<string, unknown>).url ?? 'a stdio command')}, not ${opts.expectUrl} — another install's wiring; kept as is. Remove it first (\`gbrain bootstrap uninstall --harness pi\`), then re-run.`],
+    };
+  }
   const entry = buildPiMcpEntry(opts.spec);
   if (prior !== undefined && JSON.stringify(prior) === JSON.stringify(entry)) {
-    return { ok: true, path, changed: false, replacedPrior: true, backupPath: null, notes: [] };
+    return { ok: true, path, changed: false, replacedPrior: true, backupPath: null, notes: [], writtenText: readFileSync(path, 'utf8') };
   }
-  const next = { ...r.config, mcpServers: { ...r.servers, [name]: entry } };
-  const backupPath = r.exists ? backup(path) : null;
-  atomicWriteTextFile(path, `${JSON.stringify(next, null, 2)}\n`, { freshMode: 0o600 });
-  return { ok: true, path, changed: true, replacedPrior: prior !== undefined, backupPath, notes: [] };
+  const servers = { ...r.servers, [name]: entry };
+  const next = { ...r.config, mcpServers: servers };
+  const secret = holdsInlineBearer(servers) || holdsInlineBearer(r.servers);
+  const backupPath = r.exists ? backup(path, secret ? 0o600 : undefined) : null;
+  const writtenText = `${JSON.stringify(next, null, 2)}\n`;
+  atomicWriteTextFile(path, writtenText, secret ? { forceMode: 0o600 } : { freshMode: 0o600 });
+  return { ok: true, path, changed: true, replacedPrior: prior !== undefined, backupPath, notes: [], writtenText };
 }
 
 export interface RemovePiMcpResult {
@@ -148,7 +209,7 @@ export interface RemovePiMcpResult {
 }
 
 /** Remove gbrain's entry only when it is ours; everything else survives. */
-export function removePiMcpEntry(opts: { path?: string; name?: string } = {}): RemovePiMcpResult {
+export function removePiMcpEntry(opts: { path?: string; name?: string; /** [C8] remove only when it points here. */ url?: string } = {}): RemovePiMcpResult {
   const path = opts.path ?? piMcpConfigPath();
   const name = opts.name ?? PI_MCP_DEFAULT_NAME;
   const r = readPiMcpConfig(path);
@@ -156,9 +217,13 @@ export function removePiMcpEntry(opts: { path?: string; name?: string } = {}): R
   const prior = r.servers[name];
   if (prior === undefined) return { path, removed: false, notes: [] };
   if (!isOwnedEntry(prior)) return { path, removed: false, notes: [`${path}: the "${name}" MCP server is not gbrain-managed — left untouched.`] };
+  if (opts.url !== undefined && (prior as Record<string, unknown>).url !== opts.url) {
+    return { path, removed: false, notes: [`${path}: the gbrain-managed "${name}" MCP server points at another serve — left untouched.`] };
+  }
   const servers = { ...r.servers };
   delete servers[name];
-  backup(path);
-  atomicWriteTextFile(path, `${JSON.stringify({ ...r.config, mcpServers: servers }, null, 2)}\n`);
+  const secret = holdsInlineBearer(r.servers);
+  backup(path, secret ? 0o600 : undefined);
+  atomicWriteTextFile(path, `${JSON.stringify({ ...r.config, mcpServers: servers }, null, 2)}\n`, secret ? { forceMode: 0o600 } : {});
   return { path, removed: true, notes: [] };
 }

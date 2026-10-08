@@ -435,14 +435,10 @@ function stdioRegistration(h: ReadinessHarness, bin: string, surface: McpSurface
  * bearer supplied by a command pi runs (never written into the file). */
 function piHttpWiring(): Action {
   return {
-    argv: ['gbrain', 'bootstrap', 'hooks', '--harness', 'pi', '--url', '<MCP_URL>', '--mcp-auth-command', '<AUTH_COMMAND>'],
-    inputs: [
-      { name: 'MCP_URL', how: 'The running `gbrain serve --http` endpoint, e.g. http://127.0.0.1:3131/mcp.' },
-      { name: 'AUTH_COMMAND', how: 'Ask the user for a shell command that prints `Bearer <token>` for that serve (e.g. a Keychain lookup); pi runs it at connect time.' },
-    ],
+    argv: ['gbrain', 'bootstrap', 'harness', '--harness', 'pi', '--yes'],
     consent: ['persistent_install', 'credentials'], actor: 'agent', requires_exclusive: false,
-    why: 'Wires pi to the shared `gbrain serve --http` on this machine: writes an HTTP MCP entry to ~/.pi/agent/mcp.json whose Authorization header is produced by a command pi runs, and installs the gbrain-managed pi hooks extension, so several sessions share one brain without lock contention.',
-    user_message: 'To let pi share this brain with your other sessions, I\'d connect it to the local gbrain HTTP server and install gbrain\'s pi hooks. I need a command that prints the bearer token (for example a Keychain lookup). OK?',
+    why: 'Wires pi to the shared `gbrain serve --http` on this machine (it must be running): mints a bearer token (scopes read+write), writes an HTTP MCP entry with that token inline to ~/.pi/agent/mcp.json (0600), and installs the gbrain-managed pi hooks extension, so several sessions share one brain without lock contention.',
+    user_message: 'To let pi share this brain with your other sessions, I\'d connect it to the local gbrain HTTP server. That stores an access token in pi\'s MCP config and installs gbrain\'s pi hooks extension. OK?',
     verify: VERIFY('harness_wiring'), docs: 'docs/mcp/PI.md',
   };
 }
@@ -452,7 +448,7 @@ function sharedHttpWiring(selector: ReadinessHarness | 'all'): Action {
   return {
     argv: ['gbrain', 'bootstrap', 'harness', '--harness', selector, '--yes'],
     consent: ['persistent_install', 'credentials'], actor: 'agent', requires_exclusive: false,
-    why: `Wires ${names} to the shared \`gbrain serve --http\` on this machine (it must be running): mints one bearer token per harness (scopes read+write), writes an HTTP MCP entry with that token to the harness config (Claude Code: ~/.claude.json plus a permissions.allow 'mcp__gbrain' pre-approval and lifecycle hooks in ~/.claude/settings.json; Codex: ~/.codex/config.toml; opencode: its user config), so several sessions share one brain without lock contention.`,
+    why: `Wires ${names} to the shared \`gbrain serve --http\` on this machine (it must be running): mints one bearer token per harness (scopes read+write), writes an HTTP MCP entry with that token to the harness config (Claude Code: ~/.claude.json plus a permissions.allow 'mcp__gbrain' pre-approval and lifecycle hooks in ~/.claude/settings.json; Codex: ~/.codex/config.toml; opencode: its user config; pi: ~/.pi/agent/mcp.json plus its hooks extension), so several sessions share one brain without lock contention.`,
     user_message: `To let several agent sessions share this brain, I'd connect ${names} to the local gbrain HTTP server. That stores an access token in the harness config, pre-approves gbrain's tools and installs its session hooks. OK?`,
     verify: VERIFY('harness_wiring'), docs: 'docs/guides/remote-mcp.md',
   };

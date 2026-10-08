@@ -179,15 +179,16 @@ describe('harness_wiring by state', () => {
       .toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks']);
   });
 
-  test('pi: stdio wiring is `bootstrap hooks --harness pi` (extension + mcp.json); shared HTTP wiring asks for the URL and an auth command', () => {
+  test('pi: stdio wiring is `bootstrap hooks --harness pi` (extension + mcp.json); shared HTTP wiring is `bootstrap harness --harness pi`', () => {
     const stdio = harnessWiringEntry({ transport: 'cli', harnesses: ['pi'], lockOwner: null, gbrainBin: BIN });
     expect(stdio.fix?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'pi']);
     expect(stdio.fix?.why).toContain('~/.pi/agent/mcp.json');
     expect(stdio.fix?.why).toContain('gbrain-hooks.ts');
     const http = harnessWiringEntry({ transport: 'cli', harnesses: ['pi'], lockOwner: owner('http'), gbrainBin: BIN });
     expect(http.reason).toBe('http_serve_running');
-    expect(http.fix?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'pi', '--url', '<MCP_URL>', '--mcp-auth-command', '<AUTH_COMMAND>']);
-    expect(http.fix?.inputs?.map((i) => i.name)).toEqual(['MCP_URL', 'AUTH_COMMAND']);
+    // The token-minting lane: no user inputs, the same consent classes as the other harnesses.
+    expect(http.fix?.argv).toEqual(['gbrain', 'bootstrap', 'harness', '--harness', 'pi', '--yes']);
+    expect(http.fix?.inputs).toBeUndefined();
     expect(http.fix?.consent).toEqual(['persistent_install', 'credentials']);
   });
 

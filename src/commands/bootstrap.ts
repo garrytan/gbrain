@@ -147,15 +147,16 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
   verify [--json]                 The whole install contract (round-trip, graph floor,
                                   magic moment, scans, hooks smoke). Exit 0 or not done.
   attach [--harness H]            Machine two: adopt a cloned agent workspace.
-  harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]
+  harness [--harness claude-code|codex|opencode|pi|all] [--url U | --port N] [--source ID]
           [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...
           [--no-hooks] [--no-capture] [--force] [--status] [--remove [--dry-run]] [--refresh-skills] [--yes] [--json]
           [--seat <label> | --no-seat]
-                                  Wire framework-spawned Claude Code / Codex / opencode
+                                  Wire framework-spawned Claude Code / Codex / opencode / pi
                                   sessions to a RUNNING \`gbrain serve --http\` on this box
                                   (#4043): scoped bearer token, user-scope MCP + headless
                                   pre-approval, lifecycle hooks (user scope, or per --project
-                                  dir), codex config block, opencode config entry. No
+                                  dir), codex config block, opencode config entry, pi
+                                  mcp.json entry + hooks extension. No
                                   agent.json needed. Idempotent; --remove tears it down (--dry-run previews).
                                   --source ID: the source the hooks + token bind to
                                   (default: sources.default, else the sole populated
@@ -227,11 +228,11 @@ const SUBCOMMAND_HELP: Record<string, string> = {
   // entry the dispatch's `Object.hasOwn(SUBCOMMAND_HELP, sub)` guard was
   // false, so `--help` after the subcommand name ran the harness apply path.
   harness:
-    'gbrain bootstrap harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]\n' +
+    'gbrain bootstrap harness [--harness claude-code|codex|opencode|pi|all] [--url U | --port N] [--source ID]\n' +
     '                       [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...\n' +
     '                       [--no-hooks] [--no-capture] [--force] [--status] [--remove [--dry-run]] [--yes] [--json]\n' +
     '                       [--seat <label> | --no-seat]\n' +
-    '  Wire framework-spawned Claude Code / Codex / opencode sessions to a RUNNING `gbrain serve --http`\n' +
+    '  Wire framework-spawned Claude Code / Codex / opencode / pi sessions to a RUNNING `gbrain serve --http`\n' +
     '  on this box (#4043). Idempotent; --remove tears it down. (--local is an accepted no-op alias.)\n' +
     '  See `gbrain bootstrap --help` for the per-flag description.',
 };

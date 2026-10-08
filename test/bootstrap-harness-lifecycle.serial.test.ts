@@ -83,6 +83,7 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
     claude: () => true,
     codex: () => true,
     opencode: () => false,
+    pi: () => false,
   } as const;
 
   async function capture<T>(fn: () => Promise<T>): Promise<{ result: T; out: string; err: string }> {
