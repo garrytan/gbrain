@@ -309,6 +309,8 @@ describeE2E('serve-http multi-agent E2E (cathedral-6)', () => {
       '--harness', 'claude-code',
       '--preset', 'coding-agent',
       '--federated-read', 'proj-widget',
+      // S0/D4: presets register `full`; case 7 needs A narrowed, so pin starter explicitly.
+      '--surface', 'starter',
       '--url', `http://localhost:${PORT}`,
       '--json', '--show-token',
     ]);
@@ -584,7 +586,7 @@ describeE2E('serve-http multi-agent E2E (cathedral-6)', () => {
       ON CONFLICT (page_id, row_num) DO NOTHING
     `);
 
-    // A runs on the 'starter' surface (coding-agent preset): takes_list is
+    // A runs on the 'starter' surface (pinned at registration in case 1): takes_list is
     // hidden there, and a hidden op is indistinguishable from a nonexistent
     // one — denied. Either way, the foreign claim must never appear.
     const deniedA = await callTool(tokenA!, 'takes_list', { page_slug: 'notes/nova-secret' });

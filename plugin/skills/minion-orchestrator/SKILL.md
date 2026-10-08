@@ -553,19 +553,3 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - Get structured progress — `get_job_progress` (MCP)
 - Queue stats — `get_job_stats` (MCP; admin scope over HTTP, same as the other
   jobs ops here — includes the wedged-queue silent-halt signal) or `gbrain jobs stats` (CLI)
-
-## Tools outside your MCP surface
-
-This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
-does not have it, call request_tools {"surface":"full"} to add it to this session, or run its gbrain CLI equivalent:
-
-- `get_job` → `gbrain jobs get`
-- `get_job_progress` → `gbrain call get_job_progress <params_json>`
-- `list_jobs` → `gbrain jobs list`
-- `pause_job` → `gbrain call pause_job <params_json>`
-- `replay_job` → `gbrain call replay_job <params_json>`
-- `resume_job` → `gbrain call resume_job <params_json>`
-- `send_job_message` → `gbrain call send_job_message <params_json>`
-- `submit_job` → `gbrain jobs submit`
-
-To widen every new session, set this machine's plugin surface with GBRAIN_SURFACE=full.

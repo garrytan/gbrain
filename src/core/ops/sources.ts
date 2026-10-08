@@ -11,7 +11,7 @@ import { authTransport, opError } from './contract.ts';
 import { hostFix, hostOnlyError, paramUse } from './op-fix.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { assertSourceInCallerScope, assertSourceInCallerWriteScope, sourceScopeOpts } from './context.ts';
-import { resolveAuthCapabilities } from '../harness/capabilities.ts';
+import { resolveAuthCapabilities, resolveGrantDiagnosis } from '../harness/capabilities.ts';
 
 // --- v0.28: whoami + sources management ---
 
@@ -81,7 +81,7 @@ const whoami: Operation = {
         transport: 'oauth',
         client_id: ctx.auth.clientId,
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
-        ...await resolveAuthCapabilities(ctx.auth, ctx.engine, ctx.config),
+        ...await resolveAuthCapabilities(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),
       };
     }
     return {
@@ -89,6 +89,7 @@ const whoami: Operation = {
       token_name: ctx.auth.clientName ?? ctx.auth.clientId,
       scopes: ctx.auth.scopes,
       expires_at: null,
+      grant_diagnosis: await resolveGrantDiagnosis(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),
       readiness: readiness('http'),
     };
   },

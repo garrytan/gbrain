@@ -24,6 +24,7 @@ import type { SyncResult } from '../../commands/sync.ts';
 import { execFileBounded } from '../brain-repo-durability.ts';
 import { loadConfig } from '../config.ts';
 import { catalogueError, type CatalogueName } from '../error-catalogue.ts';
+import { classifyGitCheckout } from '../git-checkout.ts';
 import type { Action } from '../agent-output.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -203,16 +204,27 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
   const members = (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id',
     [binding.worktree_id])).map(row => row.source_id);
   await assertNoUnfinishedSync(engine, members);
-  const branch = (await git(['-C', root, 'symbolic-ref', '--quiet', '--short', 'HEAD'])).stdout.trim();
+  if (classifyGitCheckout(root) === 'not_git') throw refusal('refresh_no_upstream',
+    `The checkout ${root} is not a Git checkout, so there is no upstream to fast-forward to; gbrain never initializes Git on its own.`,
+    'Nothing to refresh: only a Git checkout whose branch tracks an upstream can be fast-forwarded, and turning this directory into one is the user\'s call.');
+  const read = async (args: string[], ...expected: number[]) => {
+    const out = await git(['-C', root, ...args]);
+    if (out.code === 0 || expected.includes(out.code)) return out;
+    throw opError('git_unavailable', `git ${args.join(' ')} ${out.timedOut ? 'did not finish within its bound or could not start'
+      : `failed (${out.stderr.trim().split('\n')[0] || `exit ${out.code}`})`}, so the checkout's branch, upstream and remote are unknown; nothing changed.`,
+      `Check that git works in the checkout (git -C ${q(root)} status), then retry gbrain sources refresh ${sourceId}.`,
+      { fix: readFix('Git prints why it cannot read this checkout; read-only.', { argv: ['git', '-C', root, 'status'] }) });
+  };
+  const branch = (await read(['symbolic-ref', '--quiet', '--short', 'HEAD'], 1)).stdout.trim();
   const upstream = branch ? await git(['-C', root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']) : null;
   if (!branch || !upstream || upstream.code !== 0) {
-    const remote = (await git(['-C', root, 'remote'])).stdout.split('\n').map(v => v.trim()).filter(Boolean)[0] ?? 'origin';
+    const remote = (await read(['remote'])).stdout.split('\n').map(v => v.trim()).filter(Boolean)[0] ?? 'origin';
     throw refusal('refresh_no_upstream', `The checkout ${branch ? `branch ${branch}` : '(detached HEAD)'} has no upstream branch, so there is nothing to fast-forward to.`,
       branch ? `git -C ${q(root)} branch --set-upstream-to ${remote}/${branch}` : `git -C ${q(root)} switch <branch>, then git -C ${q(root)} branch --set-upstream-to ${remote}/<branch>`);
   }
   const upstreamRef = upstream.stdout.trim();
-  const remote = (await git(['-C', root, 'config', '--get', `branch.${branch}.remote`])).stdout.trim();
-  const merge = (await git(['-C', root, 'config', '--get', `branch.${branch}.merge`])).stdout.trim();
+  const remote = (await read(['config', '--get', `branch.${branch}.remote`], 1)).stdout.trim();
+  const merge = (await read(['config', '--get', `branch.${branch}.merge`], 1)).stdout.trim();
   if (remote && remote !== '.') {
     const fetched = await git(['-C', root, 'fetch', '--no-tags', '--quiet', remote, merge || branch], fetchTimeoutMs);
     if (fetched.code !== 0) throw refusal('fetch_failed',

@@ -62,7 +62,7 @@ export async function releasePreActivationClaims(engine: BrainEngine, opts: { ex
       const binding = await getWorktreeBinding(engine, claim.source_id, hostId);
       if (!binding || binding.owner_host_id !== hostId || !binding.local_path || locked.has(binding.worktree_id)) continue;
       locked.add(binding.worktree_id);
-      const lock = await acquireWorktree(binding);
+      const lock = await acquireWorktree(binding, 0, undefined, undefined, { yieldLanes: true });
       if (!lock) throw new OperationError('writer_lock_unavailable', `A local process holds the worktree lock of claimed source '${claim.source_id}'.`,
         'Stop the gbrain process on this host that holds it (gbrain serve or autopilot), then rerun deactivate.');
       locks.push(lock);

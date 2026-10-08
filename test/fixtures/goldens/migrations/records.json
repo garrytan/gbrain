@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 215,
+    "count": 217,
     "gaps": [
       17,
       18,
@@ -36,7 +36,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "59d9ccfea1c53384d8607874a51209a9c2dfd51b2b85a2cb6269fa4120faf1f3"
     },
-    "latest": 220,
+    "latest": 222,
     "records": [
       {
         "handler": {
@@ -3258,6 +3258,32 @@
       {
         "handler": "absent",
         "idempotent": true,
+        "name": "persistence_request_preparation_attempts",
+        "sql": {
+          "length": 148,
+          "sha256": "c33c596845b68c9a58cde204e44ae082e6d664bc7fe31f9a2a6f21b50231c190"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 220
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "chunk_embedding_pending_since",
+        "sql": {
+          "length": 897,
+          "sha256": "ba56b68f73e85332abfab79b4d36b2bd174ca57886d9191e05a21d14c3a38144"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 221
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
         "name": "persistence_client_request_id",
         "sql": {
           "length": 88,
@@ -3266,7 +3292,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 220
+        "version": 222
       }
     ],
     "versions": [
@@ -3484,7 +3510,9 @@
       217,
       218,
       219,
-      220
+      220,
+      221,
+      222
     ]
   },
   "normalizer": "migrations-record-v1"

@@ -33,7 +33,9 @@ export interface HeldPage { record: GitHoldRecord; revision: string | null; fenc
  * Held files of the sources in a read scope: new files with no page (`missing`) and pages whose newer file is held (`stale`);
  * `fences` (present only when some are) counts the #6188 `invalid_fence` holds among them, which route to `gbrain repair fences` instead of frontmatter repair.
  */
-export interface HeldCoverage { source_id: string; missing: number; stale: number; fences?: number; concurrent?: number }
+export interface HeldCoverage { source_id: string; missing: number; stale: number; fences?: number; concurrent?: number;
+  /** #6278 `preparation_stalled` holds: the writer stalled, not the file; they route to writer status and a re-screen. */
+  stalled?: number }
 
 /** `get_page.file_held`. */
 export interface FileHeld {
@@ -90,9 +92,10 @@ export function readHeldCoverage(engine: Exec, scope: { sourceId?: string; sourc
   const ids = scope.sourceIds ?? (scope.sourceId !== undefined && scope.sourceId !== ALL_SOURCES ? [scope.sourceId] : null);
   if (ids && !ids.length) return Promise.resolve([]);
   return cached(request, `coverage:${ids ? [...ids].sort().join(',') : '*'}`, async () => {
-    const rows = await engine.executeRaw<{ source_id: string; count: number | string; stale: number | string; fences: number | string; concurrent: number | string }>(`SELECT s.id AS source_id,
+    const rows = await engine.executeRaw<{ source_id: string; count: number | string; stale: number | string; fences: number | string; concurrent: number | string; stalled: number | string }>(`SELECT s.id AS source_id,
         COALESCE((h.completed_keys->0->>'count')::int,0) AS count, COALESCE((h.completed_keys->0->>'stale')::int,0) AS stale,
-        COALESCE((h.completed_keys->0->>'fences')::int,0) AS fences, COALESCE((h.completed_keys->0->>'concurrent')::int,0) AS concurrent
+        COALESCE((h.completed_keys->0->>'fences')::int,0) AS fences, COALESCE((h.completed_keys->0->>'concurrent')::int,0) AS concurrent,
+        COALESCE((h.completed_keys->0->>'stalled')::int,0) AS stalled
       FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
       WHERE h.op=$1 AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))
         AND COALESCE((h.completed_keys->0->>'count')::int,0)>0
@@ -100,15 +103,16 @@ export function readHeldCoverage(engine: Exec, scope: { sourceId?: string; sourc
     return rows.map(row => {
       const count = Number(row.count), stale = Math.min(Number(row.stale), count), fences = Math.min(Number(row.fences), count);
       const concurrent = Math.min(Number(row.concurrent), count - fences);
-      return { source_id: row.source_id, missing: count - stale, stale, ...(fences ? { fences } : {}), ...(concurrent ? { concurrent } : {}) };
+      const stalled = Math.min(Number(row.stalled), count - fences - concurrent);
+      return { source_id: row.source_id, missing: count - stale, stale, ...(fences ? { fences } : {}), ...(concurrent ? { concurrent } : {}), ...(stalled ? { stalled } : {}) };
     });
   });
 }
 
 /** D6: which repair a held source needs, from its counts. */
 export function coverageRoute(source: HeldCoverage): HoldRepairRoute {
-  const fences = source.fences ?? 0, concurrent = source.concurrent ?? 0;
-  return { fences, others: Math.max(0, source.missing + source.stale - fences - concurrent), ...(concurrent ? { concurrent } : {}) };
+  const fences = source.fences ?? 0, concurrent = source.concurrent ?? 0, stalled = source.stalled ?? 0;
+  return { fences, others: Math.max(0, source.missing + source.stale - fences - concurrent - stalled), ...(concurrent ? { concurrent } : {}), ...(stalled ? { stalled } : {}) };
 }
 
 /**
@@ -123,12 +127,14 @@ export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; rout
   const frontmatter = sources.filter(source => !source.route || source.route.others > 0).map(source => `'gbrain repair frontmatter --source ${source.source_id}'`);
   const fences = sources.filter(source => source.route && source.route.fences > 0).map(source => `'${fencePreviewArgv(source.source_id).join(' ')}'`);
   const concurrent = sources.filter(source => source.route?.concurrent).map(source => source.source_id);
+  const stalled = sources.filter(source => source.route?.stalled).map(source => source.source_id);
   const first = sources[0]!;
   const parts = [
     ...(frontmatter.length ? [`Please run ${frontmatter.join(', ')} on the brain host to preview the fixes, then apply them.`] : []),
     ...(fences.length ? [`Some held files have a facts or takes table gbrain could not import. The brain host's maintenance run repairs most of these by itself when it is running; `
       + `to see each one's state and repair the rest now, run ${fences.join(', ')} on the brain host (a read-only preview that prints the apply command).`] : []),
     ...(concurrent.length ? [`Some notes changed in their files while an agent saved a different version to the brain, so both were kept: on the brain host run ${concurrent.map(id => `'gbrain sources status ${id}'`).join(', ')} and reconcile each named note with 'gbrain sources reconcile <source> <slug> --preview'.`] : []),
+    ...(stalled.length ? [`Some files are held because the brain's write owner could not finish preparing them (the files themselves are fine): on the brain host run ${stalled.map(id => `'gbrain sources writer status --source ${id} --json'`).join(', ')} to see what the owner was stuck on, fix that or upgrade gbrain, then 'gbrain sources retry-held <source>' and the same sync.`] : []),
   ];
   return { argv: holdRepairSteps(first.source_id, first.route ?? { fences: 0, others: 1 }).argv, consent: [], actor: 'host_admin', requires_exclusive: false, why,
     user_message: `Some files in your brain could not be imported, so answers from it can miss or show outdated notes. ${parts.join(' ')}` };
@@ -136,7 +142,8 @@ export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; rout
 
 /** The route of one hold record. */
 export function recordRoute(record: Pick<GitHoldRecord, 'code'>): HoldRepairRoute {
-  return record.code === 'invalid_fence' ? { fences: 1, others: 0 } : record.code === 'concurrent_write' ? { fences: 0, others: 0, concurrent: 1 } : { fences: 0, others: 1 };
+  return record.code === 'invalid_fence' ? { fences: 1, others: 0 } : record.code === 'concurrent_write' ? { fences: 0, others: 0, concurrent: 1 }
+    : record.code === 'preparation_stalled' ? { fences: 0, others: 0, stalled: 1 } : { fences: 0, others: 1 };
 }
 
 /**
@@ -148,8 +155,9 @@ export function recordRoute(record: Pick<GitHoldRecord, 'code'>): HoldRepairRout
 export function fileHeldField(held: HeldPage, remote: boolean): FileHeld {
   const { record } = held;
   const fence = record.code === 'invalid_fence';
+  const stalled = record.code === 'preparation_stalled';
   const why = `The canonical file of this page is held (${record.code}${record.meta.reason ? `, ${record.meta.reason}` : ''}): sync cannot import its newer version, so this page shows its last good revision `
-    + `and is read-only for put_page until ${fence ? 'the file is repaired' : 'the brain host operator repairs the file'}.`;
+    + `and is read-only for put_page until ${fence ? 'the file is repaired' : stalled ? 'the brain host operator fixes the write owner and re-screens the file' : 'the brain host operator repairs the file'}.`;
   const fix = !remote ? gitHoldFix(record, held.fenceAuto)
     : fence ? fenceHoldRelay(record, held.fenceAuto, why) : hostOperatorFix([{ source_id: record.source_id, route: recordRoute(record) }], why);
   const location = fence ? fenceHoldLocation(record.meta, held.fenceAuto, remote) : undefined;

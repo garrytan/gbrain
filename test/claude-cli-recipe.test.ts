@@ -159,6 +159,8 @@ describe('claude-cli LanguageModel — text-only round trip', () => {
       } as LanguageModelV2CallOptions);
 
       expect(result.usage.cachedInputTokens).toBe(9001);
+      // AI SDK convention: the input total contains the cache read (12 uncached + 9001 read).
+      expect(result.usage.inputTokens).toBe(12 + 9001);
     });
   });
 

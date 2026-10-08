@@ -123,7 +123,7 @@ test('permission edits report unknown after lost commit acknowledgement and pres
       try {
         const { port } = server.address() as { port: number };
         const post = (body: Record<string, unknown>) => fetch(`http://127.0.0.1:${port}/admin/api/rescope-client`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, ...body }) });
-        const change = { surface: 'full', expectedRevision: created.grant.revision };
+        const change = { surface: 'starter', expectedRevision: created.grant.revision };
         const preview = await post({ ...change, dryRun: true });
         expect(preview.status).toBe(503);
         const previewReceipt = await preview.json() as any;
@@ -137,12 +137,12 @@ test('permission edits report unknown after lost commit acknowledgement and pres
         expect(receipt.next_action).toContain('reload its current grant');
         expect(JSON.stringify(receipt)).not.toContain('private_operational_detail');
         const current = await readClientGrant(engine, clientId);
-        expect(current.surface).toBe('full');
+        expect(current.surface).toBe('starter');
         expect(current.revision).toBe(created.grant.revision + 1);
         const stale = await post({ ...change, surface: 'verbs', dryRun: true });
         expect(stale.status).toBe(409);
         expect(await stale.json()).toMatchObject({ code: 'grant_conflict', stage: 'rescope', outcome: 'failed' });
-        expect((await readClientGrant(engine, clientId)).surface).toBe('full');
+        expect((await readClientGrant(engine, clientId)).surface).toBe('starter');
         const legacy = await post({ federatedRead: [] });
         expect(legacy.status).toBe(400);
         expect(await legacy.json()).toMatchObject({ code: 'invalid_grant', stage: 'rescope', outcome: 'failed' });

@@ -21,7 +21,7 @@
  *
  * Starter-surface gap snapshot: each bundled skill's frontmatter `tools:`
  * list is compared against the REGISTRATION_SURFACE op set (the plugin lanes
- * serve `--surface starter`, the surface every stdio registration gbrain
+ * serve `--surface full` today, the surface every stdio registration gbrain
  * writes pins; the root plugin manifests must pin the same value). Harness tools (shell/exec/read/write/edit/
  * web_search/web_fetch), literal `gbrain` (CLI usage marker), and unknown
  * non-op names are not MCP ops; `mcp:`-prefixed names count with the prefix
@@ -298,16 +298,20 @@ addition/exclusion).
 
 ## MCP surface note (read once)
 
-The plugin's MCP server runs \`gbrain serve --surface ${REGISTRATION_SURFACE}\` — the
-${SURFACE_OPS.size}-op daily-driver surface (the seven memory verbs + daily
-brain ops + capture), the same surface every stdio registration gbrain writes
-pins. ${gapSkills}
-bundled skills reference gbrain operations beyond that surface; every one of
+The plugin's MCP server runs \`gbrain serve --surface ${REGISTRATION_SURFACE}\` — ${SURFACE_OPS.size}
+operations, the same surface every stdio registration gbrain writes pins.
+${gapSkills === 0
+    ? `Every gbrain operation the bundled skills name is on it. A harness that caps
+its tool count can narrow this machine's plugin surface with
+\`GBRAIN_SURFACE=starter\` (or \`verbs\`); the server honors it and new sessions
+pick it up. Skills keep their first-class \`gbrain\` CLI paths for anything a
+narrowed list leaves out.`
+    : `${gapSkills} bundled skills reference gbrain operations beyond that surface; every one of
 them has a first-class \`gbrain\` CLI path, which is the primary way skills
 drive gbrain. When a skill step names an operation your MCP tool list doesn't
 carry, call \`request_tools {"surface":"full"}\` to add it to this session, run
 the equivalent \`gbrain\` CLI command, or widen this machine's plugin surface
-with \`GBRAIN_SURFACE=full\` (the server honors it; new sessions pick it up).
+with \`GBRAIN_SURFACE=full\` (the server honors it; new sessions pick it up).`}
 
 ## Requirements
 

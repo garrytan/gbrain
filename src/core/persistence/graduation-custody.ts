@@ -361,7 +361,7 @@ function cutoverSourceRefusal(runId: string, sourceDataDir: string | null): Oper
  * (the verify-step replay probe sets it).
  */
 export async function assertGraduationAdmission(tx: BrainEngine): Promise<void> {
-  if (!await graduationTablePresent(tx)) return;
+  if (!await graduationTablePresent(tx, { cached: true })) return;
   const [row] = await tx.executeRaw<{ role: string; run_id: string; state: string; source_data_dir: string | null; run: string | null }>(
     `SELECT role, run_id::text AS run_id, state, source_data_dir, NULLIF(current_setting('${GRADUATION_RUN_SETTING}', true), '') AS run
      FROM persistence_graduation WHERE singleton = 1`);

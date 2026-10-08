@@ -115,6 +115,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - `insufficient_scope` / `invalid_token` on an MCP call: this is a grant problem only the owner can change. Do not try successively broader OAuth scopes; tell the user which scope is missing.
 - A failed transport after a mutation was sent means the outcome is unknown: re-read the client list before retrying, never re-send blind.
 - A list call fails: a failed list is not an empty list; report the error.
+- A tool the grant should reach is missing (`unknown_tool`, or a write such as `put_pages` absent): read `grant_diagnosis` from `whoami` or `gbrain://capabilities`. It names the blocker (scope, operation snapshot, client pin or server ceiling) and counts the operations it hides without naming them. Relay its `fix` (`next: tell_user_to_run`) to the brain owner; on the host, `gbrain doctor` check `grant_new_ops_available` shows the exact commands. New memory-profile grants are on the full surface; older ones keep their stored surface until the owner changes it. An "original intent unknown" grant may be restricted on purpose: never widen it unasked, and offer `--operations all` (no snapshot, including operations later upgrades add) only as the user's explicit choice.
 
 ## Anti-Patterns
 

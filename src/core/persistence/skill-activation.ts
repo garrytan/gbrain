@@ -41,7 +41,7 @@ export async function activateSharedSkillPersistence(engine: BrainEngine,
   const locks: NativeLockHandle[] = [];
   try {
     for (const binding of [...new Map(initial.map(row => [row.worktree_id, row])).values()]) {
-      const lock = await acquireWorktree(binding);
+      const lock = await acquireWorktree(binding, 0, undefined, undefined, { yieldLanes: true });
       if (!lock) throw quiescence();
       locks.push(lock);
     }

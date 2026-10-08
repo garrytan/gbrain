@@ -124,6 +124,13 @@ interface BaseOptions<T extends Record<string, postgres.PostgresType>> {
    * reused because its ReadyForQuery status was not idle ('T' or 'E').
    */
   onpoisoned: (status: string) => void;
+  /**
+   * GBrain: share the parameter types of a described statement across this pool's
+   * connections, so a connection running it for the first time skips the describe
+   * round trip and keeps pipelining. Only built-in types are shared.
+   * @default true
+   */
+  shared_types: boolean;
   backoff: boolean | ((attemptNum: number) => number);
   max_lifetime: number | null;
   keep_alive: number | null;

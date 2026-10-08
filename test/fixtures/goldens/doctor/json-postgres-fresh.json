@@ -379,7 +379,7 @@
             "next": "report",
             "requires_exclusive": false,
             "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "Register `<absolute path to gbrain> serve --surface starter` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "why": "Register `<absolute path to gbrain> serve --surface full` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
           "message": "No agent harness was detected. Wire one when the user picks an agent app.",
           "name": "harness_wiring",
@@ -820,10 +820,27 @@
             "count": 0,
             "docs": "docs/guides/troubleshooting.md#persistence-write-stall",
             "max_claim_ms": "<volatile>",
+            "preparation_policy": {
+              "maintenance_preparation_ms": "<volatile>",
+              "max_preparation_attempts": 2,
+              "preparation_ceiling_ms": "<volatile>",
+              "sync_preparation_ms": "<volatile>"
+            },
             "stalls": []
           },
           "message": "No write request has held its claim longer than persistence.max_claim_ms (600000 ms).",
           "name": "persistence_write_stall",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "applied": "5min",
+            "configured": "5min",
+            "docs": "docs/guides/troubleshooting.md#session-timeouts-not-applied"
+          },
+          "message": "The session statement_timeout (5min) reaches the server.",
+          "name": "persistence_session_timeouts",
           "status": "ok"
         },
         {
@@ -1288,6 +1305,17 @@
           },
           "message": "Every active legacy token has explicit scopes.",
           "name": "legacy_token_null_scope",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#grants-that-cannot-reach-new-operations",
+            "grants": [],
+            "server_surface": "full"
+          },
+          "message": "Every active client and token can call the operations its scopes allow.",
+          "name": "grant_new_ops_available",
           "status": "ok"
         },
         {
@@ -1833,6 +1861,11 @@
               }
             ],
             "uncommitted_repairs": 0,
+            "unrenderable_legacy_facts": {
+              "complete": true,
+              "pages": [],
+              "total": 0
+            },
             "warn_at_normalized_7d": 20
           },
           "message": "No malformed facts or takes fence is held, stored or waiting in a checkout (1 source(s) scanned).",

@@ -1173,9 +1173,11 @@ export interface BrainEngine {
    * pre-registry brains. `embedding_image` routing is unaffected.
    * `sealChunkerVersion` (#5984): the caller deleted every chunk of the page
    * earlier in this transaction; the stale-row work is skipped and the page is
-   * sealed at that chunker version after the insert.
+   * sealed at that chunker version after the insert. With `pageId` (the
+   * caller's own write of that page in this transaction) the seal and the
+   * insert are sent together and the seal's page is checked against it.
    */
-  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number } & BatchOpts): Promise<void>;
+  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number } & BatchOpts): Promise<void>;
   /**
    * Read every chunk for a page. Scope precedence mirrors getPage (#2555):
    * a federated grant (`sourceIds[]`) wins over scalar `sourceId`; with
@@ -2439,6 +2441,8 @@ export interface BrainEngine {
     slug: string,
     sourceId: string,
     aliasNorms: string[],
+    /** #5984: `inline` writes in the caller's page transaction, without a savepoint. */
+    opts?: { inline?: boolean },
   ): Promise<void>;
 
   /**
@@ -2555,11 +2559,21 @@ export interface BrainEngine {
    * by then get cancelled (Postgres: query.cancel(); PGLite: in-process,
    * Promise.race against signal-rejection — documented gap because PGLite
    * has no kernel-level cancellation).
+   *
+   * #6278: `opts.timeoutMs` runs an autocommit statement under a
+   * transaction-local `statement_timeout` of that many milliseconds (Postgres:
+   * a reserved connection runs `BEGIN; SET LOCAL statement_timeout`, the
+   * statement and `COMMIT` as one pipelined round trip, so the bound holds
+   * through a transaction-mode pooler that drops the session's startup
+   * parameters; a statement past it fails with SQLSTATE 57014). Inside a
+   * transaction the option is ignored (a `SET LOCAL` there would change the
+   * enclosing transaction). PGLite ignores it: one in-process connection has
+   * no other session to wait on.
    */
   executeRaw<T = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; timeoutMs?: number },
   ): Promise<T[]>;
 
   /**

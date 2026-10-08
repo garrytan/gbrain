@@ -636,6 +636,7 @@ function parseOptions(a, b) {
     onnotify        : o.onnotify,
     onclose         : o.onclose,
     onpoisoned      : o.onpoisoned,
+    shared_types    : o.shared_types === false ? null : new Map(),
     onparameter     : o.onparameter,
     socket          : o.socket,
     transform       : parseTransform(o.transform || { undefined: undefined }),

@@ -17,7 +17,7 @@ export async function reconcileContextualEmbeddingInputs(tx: BrainEngine, snapsh
       : !acceptedEmbeddingInputHashes(provenance, mode, chunk).includes(hash);
   }).map(chunk => Number(chunk.id));
   if (stale.length) await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(target.column.name)}=NULL,
-    embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL WHERE page_id=$1 AND id=ANY($2::int[])`, [snapshot.page.id, stale]);
+    embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,embedding_pending_since=now() WHERE page_id=$1 AND id=ANY($2::int[])`, [snapshot.page.id, stale]);
   const staleIds = new Set(stale);
   const raw = chunks.filter(chunk => !chunk.embedding_is_null && !staleIds.has(Number(chunk.id))
     && recorded.get(Number(chunk.id)) == null);

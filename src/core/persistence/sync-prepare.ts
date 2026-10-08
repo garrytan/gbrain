@@ -1,4 +1,6 @@
 import { realpathSync } from 'node:fs';
+import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
+import { boundedReads } from './bounded-reads.ts';
 import { basename, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -43,7 +45,7 @@ import { describeFixes } from '../fence-repair/report.ts';
 import { fenceFixesWire } from '../fence-repair/tier1.ts';
 import type { FenceFix } from '../fence-repair/types.ts';
 import { VERSION } from '../../version.ts';
-import { windowPredecessor, windowPredecessorAllows } from './sync-window.ts';
+import { earlierGroupMemberFailed, windowPredecessor, windowPredecessorAllows } from './sync-window.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -100,6 +102,30 @@ function sharedSyncValidation(tx: BrainEngine, key: string, run: () => Promise<{
   let shared = byKey.get(key);
   if (!shared) { shared = run(); byKey.set(key, shared); }
   return shared;
+}
+/**
+ * #5984: the source-wide part of sync validation as one pipeline: coordinator switch, configured root,
+ * cursor, window predecessor and owner epoch, each checked in that order. The rows stay locked FOR SHARE.
+ */
+async function sourceSyncChecks(tx: BrainEngine, row: WriteRequest, p: SyncIntent, root: string, after: string | null) {
+  const [, , held] = await pipelined(tx, [
+    () => assertManagedSyncActive(tx, true),
+    async () => {
+      const [configuredSource] = await tx.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 FOR SHARE', [row.source_id]);
+      assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
+    },
+    () => readSyncCursorFence(tx, p.cursorKey),
+    async () => {
+      if (after && !await windowPredecessorAllows(tx, row)) throw syncPublicationRefusal('revision_conflict', 'An earlier page of this sync did not commit.', row, p,
+        `Request ${row.request_id} was admitted ahead of request ${after} of the same sync run, which did not commit, so this page must not publish after it.`);
+    },
+    async () => {
+      const current = await getWorktreeBinding(tx, row.source_id);
+      if (!current || String(current.owner_epoch) !== p.ownerEpoch) throw syncPublicationRefusal('owner_unavailable', 'The accepted sync owner epoch changed.', row, p,
+        `The owner epoch of ${row.source_id} changed after this sync was admitted. Do not claim or transfer the source to repair content.`, true);
+    },
+  ]) as [unknown, unknown, Awaited<ReturnType<typeof readSyncCursorFence>>];
+  return held ?? null;
 }
 /**
  * Read-only: the receipt itself for the local CLI writer's own request;
@@ -204,7 +230,49 @@ function companyWritebackRefusal(row: WriteRequest, p: SyncIntent, fenceFixes: r
       : `The file of ${row.slug} needs a canonical correction, and a company-brain source never rewrites repository files; correct it in the repository and commit.`);
 }
 
-export async function prepareManagedSyncMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
+/**
+ * The entry's recorded origin, checked against the checkout (`git rev-parse`, the entry's path under the root) and the
+ * accepted page (its origin, and the rename source's); a checkpoint has none. `clock` names the steps (#6278).
+ */
+async function resolveSyncOrigin(engine: BrainEngine, row: WriteRequest, p: SyncIntent, root: string, originPageId: number | null, clock: ClaimPhaseClock | undefined):
+  Promise<{ origin?: Parameters<typeof assertSyncEntryOrigin>[1]; originContext?: Parameters<typeof assertSyncEntryOrigin>[0]; originScope?: SyncOriginScope }> {
+  if (p.kind === 'managed_sync_checkpoint') return {};
+  if (typeof p.path !== 'string' || typeof p.sourcePath !== 'string') throw syncPublicationRefusal('storage_error', 'The accepted sync origin is missing.', row, p,
+    'The stored intent has no recorded file path for this page.');
+  let working = p.working;
+  if (p.kind === 'managed_sync_delete' && working === undefined) {
+    enterClaimStep(clock, 'manifest_entry', undefined, 'db');
+    const [manifest] = await engine.executeRaw<{ entry: { path: string; sourcePath: string; action: string; working: boolean; pageId?: number | null } }>(
+      "SELECT completed_keys->$2::integer AS entry FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [p.runId, p.index]);
+    const entry = manifest?.entry;
+    if (!entry || entry.path !== p.path || entry.sourcePath !== p.sourcePath || entry.action !== 'delete' ||
+        typeof entry.working !== 'boolean' || (entry.pageId ?? null) !== row.page_id) {
+      throw new OperationError('page_identity_changed', 'The legacy deletion has no matching immutable origin manifest.',
+        'Inspect the source identity and explicitly retry failed sync discovery; the accepted request has not been rewritten.');
+    }
+    working = entry.working;
+  }
+  const origin = { path: p.path, sourcePath: p.sourcePath, action: p.kind === 'managed_sync_delete' ? 'delete' as const : 'import' as const, working };
+  enterClaimStep(clock, 'git_rev_parse', undefined, 'git');
+  const originContext = { root, gitRoot: realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim()), target: p.target, slugMode: p.slugMode };
+  assertSyncEntryOrigin(originContext, origin);
+  const originScope = syncOriginScope({ ...originContext, sourceId: row.source_id });
+  enterClaimStep(clock, 'origin_check', undefined, 'db');
+  await assertSyncPageOrigin(engine, row.source_id, p.sourcePath, originPageId, p.kind === 'managed_sync_delete', originScope);
+  if (p.renameFrom) await assertSyncPageOrigin(engine, row.source_id, p.renameFrom.sourcePath, p.renameFrom.pageId, true, originScope);
+  return { origin, originContext, originScope };
+}
+
+/**
+ * `clock` (#6278): the claim's phase clock. Each await boundary below names its step and what it waits on
+ * (`enterClaimStep`), which also throws the preparation's abort reason once its budget cut it off. No
+ * statement here takes the member's signal: the reads a group memoizes (preparationReads) must stay shared,
+ * and the step boundaries are where cancellation lands. The preparation's raw reads run through
+ * `boundedReads`: a relation lock held elsewhere ends the statement on the server at the budget (plan 1.4),
+ * so the member is released without a zombie statement pinning a connection until the ceiling.
+ */
+export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: WriteRequest, _config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
+  const engine = boundedReads(unbounded, clock);
   const p = row.intent as SyncIntent | null;
   if (!p || !['managed_sync_import', 'managed_sync_delete', 'managed_sync_checkpoint'].includes(p.kind)) throw syncPublicationRefusal('invalid_params', 'Unsupported internal sync intent.', row, p,
     'The request does not carry a managed sync intent this release can publish.');
@@ -217,46 +285,28 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     if (await transactionMemo(tx, `git-holds:${row.source_id}:${row.source_incarnation}`, () => countGitHolds(tx, row.source_id, row.source_incarnation)) === 0) return;
     await clearGitHold(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, path, observedAt: p.holdObservedAt });
   };
+  enterClaimStep(clock, 'managed_sync_active', undefined, 'db');
   await assertManagedSyncActive(engine);
   if (p.kind !== 'managed_sync_delete' && (!p.processingOptions ||
       ['noEmbed', 'noExtract', 'noSchemaPack'].some(key => typeof p.processingOptions?.[key as keyof SyncProcessingOptions] !== 'boolean'))) {
     throw new OperationError('invalid_params', 'The legacy sync request has no durable processing options.',
       'Inspect this unchanged request, then use --retry-failed with explicit sync options to rediscover. Unknown embedding and schema consent cannot be inferred from a retry.');
   }
+  enterClaimStep(clock, 'authority', undefined, 'db');
   await validateSyncAuthority(engine, p.syncAuthority, row.slug);
+  enterClaimStep(clock, 'worktree_binding', undefined, 'db');
   const binding = await getWorktreeBinding(engine, row.source_id);
   if (!binding?.local_path || String(binding.owner_epoch) !== p.ownerEpoch) throw syncPublicationRefusal('owner_unavailable', 'The accepted sync owner changed.', row, p,
     `The canonical owner of ${row.source_id} changed, or lost its local path, after this sync was admitted. Do not claim or transfer the source to repair content.`, true);
   const root = join(binding.local_path, binding.relative_path);
+  enterClaimStep(clock, 'configured_root', undefined, 'db');
   const [configuredSource] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [row.source_id]);
   assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
-  if (p.kind !== 'managed_sync_checkpoint') await assertKnowledgePublicationAllowed(engine, row,
-    p.path === null ? undefined : { root, path: join(root, p.path) });
-  let origin: Parameters<typeof assertSyncEntryOrigin>[1] | undefined;
-  let originContext: Parameters<typeof assertSyncEntryOrigin>[0] | undefined;
-  let originScope: SyncOriginScope | undefined;
   if (p.kind !== 'managed_sync_checkpoint') {
-    if (typeof p.path !== 'string' || typeof p.sourcePath !== 'string') throw syncPublicationRefusal('storage_error', 'The accepted sync origin is missing.', row, p,
-      'The stored intent has no recorded file path for this page.');
-    let working = p.working;
-    if (p.kind === 'managed_sync_delete' && working === undefined) {
-      const [manifest] = await engine.executeRaw<{ entry: { path: string; sourcePath: string; action: string; working: boolean; pageId?: number | null } }>(
-        "SELECT completed_keys->$2::integer AS entry FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [p.runId, p.index]);
-      const entry = manifest?.entry;
-      if (!entry || entry.path !== p.path || entry.sourcePath !== p.sourcePath || entry.action !== 'delete' ||
-          typeof entry.working !== 'boolean' || (entry.pageId ?? null) !== row.page_id) {
-        throw new OperationError('page_identity_changed', 'The legacy deletion has no matching immutable origin manifest.',
-          'Inspect the source identity and explicitly retry failed sync discovery; the accepted request has not been rewritten.');
-      }
-      working = entry.working;
-    }
-    origin = { path: p.path, sourcePath: p.sourcePath, action: p.kind === 'managed_sync_delete' ? 'delete' : 'import', working };
-    originContext = { root, gitRoot: realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim()), target: p.target, slugMode: p.slugMode };
-    assertSyncEntryOrigin(originContext, origin);
-    originScope = syncOriginScope({ ...originContext, sourceId: row.source_id });
-    await assertSyncPageOrigin(engine, row.source_id, p.sourcePath, originPageId, p.kind === 'managed_sync_delete', originScope);
-    if (p.renameFrom) await assertSyncPageOrigin(engine, row.source_id, p.renameFrom.sourcePath, p.renameFrom.pageId, true, originScope);
+    enterClaimStep(clock, 'knowledge_publication', undefined, 'db');
+    await assertKnowledgePublicationAllowed(engine, row, p.path === null ? undefined : { root, path: join(root, p.path) });
   }
+  const { origin, originContext, originScope } = await resolveSyncOrigin(engine, row, p, root, originPageId, clock);
   const moved = p.kind === 'managed_sync_import' ? p.renameFrom : undefined;
   const assertRenameSource = async (tx: BrainEngine) => {
     if (!moved || moved.slug === row.slug) return;
@@ -266,33 +316,32 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
         `Page ${moved.slug}, which this file was renamed from, changed or was deleted after the sync was admitted.`);
     }
   };
+  // #5984: validation's reads are pipelined; each check runs in the order it always did, so the first failing one is reported.
   const validate = async (tx: BrainEngine) => {
     const after = windowPredecessor(row);
-    const cursor = await sharedSyncValidation(tx, `${row.source_id}\0${p.cursorKey}\0${p.ownerEpoch}\0${root}\0${after ?? ''}`, async () => {
-      await assertManagedSyncActive(tx, true);
-      const [configuredSource] = await tx.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 FOR SHARE', [row.source_id]);
-      assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
-      const held = await readSyncCursorFence(tx, p.cursorKey);
-      if (after && !await windowPredecessorAllows(tx, row)) throw syncPublicationRefusal('revision_conflict', 'An earlier page of this sync did not commit.', row, p,
-        `Request ${row.request_id} was admitted ahead of request ${after} of the same sync run, which did not commit, so this page must not publish after it.`);
-      const current = await getWorktreeBinding(tx, row.source_id);
-      if (!current || String(current.owner_epoch) !== p.ownerEpoch) throw syncPublicationRefusal('owner_unavailable', 'The accepted sync owner epoch changed.', row, p,
-        `The owner epoch of ${row.source_id} changed after this sync was admitted. Do not claim or transfer the source to repair content.`, true);
-      return held ?? null;
-    });
-    await validateSyncAuthority(tx, p.syncAuthority, row.slug);
-    if (cursor && (cursor.run_id !== p.runId || (cursor.request_id !== row.request_id && !cursor.group?.includes(row.request_id)))) throw syncPublicationRefusal('revision_conflict', 'The accepted sync cursor changed before publication.', row, p,
-      `Another sync run of ${row.source_id} replaced the cursor this request belongs to.`);
-    if (p.kind !== 'managed_sync_checkpoint') await assertKnowledgePublicationAllowed(tx, row,
-      p.path === null ? undefined : { root, path: join(root, p.path) });
-    if (p.path !== null && syncRawHash(root, p.path) !== p.rawHash) throw syncPublicationRefusal('source_changed', 'The imported file changed after sync admission.', row, p,
-      `The file of ${row.slug} changed on disk after this sync was admitted; review the change and commit it.`);
-    if (origin && originContext) {
-      assertSyncEntryOrigin(originContext, origin);
-      await assertSyncPageOrigin(tx, row.source_id, origin.sourcePath, originPageId, p.kind === 'managed_sync_delete', originScope);
-      if (moved) await assertSyncPageOrigin(tx, row.source_id, moved.sourcePath, moved.pageId, true, originScope);
-      await assertRenameSource(tx);
-    }
+    const shared = sharedSyncValidation(tx, `${row.source_id}\0${p.cursorKey}\0${p.ownerEpoch}\0${root}\0${after ?? ''}`, () => sourceSyncChecks(tx, row, p, root, after));
+    await pipelined(tx, [
+      () => shared,
+      () => validateSyncAuthority(tx, p.syncAuthority, row.slug),
+      async () => { if (await earlierGroupMemberFailed(tx, row)) throw syncPublicationRefusal('revision_conflict', 'An earlier page of this sync did not commit.', row, p, `Request ${row.request_id} follows a page of the same bulk group that did not commit, so this page must not publish after it.`); },
+      async () => {
+        const cursor = await shared;
+        if (cursor && (cursor.run_id !== p.runId || (cursor.request_id !== row.request_id && !cursor.group?.includes(row.request_id)))) throw syncPublicationRefusal('revision_conflict', 'The accepted sync cursor changed before publication.', row, p,
+          `Another sync run of ${row.source_id} replaced the cursor this request belongs to.`);
+      },
+      async () => { if (p.kind !== 'managed_sync_checkpoint') await assertKnowledgePublicationAllowed(tx, row, p.path === null ? undefined : { root, path: join(root, p.path) }); },
+      async () => {
+        if (p.path !== null && syncRawHash(root, p.path) !== p.rawHash) throw syncPublicationRefusal('source_changed', 'The imported file changed after sync admission.', row, p,
+          `The file of ${row.slug} changed on disk after this sync was admitted; review the change and commit it.`);
+      },
+      async () => {
+        if (!origin || !originContext) return;
+        assertSyncEntryOrigin(originContext, origin);
+        await assertSyncPageOrigin(tx, row.source_id, origin.sourcePath, originPageId, p.kind === 'managed_sync_delete', originScope);
+      },
+      async () => { if (origin && originContext && moved) await assertSyncPageOrigin(tx, row.source_id, moved.sourcePath, moved.pageId, true, originScope); },
+      async () => { if (origin && originContext) await assertRenameSource(tx); },
+    ]);
     if (p.companyApproval) {
       const [source] = await tx.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [row.source_id]);
       const policy = companyBrainProfile(source?.config);
@@ -334,6 +383,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     return { status: 'synced', source_id: row.source_id, committed_pages: p.total };
   } };
   const source = { sourceId: row.source_id };
+  enterClaimStep(clock, 'page_snapshot', undefined, 'db');
   const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
   assertPageRevision(snapshot, p.expected_revision === null ? {} : { expectedRevision: p.expected_revision });
   const recordedOrigin = moved?.slug === row.slug ? moved.sourcePath : p.sourcePath!;
@@ -344,6 +394,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   }
   if (p.unownedDeletion) return { observedRevision: snapshot!.revision, noop: true, validate,
     apply: async tx => { await releaseHold(tx); return { status: 'skipped', slug: row.slug, source_id: row.source_id, noop: true, reason: 'unowned_deleted_path' }; } };
+  enterClaimStep(clock, 'unbound_source_check', undefined, 'db');
   if (snapshot && snapshot.page.source_path == null && await isUnboundSourcePage(engine, row.source_id, row.slug)) {
     throw syncPublicationRefusal('source_changed', UNBOUND_COLLISION_MESSAGE, row, p,
       `A canonical file now occupies the path of page ${row.slug}, written while ${row.source_id} was unbound; neither copy was overwritten. Rename or remove the file and commit, or copy what you need into the page first.`);
@@ -366,6 +417,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     const codeScreen = screenImportContent({ content: p.content, path: p.sourcePath });
     if (codeScreen.status === 'refused') throw syncContentRefusal(codeScreen.refusal, row, p);
     let prepared: PreparedContentImport | undefined;
+    enterClaimStep(clock, 'code_import', undefined, 'db');
     const result = await importCodeFile(engine, p.sourcePath, p.content, { ...source, noEmbed: true,
       prepare: async value => { prepared = value; return value.result; } });
     if (!prepared || prepared.slug !== row.slug) throw syncPublicationRefusal('invalid_params', result.error ?? 'The code file identity could not be prepared.', row, p,
@@ -386,15 +438,19 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   if (schema && p.processingOptions?.noSchemaPack) throw syncPublicationRefusal('profile_incompatible', 'Company source approval requires its pinned schema pack.', row,
     { ...p, processingOptions: { ...p.processingOptions!, noSchemaPack: false } },
     `A company-brain source imports with its pinned schema pack, so ${row.source_id} cannot sync with --no-schema-pack.`);
+  enterClaimStep(clock, 'schema_pack', undefined, 'db');
   const activePack = p.processingOptions?.noSchemaPack ? undefined : schema ? (await checkApprovedSchemaForEngine(engine, { name: schema.name, identity: schema.identity, resolvedManifestHash: schema.resolved_digest },
     { remote: false, sourceId: row.source_id })).pack.manifest : (await loadActivePackForEngine(engine, { remote: row.authority.remote, sourceId: row.source_id }).catch(() => null))?.manifest;
   // A renamed page is prepared where it stands; publication moves it, then re-prepares at the new slug.
   const renamed = moved && moved.slug !== row.slug ? moved : undefined;
+  if (renamed) enterClaimStep(clock, 'rename_source', undefined, 'db');
   const base = renamed ? await engine.readPageSnapshot(renamed.slug, { ...source, includeDeleted: true }) : snapshot;
   if (renamed && (base?.page.id !== renamed.pageId || base.revision !== renamed.revision || base.page.deleted_at != null)) {
     throw syncPublicationRefusal('revision_conflict', 'The renamed page changed after sync admission.', row, p,
       `Page ${renamed.slug}, which this file was renamed from, changed or was deleted after the sync was admitted.`);
   }
+  // The screen hashes the frozen bytes and, for a newer working tree, reads the file (raw hash).
+  enterClaimStep(clock, 'import_screen', undefined, 'fs');
   const { screen, parsedInput, newerWorkingTree } = await settledSyncScreen(engine, { content: p.content, rawHash: p.rawHash, lineEndingOnly: p.lineEndingOnly === true,
     slug: row.slug, sourcePath: p.sourcePath, path: p.path, root, snapshot, base, renamed: !!renamed, activePack, companyApproval: !!p.companyApproval });
   if (screen.status === 'published') return { observedRevision: snapshot?.revision ?? null, noop: true, contentUnchanged: true, validate,
@@ -416,6 +472,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     }
   }
   let prepared: PreparedContentImport | undefined;
+  enterClaimStep(clock, 'import_content', undefined, 'db');
   // #6188: the import reuses this screen's fence verdict for the same bytes (one fence scan per file at prepare).
   const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, preserveGateMarkers: true, activePack, coordinated: true, fences: 'coordinated' as const,
     ...(importContent === p.content && screen.status === 'importable' ? { fenceScreen: screen.fences ?? null } : {}),
@@ -449,11 +506,13 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   const fenceFixes = ready.result.fences_normalized ?? [];
   if (overlay && p.companyApproval) throw companyWritebackRefusal(row, p, fenceFixes);
   // #5409: a read-only mirror keeps its canonical metadata in the database only; its checkout stays the remote's bytes.
+  enterClaimStep(clock, 'mirror_check', undefined, 'db');
   const mirrorReadOnly = overlay && await sourceMirrorReadOnly(engine, row.source_id);
   const writeback = overlay && !mirrorReadOnly;
   if (writeback && !p.lineEndingOnly && p.rawHash !== sha256(p.content)) throw syncPublicationRefusal('source_changed', 'Canonical sanitization cannot overwrite newer working-tree bytes.', row, p,
     `The canonical correction for ${row.slug} would overwrite newer working-tree bytes; preserve the local edit and commit it.`);
   // A rename projects against the moved page (same id), so its pinned timeline rows carry over.
+  enterClaimStep(clock, 'canonical_projections', undefined, 'db');
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, p.companyApproval ? 'immutable' : 'file');
   const preparedImport: PreparedMutation = { observedRevision: snapshot?.revision ?? null,
     // Tells the #5470 screen the content is unchanged; publication still queues its effects.
@@ -480,16 +539,17 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
       }
       // A moved page is versioned from its own (rename source) read.
       await applied.apply(tx, renamed ? undefined : preimage);
-      // Hash no-ops still repair a missing physical origin under the same guard.
-      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
+      // Hash no-ops still repair a missing physical origin under the same guard (a page write records it itself).
+      if (applied.noop) await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
       // #5984: the one read of the page after its last page write (the projections
       // below and the seal leave its revision unchanged): read-back check, projection
       // target, seal input, receipt revision and effects.
       const final = await tx.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
       const live = final && final.page.deleted_at == null ? final : null;
       if (!applied.noop) await verifyPageReadable(tx, row.slug, applied.contentHash!, row.source_id, 'managed sync', live?.page ?? null);
-      if (!applied.noop || p.companyApproval) await project(tx, final?.page.id);
+      // The projections, the text seal, the hold and the provenance touch separate rows; their pipelines run together.
       await pipelined(tx, [
+        async () => { if (!applied.noop || p.companyApproval) await project(tx, final?.page.id); },
         async () => { if (!applied.noop && live) await sealPageTextProjection(tx, row.slug, row.source_id, live); },
         () => releaseHold(tx),
         async () => { if (final) await recordSyncImportProvenance(tx, { source_id: row.source_id, incarnation: row.source_incarnation, page_id: Number(final.page.id), origin: p.sourcePath!,

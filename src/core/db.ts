@@ -122,6 +122,21 @@ const FALLBACK_CONNECT_TIMEOUT_S = 10;
 const MAX_CONNECT_TIMEOUT_S = Math.floor(0x7fffffff / 1000);
 
 /**
+ * #5984: whether a pool shares the parameter types of a described statement
+ * across its connections (the vendored driver's `shared_types`), so a
+ * connection running a statement for the first time skips the describe round
+ * trip and keeps pipelining. On by default; GBRAIN_PG_TYPE_CACHE=0 turns it off.
+ */
+export function resolveSharedTypes(): boolean {
+  const value = process.env.GBRAIN_PG_TYPE_CACHE?.trim().toLowerCase();
+  return value !== '0' && value !== 'false';
+}
+/** Forgets the shared parameter types of these pools; a schema change may have changed them. */
+export function clearSharedTypes(...pools: unknown[]): void {
+  for (const pool of pools) (pool as { options?: { shared_types?: Map<string, number[]> | null } } | null)?.options?.shared_types?.clear();
+}
+
+/**
  * The `connect_timeout` each postgres() pool is built with, read from that
  * pool's own URL.
  *
@@ -342,6 +357,7 @@ export async function connect(config: EngineConfig, hooks: { onpoisoned?: (statu
       // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
       onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
       onpoisoned: hooks.onpoisoned,
+      shared_types: resolveSharedTypes(),
     };
     if (Object.keys(timeouts).length > 0) {
       opts.connection = timeouts;

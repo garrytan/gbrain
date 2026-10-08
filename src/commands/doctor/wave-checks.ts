@@ -119,6 +119,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async engine => (await import('./checks/persistence-requests.ts')).writeStallCheck(engine),
   },
   {
+    id: 'persistence_session_timeouts', resolution: 'operator', registration: 'wave',
+    count: d => d.reason === 'session_timeouts_not_applied' ? 1 : 0,
+    hostOnly: 'The connection URL and its pooler are brain-host configuration outside any source scope.',
+    impact: 'A transaction-mode pooler drops the configured session statement_timeout, so autocommit statements outside a transaction have no server-side bound',
+    instruction: 'Set the default on the role instead: `ALTER ROLE <gbrain role> SET statement_timeout = \'5min\'` (docs/guides/troubleshooting.md#session-timeouts-not-applied).',
+    run: async engine => (await import('./checks/persistence-requests.ts')).sessionTimeoutsCheck(engine),
+  },
+  {
     id: 'connector_held_items', resolution: 'operator', registration: 'wave',
     count: d => Number(d.held ?? 0),
     impact: 'Some connector items are held after repeated failures and are not imported',

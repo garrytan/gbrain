@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { pipelined } from '../page-state/transactions.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -12,7 +13,7 @@ import { detectManifestScope, storedManifestScope, worktreeManifest, type Stored
 import { localHostId, persistenceHome } from './identity.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
-import { acquireShared, yieldLease } from './worktree-lease.ts';
+import { acquireShared, deferToLease, exclusiveAcquired, joinLease, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
 import { readPhysicalRootStamp } from './physical-root-record.ts';
@@ -130,16 +131,28 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
  * this native lock after database ownership is verified; otherwise it refuses
  * with the filled self-transfer commands.
  */
-export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal, engine?: BrainEngine): Promise<NativeLockHandle | null> {
+/**
+ * `yieldLanes`: a request publication, recovery or topology change wounds this process's lane lease and waits for
+ * it (worktree-lease.ts `yieldLease`). Without it a try-acquire (no wait) is a background writer (effects): it
+ * reports busy while lanes hold the lease, and the lease drains for it after `DEFER_WAIT_MS`.
+ */
+export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal, engine?: BrainEngine,
+  opts: { yieldLanes?: boolean } = {}): Promise<NativeLockHandle | null> {
   if (!binding.local_path || !binding.coordination_path) return null;
   // #5984 lanes: an exclusive writer drains this process's lane lease first; while lanes still hold it the worktree is busy.
-  if (!await yieldLease(binding.coordination_path, waitMs, signal)) return null;
-  return lockWorktree(binding, waitMs, signal, engine);
+  if (waitMs <= 0 && !opts.yieldLanes ? !deferToLease(binding.coordination_path) : !await yieldLease(binding.coordination_path, waitMs, signal)) return null;
+  const lock = await lockWorktree(binding, waitMs, signal, engine);
+  if (lock) exclusiveAcquired(binding.coordination_path);
+  return lock;
 }
 /** #5984 lanes: database-only lane publications share one native lock in this process (worktree-lease.ts). */
 export async function acquireWorktreeShared(binding: WorktreeBinding, engine: BrainEngine): Promise<NativeLockHandle | null> {
   if (!binding.local_path || !binding.coordination_path) return null;
   return acquireShared(binding.coordination_path, () => lockWorktree(binding, 0, undefined, engine));
+}
+/** #5984 Phase 4.5: joins this process's live lane lease (worktree-lease.ts `joinLease`), or null. */
+export function joinWorktreeLease(binding: WorktreeBinding): NativeLockHandle | null {
+  return binding.local_path && binding.coordination_path ? joinLease(binding.coordination_path) : null;
 }
 async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: AbortSignal | undefined, engine: BrainEngine | undefined): Promise<NativeLockHandle | null> {
   if (!binding.coordination_path || !binding.local_path) return null;
@@ -181,9 +194,12 @@ export async function probeWorktreeWriter(binding: WorktreeBinding, engine?: Bra
 }
 export async function guardOwnership(tx: SqlEngine, row: WriteRequest, hostId: string): Promise<WorktreeBinding | null> {
   if (!row.worktree_id) return null;
-  const [owner] = await tx.executeRaw<{ owner_host_id: string; owner_epoch: string | number; state: string }>(
-    'SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [row.worktree_id]);
-  const binding = await getWorktreeBinding(tx, row.source_id, hostId);
+  // The worktree lock and the binding read are sent together; the server takes the lock first.
+  const [[owner], binding] = await pipelined(tx, [
+    () => tx.executeRaw<{ owner_host_id: string; owner_epoch: string | number; state: string }>(
+      'SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [row.worktree_id]),
+    () => getWorktreeBinding(tx, row.source_id, hostId),
+  ]) as [Array<{ owner_host_id: string; owner_epoch: string | number; state: string }>, WorktreeBinding | null];
   if (!owner || !binding || binding.worktree_id !== row.worktree_id || binding.source_incarnation !== row.source_incarnation ||
     owner.owner_host_id !== hostId || owner.state !== 'active' || String(binding.topology_generation) !== String(row.topology_generation)) {
     throw opError('owner_unavailable', 'The accepted worktree ownership or source topology changed.',

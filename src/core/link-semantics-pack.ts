@@ -41,8 +41,9 @@ export async function primeRelationSemantics(engine: Partial<Pick<BrainEngine, '
   if (!engine.getConfig || !engine.listConfigKeys) return;
   const configured = engine as Pick<BrainEngine, 'getConfig' | 'listConfigKeys'>;
   try {
-    const { loadActivePackForLocalEngine } = await import('./schema-pack/best-effort.ts');
-    const sourceKeys = await configured.listConfigKeys(SOURCE_PACK_PREFIX).catch(() => [] as string[]);
+    // The key read is issued at once (not after the module load), so a caller pipelining this keeps its statement order.
+    const [{ loadActivePackForLocalEngine }, sourceKeys] = await Promise.all([import('./schema-pack/best-effort.ts'),
+      configured.listConfigKeys(SOURCE_PACK_PREFIX).catch(() => [] as string[])]);
     const sourceIds = [...new Set(sourceKeys.map(k => k.slice(SOURCE_PACK_PREFIX.length)).filter(Boolean))];
     const packs = await Promise.all([
       loadActivePackForLocalEngine(configured),

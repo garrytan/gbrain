@@ -3,10 +3,11 @@
  * kind (src/core/repair/fences.ts) in the global maintenance lane, so fences
  * that sync held and malformed fences that pages store are repaired with no
  * operator. The phase has no rule logic of its own: the kind plans from its
- * census, skips sources this host does not own (`owner_unavailable`) or that
- * are mid-sync (`sync_in_progress`), reads `fences.repair.llm` and the daily
- * USD ledger itself, and re-plans on the next run, where items already
- * repaired drop out.
+ * census, skips sources this host may not write (an owner reason such as
+ * `host_mismatch`) and the candidates a running sync still names
+ * (`sync_in_progress`; the rest of a syncing source is repaired, #6278),
+ * reads `fences.repair.llm` and the daily USD ledger itself, and re-plans on
+ * the next run, where items already repaired drop out.
  *
  * The phase gates on `fences.repair.enabled`, runs the kind through the
  * shared trusted repair runner (an apply, or a preview on a dry run) with a

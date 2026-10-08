@@ -188,7 +188,7 @@ describe('opencode workspace lane — default scope is USER-GLOBAL', () => {
     };
     expect(entry.type).toBe('local');
     expect(entry.command[0]).toBe(FAKE_BIN); // user scope: absolute path
-    expect(entry.command.slice(1)).toEqual(['serve', '--surface', 'starter']);
+    expect(entry.command.slice(1)).toEqual(['serve', '--surface', 'full']);
     expect(entry.environment.GBRAIN_SOURCE).toBeDefined();
     expect(entry.enabled).toBe(true);
 
@@ -322,7 +322,7 @@ describe('opencode workspace lane — explicit project opt-in', () => {
     const cfgPath = join(ws, 'opencode.json');
     const parsed = parseOpencodeConfig(readFileSync(cfgPath, 'utf8'), cfgPath);
     const entry = (parsed.mcp as Record<string, unknown>).gbrain as { command: string[] };
-    expect(entry.command).toEqual(['gbrain', 'serve', '--surface', 'starter']); // committed-candidate file: PATH-resolved, never absolute
+    expect(entry.command).toEqual(['gbrain', 'serve', '--surface', 'full']); // committed-candidate file: PATH-resolved, never absolute
     expect(r.out).toContain('project (explicit opt-in)');
     expect(r.err).toContain('SHARING WARNING');
     expect(r.err).toContain('"enabled": false');
@@ -383,8 +383,10 @@ describe('opencode never-narrow: a rewritten entry keeps its surface form', () =
     return ((parseOpencodeConfig(readFileSync(cfgPath, 'utf8'), cfgPath).mcp as Record<string, { command: string[] }>).gbrain).command;
   }
 
-  test('a pinned --surface full stays full, a bare serve stays bare, an explicit --surface wins', async () => {
+  test('a pinned --surface stays pinned, a bare serve stays bare, an explicit --surface wins', async () => {
     expect(await rerunWith([FAKE_BIN, 'serve', '--surface', 'full'])).toEqual([FAKE_BIN, 'serve', '--surface', 'full']);
+    // S0: starter differs from the registration default (full), so keeping it is observable.
+    expect(await rerunWith([FAKE_BIN, 'serve', '--surface', 'starter'])).toEqual([FAKE_BIN, 'serve', '--surface', 'starter']);
     expect(await rerunWith([FAKE_BIN, 'serve'])).toEqual([FAKE_BIN, 'serve']);
     expect(await rerunWith([FAKE_BIN, 'serve', '--surface', 'full'], ['--surface', 'verbs'])).toEqual([FAKE_BIN, 'serve', '--surface', 'verbs']);
   }, 60_000);

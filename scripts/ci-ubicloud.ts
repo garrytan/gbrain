@@ -43,8 +43,8 @@
  * recorded name is destroyed and polled until it is confirmed gone.
  */
 
-import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, createReadStream, createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync, type ChildProcess } from "node:child_process";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -61,6 +61,7 @@ import {
   type Lane,
   type WeightTable,
 } from "./ubicloud/schedule.ts";
+import { runScript, type RunScriptOpts } from "./ubicloud/run-script.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const RUNNER = join(ROOT, "scripts/ubicloud/ubi-runner.sh");
@@ -162,32 +163,11 @@ function sh(cmd: string, args: string[]): string {
 }
 const lines = (text: string) => text.split(/\s+/).map((l) => l.trim()).filter(Boolean);
 
-const children = new Map<ReturnType<typeof spawn>, string>();
+const children = new Map<ChildProcess, string>();
 
-/** Run the runner script; stdout goes to `out` (a path) or is returned. */
-function runner(args: string[], opts: { out?: string; input?: string; timeoutMs?: number } = {}): Promise<{ code: number; stdout: string }> {
-  return new Promise((resolvePromise) => {
-    const child = spawn("bash", [RUNNER, ...args], { cwd: ROOT, stdio: ["pipe", "pipe", "pipe"] });
-    children.set(child, args[0]!);
-    let stdout = "";
-    let stderr = "";
-    const sink = opts.out ? createWriteStream(opts.out) : null;
-    child.stdout!.on("data", (chunk) => (sink ? sink.write(chunk) : (stdout += chunk)));
-    child.stderr!.on("data", (chunk) => (sink ? sink.write(chunk) : (stderr += chunk)));
-    if (opts.input) {
-      createReadStream(opts.input).pipe(child.stdin!);
-    } else {
-      child.stdin!.end();
-    }
-    const timer = opts.timeoutMs ? setTimeout(() => child.kill("SIGKILL"), opts.timeoutMs) : null;
-    child.on("close", (code) => {
-      if (timer) clearTimeout(timer);
-      children.delete(child);
-      const finish = () => resolvePromise({ code: code ?? 1, stdout: sink ? "" : stdout + (code ? stderr : "") });
-      if (sink) sink.end(finish);
-      else finish();
-    });
-  });
+/** Run the runner script; output goes to `out` (a path) or is returned (scripts/ubicloud/run-script.ts). */
+function runner(args: string[], opts: Omit<RunScriptOpts, "cwd" | "onSpawn" | "onClose"> = {}): Promise<{ code: number; stdout: string }> {
+  return runScript(RUNNER, args, { ...opts, cwd: ROOT, onSpawn: (child) => children.set(child, args[0]!), onClose: (child) => children.delete(child) });
 }
 
 const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -275,7 +255,7 @@ async function main() {
 
   // ── Checkout tarball, packed once while the VMs boot ─────────────────────
   const tarball = join(tmpdir(), `gbrain-ci-ubicloud-${process.pid}.tgz`);
-  const packed = runner(["pack", ROOT], { out: tarball });
+  const packed = runner(["pack", ROOT], { out: tarball, stdoutOnly: true });
   // Faster create and SSH polling than the runner's interactive default.
   process.env.UBI_POLL_SECONDS ??= "2";
 
@@ -445,7 +425,8 @@ async function main() {
     // and waits for the marker the upload writes when it lands.
     const env = `SLOTS=${opts.slots} BUN_VERSION=${quote(bunVersion)} GITLEAKS=${opts.lanes.has("gitleaks") ? 1 : 0} CHECKOUT=${REMOTE_DIR} CHECKOUT_MARKER=${UNPACKED_MARKER}`;
     const setupRun = runner(["ssh", vm.name, `${env} bash -s`], { input: SETUP_SCRIPT, out: `${setupLog}.bootstrap`, timeoutMs: 15 * 60 * 1000 });
-    if ((await packed).code !== 0) throw new Error("packing the checkout failed");
+    const pack = await packed;
+    if (pack.code !== 0) throw new Error(`packing the checkout failed: ${pack.stdout.trim().split("\n").slice(-3).join(" | ")}`);
     const unpack = await runner(["unpack", vm.name, REMOTE_DIR], { input: tarball });
     const marked = unpack.code === 0 ? await runner(["ssh", vm.name, `touch ${UNPACKED_MARKER}`]) : unpack;
     if (marked.code !== 0) {

@@ -242,7 +242,7 @@ describe('runHooks plugin-lane skip (serial: env fixtures)', () => {
     expect(r.result).toBe(0);
     const add = calls.find((c) => c[0] === 'codex' && c[1] === 'mcp' && c[2] === 'add');
     expect(add).toBeDefined();
-    expect(add!.join(' ')).toContain('serve --surface starter');
+    expect(add!.join(' ')).toContain('serve --surface full');
   }, 30_000);
 
   test('codex + plugin + --mcp-even-if-plugin → registration forced through', async () => {

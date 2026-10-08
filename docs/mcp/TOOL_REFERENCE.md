@@ -357,7 +357,7 @@ MEMORY VERB (v1): save one fact to durable agent memory — the protocol write v
 
 ## `request_tools`
 
-Discover this brain's tool catalog and optionally unlock a wider tool surface for your client. No arguments → the catalog visible to YOUR credentials, grouped by area (tool names + one-line summaries). {tools: ["name", ...]} → full read-only schemas for the visible subset of those names (unknown/hidden names are silently omitted). {surface: "verbs"|"starter"|"full"} → persist that tool surface for this client (bounded by the server ceiling; denied when an operator pinned the surface; ~5 changes/hour), then re-issue tools/list to see the new catalog.
+Discover this brain's tool catalog and optionally unlock a wider tool surface for your client. No arguments → the catalog visible to YOUR credentials, grouped by area (tool names + one-line summaries). {tools: ["name", ...]} → full read-only schemas for the visible subset of those names (unknown/hidden names are silently omitted; an empty list, or one with no name you can call, returns the catalog plus `did_you_mean`, the closest names you can call). {surface: "verbs"|"starter"|"full"} → persist that tool surface for this client (bounded by the server ceiling; denied when an operator pinned the surface; ~5 changes/hour), then re-issue tools/list to see the new catalog.
 
 | Parameter | Type | Guidance |
 | --- | --- | --- |

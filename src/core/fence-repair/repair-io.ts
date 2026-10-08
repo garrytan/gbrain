@@ -3,11 +3,13 @@
  * candidate's current bytes, and the four write-back paths.
  *
  * Sources. On a managed brain a source with a canonical checkout is repaired
- * only on its active owner host (`owner_unavailable` elsewhere), and never
- * while its managed sync cursor is unfinished or a queued or running write
- * names the candidate (`sync_in_progress`, E9). A legacy (unmanaged) source
- * writes its recorded checkout. A read-only mirror is repaired in the
- * database only.
+ * only on its active owner host (`owner_unavailable` elsewhere, with the
+ * condition as its reason: persistence/owner-refusal.ts), and a candidate a
+ * write in flight or an unfinished sync's frozen manifest still names is
+ * `sync_in_progress` (persistence/repair-busy.ts); every other candidate is
+ * repaired while the sync runs (#6278). A legacy (unmanaged) source writes
+ * its recorded checkout. A read-only mirror is repaired in the database
+ * only.
  *
  * Write-back (spec section 12 step 7):
  *   - managed: `managed_file_repair` writes the exact repaired bytes bound to
@@ -36,6 +38,8 @@ import { resolveSlugForPath } from '../sync.ts';
 import { sha256 } from '../persistence/digest.ts';
 import { localHostId } from '../persistence/identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { checkOwner, ownerRefusal, type OwnerRefusal } from '../persistence/owner-refusal.ts';
+import { loadRepairBusySet, type RepairBusySet } from '../persistence/repair-busy.ts';
 import { sourceMirrorReadOnly } from '../persistence/mirror-read-only.ts';
 import { isSourceDbOnlySlug } from '../persistence/source-storage.ts';
 import { confinedRepairTarget, prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
@@ -57,12 +61,10 @@ export interface FenceSource {
   mirror: boolean;
   /** The checkout this host reads and (unless a mirror) writes; null when the source has none here. */
   root: string | null;
-  /** Managed brain: another host owns this source's checkout, or its owner is not active. */
-  ownerElsewhere: boolean;
-  /** Managed brain: a managed sync of this source has not finished (E9). */
-  syncUnfinished: boolean;
-  /** Paths and slugs a queued, running or recovering write of this source names. */
-  busy: { paths: Set<string>; slugs: Set<string> };
+  /** Managed brain: why this host may not write the source's checkout (another owner, a transfer or clone in progress, an incomplete registration); null when it may. */
+  owner: OwnerRefusal | null;
+  /** Managed brain: the paths and slugs in-flight writes and unfinished sync manifests name (every candidate while `unknown`). */
+  busy: RepairBusySet;
   activePack?: Awaited<ReturnType<typeof repairScreenConfig>>['activePack'];
 }
 
@@ -70,33 +72,34 @@ function inGit(root: string): boolean {
   try { execFileSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' }); return true; } catch { return false; }
 }
 
-/** This host's view of one source for fence repair; null when the source is gone or archived. */
-export async function loadFenceSource(engine: BrainEngine, sourceId: string): Promise<FenceSource | null> {
+/**
+ * This host's view of one source for fence repair; null when the source is gone or archived. `remote` (default
+ * true, the fail-closed reading of an unknown caller) keeps local paths out of the owner refusal's text.
+ */
+export async function loadFenceSource(engine: BrainEngine, sourceId: string, opts: { remote?: boolean } = {}): Promise<FenceSource | null> {
   const [row] = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
     'SELECT id, incarnation::text AS incarnation, local_path FROM sources WHERE id=$1 AND archived IS NOT TRUE', [sourceId]);
   if (!row) return null;
   const managed = await managedPersistenceEnabled(engine);
   const mirror = await sourceMirrorReadOnly(engine, sourceId);
   let root: string | null = null;
-  let ownerElsewhere = false;
+  let owner: OwnerRefusal | null = null;
   if (managed) {
     const binding = await getWorktreeBinding(engine, sourceId);
+    // A source with no binding at all has no checkout anywhere: it is repaired in the database (db mode), not refused.
     if (binding) {
-      if (binding.owner_host_id !== localHostId() || binding.state !== 'active' || !binding.local_path) ownerElsewhere = true;
-      else root = join(binding.local_path, binding.relative_path);
+      const hostId = localHostId();
+      const checked = checkOwner(binding, row.incarnation, hostId);
+      if (checked.reason) owner = ownerRefusal({ sourceId, reason: checked.reason, binding, incarnation: row.incarnation, hostId, remote: opts.remote !== false, work: 'fence repair' });
+      else root = join(checked.binding.local_path, checked.binding.relative_path);
     }
   } else {
     const local = row.local_path ?? (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
     root = local && existsSync(local) ? local : null;
   }
-  const [cursor] = managed ? await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM op_checkpoints WHERE op='managed-sync'
-    AND COALESCE(completed_keys->0->>'done','false')<>'true' AND completed_keys->0->>'sourceId'=$1`, [sourceId]) : [{ n: 0 }];
-  const pending = await engine.executeRaw<{ slug: string; path: string | null; source_path: string | null }>(`SELECT slug, intent->>'path' AS path, intent->>'sourcePath' AS source_path
-    FROM persistence_requests WHERE source_id=$1 AND state IN ('queued','running','recovering')`, [sourceId]).catch(() => []);
+  const busy: RepairBusySet = managed ? await loadRepairBusySet(engine, sourceId, row.incarnation) : { paths: new Set(), slugs: new Set(), unknown: null };
   const config = await repairScreenConfig(engine, sourceId);
-  return { id: row.id, incarnation: row.incarnation, managed, mirror, root, ownerElsewhere, syncUnfinished: Number(cursor?.n ?? 0) > 0,
-    busy: { paths: new Set(pending.flatMap(p => [p.path, p.source_path].filter((v): v is string => !!v))), slugs: new Set(pending.map(p => p.slug)) },
-    ...(config.activePack ? { activePack: config.activePack } : {}) };
+  return { id: row.id, incarnation: row.incarnation, managed, mirror, root, owner, busy, ...(config.activePack ? { activePack: config.activePack } : {}) };
 }
 
 /** One candidate's current bytes: a working-tree file, or a stored page. */
@@ -249,6 +252,7 @@ export async function writeFenceRepair(ctx: OperationContext, src: FenceSource, 
       if (error instanceof OperationError && ['changed_since_preview', 'revision_conflict', 'page_identity_changed', 'source_changed'].includes(error.code)) {
         return { ok: false, reason: 'changed_since_read', message: `${target.path} changed while it was being repaired; the next run reads it again.` };
       }
+      if (error instanceof OperationError && error.code === 'sync_in_progress') return { ok: false, reason: 'sync_in_progress', message: error.message };
       throw error;
     }
   }

@@ -14,7 +14,10 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } fr
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   __setChatTransportForTests,
+  __setGenerateTextTransportForTests,
   chat,
+  configureGateway,
+  resetGateway,
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
 import {
@@ -211,7 +214,8 @@ describe('gateway.chat() success boundary — direct vs job callers', () => {
     });
     __setChatTransportForTests(async () =>
       fakeResult({
-        usage: { input_tokens: 100, output_tokens: 50, cache_read_tokens: 2000, cache_creation_tokens: 3000 },
+        // ChatResult convention: input_tokens is the total, the cache buckets are inside it (100 uncached).
+        usage: { input_tokens: 5100, output_tokens: 50, cache_read_tokens: 2000, cache_creation_tokens: 3000 },
       }),
     );
     await chat({ model: 'anthropic:claude-haiku-4-5', messages: [{ role: 'user', content: 'hi' }] });
@@ -387,5 +391,50 @@ describe('engine sink + get_usage op (PGLite, migration v140 schema)', () => {
     expect(out.totals.calls).toBe(0);
     expect(out.by_model).toEqual([]);
     expect(out.coverage.table_present).toBe(true);
+  });
+});
+
+// A1 follow-up: the gateway reports AI SDK usage, where the input total
+// already contains the cache buckets. A 100-token prompt with 60 tokens read
+// from cache must be priced as 40 uncached + 60 cache-read, whichever
+// convention the provider used; adding the 60 on top of the 100 (master)
+// priced 160 input tokens. The generateText seam replaces only the SDK call,
+// so the gateway's own usage assembly runs.
+describe('cache tokens are subsets of the gateway input total (both provider conventions)', () => {
+  afterEach(() => {
+    __setGenerateTextTransportForTests(null);
+    resetGateway();
+  });
+
+  const CASES = [
+    { model: 'anthropic:claude-haiku-4-5', result: { finishReason: 'stop',
+      usage: { inputTokens: 100, inputTokenDetails: { noCacheTokens: 40, cacheReadTokens: 60, cacheWriteTokens: 0 }, outputTokens: 10 },
+      providerMetadata: { anthropic: { cacheReadInputTokens: 60, cacheCreationInputTokens: 0 } } } },
+    { model: 'openai:gpt-4o', result: { finishReason: 'stop',
+      usage: { inputTokens: 100, inputTokenDetails: { noCacheTokens: 40, cacheReadTokens: 60, cacheWriteTokens: undefined }, outputTokens: 10, cachedInputTokens: 60 } } },
+  ] as const;
+
+  for (const { model, result } of CASES) {
+    test(`${model}: 40 uncached + 60 cache-read, not 100 + 60`, async () => {
+      configureGateway({ env: { ANTHROPIC_API_KEY: 'sk-ant-fake', OPENAI_API_KEY: 'sk-fake' } });
+      __setGenerateTextTransportForTests((async () => ({ content: [{ type: 'text', text: 'ok' }], ...result })) as never);
+      const records: ChatUsageRecord[] = [];
+      setChatUsageSink((r) => { records.push(r); });
+      await chat({ model, messages: [{ role: 'user', content: 'hi' }] });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(records.length).toBe(1);
+      expect(records[0]!.input_tokens).toBe(100);
+      expect(records[0]!.cache_read_tokens).toBe(60);
+      const expected = estimateChatCostUsd(model, { input_tokens: 40, output_tokens: 10, cache_read_tokens: 60 })!;
+      expect(expected).toBeGreaterThan(0);
+      expect(records[0]!.cost_usd).toBeCloseTo(expected, 12);
+      expect(records[0]!.cost_usd).toBeLessThan(estimateChatCostUsd(model, { input_tokens: 100, output_tokens: 10, cache_read_tokens: 60 })!);
+    });
+  }
+
+  test('a priced meter (non-table override) charges the input total once', () => {
+    const meter: ChatCallMeter = { calls: 0, cost_usd: 0, pricing_overrides: { 'acme:override-model': { input: 1, output: 0 } } as never };
+    withChatCallMeter(meter, () => recordChatUsage({ model: 'acme:override-model', usage: { input_tokens: 100, output_tokens: 0, cache_read_tokens: 60 } }));
+    expect(meter.cost_usd).toBeCloseTo(100 / 1e6, 12);
   });
 });

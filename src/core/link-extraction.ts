@@ -1474,9 +1474,8 @@ function basenameSort(a: string, b: string): number {
   return (a.length - b.length) || a.localeCompare(b);
 }
 
-/** Build a `key → slug[]` index over a slug collection. Keys: raw/lower/slugified tail. */
-export function buildBasenameIndex(slugs: Iterable<string>): Map<string, string[]> {
-  const idx = new Map<string, string[]>();
+/** Build a `key → slug[]` index over a slug collection, or add the slugs to `idx`. Keys: raw/lower/slugified tail. */
+export function buildBasenameIndex(slugs: Iterable<string>, idx = new Map<string, string[]>()): Map<string, string[]> {
   const addKey = (key: string, slug: string) => {
     const existing = idx.get(key);
     if (existing) { if (!existing.includes(slug)) existing.push(slug); }
@@ -1519,9 +1518,10 @@ export function queryBasenameIndex(idx: Map<string, string[]>, name: string): st
  */
 export function makeResolver(
   engine: BrainEngine,
-  opts: { mode: 'batch' | 'live'; sourceId?: string } = { mode: 'live' },
+  opts: { mode: 'batch' | 'live'; sourceId?: string; basenameIndex?: () => Promise<Map<string, string[]>> } = { mode: 'live' },
 ): SlugResolver {
   const cache = new Map<string, string | null>();
+  const basenameMatches = new Map<string, string[]>();
   const attendanceCache = new Map<string, string | null>();
   const attendanceCacheLimit = 256;
 
@@ -1536,6 +1536,10 @@ export function makeResolver(
   async function ensureBasenameIndex(): Promise<Map<string, string[]>> {
     if (basenameIndex !== null) return basenameIndex;
     const idx = new Map<string, string[]>();
+    if (opts.basenameIndex) {
+      basenameIndex = await opts.basenameIndex().catch(() => idx);
+      return basenameIndex;
+    }
     if (typeof engine.getAllSlugs !== 'function') {
       basenameIndex = idx;
       return idx;
@@ -1584,8 +1588,10 @@ export function makeResolver(
     },
     async resolveBasenameMatches(name: string): Promise<string[]> {
       // Issue #972 (codex [P2] DRY): shared query so resolver + FS + doctor
-      // return the same matches in the same stable order.
-      return queryBasenameIndex(await ensureBasenameIndex(), name);
+      // return the same matches in the same stable order. Memoized per
+      // resolver: a shared opts.basenameIndex may grow while a page extracts.
+      if (!basenameMatches.has(name)) basenameMatches.set(name, queryBasenameIndex(await ensureBasenameIndex(), name));
+      return [...basenameMatches.get(name)!];
     },
 
     async resolve(name: string, dirHint?: string | string[], resolveOpts?: ResolveOptions): Promise<string | null> {

@@ -49,7 +49,7 @@ the same registry.
 
 ```bash
 gbrain init --pglite                                      # 2-second local brain
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter   # the verbs plus page tools
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface full   # every operation, the verbs included
 gbrain remember "gbrain install check" --provenance install-check
 gbrain recall --query "gbrain install check"              # …now ask your agent in a NEW session
 ```
@@ -64,28 +64,28 @@ If `claude` is not found: install Claude Code first, or use a block below.
 
 **Codex**
 ```bash
-codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter
+codex mcp add gbrain -- "$(command -v gbrain)" serve --surface full
 ```
 
 **Grok Build** (verify with `grok mcp doctor gbrain` — the add is lazy)
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface starter
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface full
 ```
 
 **opencode** (verify with `opencode mcp list` — the add is lazy, and list SPAWNS the server)
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface starter
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface full
 ```
 
 **OpenClaw / any stdio MCP host** — register the server command
-`gbrain serve --surface starter`. Remote brains: `gbrain serve --http` on the
+`gbrain serve --surface full`. Remote brains: `gbrain serve --http` on the
 host, then `gbrain connect https://host/mcp --token gbrain_xxx --install` on
 each client.
 
 **Surface modes:** `--surface verbs` exposes EXACTLY the seven verbs —
 advertised list AND dispatch are filtered fail-closed (a hidden op returns
 `unknown_tool` even when called by name). `--surface starter` exposes the
-~27-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
+40-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
 verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and the
 `request_tools` discovery meta-op (re-derivable from production usage via
 `scripts/derive-starter-ops.ts`). Monotonic by construction: verbs ⊆ starter ⊆ full
@@ -93,8 +93,9 @@ verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and 
 verb semantics. `--surface full` (the default for a bare `serve`) exposes
 every operation, verbs included. Every stdio registration gbrain writes
 (`gbrain init`'s quickstart, readiness, `gbrain bootstrap hooks`, the plugins)
-pins `starter`, because `verbs` lacks the page reads and writes bootstrap's
-instructions use and `full` puts the whole catalogue in front of the model.
+pins `full`, callable and advertised: in the held-out agent benchmark, listing
+only `starter` or `verbs` lowered task success and saved no tokens. A harness
+that caps its tool count can register `--surface starter` or `--surface verbs`.
 Persist a default for bare `serve` with `gbrain config set mcp_surface verbs`.
 On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface`; a
 session widens itself with `request_tools {"surface":"full"}` (see

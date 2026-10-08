@@ -64,8 +64,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -73,8 +73,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -673,8 +673,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -682,8 +682,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -770,8 +770,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -779,8 +779,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -849,8 +849,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -858,8 +858,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -919,8 +919,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -928,8 +928,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -1246,8 +1246,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -1255,8 +1255,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -1310,8 +1310,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -1319,8 +1319,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",

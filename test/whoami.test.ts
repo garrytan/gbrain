@@ -7,9 +7,14 @@
  * test/e2e/serve-http-oauth.test.ts and test/e2e/sources-remote-mcp.test.ts.
  */
 
-import { test, expect, describe } from 'bun:test';
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test';
 import { operations, OperationError } from '../src/core/operations.ts';
 import type { OperationContext, AuthInfo } from '../src/core/operations.ts';
+import { STARTER_OPS } from '../src/mcp/surface.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { readClientGrant, rescopeClientGrant, resolveGrantProfile } from '../src/core/grants/service.ts';
 
 const whoami = operations.find(o => o.name === 'whoami')!;
 
@@ -258,5 +263,186 @@ describe('whoami op metadata', () => {
 
   test('mutating is false', () => {
     expect(whoami.mutating).toBeFalsy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D4: grant_diagnosis — proven blockers with counts and no operation names,
+// inferred grant age kept apart, identity from the verifier's principal.
+// ---------------------------------------------------------------------------
+
+const EXCLUDED = ['put_pages', 'delete_page'];
+
+async function diagnose(auth: AuthInfo, extra: Partial<OperationContext> = {}): Promise<any> {
+  return (await whoami.handler(ctxWith({ remote: true, auth, ...extra }), {})) as any;
+}
+
+function oauthAuth(overrides: Partial<AuthInfo>): AuthInfo {
+  return {
+    token: 'gbrain_at_diag', clientId: 'display-only-id', clientName: 'diag-example',
+    principal: { kind: 'oauth_client', id: 'gbrain_cl_diag_principal' },
+    scopes: ['read', 'write'], expiresAt: 1, sourceId: 'default', allowedSources: ['default'],
+    ...overrides,
+  } as AuthInfo;
+}
+
+/** Every operation a read+write grant may call on this server: a no-snapshot full-surface grant lists exactly that set. */
+async function eligibleFor(scopes: string[]): Promise<string[]> {
+  return (await diagnose(oauthAuth({ scopes, allowedOperations: null }))).available_operations;
+}
+
+describe('whoami grant_diagnosis', () => {
+  test('snapshot-blocked: names the operation snapshot, counts the excluded operations and names none', async () => {
+    const eligible = await eligibleFor(['read', 'write']);
+    expect(eligible).toEqual(expect.arrayContaining(EXCLUDED));
+    const result = await diagnose(oauthAuth({ allowedOperations: eligible.filter(name => !EXCLUDED.includes(name)), surface: 'full', surfaceSetBy: 'operator' }));
+    const d = result.grant_diagnosis;
+    expect(d.blockers).toEqual([{ blocker: 'operation_snapshot', excluded_count: 2 }]);
+    expect(d.unreachable_count).toBe(2);
+    expect(d.grant_age).toEqual({ state: 'intent_unknown', excluded_count: 2,
+      statement: "This grant's snapshot excludes 2 currently eligible operations; original intent unknown." });
+    expect(d.fix.next).toBe('tell_user_to_run');
+    expect(d.fix.argv).toEqual(['gbrain', 'auth', 'rescope', '--client', 'gbrain_cl_diag_principal', '--operations', '<OPERATIONS>', '--dry-run']);
+    expect(d.fix.then_argv).toEqual(['gbrain', 'auth', 'rescope', '--client', 'gbrain_cl_diag_principal', '--operations', '<OPERATIONS>']);
+    expect(d.fix.all_operations.argv).toContain('all');
+    for (const name of EXCLUDED) expect(JSON.stringify(result)).not.toContain(name);
+  });
+
+  test('pin-blocked: names the client pin and its surface; the snapshot is complete', async () => {
+    const eligible = await eligibleFor(['read', 'write']);
+    const d = (await diagnose(oauthAuth({ allowedOperations: eligible, surface: 'starter', surfaceSetBy: 'operator' }))).grant_diagnosis;
+    const outsideStarter = eligible.filter(name => !STARTER_OPS.has(name)).length;
+    expect(outsideStarter).toBeGreaterThan(0);
+    expect(d.blockers).toEqual([{ blocker: 'client_pin', surface: 'starter', set_by: 'operator', excluded_count: outsideStarter }]);
+    expect(d.grant_age).toEqual({ state: 'snapshot_complete', excluded_count: 0 });
+    expect(d.fix.argv).toEqual(['gbrain', 'auth', 'rescope', '--client', 'gbrain_cl_diag_principal', '--surface', 'full', '--dry-run']);
+    expect(d.fix.inputs).toBeUndefined();
+    for (const name of EXCLUDED) expect(JSON.stringify(d)).not.toContain(name);
+  });
+
+  test('both: a client blocked by its snapshot and its pin gets both blockers and one command lifting both', async () => {
+    const eligible = await eligibleFor(['read', 'write']);
+    const d = (await diagnose(oauthAuth({ allowedOperations: eligible.filter(name => name !== 'put_pages'), surface: 'starter', surfaceSetBy: 'operator' }))).grant_diagnosis;
+    const outsideStarter = eligible.filter(name => !STARTER_OPS.has(name));
+    expect(d.blockers).toEqual([
+      { blocker: 'operation_snapshot', excluded_count: 1 },
+      { blocker: 'client_pin', surface: 'starter', set_by: 'operator', excluded_count: outsideStarter.length },
+    ]);
+    expect(d.unreachable_count).toBe(new Set([...outsideStarter, 'put_pages']).size);
+    expect(d.fix.argv).toEqual(['gbrain', 'auth', 'rescope', '--client', 'gbrain_cl_diag_principal', '--operations', '<OPERATIONS>', '--surface', 'full', '--dry-run']);
+    expect(JSON.stringify(d)).not.toContain('put_pages');
+  });
+
+  test('scope-blocked: a reader names the missing write scope and counts no write operations', async () => {
+    const eligible = await eligibleFor(['read']);
+    expect(eligible).not.toContain('put_pages');
+    const d = (await diagnose(oauthAuth({ scopes: ['read'], allowedOperations: eligible, surface: 'full' }))).grant_diagnosis;
+    expect(d.blockers).toEqual([{ blocker: 'scope', missing_scopes: ['write'] }]);
+    expect(d.unreachable_count).toBe(0);
+    expect(d.fix).toBeNull();
+  });
+
+  test('server-ceiling: a narrower transport ceiling is its own blocker and no grant change is offered', async () => {
+    const eligible = await eligibleFor(['read', 'write']);
+    const d = (await diagnose(oauthAuth({ allowedOperations: eligible, effectiveSurface: 'starter' }), { surfaceCeiling: 'starter' })).grant_diagnosis;
+    expect(d.blockers).toEqual([{ blocker: 'server_ceiling', surface: 'starter', excluded_count: eligible.filter(name => !STARTER_OPS.has(name)).length }]);
+    expect(d.fix).toBeNull();
+  });
+
+  test('scope-eligible counting: a writer snapshot holding every read/write operation reports 0 though the catalog has admin-only operations', async () => {
+    const eligible = await eligibleFor(['read', 'write']);
+    const adminOnly = operations.filter(op => !op.localOnly && op.scope === 'admin').map(op => op.name);
+    expect(adminOnly.length).toBeGreaterThan(0);
+    for (const name of adminOnly) expect(eligible).not.toContain(name);
+    const d = (await diagnose(oauthAuth({ allowedOperations: eligible, surface: 'full' }))).grant_diagnosis;
+    expect(d.blockers).toEqual([]);
+    expect(d.unreachable_count).toBe(0);
+    expect(d.grant_age).toEqual({ state: 'snapshot_complete', excluded_count: 0 });
+  });
+
+  test('legacy token: identity is the verifier principal id and the fix refreshes the snapshot', async () => {
+    const eligible = await eligibleFor(['read', 'write']);
+    const auth = { token: 'gbrain_x', clientId: 'shared-token-name', clientName: 'shared-token-name',
+      principal: { kind: 'legacy_token', id: '00000000-0000-4000-8000-0000000000d4' }, scopes: ['read', 'write'],
+      allowedOperations: eligible.filter(name => name !== 'put_pages'), expiresAt: 1 } as AuthInfo;
+    const result = await diagnose(auth);
+    expect(result.transport).toBe('legacy');
+    const d = result.grant_diagnosis;
+    expect(d.blockers).toEqual([{ blocker: 'operation_snapshot', excluded_count: 1 }]);
+    expect(d.grant_age.state).toBe('intent_unknown');
+    expect(d.fix.argv).toEqual(['gbrain', 'auth', 'rescope', '--id', '00000000-0000-4000-8000-0000000000d4', '--refresh-operations']);
+    expect(d.fix.then_argv).toEqual(['gbrain', 'auth', 'rescope', '--id', '00000000-0000-4000-8000-0000000000d4', '--refresh-operations', '--add', '<OPERATIONS>']);
+    expect(JSON.stringify(result)).not.toContain('put_pages');
+  });
+
+  test('no principal: counts still report, but no host command is built from a display name', async () => {
+    const eligible = await eligibleFor(['read', 'write']);
+    const d = (await diagnose(oauthAuth({ principal: undefined, allowedOperations: eligible.filter(name => name !== 'put_pages') }))).grant_diagnosis;
+    expect(d.blockers).toEqual([{ blocker: 'operation_snapshot', excluded_count: 1 }]);
+    expect(d.fix).toBeNull();
+  });
+});
+
+describe('whoami grant_diagnosis grant age on a real grant record (PGLite)', () => {
+  let engine: PGLiteEngine;
+  let provider: GBrainOAuthProvider;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  }, 60_000);
+  afterAll(async () => { await engine?.disconnect(); }, 15_000);
+
+  async function writerWithout(name: string, excluded: string[]) {
+    const created = await provider.registerClientManual(name, ['client_credentials'], 'read write', [], 'default', undefined, undefined, undefined,
+      resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' }));
+    const grant = await readClientGrant(engine, created.clientId);
+    await rescopeClientGrant(engine, created.clientId, { allowedOperations: grant.allowedOperations!.filter(op => !excluded.includes(op)) }, { actor: 'test' });
+    return created;
+  }
+  async function liveDiagnosis(clientId: string, secret: string) {
+    const token = await provider.exchangeClientCredentials(clientId, secret);
+    const auth = await provider.verifyAccessToken(token.access_token) as unknown as AuthInfo;
+    auth.effectiveSurface = 'full';
+    return (await whoami.handler(ctxWith({ remote: true, auth, engine, config: { engine: 'pglite' } as any, surfaceCeiling: 'full' }), {}) as any).grant_diagnosis;
+  }
+  const dropFromCatalog = (clientId: string, name: string) => engine.executeRaw(
+    `UPDATE oauth_grant_audit SET after_grant = jsonb_set(after_grant, '{catalogProvenance,operations}', (after_grant->'catalogProvenance'->'operations') - $2::text)
+     WHERE client_id = $1 AND after_grant->'catalogProvenance' IS NOT NULL`, [clientId, name]);
+
+  test('post-D4: a snapshot written without an operation that existed reports it as left out, not predated', async () => {
+    const created = await writerWithout('age-left-out-example', ['put_pages']);
+    const d = await liveDiagnosis(created.clientId, created.clientSecret!);
+    expect(d.blockers).toEqual([{ blocker: 'operation_snapshot', excluded_count: 1 }]);
+    expect(d.grant_age).toMatchObject({ state: 'provenance_recorded', excluded_count: 1, predates_count: 0, excluded_at_snapshot_count: 1 });
+    expect(d.grant_age.statement).toContain('all existed when the snapshot was written');
+    expect(d.grant_age.statement).not.toContain('predates');
+  });
+
+  test('post-D4: an operation added after the snapshot was written is asserted as predated', async () => {
+    const created = await writerWithout('age-predates-example', ['put_pages']);
+    await dropFromCatalog(created.clientId, 'put_pages');
+    const d = await liveDiagnosis(created.clientId, created.clientSecret!);
+    expect(d.grant_age).toMatchObject({ state: 'provenance_recorded', excluded_count: 1, predates_count: 1, excluded_at_snapshot_count: 0 });
+    expect(d.grant_age.statement).toStartWith('This grant predates 1 currently eligible operation:');
+    expect(JSON.stringify(d)).not.toContain('put_pages');
+  });
+
+  test('a new admin-only operation outside a writer grant is not counted', async () => {
+    const created = await writerWithout('age-admin-example', ['put_pages']);
+    const adminOp = operations.find(op => !op.localOnly && op.scope === 'admin')!.name;
+    await dropFromCatalog(created.clientId, adminOp);
+    const d = await liveDiagnosis(created.clientId, created.clientSecret!);
+    expect(d.blockers).toEqual([{ blocker: 'operation_snapshot', excluded_count: 1 }]);
+    expect(d.grant_age).toMatchObject({ excluded_count: 1, predates_count: 0 });
+  });
+
+  test('legacy: without recorded provenance the same snapshot says original intent unknown', async () => {
+    const created = await writerWithout('age-legacy-example', ['put_pages']);
+    await engine.executeRaw("UPDATE oauth_grant_audit SET after_grant = after_grant - 'catalogProvenance' WHERE client_id = $1", [created.clientId]);
+    const d = await liveDiagnosis(created.clientId, created.clientSecret!);
+    expect(d.grant_age).toEqual({ state: 'intent_unknown', excluded_count: 1,
+      statement: "This grant's snapshot excludes 1 currently eligible operation; original intent unknown." });
   });
 });

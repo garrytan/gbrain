@@ -142,7 +142,7 @@ export function firstRunJson(bundle: Notice[]): { notices?: unknown[]; contract_
 
 /**
  * The harness registration line for init's quickstart: the readiness
- * `harness_wiring` fix (absolute binary, `--surface starter` unless
+ * `harness_wiring` fix (absolute binary, `--surface full` unless
  * `gbrain init --surface` names another) for the detected harness, else the
  * Claude Code registration built the same way. Null when the gbrain binary
  * has no absolute path (never registered bare).

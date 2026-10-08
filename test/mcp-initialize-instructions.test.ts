@@ -197,3 +197,42 @@ describe('#6170: writeback line and error protocol inside the harness read limit
     }
   }
 });
+
+// D1 (wave 0): when callable tools are left out of the listed set, the
+// hidden-tool sentence is the first thing a capped harness reads, on every
+// surface, writeback mode and with the status line; the other prompt-critical
+// lines still fit. On master the sentence was appended after the contract.
+describe('D1: hidden-tool sentence inside the harness read limit', () => {
+  const STATUS_LINE = 'This server is status-only: call gbrain_status for brain health; every other tool is off on this connection.';
+  for (const surface of SURFACES) {
+    for (const mode of ['off', 'salient', 'all'] as const) {
+      for (const statusLine of [undefined, STATUS_LINE]) {
+        test(`${surface} / ${mode} / status line=${statusLine !== undefined}`, () => {
+          const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
+          const callable = (n: string) => listed.has(n) || n === 'request_tools';
+          const writeback = mode !== 'off' && listed.has('remember') ? { mode, transientTtl: '3d', visibility: 'private' as const, extractFactsAvailable: true } : null;
+          const text = buildMcpInstructions({ tools: { callable, hiddenCallable: 100, statusLine }, writeback });
+          const critical = [
+            '100 more are callable. Call request_tools with no arguments',
+            listed.has('context_pack') && 'call `context_pack` at session start',
+            listed.has('put_page') && listed.has('get_page') && 'put_page REPLACES the entire page',
+            listed.has('put_page') && 'Writing:',
+            'Follow `fix.next`',
+            writeback && 'Ambient writeback is ON',
+          ].filter((marker): marker is string => typeof marker === 'string');
+          for (const marker of critical) {
+            const start = text.indexOf(marker);
+            expect({ marker, found: start >= 0 }).toEqual({ marker, found: true });
+            const end = text.indexOf('\n', start);
+            expect({ marker, end: Math.min(end === -1 ? text.length : end, HARNESS_READ_LIMIT + 1) }).toEqual({ marker, end: Math.min(end === -1 ? text.length : end, HARNESS_READ_LIMIT) });
+          }
+        });
+      }
+    }
+  }
+
+  test('no hidden callable tools, or request_tools not callable: no sentence', () => {
+    expect(buildMcpInstructions({ tools: { callable: () => true, hiddenCallable: 0 } })).not.toContain('more are callable');
+    expect(buildMcpInstructions({ tools: { callable: n => n !== 'request_tools', hiddenCallable: 5 } })).not.toContain('more are callable');
+  });
+});

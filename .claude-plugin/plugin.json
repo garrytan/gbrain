@@ -1,6 +1,6 @@
 {
   "name": "gbrain",
-  "version": "0.60.110.0",
+  "version": "0.60.116.0",
   "description": "Personal knowledge brain for your coding agent — hybrid search, synthesis, graph traversal, and durable cross-session memory over Postgres/PGLite with pgvector, plus a curated brain-first skill set.",
   "author": {
     "name": "Garry Tan",
@@ -25,7 +25,7 @@
       "args": [
         "serve",
         "--surface",
-        "starter",
+        "full",
         "--source-guard"
       ],
       "cwd": "${CLAUDE_PLUGIN_ROOT}"

@@ -82,6 +82,7 @@ import { queueHealthEntry, indexAuditEntry, imageAssetsEntry } from './checks/qu
 import { globalMaintenanceTimeoutsEntry } from './checks/global-maintenance-timeouts.ts';
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
+import { grantNewOpsEntry } from './checks/grant-new-ops.ts';
 import { syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
 import { gitConvergenceEntry } from './checks/git-convergence.ts';
 import { retrievalFeedbackEntry } from './checks/retrieval-feedback.ts';
@@ -160,6 +161,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   globalMaintenanceTimeoutsEntry,
   legacyJobAuthorityEntry,
   legacyTokenGrantsEntry,
+  grantNewOpsEntry,
   indexAuditEntry,
   imageAssetsEntry,
   syncFreshnessEntry,

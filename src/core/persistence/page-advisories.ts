@@ -23,8 +23,13 @@ const LINE_GRAMMAR_FINDINGS_MAX = 5;
 async function similarPagesAdvisory(engine: BrainEngine, row: WriteRequest, page: ParsedPage): Promise<Record<string, unknown> | undefined> {
   if (!['put_page', 'capture'].includes(row.operation) || row.page_id != null || row.slug.startsWith('wiki/agents/')
     || page.frontmatter?.dream_generated === true || (page.type as string) === 'extract_receipt' || isQuarantined(page.frontmatter)) return undefined;
-  const found = await findSimilarPages(engine, { sourceId: row.source_id, slug: row.slug, title: page.title ?? '',
-    excludePrivate: row.authority.excludePrivate ?? row.authority.remote });
+  // #6276: off by default, so the default path sends no statement; on Postgres the check runs with JIT off (its
+  // correlated visibility subplans cross the JIT cost threshold on larger brains and compile on every call).
+  if (!/^(true|1|yes|on)$/i.test((await engine.getConfig('put_page.similar_pages').catch(() => null))?.trim() ?? '')) return undefined;
+  const input = { sourceId: row.source_id, slug: row.slug, title: page.title ?? '', excludePrivate: row.authority.excludePrivate ?? row.authority.remote };
+  const found = engine.kind === 'postgres'
+    ? await engine.transaction(async tx => { await tx.executeRaw('SET LOCAL jit = off'); return findSimilarPages(tx, input); })
+    : await findSimilarPages(engine, input);
   if (!found?.candidates.length) return undefined;
   const first = found.candidates[0];
   return {

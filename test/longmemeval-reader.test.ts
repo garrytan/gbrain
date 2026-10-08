@@ -6,7 +6,7 @@
  */
 import { describe, test, expect } from 'bun:test';
 import type Anthropic from '@anthropic-ai/sdk';
-import { buildReaderRequest, generateAnswer, READER_MAX_SESSION_CHARS, READER_PROMPT_VERSION, READER_SYSTEM_TEXT, READER_NOTES_SYSTEM_TEXT, readerConfigHash, resolveReaderConfig } from '../src/eval/longmemeval/reader.ts';
+import { buildReaderRequest, generateAnswer, READER_MAX_SESSION_CHARS, READER_PROMPT_VERSION, READER_SYSTEM_TEXT, READER_NOTES_SYSTEM_TEXT, readerConfigHash, resolveReaderConfig, readerUsageFromGateway, readerUsageFromMessage } from '../src/eval/longmemeval/reader.ts';
 import { checkResumeReaderConfig } from '../src/eval/longmemeval/resume.ts';
 import { sha256Hex } from '../src/eval/longmemeval/run-config.ts';
 import type { SearchResult } from '../src/core/types.ts';
@@ -131,5 +131,37 @@ describe('generateAnswer context construction', () => {
     const out = await generateAnswer(c, { question: 'q' }, [hit('chat/orphan', 'only this chunk')], [], new Map(), 'm');
     expect(calls[0].userText).toContain('only this chunk');
     expect(out.context_sessions).toBe(1);
+  });
+});
+
+// A1: one normalized usage record whichever cached-token convention the
+// client reports. A 100-token prompt with 60 tokens read from cache: the
+// Anthropic Messages API puts 40 in input_tokens and 60 in its own bucket;
+// the gateway (AI SDK v6) reports input_tokens 100 with 60 as a subset.
+// Adding the cache bucket to the gateway total again would read 160.
+describe('A1 reader usage normalization', () => {
+  const expected = { total_input_tokens: 100, uncached_input_tokens: 40, cache_read_input_tokens: 60, cache_write_input_tokens: 0, output_tokens: 12, reasoning_tokens: null };
+
+  test('Anthropic Messages convention (separate cache buckets)', () => {
+    const message = { usage: { input_tokens: 40, output_tokens: 12, cache_read_input_tokens: 60, cache_creation_input_tokens: 0 } } as unknown as Anthropic.Message;
+    expect(readerUsageFromMessage(message)).toEqual(expected);
+  });
+
+  test('gateway convention (cache counts inside the input total)', () => {
+    expect(readerUsageFromGateway({ input_tokens: 100, output_tokens: 12, cache_read_tokens: 60, cache_creation_tokens: 0 })).toEqual(expected);
+    expect(readerUsageFromGateway({ input_tokens: 100, output_tokens: 12, cache_read_tokens: 60, cache_creation_tokens: 0, reasoning_tokens: 7 }).reasoning_tokens).toBe(7);
+  });
+
+  test('a client that reports no usage yields null, never zeros', () => {
+    expect(readerUsageFromMessage({ content: [] } as unknown as Anthropic.Message)).toBeNull();
+  });
+
+  test('generateAnswer keeps the usage and the finish reason', async () => {
+    const answer = await generateAnswer({ create: async () => ({ content: [{ type: 'text', text: 'Paris' }], stop_reason: 'max_tokens',
+      usage: { input_tokens: 40, output_tokens: 12, cache_read_input_tokens: 60 } }) as unknown as Anthropic.Message },
+    { question: 'Where?' }, [], [], new Map(), 'anthropic:claude-opus-5-5');
+    expect(answer.text).toBe('Paris');
+    expect(answer.finish_reason).toBe('max_tokens');
+    expect(answer.usage).toEqual(expected);
   });
 });

@@ -3,8 +3,8 @@
  * seam sits at a point where a process death leaves durable state the
  * recovery path must finish: publication boundaries, after an effect's side
  * effect but before its completion is recorded, before a recovery record is
- * cleared, between sync checkpoints, and after the consumer prepared a
- * claimed request. Production never installs a hook, so every call is a
+ * cleared, between sync checkpoints, after the consumer prepared a
+ * claimed request, and (`lane:applied`) when a lane group has applied its pages and waits for its commit turn. Production never installs a hook, so every call is a
  * no-op there; the gate's workers install one that SIGKILLs or stalls the
  * process at a chosen point.
  */
@@ -14,8 +14,14 @@ import type { WriteRequest } from './model.ts';
 
 export type PublicationBoundary = Parameters<NonNullable<PublicationHooks['boundary']>>[0];
 export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${EffectKind}:mid`
-  | 'effect_recovery:before_clear' | 'publication_recovery:before_clear' | 'sync:mid_checkpoint' | 'consumer:prepared';
-export interface FaultDetail { requestId?: string; effectId?: string | number; sourceId?: string; operation?: string | null }
+  | 'effect_recovery:before_clear' | 'publication_recovery:before_clear' | 'sync:mid_checkpoint' | 'sync:before_group_admission' | 'sync:mid_waiver_run' | 'consumer:prepared'
+  | 'consumer:preparing' | 'lane:applied';
+/**
+ * `signal` (#6278, `consumer:preparing` only): the preparation's abort signal, so
+ * a stalling hook can model both the reporter's cases: a preparer that honours
+ * cancellation (settle on abort) and one that ignores it (hang on).
+ */
+export interface FaultDetail { requestId?: string; effectId?: string | number; sourceId?: string; operation?: string | null; signal?: AbortSignal }
 type FaultHook = (point: FaultPoint, detail: FaultDetail) => Promise<void> | void;
 
 /** The mid-effect seam of every effect kind; a new kind without one fails typecheck. */

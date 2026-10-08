@@ -4,7 +4,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
+import { ABANDONED_STOP_GRACE_MS, PersistenceConsumer } from '../src/core/persistence/consumer.ts';
+import { PreparationDeadlineError } from '../src/core/persistence/bounded-reads.ts';
+import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { admitWrite, getWriteRequestById, WRITE_PROGRESS_SQL } from '../src/core/persistence/journal.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
@@ -198,7 +200,10 @@ test('distinct stalled receipt reads stay capped and shutdown drains every retai
   } finally { for (const release of releases) release.resolve([]); await disposePersistenceConsumer(proxy); }
 }), 5000);
 
-for (const cooperates of [true, false]) test(`preparation deadline retains tracking and fences late results (cooperative=${cooperates})`, async () => withEnv(env, async () => {
+// #6278: this pair pins the pre-deadline behaviour (a preparer that ignores its signal stays `running` past the budget) and
+// runs verbatim with the `preparation_deadlines` switch off; the switch-on variants follow it.
+for (const cooperates of [true, false]) test(`preparation deadline retains tracking and fences late results (cooperative=${cooperates})`, async () => withEnv({ ...env, GBRAIN_PREPARATION_DEADLINES: '0' }, async () => {
+  resetWriteSwitches();
   const sources = await fixtures(engine, config);
   const row = await admitWrite(engine, admission(config, sources[0], `deadline-${cooperates}`, 'deadline body'));
   const release = Promise.withResolvers<void>();
@@ -229,9 +234,178 @@ for (const cooperates of [true, false]) test(`preparation deadline retains track
   } finally {
     release.resolve();
     await consumer.stop();
+    resetWriteSwitches();
     await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
   }
 }), 5000);
+
+/**
+ * #6278, switch on: the budget releases the claim whether or not the preparer honours its signal. The non-cooperative
+ * preparer's request is back in the queue at the budget with `preparation_deadline` and one counted attempt while the
+ * abandoned preparation still runs (the #5373 root barrier holds, so the root is not claimed again until it settles);
+ * its late result never publishes and the counters conserve.
+ */
+for (const cooperates of [true, false]) test(`preparation deadline releases the claim at the budget and counts the attempt (cooperative=${cooperates}, #6278)`, async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const row = await admitWrite(engine, admission(config, sources[0], `deadline-switch-on-${cooperates}`, 'deadline body'));
+  const release = Promise.withResolvers<void>();
+  let attempts = 0;
+  let aborted = false;
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_e, current, _c, signal?: AbortSignal) => {
+    attempts++;
+    signal?.addEventListener('abort', () => { aborted = true; if (cooperates) release.resolve(); }, { once: true });
+    await release.promise;
+    if (cooperates) signal?.throwIfAborted();
+    return prepared(current, sources);
+  }, { hostId: config.hostId, pollMs: 60_000, preparationMs: 50, preparationBudgets: { maxAttempts: 5, ceilingMs: 60_000 } });
+  try {
+    consumer.start();
+    await waitFor(() => attempts === 1);
+    await waitFor(async () => (await getWriteRequestById(engine, row.id))?.state === 'queued', { timeoutMs: 2_000, label: 'the budget releases the claim' });
+    expect(aborted).toBe(true);
+    expect(attempts).toBe(1);
+    const released = await getWriteRequestById(engine, row.id);
+    expect(released).toMatchObject({ state: 'queued', blocked_reason: 'preparation_deadline', preparation_attempts: 1 });
+    if (!cooperates) {
+      // The preparer still runs: the slot is free, the root is still blocked by it, nothing is re-claimed meanwhile.
+      await Bun.sleep(150);
+      expect(consumer.status()).toMatchObject({ active_preparations: 0, abandoned_preparations: 1, restart_required: false, outlived_ceiling: [] });
+      expect(attempts).toBe(1);
+      expect((await getWriteRequestById(engine, row.id))?.state).toBe('queued');
+    }
+    release.resolve();
+    await waitFor(() => consumer.status().abandoned_preparations === 0);
+    expect(await engine.readPageSnapshot(row.slug, { sourceId: row.source_id })).toBeNull();
+    await assertConservation(engine);
+  } finally {
+    release.resolve();
+    await consumer.stop();
+    await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
+  }
+}), 5000);
+
+test('an abandoned preparation past the hard ceiling frees its root, pins the counter at the limit and the next claim fails preparation_stalled (#6278)', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const stuck = await admitWrite(engine, admission(config, sources[0], 'ceiling/stuck', 'stuck body'));
+  const behind = await admitWrite(engine, admission(config, sources[0], 'ceiling/behind', 'behind body'));
+  const never = Promise.withResolvers<ReturnType<typeof prepared>>();
+  const attempts: string[] = [];
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_e, current) => {
+    attempts.push(current.id);
+    return current.id === stuck.id ? never.promise : prepared(current, sources);
+  }, { hostId: config.hostId, pollMs: 20, preparationMs: 30, preparationBudgets: { maxAttempts: 3, ceilingMs: 200 }, onError: () => {} });
+  try {
+    consumer.start();
+    await waitFor(async () => (await getWriteRequestById(engine, stuck.id))?.blocked_reason === 'preparation_deadline', { timeoutMs: 2_000 });
+    // Until the ceiling the root waits on the zombie: the write behind it is not claimed.
+    expect((await getWriteRequestById(engine, behind.id))?.state).toBe('queued');
+    expect(attempts).toEqual([stuck.id]);
+    await waitFor(() => consumer.status().restart_required, { timeoutMs: 2_000, label: 'the ceiling passes and the zombie is isolated' });
+    expect(consumer.status().outlived_ceiling).toEqual([expect.objectContaining({ request_id: stuck.request_id, operation: 'put_page', step: null, waiting_on: 'unknown' })]);
+    await waitFor(async () => (await getWriteRequestById(engine, stuck.id))?.preparation_attempts === 3, { timeoutMs: 2_000, label: 'the overrun pins the counter at the limit' });
+    // At the zombie cap this process claims nothing more; a process that still claims it finishes it without preparing again.
+    await Bun.sleep(100);
+    expect(attempts).toEqual([stuck.id]);
+    const fresh = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_e, current) => { attempts.push(current.id); return prepared(current, sources); },
+      { hostId: config.hostId, pollMs: 20, preparationBudgets: { maxAttempts: 3 }, onError: () => {} });
+    try {
+      fresh.start();
+      await waitFor(async () => (await getWriteRequestById(engine, stuck.id))?.state === 'failed', { timeoutMs: 3_000, label: 'the next claim fails it preparation_stalled' });
+      const failed = (await getWriteRequestById(engine, stuck.id))!;
+      expect(failed).toMatchObject({ state: 'failed', error_code: 'preparation_stalled', preparation_attempts: 3 });
+      expect(failed.error_message).toContain('persistence.max_preparation_attempts (3)');
+      expect(failed.error_detail).toMatchObject({ origin: 'preparation_stall', attempts: 3, limit: 3, stage: 'preparation' });
+      await waitFor(async () => (await getWriteRequestById(engine, behind.id))?.state === 'committed', { timeoutMs: 3_000, label: 'the root moves on' });
+      expect(attempts.filter(id => id === stuck.id)).toHaveLength(1);
+    } finally { await fresh.stop(); }
+    never.resolve(prepared(stuck, sources));
+    await waitFor(() => consumer.status().outlived_ceiling.length === 0);
+    expect(await engine.readPageSnapshot(stuck.slug, { sourceId: stuck.source_id })).toBeNull();
+    await assertConservation(engine);
+  } finally {
+    never.resolve(prepared(stuck, sources));
+    await consumer.stop();
+    for (const row of [stuck, behind]) await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id).catch(() => {});
+  }
+}), 15_000);
+
+test('the release that brings the counter to the limit finishes the request failed/preparation_stalled, and a waiting put_page caller receives it (#6278)', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const row = await admitWrite(engine, admission(config, sources[0], 'limit/foreground', 'poisoned body'));
+  let attempts = 0;
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_e, _current, _c, signal?: AbortSignal) => {
+    attempts++;
+    // Honours cancellation but never finishes inside its budget: the reporter's cooperative shape.
+    return new Promise<never>((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  }, { hostId: config.hostId, pollMs: 20, preparationMs: 30, preparationBudgets: { maxAttempts: 2 }, onError: () => {} });
+  try {
+    consumer.start();
+    const waited = await awaitWrite(engine, row, { engine: 'pglite' }, { waitMs: 5_000 });
+    expect(waited.kind).toBe('terminal');
+    expect(waited.row).toMatchObject({ state: 'failed', error_code: 'preparation_stalled', preparation_attempts: 2 });
+    expect(attempts).toBe(2);
+    expect(waited.row.error_message).toContain('submit the write again with a new request_id');
+    expect(await engine.readPageSnapshot(row.slug, { sourceId: row.source_id })).toBeNull();
+    await assertConservation(engine);
+  } finally { await disposePersistenceConsumer(engine); await consumer.stop(); }
+}), 10_000);
+
+/**
+ * #6278 (plan item 1.4): a bounded read the server ended inside the budget (a session `lock_timeout` shorter than the budget)
+ * reports the deadline itself. Protects: the consumer handles it as the deadline, never as the preparer's own failure: the
+ * claim is released `preparation_deadline` and charged, the release that reaches the limit finishes the request
+ * `failed`/`preparation_stalled`, and no `storage_error` receipt is written. Fails when the catch path releases it uncharged
+ * (`consumer_stopping`) or writes a terminal receipt from the raw error.
+ */
+test('a server-reported deadline inside the budget is a charged preparation_deadline release, then preparation_stalled at the limit (#6278)', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const row = await admitWrite(engine, admission(config, sources[0], 'server-deadline/foreground', 'bounded body'));
+  let attempts = 0;
+  const second = Promise.withResolvers<void>();
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_e, _current, _c, _signal, clock) => {
+    if (++attempts === 2) await second.promise;
+    if (clock) clock.step = 'origin_check';
+    throw new PreparationDeadlineError('origin_check', '55P03', Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' }));
+  }, { hostId: config.hostId, pollMs: 20, preparationMs: 5_000, preparationBudgets: { maxAttempts: 2 }, onError: () => {} });
+  try {
+    consumer.start();
+    // The first attempt's release was charged (inside the budget, so only the error could have reported the deadline).
+    await waitFor(() => attempts === 2, { timeoutMs: 3_000 });
+    expect(await getWriteRequestById(engine, row.id)).toMatchObject({ state: 'running', preparation_attempts: 1 });
+    second.resolve();
+    const waited = await awaitWrite(engine, row, { engine: 'pglite' }, { waitMs: 5_000 });
+    expect(waited.kind).toBe('terminal');
+    expect(waited.row).toMatchObject({ state: 'failed', error_code: 'preparation_stalled', preparation_attempts: 2 });
+    expect(waited.row.error_message).toContain('step origin_check');
+    expect(attempts).toBe(2);
+    expect(await engine.readPageSnapshot(row.slug, { sourceId: row.source_id })).toBeNull();
+    await assertConservation(engine);
+  } finally { second.resolve(); await disposePersistenceConsumer(engine); await consumer.stop(); }
+}), 10_000);
+
+test('a stopping consumer gives abandoned preparations a bounded grace instead of waiting forever (#6278)', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const row = await admitWrite(engine, admission(config, sources[0], 'stop/abandoned', 'abandoned body'));
+  const never = Promise.withResolvers<ReturnType<typeof prepared>>();
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async () => never.promise,
+    { hostId: config.hostId, pollMs: 60_000, preparationMs: 30, preparationBudgets: { maxAttempts: 5, ceilingMs: 60_000 } });
+  try {
+    consumer.start();
+    await waitFor(async () => (await getWriteRequestById(engine, row.id))?.blocked_reason === 'preparation_deadline', { timeoutMs: 2_000 });
+    expect(consumer.status().abandoned_preparations).toBe(1);
+    const started = performance.now();
+    await consumer.stop();
+    expect(performance.now() - started).toBeLessThan(ABANDONED_STOP_GRACE_MS + 2_000);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(ABANDONED_STOP_GRACE_MS - 50);
+    never.resolve(prepared(row, sources));
+    await Bun.sleep(50);
+    expect(await engine.readPageSnapshot(row.slug, { sourceId: row.source_id })).toBeNull();
+  } finally {
+    never.resolve(prepared(row, sources));
+    await consumer.stop();
+    await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id).catch(() => {});
+  }
+}), 15_000);
 
 test('an edit_page preparation shares the preparation deadline (#5616)', async () => withEnv(env, async () => {
   const sources = await fixtures(engine, config);

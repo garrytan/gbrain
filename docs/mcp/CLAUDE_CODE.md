@@ -43,7 +43,7 @@ into your user-scope skills dir with a local-edit-respecting update lens
 `claude plugin install gbrain@gbrain`.) Prerequisites and behavior match the
 [Codex plugin](CODEX.md#install-as-a-codex-plugin-recommended): the gbrain CLI
 installed (`bun install -g github:garrytan/gbrain#latest-stable`), a brain
-(`gbrain init`), `starter` MCP surface with `--source-guard`, and the same
+(`gbrain init`), `full` MCP surface with `--source-guard`, and the same
 routing rules (`GBRAIN_SOURCE`/`GBRAIN_BRAIN_ID` env — dotfiles don't apply
 to a plugin-launched serve). Positioning: the plugin is the lightweight
 brain+skills path; `gbrain bootstrap` remains the deep lane (identity, hooks,
@@ -54,7 +54,7 @@ tools use the plugin lane's own approval flow.
 ## Option 1: Local (recommended, zero server needed)
 
 ```bash
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface full
 ```
 
 That's it. Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
@@ -72,13 +72,14 @@ tunnel, no token needed. Works with both PGLite and Supabase engines.
 > connections. Details:
 > [serve ↔ sync concurrency](../architecture/serve-sync-concurrency.md).
 
-`--surface verbs` exposes the seven-verb memory protocol (`recall`, `remember`,
-`entity`, `synthesize`, `forget`, `context_pack`, `delta` —
-[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)),
-the surface built for agents and quickstarts. `--surface starter` adds the
-daily-driver set on top (core page/search/graph ops + capture). Drop the flag for the full
-operation catalog (`get_page`, `put_page`, `search`, graph ops, …) — `full` is
-the default and what existing installs already run.
+`--surface full` serves the whole operation catalog (`get_page`, `put_page`,
+`put_pages`, `search`, graph ops, …), the seven-verb memory protocol (`recall`,
+`remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` —
+[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) included; it is the surface
+every registration gbrain writes pins and what a bare `serve` defaults to. A
+harness that caps its tool count can register `--surface starter` (the verbs
+plus the daily-driver page/search/graph ops and capture) or `--surface verbs`
+(only the seven verbs).
 
 ## Option 2: Remote, one command (fastest from a bearer token)
 

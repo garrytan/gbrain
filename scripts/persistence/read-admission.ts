@@ -53,19 +53,41 @@ export function observeAdmissionTransactions(engine: BrainEngine,
   observed: (requestId: string, completedAt: number) => void): BrainEngine {
   const original = engine.transaction;
   let wrapped: BrainEngine;
+  const observe = (result: unknown) => {
+    if (!result || typeof result !== 'object') return;
+    const row = result as Record<string, unknown>;
+    if (row.state === 'queued' && typeof row.request_id === 'string') observed(row.request_id, performance.now());
+  };
   async function transaction<T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
     const result = await original.call(this, run) as T;
-    if (this === wrapped && result && typeof result === 'object') {
-      const row = result as Record<string, unknown>;
-      if (row.state === 'queued' && typeof row.request_id === 'string') observed(row.request_id, performance.now());
-    }
+    if (this === wrapped) observe(result);
     return result;
+  }
+  // A single write's admission may run on the persistence consumer's reserved
+  // connection (its warm single-write lane) instead of `engine.transaction`;
+  // that connection's resolved top-level transactions are observed the same way.
+  const reserve = engine.withReservedConnection;
+  const reservedConnections = new WeakMap<object, object>();
+  async function withReservedConnection<T>(this: BrainEngine, fn: (conn: any) => Promise<T>, opts?: unknown): Promise<T> {
+    return reserve.call<BrainEngine, [(conn: any) => Promise<T>, never], Promise<T>>(this, (conn: any) => {
+      let observedConn = reservedConnections.get(conn);
+      if (!observedConn) {
+        observedConn = typeof conn?.transaction !== 'function' ? conn : new Proxy(conn, { get(target, property, receiver) {
+          if (property !== 'transaction') return Reflect.get(target, property, receiver);
+          return async (run: (tx: BrainEngine) => Promise<unknown>) => { const result = await target.transaction(run); observe(result); return result; };
+        } });
+        reservedConnections.set(conn, observedConn!);
+      }
+      return fn(observedConn);
+    }, opts as never);
   }
   // Route warmup and pressure calls through one stable observer without
   // replacing engine methods. Transaction clones keep their own receiver
   // and scoped connection; only the original wrapper may emit an observation.
   wrapped = new Proxy(engine, { get(target, property, receiver) {
-    return property === 'transaction' ? transaction : Reflect.get(target, property, receiver);
+    if (property === 'transaction') return transaction;
+    if (property === 'withReservedConnection' && typeof reserve === 'function') return withReservedConnection;
+    return Reflect.get(target, property, receiver);
   } });
   return wrapped;
 }

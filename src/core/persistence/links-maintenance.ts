@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../link-extraction.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
+import { preparationConfigView } from './config-snapshot.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { maintenanceAttribution } from './attribution.ts';
 import { unrecordedCanonicalTimeline } from './canonical-projections.ts';
@@ -41,6 +42,9 @@ export function formatManagedStaleExtraction(result: ManagedLinkExtraction, dryR
     (result.remaining ? ` ${result.remaining} page(s) remain stale.` : '') + (mentionLine ? `\n${mentionLine}` : '');
 }
 
+/** #5984: pages a managed link extraction derives at once on Postgres. */
+export const MANAGED_LINK_EXTRACTION_WIDTH = 4;
+
 /**
  * Derive markdown links with put_page's contract: the page's own derived edges
  * are replaced by what its current text supports, other producers' edges stay.
@@ -72,12 +76,14 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
   const maxPages = opts.maxPages ?? Infinity;
   const done = new Set<string>();
   const attribution = await maintenanceAttribution(engine);
+  // #5984: every page's link preparation reads the same config; one read answers them for this run.
+  const settings = await preparationConfigView(engine);
   const derive = async (slug: string, sourceId: string, stamp?: string) => {
     opts.signal?.throwIfAborted();
     done.add(`${sourceId}\0${slug}`);
     const snapshot = await engine.readPageSnapshot(slug, { sourceId });
     if (!snapshot || isQuarantined(snapshot.page.frontmatter)) return;
-    const prepared = await prepareAutomaticLinks(engine, slug, snapshot.page, sourceId);
+    const prepared = await prepareAutomaticLinks(settings, slug, snapshot.page, sourceId);
     const outcome = await engine.transaction(async tx => withCoordinatedWrite(tx, [sourceId], async () => {
       await tx.lockPageKeys(prepared.pageKeys);
       const current = await tx.readPageSnapshot(slug, { sourceId });
@@ -101,23 +107,32 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
     result.removed += outcome.removed;
     result.timeline += outcome.timeline;
   };
-  const budget = () => result.pages + result.skipped < maxPages && Date.now() < deadline;
+  let started = 0;
+  const budget = () => started < maxPages && Date.now() < deadline;
+  // #5984: on Postgres several pages derive at once, each in its own transaction (page guards lock in sorted
+  // order, so they cannot deadlock); a page's links depend only on committed pages. The first failure stops the rest.
+  const width = engine.kind === 'postgres' ? MANAGED_LINK_EXTRACTION_WIDTH : 1;
+  const each = async <T>(items: readonly T[], run: (item: T) => Promise<void>) => {
+    let next = 0, failed = false;
+    await Promise.all(Array.from({ length: Math.min(width, items.length) }, async () => {
+      while (!failed && next < items.length && budget()) {
+        const item = items[next++]!;
+        started++;
+        await plannerTick(started);
+        try { await run(item); } catch (error) { failed = true; throw error; }
+      }
+    }));
+  };
   const plannerTick = await plannerStatsForLinkDrain(engine, async () =>
     Math.min(maxPages, await engine.countStalePagesForExtraction({ sourceId: opts.sourceId, versionTs })));
-  if (opts.slugs?.length && opts.sourceId) {
-    for (const slug of new Set(opts.slugs)) { if (!budget()) break; await plannerTick(result.pages + result.skipped); await derive(slug, opts.sourceId); }
-  }
+  if (opts.slugs?.length && opts.sourceId) await each([...new Set(opts.slugs)], slug => derive(slug, opts.sourceId!));
   let afterPageId = 0;
   while (budget()) {
     const rows = await engine.listStalePagesForExtraction({ batchSize: 25, afterPageId, sourceId: opts.sourceId, versionTs });
     if (!rows.length) break;
-    for (const row of rows) {
-      if (!budget()) break;
-      afterPageId = row.id;
-      if (done.has(`${row.source_id}\0${row.slug}`)) continue;
-      await plannerTick(result.pages + result.skipped);
-      await derive(row.slug, row.source_id, row.updated_at.getTime() >= Date.parse(versionTs) ? row.updated_at_iso : versionTs);
-    }
+    afterPageId = rows[rows.length - 1]!.id;
+    await each(rows.filter(row => !done.has(`${row.source_id}\0${row.slug}`)),
+      row => derive(row.slug, row.source_id, row.updated_at.getTime() >= Date.parse(versionTs) ? row.updated_at_iso : versionTs));
   }
   result.remaining = await engine.countStalePagesForExtraction({ sourceId: opts.sourceId, versionTs });
   if (withMentions) {

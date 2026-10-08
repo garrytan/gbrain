@@ -74,8 +74,21 @@ function parseJson<T>(value: unknown): T | null {
   return value as T;
 }
 
-export async function graduationTablePresent(engine: BrainEngine): Promise<boolean> {
+/**
+ * Engines (their root, never a transaction clone) whose database is known to have the table; an absence is never
+ * kept. Only writer admission reads it (`cached`): a database that admits writes has the persistence schema, while
+ * a graduation target engine can be pointed at a database that does not have the table yet.
+ */
+const tablePresent = new WeakSet<object>();
+function rootEngine(engine: object): object {
+  let root = engine;
+  while (Object.hasOwn(root, '_pageTransaction')) root = Object.getPrototypeOf(root);
+  return root;
+}
+export async function graduationTablePresent(engine: BrainEngine, opts: { cached?: boolean } = {}): Promise<boolean> {
+  if (opts.cached && tablePresent.has(rootEngine(engine))) return true;
   const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT to_regclass('persistence_graduation') IS NOT NULL AS present`);
+  if (row?.present === true) tablePresent.add(rootEngine(engine));
   return row?.present === true;
 }
 

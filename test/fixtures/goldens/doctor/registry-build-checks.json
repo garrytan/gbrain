@@ -394,6 +394,10 @@
         "name": "persistence_write_stall"
       },
       {
+        "category": "ops",
+        "name": "persistence_session_timeouts"
+      },
+      {
         "category": "brain",
         "name": "connector_held_items"
       },
@@ -584,6 +588,10 @@
       {
         "category": "ops",
         "name": "legacy_token_null_scope"
+      },
+      {
+        "category": "ops",
+        "name": "grant_new_ops_available"
       },
       {
         "category": "ops",

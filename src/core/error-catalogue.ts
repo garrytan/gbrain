@@ -72,6 +72,9 @@ export const ERROR_CATALOGUE = {
   sync_drain_database_contention: { code: 'database_contention', docs: 'docs/guides/write-refusals.md#drain-database-contention' },
   sync_drain_writer_blocked: { code: 'recovery_required', docs: 'docs/guides/write-refusals.md#drain-writer-blocked' },
   sync_drain_blocked_by_failures: { code: 'blocked_by_failures', docs: 'docs/guides/write-refusals.md#drain-blocked-by-a-failed-page' },
+  sync_drain_preparation_abandoned: { code: 'preparation_abandoned', docs: 'docs/guides/write-refusals.md#drain-preparation-abandoned' },
+  sync_drain_preparation_systemic: { code: 'preparation_systemic', docs: 'docs/guides/write-refusals.md#preparation_systemic' },
+  sync_drain_write_capacity: { code: 'queue_capacity', docs: 'docs/guides/write-refusals.md#drain-write-capacity' },
 } as const satisfies Record<string, CatalogueEntry>;
 
 export type CatalogueName = keyof typeof ERROR_CATALOGUE;

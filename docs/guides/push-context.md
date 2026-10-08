@@ -95,9 +95,10 @@ this channel production-grade rather than spammy-and-invisible:
   client-side), the doctor check reconciles the counts against the hook's own
   heartbeat and cautions when they diverge.
 
-The hook lane rides the PGLite serve's IPC socket: on a Postgres brain or a
-thin-client install the hook stays quiet by design (pull-mode retrieval covers
-those; extending the lane is a filed follow-up in TODOS.md).
+The hook lane rides the running serve's IPC socket on PGLite and Postgres alike
+(the listener is engine-uniform and keys its socket off the connection URL), so
+the hook stays quiet only while no `gbrain serve` for the brain is running, and
+on a thin-client install, where pull-mode retrieval covers it.
 
 Kill switch: `GBRAIN_HOOKS=0`. Install/uninstall: `docs/guides/bootstrap.md`.
 

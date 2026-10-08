@@ -93,7 +93,8 @@ async function ensureLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', gra
     'SELECT revoked_at,credential_hash,lane FROM persistence_local_writers WHERE id=$1::uuid', [local.id]);
   if (existing?.revoked_at != null) throw new OperationError('permission_denied', 'This local writer registration was revoked.', 'Explicitly register a new writer to authorize future work.');
   if (existing && (existing.lane !== lane || existing.credential_hash !== sha256(local.credential))) throw credentialMismatch(path, local.id, lane);
-  await engine.executeRaw(`INSERT INTO persistence_local_writers(id,lane,credential_hash,grant_ceiling)
+  // A registered writer is left as it is (the insert would conflict and do nothing).
+  if (!existing) await engine.executeRaw(`INSERT INTO persistence_local_writers(id,lane,credential_hash,grant_ceiling)
     VALUES($1::uuid,$2,$3,$4::text::jsonb) ON CONFLICT(id) DO NOTHING`, [local.id, lane, sha256(local.credential), JSON.stringify(grant)]);
   return local;
 }

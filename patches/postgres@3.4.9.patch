@@ -1,5 +1,5 @@
 diff --git a/cjs/src/connection.js b/cjs/src/connection.js
-index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124dbb94e18b 100644
+index 07f6716702ac888215c86ad6e0071aaf55ae519c..f6d76e59ab690dc0a92986f90ade8839bc0470d4 100644
 --- a/cjs/src/connection.js
 +++ b/cjs/src/connection.js
 @@ -78,6 +78,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -42,7 +42,25 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
      } catch (error) {
        sent.length === 0 && write(Sync)
        errored(error)
-@@ -295,7 +301,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -235,10 +241,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     q.onlyDescribe && (delete statements[q.signature])
+     q.parameters = q.parameters || parameters
+     q.prepared = q.prepare && q.signature in statements
+-    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared)
++    // GBrain: a statement this pool already described on another connection reuses its parameter
++    // types, so it is parsed, described and executed in one pipelined message group (no describe first).
++    q.typesKey = options.shared_types && parameters.length && !q.onlyDescribe ? types + string : null
++    const shared = !q.prepared && q.typesKey && options.shared_types.get(q.typesKey)
++    q.sharedTypes = !!shared
++    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !shared)
+     q.statement = q.prepared
+       ? statements[q.signature]
+-      : { string, types, name: q.prepare ? statementId + statementCount++ : '' }
++      : { string, types: shared ? shared.slice() : types, name: q.prepare ? statementId + statementCount++ : '' }
+ 
+     typeof options.debug === 'function' && options.debug(id, string, parameters, types)
+   }
+@@ -295,7 +306,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
  
    /* c8 ignore next 3 */
    function drain() {
@@ -51,7 +69,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
    }
  
    function data(x) {
-@@ -379,6 +385,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -379,6 +390,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function error(err) {
@@ -60,7 +78,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
      if (connection.queue === queues.connecting && options.host[retries + 1])
        return
  
-@@ -388,6 +396,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -388,6 +401,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function errored(err) {
@@ -69,7 +87,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
      stream && (stream.destroy(err), stream = null)
      query && queryError(query, err)
      initial && (queryError(initial, err), initial = null)
-@@ -447,6 +457,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -447,6 +462,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      socket.removeAllListeners()
      socket = null
  
@@ -81,15 +99,19 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
      if (initial)
        return reconnect()
  
-@@ -533,6 +548,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -533,8 +553,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function ReadyForQuery(x) {
 +    connection.status = x[5]
      if (query) {
        if (errorResponse) {
++        // GBrain: a failed statement describes again next time instead of trusting shared parameter types.
++        query.sharedTypes && options.shared_types.delete(query.typesKey)
          query.retried
-@@ -564,10 +580,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+           ? errored(query.retried)
+           : query.prepared && retryRoutines.has(errorResponse.routine)
+@@ -564,10 +587,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
          return fetchArrayTypes()
        }
  
@@ -104,7 +126,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
      }
  
      while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
-@@ -580,7 +598,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -580,7 +605,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        ? !connection.reserved.release && x[5] === 73 // I
          ? ending
            ? terminate()
@@ -113,8 +135,18 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
          : connection.reserved()
        : ending
          ? terminate()
+@@ -630,6 +655,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+       !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
+ 
+     query.prepare && (statements[query.signature] = query.statement)
++    // GBrain: only built-in parameter types are shared; a database's own types may be recreated under a new oid.
++    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
++      && options.shared_types.set(query.typesKey, query.statement.types.slice())
+     query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
+   }
+ 
 diff --git a/cjs/src/index.js b/cjs/src/index.js
-index f09c61c7e998f411560b95c9a8e1ed6a97972c11..c72e4135627296dd00179e30d02094d591047267 100644
+index f09c61c7e998f411560b95c9a8e1ed6a97972c11..a58dbb6c1e27094bb10e461d354af8c3e5eb9ff7 100644
 --- a/cjs/src/index.js
 +++ b/cjs/src/index.js
 @@ -200,40 +200,134 @@ function Postgres(a, b) {
@@ -367,11 +399,12 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..c72e4135627296dd00179e30d02094d5
    }
  }
  
-@@ -491,6 +616,7 @@ function parseOptions(a, b) {
+@@ -491,6 +616,8 @@ function parseOptions(a, b) {
      onnotice        : o.onnotice,
      onnotify        : o.onnotify,
      onclose         : o.onclose,
 +    onpoisoned      : o.onpoisoned,
++    shared_types    : o.shared_types === false ? null : new Map(),
      onparameter     : o.onparameter,
      socket          : o.socket,
      transform       : parseTransform(o.transform || { undefined: undefined }),
@@ -432,7 +465,7 @@ index 8438f5da92cf7637d98a33491d75c75b1c817c25..c444310ff87b0ac81fd19cd3170a0ba6
        const out = xs[index++]
  
 diff --git a/src/connection.js b/src/connection.js
-index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641cb55178d0 100644
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..792c83d36a32b8181a438e0b0e91e0a7db8083ca 100644
 --- a/src/connection.js
 +++ b/src/connection.js
 @@ -78,6 +78,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -475,7 +508,25 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
      } catch (error) {
        sent.length === 0 && write(Sync)
        errored(error)
-@@ -295,7 +301,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -235,10 +241,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     q.onlyDescribe && (delete statements[q.signature])
+     q.parameters = q.parameters || parameters
+     q.prepared = q.prepare && q.signature in statements
+-    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared)
++    // GBrain: a statement this pool already described on another connection reuses its parameter
++    // types, so it is parsed, described and executed in one pipelined message group (no describe first).
++    q.typesKey = options.shared_types && parameters.length && !q.onlyDescribe ? types + string : null
++    const shared = !q.prepared && q.typesKey && options.shared_types.get(q.typesKey)
++    q.sharedTypes = !!shared
++    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !shared)
+     q.statement = q.prepared
+       ? statements[q.signature]
+-      : { string, types, name: q.prepare ? statementId + statementCount++ : '' }
++      : { string, types: shared ? shared.slice() : types, name: q.prepare ? statementId + statementCount++ : '' }
+ 
+     typeof options.debug === 'function' && options.debug(id, string, parameters, types)
+   }
+@@ -295,7 +306,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
  
    /* c8 ignore next 3 */
    function drain() {
@@ -484,7 +535,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
    }
  
    function data(x) {
-@@ -379,6 +385,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -379,6 +390,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function error(err) {
@@ -493,7 +544,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
      if (connection.queue === queues.connecting && options.host[retries + 1])
        return
  
-@@ -388,6 +396,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -388,6 +401,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function errored(err) {
@@ -502,7 +553,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
      stream && (stream.destroy(err), stream = null)
      query && queryError(query, err)
      initial && (queryError(initial, err), initial = null)
-@@ -447,6 +457,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -447,6 +462,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      socket.removeAllListeners()
      socket = null
  
@@ -514,15 +565,19 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
      if (initial)
        return reconnect()
  
-@@ -533,6 +548,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -533,8 +553,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function ReadyForQuery(x) {
 +    connection.status = x[5]
      if (query) {
        if (errorResponse) {
++        // GBrain: a failed statement describes again next time instead of trusting shared parameter types.
++        query.sharedTypes && options.shared_types.delete(query.typesKey)
          query.retried
-@@ -564,10 +580,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+           ? errored(query.retried)
+           : query.prepared && retryRoutines.has(errorResponse.routine)
+@@ -564,10 +587,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
          return fetchArrayTypes()
        }
  
@@ -537,7 +592,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
      }
  
      while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
-@@ -580,7 +598,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -580,7 +605,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        ? !connection.reserved.release && x[5] === 73 // I
          ? ending
            ? terminate()
@@ -546,8 +601,18 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
          : connection.reserved()
        : ending
          ? terminate()
+@@ -630,6 +655,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+       !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
+ 
+     query.prepare && (statements[query.signature] = query.statement)
++    // GBrain: only built-in parameter types are shared; a database's own types may be recreated under a new oid.
++    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
++      && options.shared_types.set(query.typesKey, query.statement.types.slice())
+     query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
+   }
+ 
 diff --git a/src/index.js b/src/index.js
-index c7fba3dace20173f4cb13f3f138bb6d213b43683..e9af339e13ee79e38d13fe82733ed17dc7529b46 100644
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..58b370bb3482de2ab6c86246cd63dfda0c1ea466 100644
 --- a/src/index.js
 +++ b/src/index.js
 @@ -200,40 +200,134 @@ function Postgres(a, b) {
@@ -800,11 +865,12 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..e9af339e13ee79e38d13fe82733ed17d
    }
  }
  
-@@ -491,6 +616,7 @@ function parseOptions(a, b) {
+@@ -491,6 +616,8 @@ function parseOptions(a, b) {
      onnotice        : o.onnotice,
      onnotify        : o.onnotify,
      onclose         : o.onclose,
 +    onpoisoned      : o.onpoisoned,
++    shared_types    : o.shared_types === false ? null : new Map(),
      onparameter     : o.onparameter,
      socket          : o.socket,
      transform       : parseTransform(o.transform || { undefined: undefined }),
@@ -865,10 +931,10 @@ index c4ef97164f057db99dce1b9af3401dbb1af37e31..8fba891b879e8f5c7fdb03ea05907536
        const out = xs[index++]
  
 diff --git a/types/index.d.ts b/types/index.d.ts
-index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..19103a998359c7277cd966c246cf245aedec4297 100644
+index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..d7ba214bc614097fddbf2951127c5685d7c8e643 100644
 --- a/types/index.d.ts
 +++ b/types/index.d.ts
-@@ -119,6 +119,11 @@ interface BaseOptions<T extends Record<string, postgres.PostgresType>> {
+@@ -119,6 +119,18 @@ interface BaseOptions<T extends Record<string, postgres.PostgresType>> {
     */
    publications: string
    onclose: (connId: number) => void;
@@ -877,10 +943,17 @@ index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..19103a998359c7277cd966c246cf245a
 +   * reused because its ReadyForQuery status was not idle ('T' or 'E').
 +   */
 +  onpoisoned: (status: string) => void;
++  /**
++   * GBrain: share the parameter types of a described statement across this pool's
++   * connections, so a connection running it for the first time skips the describe
++   * round trip and keeps pipelining. Only built-in types are shared.
++   * @default true
++   */
++  shared_types: boolean;
    backoff: boolean | ((attemptNum: number) => number);
    max_lifetime: number | null;
    keep_alive: number | null;
-@@ -605,7 +610,7 @@ declare namespace postgres {
+@@ -605,7 +617,7 @@ declare namespace postgres {
      writable(): Promise<Writable>;
  
      execute(): this;
@@ -889,7 +962,7 @@ index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..19103a998359c7277cd966c246cf245a
  
      /**
       * @deprecated `.stream` has been renamed to `.forEach`
-@@ -659,6 +664,7 @@ declare namespace postgres {
+@@ -659,6 +671,7 @@ declare namespace postgres {
    | Fragment[]
  
    interface UnsafeQueryOptions {
@@ -897,7 +970,7 @@ index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..19103a998359c7277cd966c246cf245a
      /**
       * When executes query as prepared statement.
       * @default false
-@@ -717,10 +723,11 @@ declare namespace postgres {
+@@ -717,10 +730,11 @@ declare namespace postgres {
      begin<T>(cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
      begin<T>(options: string, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
  
@@ -910,7 +983,7 @@ index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..19103a998359c7277cd966c246cf245a
      savepoint<T>(cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
      savepoint<T>(name: string, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
  
-@@ -728,6 +735,7 @@ declare namespace postgres {
+@@ -728,6 +742,7 @@ declare namespace postgres {
    }
  
    interface ReservedSql<TTypes extends Record<string, unknown> = {}> extends Sql<TTypes> {

@@ -171,23 +171,24 @@ describe('resolvePreset', () => {
   const flags = (over: Record<string, unknown>) =>
     ({ showToken: false, json: false, name: 'aurora', harness: 'claude-code', ...over }) as any;
 
-  test('daily-driver: snapshot grant, default write source, starter surface', () => {
+  test('daily-driver: snapshot grant, default write source, full surface (S0/D4)', () => {
     const r = resolvePreset(flags({ preset: 'daily-driver' }));
     expect(r).toEqual({
       scopes: 'read write',
       writeSource: 'default',
       federatedRead: 'snapshot',
-      surface: 'starter',
+      surface: 'full',
       workspaceDerived: false,
     });
   });
 
-  test('coding-agent: derived workspace first in the read list, starter surface', () => {
+  test('coding-agent: derived workspace first in the read list, full surface (S0/D4)', () => {
     const r = resolvePreset(flags({ preset: 'coding-agent', federatedRead: ['proj-widget'] }));
     expect(r.writeSource).toBe('aurora-workspace');
     expect(r.workspaceDerived).toBe(true);
     expect(r.federatedRead).toEqual(['aurora-workspace', 'proj-widget']);
-    expect(r.surface).toBe('starter');
+    expect(r.surface).toBe('full');
+    expect(resolvePreset(flags({ preset: 'coding-agent', federatedRead: ['proj-widget'], surface: 'starter' })).surface).toBe('starter');
   });
 
   test('coding-agent without --federated-read fails loud', () => {

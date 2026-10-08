@@ -10,6 +10,7 @@ import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile } from '../../src/core/grants/service.ts';
+import { checkGrantNewOps } from '../../src/commands/doctor/checks/grant-new-ops.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
 
@@ -19,7 +20,7 @@ const port = 19937;
 const base = `http://127.0.0.1:${port}`;
 suite('client capability grants — Postgres and admin HTTP', () => {
   let engine: PostgresEngine; let home: string; let server: ChildProcess | undefined; let cookie = '';
-  const clients: string[] = []; const jobs: number[] = []; const sources: string[] = [];
+  const clients: string[] = []; const jobs: number[] = []; const sources: string[] = []; const pagesWritten: string[] = [];
   const adminToken = 'grant-admin-test-' + randomUUID().replaceAll('-', '');
   beforeAll(async () => {
     assertSafeE2eDatabaseUrl(databaseUrl!);
@@ -46,6 +47,7 @@ suite('client capability grants — Postgres and admin HTTP', () => {
     }
     if (engine) {
       for (const id of jobs) await engine.executeRaw('DELETE FROM minion_jobs WHERE id = $1', [id]);
+      for (const slug of pagesWritten) await engine.executeRaw('DELETE FROM pages WHERE slug = $1', [slug]);
       for (const id of clients) { await engine.executeRaw('DELETE FROM oauth_grant_audit WHERE client_id = $1', [id]); await engine.executeRaw('DELETE FROM oauth_clients WHERE client_id = $1', [id]); }
       for (const id of sources) await engine.executeRaw('DELETE FROM sources WHERE id = $1', [id]);
       await engine.disconnect();
@@ -131,6 +133,80 @@ suite('client capability grants — Postgres and admin HTTP', () => {
     const listed = (JSON.parse(stdout) as any).clients.find((c: any) => c.client_id === created.clientId);
     expect(listed).toMatchObject({ operations: 'all', operations_state: 'all', includes_future_operations: true, revoked: false });
     expect(listed.fix.argv.slice(0, 6)).toEqual(['gbrain', 'auth', 'rescope', '--client', created.clientId, '--operations']);
+  });
+
+  // D4: new profile grants are callable on the full surface; old pinned grants are reported, never widened.
+  const clientToken = async (clientId: string, clientSecret: string): Promise<string> => {
+    const response = await fetch(base + '/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }) });
+    expect(response.status).toBe(200);
+    return (await response.json() as any).access_token;
+  };
+  const callTool = async (token: string, name: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string }> => {
+    const response = await fetch(base + '/mcp', { method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+    const raw = await response.text();
+    const data = raw.split('\n').find(line => line.startsWith('data:'));
+    const rpc = JSON.parse(data ? data.slice(5) : raw);
+    if (rpc.error) return { isError: true, text: JSON.stringify(rpc.error) };
+    return { isError: rpc.result?.isError === true, text: (rpc.result?.content ?? []).map((b: any) => b?.text ?? '').join('\n') };
+  };
+  const onePage = (slug: string) => ({ pages: [{ slug, content: `---\ntitle: ${slug}\n---\nD4 bulk write fixture.\n` }], request_id: randomUUID() });
+  const whoamiDiagnosis = async (token: string) => JSON.parse((await callTool(token, 'whoami', {})).text).grant_diagnosis;
+
+  test('D4: a fresh memory-writer registered through the admin API calls put_pages', async () => {
+    const registration = await post('/admin/api/register-client', { name: 'd4-writer-' + randomUUID(), profile: 'memory-writer', sourceId: 'default' });
+    expect(registration.status).toBe(200);
+    const created = await registration.json() as any; clients.push(created.clientId);
+    expect((await readClientGrant(engine, created.clientId)).surface).toBe('full');
+    const token = await clientToken(created.clientId, created.clientSecret);
+    const slug = 'wiki/d4-bulk-' + randomUUID().slice(0, 8); pagesWritten.push(slug);
+    const result = await callTool(token, 'put_pages', onePage(slug));
+    expect(result.text).not.toContain('unknown_tool');
+    expect(result.text).not.toContain('permission_denied');
+    expect(result.isError).toBe(false);
+    expect((await whoamiDiagnosis(token)).blockers).toEqual([]);
+  });
+
+  test('D4: an operator-pinned old client is reported, not widened, and still refused', async () => {
+    const old = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine) }).registerClientManual('d4-old-' + randomUUID(), ['client_credentials'], 'read write', [], 'default', undefined, undefined, undefined,
+      { ...resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' }), surface: 'starter' });
+    clients.push(old.clientId);
+    const before = await readClientGrant(engine, old.clientId);
+    const token = await clientToken(old.clientId, old.clientSecret!);
+    const refused = await callTool(token, 'put_pages', onePage('wiki/d4-refused-' + randomUUID().slice(0, 8)));
+    expect(refused.isError).toBe(true);
+    const diagnosis = await whoamiDiagnosis(token);
+    expect(diagnosis.blockers).toEqual([expect.objectContaining({ blocker: 'client_pin', surface: 'starter', set_by: 'operator' })]);
+    expect(diagnosis.fix.argv).toEqual(['gbrain', 'auth', 'rescope', '--client', old.clientId, '--surface', 'full', '--dry-run']);
+    expect(JSON.stringify(diagnosis)).not.toContain('put_pages');
+    const check = await checkGrantNewOps(engine, { cfg: null });
+    const finding = ((check.details?.grants ?? []) as any[]).find(g => g.id === old.clientId);
+    expect(finding.blockers.map((b: any) => b.blocker)).toEqual(['client_pin']);
+    expect(finding.excluded_operations.client_pin).toContain('put_pages');
+    expect(await readClientGrant(engine, old.clientId)).toEqual(before);
+    expect((await callTool(token, 'put_pages', onePage('wiki/d4-still-refused-' + randomUUID().slice(0, 8)))).isError).toBe(true);
+  });
+
+  test('D4: a deliberately restricted writer and a memory-reader stay unable to call put_pages, and whoami says why', async () => {
+    const writer = await post('/admin/api/register-client', { name: 'd4-restricted-' + randomUUID(), profile: 'memory-writer', sourceId: 'default' });
+    const restricted = await writer.json() as any; clients.push(restricted.clientId);
+    const grant = await readClientGrant(engine, restricted.clientId);
+    await rescopeClientGrant(engine, restricted.clientId, { allowedOperations: grant.allowedOperations!.filter(op => op !== 'put_pages') }, { actor: 'test', expectedRevision: grant.revision });
+    const restrictedToken = await clientToken(restricted.clientId, restricted.clientSecret);
+    expect((await callTool(restrictedToken, 'put_pages', onePage('wiki/d4-restricted-' + randomUUID().slice(0, 8)))).isError).toBe(true);
+    const restrictedDiagnosis = await whoamiDiagnosis(restrictedToken);
+    expect(restrictedDiagnosis.blockers).toEqual([{ blocker: 'operation_snapshot', excluded_count: 1 }]);
+    expect(restrictedDiagnosis.grant_age).toMatchObject({ state: 'provenance_recorded', predates_count: 0, excluded_at_snapshot_count: 1 });
+
+    const reader = await post('/admin/api/register-client', { name: 'd4-reader-' + randomUUID(), profile: 'memory-reader', sourceId: 'default' });
+    const readerClient = await reader.json() as any; clients.push(readerClient.clientId);
+    const readerToken = await clientToken(readerClient.clientId, readerClient.clientSecret);
+    expect((await callTool(readerToken, 'put_pages', onePage('wiki/d4-reader-' + randomUUID().slice(0, 8)))).isError).toBe(true);
+    const readerDiagnosis = await whoamiDiagnosis(readerToken);
+    expect(readerDiagnosis.blockers).toEqual([{ blocker: 'scope', missing_scopes: ['write'] }]);
+    expect(readerDiagnosis.fix).toBeNull();
   });
 
   test('admin credential delivery can be recovered without another grant or secret rotation', async () => {

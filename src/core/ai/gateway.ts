@@ -2993,6 +2993,8 @@ export interface ChatResult {
     output_tokens: number;
     cache_read_tokens: number;
     cache_creation_tokens: number;
+    /** A1: the reasoning subset of output_tokens, when the provider reported one. */
+    reasoning_tokens?: number;
   };
   /** "provider:modelId" string of the model that actually answered. */
   model: string;
@@ -3723,6 +3725,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     const { inputTokens: inTok, outputTokens: outTok } = normalizeSdkUsage(usage);
     _recordBudget({ inputTokens: inTok, outputTokens: outTok });
 
+    const reasoningTokens = usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens;
     const usageOut = {
       input_tokens: inTok,
       output_tokens: outTok,
@@ -3731,6 +3734,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
       // prompt_tokens_details.cached_tokens) surface cache hits.
       cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? usage.cachedInputTokens ?? 0),
       cache_creation_tokens: Number(anthropicCache.cacheCreationInputTokens ?? anthropicCache.cache_creation_input_tokens ?? 0),
+      ...(typeof reasoningTokens === 'number' && Number.isFinite(reasoningTokens) ? { reasoning_tokens: reasoningTokens } : {}),
     };
     // #4218 success boundary: durable usage ledger (fire-and-forget, fail-open).
     recordChatUsage({

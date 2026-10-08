@@ -37,7 +37,8 @@ run('records each round trip with its statement, kind, label and backend pid', a
       expect(rows[0]).toMatchObject({ kind: 'connect', sql: '<connect>' });
       expect(rows.filter(r => r.kind !== 'connect').every(r => r.backend === Number(pid))).toBe(true);
       const unsafe = rows.filter(r => r.sql === 'SELECT $1::int AS n').map(r => r.kind);
-      expect(unsafe).toEqual(['describe', 'execute', 'describe', 'execute']);
+      // The second unprepared run reuses the parameter types the pool described (shared_types), so it skips the describe.
+      expect(unsafe).toEqual(['describe', 'execute', 'execute']);
       expect(rows.filter(r => /^(begin|commit)$/.test(r.sql.trim())).map(r => r.sql.trim())).toEqual(['begin', 'commit']);
       expect(rows.some(r => r.kind === 'simple' && r.sql === 'SELECT 1 AS one')).toBe(true);
       expect(rows.every(r => r.ms >= 0)).toBe(true);

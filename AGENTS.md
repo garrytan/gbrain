@@ -137,7 +137,15 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   page with `gbrain get --source <id> -- <slug>`, edit only that fence,
   commit, `gbrain sync --source <id> --no-pull`). Raising spend
   (`fences.repair.max_usd_per_day`, `fences.repair.llm true`) is the user's
-  call ([fence holds](docs/guides/write-refusals.md#invalid_fence)).
+  call ([fence holds](docs/guides/write-refusals.md#invalid_fence)). A hold
+  with code `preparation_stalled` (or a managed catch-up that stops
+  `preparation_abandoned` / `preparation_systemic`, or a write receipt with that
+  code) means the write owner stalled, not the file: no repair applies. Run
+  `gbrain sources writer status --source <id> --json` (read-only: the step, what
+  it waited on, the owner and its version), fix that or upgrade the owner, then
+  `gbrain sources retry-held <id>` and the sync it prints with the same options
+  (`--no-embed` stays). Runbook:
+  [catch-up stuck](docs/guides/troubleshooting.md#catch-up-stuck).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes --no-autopilot-install` (manual migration orchestration without service installation).

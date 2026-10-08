@@ -39,7 +39,7 @@ export async function exerciseAtomRetrySourceIsolation(engine: BrainEngine): Pro
           }
           if (phase === 'drain') {
             const pending = await current.executeRaw("SELECT id FROM persistence_requests WHERE id=$1::uuid AND state IN ('queued','running')", [pendingRetryId]);
-            if (pending.length) return current.executeRaw(sql.replace("WHERE r.state='queued'", "WHERE r.source_id=$3 AND r.state='queued'"), [...args!, priorSource]);
+            if (pending.length) return current.executeRaw(sql.replace("WHERE r.state='queued'", `WHERE r.source_id=$${args!.length + 1} AND r.state='queued'`), [...args!, priorSource]);
             phase = 'done';
           }
         }

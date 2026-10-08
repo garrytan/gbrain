@@ -294,14 +294,6 @@
             "params": [
               "string"
             ],
-            "sql": "SELECT value FROM config WHERE key = $1",
-            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
-          },
-          {
-            "lane": "tx",
-            "params": [
-              "string"
-            ],
             "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
             "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
           },
@@ -331,6 +323,14 @@
             ],
             "sql": "SELECT p.id FROM unnest($1::text[],$2::text[]) WITH ORDINALITY AS k(src,s,n) JOIN pages p ON p.source_id=k.src AND p.slug=k.s ORDER BY k.n FOR UPDATE OF p",
             "textSha256": "d2598c8eb0d051b3f8d25208513a7494b6db488c95574a3781e6db376d945b56"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT value FROM config WHERE key = $1",
+            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
           },
           {
             "lane": "tx",
@@ -375,6 +375,22 @@
           {
             "lane": "tx",
             "params": [
+              "string"
+            ],
+            "sql": "SELECT value FROM config WHERE key = $1",
+            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT value FROM config WHERE key = $1",
+            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
+          },
+          {
+            "lane": "tx",
+            "params": [
               "array<string>",
               "number",
               "number"
@@ -397,22 +413,6 @@
           {
             "event": "savepoint-release",
             "lane": "tx>sp"
-          },
-          {
-            "lane": "tx",
-            "params": [
-              "string"
-            ],
-            "sql": "SELECT value FROM config WHERE key = $1",
-            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
-          },
-          {
-            "lane": "tx",
-            "params": [
-              "string"
-            ],
-            "sql": "SELECT value FROM config WHERE key = $1",
-            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
           },
           {
             "lane": "tx",

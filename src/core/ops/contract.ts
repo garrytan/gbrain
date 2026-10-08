@@ -81,6 +81,8 @@ export class OperationError extends Error {
   public why?: string;
   /** Agent contract v1: the one next step. Rendered (`next`, `command`) only at serialization. */
   public fix?: Action;
+  /** Site-level override of the code's class-derived `retryable` (#6278: `owner_unavailable` / `host_mismatch` is never worth a retry). */
+  public retryable?: boolean;
   /** Agent contract v1: advice that rides the error (rendered into the envelope's `notices`). */
   public notices?: Notice[];
   /** #6188 (D16, D18): a fence refusal's location and its blocking issues; location and class only, never a cell value. */
@@ -159,6 +161,8 @@ export interface OpErrorOpts {
   fix?: Action;
   docs?: string;
   detail?: string;
+  /** Overrides the class-derived `retryable` on the envelope for this site. */
+  retryable?: boolean;
   /**
    * The frozen v1 `error` wire value when this site historically threw a
    * different code (A1 frozen pairs). `error` keeps this value; `code` is the
@@ -179,6 +183,7 @@ export function opError(code: RegistryCode, message: string, suggestion: string,
   if (opts.why !== undefined) e.why = opts.why;
   if (opts.fix !== undefined) e.fix = opts.fix;
   if (opts.detail !== undefined) e.detail = opts.detail;
+  if (opts.retryable !== undefined) e.retryable = opts.retryable;
   e.contractVersion = 1;
   return e;
 }

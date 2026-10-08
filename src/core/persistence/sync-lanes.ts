@@ -26,25 +26,77 @@ export interface LanePolicy { run: string; asked: number; effective: number; ste
   fallbacks: number }
 export interface LaneState extends LanePolicy { coordinationPath: string | null; claimed: Set<string>; begun: Set<string>;
   /** Lane tasks this process runs for the run, from the head's claim until the task settles; `closing` stops new claims. */
-  tasks: number; closing: boolean }
+  tasks: number; closing: boolean; timing: LaneTiming }
+/** Lane group transactions of a run in this process: how many are open, and where their time went. */
+interface LaneTiming { open: number; since: number; openArea: number; activeMs: number;
+  applyMs: number; appliedMembers: number; turnWaitMs: number; transactionMs: number;
+  /** Apply time per member of the recent lane groups (each new group weighs half), for group sizing. */
+  recentPerMember: number | null }
+/**
+ * #5984 lanes: what a drain's lanes did, for its report. `busy` is the mean number of lane transactions open
+ * while at least one was; `applyMsPerPage` the time from a group's transaction begin to its commit-turn wait,
+ * per member; `turnWaitShare` the share of lane transaction time spent waiting for the group before to commit.
+ */
+export interface LaneStats { busy: number | null; applyMsPerPage: number | null; turnWaitShare: number | null }
 const policies = new Map<string, LaneState>();
 let claiming = 0;
 
 /** The drain's lane policy for a worktree; replaces any earlier one. */
 export function openLanes(worktreeId: string, run: string, lanes: number, coordinationPath: string | null): void {
-  policies.set(worktreeId, { run, asked: lanes, effective: lanes, stepDown: null, overlapped: 0, fallbacks: 0, coordinationPath, claimed: new Set(), begun: new Set(), tasks: 0, closing: false });
+  policies.set(worktreeId, { run, asked: lanes, effective: lanes, stepDown: null, overlapped: 0, fallbacks: 0, coordinationPath, claimed: new Set(), begun: new Set(), tasks: 0, closing: false,
+    timing: { open: 0, since: Date.now(), openArea: 0, activeMs: 0, applyMs: 0, appliedMembers: 0, turnWaitMs: 0, transactionMs: 0, recentPerMember: null } });
 }
 /**
  * Ends a drain's lane run on every worktree it opened: no new lane claims, then waits (up to `maxMs`) for the
  * consumer claims in flight and the lane tasks already running to settle, so a drain never reports while one of
  * its groups is still publishing or aborting. Its unclaimed groups go back to the FIFO claim.
  */
-export async function closeLaneRun(run: string, maxMs = 90_000): Promise<void> {
+export async function closeLaneRun(run: string, maxMs = 90_000): Promise<LaneStats | null> {
   const open = [...policies].filter(([, state]) => state.run === run);
   for (const [, state] of open) state.closing = true;
   const started = Date.now();
   while ((claiming > 0 || open.some(([, state]) => state.tasks > 0)) && Date.now() - started < maxMs) await sleep(20);
   for (const [worktreeId, state] of open) if (policies.get(worktreeId) === state) policies.delete(worktreeId);
+  return open.length ? laneStats(open.map(([, state]) => state.timing)) : null;
+}
+function laneStats(timings: LaneTiming[]): LaneStats {
+  const sum = (key: Exclude<keyof LaneTiming, 'recentPerMember'>) => timings.reduce((total, timing) => total + timing[key], 0);
+  const round = (value: number, places: number) => Math.round(value * 10 ** places) / 10 ** places;
+  const active = sum('activeMs'), members = sum('appliedMembers'), transactions = sum('transactionMs');
+  return { busy: active > 0 ? round(sum('openArea') / active, 2) : null, applyMsPerPage: members > 0 ? Math.round(sum('applyMs') / members) : null,
+    turnWaitShare: transactions > 0 ? round(sum('turnWaitMs') / transactions, 3) : null };
+}
+function account(timing: LaneTiming, delta: number): void {
+  const now = Date.now();
+  if (timing.open > 0) { timing.openArea += timing.open * (now - timing.since); timing.activeMs += now - timing.since; }
+  timing.open += delta;
+  timing.since = now;
+}
+/**
+ * Times one lane group transaction: call at its begin, `turn()` when it starts waiting for the group before it
+ * to commit, `turned()` when that wait ends, and `end(members)` once the transaction has finished either way.
+ * Only a transaction that reached its turn counts toward the apply time per page.
+ */
+export function laneApplyBegin(state: LaneState): { turn(): void; turned(): void; end(members: number): void } {
+  const timing = state.timing, began = Date.now();
+  let turnAt: number | null = null, waited = 0, ended = false;
+  account(timing, 1);
+  return {
+    turn() { turnAt ??= Date.now(); },
+    turned() { if (turnAt !== null && !waited) waited = Date.now() - turnAt; },
+    end(members) {
+      if (ended) return;
+      ended = true;
+      account(timing, -1);
+      timing.transactionMs += Date.now() - began;
+      if (turnAt === null) return;
+      timing.applyMs += turnAt - began;
+      timing.appliedMembers += members;
+      const perMember = (turnAt - began) / Math.max(1, members);
+      timing.recentPerMember = timing.recentPerMember === null ? perMember : (timing.recentPerMember + perMember) / 2;
+      timing.turnWaitMs += waited || Date.now() - turnAt;
+    },
+  };
 }
 /**
  * Counts a consumer claim that can take a lane row, from before its claim query until the claimed head's lane
@@ -65,6 +117,10 @@ export function laneTask(state: LaneState): () => void {
 export function lanePolicy(worktreeId: string): LanePolicy | null {
   const state = policies.get(worktreeId);
   return state ? { run: state.run, asked: state.asked, effective: state.effective, stepDown: state.stepDown, overlapped: state.overlapped, fallbacks: state.fallbacks } : null;
+}
+/** The recent apply time per member of a worktree's open lane run in this process; null before a lane group reached its turn. */
+export function laneApplyMsPerMember(worktreeId: string): number | null {
+  return policies.get(worktreeId)?.timing.recentPerMember ?? null;
 }
 /** The open lane runs and how many lanes each may run now (0 while the worktree's lease drains for an exclusive writer). */
 export function laneRoots(): Array<{ worktreeId: string; run: string; capacity: number }> {

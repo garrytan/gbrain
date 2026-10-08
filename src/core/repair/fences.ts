@@ -26,8 +26,14 @@
  *
  * Per-item outcomes: `repaired` (detail: tier, classes, mode, path or slug),
  * `held` (reason: a FenceReason; the hold records it for the surfaces), or
- * `skipped` (owner_unavailable, sync_in_progress, changed_since_read,
- * changed_since_preview, claimed_elsewhere, already_clean). When the daily
+ * `skipped` (an owner reason: host_mismatch, transfer_in_progress,
+ * clone_in_progress, incarnation_changed, local_path_missing,
+ * coordination_path_missing, or owner_unavailable; sync_in_progress,
+ * changed_since_read, changed_since_preview, claimed_elsewhere,
+ * already_clean). A source whose sync is running is not skipped as a whole:
+ * only the candidates a write in flight or the sync's frozen manifest still
+ * names are `sync_in_progress`, and the busy set is read again at apply and
+ * at the write's admission (#6278). When the daily
  * ledger refuses a call the run stops with `budget_exhausted` (D15). The
  * result adds `repaired`, `remaining` by reason, `scan` and `verification`;
  * a run whose every model proposal is rejected reports 0 repaired.
@@ -52,6 +58,8 @@ import { fenceRepairLlmEnabled, readFenceRepairCaps } from '../fence-repair/conf
 import { FENCE_REASONS } from '../fence-repair/reasons.ts';
 import { FENCE_REPAIR_ACTOR } from '../fence-repair/receipt.ts';
 import { checkoutFileExists, loadFenceSource, pageSha, readFenceTarget, spliceFileSections, writeFenceRepair, type FenceRepairMode, type FenceSource, type FenceTarget } from '../fence-repair/repair-io.ts';
+import type { OwnerRefusal } from '../persistence/owner-refusal.ts';
+import { repairBusy, repairBusyMessage } from '../persistence/repair-busy.ts';
 import { analyzeFences, attemptCandidate, runTier3, tier3Estimate, tier3Memo, type FenceAnalysis } from '../fence-repair/repair-tiers.ts';
 import type { FenceFix, FenceIssue, FencePage, FenceReason, FenceTier, GateLetter } from '../fence-repair/types.ts';
 import { lineDiff } from './frontmatter.ts';
@@ -215,6 +223,11 @@ function item(entry: ApprovedFence, index: number, hash: string | null, last: bo
     ...(entry.tier === 'llm' ? { llm_usd: entry.estimate_usd } : {}), entry, hash, last, scan_partial: partial };
 }
 
+/** The hold reason of an owner refusal: the matrix reason where the fence reason table has it, else the generic `owner_unavailable`. */
+function ownerReason(owner: OwnerRefusal): FenceReason {
+  return owner.reason in FENCE_REASONS ? owner.reason as FenceReason : 'owner_unavailable';
+}
+
 /** The read-only fix that previews one candidate's repair again. */
 const previewFix = (sourceId: string, path: string | null, slug: string): Action => ({ argv: ['gbrain', 'repair', 'fences', '--source', sourceId, ...(path ? ['--only', path] : ['--slug', slug])],
   consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews this fence repair again from the bytes as they are now; nothing is written.' });
@@ -236,7 +249,7 @@ export const fencesRepair: RepairHandler = {
     const now = Date.now();
     const runs = await runFenceCensus(engine, { sourceIds: scope.source_ids, deadline: Math.min(now + SCAN_MS(), opts?.deadline ?? Infinity) });
     const sources = new Map<string, FenceSource | null>();
-    for (const id of scope.source_ids) sources.set(id, await loadFenceSource(engine, id));
+    for (const id of scope.source_ids) sources.set(id, await loadFenceSource(engine, id, { remote: opts?.remote !== false }));
     const found = await listFenceCandidates(engine, scope.source_ids);
     const { extra, unknown } = await extraCandidates(engine, scope, selection, found, sources);
     let candidates = [...found, ...extra].filter(cand => selected(cand, selection));
@@ -261,9 +274,9 @@ export const fencesRepair: RepairHandler = {
         hold(cand, entry);
         if (opts?.apply) await recordHeld(engine, src, { path: cand.path, held: isHeld }, { reason: entry.reason, gate: entry.gate, rows: entry.rows, next });
       };
-      if (src.ownerElsewhere) { await keep({ item: name, reason: 'owner_unavailable', tier: 'manual', resolution: `Run gbrain repair fences --source ${src.id} on the owner host (gbrain sources writer status --source ${src.id} names it).` }); continue; }
-      if (src.syncUnfinished || (cand.path && src.busy.paths.has(cand.path)) || src.busy.slugs.has(cand.key)) {
-        await keep({ item: name, reason: 'sync_in_progress', tier: cand.tier, resolution: `A sync or write of ${src.id} still names this file; finish it (gbrain sync --source ${src.id} --no-pull) and the next run repairs it.` });
+      if (src.owner) { await keep({ item: name, reason: ownerReason(src.owner), tier: 'manual', resolution: `${src.owner.message} ${src.owner.why}` }); continue; }
+      if (repairBusy(src.busy, { path: cand.path, slug: cand.key })) {
+        await keep({ item: name, reason: 'sync_in_progress', tier: cand.tier, resolution: repairBusyMessage(src.busy, src.id, cand.path ?? cand.key) });
         continue;
       }
       const read = await readFenceTarget(engine, src, { key: cand.key, path: cand.path });
@@ -405,19 +418,22 @@ async function applyFence(ctx: OperationContext, entry: ApprovedFence, opts: App
   const where = { ...(entry.path ? { path: entry.path } : {}), slug: entry.slug, mode: entry.mode, tier: entry.tier };
   const moved = opts.expect ? 'changed_since_preview' : 'changed_since_read';
   const skipped = (reason: string, message: string): RepairItemOutcome => ({ applied: false, outcome: 'skipped', reason, detail: { ...where, message } });
-  const src = await loadFenceSource(engine, entry.source_id);
+  const src = await loadFenceSource(engine, entry.source_id, { remote: ctx.remote !== false });
   if (!src) return skipped(moved, `Source ${entry.source_id} is gone or archived.`);
   const heldOutcome = async (reason: string, message: string, extra: { gate?: GateLetter; rows?: number[]; next?: string | null; tier?: FenceTier } = {}): Promise<RepairItemOutcome> => {
     await recordHeld(engine, src, entry, { reason, ...extra });
     return { applied: false, outcome: 'held', reason, detail: { ...where, tier: extra.tier ?? heldTier(reason), message, ...(extra.gate ? { gate: extra.gate } : {}), ...(extra.rows?.length ? { rows: extra.rows } : {}) } };
   };
-  if (src.ownerElsewhere) {
-    await recordHeld(engine, src, entry, { reason: 'owner_unavailable' });
-    return skipped('owner_unavailable', `This host is not the active owner of source ${src.id}; run gbrain repair fences there.`);
+  if (src.owner) {
+    const reason = ownerReason(src.owner);
+    await recordHeld(engine, src, entry, { reason });
+    const out = skipped(reason, src.owner.message);
+    return { ...out, detail: { ...out.detail, why: src.owner.why, fix: src.owner.fix.argv, retryable: src.owner.retryable } };
   }
-  if (src.syncUnfinished || (entry.path && src.busy.paths.has(entry.path)) || src.busy.slugs.has(entry.slug)) {
+  // Re-checked here and again at the write's admission (file-repair.ts): a sync may have frozen this candidate since the plan.
+  if (repairBusy(src.busy, { path: entry.path, slug: entry.slug })) {
     await recordHeld(engine, src, entry, { reason: 'sync_in_progress' });
-    return skipped('sync_in_progress', `A sync or write of ${src.id} still names this candidate; the next run repairs it.`);
+    return skipped('sync_in_progress', repairBusyMessage(src.busy, src.id, entry.path ?? entry.slug));
   }
   const read = await readFenceTarget(engine, src, { key: entry.key, path: entry.path });
   if (!read.ok) return skipped(moved, `The candidate is ${read.reason === 'gone' ? 'gone' : read.reason}.`);
@@ -444,6 +460,10 @@ async function write(ctx: OperationContext, src: FenceSource, target: FenceTarge
     { embed: opts.embed });
   if (!outcome.ok) {
     if (outcome.reason === 'changed_since_read') return { applied: false, outcome: 'skipped', reason: 'changed_since_read', detail: { path: target.path, slug: target.slug, mode: target.mode, message: outcome.message } };
+    if (outcome.reason === 'sync_in_progress') {
+      await recordHeld(ctx.engine, src, { path: target.path, held: target.hold !== null }, { reason: 'sync_in_progress' });
+      return { applied: false, outcome: 'skipped', reason: 'sync_in_progress', detail: { path: target.path, slug: target.slug, mode: target.mode, message: outcome.message } };
+    }
     return held(outcome.reason, outcome.message, { tier: 'manual' });
   }
   return { applied: true, outcome: 'repaired', detail: { tier: r.tier, classes: r.classes.join(', '), slug: target.slug, ...outcome.detail }, ...(r.cost ? { llm_usd: r.cost } : {}) };
@@ -483,7 +503,7 @@ async function tier3(ctx: OperationContext, src: FenceSource, target: FenceTarge
     opts, held);
   const store = attemptStore(engine);
   if (written.applied) await store.publish(result.claim);
-  else if (written.reason === 'changed_since_read') await store.transient(result.claim, 'changed_since_read');
+  else if (written.reason === 'changed_since_read' || written.reason === 'sync_in_progress') await store.transient(result.claim, written.reason);
   else await store.reject(result.claim, { reason: written.reason ?? 'still_invalid' });
   return { ...written, ...(result.spentUsd ? { llm_usd: result.spentUsd } : {}) };
 }

@@ -35,6 +35,7 @@ import { FENCE_VERSION } from '../fence-repair/refusal.ts';
 import { fenceHoldFix, fenceHoldLocation, fencePreviewArgv, readFenceAutoRepair, type FenceAutoRepair, type FenceHoldLocation } from '../fence-repair/hold-fix.ts';
 import { STRUCTURED_WRITE_ADVICE, type FencesNormalized } from '../fence-repair/report.ts';
 import type { SyncRename } from './sync-discovery.ts';
+import { VERSION } from '../../version.ts';
 
 export const GIT_HOLD_OP = 'sync-hold';
 export const GIT_HOLD_SUMMARY_OP = 'sync-hold-summary';
@@ -53,7 +54,19 @@ export const GIT_HOLD_ESCALATE_MIN_SCREENED = 40;
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
-export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression' | 'managed_image_sync_unsupported' | 'concurrent_write';
+export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression' | 'managed_image_sync_unsupported' | 'concurrent_write' | 'preparation_stalled';
+/** #6278: what the owner recorded about a preparation it gave up on (step names and vocabulary only, never content). */
+export interface PreparationStallMeta {
+  request_id: string;
+  /** The last step the owner stamped (`claim_phase.step`), or null when it recorded none. */
+  step: string | null;
+  waiting_on: 'git' | 'fs' | 'db' | 'pool' | 'unknown' | null;
+  attempts: number | null;
+  /** The gbrain that wrote the hold; a different version re-screens it (`holdRescreenDue`). */
+  gbrain_version: string;
+  /** The `gbrain sync` arguments that resume the cursor with its stored options (after `sources retry-held`). */
+  sync_argv: string[];
+}
 export type GitHoldReason = InvalidFrontmatterReason | 'rename_source_changed' | FenceReason;
 
 export interface GitHoldMeta {
@@ -78,6 +91,10 @@ export interface GitHoldMeta {
   page_revision?: string;
   /** #6188: the last fence repair attempt (repair kind or maintenance phase) that left this hold in place; location and reason only. */
   fence_repair?: FenceHoldRepairState;
+  /** #6278 `preparation_stalled`: the failed receipt's step, wait cause and attempt count. */
+  stall?: PreparationStallMeta;
+  /** #6278: the held entry is a deletion (the file is gone); discovery re-screens it on request or a gbrain change, not on its absence. */
+  deleted?: true;
 }
 
 /** #6188: why the last fence repair left a hold in place, and when the maintenance run tries it again (null: it does not). */
@@ -154,23 +171,24 @@ async function lockSummary(tx: Exec, sourceId: string, incarnation: string): Pro
 /**
  * `count` is every hold; `stale` the holds of files whose page exists (the rest are missing pages);
  * `images` the #5493 unsupported-image holds, which never escalate; `fences` the #6188 `invalid_fence` holds;
- * `concurrent` the #6194 `concurrent_write` holds.
+ * `concurrent` the #6194 `concurrent_write` holds; `stalled` the #6278 `preparation_stalled` holds.
  */
-async function adjustSummary(tx: Exec, sourceId: string, incarnation: string, delta: number, staleDelta: number, imageDelta: number, fenceDelta: number,
-  concurrentDelta: number): Promise<void> {
+const SUMMARY_COUNTERS = ['stale', 'images', 'fences', 'concurrent', 'stalled'] as const;
+type SummaryWeights = Record<typeof SUMMARY_COUNTERS[number], number>;
+async function adjustSummary(tx: Exec, sourceId: string, incarnation: string, delta: number, weights: SummaryWeights): Promise<void> {
+  const pairs = SUMMARY_COUNTERS.map((name, i) => `'${name}',GREATEST(0,COALESCE((completed_keys->0->>'${name}')::int,0)+$${i + 4}::int)`).join(',');
   await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0)||jsonb_build_object(
-      'count',GREATEST(0,COALESCE((completed_keys->0->>'count')::int,0)+$3::int),
-      'stale',GREATEST(0,COALESCE((completed_keys->0->>'stale')::int,0)+$4::int),
-      'images',GREATEST(0,COALESCE((completed_keys->0->>'images')::int,0)+$5::int),
-      'fences',GREATEST(0,COALESCE((completed_keys->0->>'fences')::int,0)+$6::int),
-      'concurrent',GREATEST(0,COALESCE((completed_keys->0->>'concurrent')::int,0)+$7::int))),updated_at=now() WHERE op=$1 AND fingerprint=$2`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), delta, staleDelta, imageDelta, fenceDelta, concurrentDelta]);
+      'count',GREATEST(0,COALESCE((completed_keys->0->>'count')::int,0)+$3::int),${pairs})),updated_at=now() WHERE op=$1 AND fingerprint=$2`,
+  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), delta, ...SUMMARY_COUNTERS.map(name => weights[name])]);
 }
 
 const staleWeight = (record: Pick<GitHoldRecord, 'page_id'> | null) => record && record.page_id !== null ? 1 : 0;
 const imageWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'managed_image_sync_unsupported' ? 1 : 0;
 const fenceWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'invalid_fence' ? 1 : 0;
 const concurrentWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'concurrent_write' ? 1 : 0;
+const stalledWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'preparation_stalled' ? 1 : 0;
+const weightsOf = (record: Pick<GitHoldRecord, 'code' | 'page_id'>, sign = 1): SummaryWeights => ({ stale: sign * staleWeight(record), images: sign * imageWeight(record),
+  fences: sign * fenceWeight(record), concurrent: sign * concurrentWeight(record), stalled: sign * stalledWeight(record) });
 
 async function readRow(tx: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
   const [row] = await tx.executeRaw<{ record: GitHoldRecord }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
@@ -194,14 +212,13 @@ export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
   [GIT_HOLD_OP, gitHoldFingerprint(input.source_id, input.incarnation, input.path), JSON.stringify([record])]);
   if (existing) {
-    if (staleWeight(input) !== staleWeight(existing) || imageWeight(input) !== imageWeight(existing) || fenceWeight(input) !== fenceWeight(existing)
-      || concurrentWeight(input) !== concurrentWeight(existing)) {
-      await adjustSummary(tx, input.source_id, input.incarnation, 0, staleWeight(input) - staleWeight(existing), imageWeight(input) - imageWeight(existing),
-        fenceWeight(input) - fenceWeight(existing), concurrentWeight(input) - concurrentWeight(existing));
+    const next = weightsOf(input), prior = weightsOf(existing);
+    if (SUMMARY_COUNTERS.some(name => next[name] !== prior[name])) {
+      await adjustSummary(tx, input.source_id, input.incarnation, 0, Object.fromEntries(SUMMARY_COUNTERS.map(name => [name, next[name] - prior[name]])) as SummaryWeights);
     }
     return 'updated';
   }
-  await adjustSummary(tx, input.source_id, input.incarnation, 1, staleWeight(input), imageWeight(input), fenceWeight(input), concurrentWeight(input));
+  await adjustSummary(tx, input.source_id, input.incarnation, 1, weightsOf(input));
   return 'inserted';
 }
 
@@ -217,10 +234,17 @@ export async function clearGitHold(tx: Exec, input: { sourceId: string; incarnat
   const existing = await readRow(tx, input.sourceId, input.incarnation, input.path);
   if (!existing || existing.observed_at > input.observedAt) return false;
   await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);
-  await adjustSummary(tx, input.sourceId, input.incarnation, -1, -staleWeight(existing), -imageWeight(existing), -fenceWeight(existing), -concurrentWeight(existing));
+  await adjustSummary(tx, input.sourceId, input.incarnation, -1, weightsOf(existing, -1));
   return true;
 }
 
+/** #5984: which of these paths have a hold row (one indexed read), so a batched waiver run clears only those. */
+export async function heldGitPaths(tx: Exec, sourceId: string, incarnation: string, paths: readonly string[]): Promise<Set<string>> {
+  if (!paths.length) return new Set();
+  const byPrint = new Map(paths.map(path => [gitHoldFingerprint(sourceId, incarnation, path), path]));
+  const rows = await tx.executeRaw<{ fingerprint: string }>('SELECT fingerprint FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])', [GIT_HOLD_OP, [...byPrint.keys()]]);
+  return new Set(rows.map(row => byPrint.get(row.fingerprint)!));
+}
 /**
  * #6188: records on a fence hold why the last repair left it held (the repair kind and the maintenance phase call it),
  * without touching its observation time or counts. False when the hold is gone or is not a fence hold.
@@ -302,21 +326,32 @@ export async function readGitHoldListing(engine: Exec, sourceIds: string[], limi
  * re-screened when `sources retry-held` asked, when its verdict depends on
  * database state or the working tree (slug conflicts, over-size, renames,
  * parser regressions), or when the gbrain that wrote it read frontmatter or
- * screened fences with an older version than this one.
+ * screened fences with an older version than this one. #6278: a
+ * `preparation_stalled` hold re-screens when the gbrain version changed (the
+ * stall was the owner's, not the file's); otherwise it waits for
+ * `sources retry-held`.
  */
 export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, retried: boolean): boolean {
   return retried || ['frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression'].includes(record.code)
     || record.meta.recovery_version < RECOVERY_VERSION
-    || (record.code === 'invalid_fence' && (record.meta.fence_version ?? 0) < FENCE_VERSION);
+    || (record.code === 'invalid_fence' && (record.meta.fence_version ?? 0) < FENCE_VERSION)
+    || (record.code === 'preparation_stalled' && record.meta.stall?.gbrain_version !== VERSION);
 }
 
 /**
  * D6: which repairs a source's holds need. Fence holds route to the fence
  * repair preview, #6194 concurrent-write holds to the reconcile preview and a
- * re-screen, every other hold to the frontmatter repair preview; a source with
- * several kinds names each.
+ * re-screen, #6278 preparation-stalled holds to writer status and a re-screen
+ * (never a file repair), every other hold to the frontmatter repair preview;
+ * a source with several kinds names each.
  */
-export interface HoldRepairRoute { fences: number; others: number; concurrent?: number }
+export interface HoldRepairRoute { fences: number; others: number; concurrent?: number; stalled?: number }
+
+/** #6278: the three commands that clear a source's `preparation_stalled` holds, in order (no file repair applies). */
+export function stalledHoldSteps(sourceId: string, syncArgv?: string[]): { status: string[]; retry: string[]; sync: string[] } {
+  return { status: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], retry: ['gbrain', 'sources', 'retry-held', sourceId],
+    sync: ['gbrain', 'sync', ...(syncArgv ?? ['--source', sourceId, '--no-pull'])] };
+}
 
 /**
  * The source-level next step every surface prints for `route` (sync results,
@@ -334,11 +369,17 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
   const frontmatterText = `preview the frontmatter and other fixes with ${frontmatter.join(' ')} (writes nothing until a hash-bound apply)`;
   const concurrentText = `for each concurrent-write hold, preview the reconciliation with gbrain sources reconcile ${sourceId} <slug> --preview `
     + `(gbrain sources status ${sourceId} names each slug and the database write that raced the import), resolve and apply it, then run gbrain sources retry-held ${sourceId} and gbrain sync --source ${sourceId} --no-pull`;
-  if (route.concurrent) {
-    const parts = [...(route.others ? [frontmatterText] : []), ...(route.fences ? [fenceText] : []), concurrentText];
+  const stalled = stalledHoldSteps(sourceId);
+  const stalledText = `the ${route.stalled ?? 0} preparation-stalled hold(s) are not file problems and need no repair: inspect the writer with ${stalled.status.join(' ')} (read-only), `
+    + `fix what it names or upgrade gbrain, then run ${stalled.retry.join(' ')} and the same sync again (${stalled.sync.join(' ')} with the run's options)`;
+  if (route.stalled && !route.others && !route.fences && !route.concurrent) {
+    return { argv: stalled.status, commands: [stalled.status.join(' '), stalled.retry.join(' '), stalled.sync.join(' ')], text: stalledText };
+  }
+  if (route.concurrent || route.stalled) {
+    const parts = [...(route.others ? [frontmatterText] : []), ...(route.fences ? [fenceText] : []), ...(route.concurrent ? [concurrentText] : []), ...(route.stalled ? [stalledText] : [])];
     const commands = [...(route.others ? [frontmatter.join(' ')] : []), ...(route.fences ? [fences.join(' ')] : []),
-      `gbrain sources status ${sourceId} --json`, `gbrain sources retry-held ${sourceId}`, `gbrain sync --source ${sourceId} --no-pull`];
-    return { argv: route.others ? frontmatter : route.fences ? fences : ['gbrain', 'sources', 'status', sourceId, '--json'], commands, text: parts.join('; ') };
+      ...(route.stalled ? [stalled.status.join(' ')] : []), `gbrain sources status ${sourceId} --json`, `gbrain sources retry-held ${sourceId}`, `gbrain sync --source ${sourceId} --no-pull`];
+    return { argv: route.others ? frontmatter : route.fences ? fences : route.concurrent ? ['gbrain', 'sources', 'status', sourceId, '--json'] : stalled.status, commands, text: parts.join('; ') };
   }
   if (route.fences && !route.others) return { argv: fences, commands: [fences.join(' ')], text: fenceText };
   if (route.fences) return { argv: frontmatter, commands: [frontmatter.join(' '), fences.join(' ')], text: `${frontmatterText}; ${fenceText}` };
@@ -368,6 +409,22 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         then: { argv: ['gbrain', 'sources', 'retry-held', source], consent: [], actor: 'agent', requires_exclusive: false,
           why: `Schedules ${record.path} for a re-screen on the next sync, after the page is reconciled.`, verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } },
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    }
+    case 'preparation_stalled': {
+      const stall = record.meta.stall;
+      const steps = stalledHoldSteps(source, stall?.sync_argv);
+      const where = stall?.step ? ` at step ${stall.step}${stall.waiting_on && stall.waiting_on !== 'unknown' ? ` (waiting on ${stall.waiting_on})` : ''}` : '';
+      const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
+      return { argv: steps.status, consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#preparation_stalled',
+        why: `${record.path} is held because its ${record.meta.deleted ? 'deletion' : 'import'} could not finish preparing${where}: the write owner gave up after `
+          + `${stall?.attempts ?? 'the allowed'} attempt(s) (request ${stall?.request_id ?? '(unknown)'}) and the rest of the source kept syncing. The file itself is not the problem, so no `
+          + `frontmatter or fence repair applies. Writer status (read-only) shows the owner process, its gbrain version and any write still stuck; fix what it names or upgrade `
+          + `gbrain, then schedule the re-screen and rerun the same sync.`,
+        then: { argv: steps.retry, consent: [], actor: 'agent', requires_exclusive: false, verify,
+          why: `Schedules ${record.path} for a re-screen on the next sync of ${source}; nothing runs now.`,
+          then: { argv: steps.sync, consent: [], actor: 'agent', requires_exclusive: false, verify,
+            why: `Re-imports ${record.path} with the run's own options (a different sync command would start another cursor); a preparation that stalls again is held again without blocking the rest.` } },
+        verify };
     }
     case 'file_too_large':
       return { argv: ['gbrain', 'config', 'get', 'sync.exclude'], consent: [], actor: 'agent', requires_exclusive: false,
@@ -400,6 +457,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
 export function gitHoldDocs(code: GitHoldCode, reason?: GitHoldReason): string {
   // #6188: fence reasons carry their own anchors (`#fence-<reason>`).
   if (code === 'invalid_fence') return reason && reason in FENCE_REASONS ? FENCE_REASONS[reason as FenceReason].docs : 'docs/guides/write-refusals.md#invalid_fence';
+  if (code === 'preparation_stalled') return 'docs/guides/write-refusals.md#preparation_stalled';
   return `docs/guides/write-refusals.md#${reason ? `${code}-${reason}` : code}`;
 }
 
@@ -609,8 +667,9 @@ export function fencesNormalizedReport(sourceId: string, tally: FencesTally | un
 export async function buildHoldReport(engine: Exec, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
   policy: SyncHoldPolicy; screened: number; pendingScreen?: boolean }): Promise<Pick<import('../../commands/sync.ts').SyncResult,
   'held' | 'held_count' | 'holds_outstanding' | 'holds_escalated' | 'holds_truncated' | 'holds_pending_screen' | 'holds_fix'>> {
-  const [summary] = await engine.executeRaw<{ count: number | string; images: number | string; fences: number | string }>(`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
-      COALESCE((completed_keys->0->>'images')::int,0) AS images, COALESCE((completed_keys->0->>'fences')::int,0) AS fences FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
+  const [summary] = await engine.executeRaw<{ count: number | string; images: number | string; fences: number | string; stalled: number | string }>(`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
+      COALESCE((completed_keys->0->>'images')::int,0) AS images, COALESCE((completed_keys->0->>'fences')::int,0) AS fences, COALESCE((completed_keys->0->>'stalled')::int,0) AS stalled
+    FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
   [GIT_HOLD_SUMMARY_OP, summaryFingerprint(input.sourceId, input.incarnation)]);
   const outstanding = Number(summary?.count ?? 0);
   const runHolds = (await readGitSourceHolds(engine, { sourceIds: [input.sourceId], runId: input.runId }))[0]?.holds ?? [];
@@ -618,16 +677,22 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
   const escalated = holdsEscalated(input.policy, outstanding - Number(summary?.images ?? 0),
     { held: runHolds.filter(hold => !imageWeight(hold)).length, screened: input.screened });
   const fences = Math.max(Number(summary?.fences ?? 0), runHolds.filter(hold => fenceWeight(hold)).length);
+  const stalled = Math.max(Number(summary?.stalled ?? 0), runHolds.filter(hold => stalledWeight(hold)).length);
   const auto = fences ? await readFenceAutoRepair(engine) : undefined;
-  const steps = holdRepairSteps(input.sourceId, { fences, others: Math.max(0, outstanding - fences) }, auto);
+  const steps = holdRepairSteps(input.sourceId, { fences, others: Math.max(0, outstanding - fences - stalled), ...(stalled ? { stalled } : {}) }, auto);
+  // #6278: the escalation text is routed by code: stalled holds point at the writer, not at a generator.
+  const runStalled = runHolds.filter(hold => stalledWeight(hold)).length;
+  const escalation = runStalled * 2 > runHolds.length
+    ? ' Escalated: more files are held than a source should carry, and most of them stalled while preparing, so the write owner (not the files) is the likely cause; inspect it with writer status before the backlog grows.'
+    : ' Escalated: more files are held than a source should carry, so a generator or a gbrain upgrade is likely writing or reading them wrong; fix the cause before the backlog grows.';
   const verify = { argv: ['gbrain', 'sources', 'status', input.sourceId, '--json'] };
   if (input.remote) return { held_count: runHolds.length, holds_fix: { argv: steps.argv, consent: [], actor: 'host_admin', requires_exclusive: false, verify,
     why: `${outstanding} file(s) in source ${input.sourceId} are held and not imported; only the brain host can inspect and repair them.`,
     user_message: `Some files in source ${input.sourceId} could not be imported. Please run 'gbrain sources status ${input.sourceId}' on the brain host, then: ${steps.text}.` } };
   const fix: Action = { argv: steps.argv, consent: [], actor: 'agent', requires_exclusive: false, verify,
     why: `${runHolds.length} file(s) held this run, ${outstanding} held in source ${input.sourceId}; they do not block sync. Inspect them with 'gbrain sources status ${input.sourceId}'; `
-      + (fences ? `then ${steps.text}.` : 'the repair preview proposes each fix and writes nothing.')
-      + (escalated ? ' Escalated: more files are held than a source should carry, so a generator or a gbrain upgrade is likely writing or reading them wrong; fix the cause before the backlog grows.' : '') };
+      + (fences || stalled ? `then ${steps.text}.` : 'the repair preview proposes each fix and writes nothing.')
+      + (escalated ? escalation : '') };
   return { held: runHolds.slice(0, input.policy.cap).map(hold => gitHoldItem(hold, auto)), held_count: runHolds.length, holds_outstanding: outstanding,
     ...(escalated ? { holds_escalated: true } : {}), ...(runHolds.length > input.policy.cap ? { holds_truncated: true } : {}),
     ...(input.pendingScreen ? { holds_pending_screen: true } : {}), holds_fix: fix };
@@ -637,6 +702,6 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
 export function syncHoldJsonFields(result: object): Record<string, unknown> {
   const fields = result as Record<string, unknown>;
   return Object.fromEntries(['held', 'held_count', 'holds_outstanding', 'holds_escalated', 'holds_truncated', 'holds_pending_screen', 'holds_fix',
-    'converted_from_failed', 'recovered_frontmatter', 'fences_normalized', 'fence_issues', 'dry_run', 'would_hold', 'would_hold_count', 'would_normalize', 'would_normalize_count', 'screen_skipped']
+    'converted_from_failed', 'recovered_frontmatter', 'fences_normalized', 'fence_issues', 'dry_run', 'would_hold', 'would_hold_count', 'would_normalize', 'would_normalize_count', 'screen_skipped', 'breaker']
     .filter(key => fields[key] !== undefined).map(key => [key, fields[key]]));
 }

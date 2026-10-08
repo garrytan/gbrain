@@ -227,6 +227,21 @@ export function syncWatchdogPlan(args: string[], res: HardDeadlineResolution): {
 }
 
 /**
+ * #6278: the `gbrain sync` arguments (after `sync`) that resume a managed cursor
+ * with its stored processing and cursor options, so a follow-up printed by a
+ * hold, `sources retry-held` or doctor keeps `--no-embed` and friends instead
+ * of starting a second cursor. `syncResumeCommand` quotes them.
+ */
+export function managedSyncResumeArgs(input: { sourceId: string; processingOptions?: { noEmbed?: boolean; noExtract?: boolean; noSchemaPack?: boolean } | null;
+  syncOptions?: { full?: boolean; workingTree?: boolean; srcSubpath?: string | null; exclude?: string[]; includeHidden?: string[]; strategy?: string | null } | null;
+  repoPath?: string | null }): string[] {
+  const p = input.processingOptions ?? {}, c = input.syncOptions ?? {};
+  return ['--source', input.sourceId, '--no-pull', ...(input.repoPath ? ['--repo', input.repoPath] : []), ...(p.noEmbed ? ['--no-embed'] : []), ...(p.noExtract ? ['--no-extract'] : []),
+    ...(p.noSchemaPack ? ['--no-schema-pack'] : []), ...(c.full ? ['--full'] : []), ...(c.workingTree ? ['--working-tree'] : []), ...(c.srcSubpath ? ['--src-subpath', c.srcSubpath] : []),
+    ...(c.exclude ?? []).flatMap(pattern => ['--exclude', pattern]), ...(c.includeHidden ?? []).flatMap(pattern => ['--include-hidden', pattern]), ...(c.strategy ? ['--strategy', c.strategy] : [])];
+}
+
+/**
  * #5984: the shell-quoted `gbrain sync` command that resumes this run with the
  * same brain, source and cursor-defining options (`args` are the sync argv).
  */

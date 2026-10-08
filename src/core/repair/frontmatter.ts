@@ -498,7 +498,8 @@ async function applyRepair(ctx: OperationContext, repair: ApprovedRepair, select
         committed: persistence?.git_state ?? 'not_requested' } };
     } catch (error) {
       if (error instanceof OperationError && ['changed_since_preview', 'revision_conflict', 'page_identity_changed'].includes(error.code)) return changed(error.message);
-      if (error instanceof OperationError && error.code === 'source_changed') return { applied: false, outcome: 'refused', reason: error.message, detail: { path: repair.path } };
+      // #6278: a sync that started since the preview and still names the file is refused at admission, not written.
+      if (error instanceof OperationError && (error.code === 'source_changed' || error.code === 'sync_in_progress')) return { applied: false, outcome: 'refused', reason: error.message, detail: { path: repair.path } };
       throw error;
     }
   }

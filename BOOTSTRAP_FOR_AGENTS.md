@@ -1,4 +1,4 @@
-<!-- gbrain-runbook-stamp: 0.60.110.0 -->
+<!-- gbrain-runbook-stamp: 0.60.116.0 -->
 <!-- This stamp must equal the VERSION file at every release; CI enforces it
      (scripts/check-bootstrap-tag.sh). `gbrain bootstrap status` compares it to
      the installed binary and warns on skew. -->
@@ -91,17 +91,18 @@ registration only with `--mcp-even-if-plugin`.
    Then `gbrain bootstrap status` — it is idempotent and resume-aware; after any
    partial failure, re-run it and continue where it points.
 2. **Engine.** Two lanes; default to the first:
-   - **PGLite (default):** `gbrain init --pglite` (2 seconds, no server). This is
-     the lane that keeps the per-turn hook context injection working — the hook
-     IPC listener is PGLite-only today.
+   - **PGLite (default):** `gbrain init --pglite` (2 seconds, no server). The
+     per-turn hook context injection works whenever a `gbrain serve` for the
+     brain is running.
    - **Postgres-first (harness installs):** `gbrain init --prefer-postgres` walks
      a 5-rung ladder (env URL → Supabase token discovery → local Postgres →
      `--allow-docker` → PGLite floor) for installs that want concurrent
-     connections or multi-machine access. Tradeoff, stated plainly: a Postgres
-     brain gets MCP tools every session plus the pull protocol, but gives up the
-     per-turn hook lane until the engine-uniform listener lands (the degradation
-     matrix in `docs/guides/bootstrap.md` carries the row; INSTALL_FOR_AGENTS.md
-     "Engine preference for harness installs" carries the ladder detail).
+     connections or multi-machine access. A Postgres brain keeps the per-turn
+     hook lane too: the IPC listener is engine-uniform and keys its socket off
+     the connection URL, so the hooks fire whenever a `gbrain serve` for the
+     brain is running, same as PGLite (the degradation matrix in
+     `docs/guides/bootstrap.md` carries the row; INSTALL_FOR_AGENTS.md "Engine
+     preference for harness installs" carries the ladder detail).
 
    Search mode is
    auto-selected silently (conservative when keyless, tokenmax with an

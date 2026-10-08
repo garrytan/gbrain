@@ -50,6 +50,8 @@ export type FenceReason =
   // Repair runs.
   | 'llm_unavailable' | 'llm_empty' | 'llm_refused' | 'llm_malformed' | 'llm_truncated' | 'llm_declined' | 'llm_disabled' | 'no_measured_model'
   | 'budget_exhausted' | 'no_pricing' | 'ledger_unavailable' | 'owner_unavailable' | 'owner_cli_required'
+  // Owner conditions (#6278; the `owner_unavailable` reasons the owner-refusal matrix names).
+  | 'host_mismatch' | 'transfer_in_progress' | 'clone_in_progress' | 'incarnation_changed' | 'local_path_missing' | 'coordination_path_missing'
   | 'sync_in_progress' | 'time_budget' | 'changed_since_read' | 'changed_since_preview'
   // Validator gates.
   | 'still_invalid' | 'claim_changed' | 'row_number_changed' | 'visibility_loosened'
