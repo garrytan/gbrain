@@ -90,3 +90,47 @@ export async function readIdentitySiblings(engine: BrainEngine, sourceId: string
     return { pages: [], capped: false };
   }
 }
+
+/**
+ * The page facts about an identity-sibling group are attributed to: when
+ * `slugs` (two or three live pages one name resolved to) form one group, the
+ * lowest slug; otherwise null (a real ambiguity). Fact writers use it so a
+ * name both siblings claim ("Telostra Robotics" for its account sheet and
+ * CRM record) resolves instead of falling back to a slug no page has.
+ */
+export async function siblingCanonical(engine: BrainEngine, sourceId: string, slugs: string[], opts: { excludePrivate?: boolean } = {}): Promise<string | null> {
+  const unique = [...new Set(slugs)].sort();
+  if (unique.length < 2 || unique.length > SIBLING_GROUP_CAP) return null;
+  try {
+    const policy = await readMentionPolicy(engine);
+    if (!policy.siblingMerge) return null;
+    const { privatePagesFilterFragment } = await import('../search/private-visibility.ts');
+    const rows = await engine.executeRaw<{ slug: string; title: string | null; type: string | null; identity: unknown }>(
+      `SELECT slug, title, type, frontmatter->>'identity' AS identity FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])${opts.excludePrivate ? ` AND ${privatePagesFilterFragment('pages')}` : ''}`,
+      [sourceId, unique]);
+    if (rows.length !== unique.length) return null;
+    const pack = await loadSourcePack(engine, sourceId);
+    const types = new Set(linkableTypesFor(pack, policy));
+    if (!rows.every(r => r.type != null && types.has(r.type))) return null;
+    return siblingVerdict(rows, pack, policy) === 'group' ? unique[0]! : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every `entity_slug` facts about this page may be stored under: the page,
+ * its identity siblings and the slug of its title subject (what a fact saved
+ * by name got before its siblings resolved). The entity card and recall read
+ * all of them, so a saved fact shows up whichever sibling a reader asks for.
+ */
+export async function factEntitySlugs(engine: BrainEngine, sourceId: string, slug: string, opts: { excludePrivate?: boolean } = {}): Promise<string[]> {
+  const [page] = await engine.executeRaw<{ title: string | null }>(
+    'SELECT title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, slug]).catch(() => []);
+  if (!page) return [slug];
+  const siblings = await readIdentitySiblings(engine, sourceId, { slug, title: page.title }, { excludePrivate: opts.excludePrivate ?? true });
+  const { slugify } = await import('../entities/resolve.ts');
+  const subject = slugify(titleName(page.title ?? ''));
+  return [...new Set([slug, ...siblings.pages.map(p => p.slug), ...(subject && subject !== slug ? [subject] : [])])];
+}

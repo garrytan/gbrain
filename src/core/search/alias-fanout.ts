@@ -78,11 +78,18 @@ export async function searchAliasRequired(engine: BrainEngine, alias: string, te
 
 interface Scope { sourceId?: string; sourceIds?: string[]; excludePrivate: boolean }
 
+export interface ResolvedEntity { pages: Array<{ slug: string; source_id: string }>; tokens: [number, number] }
+
 /** The entity the query names: its pages (one, or an identity-sibling group) and the n-gram that named it. */
-export async function resolveQueryEntity(engine: BrainEngine, query: string, scope: Scope):
-  Promise<{ pages: Array<{ slug: string; source_id: string }>; tokens: [number, number] } | null> {
+export async function resolveQueryEntity(engine: BrainEngine, query: string, scope: Scope): Promise<ResolvedEntity | null> {
+  return (await resolveQueryEntities(engine, query, scope, 1))[0] ?? null;
+}
+
+/** Every entity `text` names, longest n-gram first, at most `max`. */
+export async function resolveQueryEntities(engine: BrainEngine, query: string, scope: Scope, max = 4): Promise<ResolvedEntity[]> {
+  const found: ResolvedEntity[] = [];
   const tokens = queryTokens(query);
-  if (!tokens.length) return null;
+  if (!tokens.length) return found;
   const grams: Array<{ text: string; norm: string; from: number; to: number }> = [];
   for (let n = Math.min(MAX_NGRAM, tokens.length); n >= 1; n--) {
     for (let i = 0; i + n <= tokens.length; i++) {
@@ -112,15 +119,19 @@ export async function resolveQueryEntity(engine: BrainEngine, query: string, sco
     if (!hits.length) continue;
     const gramTokens = tokens.slice(g.from, g.to + 1).map(t => t.text);
     if (!(shaped(gramTokens[0]!) && shaped(gramTokens[gramTokens.length - 1]!)) && !(gramTokens.length > 1 && hits.length === 1)) continue;
-    covered.add(g.from);
     for (let k = g.from; k <= g.to; k++) covered.add(k);
-    if (hits.length === 1) return { pages: hits, tokens: [g.from, g.to] };
     const [first] = hits;
-    const sib = await readIdentitySiblings(engine, first!.source_id, { slug: first!.slug, title: await titleOf(engine, first!) }, { excludePrivate: scope.excludePrivate });
-    const group = new Set([first!.slug, ...sib.pages.map(p => p.slug)]);
-    if (hits.every(h => h.source_id === first!.source_id && group.has(h.slug))) return { pages: hits, tokens: [g.from, g.to] };
+    let pages: ResolvedEntity['pages'] | null = hits.length === 1 ? hits : null;
+    if (!pages) {
+      const sib = await readIdentitySiblings(engine, first!.source_id, { slug: first!.slug, title: await titleOf(engine, first!) }, { excludePrivate: scope.excludePrivate });
+      const group = new Set([first!.slug, ...sib.pages.map(p => p.slug)]);
+      if (hits.every(h => h.source_id === first!.source_id && group.has(h.slug))) pages = hits;
+    }
+    if (!pages) continue;
+    if (!found.some(f => f.pages.some(p => pages!.some(q => q.slug === p.slug && q.source_id === p.source_id)))) found.push({ pages, tokens: [g.from, g.to] });
+    if (found.length >= max) break;
   }
-  return null;
+  return found;
 }
 
 async function titleOf(engine: BrainEngine, ref: { slug: string; source_id: string }): Promise<string | null> {
@@ -165,10 +176,10 @@ export async function aliasFanoutMax(engine: BrainEngine): Promise<number> {
  * resolves. Fail-soft: any error returns `results` unchanged.
  */
 export async function withAliasFanOut(engine: BrainEngine, results: SearchResult[], queryText: string, scope: Scope, searchOpts: SearchOpts,
-  fallback: () => Array<{ name: string; alias: string; slug: string }>): Promise<{ results: SearchResult[]; fanout?: FanoutMeta }> {
+  fallback: () => Array<{ name: string; alias: string; slug: string }>): Promise<{ results: SearchResult[]; fanout?: FanoutMeta; entity?: ResolvedEntity }> {
   try {
     const max = await aliasFanoutMax(engine);
-    if (max === 0) return { results };
+    if (max === 0) return { results, ...(await resolveEntityQuiet(engine, queryText, scope)) };
     const words = (text: string) => normalizeAlias(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
     const queryWords = words(queryText);
     const inQuery = (name: string) => {
@@ -186,7 +197,8 @@ export async function withAliasFanOut(engine: BrainEngine, results: SearchResult
     }
     const seenNames = new Set<string>();
     names = names.filter(n => { const k = normalizeAlias(n.alias); if (seenNames.has(k)) return false; seenNames.add(k); return true; });
-    if (!names.length) return { results };
+    const entity = resolved ?? undefined;
+    if (!names.length) return { results, ...(entity ? { entity } : {}) };
     const tokens = queryTokens(queryText);
     const terms = tokens.filter((_, i) => !usedTokens || i < usedTokens[0] || i > usedTokens[1]).map(t => t.text)
       .filter(t => !STOPWORDS.has(t.toLowerCase()) && t.length >= 2 && !names.some(n => normalizeAlias(n.alias).split(' ').includes(t.toLowerCase())));
@@ -210,9 +222,14 @@ export async function withAliasFanOut(engine: BrainEngine, results: SearchResult
       aliases_skipped: skipped,
       truncated: skipped.length > 0,
     };
-    if (!fresh.length) return { results, fanout };
-    return { results: [...results.slice(0, 2), ...fresh, ...results.slice(2)], fanout };
+    if (!fresh.length) return { results, fanout, ...(entity ? { entity } : {}) };
+    return { results: [...results.slice(0, 2), ...fresh, ...results.slice(2)], fanout, ...(entity ? { entity } : {}) };
   } catch {
     return { results };
   }
+}
+
+async function resolveEntityQuiet(engine: BrainEngine, query: string, scope: Scope): Promise<{ entity?: ResolvedEntity }> {
+  const entity = await resolveQueryEntity(engine, query, scope).catch(() => null);
+  return entity ? { entity } : {};
 }

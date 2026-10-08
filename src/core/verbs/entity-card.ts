@@ -32,12 +32,14 @@ import { loadLinkableTypes } from '../mentions/policy.ts';
 import { readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
 import { encodeCursor, readReferrerGroups, PAGE_DEFAULT_LIMIT, type ReferenceRow } from '../mentions/referrers.ts';
 import { readCardIdentity, type CardIdentity } from './entity-card-identity.ts';
+import { factEntitySlugs } from '../mentions/siblings.ts';
 
 const EDGE_CAP = 10;
 const OPEN_THREADS_CAP = 3;
 const OPEN_THREAD_TIMELINE_WINDOW_DAYS = 90;
 const SUGGESTION_CAP = 3;
 const FACT_FETCH_CAP = 100;
+const RECENT_FACTS_CAP = 5;
 
 export interface EntityCardEdge {
   type: string;
@@ -85,6 +87,8 @@ export interface EntityCard {
   backlink_count: number;
   /** Exact active-fact count (indexed COUNT, not payload length); visibility-filtered for remote. */
   active_fact_count: number;
+  /** The newest active saved facts about this entity (also those saved under an identity sibling or its bare name, with that `entity_slug`). */
+  recent_facts?: Array<{ id: string; fact: string; kind: string; valid_from: string | null; entity_slug?: string }>;
   /**
    * Current and ended state relationships of this entity, rendered for agents
    * ("now: works_at widget-co (since 2025-03-01); ended: works_at acme-example
@@ -333,6 +337,8 @@ async function assembleCard(
 ): Promise<EntityCard> {
   const pageSlug = row.slug;
   const visibility = remote ? (['world'] as ('private' | 'world')[]) : undefined;
+  // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
+  const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate }).catch(() => [pageSlug]);
   const { privatePagesFilterFragment, privateLinkOriginFilterFragment } = await import('../search/private-visibility.ts');
   const inboundPrivacy = excludePrivate
     ? ` AND ${privatePagesFilterFragment('f')} AND ${privateLinkOriginFilterFragment('l')}`
@@ -387,12 +393,12 @@ async function assembleCard(
       .then(rs => Number(rs[0]?.n ?? 0))
       .catch(() => 0),
     engine.getTimeline(pageSlug, { limit: 5, sourceId, excludePrivate }).catch(() => []),
-    engine
-      .listFactsByEntity(sourceId, pageSlug, {
-        activeOnly: true,
-        limit: FACT_FETCH_CAP,
-        ...(visibility ? { visibility } : {}),
-      })
+    Promise.all(factSlugs.map(slug => engine.listFactsByEntity(sourceId, slug, {
+      activeOnly: true,
+      limit: FACT_FETCH_CAP,
+      ...(visibility ? { visibility } : {}),
+    })))
+      .then(lists => lists.flat().sort((a, b) => factTime(b) - factTime(a)).slice(0, FACT_FETCH_CAP))
       .catch(() => [] as FactRow[]),
     // Exact active-fact count: the payload fetch above is capped at
     // FACT_FETCH_CAP, so facts.length silently reports the cap for bigger
@@ -403,9 +409,9 @@ async function assembleCard(
       .executeRaw<{ n: string | number }>(
         `SELECT COUNT(*) AS n
            FROM facts
-          WHERE source_id = $1 AND entity_slug = $2
+          WHERE source_id = $1 AND entity_slug = ANY($2::text[])
             AND expired_at IS NULL${remote ? ` AND visibility = 'world'` : ''}`,
-        [sourceId, pageSlug],
+        [sourceId, factSlugs],
       )
       .then(rs => Number(rs[0]?.n ?? 0))
       .catch(() => null),
@@ -516,7 +522,15 @@ async function assembleCard(
     backlink_count: backlinkCount,
     active_fact_count: activeFactCount ?? facts.length,
     ...(relationshipNote ? { relationship_note: relationshipNote } : {}),
+    ...(facts.length ? { recent_facts: facts.slice(0, RECENT_FACTS_CAP).map(f => ({
+      id: String(f.id), fact: f.fact, kind: f.kind, valid_from: f.valid_from ? toIso(f.valid_from as Date | string) : null,
+      ...(f.entity_slug && f.entity_slug !== pageSlug ? { entity_slug: f.entity_slug } : {}),
+    })) } : {}),
   };
+}
+
+function factTime(f: FactRow): number {
+  return toMs((f.valid_from ?? f.created_at ?? null) as Date | string | null);
 }
 
 /**
