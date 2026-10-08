@@ -3,7 +3,7 @@
  * page writes from a second process while another process drains a managed sync.
  * Env: WORKER_DATABASE_URL, WORKER_SOURCE, WORKER_SLUGS (comma-separated, one
  * put_page each, in order; with WORKER_GO, the go file's content instead), WORKER_INTERVAL_MS (gap between writes; 0 = back to
- * back), WORKER_OUT (JSON results), WORKER_GO (optional: a file whose creation starts the writes, so a
+ * back), WORKER_OUT (JSON results; `<WORKER_OUT>.claims` holds this process's claim times), WORKER_GO (optional: a file whose creation starts the writes, so a
  * test can start the process ahead and write at a chosen moment). GBRAIN_HOME is the drain's, so both processes
  * are the same local writer on the same owner host.
  */
@@ -17,6 +17,20 @@ import { observeAdmissionTransactions } from '../../scripts/persistence/read-adm
 // could already see the write from one that chose its row before the write was visible.
 let admittedAt: number | undefined;
 const postgres = new PostgresEngine();
+// `claims`: when this process claimed each request (the moment its claim chose the row), so the test can close its
+// window at the write's claim when this process, not the drain's, claimed it. Same recorder as the test's.
+const claims: Record<string, number> = {};
+{
+  const execute = postgres.executeRaw;
+  const chose = new WeakMap<object, number>();
+  postgres.executeRaw = async function (this: PostgresEngine, sql: string, params?: unknown[], opts?: unknown) {
+    const sent = Date.now();
+    if (/FOR UPDATE OF r SKIP LOCKED/.test(sql)) chose.set(this, sent);
+    const out = await execute.call(this, sql, params, opts as never) as Array<{ id?: string; state?: string }>;
+    if (/^UPDATE persistence_requests( r)? SET state='running'/.test(sql.trim())) for (const row of out) if (row.id && row.state === 'running') claims[String(row.id)] ??= chose.get(this) ?? sent;
+    return out as never;
+  } as PostgresEngine['executeRaw'];
+}
 const engine = observeAdmissionTransactions(postgres, () => { admittedAt ??= Date.now(); });
 await postgres.connect({ database_url: process.env.WORKER_DATABASE_URL!, poolSize: 4 });
 const sourceId = process.env.WORKER_SOURCE!;
@@ -38,6 +52,7 @@ for (const slug of slugs) {
   }
   if (interval) await Bun.sleep(interval);
 }
+writeFileSync(`${process.env.WORKER_OUT!}.claims`, JSON.stringify(claims));
 writeFileSync(process.env.WORKER_OUT!, JSON.stringify(results));
 await disposePersistenceConsumer(engine);
 await engine.disconnect();

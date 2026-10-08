@@ -45,7 +45,7 @@ const until = async (check: () => Promise<boolean>, ms = 60_000) => {
   const deadline = Date.now() + ms;
   while (!await check()) { if (Date.now() > deadline) throw new Error('timed out'); await Bun.sleep(10); }
 };
-/** Records every request the drain's process claims (FIFO, lane head or group follower), with the time. */
+/** Records every request the drain's process claims (FIFO, lane head or group follower), with the time of its first claim. */
 function recordClaims(e: BrainEngine): { claims: Map<string, number>; restore: () => void } {
   const claims = new Map<string, number>();
   const execute = e.executeRaw;
@@ -55,7 +55,7 @@ function recordClaims(e: BrainEngine): { claims: Map<string, number>; restore: (
     const sent = Date.now();
     if (/FOR UPDATE OF r SKIP LOCKED/.test(sql)) chose.set(this, sent);
     const out = await execute.call(this, sql, params, opts as never) as Array<{ id?: string; state?: string }>;
-    if (/^UPDATE persistence_requests( r)? SET state='running'/.test(sql.trim())) for (const row of out) if (row.id && row.state === 'running') claims.set(String(row.id), chose.get(this) ?? sent);
+    if (/^UPDATE persistence_requests( r)? SET state='running'/.test(sql.trim())) for (const row of out) if (row.id && row.state === 'running' && !claims.has(String(row.id))) claims.set(String(row.id), chose.get(this) ?? sent);
     return out as never;
   } as BrainEngine['executeRaw'];
   return { claims, restore: () => { e.executeRaw = execute; } };
@@ -67,7 +67,9 @@ function writer(source: string, slugs: string[], intervalMs = 0, go?: string) {
   return async () => {
     const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
     if (code !== 0) throw new Error(`writer exited ${code}: ${stderr.slice(-2000)}`);
-    return JSON.parse(readFileSync(out, 'utf8')) as Array<{ slug: string; state: string; error?: string; submitted: number; returned: number; admitted?: number }>;
+    const results = JSON.parse(readFileSync(out, 'utf8')) as Array<{ slug: string; state: string; error?: string; submitted: number; returned: number; admitted?: number }>;
+    // The writer process records its own claims: the drain's process is not the only one that may claim a request.
+    return Object.assign(results, { claims: JSON.parse(readFileSync(`${out}.claims`, 'utf8')) as Record<string, number> });
   };
 }
 
@@ -96,9 +98,13 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
   // `laneHold`, once the write is sent each lane group that has applied its pages holds before its commit turn (no
   // counter lock held) until the write commits or `laneHold` ms pass, and `beside` records, for each foreground
   // publication in this process, whether a lane group was then open.
-  let laneOpen = 0, armed = false;
+  let laneOpen = 0, armed = false, holdStarts = false;
   const beside: boolean[] = [];
   const written = Promise.withResolvers<void>();
+  // Without `laneHold`, from the moment 4 unstarted groups are seen until `before` is read, each lane parks its group
+  // at `lane:applied`, so no lane starts another group and the groups queued ahead of the write stay queued however
+  // long the write takes to be admitted (each lane can take at most one more group before it parks).
+  const counted = Promise.withResolvers<void>();
   installFaultHook(async (point, detail) => {
     if (detail.sourceId !== source) return;
     if (point === 'publication:before_commit' && detail.operation !== 'submit_job') beside.push(laneOpen > 0);
@@ -107,6 +113,7 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
       laneOpen++;
       try { await Promise.race([written.promise, Bun.sleep(laneHold)]); } finally { laneOpen--; }
     }
+    if (!laneHold && holdStarts && point === 'lane:applied') await Promise.race([counted.promise, Bun.sleep(30_000)]);
     if (!laneHold && point === 'publication:before_commit' && detail.operation === 'submit_job') await Bun.sleep(150);
   });
   try {
@@ -120,7 +127,9 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
       const begun = new Set(all.filter(row => row.state !== 'queued').map(row => row.request_id));
       queued = all.filter(row => row.state === 'queued' && row.kind?.startsWith('managed_sync_') && !(row.grp && begun.has(row.grp)) && !begun.has(row.request_id));
       // With lanes the drain admits groups ahead; without them only the publishing group is out, so the write comes while one runs.
-      return all.some(row => row.state === 'committed') && (lanes > 1 ? queued.length >= 4 : all.some(row => row.state === 'running' && row.kind?.startsWith('managed_sync_')));
+      const ready = all.some(row => row.state === 'committed') && (lanes > 1 ? queued.length >= 4 : all.some(row => row.state === 'running' && row.kind?.startsWith('managed_sync_')));
+      if (ready && lanes > 1) holdStarts = true;
+      return ready;
     });
     const target = slug(queued.length ? queued : await rows(e, source).then(all => all.filter(row => row.state === 'queued')));
     armed = true;
@@ -138,10 +147,14 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
         && !(row.grp && started.has(row.grp)));
       return true;
     });
-    const [written] = await finish();
+    counted.resolve();
+    const writes = await finish();
+    // A request's claim is its first claim by either process (a claim released and taken again does not move it).
+    for (const [id, at] of Object.entries(writes.claims)) recorder.claims.set(id, Math.min(at, recorder.claims.get(id) ?? Infinity));
+    const [written] = writes;
     const result = await drain;
     return { source, target, before, written: written!, result, claims: recorder.claims, final: await rows(e, source), beside };
-  } finally { recorder.restore(); installFaultHook(undefined); }
+  } finally { counted.resolve(); recorder.restore(); installFaultHook(undefined); }
 }
 
 for (const lanes of [2, 1]) {
@@ -155,7 +168,7 @@ for (const lanes of [2, 1]) {
     if (lanes > 1) expect(run.before.length).toBeGreaterThan(0);
     const put = run.final.find(row => row.slug === run.target)!;
     // No sync group started (its head chosen) after the write's admission committed and before the write was claimed
-    // (with lanes, a claimed write publishes beside the lane groups, so they may start again) or, without lanes,
+    // by either process (with lanes, a claimed write publishes beside the lane groups, so they may start again) or, without lanes,
     // committed. `created` is the admission transaction's start: a claim choosing its row before the commit cannot see the write.
     expect(run.written.admitted).toBeGreaterThanOrEqual(put.created - 5);
     const windowEnd = lanes > 1 ? run.claims.get(put.id) ?? put.completed! : put.completed!;
