@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
+import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError, verbError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, validatePageSlug } from '../ops/context.ts';
@@ -182,6 +183,26 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
 
 interface WithdrawalTarget { id: number; entity_slug: string | null; source_markdown_slug: string | null; expired_at: Date | null; }
 
+/**
+ * A fact saved without an entity says nothing about whom it concerns, so its
+ * withdrawal reaches the claim under every entity. When that claim is active
+ * on entity-linked facts, forgetting the unlinked copy would silently withdraw
+ * them too, and a withdrawn claim cannot be remembered again; refuse and name them.
+ */
+async function refuseUnlinkedForgetOfLinkedClaim(tx: BrainEngine, sourceId: string, id: number, remote: boolean): Promise<void> {
+  const linked = await tx.executeRaw<{ id: number; entity_slug: string }>(`SELECT l.id,l.entity_slug FROM facts u
+    JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.entity_slug IS NOT NULL AND l.id<>u.id
+      AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
+      AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
+    WHERE u.id=$1 AND u.source_id=$2 AND ($3::boolean=false OR l.visibility='world')
+    ORDER BY l.id LIMIT 5`, [id, sourceId, remote]);
+  if (!linked.length) return;
+  const named = linked.map(row => `#${row.id} (${row.entity_slug})`).join(', ');
+  throw verbError('invalid_params',
+    `claim_linked: fact #${id} was saved without an entity, and the same claim is active as ${named}. Forgetting #${id} would withdraw those facts too, so nothing was forgotten.`,
+    `Keep the linked ${linked.length === 1 ? 'fact' : 'facts'}: the copy without an entity needs no cleanup (remember the claim with entity and replaces: "${id}" retires it). To withdraw the claim everywhere, forget ${linked.map(row => `#${row.id}`).join(', ')} first, then #${id}.`);
+}
+
 /** Withdrawal commits independently of filesystem ownership and request FIFO. */
 export async function submitForgetMutation(ctx: OperationContext, operation: 'forget' | 'forget_fact', params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const sub = await submission(ctx, operation, params);
@@ -216,6 +237,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
       WHERE id=$1 AND source_id=$2 AND ($3::boolean=false OR visibility='world')`, [id, sourceId, ctx.remote !== false]);
     if (!fact) throw verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
       `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
+    if (fact.entity_slug === null) await refuseUnlinkedForgetOfLinkedClaim(tx, sourceId, id, ctx.remote !== false);
     const slug = fact.source_markdown_slug ?? fact.entity_slug ?? 'memory/unattributed';
     enforceClientSlugFence(ctx, slug, operation); enforceSubagentSlugFence(ctx, slug, operation);
     const authority = await submissionAuthority({ ...ctx, engine: tx }, operation, sourceId, source.incarnation, slug);

@@ -126,6 +126,61 @@ describe('remember after forget of the same claim', () => {
   });
 });
 
+describe('a claim saved without an entity, then with one', () => {
+  const active = async () => (await engine.executeRaw<{ id: number; entity_slug: string | null }>(
+    'SELECT id,entity_slug FROM facts WHERE expired_at IS NULL ORDER BY id')).map(r => ({ id: String(r.id), entity_slug: r.entity_slug }));
+
+  test('re-saving it with the entity links the unlinked copy (superseded, not duplicated), so there is nothing to forget', async () => {
+    const unlinked = await call('remember', { items: [{ fact: CLAIM, provenance: 'team update' }], infer_entity: false });
+    const oldId = unlinked.body.items[0].id;
+    const linked = await call('remember', { items: [{ fact: CLAIM, provenance: 'team update', entity: 'crm/acme-example' }] });
+    expect(linked.body.items[0]).toMatchObject({ status: 'superseded', entity_slug: 'crm/acme-example', superseded_fact_id: oldId });
+    expect(linked.body.items[0].replaced_by_caller).toBeUndefined();
+    const single = await call('recall', { entity: 'crm/acme-example' });
+    expect(JSON.stringify(single.body.facts)).toContain(CLAIM);
+    expect(await active()).toEqual([{ id: linked.body.items[0].id, entity_slug: 'crm/acme-example' }]);
+    const [w] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM fact_withdrawals');
+    expect(Number(w!.n)).toBe(0);
+  });
+
+  test('the single-fact status text says the copy was linked', async () => {
+    const unlinked = await call('remember', { fact: CLAIM, provenance: 'team update', infer_entity: false });
+    const linked = await call('remember', { fact: CLAIM, provenance: 'team update', entity: 'crm/acme-example' });
+    expect(linked.body).toMatchObject({ status: 'superseded', superseded_fact_id: unlinked.body.id });
+    expect(linked.body.status_text).toBe(`linked — fact #${linked.body.id} replaces #${unlinked.body.id}, the same claim saved without an entity; nothing to forget`);
+  });
+
+  test('forgetting the unlinked copy refuses while the claim is active on a linked fact; the linked fact stays rememberable', async () => {
+    const unlinked = await call('remember', { fact: CLAIM, provenance: 'team update', infer_entity: false });
+    const linked = await call('remember', { fact: CLAIM, provenance: 'team update', entity: 'crm/acme-example' });
+    const forgot = await call('forget', { id: unlinked.body.id, reason: 'duplicate without entity' });
+    expect(forgot.isError).toBe(true);
+    expect(forgot.body.code).toBe('invalid_params');
+    expect(forgot.body.message).toBe(`claim_linked: fact #${unlinked.body.id} was saved without an entity, and the same claim is active as #${linked.body.id} (crm/acme-example). Forgetting #${unlinked.body.id} would withdraw those facts too, so nothing was forgotten.`);
+    expect(forgot.body.suggestion).toContain(`forget #${linked.body.id} first`);
+    expect(await active()).toEqual([{ id: linked.body.id, entity_slug: 'crm/acme-example' }]);
+    const [w] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM fact_withdrawals');
+    expect(Number(w!.n)).toBe(0);
+  });
+
+  test('an unlinked copy saved after the linked fact is refused the same way; forgetting the linked fact first withdraws the claim everywhere', async () => {
+    const linked = await call('remember', { fact: CLAIM, provenance: 'team update', entity: 'crm/acme-example' });
+    const unlinked = await call('remember', { fact: CLAIM, provenance: 'team update', infer_entity: false });
+    expect(unlinked.body).toMatchObject({ status: 'inserted', entity_slug: null });
+    expect((await call('forget', { id: unlinked.body.id })).body.message).toContain('claim_linked:');
+    expect((await call('forget', { id: linked.body.id })).body.expired).toBe(true);
+    expect((await call('forget', { id: unlinked.body.id })).body.expired).toBe(true);
+    expect(await active()).toEqual([]);
+  });
+
+  test('an unlinked fact whose claim is on no linked fact forgets as before', async () => {
+    const unlinked = await call('remember', { fact: CLAIM, provenance: 'team update', infer_entity: false });
+    const forgot = await call('forget', { id: unlinked.body.id });
+    expect(forgot.isError).toBe(false);
+    expect(forgot.body.expired).toBe(true);
+  });
+});
+
 describe('writeFailureDiagnostic', () => {
   test('fact_withdrawn keeps its message and next step; unknown causes name the code without raw text', () => {
     expect(writeFailureDiagnostic('invalid_params', FACT_WITHDRAWN_MESSAGE)).toEqual({ reason: 'invalid_params',

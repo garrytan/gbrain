@@ -76,6 +76,21 @@ describe('facts about an entity with identity siblings', () => {
     expect(r.json.warnings).toBeUndefined();
   });
 
+  test('save without an entity, re-save with one, then forget the unlinked copy: the fact stays on both sibling cards (dev round 2)', async () => {
+    await siblings();
+    const claim = 'Correction: Ines Example is now the procurement lead at Widget Co; Lior Example moved to another role.';
+    const unlinked = (await call('remember', { items: [{ fact: claim }], provenance: 'team update', infer_entity: false })).json.items[0];
+    const linked = (await call('remember', { items: [{ fact: claim, entity: 'crm/widget-co' }], provenance: 'team update' })).json.items[0];
+    expect(linked).toMatchObject({ status: 'superseded', superseded_fact_id: unlinked.id });
+    const forgot = await dispatchToolCall(engine, 'forget', { id: unlinked.id, reason: 'duplicate without entity' }, local as never);
+    expect(forgot.isError).toBe(true);
+    expect(forgot.content[0].text).toContain('claim_linked:');
+    for (const name of ['WGCO', 'Widget Co', 'Copper Fox']) {
+      const card = (await call('entity', { name })).json.card;
+      expect(card.recent_facts.map((f: { id: string }) => String(f.id))).toEqual([String(linked.id)]);
+    }
+  });
+
   test('search names the entity: its saved facts come first, then the facts of an entity they point to', async () => {
     await siblings();
     await put('crm/kite-co', 'crm', 'CRM record: Kite Co', 'Account code: KTCO.');

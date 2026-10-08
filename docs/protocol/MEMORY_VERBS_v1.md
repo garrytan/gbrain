@@ -300,6 +300,13 @@ text equal to the target is `status: duplicate` and changes nothing. On success
 `superseded_by` and its `## Facts` row is struck with `superseded by #N` in
 the same publication. Every `superseded` response carries `superseded_fact_id`.
 
+Remembering a claim with an entity (given or inferred) when the same claim is
+an active fact saved without an entity, in the same source and visibility,
+links that copy as if `replaces` named it: `status: superseded`,
+`superseded_fact_id` names the unlinked copy, `replaced_by_caller` is absent,
+and `status_text` says there is nothing to forget. When `replaces` would refuse
+(for example `replaces_cross_page`), the fact is saved as a new one instead.
+
 #### remember entity attribution fields (additive)
 
 Optional response fields; clients must ignore any they do not know.
@@ -334,7 +341,7 @@ writes nothing twice.
 
 Response: `{ protocol_version, request_id, client_request_id?, items[], saved, failed, partial,
 hints?, next? }`. Each `items[]` entry is a compact receipt `{ index,
-request_id, status, id?, entity_slug?, warnings?, valid_until?, state? }`
+request_id, status, id?, entity_slug?, superseded_fact_id?, warnings?, valid_until?, state? }`
 (`state` and `retry_after_ms` only when the write is not yet committed), or
 `{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Hints the
 single-fact response would repeat per item appear once in `hints`. `partial: true` means some items saved and some failed; resend
@@ -505,6 +512,12 @@ already-expired fact returns `expired: false` (success); unknown id ⇒
 `not_found`. Facts are expired with an audit trail, never deleted.
 
 Response: `{ id, expired, reason, protocol_version }`.
+
+A fact saved without an entity withdraws its claim under every entity. When the
+same claim is active on entity-linked facts (same source and visibility),
+forgetting the unlinked fact is refused with `invalid_params`, message prefix
+`claim_linked:`, naming those facts, and nothing changes. The `suggestion`
+says to keep them, or to forget them first to withdraw the claim everywhere.
 
 #### forget similar_active and semantic_review (additive)
 
