@@ -12,6 +12,7 @@
       "FACT_RELINK_TABLE_SQL": "1fdde4b99d0077365274096f294be64a992961c7b4544af794224de238b03630",
       "FACT_UNLINKED_INDEX_SQL": "87dcf23c3fa570d93bfb214b6bbb024faa9ff9bff227aa78869a29580be03298",
       "ISSUANCE_CLOCK_SLACK_SECONDS": "8f36c80392df6f9b9c754826289b63969d9d41ca8955213291e4413d614dce35",
+      "PAGES_RECONCILE_NAME_INDEXES": "8805e35341b22324b932b1cc05030cc8f2bfc95532bf810ec35330783f29c59a",
       "PERSISTENCE_DATABASE_PENDING_INDEX_SQL": "6e0f618be33d037454933ea4dea11438413d45aef35d3bd4f33e89624d6e199e",
       "PERSISTENCE_EFFECT_PARKED_INDEX_SQL": "0107863883415378d7c0dce7a0cbd5311c2c5a59fc0f81917cc8b767fd235cf2",
       "PERSISTENCE_SYNC_RUN_INDEXES": "e1b12613c5fd2facb850e6857b0bddcf49b2478ec258fa226fe15e71e55df9c1",
@@ -23,7 +24,6 @@
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
       "grantFromRow": "2d0603bb0f964d7e45e04aa76bac54cd4f6f63c91a8d9f028b60b4792bc1695e",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
-      "migrateAutoThinkToPins": "acdb45b8a1c474004b119f900ddd4a902d98681d6379edad15708d87dd834bb4",
       "migrateConnectorCheckpoints": "e0403022a56559556c82a9fa1e90d928f36e1d09c7db570e1d788a87d2dc9521",
       "migrateLegacyTokens": "6e4abe3670127e7a495b56ecbf9f5789edd3a7362d45704656c2210a85b27f4c",
       "migrationNotice": "9a6607b26a9719ef1833571b137bc8ebfcd1e16d545e89ff8728cf3ccbcbb409",
@@ -3236,18 +3236,22 @@
         "handler": {
           "form": "arrow",
           "helpers": [
-            "migrateAutoThinkToPins"
+            "PAGES_RECONCILE_NAME_INDEXES",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "migrationNotice",
+            "quietMigrationNotices"
           ],
-          "sha256": "6538d483dacf5b76e4eb837603082e0c8611c613f6c534007fa2f2b197e1e1ed"
+          "sha256": "307c6ea0c0366c8664ee6bf04782a136d9e07daf3d88606ce168d30a0e20bf81"
         },
         "idempotent": true,
-        "name": "pinned_questions",
+        "name": "pages_reconcile_name_indexes",
         "sql": {
-          "length": 2746,
-          "sha256": "07ff5ebf8abd16f5edf1bb76318ef541e7a74a3c275a78dac04acb103858e93b"
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         },
         "sqlFor": "absent",
-        "transaction": "absent",
+        "transaction": false,
         "verify": "absent",
         "version": 219
       }

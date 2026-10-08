@@ -11,6 +11,7 @@
 import type { BrainEngine } from './engine.ts';
 import { loadConfig, loadConfigWithEngine } from './config.ts';
 import { assessContentSanity, type ContentSanityResult } from './content-sanity.ts';
+import { withQuarantineOverride } from './quarantine-override.ts';
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
 import { classifyImportHold, contentSizeHold, parseMarkdown, type ContentHold, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
 import { isCodeFilePath } from './sync.ts';
@@ -56,8 +57,9 @@ export async function loadImportSanityConfig(engine: BrainEngine): Promise<Impor
   };
 }
 
-export function assessImportSanity(page: Pick<ParsedMarkdown, 'compiled_truth' | 'timeline' | 'title' | 'type'>, cfg: ImportSanityConfig): ContentSanityResult {
-  return assessContentSanity({
+/** #6259: a page carrying a current `quarantine_override` keeps the classifier's verdict off (see quarantine-override.ts). */
+export function assessImportSanity(page: Pick<ParsedMarkdown, 'compiled_truth' | 'timeline' | 'title' | 'type'> & { frontmatter?: Record<string, unknown> }, cfg: ImportSanityConfig): ContentSanityResult {
+  return withQuarantineOverride(assessContentSanity({
     compiled_truth: page.compiled_truth,
     timeline: page.timeline ?? '',
     title: page.title,
@@ -69,7 +71,7 @@ export function assessImportSanity(page: Pick<ParsedMarkdown, 'compiled_truth' |
     extra_literals: cfg.extraLiterals,
     // #4702: the file plane is hand-edited JSON.
     disabled_patterns: Array.isArray(cfg.cs.disabled_patterns) ? cfg.cs.disabled_patterns : undefined,
-  });
+  }), page);
 }
 
 /**

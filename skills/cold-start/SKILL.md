@@ -476,7 +476,12 @@ After completing available phases:
    - Calendar: daily cron
    - Email: periodic sweep (4-8 hours)
    - X: daily ingest
-   - Brain repo: `gbrain sync --repo <path>` every 5-30 minutes
+   - Brain repo: `gbrain sync --repo <path>` every 5-30 minutes. A managed brain
+     (`gbrain sources writer status --json` shows `"mode": "managed"`) refuses
+     that line: use the managed recipe in `skills/cron-scheduler/SKILL.md`
+     ("Managed brain") with `--source <id>`, e.g.
+     `gbrain sources refresh <id>; gbrain sync --source <id> --no-pull --hard-deadline 13m`
+     every 15 minutes on the owner host.
 
 4. **Track state:**
    ```json

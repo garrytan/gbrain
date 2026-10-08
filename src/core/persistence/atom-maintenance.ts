@@ -289,8 +289,15 @@ function expiredAtomReceipt(row: WriteRequest): never {
 
 function malformedAtomReceipt(row: WriteRequest): never {
   if (row.compacted && !row.intent) expiredAtomReceipt(row);
-  const error = new OperationError('extraction_failed', 'The accepted atom extraction produced malformed output.',
-    `Approve one new attempt with gbrain jobs submit extract-atoms-drain --params '${JSON.stringify({ sourceId: row.source_id, retryRequestId: row.request_id })}'.`);
+  const failure = (row.outcome as { failure?: unknown } | null)?.failure;
+  const params = JSON.stringify({ sourceId: row.source_id, retryRequestId: row.request_id });
+  const error = new OperationError('extraction_failed', `The accepted atom extraction failed${typeof failure === 'string' && failure ? ` (${failure})` : ''}; a new attempt needs approval.`,
+    `Approve one new attempt with gbrain jobs submit extract-atoms-drain --params '${params}'.`);
+  error.why = 'A failed managed atom batch keeps its failure receipt instead of retrying on its own, so the same input is not paid for every cycle; the earlier atoms of the page stay as they were.';
+  error.fix = { argv: ['gbrain', 'jobs', 'submit', 'extract-atoms-drain', '--params', params], consent: ['paid'], actor: 'agent', requires_exclusive: false,
+    why: 'Runs one new paid extraction attempt for this batch; ask the user before spending.',
+    verify: { argv: ['gbrain', 'write-request', '--', row.request_id] } };
+  error.contractVersion = 1;
   error.writeRequest = receiptFor(row);
   throw error;
 }

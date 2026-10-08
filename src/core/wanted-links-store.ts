@@ -6,6 +6,7 @@
 import type { BrainEngine } from './engine.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
+import { validateSlug } from './utils.ts';
 
 export type WantedProducer = 'body' | 'frontmatter';
 
@@ -25,8 +26,32 @@ export interface WantedLinksReplacement {
 }
 
 /**
+ * #6228/#6225: the rows whose target can become a page. A slug target must
+ * pass validateSlug (a regex literal on a code page read as a wikilink does
+ * not) and every target must be in a registered source (a `[[memory:123]]`
+ * citation names none). Any other row names no possible page; locking it
+ * would throw and abort the caller's whole extraction transaction. Foreign
+ * sources are read `FOR SHARE`, so one cannot disappear between this check
+ * and the page-guard lock; the origin's own source needs no read.
+ */
+export async function possibleWantedRows<T extends Pick<WantedLinkInput, 'ref_kind' | 'target_source_id' | 'target_ref'>>(
+  tx: Pick<BrainEngine, 'executeRaw'>, originSourceId: string, rows: readonly T[],
+): Promise<T[]> {
+  const shaped = rows.filter(row => row.ref_kind !== 'slug' || pageSlugShaped(row.target_ref));
+  const foreign = [...new Set(shaped.map(row => row.target_source_id).filter(id => id !== originSourceId))];
+  if (!foreign.length) return shaped;
+  const registered = new Set((await tx.executeRaw<{ id: string }>(
+    'SELECT id FROM sources WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE', [foreign])).map(row => row.id));
+  return shaped.filter(row => row.target_source_id === originSourceId || registered.has(row.target_source_id));
+}
+
+function pageSlugShaped(target: string): boolean {
+  try { validateSlug(target); return true; } catch { return false; } // a refused slug is the answer, not an error
+}
+
+/**
  * Replace one origin's wanted rows inside the caller's transaction (the same
- * one that replaces its derived links). Slug targets are locked first, so a
+ * one that replaces its derived links), keeping only possibleWantedRows. Slug targets are locked first, so a
  * concurrent writer creating the target either committed before this check
  * (and the row is stamped `-infinity`, leaving the origin stale) or commits
  * after it with an `updated_at` past `checked_at`. Only an exact slug counts
@@ -40,7 +65,8 @@ export async function replaceWantedLinks(
   replacement: WantedLinksReplacement,
 ): Promise<number> {
   if (!replacement.producers.length) return 0;
-  const rows = replacement.rows.filter(row => replacement.producers.includes(row.producer))
+  const rows = (await possibleWantedRows(tx, origin.sourceId,
+    replacement.rows.filter(row => replacement.producers.includes(row.producer))))
     .map(row => ({ ...row, context: sanitizeForJsonb(row.context) }));
   const slugTargets = rows.filter(row => row.ref_kind === 'slug')
     .map(row => ({ sourceId: row.target_source_id, slug: row.target_ref }));

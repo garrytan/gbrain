@@ -123,7 +123,10 @@ page with `type: source` at `sources/meetings/YYYY-MM-DD-{slug}-transcript`
 (the default pack files raw evidence as `source` under `sources/`; never
 invent `meeting-transcript`, and don't write the `transcript` alias) or keep
 the source file reachable, and link it from the meeting page. The transcript is the canonical
-evidence for every quote and claim check downstream.
+evidence for every quote and claim check downstream. Put
+`facts_backstop: false` in the sidecar's frontmatter: automatic fact
+extraction would otherwise mine the raw transcript, garbles and banter
+included, beside the verified meeting page (Phase 5).
 
 **Redact before you retain.** A raw transcript routinely captures pasted
 secrets and PII (a read-aloud API key, a screen-shared token, a private phone
@@ -229,6 +232,7 @@ and sometimes confidently WRONG names. Resolve by evidence:
 ---
 type: meeting
 attendees: [{comma-separated slugs of the same people, e.g. people/alice-example}]
+facts_backstop: false
 ---
 
 # {Meeting Title} — {Date}
@@ -283,6 +287,21 @@ next cycle extracts it (`gbrain dream --phase chronicle` runs it now, paid), and
 `life/events/` pages; edit the meeting page and extraction updates its events.
 See `docs/guides/life-chronicle.md`.
 
+Facts (what `recall` returns) are also extracted from saved pages in the
+background, on by default, one paid chat call each time a page's body changes.
+Extraction files each fact on the entity page it names, so it reaches people
+and company pages without passing Phase 6, and it never takes back facts it
+filed from an earlier version of the page. That is why the template drafts
+the meeting page with `facts_backstop: false` (the receipt reads
+`facts_backstop: { skipped: "opted_out" }`): nothing is extracted while the
+page is still being corrected. When the verification checklist passes, save
+the page once more without that line; the receipt then reads
+`facts_backstop: { queued: true }`. Everything on the verified page is
+extraction input, so an uncertain note kept under the downgrade protocol
+becomes a lower-confidence fact. The transcript sidecar keeps its
+`facts_backstop: false`. Don't call `extract_facts` for the meeting or its
+transcript.
+
 ### Phase 6: Claim verification + consistency check (gate for every entity write)
 
 Recorder summaries inject false facts: speech-to-text garbles proper nouns,
@@ -322,7 +341,9 @@ it as an explicitly-uncertain note on the meeting page — never in an entity
 page's compiled truth or frontmatter.
 
 **Propagation rule:** a claim that fails verification must not fan out. Do not
-copy it to other entity pages or timeline entries. A false claim written to
+copy it to other entity pages or timeline entries, and keep it off the
+verified meeting page too: fact extraction carries that page's claims to entity
+pages (Phase 5). A false claim written to
 five pages costs five corrections.
 
 ### Phase 7: Attendee enrichment (MANDATORY)
@@ -499,13 +520,15 @@ failure axes, and V1–V5 never look at order. Verify the narrated sequence:
      in the report, don't block on it.
 
 **The loop:** fix → re-check → fix, until every item passes (or V6 is
-explicitly waived). Only then report.
+explicitly waived). Then save the meeting page without the draft
+`facts_backstop: false` line (Phase 5), and report.
 
 ## Sensitive meetings
 
 If the title or transcript signals legal or deeply personal content
 (deposition, attorney, counsel, privileged, health): keep the page minimal and
-factual, do not extract biographical color into other pages, and prefer
+factual, keep its `facts_backstop: false` unless the user agrees to fact
+extraction, do not extract biographical color into other pages, and prefer
 restraint on back-links. When in doubt about whether content should propagate,
 ask the user.
 
@@ -516,7 +539,9 @@ ingested: {N} attendees enriched, {N} entities updated, {N} action items
 captured. Verification: passed. Sequence: PASS." If the sequence check was
 waived, say so explicitly: "Sequence: WAIVED by user — {contradiction} stands
 (acknowledged, not resolved)." If the recording was split, report one line per
-resulting meeting page. If a claim was withheld or a contradiction flagged by
+resulting meeting page. Name the final meeting-page save's `facts_backstop`
+receipt: `queued`, or `opted_out` with the reason extraction stays off (a
+sensitive meeting the user did not clear). If a claim was withheld or a contradiction flagged by
 Phase 6, list each flag — the user resolves them, not silence. If any
 checklist item cannot be made to pass, report the meeting as NOT ingested and
 name the failing item.

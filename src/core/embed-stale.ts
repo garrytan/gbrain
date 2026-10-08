@@ -394,8 +394,10 @@ export async function embedStaleForSource(
     readiness = await prepareEmbeddingProjections(engine, { ...readinessOptions, repair: true });
     if (stopped()) return { ...result, aborted: true };
   }
-  if (readiness.blocked) return { ...result, blocked: readiness.blocked, complete: false, done: true,
-    remaining: await engine.countStaleChunks({ sourceId, ...(signature && { signature }) }) };
+  // #6223: pages still waiting for a projection never block the rest of the
+  // source; the drain skips their unsealed snapshots and the result stays
+  // incomplete with them counted in `blocked`.
+  const projectionBlocked = readiness.blocked;
   const stamp = await resolveProvenanceStamp(engine, signature); // column resolved once per drain, not per page
   if (stopped()) return { ...result, aborted: true };
   await opts.assertOwned?.();
@@ -484,6 +486,7 @@ export async function embedStaleForSource(
     if (batch.length === 0) {
       const blocked = await countArchivedEmbeddingWork(engine, { sourceId, signature });
       if (blocked) { result.blocked = blocked; result.failures = (result.failures ?? 0) + blocked; }
+      if (projectionBlocked) result.blocked = (result.blocked ?? 0) + projectionBlocked;
       const remaining = await engine.countStaleChunks({ sourceId, ...(signature && { signature }) });
       if (remaining || result.chunksProcessed || result.blocked) {
         result.remaining = remaining;
@@ -631,6 +634,7 @@ export async function embedStaleForSource(
     if (batch.length < batchSize) {
       const blocked = await countArchivedEmbeddingWork(engine, { sourceId, signature });
       if (blocked) { result.blocked = blocked; result.failures = (result.failures ?? 0) + blocked; }
+      if (projectionBlocked) result.blocked = (result.blocked ?? 0) + projectionBlocked;
       result.remaining = await engine.countStaleChunks({ sourceId, ...(signature && { signature }) });
       result.complete = result.remaining === 0 && !result.blocked;
       result.done = true;

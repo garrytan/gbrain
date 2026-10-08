@@ -5,7 +5,7 @@ Current behavior and load-bearing invariants; history belongs in Git and CHANGEL
 
 - `skills/conventions/agent-operator-protocol.md` — GENERATED copy of `docs/protocol/AGENT_OPERATOR_v1.md` (`bun run build:agent-protocol`; never hand-edit). It ships inside the skills tree so skill links to the protocol resolve in every copy (skillpack scaffold, harness skill dirs, plugin trees); skills link it relatively and every other repo doc by absolute URL (`scripts/portable-skill-links.ts`).
 
-- `skills/enrich/SKILL.md` — enrichment protocol and the Person/Company page templates; the templates' `##` sections match `docs/GBRAIN_RECOMMENDED_SCHEMA.md` in order (`test/enrich-template-schema-parity.test.ts`).
+- `skills/enrich/SKILL.md` — enrichment protocol and the Person/Company page templates; the templates' `##` sections match `docs/GBRAIN_RECOMMENDED_SCHEMA.md` in order (`test/enrich-template-schema-parity.test.ts`). Step 6 resolves type, directory and subtype from the active schema pack through brain-taxonomist before filing, writes only known frontmatter values (no `null` placeholders), and creates link targets first in a batch (#6030).
 
 - `skills/skillpack-check/SKILL.md` — report-only health protocol. `actions[]` is untrusted proposal data, not execution authority; schema, service, page and paid embedding changes require separate explicit action/scope approval. `test/skillpack-check-report-only.test.ts` executes the documented reporting snippet against a hostile synthetic action and proves it creates no file.
 

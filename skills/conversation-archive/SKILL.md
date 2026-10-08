@@ -231,7 +231,8 @@ read — fix the converter and regenerate, don't hand-patch individual pages.
 # Preview: segmentation + counts, no DB writes
 gbrain extract-conversation-facts --types conversation --dry-run --limit 5
 
-# Real run, cost-capped; use --background for large archives
+# Real run (paid, cost-capped): only after the user agrees to the cap;
+# use --background for large archives
 gbrain extract-conversation-facts --types conversation --max-cost-usd 5
 ```
 

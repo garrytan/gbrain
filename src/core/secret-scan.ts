@@ -35,9 +35,10 @@ import {
   LABELED_CREDENTIAL_PATTERNS,
   ECHO_MIN_CHARS_LABELED,
   LABELED_PRECHECK_RE,
-  endsWithDanglingPair,
+  danglingLabel,
   labeledEchoEligible,
   labeledValueIsCredential,
+  newTableScanState, tableCredentialCells,
 } from './secret-scan-labeled.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -120,8 +121,8 @@ interface CompiledPattern {
   precheck?: (line: string) => boolean;
   /** See CorePattern.validate; `head` is the match text before the value. */
   validate?: (value: string, head: string) => boolean;
-  /** Runs only on the line after one that ends in a dangling credential pair. */
-  continuation?: boolean;
+  /** Runs only on the line after one that ends in a dangling credential label of this form. */
+  continuation?: 'single' | 'pair';
 }
 
 interface CorePattern {
@@ -719,7 +720,7 @@ function compilePatterns(opts: ScanOpts): CompiledPattern[] {
         name: 'labeled_credential',
         // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- compile-time literal; bounded quantifiers, pinned by test/secret-scan-perf.test.ts
         re: new RegExp(p.source, 'gi'),
-        ...(p.continuation ? { continuation: true } : { precheck: (line: string) => LABELED_PRECHECK_RE.test(line) }),
+        ...(p.continuation ? { continuation: p.continuation } : { precheck: (line: string) => LABELED_PRECHECK_RE.test(line) }),
         validate: (value: string, head: string) => labeledValueIsCredential(value, p.form, head),
       });
     }
@@ -973,12 +974,15 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
   // redactFindings can splice the text once instead of searching it per
   // value.
   let offset = 0;
+  // W4.1: Markdown table state for the labeled lane (credential columns of the table being scanned).
+  const table = opts.labeledCredentials === true ? newTableScanState() : null;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
     const lineStart = offset;
     offset += line.length + 1;
-    const dangling = opts.labeledCredentials === true && i > 0 && endsWithDanglingPair(lines[i - 1] ?? '');
-    if (line.length < 8 && !dangling) continue;
+    const dangling = opts.labeledCredentials === true && i > 0 ? danglingLabel(lines[i - 1] ?? '') : null;
+    const cells = table ? tableCredentialCells(line, lines[i + 1], table) : [];
+    if (line.length < 8 && !dangling && cells.length === 0) continue;
     // ENG-12: a line wholly inside a private-key claim is already redacted by
     // it; hits on it would only double-report (one key, one finding).
     if (pem.length > 0 && insideClaim(pem, lineStart, lineStart + line.length)) continue;
@@ -997,7 +1001,7 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
       hits.push({ pattern, value, start, abs: lineStart + start, line: i + 1, lineText: line, spans });
     };
     for (const p of patterns) {
-      if (p.continuation && !dangling) continue;
+      if (p.continuation && p.continuation !== dangling) continue;
       if (p.precheck && !p.precheck(line)) continue;
       p.re.lastIndex = 0;
       let m: RegExpExecArray | null;
@@ -1034,6 +1038,7 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
         claim(p.name, value, start);
       }
     }
+    for (const c of cells) if (!taken || !anyTaken(taken, c.start, c.start + c.value.length)) { taken ??= new Uint8Array(line.length); claim('labeled_credential', c.value, c.start); }
   }
   return hits;
 }

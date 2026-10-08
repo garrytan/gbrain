@@ -83,7 +83,7 @@ describe('company-brain committed inspection', () => {
     expect(codes(plan)).toContain('restricted_audience');
   });
 
-  test.each(['quarantine', 'embed_skip'])('blocks a search-hiding marker: %s', async marker => {
+  test.each(['quarantine', 'embed_skip', 'quarantine_override'])('blocks a search-hiding marker: %s', async marker => {
     const root = await repo({ 'notes/hidden.md': page('note', `${marker}: null\n`) });
     const before = snapshot(root);
     const plan = await inspect(root);

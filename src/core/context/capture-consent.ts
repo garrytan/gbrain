@@ -37,9 +37,9 @@ import type { GBrainConfig } from '../config.ts';
 import { configDir, loadConfig } from '../config.ts';
 import { captureGateDecision, fileCaptureIsOff, resolveWritebackConfig, type CaptureGateDecision, type CaptureGateLane, type WritebackMode } from '../facts/writeback-config.ts';
 import { parseCorpusTurns } from './corpus-turns.ts';
-import { CAPTURE_OFF_SUFFIX, CORPUS_PROGRESS_SUFFIX, parseSegmentFileName, parseWbFileName, writebackOffSidecarJson } from './corpus-segments.ts';
+import { CAPTURE_OFF_INFIX, CAPTURE_OFF_SUFFIX, CORPUS_PROGRESS_SUFFIX, parseSegmentFileName, parseWbFileName, writebackOffSidecarJson } from './corpus-segments.ts';
 
-export { CAPTURE_OFF_SUFFIX };
+export { CAPTURE_OFF_INFIX, CAPTURE_OFF_SUFFIX };
 
 interface CaptureOffRecord {
   version: 1;
@@ -64,13 +64,36 @@ export function captureLaneForFile(name: string): CaptureGateLane {
   return 'session_end';
 }
 
-function readRecord(path: string): CaptureOffRecord | null {
-  try {
-    const r = JSON.parse(readFileSync(path, 'utf8')) as CaptureOffRecord;
-    return r && r.version === 1 && typeof r.brain === 'string' && Array.isArray(r.turns) ? r : null;
-  } catch {
-    return null;
+/** A record file: absent, unreadable/invalid (never "no record": it holds), or this shape. */
+function readRecord(path: string): CaptureOffRecord | null | 'unreadable' {
+  let raw: string;
+  try { raw = readFileSync(path, 'utf8'); } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unreadable';
   }
+  try {
+    const r = JSON.parse(raw) as CaptureOffRecord;
+    return r && r.version === 1 && typeof r.brain === 'string' && Array.isArray(r.turns) && r.turns.every((t) => typeof t === 'string') ? r : 'unreadable';
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/** W4.2: this brain's own record file for corpus file `file` (two brains sharing a corpus directory never write the same file). */
+export function captureOffRecordPath(file: string, brain: string = brainIdentity()): string {
+  return `${file}${CAPTURE_OFF_INFIX}${brain}.json`;
+}
+
+/**
+ * The turns this brain captured under off for `file`: its own record plus a
+ * pre-wave-12 single-file record (`<file>.capture-off.json`) when that one
+ * names this brain. `unreadable` when either file exists but cannot be read
+ * or parsed, so callers hold instead of treating it as "no record".
+ */
+function offTurns(file: string, brain: string): string[] | 'unreadable' {
+  const own = readRecord(captureOffRecordPath(file, brain));
+  const legacy = readRecord(file + CAPTURE_OFF_SUFFIX);
+  if (own === 'unreadable' || legacy === 'unreadable') return 'unreadable';
+  return [...(own?.turns ?? []), ...(legacy && legacy.brain === brain ? legacy.turns : [])];
 }
 
 /**
@@ -81,10 +104,12 @@ function readRecord(path: string): CaptureOffRecord | null {
  */
 export function recordCaptureIfOff(cfg: GBrainConfig | null | undefined, file: string, text: string, source?: string | null): boolean {
   if (!fileCaptureIsOff(cfg)) return false;
-  const path = file + CAPTURE_OFF_SUFFIX;
   const brain = brainIdentity();
-  const prior = readRecord(path);
-  const turns = new Set(prior && prior.brain === brain ? prior.turns : []);
+  const path = captureOffRecordPath(file, brain);
+  // W4.2: the first namespaced write unions a legacy record of this brain; an unreadable record throws (bank nothing).
+  const prior = offTurns(file, brain);
+  if (prior === 'unreadable') throw new Error(`capture-off record for ${basename(file)} is unreadable; nothing was banked`);
+  const turns = new Set(prior);
   for (const t of parseCorpusTurns(text)) turns.add(t.sha256);
   const record: CaptureOffRecord = { version: 1, brain, source: source ?? null, at: new Date().toISOString(), turns: [...turns] };
   const tmp = `${path}.tmp-${process.pid}`;
@@ -129,14 +154,15 @@ export async function applyCaptureGate(full: string, decision: CaptureGateDecisi
     }
     return await retireCorpusFile(full) ? decision : { action: 'hold', reason: 'retire_deferred' };
   }
-  const record = readRecord(full + CAPTURE_OFF_SUFFIX);
-  if (!record || record.brain !== brainIdentity()) return decision;
-  const retired = new Set(record.turns);
+  const off = offTurns(full, brainIdentity());
+  if (off === 'unreadable') return { action: 'hold', reason: 'capture_record_unreadable' };
+  if (off.length === 0) return decision;
+  const retired = new Set(off);
   const current = parseCorpusTurns(await readFile(full, 'utf8'));
   if (current.every((t) => retired.has(t.sha256))) {
     return await retireCorpusFile(full) ? { action: 'retire', reason: 'captured_under_off' } : { action: 'hold', reason: 'retire_deferred' };
   }
-  return await retireCorpusTurns(full, record.turns) ? decision : { action: 'hold', reason: 'retire_deferred' };
+  return await retireCorpusTurns(full, [...retired]) ? decision : { action: 'hold', reason: 'retire_deferred' };
 }
 
 /** `resolveCaptureGate` + `applyCaptureGate` for one file of one lane. */
@@ -151,10 +177,11 @@ export async function gateCorpusFile(engine: BrainEngine, full: string, lane: Ca
  * is left. Content with no off-period turns comes back unchanged.
  */
 export function withoutOffPeriodTurns(full: string, content: string): string | null {
-  const record = readRecord(full + CAPTURE_OFF_SUFFIX);
+  const recorded = offTurns(full, brainIdentity());
+  if (recorded === 'unreadable') return null;
   let retired: string[] = [];
   try { retired = (JSON.parse(readFileSync(full + CORPUS_PROGRESS_SUFFIX, 'utf8')) as { retired_turns?: string[] }).retired_turns ?? []; } catch { /* no progress */ }
-  const off = new Set([...(record && record.brain === brainIdentity() ? record.turns : []), ...retired]);
+  const off = new Set([...recorded, ...retired]);
   if (off.size === 0) return content;
   const turns = parseCorpusTurns(content);
   const kept = turns.filter((t) => !off.has(t.sha256));

@@ -995,6 +995,11 @@ function parseBool(raw: string | undefined): boolean | null {
   return null;
 }
 
+/** W4.10: the subcommand's positionals, skipping flag values (`--pack mine` never names the type). */
+async function positionals(args: string[], valueFlags: readonly string[] = []): Promise<string[]> {
+  return (await import('./schema-add-type.ts')).schemaPositionals(args, valueFlags);
+}
+
 function pickPackName(parsed: { positional?: string[] }, args: string[]): string {
   // Honor --pack <name> before falling back to the active pack.
   for (let i = 0; i < args.length; i++) {
@@ -1165,7 +1170,7 @@ async function runAddTypeCmd(args: string[]): Promise<void> {
 async function runRemoveTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const name = args.filter((a) => !a.startsWith('--'))[0];
+  const name = (await positionals(args))[0];
   if (!name) { console.error('Usage: gbrain schema remove-type <name>'); process.exit(2); }
   try { emitMutateResult(await removeTypeFromPack(packName, name), json); }
   catch (e) { handleMutationError(e); }
@@ -1174,7 +1179,7 @@ async function runRemoveTypeCmd(args: string[]): Promise<void> {
 async function runUpdateTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const name = args.filter((a) => !a.startsWith('--'))[0];
+  const name = (await positionals(args, ['--extractable', '--expert', '--expert-routing', '--primitive']))[0];
   if (!name) { console.error('Usage: gbrain schema update-type <name> [--extractable BOOL] [--expert BOOL] [--primitive P]'); process.exit(2); }
   const patch: Record<string, unknown> = {};
   for (let i = 0; i < args.length; i++) {
@@ -1198,7 +1203,7 @@ async function runUpdateTypeCmd(args: string[]): Promise<void> {
 async function runAddAliasCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const pos = args.filter((a) => !a.startsWith('--'));
+  const pos = await positionals(args);
   if (pos.length < 2) { console.error('Usage: gbrain schema add-alias <type> <alias>'); process.exit(2); }
   try { emitMutateResult(await addAliasToType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
@@ -1207,7 +1212,7 @@ async function runAddAliasCmd(args: string[]): Promise<void> {
 async function runRemoveAliasCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const pos = args.filter((a) => !a.startsWith('--'));
+  const pos = await positionals(args);
   if (pos.length < 2) { console.error('Usage: gbrain schema remove-alias <type> <alias>'); process.exit(2); }
   try { emitMutateResult(await removeAliasFromType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
@@ -1216,7 +1221,7 @@ async function runRemoveAliasCmd(args: string[]): Promise<void> {
 async function runAddPrefixCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const pos = args.filter((a) => !a.startsWith('--'));
+  const pos = await positionals(args);
   if (pos.length < 2) { console.error('Usage: gbrain schema add-prefix <type> <prefix>'); process.exit(2); }
   try { emitMutateResult(await addPrefixToType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
@@ -1225,7 +1230,7 @@ async function runAddPrefixCmd(args: string[]): Promise<void> {
 async function runRemovePrefixCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const pos = args.filter((a) => !a.startsWith('--'));
+  const pos = await positionals(args);
   if (pos.length < 2) { console.error('Usage: gbrain schema remove-prefix <type> <prefix>'); process.exit(2); }
   try { emitMutateResult(await removePrefixFromType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
@@ -1234,7 +1239,7 @@ async function runRemovePrefixCmd(args: string[]): Promise<void> {
 async function runAddLinkTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const name = args.filter((a) => !a.startsWith('--'))[0];
+  const name = (await positionals(args, ['--inverse', '--page-type', '--target-type']))[0];
   if (!name) { console.error('Usage: gbrain schema add-link-type <name> [--inverse <verb>] [--page-type <t>] [--target-type <t>]'); process.exit(2); }
   let inverse: string | undefined;
   let pageType: string | undefined;
@@ -1254,7 +1259,7 @@ async function runAddLinkTypeCmd(args: string[]): Promise<void> {
 async function runRemoveLinkTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const name = args.filter((a) => !a.startsWith('--'))[0];
+  const name = (await positionals(args))[0];
   if (!name) { console.error('Usage: gbrain schema remove-link-type <name>'); process.exit(2); }
   try { emitMutateResult(await removeLinkTypeFromPack(packName, name), json); }
   catch (e) { handleMutationError(e); }
@@ -1263,7 +1268,7 @@ async function runRemoveLinkTypeCmd(args: string[]): Promise<void> {
 async function runSetExtractableCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const pos = args.filter((a) => !a.startsWith('--'));
+  const pos = await positionals(args);
   if (pos.length < 2) { console.error('Usage: gbrain schema set-extractable <type> <true|false>'); process.exit(2); }
   const v = parseBool(pos[1]);
   if (v === null) { console.error('Second argument must be true|false'); process.exit(2); }
@@ -1274,7 +1279,7 @@ async function runSetExtractableCmd(args: string[]): Promise<void> {
 async function runSetExpertRoutingCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const pos = args.filter((a) => !a.startsWith('--'));
+  const pos = await positionals(args);
   if (pos.length < 2) { console.error('Usage: gbrain schema set-expert-routing <type> <true|false>'); process.exit(2); }
   const v = parseBool(pos[1]);
   if (v === null) { console.error('Second argument must be true|false'); process.exit(2); }
@@ -1285,7 +1290,7 @@ async function runSetExpertRoutingCmd(args: string[]): Promise<void> {
 async function runScaffoldExtractableCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
-  const pos = args.filter((a) => !a.startsWith('--'));
+  const pos = await positionals(args, ['--dims']);
   if (pos.length < 1) {
     console.error('Usage: gbrain schema scaffold-extractable <type> [--pack <name>] [--dims a,b,c] [--force]');
     process.exit(2);

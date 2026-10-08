@@ -34,6 +34,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { readLineSafe } from '../../commands/init.ts';
 import { MinionQueue } from '../minions/queue.ts';
+import type { SpendAuthorization } from '../minions/spend-record.ts';
 import { isSearchMode, type SearchMode } from './mode.ts';
 
 export type TransitionKind =
@@ -68,7 +69,9 @@ export interface ModeSwitchOpts {
   /** Test seam: injectable worker probe. */
   probeFn?: (engine: BrainEngine) => Promise<WorkerProbeResult>;
   /** Test seam: injectable Minion submitter (avoids real queue in unit tests). */
-  submitFn?: (jobName: string, params: Record<string, unknown>, idempotencyKey: string) => Promise<number>;
+  submitFn?: (jobName: string, params: Record<string, unknown>, idempotencyKey: string, spendAuthorization?: SpendAuthorization) => Promise<number>;
+  /** Test seam: the TTY answer to the reindex prompt. */
+  answerFn?: (prompt: string) => Promise<string>;
 }
 
 /**
@@ -271,12 +274,13 @@ export async function runModeSwitchUx(opts: ModeSwitchOpts): Promise<void> {
     return;
   }
 
-  // TTY + interactive: prompt.
-  const answer = await readLineSafe(
-    `Run '${summary.reindex_command}' now? [y/N]: `,
-    'n',
-    60_000,
-  );
+  // TTY + interactive: prompt, naming what the reindex re-embeds and costs (W4.5: the yes is stored on the job as its spend authorization).
+  const { countPending } = await import('../../commands/reindex.ts');
+  const { estimateReindexSpend } = await import('../reindex-consent.ts');
+  const plan = await estimateReindexSpend(opts.engine, { type: null, target: await countPending(opts.engine, null, false) });
+  const cost = plan.est_usd === null ? 'embedding cost unknown in advance' : `embedding about $${plan.est_usd.toFixed(2)}`;
+  const prompt = `Run '${summary.reindex_command}' now? It re-embeds ${plan.pages} page(s) (${cost}, plus a chat call per chunk under tokenmax). [y/N]: `;
+  const answer = opts.answerFn ? await opts.answerFn(prompt) : await readLineSafe(prompt, 'n', 60_000);
   if (answer.toLowerCase() !== 'y' && answer.toLowerCase() !== 'yes') {
     console.error(`[mode-switch] Skipped. Run \`${summary.reindex_command}\` when ready.`);
     return;
@@ -302,11 +306,17 @@ export async function runModeSwitchUx(opts: ModeSwitchOpts): Promise<void> {
   const idempotencyKey = buildReindexIdempotencyKey(sourceId, chunkerVersion, opts.newMode);
 
   const submitFn = opts.submitFn ?? defaultSubmit;
+  const { DEFAULT_PAID_CAP_USD, derivedCapUsd } = await import('../consent.ts');
+  const { jobSpendAuthorization } = await import('../minions/spend-authorization.ts');
+  const capUsd = Math.max(DEFAULT_PAID_CAP_USD, plan.est_usd === null ? 0 : derivedCapUsd(plan.est_usd));
+  const spend = jobSpendAuthorization({ consented_effects: ['paid'], cap_usd: capUsd, cap_source: 'default', via: 'tty_prompt' },
+    { command: `config set search.mode ${opts.newMode}`, of: 1, argv: ['gbrain', 'reindex', '--markdown'], ...(plan.est_usd !== null ? { est_usd: plan.est_usd } : {}) });
   try {
     const jobId = await submitFn(
       'reindex',
       { markdown: true, source_id: sourceId },
       idempotencyKey,
+      spend,
     );
     console.error(`[mode-switch] Submitted as job ${jobId}. Watch with: gbrain jobs follow ${jobId}`);
   } catch (err) {
@@ -318,13 +328,14 @@ export async function runModeSwitchUx(opts: ModeSwitchOpts): Promise<void> {
     jobName: string,
     params: Record<string, unknown>,
     idemKey: string,
+    spendAuthorization?: SpendAuthorization,
   ): Promise<number> {
     const queue = new MinionQueue(opts.engine);
     const job = await queue.add(
       jobName,
       params,
       { idempotency_key: idemKey },
-      { allowProtectedSubmit: true },
+      { allowProtectedSubmit: true, ...(spendAuthorization ? { spendAuthorization } : {}) },
     );
     return job.id;
   }

@@ -289,6 +289,20 @@ test('unfinished synthesis refuses an intervening user revision rather than adop
   });
 }, 120_000);
 
+test('a revision_conflict phase failure keeps the suggestion that names the slug (#6242)', async () => {
+  await fixture(async ({ engine, sourceId, opts, edit }) => {
+    await interruptAfterChild(engine, sourceId, opts);
+    const slug = await outputSlug(engine, sourceId);
+    await edit(slug);
+    const replay = await runPhaseSynthesize(engine, opts);
+    expect(replay.status).toBe('fail');
+    expect(replay.error?.code).toBe('SYNTH_PHASE_FAIL');
+    expect(replay.details.error_code).toBe('revision_conflict');
+    expect(replay.error?.hint).toContain(slug);
+    expect(replay.error?.hint).toContain(sourceId);
+  });
+}, 120_000);
+
 test('synthesis postprocessing refuses a concurrent edit after checking the child revision', async () => {
   await fixture(async ({ engine, sourceId, root, opts, calls, edit }) => {
     await interruptAfterChild(engine, sourceId, opts);

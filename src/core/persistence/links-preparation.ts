@@ -5,7 +5,7 @@ import { extractPageLinks, isGlobalBasenameEnabled, makeResolver, resolvedLinkCa
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
 import { DerivedLinkEndpointChangedError } from '../derived-links.ts';
 import { capturedLinkEndpoints, indexLinkSources, loadLinkSourcePolicy, resolveCandidateSources } from '../link-reconciliation.ts';
-import { collectWantedLinks, isWantedPagesEnabled } from '../wanted-links.ts';
+import { collectWantedLinks, isWantedPagesEnabled, possibleWantedRows } from '../wanted-links.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { lineGrammarOptions } from '../line-grammar.ts';
 
@@ -54,9 +54,10 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
       return resolved.ok ? (targetSlug === slug && resolved.toSourceId === sourceId ? page.type
         : metadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type) : undefined;
     } });
+  // The rows the store keeps (#6228/#6225), so the receipt's wanted preview never names a target no page can have.
   const wanted = { producers: ['body', 'frontmatter'] as const, rows: await isWantedPagesEnabled(engine)
-    ? collectWantedLinks({ candidates: candidates.map(retarget), frontmatterUnresolved: unresolved, originSourceId: sourceId,
-      crossSourceAllowed: policy.allowCrossSource || policy.crossSource, resolve })
+    ? await possibleWantedRows(engine, sourceId, collectWantedLinks({ candidates: candidates.map(retarget), frontmatterUnresolved: unresolved,
+      originSourceId: sourceId, crossSourceAllowed: policy.allowCrossSource || policy.crossSource, resolve }))
     : [] };
   const rows = candidates.map(retarget).flatMap(candidate => {
     const resolved = resolve(candidate);

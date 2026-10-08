@@ -138,18 +138,23 @@ The shipped onboard contract has 3 apply_policy values:
 | Policy | Meaning |
 |--------|---------|
 | `auto_apply` | Autopilot runs unattended |
-| `prompt_required` | Autopilot in `--auto-with-prompt` mode prompts user |
-| `manual_only` | Autopilot NEVER auto-fires; user must explicitly submit |
+| `prompt_required` | MCP `run_onboard` mode `auto-with-prompt` runs it |
+| `manual_only` | No automatic run submits it; the user submits it |
 
 `pack_upgrade_available` emits a `RemediationStep` with `protected:
-true` + `job: 'unify-types'`. `toOnboardRecommendation` in
-`src/core/onboard/render.ts` maps this to `manual_only` via the
-`MANUAL_ONLY_PROTECTED_JOBS` allowlist (which also contains
-`extract-takes-from-pages`).
+true` + `job: 'unify-types'`. `isManualOnlyStep` in
+`src/core/remediation/manual-only.ts` decides manual-only by job name
+(`unify-types` and `extract-takes-from-pages`), even for a step without
+`protected: true`. `toOnboardRecommendation` labels with it, and
+`runRemediation` (behind `gbrain onboard --auto`, `doctor --remediate`
+and MCP `run_onboard`) never submits such a step: it returns it in
+`manual_only_skipped` with the user's own `gbrain jobs submit <job>
+--params <json> --follow` command. Autopilot's targeted dispatch
+filters it too.
 
 Rationale: pack upgrades change the brain's taxonomy. Taxonomy is a
-user judgment call — not autopilot's call. Even with `--auto-with-
-prompt`, prompting the user to confirm a pack upgrade mid-tick is the
+user judgment call — not autopilot's call. Even in `auto-with-prompt`
+mode, prompting the user to confirm a pack upgrade mid-tick is the
 wrong UX (the user came to fix orphans, not to be interrupted with
 "hey want to migrate your taxonomy?"). Explicit submission is the
 right boundary.

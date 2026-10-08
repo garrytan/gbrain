@@ -2921,6 +2921,8 @@ const OP_HELP_EXAMPLES: Record<string, string[]> = {
     'gbrain backlinks companies/acme-example --source-id business',
     'gbrain backlinks companies/acme-example --all-sources --json',
   ],
+  // #6255: the receipt command's routing flags and states.
+  get_write_request: ['gbrain write-request --brain host -- <request_id> [--json]  # queued/running: pending, read again after retry_after_ms; committed/conflict/failed/cancelled: final'],
   traverse_graph: [
     'gbrain graph people/alice-example --depth 2',
     'gbrain graph people/alice-example --source business --direction both',

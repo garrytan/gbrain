@@ -6,7 +6,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
-import { loadDreamBreaker, resetDreamBreakerKey } from '../../src/core/cycle/dream-breaker.ts';
+import { countDeadDreamSubmissions, loadDreamBreaker, resetDreamBreakerKey } from '../../src/core/cycle/dream-breaker.ts';
 
 const describePg = hasDatabase() ? describe : describe.skip;
 const KEY = 'dream:synth-v2:default:filename:pg-loop.txt:0123456789abcdef';
@@ -33,6 +33,24 @@ describePg('dream paid-loop breaker — Postgres', () => {
     expect((await loadDreamBreaker(engine))!.tripped.get(KEY)).toBe(3);
     await resetDreamBreakerKey(engine, KEY);
     expect((await loadDreamBreaker(engine))!.tripped.has(KEY)).toBe(false);
+  });
+
+  test('#6236: patterns deaths and paid timeout-cancels count per source under changing content keys', async () => {
+    const engine = getEngine();
+    await engine.executeRaw(`DELETE FROM minion_jobs WHERE name = 'subagent'`);
+    await engine.setConfig('dream.breaker.resets', '{}');
+    const seed = (key: string, status: string, tokens: number, source: string) => engine.executeRaw(
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, idempotency_key, tokens_input, finished_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', $1, $2, $3::jsonb, $4, $5, now())`,
+      [`q-${key}`, status, { source_id: source }, key, tokens]);
+    await seed('dream:patterns:pg-1', 'dead', 0, 'pg-src');
+    await seed('dream:patterns:pg-2', 'cancelled', 900, 'pg-src');
+    await seed('dream:patterns:pg-3', 'cancelled', 0, 'pg-src');
+    await seed('dream:patterns:pg-4', 'dead', 0, 'pg-src');
+    const rows = await countDeadDreamSubmissions(engine);
+    expect(rows.find(row => row.base_key === 'dream:patterns:source:pg-src')?.dead_submissions).toBe(3);
+    expect(rows.some(row => row.base_key.startsWith('dream:patterns:pg-'))).toBe(false);
+    expect((await loadDreamBreaker(engine))!.tripped.get('dream:patterns:source:pg-src')).toBe(3);
   });
 
   test('migration 173 leaves a valid partial index on dead subagent finish times', async () => {

@@ -104,10 +104,11 @@ export function previewHarnessRemoval(receipt: HarnessReceipt, d: HookDeps): num
 }
 
 /** True when the user-scope settings carry any harness hook entry, marked or
- * not, from any install — `--project` wiring would double-fire next to it. */
+ * not, exact or edited (`unowned` by shape, W4.8), from any install —
+ * `--project` wiring would double-fire next to it. */
 export function harnessHooksPresent(settingsPath: string): boolean {
   const scan = scanHarnessHookCarrier(settingsPath, 'any');
-  return Object.values(scan.events).some((c) => c.marked + c.command > 0);
+  return Object.values(scan.events).some((c) => c.marked + c.command + c.unowned > 0);
 }
 
 /** `--status` census of each receipt-named hook carrier (read-only). */

@@ -1479,6 +1479,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'facts.entity_inference', // #5836: write-time subject inference kill switch (subject-infer.ts)
   'facts.candidate_fusion', // C2: 'rrf_free' (default, cosine arm) | 'interleave' (cosine + keyword; facts/single-prepare.ts)
   'facts.supersession_thresholds', // JSON {"provider:model@dims": number | "off"} (facts/supersession-threshold.ts)
+  'facts.page_write_notability_filter', // #6231: tiers page-write extraction keeps (facts/notability-filter.ts)
   // Ambient memory writeback (opt-in, default OFF): 'off' | 'salient' | 'all'.
   // DUAL-PLANE: `gbrain config set` writes the DB plane (authoritative — the
   // serve-side harvest gate re-checks it) AND mirrors into the file plane's

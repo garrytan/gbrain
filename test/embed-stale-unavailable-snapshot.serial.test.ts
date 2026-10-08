@@ -24,6 +24,8 @@ import { installFixtureChunks } from './helpers/page-projection.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { runEmbedCore } from '../src/commands/embed.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { listPendingProjectionPages, prepareEmbeddingProjections } from '../src/core/embedding-readiness.ts';
+import { embedStaleForSource } from '../src/core/embed-stale.ts';
 
 const DIMS = 1536;
 let engine: PGLiteEngine;
@@ -75,6 +77,57 @@ async function nullVectors(slug: string): Promise<number> {
     'SELECT count(*)::int AS n FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug = $1 AND c.embedding IS NULL', [slug]);
   return row.n;
 }
+
+// #6223 (fix wave 12, W1.5): a page only its importer can rebuild (an image
+// page whose projection was unsealed) must not starve every other stale chunk.
+async function blockedImagePage(slug: string) {
+  await stalePage(slug);
+  await engine.executeRaw("UPDATE pages SET page_kind='image', text_projection_revision=NULL WHERE slug=$1", [slug]);
+}
+const chunkRows = (slug: string) => engine.executeRaw(
+  'SELECT c.chunk_index,c.chunk_text,c.embedding IS NULL AS unembedded FROM content_chunks c JOIN pages p ON p.id=c.page_id WHERE p.slug=$1 ORDER BY c.chunk_index', [slug]);
+
+describe('embed --stale past pages still waiting for a projection (#6223)', () => {
+  test.each([[false], [true]])('a blocked image page does not starve healthy stale chunks (catchUp=%s)', async catchUp => {
+    await blockedImagePage('images/scan-0001');
+    await stalePage('notes/healthy');
+    const before = await chunkRows('images/scan-0001');
+    const result = await runEmbedCore(engine, { stale: true, quiet: true, catchUp, batchSize: 1 });
+    expect(result.embedded).toBe(1);
+    expect(await nullVectors('notes/healthy')).toBe(0);
+    expect(result.failures).toBe(1);
+    const samples = result.failure_samples.join(' ');
+    expect(samples).toContain('default:images/scan-0001');
+    expect(samples).toContain('gbrain embed --stale --images');
+    expect(samples).not.toContain('changed, was deleted or lost its projection during this run');
+    expect(await chunkRows('images/scan-0001')).toEqual(before);
+  });
+
+  test('bounded recovery reaches a repairable page behind a full batch of blocked image pages', async () => {
+    for (const slug of ['images/a', 'images/b']) await blockedImagePage(slug);
+    await stalePage('notes/repairable');
+    await engine.executeRaw("UPDATE pages SET text_projection_revision=NULL WHERE slug='notes/repairable'");
+    const result = await prepareEmbeddingProjections(engine, { repair: true, limit: 2, activeSourcesOnly: true });
+    expect(result).toEqual({ rebuilt: 1, blocked: 2 });
+    expect((await listPendingProjectionPages(engine, { activeSourcesOnly: true })).map(page => [page.slug, page.page_kind]))
+      .toEqual([['images/a', 'image'], ['images/b', 'image']]);
+    const repaired = await engine.readPageSnapshot('notes/repairable');
+    expect(repaired?.page.text_projection_revision).toBe(repaired?.revision);
+  });
+
+  test('the source drain (embed-backfill, remediation) embeds healthy pages and stays incomplete', async () => {
+    await blockedImagePage('images/scan-0002');
+    await stalePage('notes/healthy-source');
+    const texts: string[] = [];
+    const result = await embedStaleForSource(engine, 'default', {
+      embedFn: async values => { texts.push(...values); return values.map(() => new Float32Array(DIMS).fill(0.001)); } });
+    expect(result.embedded).toBe(1);
+    expect(texts.join(' ')).not.toContain('images/scan-0002');
+    expect(result.blocked).toBe(1);
+    expect(result.complete).toBe(false);
+    expect(await nullVectors('notes/healthy-source')).toBe(0);
+  });
+});
 
 describe('embed --stale with a projection snapshot that becomes unavailable mid-run (#5804)', () => {
   test('edited pages are counted failures with one batch summary; untouched pages still embed', async () => {

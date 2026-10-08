@@ -50,11 +50,11 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // v0.42 type-unification (T11, plan D17). Pack-upgrade migration that
   // retypes 25K+ pages, creates 5K+ alias rows, converts edge-shaped
   // pages to link rows, AND flips the active schema pack. One-time
-  // consenting user decision. PROTECTED + manual_only in
-  // src/core/onboard/render.ts:toOnboardRecommendation ensures autopilot
-  // can't auto-apply; user must run `gbrain onboard --auto-with-prompt`
-  // or submit explicitly via `gbrain jobs submit unify-types` (the local CLI
-  // submit path sets allowProtectedSubmit for protected names itself).
+  // consenting user decision. PROTECTED + manual-only
+  // (src/core/remediation/manual-only.ts) ensures no automatic run submits
+  // it; the user submits it explicitly via `gbrain jobs submit unify-types`
+  // (the local CLI submit path sets allowProtectedSubmit for protected names
+  // itself).
   'unify-types',
   // v0.42.0.0 — SkillOpt: optimizer Sonnet/Opus loops over a benchmark.
   // Preemptive register entry (v1 is CLI-only foreground; future Minion

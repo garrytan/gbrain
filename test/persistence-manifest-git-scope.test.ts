@@ -8,7 +8,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -58,6 +58,25 @@ test('git scope hashes tracked files only and never opens an ignored one', () =>
     // A plain directory nested inside an unrelated repository keeps the exact-copy tree scope.
     const nested = join(root, 'notes');
     expect(worktreeManifest(nested).scope).toBeUndefined();
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('W4.4: a checkout Git cannot read refuses instead of hashing every file (ignored .env included)', () => {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-manifest-damaged-'));
+  try {
+    const root = join(home, 'brain'); gitCheckout(root);
+    writeFileSync(join(root, '.git', 'HEAD'), 'garbage\n');
+    // An unreadable ignored file: a whole-tree fallback would open it.
+    chmodSync(join(root, '.env.local'), 0o000);
+    let thrown: unknown;
+    try { worktreeManifest(root); } catch (error) { thrown = error; }
+    expect(thrown).toMatchObject({ code: 'writer_manifest_unsafe' });
+    expect((thrown as { fix?: { argv?: string[]; verify?: { argv?: string[] } } }).fix).toMatchObject({
+      argv: ['git', '-C', realpathSync(root), 'status'], verify: { argv: ['git', '-C', realpathSync(root), 'rev-parse', '--show-toplevel'] } });
+    // A plain directory (no .git) still takes the exact-copy tree scope.
+    const plain = join(home, 'plain'); mkdirSync(plain); writeFileSync(join(plain, 'a.md'), 'a\n');
+    expect(worktreeManifest(plain)).toMatchObject({ file_count: 1 });
+    expect(worktreeManifest(plain).scope).toBeUndefined();
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 

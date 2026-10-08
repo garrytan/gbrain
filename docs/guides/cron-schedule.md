@@ -47,6 +47,14 @@ scheduling surfaces — reach for these first:
 For scheduling `sync` + `embed --stale` specifically, the home doc is
 [live-sync.md](live-sync.md).
 
+### Dream beside autopilot
+
+A nightly `gbrain dream` beside autopilot is supported. Source phases run
+under the source's own lease; brain-wide phases (synthesize, patterns, embed,
+purge…) also need the shared `gbrain-cycle` lease, so the later run skips only
+those (`maintenance_lock_busy`) and the holder runs them.
+`gbrain status --section locks --json` shows the holder.
+
 ## Implementation: Setting Up Cron Jobs
 
 ```bash
@@ -173,6 +181,9 @@ per-transcript synthesis subagents. The dials:
   judging NEW files; a big cold corpus triages across a few cycles (cached
   files are free). Deferred files are labeled "not yet triaged", never
   silently rejected.
+- A truncated, refused or unparseable verdict backs off (24h, doubling to
+  7 days; `triage_unreliable_backoff`) instead of being re-paid nightly;
+  `gbrain dream retriage --force` re-judges now.
 - `dream.synthesize.max_submissions_per_source_per_day` (default 0 = off) —
   opt-in backstop cap on synthesis jobs per source; 200/day is a sane value
   for busy deployments.

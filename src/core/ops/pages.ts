@@ -1,4 +1,4 @@
-import { pageMutationSource, submitPageMutation } from '../persistence/page-mutations.ts';
+import { pageMutationSource, submitPageMutation, validateMutationSlug } from '../persistence/page-mutations.ts';
 import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
 import { PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, WRITE_WAIT_PARAM } from '../persistence/params.ts';
 import { assertPurgeParams } from '../persistence/purge-params.ts';
@@ -291,11 +291,11 @@ const put_page: Operation = {
   name: 'put_page',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Complete content REPLACES the whole page: read get_page include_content:true, then send its revision as expected_revision and a request_id. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Edits: edit_page; over 3 pages: put_pages.',
+  description: 'Complete content REPLACES the whole page: read get_page include_content:true; send its revision as expected_revision. Keep a request_id UUID; retry with identical arguments. Remote callers: existing-page [[links]] become mentions; typed links are skipped (stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Edits: edit_page; >3 pages: put_pages.',
   params: {
     ...PAGE_MUTATION_PARAMS,
     slug: { type: 'string', description: 'Page slug.', required: true },
-    content: { type: 'string', required: true, description: 'Complete markdown with frontmatter; read get_page include_content:true first.' },
+    content: { type: 'string', required: true, description: 'Complete markdown (get_page include_content:true).' },
     allow_empty: { type: 'boolean', required: false, description: 'Allow emptying the page.' },
     drop_timeline: { type: 'boolean', required: false, description: 'No Timeline in content: delete its entries.' },
     wait_ms: WRITE_WAIT_PARAM,
@@ -383,11 +383,11 @@ const delete_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    pageMutationSource(ctx, p, 'delete_page');
+    const sourceId = pageMutationSource(ctx, p, 'delete_page');
     assertPurgeParams(p, ctx.remote);
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
-        validatePageSlug(p.slug);
+        await validateMutationSlug(ctx, 'delete_page', p.slug, sourceId);
         enforceClientSlugFence(ctx, p.slug, 'delete_page');
         enforceSubagentSlugFence(ctx, p.slug, 'delete_page');
       }
@@ -411,10 +411,10 @@ const restore_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    pageMutationSource(ctx, p, 'restore_page');
+    const sourceId = pageMutationSource(ctx, p, 'restore_page');
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
-        validatePageSlug(p.slug);
+        await validateMutationSlug(ctx, 'restore_page', p.slug, sourceId);
         enforceClientSlugFence(ctx, p.slug, 'restore_page');
         enforceSubagentSlugFence(ctx, p.slug, 'restore_page');
       }

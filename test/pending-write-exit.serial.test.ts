@@ -112,7 +112,10 @@ describe('resident owner: pending-write exit codes', () => {
             const body = JSON.parse(result.stdout);
             expect(body.write_request).toMatchObject({ request_id: ID, state: 'running' });
             expect(body).toMatchObject({ request_id: ID, state: 'running' });
-            expect(body.poll_command).toBe(`gbrain call get_write_request '{"request_id":"${ID}"}'`);
+            // #6255: the poll command is the envelope's receipt fix, pinned to the brain it ran against.
+            expect(body.poll_command).toBe(`gbrain write-request --brain host -- ${ID}`);
+            expect(body.poll_command).toBe(body.fix.argv.join(' '));
+            expect(result.stderr).toContain(`Poll: gbrain write-request --brain host -- ${ID}`);
           }
         });
       }
@@ -175,7 +178,7 @@ describe('resident owner: pending-write exit codes', () => {
       const result = await spawnCli(dir, ['call', 'put_page', JSON.stringify({ slug: 'notes/a', content: 'A', request_id: ID }), '--wait', '0']);
       expect(result.code).toBe(PENDING_WRITE_EXIT_CODE);
       expect(result.stderr).toContain(`Request: ${ID} (running)`);
-      expect(result.stderr).toContain(`Poll: gbrain call get_write_request '{"request_id":"${ID}"}'`);
+      expect(result.stderr).toContain(`Poll: gbrain write-request --brain host -- ${ID}`);
       expect(result.stderr).toContain('#cli-exit-status-for-writes');
     });
   }, 30_000);

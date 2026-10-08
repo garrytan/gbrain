@@ -25,6 +25,7 @@
  */
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, posix, relative } from 'node:path';
+import { repoBaseOrThrow } from '../src/core/repo-base.ts';
 
 const ROOT = join(import.meta.dir, '..');
 export const DEFAULT_BLOB_BASE = 'https://github.com/garrytan/gbrain/blob/master';
@@ -32,8 +33,8 @@ export const PROTOCOL_SOURCE = 'docs/protocol/AGENT_OPERATOR_v1.md';
 export const BUNDLED_PROTOCOL = 'skills/conventions/agent-operator-protocol.md';
 
 export function repoBlobBase(env: Record<string, string | undefined> = process.env): string {
-  const raw = env.LLMS_REPO_BASE?.replace(/\/+$/, '');
-  if (!raw) return DEFAULT_BLOB_BASE;
+  if (!env.LLMS_REPO_BASE?.trim()) return DEFAULT_BLOB_BASE;
+  const raw = repoBaseOrThrow(env.LLMS_REPO_BASE, DEFAULT_BLOB_BASE);
   const m = raw.match(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/(.+)$/);
   return m ? `https://github.com/${m[1]}/${m[2]}/blob/${m[3]}` : raw;
 }

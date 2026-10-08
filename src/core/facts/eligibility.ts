@@ -3,11 +3,10 @@
  *
  * Single source of truth for "should this page write fire the facts
  * extraction backstop?" Used by:
- *   - put_page (operations.ts:556 — MCP backstop hook)
- *   - sync.ts post-import hook
- *   - file_upload + code_import callers
- *   - extract_facts MCP op (negative path: returns 'eligibility_failed' so
- *     the caller sees a stable reason)
+ *   - the page-write outbox (persistence/effect-facts.ts: prepareFactsBackstop
+ *     for put_page, capture and edit_page, and its body_unchanged check)
+ *   - runFactsBackstop (facts/backstop.ts), called by sync's post-import hook
+ *     and by the facts-absorb job, which re-checks the page it reads
  *
  * Pre-extraction (PR1 commit 5), this lived inline at operations.ts:633
  * and sync.ts had its own divergent type filter (`['conversation',
@@ -21,6 +20,10 @@
  *     own world; not user-meaningful for hot memory)
  *   - frontmatter.dream_generated is NOT `true` (anti-loop: never extract
  *     from dream-generated pages — they're already a digest)
+ *   - frontmatter.facts_backstop is NOT off (`false`, `0`, `no`, `off`; #6232):
+ *     the writer's opt-out for a page whose facts another page carries, such
+ *     as a meeting's raw transcript, or a draft not yet verified. It stops
+ *     future extraction only; facts already extracted from the page stay.
  *   - body length >= 80 chars (skip TODO-style snippets)
  *   - parsed.type ∈ {note, meeting, slack, email, calendar-event, source, writing}
  *     OR slug.startsWith('meetings/' | 'personal/' | 'daily/')
@@ -35,6 +38,7 @@
  */
 
 import type { PageType } from '../types.ts';
+import { isFrontmatterFlagOff } from './conversation-types.ts';
 
 export type EligibilityResult = { ok: true } | { ok: false; reason: string };
 
@@ -90,6 +94,7 @@ export function isFactsBackstopEligible(
   if (parsed.frontmatter && parsed.frontmatter.dream_generated === true) {
     return { ok: false, reason: 'dream_generated' };
   }
+  if (isFrontmatterFlagOff(parsed.frontmatter?.facts_backstop)) return { ok: false, reason: 'opted_out' };
 
   const body = (parsed.compiled_truth ?? '').trim();
   if (body.length < MIN_BODY_CHARS) return { ok: false, reason: 'too_short' };

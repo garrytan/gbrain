@@ -9,8 +9,10 @@
 //
 // Three modes:
 //   --check    (default): print plan, no submission
-//   --auto:               submit auto_apply tier (requires --max-usd)
-//   --auto --yes:         also submit prompt_required tier
+//   --auto:               run the plan's job steps (requires --max-usd); a
+//                         manual-only step (unify-types, takes bootstrap) is
+//                         never submitted and is reported with the user's
+//                         own command instead
 //   --history:            show recent migration_impact_log entries
 //
 // `--json` switches to the stable JSON envelope. No CLI mode → human render.
@@ -31,7 +33,6 @@ function parseInt10(args: string[], flag: string): number | null {
 export async function runOnboard(engine: BrainEngine, args: string[]): Promise<void> {
   const check = args.includes('--check') || (!args.includes('--auto') && !args.includes('--history'));
   const auto = args.includes('--auto');
-  const yes = args.includes('--yes');
   const history = args.includes('--history');
   const jsonOutput = args.includes('--json');
   // v0.42 (T16): --explain extends --check with per-cluster narrative
@@ -152,20 +153,11 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
   // summary). extraRemediations (gathered above from runAllOnboardChecks)
   // is threaded into the runner so the onboard-check remediations
   // (extract-ner, extract-timeline-from-meetings, etc.) reach the planner
-  // — the same wiring the --check path uses above.
+  // — the same wiring the --check path uses above. The runner never submits
+  // a manual-only step; it returns them as `manual_only_skipped`.
   const result = await runRemediation(
     engine,
-    {
-      targetScore,
-      maxUsd,
-      extraRemediations,
-      // --auto --yes opts into the prompt_required tier too; library
-      // doesn't distinguish auto_apply vs prompt_required, it just runs
-      // every remediation in the plan. The plan-building side (T12 render)
-      // does the tier distinction; for --auto without --yes, the CLI shell
-      // would pre-filter the extras to auto_apply only. For now: pass
-      // everything; CLI documents this is "everything" behavior.
-    },
+    { targetScore, maxUsd, extraRemediations },
     {
       onTargetUnreachable: (target, ceiling) => {
         process.stderr.write(
@@ -174,7 +166,7 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
         );
       },
       onNothingToDo: (score, target) => {
-        process.stdout.write(
+        (jsonOutput ? process.stderr : process.stdout).write(
           `Brain at score ${score}/100, target ${target}/100. Nothing to do.\n`,
         );
       },
@@ -198,16 +190,28 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
     },
   );
 
-  if (result.target_unreachable) process.exit(2);
-
   if (jsonOutput) {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-  } else if (result.submitted.length > 0) {
-    process.stdout.write(
-      `\nBrain score: ${result.brain_score_initial} → ${result.brain_score_final} (target ${targetScore})\n` +
-      `Submitted: ${result.submitted.length} job(s), ${result.aborted_count} aborted/failed\n`,
-    );
+  } else {
+    if (result.submitted.length > 0) {
+      process.stdout.write(
+        `\nBrain score: ${result.brain_score_initial} → ${result.brain_score_final} (target ${targetScore})\n` +
+        `Submitted: ${result.submitted.length} job(s), ${result.aborted_count} aborted/failed\n`,
+      );
+    }
+    const manual = result.manual_only_skipped ?? [];
+    if (manual.length > 0) {
+      process.stdout.write(`\nNot run: ${manual.length} manual-only step(s). Review them with gbrain onboard --check, then run the ones you want yourself:\n`);
+      for (const m of manual) {
+        process.stdout.write(`  - ${m.job}${(m.est_usd_cost ?? 0) > 0 ? ` (~$${(m.est_usd_cost ?? 0).toFixed(2)})` : ''}: ${m.fix.command}\n`);
+        for (const q of m.queued_jobs ?? []) {
+          process.stdout.write(`    job #${q.id} (${q.status}) was queued by an earlier run and still runs; cancel it with gbrain jobs cancel ${q.id}\n`);
+        }
+      }
+    }
   }
+
+  if (result.target_unreachable) process.exit(2);
 
   const anyFailed = result.submitted.some(
     (s) => s.status !== 'completed' && s.status !== 'submitted' && s.status !== 'dry_run',

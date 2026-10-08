@@ -166,11 +166,25 @@ the raw data shows exactly what the API returned.
 #### CREATE path
 
 1. Check notability gate (see `skills/_brain-filing-rules.md`)
-2. Check filing rules -- where does this entity go?
-3. Create page with the appropriate template (below)
+2. Resolve the entity's type, directory and subtype from the ACTIVE schema
+   pack, never from the templates below: follow
+   `skills/brain-taxonomist/SKILL.md` (`gbrain schema show --json`, or MCP
+   `get_active_schema_pack`; `schema_explain_type` for one type). When the
+   pack declares an entity type the evidence fits better than `person` or
+   `company` (an investment firm, a protocol foundation), file it under that
+   type's directory with its subtype. If no declared type fits, say so and
+   ask; don't fall back to `companies/`.
+3. Create the page from the template below, with the `type` and directory
+   from step 2. Frontmatter carries only keys the pack declares for the type or
+   that existing pages of the type already use, and only with known values:
+   omit an unknown field entirely, never write `null`, an empty value or a
+   placeholder.
 4. Fill compiled truth with citations
 5. Add first timeline entry
 6. Leave empty sections as `[No data yet]` (don't fill with boilerplate)
+7. In a batch, create the pages other pages will link to first. A link to a
+   page that doesn't exist yet is recorded as a wanted page and becomes an
+   edge once that page is written (`gbrain wanted` lists them).
 
 #### UPDATE path
 
@@ -191,10 +205,7 @@ updated: YYYY-MM-DD
 tags: []
 company: Current Company
 relationship: How the user knows them
-email:
-linkedin:
-twitter:
-location:
+# email, linkedin, twitter, location: add each only when you know it
 ---
 
 # Full Name

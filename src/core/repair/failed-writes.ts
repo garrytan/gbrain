@@ -22,7 +22,11 @@
  *     the newer content), or the page changed after the revision the caller
  *     read;
  *   - `unpinned_target`: a `remember` whose original target was inferred as
- *     unattributed; replaying would infer again and could pick another page.
+ *     unattributed; replaying would infer again and could pick another page;
+ *   - `file_database_drift` (W4.11): its last replay was refused
+ *     `source_changed` because the page's file and database differ, and the
+ *     page has not been written since; the listing names the reconcile
+ *     command, and the write is a candidate again once the page changes.
  *
  * Explicit-only and preview-bound: the preview lists every candidate with its
  * class and saves the replay set, with each target page's revision, under its
@@ -58,7 +62,7 @@ interface FailedWrite {
   id: string; sequence: string; operation: string; source_id: string; slug: string; digest: string;
   intent: Record<string, unknown>; authority: WriteAuthority; created_at: string; producer: string | null;
 }
-type Disposition = 'replay' | 'already_written' | 'duplicate' | 'superseded' | 'unpinned_target';
+type Disposition = 'replay' | 'already_written' | 'duplicate' | 'superseded' | 'unpinned_target' | 'file_database_drift';
 /** A replay bound to the page revision the preview saw (null: no live page). */
 interface ApprovedWrite extends FailedWrite { revision: string | null; selection: string[] }
 interface FailedWriteItem extends RepairItem { failed: ApprovedWrite; hash: string; last: boolean }
@@ -113,9 +117,30 @@ async function replayAttempt(engine: BrainEngine, failedId: string): Promise<{ i
   }
 }
 
+/** The newest replay attempt that ended without committing, or null. */
+async function lastFailedAttempt(engine: BrainEngine, failedId: string): Promise<WriteRequest | null> {
+  let last: WriteRequest | null = null;
+  for (let attempt = 0; ; attempt++) {
+    const [prior] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid', [replayId(failedId, attempt)]);
+    if (!prior || prior.state === 'committed' || !isTerminal(prior)) return last;
+    last = prior;
+  }
+}
+
+/** W4.11: the reconcile step for a page whose file and database differ. */
+function driftDetail(sourceId: string, slug: string): string {
+  return `the page's file and database differ, so the replay was refused (source_changed); reconcile first: gbrain sources reconcile ${sourceId} ${slug} --preview, then run gbrain repair failed-writes again`;
+}
+
 /** Why a caller write must not be replayed now, or `replay`. */
 async function disposition(engine: BrainEngine, write: FailedWrite): Promise<{ class: Disposition; detail?: string }> {
   if ((await replayAttempt(engine, write.id)).prior?.state === 'committed') return { class: 'already_written', detail: 'replayed by gbrain repair failed-writes' };
+  const drifted = await lastFailedAttempt(engine, write.id);
+  if (drifted?.error_code === 'source_changed') {
+    const [written] = await engine.executeRaw<{ later: boolean }>(
+      'SELECT updated_at > $3::timestamptz AS later FROM pages WHERE source_id=$1 AND slug=$2', [write.source_id, write.slug, drifted.updated_at]);
+    if (!written?.later) return { class: 'file_database_drift', detail: driftDetail(write.source_id, write.slug) };
+  }
   const replace = write.operation === 'put_page';
   const [later] = await engine.executeRaw<{ state: string; operation: string; same_intent: boolean }>(
     `SELECT state, operation, digest=$3 AS same_intent FROM persistence_requests
@@ -269,6 +294,9 @@ async function replay(ctx: OperationContext, failed: ApprovedWrite): Promise<Rep
     if (live.operation === 'remember') await submitRememberMutation(lane, params);
     else await submitPageMutation(lane, { operation: live.operation, params: replayed, ...(isTimelineSection(timelineSection) ? { timelineSection } : {}) });
   } catch (error) {
+    if (error instanceof OperationError && error.code === 'source_changed') {
+      return { applied: false, outcome: 'file_database_drift', reason: driftDetail(failed.source_id, failed.slug) };
+    }
     if (error instanceof OperationError && !['write_pending', 'owner_unavailable', 'writer_lock_unavailable', 'writer_busy'].includes(error.code)) {
       return { applied: false, outcome: ['revision_conflict', 'revision_required'].includes(error.code) ? 'conflict' : 'refused', reason: `${error.code}: ${error.message}` };
     }

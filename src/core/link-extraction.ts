@@ -19,7 +19,7 @@ import { targetTakesVerb } from './link-target-roles.ts';
 import { inSuppressedRange, rolePriorSuppressedRanges } from './machine-sections.ts';
 import { statedRelationTypes } from './line-grammar.ts';
 import { isValidSourceId } from './source-id.ts';
-import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
+import { isDatedTimelineLine, parseInlineCitationTimelineEntries, TIMELINE_LINE_RE, TIMELINE_LINE_RE_CN } from './timeline-citations.ts';
 import { isMaterializedMarkerLine } from './timeline-marker.ts';
 import { slugifyPath, slugifySegment } from './sync.ts';
 import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
@@ -1939,11 +1939,10 @@ export function findTimelineSourceDelimiter(text: string): number {
 // `Source — Summary` split ONLY to pipe-separated bullets (the canonical
 // shape the FS extractor matches); a dash-separated bullet's rest is one
 // summary and must not be shattered on its first interior dash.
-const TIMELINE_LINE_RE = /^\s*(?:-\s*)?\*\*(\d{4}-\d{2}-\d{2})\*\*\s*([|\-–—]+)\s*(.+?)\s*$/;
-// Chinese date lines: `- 2020年1月2日 | summary` (bold optional). Requires the
-// 年/月 markers so plain ASCII `- 2020-01-02 - text` does NOT match — non-bold
-// ASCII dates were never timeline entries and must stay that way.
-const TIMELINE_LINE_RE_CN = /^\s*(?:-\s*)?(?:\*\*)?(\d{4})年(\d{1,2})月(\d{1,2})日?(?:\*\*)?\s*([|\-–—]+)\s*(.+?)\s*$/;
+// Chinese date lines (TIMELINE_LINE_RE_CN): `- 2020年1月2日 | summary` (bold
+// optional). Requires the 年/月 markers so plain ASCII `- 2020-01-02 - text`
+// does NOT match. Both live in timeline-citations.ts, whose inline-citation
+// pass skips the lines they read.
 
 // `### YYYY-MM-DD — summary` headings, as the FS extractor (timeline-extract.ts Format 2) accepts.
 const TIMELINE_HEADING_RE = /^\s*###\s+(\d{4}-\d{2}-\d{2})\s*[\-–—]+\s*(.+?)\s*$/;
@@ -2046,7 +2045,7 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
   // Format 3 (the fs-source path). Blocks already captured by the timeline
   // bullet pass are skipped (a bullet often carries its own citation).
   for (const entry of parseInlineCitationTimelineEntries(content, {
-    skipLine: (line) => TIMELINE_LINE_RE.test(line) || TIMELINE_LINE_RE_CN.test(line),
+    skipLine: isDatedTimelineLine,
   })) {
     // #3957: carry the citation's source label in `source` (the dedup-key
     // column) so the row shape matches the FS extractor's Format 3; the

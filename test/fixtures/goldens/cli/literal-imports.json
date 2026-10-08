@@ -148,7 +148,9 @@
         "./core/sync-concurrency.ts",
         "./commands/reindex-vectors.ts",
         "./commands/reindex-aliases.ts",
-        "./commands/reindex.ts"
+        "./commands/reindex.ts",
+        "./core/consent.ts",
+        "./core/ops/contract.ts"
       ],
       "reindex-code": [
         "./commands/reindex-code.ts"

@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { groundPatternPages } from '../src/core/cycle/patterns.ts';
+import { CLAIM_SOURCES_KEY, dedupePatternClaimSources, resolveClaimSources } from '../src/core/cycle/pattern-claim-sources.ts';
 
 let engine: PGLiteEngine;
 
@@ -43,5 +44,39 @@ describe('patterns quote grounding', () => {
     expect((page!.frontmatter.unverified_claims as unknown[]).length).toBe(1);
     const again = await groundPatternPages(engine, null, [], reflections, 'wiki/personal/patterns', 'default', '2026-10-05');
     expect(again).toEqual({ pages: 0, quarantined: 0, repaired: 0 });
+  });
+
+  test('#6236: a quarantined claim references the page\'s shared reflection list instead of carrying it, losslessly', async () => {
+    await importFromContent(engine, 'wiki/personal/patterns/fridays',
+      '---\ntype: note\ntitle: Fridays\ndream_generated: true\n---\nYou wrote "never ship on Fridays" and "always test first".\n',
+      { noEmbed: true, sourceId: 'default' });
+    const reflections = ['r1', 'r2'].map(r => ({ slug: `wiki/personal/reflections/${r}`, title: r, excerpt: '', updatedAt: new Date(), seat: null }));
+    await groundPatternPages(engine, null, [{ slug: 'wiki/personal/patterns/fridays', source_id: 'default' }], reflections, 'wiki/personal/patterns', 'default', '2026-10-06');
+    const fm = (await engine.getPage('wiki/personal/patterns/fridays'))!.frontmatter as Record<string, unknown>;
+    const claims = fm.unverified_claims as Array<{ sources: string[] }>;
+    expect(claims.length).toBeGreaterThan(0);
+    for (const claim of claims) {
+      expect(claim.sources).toHaveLength(1);
+      expect(resolveClaimSources(fm, claim)).toEqual(reflections.map(r => r.slug));
+    }
+    expect(Object.keys(fm[CLAIM_SOURCES_KEY] as object)).toHaveLength(1);
+  });
+
+  test('#6236: a page written with inline reflection lists is de-duplicated before the child runs, body untouched', async () => {
+    const list = Array.from({ length: 100 }, (_, i) => `wiki/personal/reflections/x${i}`);
+    const claims = Array.from({ length: 5 }, (_, i) => `  - text: claim ${i}\n    reason: quote_not_in_source\n    sources:\n${list.map(p => `      - ${p}`).join('\n')}`).join('\n');
+    await importFromContent(engine, 'wiki/personal/patterns/legacy',
+      `---\ntype: note\ntitle: Legacy\ndream_generated: true\nquote_verified_at: '2026-10-01'\nunverified_claims:\n${claims}\n---\nA legacy pattern body.\n`,
+      { noEmbed: true, sourceId: 'default' });
+    const before = (await engine.getPage('wiki/personal/patterns/legacy'))!;
+    const result = await dedupePatternClaimSources(engine, null, 'wiki/personal/patterns', 'default');
+    expect(result.rewritten).toEqual(['wiki/personal/patterns/legacy']);
+    expect(result.held).toEqual([]);
+    const after = (await engine.getPage('wiki/personal/patterns/legacy'))!;
+    expect(after.compiled_truth).toBe(before.compiled_truth);
+    const fm = after.frontmatter as Record<string, unknown>;
+    for (const claim of fm.unverified_claims as Array<{ sources: string[] }>) expect(resolveClaimSources(fm, claim)).toEqual(list);
+    expect(JSON.stringify(fm).length).toBeLessThan(JSON.stringify(before.frontmatter).length / 3);
+    expect((await dedupePatternClaimSources(engine, null, 'wiki/personal/patterns', 'default')).rewritten).toEqual([]);
   });
 });

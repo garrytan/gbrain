@@ -36,6 +36,8 @@ import { resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { loadConfig } from '../core/config.ts';
+import { BudgetExhausted, BudgetTracker } from '../core/budget/budget-tracker.ts';
+import { withBudgetTracker } from '../core/ai/gateway.ts';
 
 interface ReindexOpts {
   /** Cap total pages reindexed. Useful for triage runs on huge brains. */
@@ -83,7 +85,7 @@ export interface ReindexResult {
 const REINDEX_HELP = `gbrain reindex — re-chunk / re-embed existing pages after a pipeline upgrade
 
 USAGE
-  gbrain reindex --markdown   [--type PAGE_TYPE] [--limit N] [--workers N] [--dry-run] [--no-embed] [--json] [--repo PATH]
+  gbrain reindex --markdown   [--type PAGE_TYPE] [--limit N] [--workers N] [--dry-run] [--no-embed] [--yes] [--max-usd USD] [--json] [--repo PATH]
   gbrain reindex --multimodal [--limit N] [--workers N] [--dry-run] [--cost-estimate] [--no-embed] [--yes] [--json]
   gbrain reindex --aliases    [--limit N] [--dry-run] [--json] [--source <id>]
   gbrain reindex --vectors    [--dry-run] [--json]
@@ -112,7 +114,11 @@ OPTIONS
   --dry-run         Report what would change; write nothing
   --cost-estimate   --multimodal only: print the embed cost estimate and stop
   --no-embed        Skip re-embedding (chunk-only reindex)
-  --yes             --multimodal only: skip the cost confirm
+  --yes             Approve the paid run: --markdown re-embeds pages and asks
+                    first (exit 3 without approval when not interactive;
+                    --dry-run, --no-embed and a keyless brain never ask);
+                    --multimodal skips its cost confirm
+  --max-usd USD     --markdown: approve the paid run with this cost cap
   --source <id>     --aliases only: restrict to one source
   --repo PATH       --markdown only: brain repo override
   --json            Machine-readable output
@@ -126,7 +132,7 @@ export function printReindexHelp(): void {
   console.log(REINDEX_HELP);
 }
 
-const REINDEX_VALUE_FLAGS = new Set(['--type', '--limit', '--repo', '--workers', '--concurrency']);
+const REINDEX_VALUE_FLAGS = new Set(['--type', '--limit', '--repo', '--workers', '--concurrency', '--max-usd']);
 
 export function normalizeReindexArgs(args: string[]): string[] {
   return args.flatMap((arg) => {
@@ -223,7 +229,7 @@ function parseArgs(args: string[]): ReindexOpts {
  * hook for post-v81 brains. The simple `chunker_version OR mode IS NULL`
  * predicate covers the headline upgrade case the wave is shipping.
  */
-async function countPending(engine: BrainEngine, type: string | null = null, noEmbed = false): Promise<number> {
+export async function countPending(engine: BrainEngine, type: string | null = null, noEmbed = false): Promise<number> {
   const driftPredicate = pendingDriftPredicate(noEmbed);
   if (type) {
     const rows = await engine.executeRaw<{ count: string | number }>(
@@ -290,7 +296,15 @@ async function readBatch(
   );
 }
 
-export async function runReindex(engine: BrainEngine, args: string[]): Promise<ReindexResult> {
+/** How a caller already authorized the paid run (W4.5): the job handler's stored spend record, or the upgrade prompt's TTY yes. */
+export interface ReindexRunOpts {
+  /** The paid run is already authorized; skip the consent gate. */
+  authorized?: boolean;
+  /** False for unattended callers (the job handler): the gate never prompts. */
+  interactive?: boolean;
+}
+
+export async function runReindex(engine: BrainEngine, args: string[], runOpts: ReindexRunOpts = {}): Promise<ReindexResult> {
   args = normalizeReindexArgs(args);
   const invalidType = args.some((arg, index) =>
     arg === '--type' && !parsePageType(args[index + 1]));
@@ -370,7 +384,29 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
     return { pending, pendingAfter: pending, reindexed: 0, skipped: 0, failed: 0, dryRun: true, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type };
   }
 
-  if (await managedPersistenceEnabled(engine)) return reindexManaged(engine, opts, type, pending);
+  // W4.5: re-embedding is paid work; ask before it starts (throws the exit-3 consent refusal or cost_cap_exceeded).
+  // W12 P1: the approved cap is enforced while the run spends (embedding and synopsis calls), not only checked up front.
+  let cap: BudgetTracker | null = null;
+  let capHit: BudgetExhausted | null = null;
+  if (!opts.noEmbed && !runOpts.authorized) {
+    const { requireReindexConsent } = await import('../core/reindex-consent.ts');
+    const gate = await requireReindexConsent(engine, { args, type, target, ...(runOpts.interactive === false ? { interactive: false } : {}) });
+    const capUsd = gate?.auth.cap_usd;
+    if (typeof capUsd === 'number' && Number.isFinite(capUsd) && capUsd > 0) {
+      cap = new BudgetTracker({ maxCostUsd: capUsd, label: 'reindex', capSource: gate!.auth.cap_source ?? undefined });
+      // An import swallows a refused embedding (its chunks wait for `embed --stale`), so the run stops at the next page.
+      const tracker = cap;
+      tracker.onExhausted(() => { capHit = new BudgetExhausted(`reindex reached its $${capUsd.toFixed(2)} cost cap`, { reason: 'cost', spent: tracker.totalSpent, cap: capUsd }); });
+    }
+  }
+  const metered = <T>(fn: () => Promise<T>): Promise<T> => (cap ? withBudgetTracker(cap, fn) : fn());
+
+  if (await managedPersistenceEnabled(engine)) {
+    try { return await metered(() => reindexManaged(engine, opts, type, pending)); } catch (e) {
+      if (!(e instanceof BudgetExhausted)) throw e;
+      return reportBudgetStop(engine, e, { pending, type, json: !!opts.json, reindexed: 0, skipped: 0, failed: 0 });
+    }
+  }
 
   const reporter = createProgress(cliOptsToProgressOptions(getCliOptions()));
   reporter.start('reindex.markdown', target);
@@ -385,7 +421,8 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
   // exactly the auto threshold (100), so batch length never enabled it.
   const { workers } = resolveWorkersWithClamp(engine, opts.workers, 'reindex', target);
 
-  while (reindexed + skipped + failed < target) {
+  let stopped: BudgetExhausted | null = null;
+  try { await metered(async () => { while (reindexed + skipped + failed < target) {
     const remaining = target - (reindexed + skipped + failed);
     const batchSize = Math.min(BATCH, remaining);
     const batch = await readBatch(engine, batchSize, type, !!opts.noEmbed, afterId);
@@ -402,6 +439,7 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
       workers,
       failureLabel: (row) => row.slug,
       onItem: async (row) => {
+        if (capHit) throw capHit;
         reporter.tick();
         try {
           if (row.source_path && repoPath) {
@@ -461,15 +499,20 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
             skipped++;
           }
         } catch (err) {
+          if (err instanceof BudgetExhausted) throw err;
           const msg = err instanceof Error ? err.message : String(err);
           process.stderr.write(`[reindex] ${row.slug}: ${msg}\n`);
           failed++;
         }
       },
     });
+  } }); } catch (e) {
+    if (!(e instanceof BudgetExhausted)) throw e;
+    stopped = e;
   }
 
   reporter.finish();
+  if (stopped) return reportBudgetStop(engine, stopped, { pending, type, json: !!opts.json, reindexed, skipped, failed, workers });
 
   if (reindexed > 0) await refreshProjectionStatistics(engine);
   const pendingAfter = await countPending(engine, type, !!opts.noEmbed);
@@ -500,6 +543,25 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
   }
 
   return result;
+}
+
+/**
+ * W12 P1: the run stopped at its approved cost cap. Pages re-chunked so far are
+ * kept (a rerun continues with the rest); exit 1 with the spend and the rerun.
+ */
+async function reportBudgetStop(engine: BrainEngine, e: BudgetExhausted, r: { pending: number; type: string | null; json: boolean; reindexed: number; skipped: number; failed: number; workers?: number }): Promise<ReindexResult> {
+  if (r.reindexed > 0) await refreshProjectionStatistics(engine);
+  const pendingAfter = await countPending(engine, r.type, false);
+  setCliExitVerdict(1);
+  const message = `stopped at the $${e.cap.toFixed(2)} cost cap after spending $${e.spent.toFixed(4)} (${e.message}). ${pendingAfter} page(s) still pending, and pages re-chunked after the cap wait for gbrain embed --stale; ask the user before running again with a higher --max-usd.`;
+  if (r.json) {
+    process.stdout.write(JSON.stringify({ pending: r.pending, pending_after: pendingAfter, reindexed: r.reindexed, skipped: r.skipped, failed: r.failed,
+      chunker_version: MARKDOWN_CHUNKER_VERSION, type: r.type, budget_exhausted: { cap_usd: e.cap, spent_usd: e.spent, reason: e.reason } }) + '\n');
+  } else {
+    process.stderr.write(`[reindex] ${message}\n`);
+  }
+  return { pending: r.pending, pendingAfter, reindexed: r.reindexed, skipped: r.skipped, failed: r.failed, dryRun: false, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type: r.type,
+    ...(r.workers !== undefined ? { workers: r.workers } : {}) };
 }
 
 /**

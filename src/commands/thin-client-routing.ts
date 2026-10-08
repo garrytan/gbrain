@@ -120,7 +120,7 @@ export async function routeThinClientCommand(
   }
 
   if (command === 'search') {
-    if (sub === 'modes' && !rest.includes('--reset') && !rest.includes('--source')) {
+    if (sub === 'modes' && !rest.includes('--reset') && !rest.includes('--source') && !rest.includes('--mode')) {
       printJson(await call(cfg, 'search_modes', {}));
       return true;
     }
@@ -132,7 +132,7 @@ export async function routeThinClientCommand(
       printJson(await call(cfg, 'search_tune', {}));
       return true;
     }
-    return false; // modes --reset / modes --source (the reset dry-run) / tune --apply / diagnose — host-side config or live probe
+    return false; // modes --reset / modes --mode|--source (the reset dry-run) / tune --apply / diagnose — host-side config or live probe
   }
 
   if (command === 'jobs' && sub === 'stats') {

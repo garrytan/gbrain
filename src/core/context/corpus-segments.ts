@@ -94,8 +94,10 @@ const SEAT_ORPHAN_GRACE_MS = 10 * 60 * 1000;
  * publish). Lives HERE so the engine-free hook lane can GC orphaned receipts
  * without importing the engine-typed harvest module. */
 export const HARVEST_RECEIPT_SUFFIX = '.receipt.json';
-/** #6091: capture-time consent record (capture-consent.ts); reaped with its corpus file after a grace period. */
+/** #6091: capture-time consent record (capture-consent.ts); reaped with its corpus file after a grace period.
+ * `<file>.capture-off.json` is the pre-wave-12 single record; W4.2 records are `<file>.capture-off.<brain>.json`. */
 export const CAPTURE_OFF_SUFFIX = '.capture-off.json';
+export const CAPTURE_OFF_INFIX = '.capture-off.';
 /** #5887 window-progress sidecar (context/corpus-windows.ts) and its CAS
  * lock. Engine-free home so the hook's GC reaps both with the `.txt`; the
  * hook's resume rewrite never deletes them. */
@@ -587,9 +589,10 @@ export function gcCorpusArtifacts(
           }
           continue;
         }
-        if (name.endsWith(CAPTURE_OFF_SUFFIX)) {
-          // Written BEFORE its corpus file lands: only an orphan past the grace period is reaped.
-          if (!existsSync(p.slice(0, -CAPTURE_OFF_SUFFIX.length)) && statSync(p).mtimeMs < Date.now() - SEAT_ORPHAN_GRACE_MS) rmSync(p, { force: true });
+        const offAt = name.endsWith('.json') ? name.lastIndexOf(CAPTURE_OFF_INFIX) : -1;
+        if (offAt > 0) {
+          // Written BEFORE its corpus file lands: only an orphan past the grace period is reaped (every brain's record alike).
+          if (!existsSync(join(dir, name.slice(0, offAt))) && statSync(p).mtimeMs < Date.now() - SEAT_ORPHAN_GRACE_MS) rmSync(p, { force: true });
           continue;
         }
         if (name.endsWith('.ledger.json')) {

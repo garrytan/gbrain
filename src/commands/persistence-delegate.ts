@@ -21,12 +21,15 @@ export async function reportPersistenceCliError(error: unknown, json = false,
   // PENDING_WRITE_EXIT_CODE (0 with --accept-pending) and names how to poll.
   const pending = pendingReceiptOf(error);
   const acceptPending = acceptPendingRequested(getCliOptions().acceptPending);
+  const render = cliRenderContext();
+  const envelope = toAgentError(error, { transport: 'cli', command: cliCommandOf(), render, ...(pending ? { mutating: true, outcome: 'pending' as const } : {}) });
+  // #6255: one source for the poll command: the envelope's receipt fix, pinned like every CLI fix.
+  const poll = pending ? pollCommand(pending.request_id, envelope.fix, render.routing) : undefined;
   if (json) {
     // Legacy keys lead and keep their values; the v1 envelope fields (code, fix, docs_cmd, class, retryable,
     // notices, contract_version) come from the shared renderer, as renderCliError writes them (cli-error.ts pattern).
     const legacy: Record<string, unknown> = pending ? { ...detail, request_id: pending.request_id, state: pending.state,
-      poll_command: pollCommand(pending.request_id) } : { ...detail };
-    const envelope = toAgentError(error, { transport: 'cli', command: cliCommandOf(), render: cliRenderContext() });
+      poll_command: poll } : { ...detail };
     noteRenderedErrorCode(envelope.code);
     const doc = { ...legacy, ...Object.fromEntries(Object.entries(envelope).filter(([, v]) => v !== undefined)), ...legacy };
     await out(JSON.stringify(doc, null, 2) + '\n');
@@ -39,7 +42,7 @@ export async function reportPersistenceCliError(error: unknown, json = false,
   const requestId = receipt?.request_id ?? ('request_id' in detail ? detail.request_id : undefined);
   if (requestId) console.error(`Request: ${requestId}${receipt ? ` (${receipt.state})` : ''}`);
   if (pending) {
-    console.error(`Poll: ${pollCommand(pending.request_id)}`);
+    console.error(`Poll: ${poll}`);
     if (!acceptPending) console.error(`Exit ${PENDING_WRITE_EXIT_CODE}: accepted, not yet committed. Wait longer with --wait <seconds>, or pass --accept-pending to exit 0 (${WRITE_EXIT_DOCS}).`);
   }
   setCliExitVerdict(writeErrorExitCode(error, acceptPending));

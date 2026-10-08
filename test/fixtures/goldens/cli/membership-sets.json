@@ -274,6 +274,7 @@
         "projections",
         "protocol",
         "providers",
+        "quarantine",
         "questions",
         "reindex",
         "reinit-pglite",

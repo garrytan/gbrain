@@ -5,6 +5,7 @@ import type { FactsBackstopCtx } from '../facts/backstop.ts';
 import { factEventTime } from '../facts/event-time.ts';
 import { ENTITY_HINTS_CAP, type ExtractedFact, type FactEmbeddingSignature } from '../facts/extract.ts';
 import { readFactsEmbeddingDim } from '../embedding-dim-check.ts';
+import { currentEmbeddingSignature } from '../embedding.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { hostFix, opTransport, readFix } from '../ops/op-fix.ts';
@@ -117,6 +118,16 @@ export async function resolveManagedFactsEmbedding(engine: BrainEngine, config: 
   const model = values.embedding_model;
   if (!model) return null;
   const dimensions = /^[1-9]\d*$/.test(values.embedding_dimensions ?? '') ? Number(values.embedding_dimensions) : null;
+  if (!/[:/]/.test(model) && /^[^\s]+$/.test(model) && dimensions) {
+    // #6113: a legacy row stores the model without its provider. Name the one supported rewrite (a preview first).
+    const signature = currentEmbeddingSignature();
+    const gateway = signature ? signature.slice(0, signature.lastIndexOf(':')) : null;
+    const target = gateway?.endsWith(`:${model}`) ? gateway : null;
+    throw opError('embedding_configuration', 'The selected brain records its embedding model without a provider, so facts cannot be embedded.',
+      `The brain's embedding_model row is ${JSON.stringify(model)} with no provider prefix (a row from an older install), so fact extraction stopped before admission; gbrain config set cannot change it. `
+      + `Preview the supported rewrite with gbrain migrate embeddings --to ${target ?? `<provider>:${model}`} --dry-run and show the user its cost: it re-embeds active facts, so applying it needs the user's paid authorization.`,
+      { fix: target ? readFix(`Previews rewriting the brain's embedding identity to ${target}, read-only.`, { argv: ['gbrain', 'migrate', 'embeddings', '--to', target, '--dry-run'] }) : embeddingsFix() });
+  }
   if (!/^[^\s:]+:[^\s]+$/.test(model) || !dimensions || !Number.isSafeInteger(dimensions)) {
     throw opError('embedding_configuration', 'The selected brain has no verifiable facts embedding model and dimensions.',
       `The brain's embedding_model (${JSON.stringify(model)}) is not provider:model or embedding_dimensions is not a positive integer, so fact extraction stopped before admission. Check embedding readiness; correcting the configuration is the user's decision.`,

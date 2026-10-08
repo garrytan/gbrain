@@ -1,3 +1,8 @@
+import type { RemediationStep } from '../core/remediation-step.ts';
+import { isManualOnlyStep } from '../core/remediation/manual-only.ts';
+
+export { isManualOnlyStep };
+
 export const AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES = 60;
 
 export interface AutopilotRemediationPlanShape {
@@ -43,4 +48,9 @@ export function shouldSleepHealthyAutopilot(
   return score >= 95
     && planLength === 0
     && minutesSinceLastFull < AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES;
+}
+
+/** The steps a targeted dispatch submits: never a manual-only step. */
+export function autopilotTargetedSteps<T extends Pick<RemediationStep, 'job'>>(plan: readonly T[]): T[] {
+  return plan.filter((step) => !isManualOnlyStep(step));
 }

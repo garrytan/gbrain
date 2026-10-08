@@ -96,6 +96,8 @@ import { withChatPhase, estimateChatCostUsd } from '../ai/chat-usage.ts';
 import { verifyAndRepairDreamPages, normForGrounding, readVerifyEpoch, loadChildWriteEpochs, isDreamOwnedPage, type QuoteVerifyStats, type TranscriptForVerify } from './synthesize-verify.ts';
 import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
 import { resolveTriageDecide, type TriageDecide, type TriageDecideStats } from './triage-decide.ts';
+import { OperationError } from '../ops/contract.ts';
+import { backoffUntil, recordUnreliableTriage, responseDiagnostic, triageBackoffDetails, TRIAGE_UNRELIABLE_BACKOFF, type TriageDiagnostic } from './triage-backoff.ts';
 import { resolveGroundingDecide } from './grounding-decide.ts';
 import { passesTriageGate, rescueConfigOf, DEFAULT_RESCUE_FLOOR, DEFAULT_RESCUE_MIN_SEGMENTS, DEFAULT_RESCUE_CONTENT_TYPES, DEFAULT_RESCUE_CONFIG, type RescueConfig, type RescueVerdictLike } from './triage-rescue.ts';
 
@@ -565,7 +567,7 @@ async function runPhaseSynthesizeInner(
       judged: pass.judged,
       cache_hits: pass.cacheHits,
       unreliable: pass.unreliable,
-      deferred: pass.deferred,
+      deferred: pass.deferred, ...triageBackoffDetails(pass.backoff),
       degraded: degradedCount,
       below_threshold: pass.reports.filter(r => r.score !== null && !r.worth).length,
       // F6 spend visibility: judge-call tokens for this pass's cache MISSES
@@ -583,9 +585,9 @@ async function runPhaseSynthesizeInner(
       rescue_fired: pass.reports.filter(r => r.rescued === true).length, ...(pass.decide ? { decide: pass.decide } : {}),
     };
     // 3A: a time-boxed cold pass must never read as mass rejection.
-    const deferralSuffix = pass.deferred > 0
+    const deferralSuffix = (pass.deferred > 0
       ? ` (${pass.deferred} not yet triaged — time budget; re-run or use dream retriage)`
-      : '';
+      : '') + (pass.backoff > 0 ? ` (${pass.backoff} in unreliable-verdict backoff — dream retriage --force re-judges)` : '');
 
     // Dry-run stops here: the triage pass ran (scores cached), but no
     // synthesis. Codex finding #8: --dry-run does NOT mean "zero LLM calls";
@@ -1419,8 +1421,8 @@ async function runPhaseSynthesizeInner(
       },
     }));
   } catch (e) {
-    return failed(makeError('InternalError', 'SYNTH_PHASE_FAIL',
-      e instanceof Error ? (e.message || 'synthesize phase threw') : String(e)));
+    return failed(makeError('InternalError', 'SYNTH_PHASE_FAIL', e instanceof Error ? (e.message || 'synthesize phase threw') : String(e),
+      e instanceof OperationError ? e.suggestion : undefined), e instanceof OperationError ? { error_code: e.code } : {});
   } finally {
     if (ownedPrivateQueue) {
       try {
@@ -1986,10 +1988,12 @@ export interface TriageResult {
    *                   could be parsed out of the response. Out-of-range scores
    *                   land here deliberately — clamping would cache a
    *                   fabricated verdict.
-   * runTriagePass skips putDreamVerdict for these so the next cycle re-judges
-   * the transcript instead of permanently trusting a degenerate rejection.
+   * runTriagePass never caches these as a verdict: it writes a backoff marker
+   * (triage-backoff.ts) so the same input is not re-paid every cycle.
    */
   unreliable?: 'truncated' | 'refusal' | 'unparseable';
+  /** Set with `unreliable`: stop reason, length and digest of the response, never its text. */
+  diagnostic?: TriageDiagnostic;
   /**
    * F6: judge-call token usage when the client surfaced it (gateway clients
    * do; legacy SDK-shape mocks may not). Present on degenerate results too —
@@ -2127,8 +2131,10 @@ Quote verbatim; never paraphrase inside "quote".`;
     ? { in: rawUsage.input_tokens, out: rawUsage.output_tokens }
     : undefined;
   const answeredBy = (msg as { answered_by?: string }).answered_by;
-  const withTokens = (r: TriageResult): TriageResult =>
-    ({ ...r, ...(callTokens ? { tokens: callTokens } : {}), ...(answeredBy ? { answeredBy } : {}) });
+  const withTokens = (r: TriageResult): TriageResult => ({
+    ...r, ...(callTokens ? { tokens: callTokens } : {}), ...(answeredBy ? { answeredBy } : {}),
+    ...(r.unreliable ? { diagnostic: responseDiagnostic(stopReasonRaw, text) } : {}),
+  });
   const refused = stopReasonRaw === 'refusal';
   const abnormalStop: TriageResult['unreliable'] | undefined =
     truncated ? 'truncated' : refused ? 'refusal' : undefined;
@@ -2349,8 +2355,10 @@ export interface TriageFileReport {
   reasons: string[];
   cached: boolean;
   unreliable?: string;
-  /** True when the maxMs budget (or shouldStop) expired before this file could be judged. */
+  /** True when the maxMs budget (or shouldStop) expired, or an unreliable-verdict backoff holds, before this file could be judged. */
   deferred?: boolean;
+  /** `triage_unreliable_backoff` when a backoff marker deferred the file (counted in the pass's `backoff`, not `deferred`). */
+  code?: string;
 }
 
 export interface TriagePassResult {
@@ -2362,6 +2370,8 @@ export interface TriagePassResult {
   cacheHits: number;
   unreliable: number;
   deferred: number;
+  /** Files skipped by an unreliable-verdict backoff marker: free, and not a budget deferral. */
+  backoff: number;
   /** F6: summed judge-call usage across cache MISSES this pass (hits are free). */
   tokens: { in: number; out: number };
   /** S7 decide stats, present only when the slot is not off. */
@@ -2412,6 +2422,7 @@ export async function runTriagePass(
   let cacheHits = 0;
   let unreliableCount = 0;
   let deferredCount = 0;
+  let backoffCount = 0;
   let tokensIn = 0;
   let tokensOut = 0;
 
@@ -2461,7 +2472,8 @@ export async function runTriagePass(
   const processLlm = async (idx: number): Promise<void> => {
     const t = transcripts[idx];
     // Cache lookup is always free — never deferred by the time budget.
-    const cached = cfg.force ? null : await engine.getDreamVerdict(t.filePath, t.contentHash);
+    const existing = await engine.getDreamVerdict(t.filePath, t.contentHash);
+    const cached = cfg.force ? null : existing;
     const cacheValid = cached !== null && isTriageCacheValid(cached, cfg.model, cfg.staleBefore);
     if (cached && cacheValid) {
       cacheHits++;
@@ -2475,6 +2487,15 @@ export async function runTriagePass(
         content_type: cached.content_type,
         reasons: cached.reasons,
         cached: true,
+      };
+      return;
+    }
+    const backedOffUntil = cfg.force ? null : backoffUntil(existing, cfg.model, TRIAGE_VERSION);
+    if (backedOffUntil) {
+      backoffCount++;
+      reports[idx] = {
+        filePath: t.filePath, worth: false, score: null, content_type: null, cached: false, deferred: true, code: TRIAGE_UNRELIABLE_BACKOFF,
+        reasons: [`${TRIAGE_UNRELIABLE_BACKOFF}: the last judge verdict was unreliable; not re-judged before ${backedOffUntil}`],
       };
       return;
     }
@@ -2528,16 +2549,14 @@ export async function runTriagePass(
         tokensOut += triage.tokens.out;
       }
       if (triage.unreliable) {
-        // Degenerate judgement — do NOT write it to dream_verdicts: a cached
-        // rejection is permanent for this content hash, and a triage model
-        // that reliably truncates would silently reject every transcript
-        // forever. Log + skip so the next cycle re-judges.
+        // Degenerate judgement — never cached as a verdict (a cached rejection
+        // is permanent for this content hash). A backoff marker instead keeps
+        // the next cycles from paying to re-judge the same input (#6069).
         unreliableCount++;
-        process.stderr.write(
-          `[dream] triage for ${t.basename} was ${triage.unreliable} ` +
-          `(${triage.reasons.join('; ')}); not caching in dream_verdicts — ` +
-          `next cycle will re-judge ${t.filePath}\n`,
-        );
+        await recordUnreliableTriage(engine, t, triage.unreliable, triage.diagnostic, {
+          existing, keepExisting: existing !== null && isTriageCacheValid(existing, cfg.model),
+          model: cfg.model, triageVersion: TRIAGE_VERSION, aborted: cfg.signal?.aborted === true,
+        });
         reports[idx] = {
           filePath: t.filePath,
           worth: false,
@@ -2649,7 +2668,7 @@ export async function runTriagePass(
     }
   }
 
-  return { reports, byPath, judged, cacheHits, unreliable: unreliableCount, deferred: deferredCount, tokens: { in: tokensIn, out: tokensOut }, ...(cfg.decide ? { decide: cfg.decide.stats } : {}) };
+  return { reports, byPath, judged, cacheHits, unreliable: unreliableCount, deferred: deferredCount, backoff: backoffCount, tokens: { in: tokensIn, out: tokensOut }, ...(cfg.decide ? { decide: cfg.decide.stats } : {}) };
 }
 
 // ── Subagent prompt ──────────────────────────────────────────────────

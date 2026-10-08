@@ -542,8 +542,11 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
   // effect; a push failure leaves the whole group retryable (the next pass
   // finds nothing to commit and pushes once). Nothing holds a lock or a
   // database connection while waiting.
-  const probes = new Map<string, Promise<boolean>>();
-  const deferred: { effects: PersistenceEffect[]; binding: WorktreeBinding; hardened: Promise<boolean> }[] = [];
+  // #6210: each cached probe settles to a value, so a failed probe is never an
+  // unhandled rejection while it waits in the map; it fails every effect it covers.
+  type DurabilityProbe = { durable: boolean } | { error: unknown };
+  const probes = new Map<string, Promise<DurabilityProbe>>();
+  const deferred: { effects: PersistenceEffect[]; binding: WorktreeBinding; hardened: Promise<DurabilityProbe> }[] = [];
   const unpushed = new Map<string, { binding: WorktreeBinding; items: { effect: PersistenceEffect; git: string; target?: string }[] }>();
   const commitGroup = async (effects: PersistenceEffect[], binding: WorktreeBinding & { local_path: string }) => {
     // A short group yields to publications still queued for its worktree, so a
@@ -611,7 +614,7 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
       } catch (error) { await recordFailure(engine, effect, error, opts.signal); continue; }
       if (effect.kind === 'git' && binding?.local_path) {
         const root = binding.local_path;
-        if (!probes.has(root)) probes.set(root, isDurabilityHardenedAsync(root));
+        if (!probes.has(root)) probes.set(root, isDurabilityHardenedAsync(root).then(durable => ({ durable }), error => ({ error })));
         const group = singleFileGitEffect(effect) && effect.worktree_id
           ? [effect, ...await claimCoalescedGitEffects(engine, opts.hostId, effect.worktree_id, GIT_GROUP_SIZE - 1)] : [effect];
         deferred.push({ effects: group, binding, hardened: probes.get(root)! });
@@ -619,7 +622,12 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
     }
     if (!deferred.length) break;
     for (const { effects, binding, hardened } of deferred.splice(0)) {
-      const durable = await hardened;
+      const probe = await hardened;
+      if ('error' in probe) {
+        for (const effect of effects) await recordFailure(engine, effect, probe.error, opts.signal);
+        continue;
+      }
+      const durable = probe.durable;
       if (durable && singleFileGitEffect(effects[0]!)) await commitGroup(effects, { ...binding, local_path: binding.local_path! });
       // Coalesced siblings run with their own source's binding (sources can share a worktree).
       else for (const effect of effects) {

@@ -146,8 +146,10 @@ line naming the cap, its source and how to remove it, e.g.
 | Backfill per-job budget | `embed.backfill_max_usd` | `10` | caps the job's tracker | `off` (`0`/garbage → default, fail-closed) | uncapped (still ledgered) |
 | Backfill cooldown | `embed.backfill_cooldown_min` | `10` | skips re-submission inside window | — (latency knob, not spend) | **not** bypassed |
 | `reindex-code` cost gate | — (preview before re-embed) | — | TTY prompt / non-TTY refuse + exit 3 (`confirmation_required`) | `--max-cost off` | runs uncapped (still ledgered) |
+| `reindex --markdown` consent gate | — | — | TTY prompt / non-TTY exit 3; a queued job needs the approval stored at submit | `--dry-run`, `--no-embed` | derived cap |
 | `migrate embeddings` consent gate | — (plan + estimate before provider migration) | — | TTY y/N prompt / non-TTY refuse + exit 3 (`confirmation_required`) | `--yes` | estimate marked informational, but **still prompts** (guards a destructive schema rebuild, not just spend) |
-| `enrich` / `onboard --auto` | `--max-usd` (per-call) | — | non-TTY without `--yes`/`--max-usd`: refuse + exit 3 (`confirmation_required`); `--yes` runs under the derived cap | `--max-usd off` | runs uncapped (still ledgered) |
+| `enrich` | `--max-usd` (per-call) | — | non-TTY without `--yes`/`--max-usd`: refuse + exit 3 (`confirmation_required`); `--yes` runs under the derived cap | `--max-usd off` | runs uncapped (still ledgered) |
+| `onboard --auto` | `--max-usd` (per-call) | — | refuses without `--max-usd` (exit 2); manual-only steps (pack upgrade, takes bootstrap) never run, their commands are printed | `--max-usd off` | runs uncapped (still ledgered) |
 | Image-OCR per-run ceiling | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
 | Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker (one tracker per drain attempt, across all its batches) | — | **not** consulted (phase budget enforces regardless) |
 | Atom auto-drain daily cap | `autopilot.auto_drain.max_usd_per_day` | `2.00` | daily cap on drain **attempts** (`floor(max / 0.30)` = 6), not a dollar ledger | `gbrain config set autopilot.auto_drain.enabled false` | **not** consulted |
@@ -380,6 +382,13 @@ gbrain config set dream.breaker.max_dead_submissions 5   # raise the limit; 0 di
 - The check happens before synthesis submission. Transcript triage for that run may
   already have happened, so the promise is "no synthesis submission", not "no
   model call at all".
+- Patterns digests its reflection set into its key, so the key changes whenever a
+  reflection does. Patterns deaths therefore count per source, under
+  `dream:patterns:source:<source id>`, whatever reflections each run read. A
+  patterns child cancelled at its timeout after paid work counts as a death; one
+  cancelled before any work does not. A completed run resets the count, so only
+  deaths in a row trip it; reset a tripped source with
+  `gbrain dream reset-key 'dream:patterns:source:<source id>'`.
 - Not covered: a transcript that keeps growing gets a new content-hashed key each
   cycle, and patterns runs outside maintenance carry no key.
 - If the count query fails, the breaker is skipped for that run with a warning, the

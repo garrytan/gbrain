@@ -25,6 +25,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { opError } from '../ops/contract.ts';
 import { createProgress, type ProgressOptions } from '../progress.ts';
 import { hardenedGitSync } from '../hardened-git.ts';
+import { classifyGitCheckout } from '../git-checkout.ts';
 import { digest, sha256 } from './digest.ts';
 import { isPhysicalRootMetadata } from './root-metadata.ts';
 import type { PhysicalRootRecovery } from './physical-root-recovery.ts';
@@ -39,20 +40,41 @@ export type StoredWorktreeManifest = WorktreeManifest & { canonical_stamp?: stri
 export const MANIFEST_PROGRESS_MIN_FILES = 5000;
 const GIT_LIMITS = { timeoutMs: 60_000, maxBytes: 256 * 1024 * 1024 };
 
+const unsafe = (message: string, suggestion: string, opts?: Parameters<typeof opError>[3]) => opError('writer_manifest_unsafe', message, suggestion, opts);
+
 /** The scope a stored manifest was recorded in (older releases recorded `tree` without saying so). */
 export function storedManifestScope(manifest: { scope?: WorktreeManifestScope } | null | undefined): WorktreeManifestScope {
   return manifest?.scope === 'git' ? 'git' : 'tree';
 }
 
-/** `git` when `root` is the top of its own Git work tree, else `tree`. */
+/**
+ * True when `canonical` positively cannot be the top of its own Git work tree:
+ * it has no `.git` directory or file. (Wave 12 seam: lane W1's shared
+ * "positively not a Git checkout" classifier replaces this at integration.)
+ */
+/**
+ * `git` when `root` is the top of its own Git work tree, else `tree`. W4.4:
+ * when Git cannot answer for a directory that holds `.git` (damaged HEAD,
+ * dubious ownership, timeout, Git missing), this refuses instead of hashing
+ * the whole tree, which would open ignored files such as `.env`.
+ */
 export function detectManifestScope(root: string): WorktreeManifestScope {
   const canonical = realpathSync(root);
   const top = hardenedGitSync(canonical, ['rev-parse', '--show-toplevel'], { timeoutMs: 10_000, maxBytes: 64 * 1024 });
-  if (!top.ok) return 'tree';
+  if (!top.ok) {
+    if (classifyGitCheckout(canonical) === 'not_git') return 'tree';
+    throw unsafe('Git could not read this checkout, so no manifest was recorded.',
+      `${canonical} holds a .git entry but \`git rev-parse\` failed (${top.reason === 'exit' ? 'a damaged repository, or a checkout owned by another user' : top.reason}), and hashing every file instead would read ignored files such as .env. `
+        + `Ask the user to run \`git -C ${canonical} status\` to see why Git refuses it and repair it (or run gbrain as the checkout's owner), then run the step again.`,
+      { why: 'Without Git the manifest would cover every file, ignored secrets included, so nothing was hashed.',
+        fix: { argv: ['git', '-C', canonical, 'status'], consent: [], actor: 'user', requires_exclusive: false,
+          why: 'Git prints why it cannot read this checkout (a damaged HEAD or index, or a checkout owned by another user).',
+          user_message: `Git cannot read ${canonical}. Please run the command shown, repair what it reports, then run the gbrain step again.`,
+          verify: { argv: ['git', '-C', canonical, 'rev-parse', '--show-toplevel'] } } });
+  }
   try { return realpathSync(top.stdout.toString('utf8').trim()) === canonical ? 'git' : 'tree'; } catch { return 'tree'; }
 }
 
-const unsafe = (message: string, suggestion: string) => opError('writer_manifest_unsafe', message, suggestion);
 const excluded = (rel: string) => rel.split('/').some(part => part === '.git' || part === '.gbrain-managed' || isPhysicalRootMetadata(part));
 
 /**

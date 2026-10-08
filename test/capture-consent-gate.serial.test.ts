@@ -10,7 +10,7 @@
  * Serial: real PGLite engines, module-global harvest queue, GBRAIN_HOME env.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -19,7 +19,9 @@ import { __resetFactsQueueForTests } from '../src/core/facts/queue.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
 import { CORPUS_INGESTED_SUFFIX, runMaintenanceSweep } from '../src/core/sweep.ts';
 import { __drainCheckpointHarvestForTests, __resetCheckpointHarvestForTests, scheduleCheckpointHarvest } from '../src/core/context/checkpoint-harvest.ts';
-import { appendSegmentLedger, segmentFileName, writeSegment } from '../src/core/context/corpus-segments.ts';
+import { appendSegmentLedger, gcCorpusArtifacts, segmentFileName, writeSegment } from '../src/core/context/corpus-segments.ts';
+import { brainIdentity, recordCaptureIfOff } from '../src/core/context/capture-consent.ts';
+import { parseCorpusTurns } from '../src/core/context/corpus-turns.ts';
 import { runHook } from '../src/commands/hook.ts';
 import { discoverTranscripts } from '../src/core/cycle/transcript-discovery.ts';
 
@@ -338,6 +340,69 @@ describe('two brains on one machine', () => {
     await asBrainB(() => runMaintenanceSweep(other, { sourceId: 'default', capabilities: KEYED, budgetMs: 30_000 }));
     expect(prompts.length).toBe(1);
     expect(prompts[0]).toContain('beta said to brain B');
+  });
+
+  // W4.2: two brains whose hooks bank the same session file in one shared corpus directory.
+  const OFF = { engine: 'pglite', memory: { auto_writeback: 'off' } } as never;
+  const shared = (sessionId: string, turns: string[]) => {
+    const file = join(corpusDir, `${sessionId}.txt`);
+    return { file, text: corpusText(turns) };
+  };
+
+  test('W4.2: brain B capturing under off never erases brain A\'s off record for the same file', async () => {
+    await setMode('off');
+    const { file, text } = shared('sess-w42a', ['delta said to brain A under off', 'ack']);
+    recordCaptureIfOff(OFF, file, text);
+    await asBrainB(async () => { recordCaptureIfOff(OFF, file, text + '\n[user]\nepsilon said to brain B\n'); });
+    writeFileSync(file, text);
+    await setMode('salient');
+    await sweep();
+    expect(prompts.length).toBe(0);
+  });
+
+  test('W4.2: a pre-upgrade record of this brain is unioned on the first per-brain write and survives an older writer replacing it', async () => {
+    await setMode('off');
+    const { file, text } = shared('sess-w42b', ['zeta said to brain A before the upgrade', 'ack']);
+    const legacy = file + '.capture-off.json';
+    writeFileSync(legacy, JSON.stringify({ version: 1, brain: brainIdentity(), source: null, at: new Date().toISOString(),
+      turns: parseCorpusTurns(text).map((t) => t.sha256) }) + '\n');
+    const later = text + '\n[user]\neta said to brain A after the upgrade\n';
+    recordCaptureIfOff(OFF, file, later);
+    // An older gbrain on brain B still writes the single legacy file and drops A's turns from it.
+    await asBrainB(async () => {
+      writeFileSync(legacy, JSON.stringify({ version: 1, brain: brainIdentity(), source: null, at: new Date().toISOString(), turns: [] }) + '\n');
+    });
+    writeFileSync(file, later);
+    await setMode('salient');
+    await sweep();
+    expect(prompts.length).toBe(0);
+  });
+
+  test('W4.2: an unreadable capture-off record holds the file instead of reading as "no record"', async () => {
+    const { file, text } = shared('sess-w42c', ['theta said under off, record later corrupted', 'ack']);
+    writeFileSync(file + '.capture-off.json', '{"version":1,"brain":');
+    writeFileSync(file, text);
+    await setMode('salient');
+    await sweep();
+    expect(prompts.length).toBe(0);
+    expect(() => recordCaptureIfOff(OFF, file, text)).toThrow(/unreadable/);
+  });
+
+  test('W4.2: GC reaps any brain\'s orphaned record only past the grace period and keeps a live file\'s records', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gb-consent-gc-'));
+    tmpDirs.push(dir);
+    const old = new Date(Date.now() - 60 * 60 * 1000);
+    const orphanB = join(dir, 'gone.txt.capture-off.bbbbbbbbbbbbbbbbbbbbbbbb.json');
+    const freshB = join(dir, 'pending.txt.capture-off.bbbbbbbbbbbbbbbbbbbbbbbb.json');
+    const liveA = join(dir, 'live.txt.capture-off.aaaaaaaaaaaaaaaaaaaaaaaa.json');
+    for (const p of [orphanB, freshB, liveA]) writeFileSync(p, '{}\n');
+    writeFileSync(join(dir, 'live.txt'), '[user]\nhi\n');
+    utimesSync(orphanB, old, old);
+    utimesSync(liveA, old, old);
+    gcCorpusArtifacts(dir, 24 * 60 * 60 * 1000, []);
+    expect(existsSync(orphanB)).toBe(false);
+    expect(existsSync(freshB)).toBe(true);
+    expect(existsSync(liveA)).toBe(true);
   });
 
   test('pin: a capture record written by another brain in a shared corpus directory is ignored', async () => {

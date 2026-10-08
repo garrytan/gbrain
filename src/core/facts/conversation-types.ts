@@ -78,6 +78,9 @@ const FLAG_TRUE = ['true', '1', 'yes', 'on'];
 const FLAG_FALSE = ['false', '0', 'no', 'off'];
 const flagText = (v: unknown): string => (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? String(v).trim().toLowerCase() : '');
 
+/** A frontmatter flag set off: `false`, `0`, `no` or `off`, as a YAML scalar or as text, in any case. */
+export const isFrontmatterFlagOff = (v: unknown): boolean => FLAG_FALSE.includes(flagText(v));
+
 /** Strict eligibility (opt-in): only `type: conversation` or an explicit `conversation_parseable: true`. */
 export async function requireParseableConversationFlag(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
   return FLAG_TRUE.includes(flagText(await engine.getConfig(REQUIRE_PARSEABLE_FLAG_CONFIG_KEY)));

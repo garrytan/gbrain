@@ -16,6 +16,7 @@
  * these tests tell a memo hit from a recompute.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setSystemTime, test } from 'bun:test';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
@@ -52,7 +53,7 @@ beforeEach(async () => {
   await seedSourceScopeFixture(engine);
 });
 
-afterEach(() => setSystemTime());
+afterEach(() => { setSystemTime(); _resetCliExitVerdictForTests(); });
 
 const advance = (ms: number) => { now += ms; setSystemTime(new Date(now)); };
 

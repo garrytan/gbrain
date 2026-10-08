@@ -976,7 +976,7 @@ export async function runPhaseExtractAtoms(
   }
 
   // ── gbrain#4148 helpers ────────────────────────────────────────────
-  let malformedOutputs = 0;
+  let malformedOutputs = 0, stoppedOutputs = 0; // #6260: stopped = clipped, or empty under an unconfirmed stop
   const tombstonedForFailures: string[] = [];
   // v146: transcript tombstones ride a SEPARATE array. `tombstoned_for_failures`
   // is a list of page SLUGS; transcripts are filesystem paths, and mixing the two
@@ -1132,11 +1132,11 @@ export async function runPhaseExtractAtoms(
 
       // gbrain#4148: typed outcome — malformed output is a FAILURE (counted
       // toward the bounded tombstone below), never a zero-yield success.
-      const parseOutcome = parseAtomsOutcome(result.text);
+      const parseOutcome = parseAtomsOutcome(result.text, result.stopReason);
       if (!parseOutcome.ok) {
-        malformedOutputs++;
+        if (parseOutcome.stopped) stoppedOutputs++; else malformedOutputs++;
         if (!opts.dryRun && managed && origin) writeRequests.push(...await publishManagedAtoms(engine, managed, origin, [], parseOutcome.reason));
-        await recordDeterministicFailure(item, originLabel, `malformed model output: ${parseOutcome.reason}`);
+        await recordDeterministicFailure(item, originLabel, parseOutcome.stopped ? parseOutcome.reason : `malformed model output: ${parseOutcome.reason}`);
         continue;
       }
       const atoms = parseOutcome.atoms;
@@ -1456,7 +1456,7 @@ export async function runPhaseExtractAtoms(
       failures,
       ...(managed ? { write_requests: writeRequests } : {}),
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
-      malformed_outputs: malformedOutputs,
+      malformed_outputs: malformedOutputs, stopped_outputs: stoppedOutputs,
       tombstoned_for_failures: tombstonedForFailures,
       tombstoned_transcripts: tombstonedTranscripts,
       estimated_spend_usd: estimatedSpendUsd,

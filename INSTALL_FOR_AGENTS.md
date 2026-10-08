@@ -630,7 +630,7 @@ gbrain onboard --check --json
 The JSON envelope (`schema_version: 1`) carries `recommendations[]` with
 `apply_policy` per item: `auto_apply` (safe to run unattended),
 `prompt_required` (needs explicit user consent), or `manual_only`
-(LLM-bearing, user must run themselves).
+(pack upgrade, paid takes bootstrap: the user runs it).
 
 **After every `gbrain upgrade`:**
 ```bash
@@ -644,9 +644,10 @@ step regardless.
 ```bash
 gbrain onboard --auto --max-usd 5
 ```
-Refuses without `--max-usd N`. Runs auto-eligible items only. The
-autopilot daemon also consults onboard recommendations on its tick — no
-explicit agent action needed for the autonomous path.
+Refuses without `--max-usd N`. Never runs `manual_only` items; it
+lists them in `manual_only_skipped`. The autopilot daemon also consults
+onboard recommendations on its tick — no explicit agent action needed
+for the autonomous path.
 
 **Remote / federated brain installs (MCP):**
 The `run_onboard` MCP op (admin scope) lets thin-client agents probe

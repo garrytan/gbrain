@@ -44,3 +44,23 @@ test('projection recovery stops after a batch makes no progress', async () => {
   expect(await prepareEmbeddingProjections(engine, { repair: true })).toEqual({ rebuilt: 0, blocked: 1 });
   expect(batches).toBe(1);
 });
+
+// #6223 (fix wave 12): recovery walks a keyset cursor, so several full batches
+// of pages no projection can be built for are each visited once and it stops.
+test('projection recovery advances past full unavailable batches and terminates', async () => {
+  const cursors: unknown[] = [];
+  const engine = mockEmbedProjectionEngine({
+    readPageSnapshot: async () => null,
+    executeRaw: async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith('SELECT count(')) return [{ n: 5 }];
+      if (sql.startsWith('SELECT p.slug,p.source_id')) {
+        const after = Number(params![params!.length - 2]);
+        cursors.push(after);
+        return [1, 2, 3, 4, 5].filter(id => id > after).slice(0, 2).map(id => ({ id, slug: `synthetic-unavailable-${id}`, source_id: 'default' }));
+      }
+      return [];
+    },
+  });
+  expect(await prepareEmbeddingProjections(engine, { repair: true, limit: 2 })).toEqual({ rebuilt: 0, blocked: 5 });
+  expect(cursors).toEqual([0, 2, 4]);
+});

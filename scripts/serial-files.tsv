@@ -166,6 +166,7 @@ test/extract-facts-embed-warn.serial.test.ts	R2	R2: mock.module(../src/core/ai/g
 test/extract-include-frontmatter-config.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/facts-backstop-outcome.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, OPENAI_API_KEY, ANTHROPIC_API_KEY)
 test/facts-context-injection.serial.test.ts	global-state	global-state: process-wide test seams __resetHotMemoryCacheForTests
+test/facts-embedding-bare-model.serial.test.ts	global-state	global-state: configures the process-wide AI gateway (configureGateway/resetGateway) to name the gateway provider in the refusal
 test/facts-valid-from-context.serial.test.ts	R2	R2: mock.module(../src/core/facts/extract.ts) replaces modules for every file in the process
 test/filing-rules-resolution.serial.test.ts	R1	R1: mutates process.env (HOME, GBRAIN_HOME, GBRAIN_GIT_ALLOW_FILE_TRANSPORT)
 test/fix-wave-3-connector-loops.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests; configureGateway changes the process-wide AI gateway
@@ -279,6 +280,7 @@ test/pglite-wal-repair.serial.test.ts	global-state	global-state: R3: constructs 
 test/physical-root-overlap-vanished-dir.serial.test.ts	R2	R2: mock.module(node:fs) makes readdirSync throw ENOENT for one path
 test/projections-drain-cli.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/put-page-push-reporting.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
+test/quarantine-override.serial.test.ts	global-state	global-state: replaces console.log, console.error and process.exit to capture the quarantine CLI, and patches a shared engine's readPageSnapshot for the revision race
 test/query-cache-knobs-hash.serial.test.ts	R1	R1: mutates process.env (GBRAIN_FTS_LANGUAGE)
 test/query-image-date-readiness.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.ts) replaces modules for every file in the process
 test/query-image-flag.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.ts) replaces modules for every file in the process

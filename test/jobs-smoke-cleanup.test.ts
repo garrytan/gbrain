@@ -103,12 +103,27 @@ describe('gbrain jobs smoke cleanup', () => {
     expect(await jobRows()).toEqual(unrelated);
   }, 30_000);
 
-  test('--sigkill-rescue: the forged active transition is refused today, and neither probe nor rescue job is left', async () => {
+  test('--sigkill-rescue: the stalled probe is rescued (exit 0), and neither probe nor rescue job is left', async () => {
     const unrelated = await seedUnrelated();
-    // The rescue case forges status='active' with raw SQL, which the queue
-    // protocol trigger refuses (tracked separately). Pin that refusal so the
-    // cleanup assertion below is about a real throw, not a skipped case.
-    await expect(runSmoke(['--sigkill-rescue'])).rejects.toThrow(/Minion queue protocol/);
+    // W4.9: the rescue job enters `active` through queue.claim, so the queue
+    // protocol trigger admits it and the #219 rescue verdict is reached.
+    const result = await runSmoke(['--sigkill-rescue']);
+    expect(result.stderr).not.toContain('SMOKE FAIL');
+    expect(result.code).toBe(0);
+    expect(await jobRows()).toEqual(unrelated);
+  }, 30_000);
+
+  test('--wedge-rescue: the wall-clock sweep evicts the wedged probe (exit 0), and nothing is left', async () => {
+    const unrelated = await seedUnrelated();
+    const result = await runSmoke(['--wedge-rescue']);
+    expect(result.stderr).not.toContain('SMOKE FAIL');
+    expect(result.code).toBe(0);
+    expect(await jobRows()).toEqual(unrelated);
+  }, 30_000);
+
+  test('both rescue cases in one run pass', async () => {
+    const unrelated = await seedUnrelated();
+    expect((await runSmoke(['--sigkill-rescue', '--wedge-rescue'])).code).toBe(0);
     expect(await jobRows()).toEqual(unrelated);
   }, 30_000);
 });

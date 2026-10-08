@@ -728,6 +728,16 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 |---|---|---|---|---|---|---|
 | Commit or stash canonical skill edits before optimization. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### dream_breaker_tripped
+
+<a id="dream_breaker_tripped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A dream synthesize or patterns submission died (or, for patterns, was cancelled at its timeout after paid work) the breaker limit of times within 24 hours, so it was not submitted again. | A run that keeps dying keeps paying; the breaker stops resubmitting until the cause is fixed and the key is reset. Patterns count per source (`dream:patterns:source:<id>`) whatever reflections each run read, and a completed run resets that count. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. Run: gbrain doctor --only dream_paid_loop --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions](../../docs/operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions)
+
 ### effect_not_failed
 
 <a id="effect_not_failed"></a>
@@ -858,7 +868,7 @@ More: [docs/guides/move-to-postgres.md#graduated-datastore](../../docs/guides/mo
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The accepted atom extraction produced malformed output. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+| The accepted atom extraction failed (malformed output, or a response stopped before the end); a new attempt needs approval. | A failed managed atom batch is recorded as a failure receipt instead of being retried automatically, so the same input is not paid for every cycle. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
 ### extractor_identity_mismatch
 
@@ -893,6 +903,18 @@ More: [docs/guides/move-to-postgres.md#graduated-datastore](../../docs/guides/mo
 | Facts absorb refused the write. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#facts_absorb_write_refused](../../docs/guides/write-refusals.md#facts_absorb_write_refused)
+
+### facts_backstop_skipped
+
+<a id="facts_backstop_skipped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page write queued no automatic fact extraction; the receipt's `facts_backstop.skipped` reason says why (a `kind:<type>` reason names a page type that is not extracted). | A capability this request needs is not configured or not reachable on this brain. | Nothing failed. `opted_out` means the page frontmatter sets `facts_backstop: false`; remove that line and save the page to extract it. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `gbrain doctor --json` | 1 | no |
+
+Reasons: `opted_out`, `body_unchanged`, `extraction_disabled`, `dream_generated`, `subagent_namespace`, `too_short`, `no_parsed_page`, `slug_bound_client`, `operation_bound_client`, `not_imported`, `backstop_error`.
+
+More: [docs/guides/concurrent-writes.md#facts-backstop](../../docs/guides/concurrent-writes.md#facts-backstop)
 
 ### facts_drain_deferred
 
@@ -1520,6 +1542,16 @@ More: [docs/guides/repair.md#legacy-jobs-active](../../docs/guides/repair.md#leg
 |---|---|---|---|---|---|---|
 | Another process holds the lock this command needs. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### maintenance_lock_busy
+
+<a id="maintenance_lock_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source-scoped dream cycle skipped its brain-wide phases because another cycle (usually autopilot maintenance) holds the shared gbrain-cycle lease; its source phases still ran. | Brain-wide phases (synthesize, patterns, embed, purge and the other mixed or global phases) must not run twice at once, so a cycle that cannot take gbrain-cycle runs only the phases its own source lease covers. | Nothing is lost: the holder runs those phases itself. To run one now, wait until the lease is released, then re-run `gbrain dream --phase <phase>` (LLM-backed phases spend; ask the user first). Run: gbrain status --section locks --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/cron-schedule.md#dream-beside-autopilot](../../docs/guides/cron-schedule.md#dream-beside-autopilot)
+
 ### managed_pull_skipped
 
 <a id="managed_pull_skipped"></a>
@@ -1529,6 +1561,14 @@ More: [docs/guides/repair.md#legacy-jobs-active](../../docs/guides/repair.md#leg
 | The managed pull was skipped. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/write-refusals.md#managed_pull_skipped](../../docs/guides/write-refusals.md#managed_pull_skipped)
+
+### manual_only_skipped
+
+<a id="manual_only_skipped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An automatic remediation run (`gbrain onboard --auto`, `doctor --remediate`, MCP `run_onboard`, autopilot) did not submit a manual-only step: the schema-pack upgrade (`unify-types`) or the paid takes bootstrap (`extract-takes-from-pages`). | A pack upgrade retypes pages and switches the brain's schema pack, and the takes bootstrap pays a model per page; both are the user's one-time decision, so only the user submits them. A job of that kind an earlier run already queued is listed in `queued_jobs` and still runs unless cancelled. | Show the user the step and its `fix.command` (`gbrain jobs submit <job> --follow`, with `--params` when the step has them); the user runs it after reviewing `gbrain onboard --check`. Cancel a listed queued job with `gbrain jobs cancel <id>` if the user does not want it. Run: gbrain jobs list --status waiting | user | `repeat the read that failed` | 1 | no |
 
 ### membership_inactive
 
@@ -1771,6 +1811,14 @@ More: [docs/guides/repair.md#page-projection-conflict](../../docs/guides/repair.
 | Google connect credential error: pasted wrong url. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### pattern_claims_pending
+
+<a id="pattern_claims_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An existing pattern page is waiting on the rewrite that de-duplicates its claim sources, so no patterns child was submitted this run. | The patterns child reads existing pattern pages; until their claim records reference one shared reflection list, the pages can overflow the model's window and the run pays for nothing. | Wait briefly, then retry the same request (writes: reuse the same request_id). Run: gbrain write-requests --source '{source_id}' | agent | `repeat the read that failed` | 1 | yes |
 
 ### payload_too_large
 
@@ -2488,6 +2536,14 @@ More: [docs/guides/write-refusals.md#timeline_rows_would_be_removed](../../docs/
 
 More: [docs/guides/data-ingestion.md#credential-redaction](../../docs/guides/data-ingestion.md#credential-redaction)
 
+### triage_unreliable_backoff
+
+<a id="triage_unreliable_backoff"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Dream triage did not re-judge a transcript because its last judge verdict was truncated, refused or unparseable and its backoff has not ended. | An unreliable verdict is never cached, so without a backoff the same input was paid for every cycle; it waits 24h, doubling per repeat up to 7 days, and a content or triage-model change re-judges at once. | Leave it (it is retried after the backoff), or ask the user before `gbrain dream retriage --force`, which re-judges every transcript now and pays per file. Run: gbrain dream retriage --dry-run --json | agent | `repeat the read that failed` | 1 | yes |
+
 ### trusted_local_only
 
 <a id="trusted_local_only"></a>
@@ -2738,7 +2794,7 @@ More: [docs/architecture/topologies.md#transfer-manifest-scope](../../docs/archi
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The canonical worktree manifest cannot be recorded safely: the checkout holds a symlink or a Git submodule, or a Git-scoped comparison ran on a directory Git cannot list. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| The canonical worktree manifest cannot be recorded safely: the checkout holds a symlink or a Git submodule, a Git-scoped comparison ran on a directory Git cannot list, or Git cannot read a directory that holds .git. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 ### writer_not_initialized
 

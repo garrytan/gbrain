@@ -1041,7 +1041,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // through to the writers' own fail-closed paths.
   if (flags.projects.length > 0 && !flags.noHooks && harnessHooksPresent(d.userSettingsPath)) {
     d.logError(
-      `user-scope harness hooks already exist in ${d.userSettingsPath} (possibly from another GBRAIN_HOME's ` +
+      `user-scope harness hooks already exist in ${d.userSettingsPath} (edited entries included; possibly from another GBRAIN_HOME's ` +
         'install); --project wiring would double-fire every event. Remove that install first ' +
         '(`gbrain bootstrap harness --remove` under its home).',
     );

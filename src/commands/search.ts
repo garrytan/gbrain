@@ -9,7 +9,7 @@
  *     active mode, the source of every resolved knob (mode default vs
  *     config override vs per-call), and a one-liner per knob.
  *
- *   gbrain search modes --reset [--source <mode>]
+ *   gbrain search modes --reset [--mode <mode>]   (--source <mode>: deprecated alias)
  *     Clears every search.* override key (per CDX-8). --source acts as
  *     a dry-run that lists what would change without writing.
  *
@@ -98,18 +98,54 @@ function formatModesText(report: SearchModesReport): string {
   return lines.join('\n');
 }
 
+/**
+ * W4.13: the dry-run mode of `search modes --reset --mode <mode>`. `--source`
+ * is the deprecated spelling (it means a brain source everywhere else) and
+ * prints a notice. A flag without a value, or `--mode` and `--source` naming
+ * different modes, refuses with exit 2 before anything is read or deleted.
+ */
+async function modesDryRunMode(args: string[]): Promise<{ mode: string | null } | { refused: true }> {
+  const read = (flag: string): string | null | undefined => {
+    const at = args.indexOf(flag);
+    if (at === -1) return null;
+    const value = args[at + 1];
+    return value === undefined || value.startsWith('--') ? undefined : value;
+  };
+  const refuse = async (message: string, why: string): Promise<{ refused: true }> => {
+    const { usageError, writeCliError } = await import('../cli/cli-error.ts');
+    const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
+    setCliExitVerdict(writeCliError(usageError(message,
+      `Preview with gbrain search modes --reset --mode <${SEARCH_MODES.join('|')}>, or clear the overrides with gbrain search modes --reset.`,
+      { why, fix: { argv: ['gbrain', 'search', 'modes'], consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Shows every search.* override and its value; changes nothing.' } }), 'search', { json: args.includes('--json') }));
+    return { refused: true };
+  };
+  const mode = read('--mode');
+  const source = read('--source');
+  if (mode === undefined || source === undefined) {
+    return refuse(`${mode === undefined ? '--mode' : '--source'} needs a search mode value; nothing was changed.`,
+      'Without its value the command would reset every override instead of previewing.');
+  }
+  if (mode !== null && source !== null && mode !== source) {
+    return refuse(`--mode ${mode} and --source ${source} name different modes; nothing was changed.`, 'Only one preview mode can run.');
+  }
+  if (source !== null) process.stderr.write('[search modes] --source <mode> is deprecated here (--source names a brain source everywhere else); use --mode <mode>.\n');
+  return { mode: mode ?? source };
+}
+
 async function runModesSubcommand(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
   const reset = args.includes('--reset');
-  const sourceIdx = args.indexOf('--source');
-  const dryRunSource = sourceIdx !== -1 ? args[sourceIdx + 1] : null;
+  const parsed = await modesDryRunMode(args);
+  if ('refused' in parsed) return;
+  const dryRunSource = parsed.mode;
 
   // --reset path: clear every search.* OVERRIDE key (not search.mode itself).
-  // --source <mode> is a dry-run that prints what would change.
+  // --mode <mode> (alias --source) is a dry-run that prints what would change.
   if (reset || dryRunSource) {
     const dryRun = Boolean(dryRunSource);
     if (dryRunSource && !isSearchMode(dryRunSource)) {
-      console.error(`Invalid --source value: ${dryRunSource}. Expected one of: ${SEARCH_MODES.join(', ')}`);
+      console.error(`Invalid --mode value: ${dryRunSource}. Expected one of: ${SEARCH_MODES.join(', ')}`);
       process.exit(1);
     }
     const overrides = await engine.listConfigKeys('search.');
@@ -119,7 +155,7 @@ async function runModesSubcommand(engine: BrainEngine, args: string[]): Promise<
       return;
     }
     if (dryRun) {
-      console.log(`--source ${dryRunSource} (dry run). Would unset ${toRemove.length} key(s):`);
+      console.log(`--mode ${dryRunSource} (dry run). Would unset ${toRemove.length} key(s):`);
       for (const k of toRemove) console.log(`  - ${k}`);
       console.log(`No changes written. Re-run with --reset to apply.`);
       return;
@@ -359,7 +395,8 @@ const USAGE = `Usage: gbrain search <modes|stats|tune|diagnose> [flags]
 Subcommands:
   modes [--json]              Show active mode, bundles, and per-knob source.
   modes --reset               Clear all search.* overrides (mode bundle wins).
-  modes --source <mode>       Dry-run: list what --reset would change.
+  modes --reset --mode <mode> Dry-run: list what --reset would change
+                              (--source <mode> is a deprecated alias).
   stats [--days N] [--json]   Cache hit rate, intent mix, budget pressure.
   tune [--apply] [--json]     Print recommendations; --apply mutates config.
   diagnose "<query>" --target <slug> [--json] [--source <id>]
