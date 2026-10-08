@@ -49,6 +49,8 @@ import type { GBrainConfig } from '../config.ts';
 import { isAvailable } from '../ai/gateway.ts';
 import { withAIInvocationPreflight } from '../ai/invocation-guard.ts';
 import { decideSingleFact } from './single-prepare.ts';
+import { classifyAgainstCandidates, cosineSimilarity } from './classify.ts';
+import type { ExtractedFact } from './extract.ts';
 import { cosineVerdict, dedupCapturedFacts, EXPLICIT_DUPLICATE_THRESHOLD, isCaptureLane, withCaptureDrops } from './capture-dedup.ts';
 import { assertAmbientCaptureAdmissible, type FactsBackstopSource } from './capture-sources.ts';
 import { appendContextNote, type InferredVia } from './subject-infer.ts';
@@ -184,13 +186,38 @@ interface ParsedPageInput {
 /** k for findCandidateDuplicates — ceiling on candidates considered. */
 const DEDUP_CANDIDATE_LIMIT = 5;
 
-/**
- * Explicit lanes ask the duplicate classifier when the top candidate scores
- * at least this but below the 0.95 fast path: re-extracting an edited page
- * rewords its claims into this band. Same value as the consolidate phase's
- * default cluster threshold.
- */
+/** Lowest top-candidate cosine that asks the classifier; the consolidate phase's default cluster threshold. */
 const CLASSIFY_FLOOR = 0.85;
+
+/**
+ * Id of the active fact on `entitySlug` that `f` restates, or null. Cosine at
+ * 0.95 or above is a duplicate on explicit lanes (capture lanes never drop by
+ * cosine, #5888). Between CLASSIFY_FLOOR and 0.95 explicit lanes ask the
+ * classifier, because re-extracting an edited page rewords its claims into
+ * that band (#6333). A failed classifier call keeps the 0.95 rule, so the band
+ * only ever skips an insert.
+ */
+async function findDuplicateByEmbedding(
+  ctx: FactsBackstopCtx,
+  entitySlug: string,
+  f: Pick<ExtractedFact, 'fact' | 'kind' | 'embedding_model' | 'attributed_to'> & { embedding: Float32Array },
+  abortSignal?: AbortSignal,
+): Promise<number | null> {
+  const candidates = await ctx.engine.findCandidateDuplicates(ctx.sourceId, entitySlug, f.fact,
+    { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null });
+  let top: { id: number; score: number; fact: string } | null = null;
+  for (const c of candidates) {
+    if (!c.embedding) continue;
+    const s = cosineSimilarity(f.embedding, c.embedding);
+    if (!top || s > top.score) top = { id: c.id, score: s, fact: c.fact };
+  }
+  if (!top) return null;
+  if (cosineVerdict(ctx.source, top.score, f.fact, top.fact) === 'duplicate') return top.id;
+  if (top.score < CLASSIFY_FLOOR || isCaptureLane(ctx.source)) return null;
+  const verdict = await classifyAgainstCandidates({ fact: f.fact, kind: f.kind ?? 'fact', embedding: f.embedding }, candidates,
+    { model: ctx.model, fallbackThreshold: EXPLICIT_DUPLICATE_THRESHOLD, abortSignal });
+  return verdict.decision === 'duplicate' ? verdict.matched_id : null;
+}
 
 /**
  * Once-per-process stderr warning memo. v0.32.2 uses this to surface
@@ -610,7 +637,6 @@ async function runPipelineBodyInner(
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason }> {
   const { extractFactsFromTurnWithOutcome, FactsExtractionError } = await import('./extract.ts');
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
-  const { classifyAgainstCandidates, cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
   const { isFactWithdrawn } = await import('./withdrawal.ts');
 
@@ -729,29 +755,7 @@ async function runPipelineBodyInner(
     const exact = resolvedSlug ? await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility, attributed_to: f.attributed_to ?? null }, null) : null;
     let matchedExistingId: number | null = exact?.candidate?.id ?? null;
     if (matchedExistingId === null && resolvedSlug && f.embedding && !f.entity_inferred) {
-      const candidates = await ctx.engine.findCandidateDuplicates(
-        ctx.sourceId,
-        resolvedSlug,
-        f.fact,
-        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null },
-      );
-      let top: { id: number; score: number; fact: string } | null = null;
-      for (const c of candidates) {
-        if (!c.embedding) continue;
-        const s = cosineSimilarity(f.embedding, c.embedding);
-        if (!top || s > top.score) top = { id: c.id, score: s, fact: c.fact };
-      }
-      if (top && cosineVerdict(ctx.source, top.score, f.fact, top.fact) === 'duplicate') {
-        matchedExistingId = top.id;
-      } else if (top && top.score >= CLASSIFY_FLOOR && !isCaptureLane(ctx.source)) {
-        // A failed classifier call keeps the 0.95 rule, so the band only ever skips an insert.
-        const verdict = await classifyAgainstCandidates(
-          { fact: f.fact, kind: f.kind, embedding: f.embedding },
-          candidates,
-          { model: ctx.model, fallbackThreshold: EXPLICIT_DUPLICATE_THRESHOLD, abortSignal },
-        );
-        if (verdict.decision === 'duplicate') matchedExistingId = verdict.matched_id;
-      }
+      matchedExistingId = await findDuplicateByEmbedding(ctx, resolvedSlug, { ...f, embedding: f.embedding }, abortSignal);
     }
 
     if (matchedExistingId !== null) {
