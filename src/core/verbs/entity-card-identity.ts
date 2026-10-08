@@ -34,7 +34,17 @@ export interface IdentityExcerptLine { slug: string; line: string }
 /** Whether `text` holds a name other than `subject`: a capitalized multi-word run or a code token. */
 export function hasOtherName(text: string, subject: string): boolean {
   const own = subject.toLowerCase();
-  const stripped = own ? text.replace(new RegExp(own.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' ') : text;
+  let stripped = text;
+  if (own) {
+    const lower = text.toLowerCase();
+    const parts: string[] = [];
+    let from = 0;
+    for (let at = lower.indexOf(own); at >= 0; at = lower.indexOf(own, from)) {
+      parts.push(text.slice(from, at));
+      from = at + own.length;
+    }
+    stripped = parts.join(' ') + ' ' + text.slice(from);
+  }
   for (const m of stripped.matchAll(NAME_RUN_RE)) if (m[0].toLowerCase() !== own) return true;
   for (const m of stripped.matchAll(CODE_RE)) if (!NOT_NAMES.has(m[0]) && !/^\d[\d-]*$/.test(m[0])) return true;
   return false;

@@ -50,7 +50,7 @@ const COMMON_WORDS = new Set([
   'june', 'july', 'august', 'september', 'october', 'november', 'december', 'board', 'finance', 'legal', 'sales', 'marketing',
   'engineering', 'operations', 'support', 'hr', 'it', 'plan', 'report', 'team', 'project', 'update', 'review', 'company',
 ]);
-const CORPORATE_SUFFIX = '(?:,?\\s+(?:Inc|LLC|Ltd|Limited|Corp|Corporation|Co|GmbH|PLC|plc|LP|LLP|Holdings|S\\.A)\\.?)*';
+const CORPORATE_SUFFIX_RE = /,?\s+(?:Inc|LLC|Ltd|Limited|Corp|Corporation|Co|GmbH|PLC|LP|LLP|Holdings|S\.A)\.?$/i;
 const PAREN_TERM_RE = /\(\s*(?:the\s+)?["\u201c']([^"\u201d'()\n]{1,60})["\u201d']\s*\)/g;
 const MAX_NAME_TOKENS = 4;
 
@@ -132,9 +132,21 @@ export function declarationsIn(text: string, opts: DeclarationOpts = {}): Declar
   const out: Declaration[] = [];
   const push = (alias: string | null, line: number) => { if (alias && !out.some(d => d.alias === alias)) out.push({ alias, line }); };
   const ownNames = (opts.ownNames ?? []).filter(Boolean);
-  const parenOwner = ownNames.length
-    ? new RegExp(`(?:${ownNames.map(n => n.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&')).join('|')})${CORPORATE_SUFFIX},?\\s*$`, 'i')
-    : null;
+  const ownLower = ownNames.map(n => n.toLowerCase());
+  /** Whether `before` ends with one of the page's own names, after any corporate suffixes and a trailing comma. */
+  const endsWithOwnName = (before: string): boolean => {
+    const endsWithName = (t: string) => {
+      const lower = t.toLowerCase();
+      return ownLower.some(n => lower.endsWith(n) && !/[\p{L}\p{N}]/u.test(lower.charAt(lower.length - n.length - 1)));
+    };
+    let t = before.trimEnd().replace(/,$/, '');
+    for (let i = 0; i < 4; i++) {
+      if (endsWithName(t)) return true;
+      if (!CORPORATE_SUFFIX_RE.test(t)) return false;
+      t = t.replace(CORPORATE_SUFFIX_RE, '');
+    }
+    return endsWithName(t);
+  };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (line.length > 2000) continue;
@@ -158,9 +170,9 @@ export function declarationsIn(text: string, opts: DeclarationOpts = {}): Declar
       if (RELATIONAL_NOUN_RE.test(sentence)) continue;
       push(captureName(plain.slice(m.index! + m[0].length), { multiword }), i);
     }
-    if (parenOwner) {
+    if (ownLower.length) {
       for (const m of plain.matchAll(PAREN_TERM_RE)) {
-        if (!parenOwner.test(plain.slice(0, m.index))) continue;
+        if (!endsWithOwnName(plain.slice(0, m.index))) continue;
         push(captureName(`"${m[1]}"`, { multiword }), i);
       }
     }

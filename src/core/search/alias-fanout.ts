@@ -169,8 +169,12 @@ export async function withAliasFanOut(engine: BrainEngine, results: SearchResult
   try {
     const max = await aliasFanoutMax(engine);
     if (max === 0) return { results };
-    const queryLc = ` ${queryText.toLowerCase()} `;
-    const inQuery = (name: string) => new RegExp(`(?<![\\p{L}\\p{N}])${normalizeAlias(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'u').test(normalizeAlias(queryLc));
+    const words = (text: string) => normalizeAlias(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    const queryWords = words(queryText);
+    const inQuery = (name: string) => {
+      const w = words(name);
+      return w.length > 0 && queryWords.some((_, i) => w.every((t, k) => queryWords[i + k] === t));
+    };
     const resolved = await resolveQueryEntity(engine, queryText, scope);
     let names: Array<{ alias: string; page: string }>;
     let usedTokens: [number, number] | null = null;
