@@ -74,6 +74,14 @@ find the race, and open a repair PR with `Fixes #<issue>`. Never widen a
 timeout or weaken an assertion. When the signature names a runner, disk or
 secret problem, ask the repository owner for that fix instead of a code PR.
 
+## Order hunt
+
+The nightly E2E workflow's `order-hunt` job (also `gh workflow run e2e.yml -f order_hunt=true`, optionally `-f order_seed=N`) runs every E2E file in a seeded random order, sequentially, on one shared Postgres database per shard. It catches a file that leaves state behind (a config row, a session setting, leftover rows) that breaks the next file, which the stress gate and race hunt cannot see because each of their iterations gets a fresh database.
+
+- **Seed:** the UTC day number by default, so each night tries a different order; the seed and shard are in the step summary.
+- **A failure** is rerun alone. A file that passes alone is reported as `order-dependent test` with `bash scripts/run-e2e.sh <the files before it, in order> <file>` to replay it; bisect the files before it to find the one that leaks, and fix that file's teardown. A file that also fails alone is only a warning here, since the full E2E lanes report it.
+- The job is keyless and outside `e2e-status`, so it never blocks a PR; a red order hunt turns the E2E nightly red.
+
 ## CI failure manifest
 
 The `executed-receipts` job of test.yml and e2e.yml runs `scripts/ci-manifest.ts`

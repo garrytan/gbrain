@@ -430,13 +430,24 @@ async function runJobs(engine: BrainEngine, jobs: Array<{ name: string; data: Re
  * claimable (`waiting`/`delayed`) job is cancelled first: a follow-up queued
  * earlier in the case (the sweep's loops_extract) would otherwise be claimed
  * by this worker once `ids` finish, and its writes and embedding effects land
- * after the case's check. Active and claimed jobs are left alone. The brain is
- * this file's own, and runCase cancels each case's leftovers.
+ * after the case's check. A follow-up queued while `ids` run (a page write's
+ * facts-absorb, dispatched from the persistence outbox by the consumer a
+ * drained job starts) is never claimed either: the worker registers only the
+ * drained jobs' names, and a worker claims only names it has registered.
+ * Active and claimed jobs are left alone. The brain is this file's own, and
+ * runCase cancels each case's leftovers.
  */
 async function drainQueue(engine: BrainEngine, ids: number[], timeoutMs = 60_000) {
   await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE status IN ('waiting','delayed') AND NOT (id = ANY($1::int[]))", [ids]);
+  const builtins = new MinionWorker(engine, { healthCheckInterval: 0 });
+  await registerBuiltinHandlers(builtins, engine, { quiet: true });
   const worker = new MinionWorker(engine, { pollInterval: 20, healthCheckInterval: 0, stalledInterval: 600_000 });
-  await registerBuiltinHandlers(worker, engine, { quiet: true });
+  const names = await engine.executeRaw<{ name: string }>('SELECT DISTINCT name FROM minion_jobs WHERE id = ANY($1::int[])', [ids]);
+  for (const { name } of names) {
+    const handler = builtins.getHandler(name);
+    if (!handler) throw new Error(`no builtin handler registered for drained job ${name}`);
+    worker.register(name, handler);
+  }
   const running = worker.start();
   const deadline = Date.now() + timeoutMs;
   let rows: Array<{ id: number; name: string; status: string; attempts_started: number; attempts_made: number; max_attempts: number; result: unknown; error_text: string | null }> = [];
