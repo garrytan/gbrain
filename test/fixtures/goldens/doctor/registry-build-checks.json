@@ -595,6 +595,10 @@
       },
       {
         "category": "ops",
+        "name": "grant_new_ops_available"
+      },
+      {
+        "category": "ops",
         "name": "index_audit"
       },
       {

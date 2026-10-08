@@ -15,12 +15,13 @@ import type { McpSurface } from '../mcp/surface.ts';
 export { shellQuote };
 
 /**
- * The surface a new stdio registration pins. `starter` carries the seven
- * memory verbs plus the page reads/writes, timeline write, skills and agent
- * lane bootstrap's instructions name (`get_timeline` is the known gap the F6
- * hint and `request_tools` cover), and stays far below the full catalogue.
+ * The surface a new stdio registration pins: `full`, callable and advertised
+ * (S0, wave 0; the maintainer chose no narrowing). Every install path reads
+ * this one value: README, docs/mcp, INSTALL_FOR_AGENTS.md, the plugin
+ * manifests and every registration gbrain writes. A narrower list, where a
+ * harness caps its tool count, is the user's explicit `--surface starter|verbs`.
  */
-export const REGISTRATION_SURFACE: McpSurface = 'starter';
+export const REGISTRATION_SURFACE: McpSurface = 'full';
 
 /** A registration command's surface value (`verbs`, `starter` or `full`). */
 export function isRegistrationSurface(v: unknown): v is McpSurface {

@@ -172,7 +172,7 @@ export async function upsertChunksOnce(
     // #4246: embedded_text_hash records md5(chunk_text) AT EMBED TIME so a
     // later text rewrite that keeps the vector is detectable as content
     // drift (invalidateContentDriftEmbeddings). NULL when no embedding lands.
-    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
+    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image, embedding_pending_since)`;
     let resolvedModel: string | null = gatewayModel;
     if (!resolvedModel) resolvedModel = (await modelRows)?.[0]?.value ?? null;
     resolvedModel = writeCol.embeddingModel || resolvedModel;
@@ -243,12 +243,17 @@ export async function upsertChunksOnce(
     // #4246: embedded_text_hash is md5(chunk_text) in SQL (not JS) so stamp + drift
     // comparison share ONE md5 implementation; it, embedded_at and the input hash
     // are set only when the row carries a vector.
+    //
+    // embedding_pending_since follows the vector that wins: NULL when one
+    // lands, kept while the row stays without one, now() when this write
+    // NULLs it (doctor ages the embedding backlog from it).
     const { text, params } = renderFragment(sqlFragment`INSERT INTO content_chunks ${trustedSql(cols)}
        SELECT ${pageId}::int, c.chunk_index, c.chunk_text, c.chunk_source, c.embedding${trustedSql(writeCast)}, c.model, c.token_count,
          CASE WHEN c.embedding IS NULL THEN NULL ELSE now() END,
          CASE WHEN c.embedding IS NULL THEN NULL ELSE md5(c.chunk_text) END,
          c.embedding_input_hash, c.language, c.symbol_name, c.symbol_type, c.start_line, c.end_line,
-         c.parent_symbol_path, c.doc_comment, c.symbol_name_qualified, c.modality, c.embedding_image::vector
+         c.parent_symbol_path, c.doc_comment, c.symbol_name_qualified, c.modality, c.embedding_image::vector,
+         CASE WHEN c.embedding IS NULL THEN now() ELSE NULL END
        FROM jsonb_to_recordset(${JSON.stringify(incoming)}::text::jsonb) AS c(chunk_index int, chunk_text text, chunk_source text,
          embedding text, model text, token_count int, embedding_input_hash text, language text, symbol_name text, symbol_type text,
          start_line int, end_line int, parent_symbol_path text[], doc_comment text, symbol_name_qualified text, modality text, embedding_image text)
@@ -305,7 +310,13 @@ export async function upsertChunksOnce(
          doc_comment = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.doc_comment ELSE COALESCE(EXCLUDED.doc_comment, content_chunks.doc_comment) END,
          symbol_name_qualified = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name_qualified ELSE COALESCE(EXCLUDED.symbol_name_qualified, content_chunks.symbol_name_qualified) END,
          modality = EXCLUDED.modality,
-         embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)`);
+         embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image),
+         embedding_pending_since = CASE
+           WHEN EXCLUDED.${col} IS NOT NULL THEN NULL
+           WHEN content_chunks.${col} IS NULL THEN COALESCE(content_chunks.embedding_pending_since, now())
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN now()
+           ELSE content_chunks.embedding_pending_since
+         END`);
     if (sealed === undefined) { await exec.query(text, params); return; }
     const [{ rows }] = await pipelined({ kind: exec.dialect }, [sealPage, () => exec.query(text, params)]) as [{ rows: Array<{ id: number }> }];
     if (rows.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
@@ -438,7 +449,7 @@ export async function invalidateStaleSignatureEmbeddings(
     return inTransaction(async tx => {
       const sources = await lockEmbeddingSources(tx, opts.sourceId);
       const { text, params } = renderFragment(sqlFragment`UPDATE content_chunks cc
-            SET ${colId} = NULL, embedded_at = NULL
+            SET ${colId} = NULL, embedded_at = NULL, embedding_pending_since = now()
            FROM pages p
           WHERE cc.page_id = p.id
             AND p.deleted_at IS NULL
@@ -471,7 +482,7 @@ export async function invalidateContentDriftEmbeddings(
     return inTransaction(async tx => {
       const sources = await lockEmbeddingSources(tx, opts?.sourceId);
       const { text, params } = renderFragment(sqlFragment`UPDATE content_chunks cc
-            SET ${colId} = NULL, embedded_at = NULL, embedded_text_hash = NULL
+            SET ${colId} = NULL, embedded_at = NULL, embedded_text_hash = NULL, embedding_pending_since = now()
            FROM pages p
           WHERE cc.page_id = p.id
             AND p.source_id=ANY(${sources}::text[])

@@ -1415,7 +1415,8 @@
           "22 modality text/text NOT NULL DEFAULT 'text'::text",
           "23 embedding_image USER-DEFINED/vector NULL",
           "24 embedding_multimodal USER-DEFINED/vector NULL",
-          "25 edges_backfilled_at timestamp with time zone/timestamptz NULL"
+          "25 edges_backfilled_at timestamp with time zone/timestamptz NULL",
+          "26 embedding_pending_since timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

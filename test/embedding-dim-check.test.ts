@@ -128,6 +128,13 @@ describe('embeddingMismatchMessage', () => {
     expect(nullIdx).toBeLessThan(alterIdx);
   });
 
+  test('Postgres recipe stamps embedding_pending_since where it NULLs the vectors', () => {
+    // Doctor's embeddings check ages the re-embed backlog from the stamp; a
+    // recipe that NULLs without it leaves the backlog's age unknown.
+    const msg = embeddingMismatchMessage({ currentDims: 1536, requestedDims: 768, source: 'init', engineKind: 'postgres' });
+    expect(msg).toContain('UPDATE content_chunks SET embedding = NULL, embedded_at = NULL, embedding_pending_since = now();');
+  });
+
   test('Postgres branch skips HNSW recreate when requested dims exceed pgvector cap', () => {
     // Codex finding #8: 2048d (Voyage 4 Large) cannot be HNSW-indexed in pgvector.
     // The recipe must NOT instruct a CREATE INDEX HNSW for that dim.

@@ -1414,7 +1414,8 @@
           "22 doc_comment text/text NULL",
           "23 symbol_name_qualified text/text NULL",
           "24 search_vector tsvector/tsvector NULL",
-          "25 edges_backfilled_at timestamp with time zone/timestamptz NULL"
+          "25 edges_backfilled_at timestamp with time zone/timestamptz NULL",
+          "26 embedding_pending_since timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

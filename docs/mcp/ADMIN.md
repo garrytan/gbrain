@@ -220,6 +220,49 @@ requests. Added scopes require a fresh token; refresh cannot widen the original
 token's scope ceiling. Native OAuth clients must reconnect and obtain fresh
 owner approval. TTL changes affect future tokens only.
 
+New `memory-reader`, `memory-writer` and `coding-agent` grants are callable and
+listed on the full surface; their operation snapshot is still the ceiling, so a
+reader still has no write operation. `delegating-agent` grants keep the starter
+surface. Clients granted before this keep their stored surface: no migration or
+repair changes it, and only an explicit `--profile` application regrants it.
+
+### Grants that cannot reach new operations
+
+A grant can be unable to call operations its scopes allow for three proven
+reasons: its operation snapshot excludes them, its stored client surface (the
+pin, for example `starter` on an older profile client) hides them, or the
+server's surface is narrower. The connection itself sees counts, never names,
+in `whoami` (`grant_diagnosis`) and `gbrain://capabilities`; operations outside
+the grant's scopes are never counted. On the host, `gbrain doctor` reports
+`grant_new_ops_available` with each grant's blockers and the operation names.
+
+Grant age is reported apart from those blockers. A snapshot written before
+this release carries no record of the operation catalog it was written
+against, so an old profile snapshot and a deliberate restriction look the
+same: such a grant reports "this grant's snapshot excludes N currently eligible
+operations; original intent unknown". Only a snapshot written with catalog
+provenance (new grants, and any later write that sets a new snapshot) is said
+to predate operations. Identically shaped grants get identical output, and
+nothing is widened automatically: ask the user first.
+
+The commands differ by credential type:
+
+```bash
+# Legacy token: preview the operations added since the snapshot, then add the approved ones
+gbrain auth rescope --token NAME --refresh-operations
+gbrain auth rescope --token NAME --refresh-operations --add put_pages
+
+# OAuth client: no refresh; pass the whole new snapshot, plus --surface full when the pin blocks too
+gbrain auth rescope --client CLIENT_ID --operations OP1,OP2,... --surface full --dry-run
+gbrain auth rescope --client CLIENT_ID --operations OP1,OP2,... --surface full
+```
+
+`--refresh-operations` is token-only (a client gets
+`client_refresh_operations_unsupported`). Removing the snapshot instead is a
+separate, disclosed choice, never the default repair: `--operations all` for a
+client (`--reset-default operations` for a token) stores no snapshot, so the
+scopes and surface allow every operation, including ones later upgrades add.
+
 ### Access-token lifetime
 
 An access token lives at most 90 days (7,776,000 seconds), whatever a
@@ -481,7 +524,7 @@ registers `gbrain serve --access read-only` as its stdio MCP command.
 
 ```bash
 claude mcp add gbrain -- "$(command -v gbrain)" serve --access read-only
-gbrain serve --surface starter --access read-only
+gbrain serve --surface full --access read-only
 ```
 
 `--access read-only` intersects the selected `--surface` with operations that

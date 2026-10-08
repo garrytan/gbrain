@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
 import { GrantError, grantFromRow, normalizeGrantBrain, validateClientGrant, type ClientGrant, type GrantPatch, type GrantValidationContext } from './model.ts';
-import { grantCatalog } from './profiles.ts';
+import { catalogProvenance, grantCatalog, type CatalogProvenance } from './profiles.ts';
 
 export type GrantDatabase = BrainEngine | SqlQuery;
 const query = (db: GrantDatabase): SqlQuery => typeof db === 'function' ? db : sqlQueryForEngine(db);
@@ -42,6 +42,39 @@ export interface GrantClientMetadata {
   issuedAt: number;
 }
 
+const operationSet = (ops: readonly string[]): string => JSON.stringify([...new Set(ops)].sort());
+
+/**
+ * The audit document for a grant write. A write that sets a new operation
+ * snapshot records the catalog it was written against (`catalogProvenance`);
+ * every other write leaves provenance with the audit row that wrote the snapshot.
+ */
+function auditDocument(after: ClientGrant, before: ClientGrant | null): string {
+  const snapshotWritten = after.allowedOperations !== null
+    && (before?.allowedOperations == null || operationSet(before.allowedOperations) !== operationSet(after.allowedOperations));
+  return JSON.stringify(snapshotWritten ? { ...after, catalogProvenance: catalogProvenance() } : after);
+}
+
+/**
+ * The catalog provenance of a client's CURRENT operation snapshot: the newest
+ * audit row that recorded provenance, only while its snapshot is still the
+ * grant's snapshot. Null for grants written before provenance existed, for a
+ * snapshot changed without it, and when the audit table cannot be read.
+ */
+export async function readClientCatalogProvenance(db: GrantDatabase, clientId: string, snapshot: readonly string[]): Promise<CatalogProvenance | null> {
+  try {
+    const rows = await query(db)`SELECT after_grant FROM oauth_grant_audit
+      WHERE client_id = ${clientId} AND after_grant->'catalogProvenance' IS NOT NULL ORDER BY id DESC LIMIT 1`;
+    const raw = rows[0]?.after_grant;
+    const doc = (typeof raw === 'string' ? JSON.parse(raw) : raw) as { allowedOperations?: unknown; catalogProvenance?: CatalogProvenance } | null;
+    const provenance = doc?.catalogProvenance;
+    if (!Array.isArray(doc?.allowedOperations) || provenance?.version !== 1 || !Array.isArray(provenance.operations)) return null;
+    return operationSet(doc.allowedOperations as string[]) === operationSet(snapshot) ? provenance : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Called after validation. Never exposes the credential in the audit document. */
 export async function insertClientGrant(sql: SqlQuery, grant: ClientGrant, metadata: GrantClientMetadata, actor = 'operator'): Promise<void> {
   await sql`
@@ -66,7 +99,7 @@ export async function insertClientGrant(sql: SqlQuery, grant: ClientGrant, metad
         ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(grant.repairReasons)}::text::jsonb)))
       RETURNING client_id
     ) INSERT INTO oauth_grant_audit (client_id, actor, action, revision, before_grant, after_grant)
-      SELECT client_id, ${actor}, 'register', ${grant.revision}, NULL, ${JSON.stringify(grant)}::text::jsonb FROM created
+      SELECT client_id, ${actor}, 'register', ${grant.revision}, NULL, ${auditDocument(grant, null)}::text::jsonb FROM created
   `;
 }
 
@@ -151,7 +184,7 @@ export async function persistGrant(sql: SqlQuery, before: ClientGrant, after: Cl
       RETURNING j.id
     ), audited AS (
       INSERT INTO oauth_grant_audit (client_id, actor, action, revision, before_grant, after_grant)
-      SELECT client_id, ${actor}, ${action}, ${after.revision}, ${JSON.stringify(before)}::text::jsonb, ${JSON.stringify(after)}::text::jsonb FROM updated
+      SELECT client_id, ${actor}, ${action}, ${after.revision}, ${JSON.stringify(before)}::text::jsonb, ${auditDocument(after, before)}::text::jsonb FROM updated
       RETURNING client_id
     ) SELECT client_id FROM audited
   `;
@@ -160,4 +193,5 @@ export async function persistGrant(sql: SqlQuery, before: ClientGrant, after: Cl
 
 export { GrantError, grantFromRow, validateClientGrant, delegationReasons, intersectGrantedScopes } from './model.ts';
 export type { ClientGrant, GrantPatch, GrantProfileId, GrantValidationContext } from './model.ts';
-export { resolveGrantProfile, grantCatalog, RENEWABLE_GRANT_TTL_SECONDS, STATIC_GRANT_TTL_SECONDS } from './profiles.ts';
+export { resolveGrantProfile, grantCatalog, catalogProvenance, RENEWABLE_GRANT_TTL_SECONDS, STATIC_GRANT_TTL_SECONDS } from './profiles.ts';
+export type { CatalogProvenance } from './profiles.ts';

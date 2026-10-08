@@ -1471,7 +1471,7 @@ async function runOneQuestion(
       reader_prompt_sha: ctx.readerConfig.promptSha,
       reader_max_tokens: ctx.readerConfig.maxTokens,
       reader_config_hash: ctx.readerHash,
-      reader_finish_reason: answer.finish_reason,
+      reader_finish_reason: answer.finish_reason, reader_usage: answer.usage,
       ...(readerError ? { error: readerError } : {}),
       ...(readerError && answer.text ? { reader_partial_output: answer.text } : {}),
       reader_context_chars: answer.context_chars,

@@ -256,7 +256,7 @@ grep -Fq "GBRAIN_SOURCE=" "$GB_CODEX_STATE" || fail "codex registration did not 
 # Every stdio registration gbrain writes pins REGISTRATION_SURFACE
 # (src/core/mcp-registration.ts); test/check-bootstrap-guards.test.ts keeps
 # this literal equal to it so a surface change fails on the PR, not nightly.
-EXPECTED_SURFACE=starter
+EXPECTED_SURFACE=full
 grep -Fq "serve --surface $EXPECTED_SURFACE" "$GB_CODEX_STATE" \
   || fail "codex registration did not pin the registration surface '$EXPECTED_SURFACE' (registered: $(cat "$GB_CODEX_STATE")). Why: bootstrap hooks builds the serve argv from stdioServeArgv/REGISTRATION_SURFACE in src/core/mcp-registration.ts. Next: if REGISTRATION_SURFACE changed on purpose, update EXPECTED_SURFACE here; otherwise fix registerCodexMcp in src/core/bootstrap/hooks.ts, then run bash tests/docker/bootstrap-e2e.sh"
 

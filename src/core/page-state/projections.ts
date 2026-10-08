@@ -187,7 +187,8 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
       const currentInput = recorded.filter(row => row.embedding_input_hash === null ? mode == null
         : acceptedEmbeddingInputHashes(provenance, mode, byIndex.get(Number(row.chunk_index))!).includes(row.embedding_input_hash)).map(row => Number(row.id));
       await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(context.column.name)}=NULL,
-        embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL WHERE page_id=$1 AND
+        embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
+        embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND
         (model IS DISTINCT FROM $2 OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[])))`,
       [snapshot.page.id, context.provenanceModel, currentInput]);
     } else if (opts.seal) await tx.deleteChunks(slug, { sourceId });
@@ -246,7 +247,8 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
         ${quoteIdentifier(column.name)}=CASE WHEN $2::text IS NULL THEN ${quoteIdentifier(column.name)} ELSE $2${vectorCastSuffix(column)} END,
         embedding_image=CASE WHEN $3::text IS NULL THEN embedding_image ELSE $3::vector END,
         embedding_input_hash=CASE WHEN $2::text IS NULL THEN embedding_input_hash ELSE $7 END,
-        embedded_at=now(),embedded_text_hash=md5(chunk_text),model=COALESCE($4,model)
+        embedded_at=now(),embedded_text_hash=md5(chunk_text),model=COALESCE($4,model),
+        embedding_pending_since=CASE WHEN $2::text IS NULL THEN embedding_pending_since ELSE NULL END
         WHERE id=$1 AND page_id=$5 AND chunk_text=$6`,
       // Bind the full provider:model captured before the provider call. Keeping
       // an old label on a new vector prevents provenance-complete migration.

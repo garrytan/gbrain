@@ -10,6 +10,52 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.115.0] - 2026-10-08
+
+**Every install path now registers the full tool surface, new memory grants can write in bulk, an empty tool lookup returns the catalog, and the embed backlog warns when it is old.**
+
+New registrations used to land on three different defaults: the README and `docs/mcp/*` taught `--surface verbs`, the coding-agent plugins and every registration gbrain writes pinned `starter`, and OpenClaw, Hermes and the thin CLI ran `full`. In a held-out agent benchmark, listing fewer tools lowered task success and saved no tokens, so there is now one value everywhere: `full`. `gbrain bootstrap hooks`, the readiness and `gbrain init` registration lines, the Codex and Claude Code plugins, `gbrain agent register` presets and every install doc pin `--surface full`. New memory-reader, memory-writer and coding-agent grants get the full surface too, so a writer can call `put_pages`; a grant's operation snapshot and scopes still bound what it can do, and a reader still cannot write. Existing registrations and clients keep the surface they have.
+
+An agent that asks `request_tools` for an empty list or only names it cannot call now gets the grouped catalog and the closest names it can call, instead of an empty answer. The sentence telling an agent that more tools are callable now opens the server instructions, inside the 2,048 characters capped harnesses read.
+
+Doctor's `embeddings` check used to call a brain healthy at 90% coverage with 136,000 chunks waiting. It now warns when the backlog is large (over 1,000 chunks or 1%) and its oldest pending chunk has waited more than 24 hours, read from a new column that records when each chunk's vector went missing, so a fresh brain mid-drain, an edited page or a model swap does not warn while it drains. The cycle's embed phase now reports `warn` when chunks could not be embedded, instead of `ok`.
+
+### How to use it
+
+```bash
+gbrain doctor --only embeddings --json            # details.backlog, oldest_pending_age_s and age_threshold_s, whatever the status
+gbrain doctor --only grant_new_ops_available      # grants whose snapshot or stored surface keeps allowed operations out of reach, with the rescope commands
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface full   # what every install path now registers
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| New stdio registrations, plugins, `agent register` presets | `--surface full` instead of `starter` or `verbs`. A harness that caps its tool count can register `--surface starter` or set `GBRAIN_SURFACE=starter`. On a fresh keyless brain the full stdio `tools/list` is 143 tools, about 118 KB. |
+| New memory grants | memory-reader, memory-writer and coding-agent profiles get callable and listed `full`; delegating-agent stays on `starter`. New grants record the operation catalog they were written against. |
+| `whoami` and `gbrain://capabilities` | A `grant_diagnosis` field: which blocker applies (scope, operation snapshot, client pin, server ceiling), with counts and no operation names; older grants say "original intent unknown". |
+| `request_tools {tools: []}` or only unknown names | The grouped catalog plus `did_you_mean`, drawn only from tools this connection can call; an existing-but-hidden name and a nonexistent one answer byte-identically. |
+| Doctor `embeddings` | Warns on a large backlog older than 24 hours; ok while a backlog drains inside that window, even below 90%. |
+| Cycle embed phase | `warn` with failure samples and the paid backfill fix when chunks failed; the cycle reports `partial`, which autopilot treats as non-fatal. |
+| `gbrain eval longmemeval` rows | `reader_usage`: total, uncached, cache-read and cache-write input, output and reasoning tokens. |
+
+### Things to watch
+
+- **Harnesses with a tool-count cap.** Full is about 140 tools. If a harness truncates or refuses the list, register it with `--surface starter`.
+- **The first upgrade adds one column.** Migration `chunk_embedding_pending_since` adds a nullable column to `content_chunks`; chunks already waiting for a vector take their creation time as their pending time, and doctor labels that age as a backfill.
+- **Existing grants are not widened.** A client that predates this release keeps its surface and snapshot; doctor's `grant_new_ops_available` names the commands the owner can run, and `--operations all` is shown only as a disclosed choice.
+- **The once-per-session stale-grant notice is not in this release.** It waits for the notice ledger.
+
+### Itemized changes
+
+- Surface: `REGISTRATION_SURFACE` is `full` (`src/core/mcp-registration.ts`); the plugin manifests, `gbrain agent register` presets, README, `INSTALL_FOR_AGENTS.md`, `BOOTSTRAP_FOR_AGENTS.md`, `docs/INSTALL.md`, `docs/mcp/*`, the MEMORY_VERBS quickstart and the coding-agent tutorial name the same value, and a test keeps them so. The stale "Postgres brains lack the hook lane" text is corrected (the IPC listener is engine-uniform), and the plugin-lane row names the OpenClaw context engine as the plugin that pushes. Plugin trees regenerated.
+- Grants: `resolveGrantProfile` gives the memory profiles `full`; catalog provenance rides the grant audit record; the shared diagnosis lives in `src/core/harness/capabilities.ts`; new doctor check `src/commands/doctor/checks/grant-new-ops.ts`.
+- Discovery: `request_tools` returns the catalog for empty and unknown-only lists (`src/core/ops/request-tools.ts`); the hidden-tool sentence leads the instructions (`src/mcp/instructions.ts`).
+- Embeddings: migration `chunk_embedding_pending_since`; every site that clears or omits a vector stamps the column and every vector write clears it; doctor's age rule in `checks/schema-health.ts`; the embed phase `warn` in `src/core/cycle.ts`.
+- Usage: the LongMemEval reader keeps provider-normalized usage on every row; chat usage pricing treats cache tokens as part of the input total instead of adding them twice, and the claude-cli adapter reports the input total.
+- CI: `ci:ubicloud` works from a checkout on `master` (the slim `.git` fetch), never writes a git warning into the checkout tarball, and survives a VM whose upload fails; the history fixture replays a `write_pending` write until it commits.
+
 ## [0.60.114.0] - 2026-10-08
 
 **A write owner no longer parks forever on a database round-trip that a transaction-mode pooler never completes.**

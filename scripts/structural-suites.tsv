@@ -93,6 +93,7 @@ test/cycle-abort.test.ts	CycleOpts.signal contract (v0.20.5)	3	readFileSync
 test/cycle-abort.test.ts	autopilot-cycle handler contract (v0.20.5)	3	readFileSync,source-surface-helper
 test/cycle-drain-renewal.test.ts	db-lock heartbeat wiring (structural — issue #6 cancellation)	1	readFileSync
 test/cycle-drain-renewal.test.ts	drain-loop wiring (structural — the shape guard only covers worker.ts)	2	readFileSync
+test/cycle-embed-phase-warn.serial.test.ts	cycle embed phase reports embed failures (E-A)	4	source-surface-helper
 test/cycle-legacy-phases.test.ts	cycle.lint_exclude (#6134)	4	readFileSync
 test/cycle-patterns-deadline-budget.test.ts	deadline plumbing wiring (structural)	7	readFileSync,source-surface-helper
 test/cycle-patterns.test.ts	patterns private-queue keepalive wiring	1	readFileSync

@@ -277,6 +277,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'legacy_token_grant_drift',
   // Lane E: tokens minted without scopes (grandfathered read+write+admin).
   'legacy_token_null_scope',
+  // D4: grants whose operation snapshot or stored surface keeps operations their scopes allow out of reach.
+  'grant_new_ops_available',
   'reranker_health',
   'rls',
   'rls_event_trigger',

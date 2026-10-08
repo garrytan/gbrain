@@ -641,16 +641,17 @@ describe('MCP registration verification [FIX7]', () => {
   const serveTail = (argv: string[]) => argv.slice(argv.indexOf('--') + 2);
   const adds = (calls: string[][]) => calls.filter((c) => c[1] === 'mcp' && c[2] === 'add');
 
-  test('a fresh registration pins the registration surface (starter)', async () => {
+  test('a fresh registration pins the registration surface (full)', async () => {
     const { runner, calls } = mcpHost({ initialReg: null });
     expect((await runHooks(runner)).result).toBe(0);
-    expect(serveTail(adds(calls)[0])).toEqual(['serve', '--surface', 'starter']);
+    expect(serveTail(adds(calls)[0])).toEqual(['serve', '--surface', 'full']);
   }, 30_000);
 
   test('never narrow: a replaced entry keeps its pinned surface, a bare serve stays bare, --surface wins', async () => {
-    const pinned = mcpHost({ initialReg: FOREIGN });
+    // Pinned to a surface other than the registration default (full), so keeping it is observable.
+    const pinned = mcpHost({ initialReg: FOREIGN.replace('serve --surface full', 'serve --surface starter') });
     expect((await runHooks(pinned.runner)).result).toBe(0);
-    expect(serveTail(adds(pinned.calls)[1])).toEqual(['serve', '--surface', 'full']);
+    expect(serveTail(adds(pinned.calls)[1])).toEqual(['serve', '--surface', 'starter']);
 
     const bare = mcpHost({ initialReg: `gbrain:\n  command: /somewhere/else/gbrain serve\n  env: GBRAIN_SOURCE=other-workspace` });
     expect((await runHooks(bare.runner)).result).toBe(0);

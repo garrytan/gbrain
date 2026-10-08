@@ -581,6 +581,8 @@
         "generateAnswer",
         "rawSessionId",
         "readerConfigHash",
+        "readerUsageFromGateway",
+        "readerUsageFromMessage",
         "renderRetrievedAsHypothesis",
         "resolveReaderConfig"
       ],

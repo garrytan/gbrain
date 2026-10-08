@@ -354,7 +354,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
         // A refused chunk keeps no vector from an earlier convention, and the page reads as not fully embedded.
         const ids = refused.failures.map(f => pending[f.index]?.id).filter((id): id is number => id !== undefined);
         await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(prepared.embeddingColumn.name)}=NULL,embedded_at=NULL,
-          embedded_text_hash=NULL,embedding_input_hash=NULL WHERE page_id=$1 AND id=ANY($2::int[])`, [prepared.snapshot.page.id, ids]);
+          embedded_text_hash=NULL,embedding_input_hash=NULL,embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND id=ANY($2::int[])`, [prepared.snapshot.page.id, ids]);
         await tx.executeRaw('UPDATE pages SET embedding_signature=NULL WHERE id=$1', [prepared.snapshot.page.id]);
       }
       if (installed && !refused) await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, snapshot.page.slug, effect.source_id);

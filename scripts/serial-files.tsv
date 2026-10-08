@@ -85,6 +85,7 @@ test/core/remediation-checkpoint.serial.test.ts	R1	R1: mutates process.env (GBRA
 test/corpus-retention-uningested.serial.test.ts	R1	R1: mutates GBRAIN_HOME for in-process session-end hook runs and the doctor check
 test/creds-vault.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/cross-modal-hybrid-integration.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway
+test/cycle-embed-phase-warn.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; mock.module replaces the embed module
 test/cycle-lock-release-diagnostic.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/cycle-lock-steal.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_CYCLE_LOCK_REFRESH_MS)
 test/cycle-patterns-completed-outcome.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.ts, ../src/core/cycle/synthesize.ts, ../src/core/minions/wait-for-completion.ts) replaces modules for every file in the process

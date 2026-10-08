@@ -1456,16 +1456,16 @@ are one principal. See [shared brain skills](shared-brain-skills.md).
 
 | Profile | Access | Native MCP surface |
 | --- | --- | --- |
-| `memory-reader` | Read selected memory | Starter |
-| `memory-writer` | Read and write selected memory | Starter |
-| `coding-agent` | Isolated project writes and explicit project reads | Starter |
+| `memory-reader` | Read selected memory | Full |
+| `memory-writer` | Read and write selected memory | Full |
+| `coding-agent` | Isolated project writes and explicit project reads | Full |
 | `operator` | Read, write, and eligible brain administration operations | Full |
 | `delegating-agent` | Memory plus explicitly bound delegation | Starter |
 | `full` | All eligible remote capabilities at grant time, including bound delegation | Full |
 
 A **profile grants authority**. A **surface selects visible tools**. Full surface does not bypass a grant, and `admin` does not imply delegation, the named shared-skill scopes, or owner dashboard/client-management authority. Starter includes authorized skill discovery and membership; the exact seven-tool `verbs` surface is memory-only. Thin CLI adapters use the full surface while retaining their source, operation, and write restrictions. Direct local CLI access is trusted access to the local computer; OAuth profiles do not confine a local shell.
 
-New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. Explicitly regrant to include them: `gbrain auth rescope-client <client_id> --allowed-operations …` for OAuth clients, or `gbrain auth rescope-token <name> --refresh-operations` (preview) then `--add <op,...>` for legacy tokens. `gbrain auth rescope --client <client_id> --operations all` (alias: `gbrain auth rescope-client <client_id> --allowed-operations all`) stores no snapshot and clears the profile instead, so the scopes and the surface alone decide, including operations later upgrades add. `gbrain auth clients` marks such a client `operations: "all"` with `includes_future_operations: true` and the command that re-pins it. A `bootstrap harness` re-run carries the replaced token's grants and does not widen its snapshot ([legacy token grants](../mcp/ADMIN.md#legacy-token-grants)). Archived sources are excluded. Legacy clients with a `NULL` operation snapshot retain their prior operation behavior.
+Clients granted a memory profile before the full-surface default keep their stored `starter` surface; no migration or repair widens it, and only an explicit `--profile` application regrants it. New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. The connection's own `whoami` reports `grant_diagnosis`: which blocker applies (scope, operation snapshot, client pin or server ceiling) and how many operations it hides, without naming them; `gbrain doctor` on the host reports the same as `grant_new_ops_available` with the commands. A grant written before snapshots recorded their operation catalog says "original intent unknown" rather than claiming it predates the operations. Explicitly regrant to include them: `gbrain auth rescope --client <client_id> --operations <op,...> --surface full --dry-run` (then without `--dry-run`; `--surface full` only when the stored surface also blocks) for OAuth clients, or `gbrain auth rescope-token <name> --refresh-operations` (preview) then `--add <op,...>` for legacy tokens ([grants that cannot reach new operations](../mcp/ADMIN.md#grants-that-cannot-reach-new-operations)). `gbrain auth rescope --client <client_id> --operations all` (alias: `gbrain auth rescope-client <client_id> --allowed-operations all`) stores no snapshot and clears the profile instead, so the scopes and the surface alone decide, including operations later upgrades add. `gbrain auth clients` marks such a client `operations: "all"` with `includes_future_operations: true` and the command that re-pins it. A `bootstrap harness` re-run carries the replaced token's grants and does not widen its snapshot ([legacy token grants](../mcp/ADMIN.md#legacy-token-grants)). Archived sources are excluded. Legacy clients with a `NULL` operation snapshot retain their prior operation behavior.
 
 Snapshot-bound clients write through approved MCP operations such as `remember`, `capture`, or `put_page`. They cannot use the legacy `POST /ingest` webhook, whose queued writes do not yet enforce operation snapshots. Existing webhook clients with a `NULL` snapshot keep their legacy behavior.
 
@@ -2654,9 +2654,11 @@ lane; moving engines is `gbrain migrate`'s.
 `--json` emits `{status, engine, ladder_rung, url_source}` as the ONLY stdout
 content so a scripted install can `| jq` it. The access token is never
 persisted, logged, or echoed.
-Tradeoff to know before choosing: Postgres brains get MCP tools every session plus
-the pull protocol, but NOT the PGLite-only per-turn bootstrap hook lane (see
-`BOOTSTRAP_FOR_AGENTS.md` and the degradation matrix in `docs/guides/bootstrap.md`).
+Postgres brains get MCP tools every session plus the pull protocol, and keep the
+per-turn bootstrap hook lane: the IPC listener is engine-uniform (it keys its
+socket off the connection URL), so the hooks fire whenever a `gbrain serve` for
+the brain is running, same as PGLite (see the degradation matrix in
+`docs/guides/bootstrap.md`).
 
 **Runtime failure loop (how the harness self-heals).** When Postgres access
 breaks at runtime, gbrain emits a machine marker: `GBRAIN_DB_ACCESS <reason>`
@@ -2837,9 +2839,9 @@ policy. Memory write access is not
 including the parent, needs its own principal and private handoff.
 
 Discover with `list_skills` using `schema_version: 2`, then fetch only relevant
-`get_skill` revisions and approved `get_skill_asset` dependencies. Starter
-supports these tools subject to grants; the `--surface verbs` examples below
-are deliberately memory-only. MCP resources at `gbrain://skills` offer the same
+`get_skill` revisions and approved `get_skill_asset` dependencies. The
+`--surface full` registrations below serve these tools subject to grants (the
+narrower `--surface verbs` is deliberately memory-only). MCP resources at `gbrain://skills` offer the same
 authorized catalog, not a promise that every client loads native skills.
 
 Managed Claude Code/Codex/opencode routers report `restart_required` and native
@@ -2894,7 +2896,7 @@ model gbrain removed in v0.33, needs `gbrain skillpack migrate-fence` once.)
 **If you are Hermes:** register gbrain as your MCP server:
 
 ```bash
-printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve
+printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface full
 ```
 
 Keep `--args` last (everything after it becomes server argv) and verify with
@@ -2904,12 +2906,12 @@ Keep `--args` last (everything after it becomes server argv) and verify with
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface verbs
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface full
 ```
 
 The add is lazy (exit 0 without connecting) — verify with
-`grok mcp doctor gbrain`, which spawns the server and must report
-`7 tools discovered`. This is the brain-only install; the `gbrain bootstrap`
+`grok mcp doctor gbrain`, which spawns the server and must report the tools it
+discovered (the full surface). This is the brain-only install; the `gbrain bootstrap`
 personal-agent path does not support Grok yet (Claude Code, Codex, and opencode only).
 Verified against Grok Build v1.0.4. Full reference:
 [docs/mcp/GROK.md](docs/mcp/GROK.md).
@@ -2920,7 +2922,7 @@ install, follow `BOOTSTRAP_FOR_AGENTS.md` instead of this page. For the
 brain-only MCP registration:
 
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface verbs
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface full
 ```
 
 The add is lazy (exit 0 without connecting) — verify with `opencode mcp list`,
@@ -3522,7 +3524,7 @@ stdout (`--json`):
           "options": [
             {
               "id": "wire",
-              "label": "Register `<absolute path to gbrain> serve --surface starter` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+              "label": "Register `<absolute path to gbrain> serve --surface full` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
             },
             {
               "id": "skip",
@@ -4753,11 +4755,11 @@ The agent starts with keyless memory and verifies it. API keys, automatic captur
 
 ### Lighter ways in
 
-**Just want a memory for your coding agent — no identity, no repo.** Spin up a local brain and connect it in two commands — zero server, zero token, zero tunnel. `--surface verbs` gives your agent the seven-verb memory protocol (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` — [MEMORY_VERBS v1](docs/protocol/MEMORY_VERBS_v1.md), frozen + additive-forever) instead of the full tool wall; drop the flag for every operation:
+**Just want a memory for your coding agent — no identity, no repo.** Spin up a local brain and connect it in two commands — zero server, zero token, zero tunnel. `--surface full` (the registration default) serves every operation, the seven-verb memory protocol ([MEMORY_VERBS v1](docs/protocol/MEMORY_VERBS_v1.md)) and `put_pages` included; a harness that caps its tool count can register `--surface verbs` or `--surface starter`:
 
 ```bash
 gbrain init --pglite --no-embedding                     # keyless local brain (no Docker)
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs   # or: codex mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface full   # or: codex mcp add gbrain -- "$(command -v gbrain)" serve --surface full
 ```
 
 If `claude` is not found, install Claude Code first — or use the per-harness blocks in the [protocol doc](docs/protocol/MEMORY_VERBS_v1.md). Heads-up: memories agents save default to brain-wide visibility (every connected agent can recall them); pass `visibility: "private"` for local-only facts.
@@ -4791,7 +4793,7 @@ to keep daemon installation and paid reindexing opt-in.
 
 ### Connect GBrain to your AI client (MCP)
 
-For a hosted brain, start with the [native OAuth and private machine connection guide](docs/guides/hosted-harness-access.md). To open the dashboard, register clients, edit access, or invalidate tokens, use [MCP administration](docs/mcp/ADMIN.md). A **profile** controls MCP authority; a **surface** controls which granted tools are visible. Neither grants owner dashboard access. New memory profiles use the starter surface. `--surface verbs` retains exactly the seven memory verbs, with orientation available through `gbrain://capabilities`. Thin CLI connections use the full surface and remain restricted by their grants.
+For a hosted brain, start with the [native OAuth and private machine connection guide](docs/guides/hosted-harness-access.md). To open the dashboard, register clients, edit access, or invalidate tokens, use [MCP administration](docs/mcp/ADMIN.md). A **profile** controls MCP authority; a **surface** controls which granted tools are visible. Neither grants owner dashboard access. New memory profiles use the full surface. `--surface verbs` retains exactly the seven memory verbs, with orientation available through `gbrain://capabilities`. Thin CLI connections use the full surface and remain restricted by their grants.
 
 Choose the connection instructions for your actual product:
 
@@ -4804,12 +4806,12 @@ commands, embedding costs, and the restrictions that remain after rebuilding.
 
 - **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — plugin: `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain` (MCP + skills; persona variants `gbrain-coding` / `gbrain-daily` install curated subsets; pick one). Marketplace-free skills: `gbrain skillpack scaffold --harness claude-code` copies a persona-curated skill set into your user-scope skills dir. Or local one-liner: `claude mcp add gbrain -- "$(command -v gbrain)" serve`. Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
 - **[Codex](docs/mcp/CODEX.md)** — plugin (recommended): `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain` installs the MCP server AND the curated skill set. Or connect-only: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`); the token path reads `$GBRAIN_REMOTE_TOKEN` at runtime, while the private-handoff installer writes a private managed HTTP header so the connection survives a new shell.
-- **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve"]}` to your MCP config.
-- **[Hermes](docs/mcp/HERMES.md)** — `printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve`. Keep `--args` last, and verify with `hermes mcp test gbrain` (the add exits 0 even on failure).
+- **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve", "--surface", "full"]}` to your MCP config.
+- **[Hermes](docs/mcp/HERMES.md)** — `printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface full`. Keep `--args` last, and verify with `hermes mcp test gbrain` (the add exits 0 even on failure).
 - **[Grok Bot](docs/guides/grok-bot.md)** — recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a `memory-writer` client and install the thin CLI at `/workspace/gbrain`; or install memory inside the Bot computer when no machine of yours stays online. Bots share local files and credentials; sources organize memory without isolating Bots. **Say to your agent:** *"connect grok bot to my brain"*.
 - **[Muse personal agent](docs/guides/muse.md)** — first verify its durable user-files location; then either connect it to your published brain (`gbrain mcp expose --funnel` + thin CLI) or install the local CLI there. Native MCP configuration and skill activation are not assumed. **Say to your agent:** *"connect muse to my brain"*.
-- **[Grok Build](docs/mcp/GROK.md)** — `grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface verbs`. The add is lazy (exit 0 without connecting) — verify with `grok mcp doctor gbrain`, which spawns the server and reports `7 tools discovered`. Verified against Grok Build v1.0.4.
-- **[opencode](docs/mcp/OPENCODE.md)** (opencode.ai / SST — not OpenClaw) — `opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface verbs`, or let `gbrain bootstrap hooks --harness opencode` write the config for you (opencode is a bootstrap-supported harness — it reads AGENTS.md natively). The add is lazy — verify with `opencode mcp list`, which spawns the server (`✓ gbrain connected`). Remote: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent opencode [--install]` — the config stores only the `{env:GBRAIN_REMOTE_TOKEN}` interpolation. Verified against opencode v1.18.18.
+- **[Grok Build](docs/mcp/GROK.md)** — `grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface full`. The add is lazy (exit 0 without connecting) — verify with `grok mcp doctor gbrain`, which spawns the server. Verified against Grok Build v1.0.4.
+- **[opencode](docs/mcp/OPENCODE.md)** (opencode.ai / SST — not OpenClaw) — `opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface full`, or let `gbrain bootstrap hooks --harness opencode` write the config for you (opencode is a bootstrap-supported harness — it reads AGENTS.md natively). The add is lazy — verify with `opencode mcp list`, which spawns the server (`✓ gbrain connected`). Remote: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent opencode [--install]` — the config stores only the `{env:GBRAIN_REMOTE_TOKEN}` interpolation. Verified against opencode v1.18.18.
 - **[OpenClaw](docs/mcp/OPENCLAW.md)** — the ClawHub bundle plugin registers gbrain automatically (`openclaw.plugin.json` ships in this repo), or register the stdio server with `openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --env GBRAIN_HOME=$HOME` (absolute path: the launchd gateway PATH lacks `~/.bun/bin`); verify with `openclaw mcp list`.
 - **[Claude Desktop (Cowork)](docs/mcp/CLAUDE_DESKTOP.md)** — Settings → Integrations → add the URL of your HTTP server. Remote only; the local `claude_desktop_config.json` does not work for remote servers.
 - **[Claude Cowork (team plan)](docs/mcp/CLAUDE_COWORK.md)** — org Owner adds the connector under Organization Settings → Connectors.
@@ -7829,9 +7831,10 @@ this channel production-grade rather than spammy-and-invisible:
   client-side), the doctor check reconciles the counts against the hook's own
   heartbeat and cautions when they diverge.
 
-The hook lane rides the PGLite serve's IPC socket: on a Postgres brain or a
-thin-client install the hook stays quiet by design (pull-mode retrieval covers
-those; extending the lane is a filed follow-up in TODOS.md).
+The hook lane rides the running serve's IPC socket on PGLite and Postgres alike
+(the listener is engine-uniform and keys its socket off the connection URL), so
+the hook stays quiet only while no `gbrain serve` for the brain is running, and
+on a thin-client install, where pull-mode retrieval covers it.
 
 Kill switch: `GBRAIN_HOOKS=0`. Install/uninstall: `docs/guides/bootstrap.md`.
 
@@ -8156,7 +8159,7 @@ the same registry.
 
 ```bash
 gbrain init --pglite                                      # 2-second local brain
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter   # the verbs plus page tools
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface full   # every operation, the verbs included
 gbrain remember "gbrain install check" --provenance install-check
 gbrain recall --query "gbrain install check"              # …now ask your agent in a NEW session
 ```
@@ -8171,28 +8174,28 @@ If `claude` is not found: install Claude Code first, or use a block below.
 
 **Codex**
 ```bash
-codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter
+codex mcp add gbrain -- "$(command -v gbrain)" serve --surface full
 ```
 
 **Grok Build** (verify with `grok mcp doctor gbrain` — the add is lazy)
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface starter
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface full
 ```
 
 **opencode** (verify with `opencode mcp list` — the add is lazy, and list SPAWNS the server)
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface starter
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface full
 ```
 
 **OpenClaw / any stdio MCP host** — register the server command
-`gbrain serve --surface starter`. Remote brains: `gbrain serve --http` on the
+`gbrain serve --surface full`. Remote brains: `gbrain serve --http` on the
 host, then `gbrain connect https://host/mcp --token gbrain_xxx --install` on
 each client.
 
 **Surface modes:** `--surface verbs` exposes EXACTLY the seven verbs —
 advertised list AND dispatch are filtered fail-closed (a hidden op returns
 `unknown_tool` even when called by name). `--surface starter` exposes the
-~27-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
+40-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
 verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and the
 `request_tools` discovery meta-op (re-derivable from production usage via
 `scripts/derive-starter-ops.ts`). Monotonic by construction: verbs ⊆ starter ⊆ full
@@ -8200,8 +8203,9 @@ verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and 
 verb semantics. `--surface full` (the default for a bare `serve`) exposes
 every operation, verbs included. Every stdio registration gbrain writes
 (`gbrain init`'s quickstart, readiness, `gbrain bootstrap hooks`, the plugins)
-pins `starter`, because `verbs` lacks the page reads and writes bootstrap's
-instructions use and `full` puts the whole catalogue in front of the model.
+pins `full`, callable and advertised: in the held-out agent benchmark, listing
+only `starter` or `verbs` lowered task success and saved no tokens. A harness
+that caps its tool count can register `--surface starter` or `--surface verbs`.
 Persist a default for bare `serve` with `gbrain config set mcp_surface verbs`.
 On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface`; a
 session widens itself with `request_tools {"surface":"full"}` (see

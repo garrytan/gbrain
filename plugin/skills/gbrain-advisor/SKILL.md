@@ -125,12 +125,3 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - **Calling the MCP `advisor` op for workspace install state.** Over MCP the
   advisor returns brain-state signals only; uninstalled-skill findings are a
   local-CLI concern.
-
-## Tools outside your MCP surface
-
-This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
-does not have it, call request_tools {"surface":"full"} to add it to this session, or run its gbrain CLI equivalent:
-
-- `advisor` → `gbrain advisor`
-
-To widen every new session, set this machine's plugin surface with GBRAIN_SURFACE=full.

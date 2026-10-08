@@ -22,8 +22,10 @@ import { checkPersistenceCapacity } from './persistence-capacity.ts';
 import { checkPostgresCancellationDriver } from './postgres-cancellation.ts';
 import { checkProjectionReadiness } from './projection-readiness.ts';
 import type { Check } from '../../doctor.ts';
+import type { BrainEngine } from '../../../core/engine.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { embeddingsDisabled } from '../../../core/embedding-disabled.ts';
+import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from '../../../core/search/embedding-column.ts';
 import { checkError, infoCheck, keylessEnablementFix } from '../check-fix.ts';
 
 async function runPgvector(ctx: DoctorContext): Promise<Check[]> {
@@ -336,6 +338,49 @@ export const rlsEventTriggerEntry: DoctorEntry = {
   run: runRlsEventTrigger,
 };
 
+/**
+ * A backlog warns only when it is both large (over 1,000 chunks or 1% of
+ * embeddable chunks) and old: its oldest pending chunk has waited longer than
+ * this. A fresh brain draining its first embed, an edited page and a model
+ * swap re-embed all start their wait at the moment the vector went missing
+ * (`content_chunks.embedding_pending_since`), so they stay `ok` while they
+ * drain inside the window.
+ */
+export const EMBEDDING_BACKLOG_MAX_AGE_S = 24 * 60 * 60;
+const EMBEDDING_BACKLOG_MIN_CHUNKS = 1_000;
+const EMBEDDING_BACKLOG_MIN_SHARE = 0.01;
+
+interface BacklogAge { oldest_pending_age_s: number; backfilled: boolean }
+
+/**
+ * Age of the oldest chunk the health counters call missing (live, not
+ * embed_skip, registry-active vector NULL). Null when it cannot be read: the
+ * column is absent, or a pending chunk carries no pending-since stamp.
+ */
+async function readBacklogAge(engine: BrainEngine): Promise<BacklogAge | null> {
+  try {
+    const column = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name);
+    const [row] = await engine.executeRaw<{ age_s: number | null; unaged: number; backfilled: boolean | null }>(
+      `SELECT EXTRACT(EPOCH FROM now() - min(cc.embedding_pending_since))::float8 AS age_s,
+              count(*) FILTER (WHERE cc.embedding_pending_since IS NULL)::int AS unaged,
+              min(cc.embedding_pending_since) <= (SELECT value::timestamptz FROM config
+                WHERE key = 'embedding_pending_since_backfilled_at') AS backfilled
+         FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+        WHERE cc.${column} IS NULL AND p.deleted_at IS NULL
+          AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')`);
+    if (!row || row.age_s === null || Number(row.unaged) > 0) return null;
+    return { oldest_pending_age_s: Math.max(0, Math.round(Number(row.age_s))), backfilled: row.backfilled === true };
+  } catch {
+    return null;
+  }
+}
+
+function formatWait(seconds: number): string {
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 172_800) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86_400)}d`;
+}
+
 async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
   const engine = connectedEngine(ctx);
@@ -366,24 +411,39 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
     } catch {
       // Config read is best-effort; the coverage numbers stand alone.
     }
+    const backlog = health.missing_embeddings;
+    const age = backlog > 0 ? await readBacklogAge(engine) : null;
+    const ageDetails = {
+      backlog,
+      oldest_pending_age_s: age?.oldest_pending_age_s ?? null,
+      age_threshold_s: EMBEDDING_BACKLOG_MAX_AGE_S,
+      ...(age?.backfilled ? { age_source: 'created_at_backfill' } : {}),
+    };
+    if (backlog === 0) {
+      checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}`, details: ageDetails });
+      return checks;
+    }
     // The backlog's fix is the catch-up drain: a plain `embed --stale` stops
     // at its 30-minute budget, which on a large brain leaves most of the
     // backlog behind (52k documents: 51,910 chunks after one run).
-    const backlog = health.missing_embeddings;
     const fix = 'gbrain embed --stale --catch-up';
-    const backlogDetails = { code: 'embedding_backlog', backlog, fix, requires_user_approval: 'paid embedding calls',
+    const details = { code: 'embedding_backlog', ...ageDetails, fix, requires_user_approval: 'paid embedding calls',
       docs: 'docs/operations/backfill-pacing.md#large-brain-deadlines' };
     const fixText = `Fix: ${fix} (runs until the backlog is empty; a plain gbrain embed --stale stops after its 30-minute budget). ` +
       'It makes paid embedding calls: confirm with the user unless embedding spend is already approved.';
-    if (health.embed_coverage >= 0.9) {
-      checks.push(backlog > 0
-        ? { name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) }
-        : { name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}` });
-    } else if (health.embed_coverage > 0) {
-      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) });
-    } else {
-      checks.push({ name: 'embeddings', status: 'warn', message: `No embeddings yet${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) });
-    }
+    // Without a readable age (pre-migration schema, unstamped rows) the
+    // coverage rule decides: warn below 90%.
+    const stale = age
+      ? (backlog > EMBEDDING_BACKLOG_MIN_CHUNKS || 1 - health.embed_coverage > EMBEDDING_BACKLOG_MIN_SHARE)
+        && age.oldest_pending_age_s > EMBEDDING_BACKLOG_MAX_AGE_S
+      : health.embed_coverage < 0.9;
+    const waited = age
+      ? ` Oldest pending chunk has waited ${formatWait(age.oldest_pending_age_s)}${age.backfilled ? ' (backfilled from its creation time)' : ''}; a large backlog warns after ${formatWait(EMBEDDING_BACKLOG_MAX_AGE_S)}.`
+      : '';
+    const summary = health.embed_coverage > 0 ? `${pct}% coverage, ${backlog} missing` : 'No embeddings yet';
+    checks.push({ name: 'embeddings', status: stale ? 'warn' : 'ok',
+      message: `${summary}${carveOut}. Backlog: ${backlog} chunk(s) without embeddings.${waited} ${fixText}`,
+      details, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) });
   } catch {
     checks.push(checkError('embeddings', 'check embedding health'));
   }

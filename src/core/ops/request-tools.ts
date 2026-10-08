@@ -10,13 +10,14 @@
  * pattern: by the time a handler runs, operations.ts has finished loading).
  */
 
-// WP4 (request_tools): the four static imports below are runtime leaves
+// WP4 (request_tools): the static imports below are runtime leaves
 // relative to operations.ts (no import cycles back into it). The cyclic
 // dependencies — src/mcp/surface.ts (→ brain-allowlist → operations),
 // src/mcp/publish-gates.ts (→ operations), and the assembled `operations`
 // array itself — are loaded via dynamic import inside the handler instead
 // (the verbs.ts house pattern).
 import { isUndefinedColumnError } from '../utils.ts';
+import { suggestNearest } from '../levenshtein.ts';
 import { hasScope, operationScopesAllowed } from '../scope.ts';
 import { RateLimiter } from '../../mcp/rate-limit.ts';
 import { writeSurfaceChangeAudit } from '../surface-audit.ts';
@@ -294,6 +295,23 @@ const request_tools: Operation = {
     const catalogCeiling = session && session.widenAllowed && !session.readOnly ? clampSurface('full') : ceiling;
     const visible = await visibleOpsForCaller(ctx, catalogCeiling);
 
+    const catalog = () => {
+      const groups = new Map<string, Array<{ name: string; one_line: string }>>();
+      for (const op of visible) {
+        // Area names are non-contractual grouping labels (amendment 22).
+        const area = op.area ?? 'other';
+        const bucket = groups.get(area) ?? [];
+        bucket.push({ name: op.name, one_line: firstSentenceOf(op.description) });
+        groups.set(area, bucket);
+      }
+      return [...groups.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([area, tools]) => ({ area, tools }));
+    };
+    const catalogNote = session
+      ? 'Call request_tools {tools: ["name", ...]} for full schemas, or {surface: "starter"|"full"} to add those tools to this session (nothing is written).'
+      : 'Call request_tools {tools: ["name", ...]} for full schemas, or {surface: "starter"|"full"} to persist a wider tool surface for your OAuth client (within the server ceiling), then re-issue tools/list.';
+
     // ── descriptor branch (D5: read-only) ───────────────────────────────
     if (p.tools !== undefined) {
       const requested = (p.tools as unknown[]).filter((t): t is string => typeof t === 'string');
@@ -306,10 +324,25 @@ const request_tools: Operation = {
         const op = byName.get(name);
         if (op) picked.push(op); // invisible names silently omitted (D5)
       }
+      if (picked.length === 0) {
+        // D1: an empty or unknown-only list gets the catalog instead of `{tools: []}`.
+        // Suggestions come only from the caller-visible set and requested names are
+        // never echoed, so an existing-but-invisible name and a nonexistent one
+        // produce the same bytes (no existence oracle).
+        const visibleNames = visible.map(o => o.name);
+        const didYouMean = [...new Set([...seen].map(name => suggestNearest(name, visibleNames)).filter((n): n is string => n !== null))].sort();
+        return {
+          tools: [],
+          ...(didYouMean.length ? { did_you_mean: didYouMean } : {}),
+          catalog: catalog(),
+          total_tools: visible.length,
+          note: `${seen.size ? 'None of the requested names is a tool this connection can call. ' : ''}${didYouMean.length ? 'The closest callable names are in did_you_mean; the' : 'The'} catalog lists every tool you can call. ${catalogNote}`,
+        };
+      }
       const { buildToolDefs } = await import('../../mcp/tool-defs.ts');
       const { resolveStrictParamsMode } = await import('../../mcp/validate-params.ts');
       const strictParams = (await resolveStrictParamsMode(ctx.engine, ctx.config)) === 'reject';
-      if (ctx.revealTools && picked.length) {
+      if (ctx.revealTools) {
         ctx.revealTools(picked.map(o => o.name));
         return { tools: buildToolDefs(picked, { strictParams }), listed: true, note: 'These tools are now in your tool list (tools/list_changed was sent); call them directly.' };
       }
@@ -317,24 +350,7 @@ const request_tools: Operation = {
     }
 
     // ── catalog branch (no args) ────────────────────────────────────────
-    const groups = new Map<string, Array<{ name: string; one_line: string }>>();
-    for (const op of visible) {
-      // Area names are non-contractual grouping labels (amendment 22).
-      const area = op.area ?? 'other';
-      const bucket = groups.get(area) ?? [];
-      bucket.push({ name: op.name, one_line: firstSentenceOf(op.description) });
-      groups.set(area, bucket);
-    }
-    const catalog = [...groups.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([area, tools]) => ({ area, tools }));
-    return {
-      catalog,
-      total_tools: visible.length,
-      note: session
-        ? 'Call request_tools {tools: ["name", ...]} for full schemas, or {surface: "starter"|"full"} to add those tools to this session (nothing is written).'
-        : 'Call request_tools {tools: ["name", ...]} for full schemas, or {surface: "starter"|"full"} to persist a wider tool surface for your OAuth client (within the server ceiling), then re-issue tools/list.',
-    };
+    return { catalog: catalog(), total_tools: visible.length, note: catalogNote };
   },
 };
 

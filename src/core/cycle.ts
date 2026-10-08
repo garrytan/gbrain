@@ -56,7 +56,7 @@ import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
-import { assertEmbedNotStalled } from './embed-stall.ts';
+import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
 import { anyAbortSignal } from './abort-signals.ts';
 import { maybeRefreshPlannerStats } from './planner-stats.ts';
 
@@ -1629,13 +1629,11 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
     const result = await runEmbedCore(engine, { stale: true, dryRun, signal, quiet: true });
     assertEmbedNotStalled(result); // #4599: a watchdog-aborted drain is a failed phase, not 'ok'
     const embeddedCount = dryRun ? result.would_embed : result.embedded;
+    const failed = result.failures > 0 && !result.lock_skipped; // E-A: blocked pages are a warn; another backfill's lock is not
+    const counts = dryRun ? `${result.would_embed} chunk(s) would be embedded (dry-run)` : `${result.embedded} chunk(s) newly embedded (${result.skipped} already had embeddings)`;
     return {
-      phase: 'embed',
-      status: 'ok',
-      duration_ms: 0,
-      summary: dryRun
-        ? `${result.would_embed} chunk(s) would be embedded (dry-run)`
-        : `${result.embedded} chunk(s) newly embedded (${result.skipped} already had embeddings)`,
+      phase: 'embed', status: failed ? 'warn' : 'ok', duration_ms: 0,
+      summary: failed ? `${counts}; ${result.failures} chunk(s) could not be embedded this run` : counts,
       details: {
         embedded: result.embedded,
         skipped: result.skipped,
@@ -1647,6 +1645,8 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
         // In dry-run, this counts pages with stale chunks that would
         // have been processed (same semantic as a real run).
         pages_embedded_count: dryRun ? result.pages_processed : embeddedCount > 0 ? result.pages_processed : 0,
+        failures: result.failures,
+        ...(failed ? { failure_samples: result.failure_samples, fix: embedBackfillFix({ backlog: result.failures, verifyCheck: 'embeddings' }) } : {}),
       },
     };
   } catch (e) {

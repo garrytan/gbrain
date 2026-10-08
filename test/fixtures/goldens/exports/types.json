@@ -1640,7 +1640,7 @@
           "responseModel?: string | undefined",
           "stopReason: \"other\" | \"length\" | \"end\" | \"tool_calls\" | \"refusal\" | \"content_filter\"",
           "text: string",
-          "usage: { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; }"
+          "usage: { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; reasoning_tokens?: number; }"
         ],
         "name": "ChatResult"
       },
@@ -1844,7 +1844,7 @@
           "messages: ChatMessage[]",
           "stopReason: ToolLoopStopReason",
           "totalTurns: number",
-          "totalUsage: { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; }"
+          "totalUsage: { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; reasoning_tokens?: number; }"
         ],
         "name": "ToolLoopResult"
       },
@@ -4008,7 +4008,8 @@
           "finish_reason: string | null",
           "response_model: string | null",
           "sessions_truncated: number",
-          "text: string"
+          "text: string",
+          "usage: ReaderUsage | null"
         ],
         "name": "ReaderAnswer"
       },
@@ -4029,6 +4030,18 @@
         "signature": [
           "\"direct\" | \"notes\""
         ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "cache_read_input_tokens: number",
+          "cache_write_input_tokens: number",
+          "output_tokens: number",
+          "reasoning_tokens: number | null",
+          "total_input_tokens: number",
+          "uncached_input_tokens: number"
+        ],
+        "name": "ReaderUsage"
       },
       {
         "kind": "interface",
@@ -4073,6 +4086,20 @@
         "name": "readerConfigHash",
         "signature": [
           "(config: ReaderConfig, model: string) => string"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "readerUsageFromGateway",
+        "signature": [
+          "(u: ChatResult[\"usage\"]) => ReaderUsage"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "readerUsageFromMessage",
+        "signature": [
+          "(message: Anthropic.Message & { gbrain_usage?: ReaderUsage; }) => ReaderUsage | null"
         ]
       },
       {

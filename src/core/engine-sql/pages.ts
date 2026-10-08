@@ -347,7 +347,7 @@ export async function updatePageContextualRetrievalState(
           RETURNING p.id, previous.old_mode, previous.skipped
         )
         UPDATE content_chunks cc SET ${vector}=NULL, embedded_at=NULL,
-          embedded_text_hash=NULL, embedding_input_hash=NULL
+          embedded_text_hash=NULL, embedding_input_hash=NULL, embedding_pending_since=now()
         FROM changed WHERE cc.page_id=changed.id
           AND changed.old_mode IN ('title','per_chunk_synopsis') AND NOT changed.skipped
           AND cc.${vector} IS NOT NULL`);

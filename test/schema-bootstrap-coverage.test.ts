@@ -891,6 +891,12 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // claim, after the migration chain has run.
   'minion_jobs.spend_authorization',
   'minion_jobs.spend_claim_token',
+  // E-B (wave 0) content_chunks.embedding_pending_since (migration
+  // chunk_embedding_pending_since): deliberately migration-only so fresh and
+  // upgraded catalogs keep the same column order (test/pglite-upgrade-replay);
+  // the schema blob carries a comment, no CREATE TABLE column and no index
+  // reads it, so there is no forward reference for the bootstrap to trip on.
+  'content_chunks.embedding_pending_since',
   // T7 — search_telemetry rank-1 drift columns (migration v111). search_telemetry
   // is created entirely by migration v57 (not in the schema blob), so the v57+v111
   // chain handles fresh + upgrade; no CREATE INDEX references these columns, so

@@ -21,13 +21,15 @@ brain contract loads with zero extra configuration.
 ## Register (recommended)
 
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface verbs
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface full
 ```
 
-`--surface verbs` exposes the seven-verb memory protocol (`recall`,
-`remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` —
-[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) instead of the full
-100+-op catalog — the recommended starting surface for coding agents.
+`--surface full` serves the whole operation catalog, the seven-verb memory
+protocol (`recall`, `remember`, `entity`, `synthesize`, `forget`,
+`context_pack`, `delta` — [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md))
+included; it is the surface every registration gbrain writes pins. A harness
+that caps its tool count can register `--surface starter` or `--surface verbs`
+(only the seven verbs) instead.
 Three facts about `opencode mcp add`, all observed:
 
 - **The local-command form is `-- <command> [args...]` after the flags** —

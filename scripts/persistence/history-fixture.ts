@@ -65,6 +65,8 @@ export interface HistoryFixtureOptions {
   worktrees: number;
   /** Scratch directory for the checkouts; a fresh temporary directory by default. */
   root?: string;
+  /** Write reply wait for every op (test seam; absent = the operation default, 5 s for agents). */
+  writeWaitMs?: number;
 }
 export interface HistoryFixtureSource { id: string; root: string; worktree: number }
 export interface HistoryFixture {
@@ -208,8 +210,27 @@ export async function prepareTopology(engine: BrainEngine, { sources, worktrees,
 }
 
 /** Build a brain with real persistence history. See the module comment for preconditions. */
+/**
+ * A write that outlives its reply wait answers `write_pending` with its
+ * receipt (a loaded CI host can take longer than put_page's 5 s default).
+ * The caller's documented recovery is replaying the same request_id, which
+ * reports the same write's state; settle each op that way before the next op
+ * in its lane reads `$current`. A write still pending at the deadline, or
+ * refused, is reported as it is, so the "every op commits" check stays exact.
+ */
+const HISTORY_COMMIT_DEADLINE_MS = 120_000;
+async function executeCommitted(world: Parameters<typeof executeOp>[0], d: OpDescriptor) {
+  const deadline = Date.now() + HISTORY_COMMIT_DEADLINE_MS;
+  let observation = await executeOp(world, d);
+  while (observation.status === 'pending' && Date.now() < deadline) {
+    await Bun.sleep(100);
+    observation = await executeOp(world, d);
+  }
+  return observation;
+}
+
 export async function buildHistoryFixture(engine: BrainEngine,
-  { pages, seed, sources, worktrees, root: requestedRoot }: HistoryFixtureOptions): Promise<HistoryFixture> {
+  { pages, seed, sources, worktrees, root: requestedRoot, writeWaitMs }: HistoryFixtureOptions): Promise<HistoryFixture> {
   assert(Number.isSafeInteger(pages) && pages >= 1 && pages <= 10_000, 'history fixture: pages must be 1..10000');
   assert(Number.isSafeInteger(seed) && seed >= 0 && seed <= 0xFFFFFFFF, 'history fixture: seed must be an unsigned 32-bit integer');
   assert(Number.isSafeInteger(worktrees) && worktrees >= 1, 'history fixture: worktrees must be >= 1');
@@ -219,12 +240,13 @@ export async function buildHistoryFixture(engine: BrainEngine,
   const topology = await prepareTopology(engine, { sources, worktrees, root });
   const { world, checkouts, sources: fixtureSources, accessTokenId, oauthClientId } = topology;
   const remotes = world.remotes;
+  if (writeWaitMs !== undefined) world.writeWaitMs = writeWaitMs;
 
   const plan = historyPlan({ pages, seed, sources, worktrees }, fixtureSources.map(s => s.id), remotes);
   // Sources publish independently; ops within one source run in plan order.
   const lanes = new Map<string, OpDescriptor[]>();
   for (const d of plan) lanes.set(d.source, [...(lanes.get(d.source) ?? []), d]);
-  await Promise.all([...lanes.values()].map(async lane => { for (const d of lane) await executeOp(world, d); }));
+  await Promise.all([...lanes.values()].map(async lane => { for (const d of lane) await executeCommitted(world, d); }));
   const observations = plan.map(d => world.observations.get(d.id)!);
   const failed = observations.filter(o => o.status !== 'committed');
   assert.deepEqual(failed.map(o => `${o.id} ${o.kind} ${o.code}`), [], 'every history op must commit');
@@ -241,7 +263,7 @@ export async function buildHistoryFixture(engine: BrainEngine,
   try {
     const delayed = descriptor('delayed-effect', 'put_page', 'local', delayedSource.id,
       { slug: 'notes/delayed-effect', content: pageContent('note', 'Delayed effect', 'Its Git effect waits on a stale index.lock.') });
-    assert.equal((await executeOp(world, delayed)).status, 'committed');
+    assert.equal((await executeCommitted(world, delayed)).status, 'committed');
     observations.push(world.observations.get('delayed-effect')!);
     const deadline = Date.now() + 60_000;
     for (;;) {

@@ -199,7 +199,7 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
       : `p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1`;
     const rows = await tx.executeRaw<{ page_id: number }>(
       `UPDATE content_chunks cc
-          SET ${colId} = NULL, embedded_at = NULL
+          SET ${colId} = NULL, embedded_at = NULL, embedding_pending_since = now()
          FROM pages p
         WHERE cc.page_id = p.id
           AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)
