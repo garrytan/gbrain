@@ -718,6 +718,8 @@ declare namespace postgres {
 
     options: ParsedOptions<TTypes>;
     parameters: ConnectionParameters;
+    /** GBrain: the pool's own queue lengths at this instant (`queued` = queries waiting for a connection). */
+    pool: { max: number; open: number; busy: number; full: number; reserved: number; connecting: number; closed: number; ended: number; queued: number };
 
     end(options?: { timeout?: number | undefined } | undefined): Promise<void>;
 

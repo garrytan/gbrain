@@ -10,6 +10,94 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.117.0] - 2026-10-08
+
+**A managed brain no longer calls itself healthy while its sync moves nothing: one consumer per host, a stall the drain can see from the same host, and `gbrain sources writer movement` as the deploy gate.**
+
+One production brain on Postgres had not committed a sync page for eighteen days while every health signal stayed green: `/health` ok, the pid alive, `sync_running: true`, seven upgrades passed. The head write of a bulk group sat `preparing` for 25 minutes with nothing in flight at the database, its lease renewing every 10 seconds; the same 16 rows prepared in 3 seconds each from a scratch process. Every such wedge had two gbrain processes holding a persistence consumer on the host (`gbrain serve` plus the `gbrain sync` CLI, sometimes the jobs worker too), and the one run with a single consumer published. The drain's stall detector could not fire on its own host, the progress meter printed an ETA from the last good window, and the job workers had been minting a new host identity after every container restart, so their maintenance writes went to "another host" for weeks. This release makes the second consumer the exception, lets the drain and the doctor say "not moving", and gives an upgrade a last step that fails when the data does not move.
+
+### How to use it
+
+```bash
+gbrain sync --source <id> --no-pull --no-embed             # beside a live gbrain serve on Postgres the serve publishes; the CLI drives and prints progress
+gbrain sources status <id> --json                          # data_moving, not_moving_since, movement_state; prints the writer-status command beside data_moving: false
+gbrain sources writer status --source <id> --json          # each running claim ends in claim.next: rerun after retry_after_ms, or restart the named owner pid; host.consumers lists the consumers alive here
+gbrain sources writer movement                             # after a restart: waits one window, exit 0 only when pending work moved (--warn-only prints and exits 0)
+gbrain doctor --json                                       # managed_sync_not_moving, two_consumers_on_host, consumers_without_heartbeat, host_identity_mismatch
+gbrain sync --source <id> --no-pull --no-delegate          # this run keeps its own consumer (either engine)
+gbrain config set persistence.single_consumer false        # brain-wide: every process keeps its own consumer, as before
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A second gbrain process on the host | A `gbrain sync`, jobs worker, autopilot or MCP process that finds a live, full, not-wedged consumer of this host in the new `persistence_consumers` heartbeat table runs waiter-only: it submits writes and waits, claims nothing, and promotes itself when that owner lapses, reads wedged or stops. `gbrain serve` always runs a full consumer. Short-lived commands (`put`, `import`, `dream`, `cycle`) keep their own. PGLite is unchanged. |
+| The managed catch-up beside a live serve | The serve runs the drain through the serve-delegated sync family with the CLI's own verified writer registration (grants and revocations still apply); the CLI polls `sync_status` and prints the same progress and summary. An older serve that cannot take the hand-off makes the CLI print one line (`owner row missing: older serve or no serve; running own consumer`) and run as before. |
+| `gbrain sync` stalling beside a live owner on this host | No more `drain_stalled` with "nothing here can claim it" at 150 s: the drain prints `stalled <N>s on <step>` with the owner's pid and kind every 10 s and keeps going until the 600 s ceiling frees the root, then stops with `cause: owner_wedged_here`, the owner `{kind, pid, nonce}`, `retry_after_ms` and `next.safe_to_loop: true` before the ceiling, or the pid to restart after it. A lapsed claim stops at once (`owner_missing`). |
+| `gbrain sources status` and `writer status --json` | `data_moving`, `not_moving_since` and `movement_state` per managed source (`parked` for a cursor left between cron runs with no live consumer), `sync_running` beside them, and the exact writer-status command printed beside `data_moving: false`. `writer status` ends each running claim in one `claim.next` (`claim_running`, `claim_overdue`, `claim_lapsed`) and lists `host.consumers` (pid, kind, mode, age, pool `{checked_out, max, waiters}`); a stalled claim carries `last_sql {label, age_ms}` (first keyword plus table, never text). |
+| `gbrain doctor` | `managed_sync_not_moving` (warn, counted against the score; `parked` is not), `two_consumers_on_host` (two resident kinds both alive over 30 s), `consumers_without_heartbeat` (a claim owner from an older release), `host_identity_mismatch` (this process's `host.json` differs from the binding owner's on the same machine; names both files, the `HOME`/`GBRAIN_HOME` each was minted under, and the `GBRAIN_HOME` to set). Each has a structured fix, `gbrain errors <code>` and a troubleshooting row. |
+| `gbrain upgrade` and `post-upgrade` | End by printing the supervisor's step: restart `serve` and the workers, then `gbrain sources writer movement`. The new command waits `max(300 s, preparation budget + 60 s)` and judges each source `moved`, `current`, `held` (exit 0 with the hold's route), `within_allowance` (exit 0, `retry_after_ms`), `not_moving` (exit 1, `managed_sync_not_moving`) or `unknown`. `/health` stays liveness-only. |
+| The consumer's own round-trips | With `GBRAIN_DIRECT_DATABASE_URL` (or the Supabase-derived direct URL) set, the consumer's tick statements run on the direct/session-mode route beside the claims, renewals and heartbeat, so a transaction-mode pooler never sits between the owner and its bookkeeping; `writer status --json` shows `connection.lane` and `pooler_mode`, one loud `[persistence] phase=start reason=transaction_pooler` line prints when only a `prepare=false` URL exists, and `GBRAIN_CONSUMER_DIRECT_LANE=0` keeps the scans on the ordinary pool. |
+| `[persistence]` log lines | The `preparation` deadline, ceiling and hold lines, the `owner_lapsed promoted_to_consumer` line and the drain's `drain_stalled` summary print the same step / waiting_on / last_sql triple, so a log tail names a stall without a command. |
+| `host.json` | Stays `version: 1`; a file minted from now on carries `minted_under: {home, gbrain_home, hostname, machine_id}`. Existing files are never rewritten. |
+
+### Things to watch
+
+- **One consumer per host is a preference.** Two processes that start within one heartbeat of each other both run full, a CLI that took its consumer before the serve started keeps it for that run, and nothing demotes a consumer that started full; doctor names the overlap until one exits. A fenced role is on the TODO list.
+- **Restart every resident process on this version**, not only `serve`: an older jobs worker or autopilot writes no heartbeat row, never defers, and shows up as `consumers_without_heartbeat`.
+- **`persistence.single_consumer` ships off.** The Phase 0 record (`docs/eval/managed-sync-two-consumer-repro.md`) reproduced the wedge with one process and `--no-lanes`: the mechanism is a transaction-mode pooler round-trip that never completes (fixed in v0.60.114.0's bounded settle), and two consumers were a multiplier. Turn the preference on with `gbrain config set persistence.single_consumer true` when a host runs a `serve` beside recurring CLI catch-ups.
+- **The drain waits longer before it stops.** With a live same-host owner, `drain_stalled` fires at the 600 s ceiling, not at the 150 s allowance; the stall line and `writer status` tell you what is held meanwhile. One wedge costs up to ten minutes and one held file, never the run.
+- **`writer movement` refuses by default** (exit 1 on `not_moving`); pipelines that cannot fail pass `--warn-only`.
+- **The mechanism itself landed in v0.60.114.0** (#6329): the await that wedged the reporter's owner is postgres.js's query promise in `runUnsafe`, parked behind a backend in `ClientRead`; the Phase 0 record names it with the captures. This release routes the consumer's own round-trips over the direct/session-mode URL when `GBRAIN_DIRECT_DATABASE_URL` is set and makes a parked backend visible in `writer status` (`owner.backend[]`). `gbrain sources writer dump` is deferred (TODOS.md).
+
+### Itemized changes
+
+- `src/core/persistence/consumer-heartbeat.ts` + migration v222: the `persistence_consumers` table (primary key `(host_id, pid, nonce)`, with `pid_ns`, kind, mode, `started_at`, `renewed_at`, `restart_required`, the oldest root-barrier age, the pool gauge, `host_json_path`, `persistence_home`, `minted_under`, version), renewed every 10 s by every full consumer through the direct lane, live within 30 s, lapsed at 60 s, lapsed rows deleted in the renewal CTE; plus the partial index `(worktree_id, completed_at DESC) WHERE state='committed'` the movement watermark reads. Process identity everywhere is `{kind, pid, nonce, pid_ns}`, and same-process checks compare the nonce.
+- Consumer: an explicit mode machine (`probing` → `full` | `waiter_only` → `promoted`), the database-only probe (`probeLiveFullConsumer`: resident kind, mode `full`, renewed within 30 s, not `restart_required`, not wedged, binding active) run on every tick, `WaiterOnlyConsumer` behind `PersistenceConsumerLike` with the consumer's whole external surface, promotion on a lapsed, wedged or gone owner, drain-back after three healthy owner ticks, single-flight probe and heartbeat cancelled by `stop()`. `startPersistenceConsumer` stays synchronous. New switch `persistence.single_consumer` (`GBRAIN_SINGLE_CONSUMER`) on the write-switch snapshot.
+- Drain: the stall line from the allowance with the owner's pid, kind and the step / waiting_on / last_sql triple; `drain_stalled` regardless of `claimable_here` past the ceiling or on a wedged owner, with `cause: owner_wedged_here`, `retry_after_ms`, `safe_to_loop` and the owner identity; the lapsed-owner wait keyed on `head_lapsed`, the owner host and a live full row, never `claimable_here`. `preparation_abandoned` for this process's own pid is unchanged.
+- Delegation (D1 a′): `sync-delegate.ts` gains a Postgres branch keyed on the heartbeat row; `sync_start` carries the CLI's verified writer registration and the serve runs `drainManagedSync` as that writer under `withVerifiedLocalRegistration`; `sync_status` carries `DrainReport` and `next`; the argv classifier admits `--json`, `--lanes`, `--no-bulk`, `--no-pull`, `--no-embed`; `--no-delegate` / `GBRAIN_SYNC_NO_DELEGATE=1` extend to Postgres and mean "keep this run's own consumer" on both engines. Skew: `unknown_kind`, `stale_serve`, `IPC_UNAVAILABLE`, a missing socket or `GBRAIN_SERVE_SYNC_IPC=0` each fall back with one warning naming the pid and the restart.
+- Movement: `readManagedSyncMovement` (watermark = newest committed `managed_sync_*` `completed_at` in the current incarnation; progress = a committed receipt or a head step advance), `data_moving` / `not_moving_since` / `movement_state` on `sources status` and `writer status`, doctor `managed_sync_not_moving` with the structured writer-status fix, one `[gbrain notice]` from `serve` on the flip, and `gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]` with its six states and per-state exits; `upgrade` and `post-upgrade` print the bare command.
+- Writer status: `claim.next` per running claim (`claim_running` with `retry_after_ms` inside the allowance, `tell_user_to_run` past the ceiling or on `restart_required`, `run` the resume command for a lapsed claim), `owner {host_id, pid, kind, build}`, `phase_age_ms`, `step_age_ms`, `last_sql` from the `boundedReads` wrapper, `pool {checked_out, max, waiters}` from a small accessor on the vendored driver (the `pool-gauge.ts` subset reported beside it as `tracked_subset`), `host.consumers`.
+- Identity: doctor `host_identity_mismatch` on both predicates (different `host.json` whose owner checkout resolves on this filesystem; a re-minted file under a different `HOME`/`GBRAIN_HOME` with the worktree present at the binding's path), `minted_under` written at mint time on a version-1 `host.json`, the printed fix using the `GBRAIN_HOME` parent value.
+- Doctor: `two_consumers_on_host` and `consumers_without_heartbeat` (`doctor/checks/persistence-consumers.ts`), `managed_sync_not_moving` (`doctor/checks/managed-sync-movement.ts`), all `ops`, all with structured fixes.
+- Registry and docs: `drain_stalled` (with the cause vocabulary, `owner_wedged_here` included), `two_consumers_on_host`, `consumers_without_heartbeat`, `host_identity_mismatch` and `managed_sync_not_moving` registered in `src/core/error-registry.ts` with full agent-operator envelopes (`gbrain errors <code>`), one contract test per code; `sources writer status` and `sources writer movement` declared read-only for `fix.verify`; `docs/guides/write-refusals.md` (the `drain_stalled` row), `troubleshooting.md` (symptom rows, the four sections, the corrected catch-up prose and a step-by-step transcript), `live-sync.md` (outcome table, "One consumer per host", `--no-delegate` and `persistence.single_consumer`), `upgrades-auto-update.md` (restart and verify), KEY_FILES, behavior notices for the preference, its fallback and the movement gate, and TODOS.md for the deferred pieces (thin-client parity, DB-resident lane state, a fenced consumer role, `pg_notify` wake, external alerting on `data_moving`, `writer dump`).
+- Eval: `docs/eval/managed-sync-two-consumer-repro.md` records the two-process reproduction (arms, instruments, which wedged, the named await where found), mirrored into gbrain-evals.
+
+Fixes #6317. Follows #6278.
+
+## To take advantage of v0.60.117.0
+
+`gbrain upgrade` applies migration v222 (one new table and one partial index). Then restart every resident gbrain process on the host, not only `serve`, and let the data prove it moves:
+
+```bash
+gbrain upgrade
+# restart gbrain serve, the jobs worker and autopilot through your supervisor
+gbrain sources writer movement        # exit 0 when pending work moved or nothing is pending
+gbrain doctor --only managed_sync_not_moving,two_consumers_on_host,consumers_without_heartbeat,host_identity_mismatch --json
+```
+
+If `writer movement` exits 1 or a source reads `data_moving: false`, follow [the catch-up is parked](docs/guides/troubleshooting.md#managed-sync-not-moving): two read-only calls name the owner process, its step and the next action. If a step fails or the numbers look wrong, file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`.
+
+## [0.60.116.0] - 2026-10-08
+
+**A Windows backup no longer fails on a cold machine's first PowerShell start, and a hung PowerShell still fails after one bounded launch.**
+
+On Windows, gbrain runs PowerShell to make a new backup path owner-only, with a 15-second limit. On a freshly started machine PowerShell's first launch sometimes takes longer than that (3.3 to 27.7 seconds measured on fresh CI runners; later launches take 0.2 to 1.5 seconds), so the first backup failed. The v0.60.109.0 retry fixed that, but it also launched a hung PowerShell twice, which the Windows ARM controls refuse, so v0.60.110.0 reverted it.
+
+gbrain now warms PowerShell once per process before the protection step: a trivial `exit 0` launch with its own 30-second limit, whose result is ignored. The protection step itself is unchanged: one launch, a 15-second limit, no retry, and any failure refuses with `private_backup_path_unavailable`. The warm-up costs about half a second on the first Windows backup of a process and nothing on other platforms.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| First backup on a cold Windows machine (PowerShell start over 15 s) | Fails with `private_backup_path_unavailable` | Succeeds |
+| PowerShell that hangs during protection | Fails after one 15 s launch | Fails after one 15 s launch (unchanged) |
+
+The `core-memory-locks-postgres` E2E test also stops failing intermittently: its source-topology step could wait out its 1-second lock limit behind 18 concurrent core writes and report the retryable `write_pending`, which the test did not retry. It now retries with the same `request_id`, as that error's fix text says. The deadlock and commit-count assertions are unchanged.
+
+## To take advantage of v0.60.117.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
 ## [0.60.115.0] - 2026-10-08
 
 **Every install path now registers the full tool surface, new memory grants can write in bulk, an empty tool lookup returns the catalog, and the embed backlog warns when it is old.**

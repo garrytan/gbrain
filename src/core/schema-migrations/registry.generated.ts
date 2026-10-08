@@ -222,7 +222,8 @@ import { v218 } from './v218-purge-legacy-worktree-manifest-files.ts';
 import { v219 } from './v219-pages-reconcile-name-indexes.ts';
 import { v220 } from './v220-persistence-request-preparation-attempts.ts';
 import { v221 } from './v221-chunk-embedding-pending-since.ts';
-import { v222 } from './v222-pinned-questions.ts';
+import { v222 } from './v222-persistence-consumers.ts';
+import { v223 } from './v223-pinned-questions.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -444,4 +445,5 @@ export const MIGRATIONS: Migration[] = [
   v220,
   v221,
   v222,
+  v223,
 ];

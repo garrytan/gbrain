@@ -582,6 +582,16 @@ More: [docs/guides/write-refusals.md#concurrent_write](../../docs/guides/write-r
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### consumers_without_heartbeat
+
+<a id="consumers_without_heartbeat"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Running write claims on this host are stamped by a process that writes no `persistence_consumers` heartbeat row, so its liveness and mode cannot be read. | Every full consumer on this release renews a heartbeat row every 10 s; a claim owner with no row is a gbrain process from before the heartbeat table (an older `serve`, jobs worker or sync CLI), which also never defers to the resident consumer, so the host may run two full consumers until it is upgraded. | Upgrade and restart the process whose pid the check names (its kind and gbrain version come from the claim stamp); until then the host runs its consumer beside the resident one. Run: gbrain sources writer status --json | agent | `gbrain doctor --only consumers_without_heartbeat --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#consumers-without-heartbeat](../../docs/guides/troubleshooting.md#consumers-without-heartbeat)
+
 ### content_rejected
 
 <a id="content_rejected"></a>
@@ -727,6 +737,18 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Commit or stash canonical skill edits before optimization. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### drain_stalled
+
+<a id="drain_stalled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A managed sync drain stopped `blocked` because its head write made no progress (no committed receipt and no step advance) for the whole stall window. | A renewed lease is not progress: the detector keys on the head claim's phase and step. With a live owner on this host the drain prints `stalled <N>s on <step>` from the allowance (budget plus 30 s) and keeps going; it stops only when `persistence.preparation_ceiling_ms` passes without the root being released, or when that owner's heartbeat row reads wedged (`cause: owner_wedged_here`, with the owner's kind, pid and nonce and `retry_after_ms` to the ceiling, after which the owner frees the root and the next pass holds the entry). A lapsed claim (`owner_missing`) stops at once unless this host owns the checkout and a live full consumer can reclaim it, which gets one more window. `drain.stall.cause` names which. | Inspect the writer with gbrain sources writer status --source <id> --json (read-only: the owner process, its step and what it waits on, and the next action). Before the ceiling (`next.safe_to_loop` true) rerun next.command after retry_after_ms; past it, or with a wedged owner, restart the named owner process on the brain host and rerun the same sync. Run: gbrain sources writer status --source '{source_id}' --json | host_admin | `gbrain doctor --only managed_sync_not_moving --json` | 1 | no |
+
+Reasons: `owner_wedged_here`, `owner_missing`, `preparation_overdue`, `publication_overdue`, `no_progress`.
+
+More: [docs/guides/write-refusals.md#drain-stalled](../../docs/guides/write-refusals.md#drain-stalled)
 
 ### dream_breaker_tripped
 
@@ -1292,6 +1314,16 @@ More: [docs/guides/bootstrap.md#harness_hook_unowned](../../docs/guides/bootstra
 |---|---|---|---|---|---|---|
 | Held out required for bundled. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### host_identity_mismatch
+
+<a id="host_identity_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This process's `host.json` identity differs from the identity that owns the binding although both resolve on this machine, so writes that need the owner read it as another host. | Host identity is a file under the persistence home: a job worker or container launched with a different `HOME` or `GBRAIN_HOME` mints a new `host.json` and sees the binding as another host's (`owner_unavailable`, `host_mismatch`), so its maintenance writes never reach the owner. The check names both files and the environment each was minted under (`minted_under`, `unknown` for a file minted before it was recorded); re-deriving the identity would re-own every existing binding, so the fix is the environment, never the file. | Set GBRAIN_HOME on the supervisor of the process to the owner's home (the value the check prints; config appends .gbrain itself) and restart it; never edit or delete a host.json. Run: gbrain doctor --only host_identity_mismatch --json | host_admin | `gbrain doctor --only host_identity_mismatch --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#host-identity-mismatch](../../docs/guides/troubleshooting.md#host-identity-mismatch)
+
 ### idempotency_conflict
 
 <a id="idempotency_conflict"></a>
@@ -1581,6 +1613,18 @@ More: [docs/guides/cron-schedule.md#dream-beside-autopilot](../../docs/guides/cr
 | The managed pull was skipped. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/write-refusals.md#managed_pull_skipped](../../docs/guides/write-refusals.md#managed_pull_skipped)
+
+### managed_sync_not_moving
+
+<a id="managed_sync_not_moving"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A managed source has unfinished sync work and a live consumer on its owner host, but no committed `managed_sync_*` receipt and no head step advance for longer than `persistence.preparation_ceiling_ms`. | Process liveness is not data movement: `/health` ok, a live pid and `sync_running: true` all held while one deployment moved nothing for weeks. `sources status --json` carries `data_moving`, `not_moving_since` and `movement_state` per source (`parked` when no drain or full consumer is live, informational), doctor warns with this code and counts it against the score, `serve` prints one notice when a source flips, and `gbrain sources writer movement` judges a window after a restart and exits 1 with this code (`reason: movement_check`) when pending work does not move. | Run gbrain sources writer status --source <id> --json (read-only): its next_action names the owner process, the step it is parked on and whether to wait or restart it. After the fix, gbrain sources writer movement proves the data moves again. Run: gbrain sources writer status --source '{source_id}' --json | host_admin | `gbrain doctor --only managed_sync_not_moving --json` | 1 | no |
+
+Reasons: `movement_check`.
+
+More: [docs/guides/troubleshooting.md#managed-sync-not-moving](../../docs/guides/troubleshooting.md#managed-sync-not-moving)
 
 ### manual_only_skipped
 
@@ -2579,6 +2623,16 @@ More: [docs/guides/data-ingestion.md#credential-redaction](../../docs/guides/dat
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The operation runs only from the trusted local CLI on the brain host; no MCP connection can call it. | Only the operator of the brain host can change what blocks this. | Ask the user to run the named gbrain command on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### two_consumers_on_host
+
+<a id="two_consumers_on_host"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Two resident gbrain processes on this host (`serve`, `sync`, `jobs`, `autopilot` or `mcp`) have each run a full persistence consumer for longer than 30 s, so both claim writes on the same roots. | One full consumer per host is a preference, not a fenced role: a `serve` always starts full, every other resident kind defers to the first live full consumer it finds in `persistence_consumers`, and two processes that start within one renewal of each other, or a CLI that took its consumer before the `serve` started, both stay full until one exits. Every observed `preparing` wedge had two consumers alive on the host. Short-lived commands (`put`, `import`, `dream`, `cli`) and rows younger than 30 s are listed, never warned. | Let the shorter-lived of the two finish (a sync CLI run ends on its own) or restart it so it defers; with persistence.single_consumer off, this is the configured behavior. Run: gbrain sources writer status --json | agent | `gbrain doctor --only two_consumers_on_host --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#two-consumers-on-host](../../docs/guides/troubleshooting.md#two-consumers-on-host)
 
 ### unavailable
 

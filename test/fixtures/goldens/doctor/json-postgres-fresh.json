@@ -502,7 +502,7 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 122/122 public tables",
+          "message": "RLS enabled on 121/121 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -514,7 +514,7 @@
         },
         {
           "category": "meta",
-          "message": "1036 column(s) verified against live schema",
+          "message": "1007 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -634,14 +634,6 @@
           "category": "brain",
           "message": "no embedding migration in flight",
           "name": "embedding_migration_state",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "message": "Embeddings are off on this brain, so facts are only deduplicated by exact text; no supersession threshold applies.",
-          "name": "supersession_calibration",
-          "readiness_state": "not_applicable",
-          "severity": "info",
           "status": "ok"
         },
         {
@@ -1804,6 +1796,54 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#managed-sync-not-moving",
+            "parked": 0,
+            "sources": []
+          },
+          "message": "No managed sync is pending.",
+          "name": "managed_sync_not_moving",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "consumers": [],
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#two-consumers-on-host",
+            "min_age_ms": "<volatile>"
+          },
+          "message": "No persistence consumer is running on this host.",
+          "name": "two_consumers_on_host",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#two-consumers-on-host",
+            "owners": []
+          },
+          "message": "Every owner of a live running claim on this host has a consumer heartbeat row.",
+          "name": "consumers_without_heartbeat",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#host-identity-mismatch",
+            "host_id": "<uuid>",
+            "host_json_path": "<home>/.gbrain/persistence/host.json",
+            "mismatches": []
+          },
+          "message": "This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
+          "name": "host_identity_mismatch",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "details": {
             "docs": "docs/guides/write-refusals.md#invalid_fence",
@@ -2012,7 +2052,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 14,
+              "global": 13,
               "mixed": 2,
               "source": 12
             },
@@ -2041,13 +2081,12 @@
               "resolve_symbol_edges": "global",
               "schema-suggest": "source",
               "skillopt": "global",
-              "standing_questions": "global",
               "sync": "source",
               "synthesize": "mixed",
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 14 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 13 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },

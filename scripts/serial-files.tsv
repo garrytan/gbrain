@@ -36,6 +36,7 @@ test/backup-coverage.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBR
 test/backup-fsync.serial.test.ts	global-state	global-state: spyOn fs.fsyncSync, fs.openSync, privacy.protectNewBackupPath, childProcess.execFile
 test/backup-invalidation.serial.test.ts	R1	R1: mutates process.env (HOME, GBRAIN_HOME, GBRAIN_GIT_ALLOW_FILE_TRANSPORT, GBRAIN_ALLOW_UNVERIFIED_REMOTE (+2 more))
 test/backup-portability-native.serial.test.ts	R1	R1: mutates process.env (SystemRoot)
+test/backup-powershell-warmup.serial.test.ts	global-state	global-state: spyOn childProcess.execFile; redefines process.platform as win32; resets the module-level PowerShell warm-up
 test/backup-status-file.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK_DAYS, GBRAIN_BACKUP_CHECK, GBRAIN_FORCE_BACKUP_NAG (+2 more))
 test/backup-verification.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/binary-self-update-compiled.serial.test.ts	global-state	global-state: compile smoke gated by GBRAIN_SELFUPDATE_COMPILE_SMOKE
@@ -321,6 +322,7 @@ test/serve-idle-sweep-source.serial.test.ts	R2	R2: mock.module(../src/core/sweep
 test/serve-source-guard.serial.test.ts	R1	R1: mutates process.env (GBRAIN_SOURCE)
 test/serve-status-mode.serial.test.ts	global-state	global-state: binds local servers/ports
 test/serve-sync-embed-drain.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; process-wide test seams __setEmbedTransportForTests, __resetDelegatedSyncForTests; configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console
+test/serve-sync-handoff.serial.test.ts	global-state	global-state: process-wide test seams __resetDelegatedSyncForTests; binds local servers/ports; patches process stdout/stderr/console
 test/serve-sync-ipc-killswitch.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; patches process stdout/stderr/console
 test/serve-sync-runner.serial.test.ts	global-state	global-state: process-wide test seams __resetDelegatedSyncForTests
 test/session-seat-capture.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_SEAT)

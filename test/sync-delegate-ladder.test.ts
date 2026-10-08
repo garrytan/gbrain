@@ -81,6 +81,8 @@ describe('parseDelegatedSyncArgs (default-deny)', () => {
     expect(r.options).toEqual({
       full: true, dryRun: true, noPull: true, noEmbed: true, noExtract: true,
       noSchemaPack: true, skipFailed: true, retryFailed: true, includeGitignored: true,
+      // #6317: the processing flags the caller set, so the managed cursor supplies only the rest (#5632).
+      explicitProcessing: ['noEmbed', 'noExtract', 'noSchemaPack'],
     });
     expect(r.explicitSource).toBe('notes');
   });
@@ -92,12 +94,22 @@ describe('parseDelegatedSyncArgs (default-deny)', () => {
 
   test.each([
     ['--repo'], ['--watch'], ['--all'], ['--workers'], ['--concurrency'],
-    ['--json'], ['--exclude'], ['--src-subpath'], ['--break-lock'],
+    ['--exclude'], ['--src-subpath'], ['--break-lock'],
     ['--force-break-lock'], ['--max-age'], ['--missing-path'], ['--parallel'],
     ['--interval'], ['--serial'], ['--strategy'], ['trigger'],
     ['--some-flag-added-in-2027'],
   ])('refuses %s by name (default-deny)', (tok) => {
     expect(parseDelegatedSyncArgs([tok])).toEqual({ ok: false, refused: tok });
+  });
+
+  test('#6317: the managed catch-up flags are admitted explicitly (--json is rendered by this client, never forwarded)', () => {
+    const r = parseDelegatedSyncArgs(['--source', 'notes', '--no-pull', '--json', '--no-bulk', '--lanes', '4', '--no-embed']);
+    expect(r).toEqual({ ok: true, explicitSource: 'notes', options: { noPull: true, noBulk: true, lanes: 4, noEmbed: true, explicitProcessing: ['noEmbed'] } });
+    expect(parseDelegatedSyncArgs(['--no-lanes'])).toEqual({ ok: true, explicitSource: null, options: { lanes: 1 } });
+    expect(parseDelegatedSyncArgs(['--lanes', '0'])).toEqual({ ok: false, refused: '--lanes (invalid value)' });
+    expect(parseDelegatedSyncArgs(['--lanes', '17'])).toEqual({ ok: false, refused: '--lanes (invalid value)' });
+    expect(parseDelegatedSyncArgs(['--lanes', 'four'])).toEqual({ ok: false, refused: '--lanes (invalid value)' });
+    expect(parseDelegatedSyncArgs(['--lanes'])).toEqual({ ok: false, refused: '--lanes (missing value)' });
   });
 
   test('a value flag with a missing/flag-shaped value refuses loudly', () => {

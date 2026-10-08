@@ -1,4 +1,5 @@
 import postgres from '#postgres'
+import { claimOwner } from './persistence/claim-phase.ts';
 import { traceSqlOptions } from './sql-trace.ts';
 import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.generated.ts';
@@ -263,6 +264,18 @@ export function resolveMaxLifetimeSeconds(
 const DEFAULT_STATEMENT_TIMEOUT = '5min';
 const DEFAULT_IDLE_TX_TIMEOUT = '5min';
 
+/**
+ * #6317 (C1): the `application_name` every gbrain pool starts its connections
+ * with, `gbrain <kind>:<pid>:<nonce8>`, so `writer status` can find the owner
+ * process's backends in `pg_stat_activity` (and a ClientRead wedge is visible
+ * in one command). Through a transaction-mode pooler the server connection is
+ * shared, so the mapping is partial; readers say `backend_visibility: pooled`.
+ */
+export function gbrainApplicationName(): string {
+  const owner = claimOwner();
+  return `gbrain ${owner.kind}:${owner.pid}:${(owner.nonce ?? '').slice(0, 8)}`.slice(0, 63);
+}
+
 export function resolveSessionTimeouts(): Record<string, string> {
   const out: Record<string, string> = {};
   const add = (envKey: string, gucKey: string, defaultVal: string) => {
@@ -359,9 +372,7 @@ export async function connect(config: EngineConfig, hooks: { onpoisoned?: (statu
       onpoisoned: hooks.onpoisoned,
       shared_types: resolveSharedTypes(),
     };
-    if (Object.keys(timeouts).length > 0) {
-      opts.connection = timeouts;
-    }
+    opts.connection = { ...timeouts, application_name: gbrainApplicationName() };
     if (typeof prepare === 'boolean') {
       opts.prepare = prepare;
       if (!prepare) {

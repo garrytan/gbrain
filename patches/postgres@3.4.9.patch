@@ -1,5 +1,5 @@
 diff --git a/cjs/src/connection.js b/cjs/src/connection.js
-index 07f6716702ac888215c86ad6e0071aaf55ae519c..f6d76e59ab690dc0a92986f90ade8839bc0470d4 100644
+index 07f67167..f6d76e59 100644
 --- a/cjs/src/connection.js
 +++ b/cjs/src/connection.js
 @@ -78,6 +78,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -146,10 +146,31 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..f6d76e59ab690dc0a92986f90ade8839
    }
  
 diff --git a/cjs/src/index.js b/cjs/src/index.js
-index f09c61c7e998f411560b95c9a8e1ed6a97972c11..a58dbb6c1e27094bb10e461d354af8c3e5eb9ff7 100644
+index f09c61c7..28dbe40c 100644
 --- a/cjs/src/index.js
 +++ b/cjs/src/index.js
-@@ -200,40 +200,134 @@ function Postgres(a, b) {
+@@ -68,6 +68,20 @@ function Postgres(a, b) {
+ 
+   Object.assign(sql, {
+     get parameters() { return options.parameters },
++    // GBrain: the pool's own queue lengths, read-only, for the consumer's pool diagnostics (#6317).
++    get pool() {
++      return {
++        max: options.max,
++        open: open.length,
++        busy: busy.length,
++        full: full.length,
++        reserved: reserved.length,
++        connecting: connecting.length,
++        closed: closed.length,
++        ended: ended.length,
++        queued: queries.length
++      }
++    },
+     largeObject: largeObject.bind(null, sql),
+     subscribe,
+     CLOSE,
+@@ -200,40 +214,134 @@ function Postgres(a, b) {
      return await sql`select pg_notify(${ channel }, ${ '' + payload })`
    }
  
@@ -303,7 +324,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..a58dbb6c1e27094bb10e461d354af8c3
      let savepoints = 0
        , connection
        , prepare = null
-@@ -249,9 +343,13 @@ function Postgres(a, b) {
+@@ -249,9 +357,13 @@ function Postgres(a, b) {
      }
  
      async function scope(c, fn, name) {
@@ -317,7 +338,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..a58dbb6c1e27094bb10e461d354af8c3
        let uncaughtError
          , result
  
-@@ -281,6 +379,8 @@ function Postgres(a, b) {
+@@ -281,6 +393,8 @@ function Postgres(a, b) {
        return result
  
        function savepoint(name, fn) {
@@ -326,7 +347,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..a58dbb6c1e27094bb10e461d354af8c3
          if (name && Array.isArray(name.raw))
            return savepoint(sql => sql.apply(sql, arguments))
  
-@@ -290,18 +390,16 @@ function Postgres(a, b) {
+@@ -290,18 +404,16 @@ function Postgres(a, b) {
  
        function handler(q) {
          q.catch(e => uncaughtError || (uncaughtError = e))
@@ -349,7 +370,42 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..a58dbb6c1e27094bb10e461d354af8c3
      }
    }
  
-@@ -398,7 +496,14 @@ function Postgres(a, b) {
+@@ -351,7 +463,7 @@ function Postgres(a, b) {
+     return new Promise((resolve, reject) => {
+       query.state
+         ? query.active
+-          ? Connection(options).cancel(query.state, resolve, reject)
++          ? cancelActive(query, resolve, reject)
+           : query.cancelled = { resolve, reject }
+         : (
+           queries.remove(query),
+@@ -362,6 +474,25 @@ function Postgres(a, b) {
+     })
+   }
+ 
++  function cancelActive(query, resolve, reject, delay = 50) {
++    Connection(options).cancel(query.state, () => {
++      if (!query.active)
++        return resolve()
++      let waiting = true
++      const timer = setTimeout(next, delay)
++      Promise.prototype.then.call(query, next, next)
++      function next() {
++        if (!waiting)
++          return
++        waiting = false
++        clearTimeout(timer)
++        query.active
++          ? cancelActive(query, resolve, reject, Math.min(delay * 2, 1000))
++          : resolve()
++      }
++    }, reject)
++  }
++
+   async function end({ timeout = null } = {}) {
+     if (ending)
+       return ending
+@@ -398,7 +529,14 @@ function Postgres(a, b) {
      move(c, ended)
    }
  
@@ -365,7 +421,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..a58dbb6c1e27094bb10e461d354af8c3
      if (queries.length === 0)
        return move(c, open)
  
-@@ -418,12 +523,32 @@ function Postgres(a, b) {
+@@ -418,12 +556,32 @@ function Postgres(a, b) {
        : move(c, full)
    }
  
@@ -399,7 +455,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..a58dbb6c1e27094bb10e461d354af8c3
    }
  }
  
-@@ -491,6 +616,8 @@ function parseOptions(a, b) {
+@@ -491,6 +649,8 @@ function parseOptions(a, b) {
      onnotice        : o.onnotice,
      onnotify        : o.onnotify,
      onclose         : o.onclose,
@@ -409,7 +465,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..a58dbb6c1e27094bb10e461d354af8c3
      socket          : o.socket,
      transform       : parseTransform(o.transform || { undefined: undefined }),
 diff --git a/cjs/src/query.js b/cjs/src/query.js
-index 45327f2fabcdbf8f8ec5020675012c310c04fee6..1d092504ac1ce1fdac78cb0c4ef3a8aa957676e4 100644
+index 45327f2f..1d092504 100644
 --- a/cjs/src/query.js
 +++ b/cjs/src/query.js
 @@ -23,11 +23,12 @@ const Query = module.exports.Query = class Query extends Promise {
@@ -453,7 +509,7 @@ index 45327f2fabcdbf8f8ec5020675012c310c04fee6..1d092504ac1ce1fdac78cb0c4ef3a8aa
            this.execute()
            return promise
 diff --git a/cjs/src/queue.js b/cjs/src/queue.js
-index 8438f5da92cf7637d98a33491d75c75b1c817c25..c444310ff87b0ac81fd19cd3170a0ba607a66781 100644
+index 8438f5da..c444310f 100644
 --- a/cjs/src/queue.js
 +++ b/cjs/src/queue.js
 @@ -15,6 +15,7 @@ function Queue(initial = []) {
@@ -465,7 +521,7 @@ index 8438f5da92cf7637d98a33491d75c75b1c817c25..c444310ff87b0ac81fd19cd3170a0ba6
        const out = xs[index++]
  
 diff --git a/src/connection.js b/src/connection.js
-index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..792c83d36a32b8181a438e0b0e91e0a7db8083ca 100644
+index 1b1cccde..792c83d3 100644
 --- a/src/connection.js
 +++ b/src/connection.js
 @@ -78,6 +78,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -612,10 +668,31 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..792c83d36a32b8181a438e0b0e91e0a7
    }
  
 diff --git a/src/index.js b/src/index.js
-index c7fba3dace20173f4cb13f3f138bb6d213b43683..58b370bb3482de2ab6c86246cd63dfda0c1ea466 100644
+index c7fba3da..060e7b84 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -200,40 +200,134 @@ function Postgres(a, b) {
+@@ -68,6 +68,20 @@ function Postgres(a, b) {
+ 
+   Object.assign(sql, {
+     get parameters() { return options.parameters },
++    // GBrain: the pool's own queue lengths, read-only, for the consumer's pool diagnostics (#6317).
++    get pool() {
++      return {
++        max: options.max,
++        open: open.length,
++        busy: busy.length,
++        full: full.length,
++        reserved: reserved.length,
++        connecting: connecting.length,
++        closed: closed.length,
++        ended: ended.length,
++        queued: queries.length
++      }
++    },
+     largeObject: largeObject.bind(null, sql),
+     subscribe,
+     CLOSE,
+@@ -200,40 +214,134 @@ function Postgres(a, b) {
      return await sql`select pg_notify(${ channel }, ${ '' + payload })`
    }
  
@@ -769,7 +846,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..58b370bb3482de2ab6c86246cd63dfda
      let savepoints = 0
        , connection
        , prepare = null
-@@ -249,9 +343,13 @@ function Postgres(a, b) {
+@@ -249,9 +357,13 @@ function Postgres(a, b) {
      }
  
      async function scope(c, fn, name) {
@@ -783,7 +860,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..58b370bb3482de2ab6c86246cd63dfda
        let uncaughtError
          , result
  
-@@ -281,6 +379,8 @@ function Postgres(a, b) {
+@@ -281,6 +393,8 @@ function Postgres(a, b) {
        return result
  
        function savepoint(name, fn) {
@@ -792,7 +869,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..58b370bb3482de2ab6c86246cd63dfda
          if (name && Array.isArray(name.raw))
            return savepoint(sql => sql.apply(sql, arguments))
  
-@@ -290,18 +390,16 @@ function Postgres(a, b) {
+@@ -290,18 +404,16 @@ function Postgres(a, b) {
  
        function handler(q) {
          q.catch(e => uncaughtError || (uncaughtError = e))
@@ -815,7 +892,42 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..58b370bb3482de2ab6c86246cd63dfda
      }
    }
  
-@@ -398,7 +496,14 @@ function Postgres(a, b) {
+@@ -351,7 +463,7 @@ function Postgres(a, b) {
+     return new Promise((resolve, reject) => {
+       query.state
+         ? query.active
+-          ? Connection(options).cancel(query.state, resolve, reject)
++          ? cancelActive(query, resolve, reject)
+           : query.cancelled = { resolve, reject }
+         : (
+           queries.remove(query),
+@@ -362,6 +474,25 @@ function Postgres(a, b) {
+     })
+   }
+ 
++  function cancelActive(query, resolve, reject, delay = 50) {
++    Connection(options).cancel(query.state, () => {
++      if (!query.active)
++        return resolve()
++      let waiting = true
++      const timer = setTimeout(next, delay)
++      Promise.prototype.then.call(query, next, next)
++      function next() {
++        if (!waiting)
++          return
++        waiting = false
++        clearTimeout(timer)
++        query.active
++          ? cancelActive(query, resolve, reject, Math.min(delay * 2, 1000))
++          : resolve()
++      }
++    }, reject)
++  }
++
+   async function end({ timeout = null } = {}) {
+     if (ending)
+       return ending
+@@ -398,7 +529,14 @@ function Postgres(a, b) {
      move(c, ended)
    }
  
@@ -831,7 +943,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..58b370bb3482de2ab6c86246cd63dfda
      if (queries.length === 0)
        return move(c, open)
  
-@@ -418,12 +523,32 @@ function Postgres(a, b) {
+@@ -418,12 +556,32 @@ function Postgres(a, b) {
        : move(c, full)
    }
  
@@ -865,7 +977,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..58b370bb3482de2ab6c86246cd63dfda
    }
  }
  
-@@ -491,6 +616,8 @@ function parseOptions(a, b) {
+@@ -491,6 +649,8 @@ function parseOptions(a, b) {
      onnotice        : o.onnotice,
      onnotify        : o.onnotify,
      onclose         : o.onclose,
@@ -875,7 +987,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..58b370bb3482de2ab6c86246cd63dfda
      socket          : o.socket,
      transform       : parseTransform(o.transform || { undefined: undefined }),
 diff --git a/src/query.js b/src/query.js
-index 0d44a15cd9e42beaf11d4be6ccde60223e09508a..96967780bdb55671bdcdda0fd0bb6e718e0a0e78 100644
+index 0d44a15c..96967780 100644
 --- a/src/query.js
 +++ b/src/query.js
 @@ -23,11 +23,12 @@ export class Query extends Promise {
@@ -919,7 +1031,7 @@ index 0d44a15cd9e42beaf11d4be6ccde60223e09508a..96967780bdb55671bdcdda0fd0bb6e71
            this.execute()
            return promise
 diff --git a/src/queue.js b/src/queue.js
-index c4ef97164f057db99dce1b9af3401dbb1af37e31..8fba891b879e8f5c7fdb03ea0590753663c824c3 100644
+index c4ef9716..8fba891b 100644
 --- a/src/queue.js
 +++ b/src/queue.js
 @@ -15,6 +15,7 @@ function Queue(initial = []) {
@@ -931,7 +1043,7 @@ index c4ef97164f057db99dce1b9af3401dbb1af37e31..8fba891b879e8f5c7fdb03ea05907536
        const out = xs[index++]
  
 diff --git a/types/index.d.ts b/types/index.d.ts
-index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..d7ba214bc614097fddbf2951127c5685d7c8e643 100644
+index 13c3432f..96cba0e0 100644
 --- a/types/index.d.ts
 +++ b/types/index.d.ts
 @@ -119,6 +119,18 @@ interface BaseOptions<T extends Record<string, postgres.PostgresType>> {
@@ -970,7 +1082,16 @@ index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..d7ba214bc614097fddbf2951127c5685
      /**
       * When executes query as prepared statement.
       * @default false
-@@ -717,10 +730,11 @@ declare namespace postgres {
+@@ -705,6 +718,8 @@ declare namespace postgres {
+ 
+     options: ParsedOptions<TTypes>;
+     parameters: ConnectionParameters;
++    /** GBrain: the pool's own queue lengths at this instant (`queued` = queries waiting for a connection). */
++    pool: { max: number; open: number; busy: number; full: number; reserved: number; connecting: number; closed: number; ended: number; queued: number };
+ 
+     end(options?: { timeout?: number | undefined } | undefined): Promise<void>;
+ 
+@@ -717,10 +732,11 @@ declare namespace postgres {
      begin<T>(cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
      begin<T>(options: string, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
  
@@ -983,7 +1104,7 @@ index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..d7ba214bc614097fddbf2951127c5685
      savepoint<T>(cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
      savepoint<T>(name: string, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
  
-@@ -728,6 +742,7 @@ declare namespace postgres {
+@@ -728,6 +744,7 @@ declare namespace postgres {
    }
  
    interface ReservedSql<TTypes extends Record<string, unknown> = {}> extends Sql<TTypes> {

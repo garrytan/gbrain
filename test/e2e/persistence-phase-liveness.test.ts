@@ -376,7 +376,8 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
   }), 30000);
 
   test('a queued direct-pool BEGIN stays tracked and cannot prepare after shutdown', () => fixture(async ({ engine, databaseUrl }, config) => {
-    await withEnv({ GBRAIN_DIRECT_DATABASE_URL: databaseUrl, GBRAIN_DISABLE_DIRECT_POOL: '0', GBRAIN_DIRECT_POOL_SIZE: '1' }, async () => {
+    // #6317: the tick's scans would otherwise take the direct lane first (consumer-lane.ts); this case is about the claim's BEGIN.
+    await withEnv({ GBRAIN_DIRECT_DATABASE_URL: databaseUrl, GBRAIN_DISABLE_DIRECT_POOL: '0', GBRAIN_DIRECT_POOL_SIZE: '1', GBRAIN_CONSUMER_DIRECT_LANE: '0' }, async () => {
       const worker = new PostgresEngine();
       await worker.connect({ database_url: databaseUrl, poolSize: 4 });
       const direct = await worker.connectionManager!.ddl();
@@ -446,7 +447,7 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
     directUrl.port = String((gateway.address() as { port: number }).port);
     const release = () => { released = true; for (const resume of pending.splice(0)) resume(); };
     try {
-      await withEnv({ GBRAIN_DIRECT_DATABASE_URL: directUrl.toString(), GBRAIN_DISABLE_DIRECT_POOL: '0', GBRAIN_DIRECT_POOL_SIZE: '1' }, async () => {
+      await withEnv({ GBRAIN_DIRECT_DATABASE_URL: directUrl.toString(), GBRAIN_DISABLE_DIRECT_POOL: '0', GBRAIN_DIRECT_POOL_SIZE: '1', GBRAIN_CONSUMER_DIRECT_LANE: '0' }, async () => {
         const worker = new PostgresEngine();
         await worker.connect({ database_url: databaseUrl, poolSize: 4 });
         expect(connections).toBe(0);

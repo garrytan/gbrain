@@ -142,6 +142,9 @@ test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistenc
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
 test/env-trust-protected-keys.test.ts	CWD_DOTENV_PROTECTED_KEYS covers every suspicious GBRAIN_* env read in src/	3	readFileSync
 test/error-catalogue.test.ts	error code registry (agent contract v1)	5	readFileSync
+test/error-registry-6317-contract.test.ts	#6317 codes are registered with a full envelope	3	readFileSync
+test/error-registry-6317-contract.test.ts	drain_stalled: the same-host stop has a cause vocabulary and a filled writer-status fix	3	readFileSync
+test/error-registry-6317-contract.test.ts	the doctor codes each have a troubleshooting symptom row that names who acts, consent and a verify step	1	readFileSync
 test/eval-brainbench-e2e.slow.test.ts	--llm availability gate	1	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	privacy guard violation branches (negative path)	1	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	render-brainbench-delta.ts (the CI step-summary block)	2	exec-scan

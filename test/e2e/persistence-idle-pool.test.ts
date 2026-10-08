@@ -125,19 +125,25 @@ describe.skipIf(!direct)('idle persistence consumer on PostgreSQL', () => {
   }, 120_000);
 });
 
-describe.skipIf(!direct)('#5233 idle lane with a direct/session route configured', () => {
-  test('an idle consumer holds an ordinary-pool connection and opens no direct-route connection', async () => {
+describe.skipIf(!direct)('#5233 / #6317 idle lane with a direct/session route configured', () => {
+  // #6317 (reporter ask 2 on #6278): with a direct/session route configured the consumer's own statements take it, so an
+  // idle consumer's probes run on the direct pool and the ordinary (pooler) connections all drain; before #6317 (#5233)
+  // the idle probe reserved an ordinary-pool connection and opened no direct one.
+  test('an idle consumer probes on the direct route and lets every ordinary-pool connection drain', async () => {
     const db = await scratchDatabase(direct!, direct!);
     const directRoute = new URL(db.url);
     directRoute.searchParams.set('application_name', 'gbrain_5233_direct_route');
     try {
-      await withEnv({ GBRAIN_DIRECT_DATABASE_URL: directRoute.toString() }, () => withConsumer(db.url, async engine => {
+      await withEnv({ GBRAIN_DIRECT_DATABASE_URL: directRoute.toString() }, () => withConsumer(db.url, async (engine, consumer) => {
         expect(engine.connectionManager?.isDualPoolActive()).toBe(true);
+        expect(consumer.status().connection).toMatchObject({ lane: 'direct' });
         await Bun.sleep(IDLE_DRAIN_MS);
         const rows = await db.admin.unsafe<{ direct: number; total: number }[]>(`SELECT
           count(*) FILTER (WHERE application_name = 'gbrain_5233_direct_route')::int AS direct, count(*)::int AS total
           FROM pg_stat_activity WHERE datname = $1`, [db.name]);
-        expect(rows[0]).toEqual({ direct: 0, total: 1 });
+        expect(rows[0]!.direct).toBeGreaterThanOrEqual(1);
+        expect(rows[0]!.total - rows[0]!.direct).toBe(0);
+        expect(engine.getPoolDiagnostics()?.tracked.reserved ?? 0).toBe(0);
       }));
     } finally { await db.drop(); }
   }, 120_000);

@@ -602,6 +602,14 @@ long-running processes x GBRAIN_POOL_SIZE
 When the sum does not fit, run fewer long-running processes (for example one
 shared `gbrain serve --http` instead of one stdio `serve` per agent session),
 or raise the pooler's limit. Do not lower a long-running process below 6.
+
+With a direct route configured, the persistence consumer's own tick
+statements (idle probe, switch read, recovery and expired-claim scans,
+capacity marking) take the direct pool beside the claims, renewals and the
+heartbeat, so a transaction-mode pooler never sits between the owner and its
+bookkeeping (#6317; `gbrain sources writer status --json` shows
+`connection.lane: direct`). `GBRAIN_CONSUMER_DIRECT_LANE=0` keeps those scans
+on the ordinary pool when the direct pool is too small for them.
 `pool_exhausted` errors (SQLSTATE `53300`) and the
 [serve boot timeout](#serve-boot-timeout) print this guidance.
 

@@ -63,7 +63,7 @@ for (const reason of ['writer_busy', 'database_contention']) test.each([0, 18000
   const row = { request_id: randomUUID(), state: 'queued', blocked_reason: reason, error_code: null,
     worktree_id: null, created_at: new Date(Date.now() - age) };
   const engine = { kind: 'pglite', executeRaw: async (sql: string) =>
-    sql.startsWith('SELECT request_id,worktree_id,state,blocked_reason') ? [row] : [] } as unknown as BrainEngine;
+    sql.startsWith('SELECT request_id,worktree_id,source_id,state,blocked_reason') ? [row] : [] } as unknown as BrainEngine;
   const [blocker] = (await readWriterDiagnostics(engine)).blockers;
   expect(blocker.diagnostic?.next_action).toBe(age >= 120000 ? 'inspect_owner' : 'poll');
   expect(blocker.next_action).toContain(WRITER_NEXT_ACTIONS[reason]);

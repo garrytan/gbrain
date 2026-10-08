@@ -113,3 +113,4 @@ test/sync-waiver-budget.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts
+test/writer-status-owner-backends.test.ts

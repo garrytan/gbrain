@@ -1,13 +1,18 @@
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
-import { LANE_BUSY, PersistenceConsumer, type PrepareMutation } from './consumer.ts';
+import { LANE_BUSY, PersistenceConsumer, type PersistenceConsumerLike, type PrepareMutation } from './consumer.ts';
+import { WaiterOnlyConsumer, type ElectedOwner } from './consumer-election.ts';
+import { RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat, type ConsumerHeartbeat } from './consumer-heartbeat.ts';
+import { enginePoolStats } from '../postgres-engine/pool-stats.ts';
+import { claimOwnerKind } from './claim-phase.ts';
 import { preparePageMutation } from './page-prepare.ts';
 import { prepareSemanticPageMutation } from './semantic-pages.ts';
 import { getWriteRequestById, getWriteRequestProgress, receiptFor, type WriteRequestProgress } from './journal.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { isWriteErrorCode, type WriteReceipt } from './types.ts';
 import { registerPgliteReopen } from '../pglite-lifecycle.ts';
+import { localHostId } from './identity.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { writeSwitchOn } from './switches.ts';
 import { pendingWriteHint } from './health.ts';
@@ -19,7 +24,7 @@ import { fenceIssuesFromDetail, fenceLocationFromDetail } from '../fence-repair/
 import { heldFileDiagnostic } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
 
-interface Service { consumer: PersistenceConsumer; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
+interface Service { consumer: PersistenceConsumerLike; heartbeat?: ConsumerHeartbeat; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
 type ProgressRead = { row: WriteRequestProgress | null } | { error: unknown } | { cancelled: true };
 const receiptReads = new WeakMap<BrainEngine, Map<string, { read: Promise<ProgressRead>; abort: AbortController }>>();
@@ -85,7 +90,13 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
     { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true), clock });
   throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
 }
-export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConfig): PersistenceConsumer {
+/**
+ * #6317 (B1): starts this process's consumer, synchronously. A `serve` and every short-lived foreground command (`put`,
+ * `import`, `cli`, ...) get a full consumer at once, with its heartbeat row; the other resident kinds (`sync`, `jobs`,
+ * `autopilot`, `mcp`) get a `WaiterOnlyConsumer` that probes the host's consumer rows on its first tick and settles to
+ * full or waiter-only (consumer-election.ts). Either way the returned object has the consumer's whole surface.
+ */
+export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConfig): PersistenceConsumerLike {
   const prior = services.get(engine);
   if (prior) {
     if (prior.stopping) {
@@ -94,9 +105,15 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     }
     return prior.consumer;
   }
-  const consumer = new PersistenceConsumer(engine, config, preparePersistedMutation,
+  const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,
     { onSettled: row => { recordSettlement(engine); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
-  const service: Service = { consumer, stopping: false };
+  const kind = claimOwnerKind();
+  const service: Service = kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres'
+    ? { consumer: new WaiterOnlyConsumer(engine, config, full, { kind, hostId: localHostId(), pool: () => enginePoolStats(engine) }), stopping: false }
+    : (() => { const consumer = full(); return { consumer, stopping: false, heartbeat: startConsumerHeartbeat(engine, consumer.hostId,
+        // #6317 (C1): the row's pool numbers come from the vendored driver's own queues (postgres-engine/pool-stats.ts).
+        { kind, mode: 'full', report: () => ({ restart_required: consumer.restartRequired(), root_barrier_age_ms: consumer.oldestRootBarrierAgeMs(), pool: enginePoolStats(engine) }) }) }; })();
+  const { consumer } = service;
   services.set(engine, service);
   const lifecycle = engine as BrainEngine & { registerBeforeDisconnect?: (run: () => Promise<void>) => unknown };
   const unregister = lifecycle.registerBeforeDisconnect?.(() => stopPersistenceConsumer(engine));
@@ -117,7 +134,13 @@ export async function stopPersistenceConsumer(engine: BrainEngine): Promise<void
   const pending = [...(receiptReads.get(engine)?.values() ?? [])];
   for (const entry of pending) entry.abort.abort();
   await service.consumer.stop();
+  await service.heartbeat?.stop();
   await Promise.all(pending.map(entry => entry.read));
+}
+/** #6317: the owner a waiter-only consumer in this process defers to, for the `writer_pending` envelope; null when this process consumes itself. */
+export function waiterOnlyOwner(engine: BrainEngine): ElectedOwner | null {
+  const consumer = services.get(engine)?.consumer;
+  return consumer instanceof WaiterOnlyConsumer && consumer.mode === 'waiter_only' ? consumer.electedOwner() : null;
 }
 /** Reset fixtures and drained lifecycle owners may discard a stopped service. */
 export async function disposePersistenceConsumer(engine: BrainEngine): Promise<void> {
@@ -277,7 +300,7 @@ function terminalReceiptHint(row: WriteRequest, reason: string): string {
     ? `${what} Submit again only if the change is still wanted, with a new request_id.`
     : `${what} Read the receipt and the current state before deciding to submit again; a new attempt needs a new request_id.`;
 }
-export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number | null } = {}): Record<string, unknown> {
+export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number | null; waiterOnlyOwner?: ElectedOwner | null } = {}): Record<string, unknown> {
   const receipt = receiptFor(row);
   // #6007: an in-process estimate beats the fixed fallback, never an owner-inspection hold.
   if (!isTerminal(row) && hints.retryAfterMs != null && receipt.diagnostic?.next_action !== 'inspect_owner') receipt.retry_after_ms = hints.retryAfterMs;
@@ -293,6 +316,15 @@ export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number 
       ? pendingWriteHint(receipt, row.operation)
       : delivered?.suggestion ?? content?.suggestion ?? held?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
   if (delivered?.detail ?? held?.reason) error.detail = delivered?.detail ?? held?.reason;
+  // #6317 (B1b): a waiter-only process names the owner that publishes for it, so the caller is told who holds the write instead of polling blind.
+  if (!isTerminal(row) && hints.waiterOnlyOwner) {
+    const owner = hints.waiterOnlyOwner;
+    const claim = receipt.diagnostic as { claim?: { stall?: { step?: string | null } } } | undefined;
+    error.why = `${error.why} This process runs no consumer of its own: the ${owner.kind} process (pid ${owner.pid}) on this host owns publication${claim?.claim?.stall?.step ? `, and its claim is stalled on step ${claim.claim.stall.step}` : ''}.`;
+    error.fix = { argv: ['gbrain', 'sources', 'writer', 'status', '--source', row.source_id, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'Read-only: names the owner process, the running claim\'s step and every write waiting behind it.',
+      verify: { argv: ['gbrain', 'doctor', '--json'] } };
+  }
   if (content) {
     if (content.code !== reason) error.canonical = content.code;
     if (content.reason) error.reason = content.reason;

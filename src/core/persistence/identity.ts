@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync, fsyncSync, linkSync, unlinkSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
+import { hostname } from 'node:os';
 import type { BrainEngine } from '../engine.ts';
 import { configDir } from '../config.ts';
 import { flushDirectory } from '../fs-durable.ts';
@@ -52,18 +53,47 @@ function privateJson<T>(path: string, create: () => T): T {
     return JSON.parse(readFileSync(path, 'utf8')) as T;
   } finally { closeSync(fd); unlinkSync(temporary); }
 }
-export function localHostId(): string {
-  const path = join(persistenceHome(), 'host.json');
-  const value = privateJson<{ version: number; id: string }>(path, () => ({ version: 1, id: randomUUID() }));
+/**
+ * #6317 (I1): where a `host.json` was minted, recorded at mint time only so
+ * doctor `host_identity_mismatch` can say which `HOME`/`GBRAIN_HOME` each of
+ * two identities came from. Optional on the version-1 document (both readers
+ * reject any other version, so the version never changes); a file minted
+ * before this release reads as `minted_under: null`, reported as unknown.
+ */
+export interface HostIdentityMintedUnder extends Record<string, unknown> { home: string | null; gbrain_home: string | null; hostname: string; machine_id: string | null }
+export interface HostIdentityFile { version: number; id: string; minted_under?: HostIdentityMintedUnder }
+export interface LocalHostIdentity { id: string; path: string; persistence_home: string; minted_under: HostIdentityMintedUnder | null }
+const MACHINE_ID_FILES = ['/etc/machine-id', '/var/lib/dbus/machine-id'];
+/** The stable machine id of a Linux host (`/etc/machine-id`), or null where none is readable (containers, macOS). */
+export function readMachineId(): string | null {
+  for (const file of MACHINE_ID_FILES) {
+    try { const text = readFileSync(file, 'utf8').trim(); if (/^[0-9a-f]{32}$/i.test(text)) return text.toLowerCase(); } catch { /* next candidate */ }
+  }
+  return null;
+}
+function mintedUnderNow(): HostIdentityMintedUnder {
+  return { home: process.env.HOME ?? null, gbrain_home: process.env.GBRAIN_HOME ?? null, hostname: hostname(), machine_id: readMachineId() };
+}
+function readHostIdentity(path: string, create: boolean): HostIdentityFile | null {
+  if (!create && !existsSync(path)) return null;
+  const value = privateJson<HostIdentityFile>(path, () => ({ version: 1, id: randomUUID(), minted_under: mintedUnderNow() }));
   if (value.version !== 1 || typeof value.id !== 'string') throw invalidIdentityFile('The local writer identity is invalid.', path, 'host identity');
-  return value.id;
+  return value;
+}
+export function localHostId(): string {
+  return readHostIdentity(join(persistenceHome(), 'host.json'), true)!.id;
+}
+/** This process's host identity with its file path and mint metadata (minting the file when absent, as `localHostId` does). */
+export function localHostIdentity(): LocalHostIdentity {
+  const home = persistenceHome();
+  const path = join(home, 'host.json');
+  const value = readHostIdentity(path, true)!;
+  const minted = value.minted_under;
+  return { id: value.id, path, persistence_home: home,
+    minted_under: minted && typeof minted === 'object' ? { home: minted.home ?? null, gbrain_home: minted.gbrain_home ?? null, hostname: String(minted.hostname ?? ''), machine_id: minted.machine_id ?? null } : null };
 }
 export function existingLocalHostId(): string | null {
-  const path = join(persistenceHome(), 'host.json');
-  if (!existsSync(path)) return null;
-  const value = JSON.parse(readFileSync(path, 'utf8')) as { version: number; id: string };
-  if (value.version !== 1 || typeof value.id !== 'string') throw invalidIdentityFile('The local writer identity is invalid.', path, 'host identity');
-  return value.id;
+  return readHostIdentity(join(persistenceHome(), 'host.json'), false)?.id ?? null;
 }
 async function brainIdentity(engine: SqlEngine): Promise<string> {
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');

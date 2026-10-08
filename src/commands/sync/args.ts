@@ -110,11 +110,14 @@ Options:
                        order. Persist with 'gbrain config set sync.lanes N' or
                        GBRAIN_SYNC_LANES; the drain reports what limited it.
   --no-lanes           Same as --lanes 1: one bulk group at a time.
-  --no-delegate        On a PGLite brain with a live 'gbrain serve', sync
-                       normally delegates the run to the serve process over
-                       its IPC socket (the lock owner does the work; embeds
-                       defer to serve's background sweep). This flag (or
-                       GBRAIN_SYNC_NO_DELEGATE=1) opts out — sync then fails
+  --no-delegate        Keep this process's own write consumer even when a
+                       live 'gbrain serve' could run the sync. Normally sync
+                       hands the run to that serve over its IPC socket and
+                       prints its progress: on PGLite because the serve holds
+                       the single-writer lock, on a managed Postgres brain so
+                       the host keeps one write consumer. This flag (or
+                       GBRAIN_SYNC_NO_DELEGATE=1) opts out: on Postgres the
+                       sync runs here beside the serve; on PGLite it fails
                        fast if a live serve holds the brain.
   --no-schema-pack     Skip loading the active schema pack (no per-file pack
                        regex runs; pages use legacy prefix typing). Escape

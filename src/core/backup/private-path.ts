@@ -42,9 +42,35 @@ foreach ($rule in $rules) {
 [Console]::Write('private')
 `;
 
+const powershellExe = () => join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+
+/**
+ * PowerShell's first start on a cold Windows machine can outrun the protection
+ * step's 15 s bound (measured 3.3-27.7 s on fresh CI runners; later starts take
+ * 0.2-1.5 s), which failed a user's first backup. A trivial launch with its own
+ * 30 s bound warms it once per process; its result is ignored. The protection
+ * step itself still gets exactly one launch under its 15 s bound, so a hung
+ * PowerShell fails as before.
+ */
+let warmed: Promise<void> | null = null;
+function warmPowerShell(): Promise<void> {
+  warmed ??= new Promise<void>(resolve => {
+    try {
+      const child = execFile(powershellExe(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'exit 0'],
+        { timeout: 30_000, windowsHide: true, maxBuffer: 1024 }, () => resolve());
+      child.stdin?.end();
+    } catch { resolve(); }
+  });
+  return warmed;
+}
+
+/** Test seam: forget this process's warm-up. */
+export function __resetPowerShellWarmupForTests(): void { warmed = null; }
+
 export async function protectNewBackupPath(path: string, kind: 'directory' | 'file'): Promise<void> {
   if (process.platform !== 'win32') return;
   try {
+    await warmPowerShell();
     assertNoSymlinks(path);
     const before = lstatSync(path, { bigint: true });
     if (!before.ino || (kind === 'directory' ? !before.isDirectory() || readdirSync(path).length !== 0 : !before.isFile() || before.size !== 0n || before.nlink !== 1n)) throw new Error('Expected a new empty path with stable identity');

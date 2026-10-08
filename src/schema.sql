@@ -2041,6 +2041,24 @@ CREATE TABLE IF NOT EXISTS persistence_effects (
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(request_id,kind)
   );
+CREATE TABLE IF NOT EXISTS persistence_consumers (
+    host_id uuid NOT NULL,
+    pid integer NOT NULL,
+    nonce text NOT NULL,
+    pid_ns text,
+    kind text NOT NULL,
+    mode text NOT NULL CHECK (mode IN ('probing','full','waiter_only','promoted')),
+    started_at timestamptz NOT NULL DEFAULT now(),
+    renewed_at timestamptz NOT NULL DEFAULT now(),
+    restart_required boolean NOT NULL DEFAULT false,
+    root_barrier_age_ms integer,
+    pool jsonb,
+    host_json_path text NOT NULL,
+    persistence_home text NOT NULL,
+    minted_under jsonb,
+    version text NOT NULL,
+    PRIMARY KEY(host_id,pid,nonce)
+  );
 
 CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
 DECLARE target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
