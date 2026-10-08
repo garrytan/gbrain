@@ -40,7 +40,10 @@ just after the save). With default settings each saved page of an
 extraction-eligible type (note, meeting, email and similar) also gets one facts
 extraction call after it is saved; it runs as a queued job, is attributed to the
 write that caused it, and stops with `gbrain config set facts.extraction_enabled
-false`. Image OCR, when turned on (`embedding_image_ocr`), runs before the save.
+false`.
+`gbrain config set facts.page_write_notability_filter medium-and-up` keeps
+only high- and medium-notability facts from page writes (`high-only` keeps the
+high tier, as sync does; `all`, the default, keeps every tier). Image OCR, when turned on (`embedding_image_ocr`), runs before the save.
 Set `GBRAIN_AI_CALL_LOG=<path>` to record every model call a process makes (kind,
 model, tokens, duration, and the write request, job or cycle phase it served; no
 prompt or response text).

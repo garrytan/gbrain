@@ -114,6 +114,25 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
 
   // A4 + T8: queued paid enrich/subagent work needs the user's authorization; it is stored on the row and the worker enforces its cap.
   let spendAuthorization: SpendAuthorization | undefined;
+  // W4.5: a re-embedding reindex job carries the user's authorization too; its handler refuses a job without one.
+  if (name === 'reindex' && data.dryRun !== true && data.noEmbed !== true) {
+    const { requireReindexConsent } = await import('../../core/reindex-consent.ts');
+    const { countPending } = await import('../reindex.ts');
+    const { isConsentRefusal, printConsentRefusal } = await import('../../core/consent.ts');
+    const { setCliExitVerdict } = await import('../../core/cli-force-exit.ts');
+    const { jobSpendAuthorization } = await import('../../core/minions/spend-authorization.ts');
+    const argv = ['gbrain', 'jobs', ...args.filter(a => a !== '--yes')];
+    const pending = await countPending(engine, null, false);
+    const target = typeof data.limit === 'number' && data.limit > 0 ? Math.min(data.limit, pending) : pending;
+    try {
+      const gate = await requireReindexConsent(engine, { args, type: null, target, argv, preview_argv: ['gbrain', 'reindex', '--markdown', '--dry-run'] });
+      if (gate) spendAuthorization = jobSpendAuthorization(gate.auth, { command: 'jobs submit reindex', of: 1, argv, ...(gate.plan.est_usd !== null ? { est_usd: gate.plan.est_usd } : {}) });
+    } catch (e) {
+      if (!isConsentRefusal(e)) throw e;
+      setCliExitVerdict(printConsentRefusal(e, { json: hasFlag(args, '--json') }));
+      return;
+    }
+  }
   if (PAID_SUBMIT_NAMES.has(name)) {
     const authorized = await authorizePaidSubmit(engine, name, data, args);
     if (!authorized) return;

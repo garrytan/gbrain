@@ -12,6 +12,7 @@
  */
 
 import { parseInlineCitationTimelineEntries, findTimelineSourceDelimiter, parseTimelineEntries } from './link-extraction.ts';
+import { isDatedTimelineLine, supersededInlineCitationEntries } from './timeline-citations.ts';
 import type { BrainEngine } from './engine.ts';
 import { firstMaterializedMarkerIndex } from './timeline-marker.ts';
 
@@ -29,6 +30,9 @@ export interface ExtractedTimelineEntry {
 // rows must share one (source, summary) shape or the timeline dedup index
 // duplicates every bullet extracted through both paths.
 const findDelimiterOutsideLinks = findTimelineSourceDelimiter;
+
+// A Format 1 bullet line; this extractor's inline-citation pass (Format 3) skips it.
+const bulletLinePattern = /^-\s+\*\*\d{4}-\d{2}-\d{2}\*\*\s*\|/;
 
 /** Extract timeline entries from markdown content */
 export function extractTimelineFromContent(content: string, slug: string): ExtractedTimelineEntry[] {
@@ -87,7 +91,6 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   // carries its own [Source: ...] citation, and re-extracting it would file
   // a duplicate entry under a different (source, summary) shape that the
   // DB-level uniqueness cannot collapse.
-  const bulletLinePattern = /^-\s+\*\*\d{4}-\d{2}-\d{2}\*\*\s*\|/;
   for (const entry of parseInlineCitationTimelineEntries(content, {
     skipLine: (line) => bulletLinePattern.test(line),
   })) {
@@ -99,6 +102,29 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
 
 type TimelineTuple = Pick<ExtractedTimelineEntry, 'date' | 'source' | 'summary'>;
 const tupleKey = (e: TimelineTuple) => JSON.stringify([e.date, e.source, e.summary]);
+
+/**
+ * #6226: the tuples the inline-citation pass of either parser filed for this
+ * text before one citation could name several dated sources, and that the
+ * current reading no longer produces (supersededInlineCitationEntries).
+ */
+export function supersededCitationTimeline(content: string): TimelineTuple[] {
+  return [
+    ...supersededInlineCitationEntries(content, { skipLine: (line) => bulletLinePattern.test(line) }),
+    ...supersededInlineCitationEntries(content, { skipLine: isDatedTimelineLine }),
+  ];
+}
+
+/**
+ * The detail an extractor itself writes for a citation row: none (file
+ * extraction) or `Source: <source>` (database extraction). Any other detail
+ * was added by someone, so a row carrying it is never retired as an older
+ * reading (#6226, taste T3): timelineKey ignores detail.
+ */
+export function hasExtractorDetail(row: { source: string; detail?: string | null }): boolean {
+  const detail = (row.detail ?? '').replace(/\s+/g, ' ').trim();
+  return detail === '' || detail === `Source: ${row.source}`.replace(/\s+/g, ' ').trim();
+}
 
 /**
  * Every (date, source, summary) tuple a page text yields under either timeline
@@ -129,8 +155,8 @@ export async function retractRemovedTimelineEntries(
   opts: { dryRun?: boolean } = {},
 ): Promise<Array<TimelineTuple & { id: number }>> {
   const kept = markdownTimelineKeys(currentText, slug);
-  const rows = await engine.executeRaw<TimelineTuple & { id: number }>(
-    `SELECT t.id, to_char(t.date, 'YYYY-MM-DD') AS date, t.source, t.summary FROM timeline_entries t
+  const rows = await engine.executeRaw<TimelineTuple & { id: number; detail: string | null }>(
+    `SELECT t.id, to_char(t.date, 'YYYY-MM-DD') AS date, t.source, t.summary, t.detail FROM timeline_entries t
       JOIN pages p ON p.id = t.page_id
       WHERE p.source_id = $1 AND p.slug = $2 AND t.event_page_id IS NULL`, [sourceId, slug]);
   const extra = rows.filter(row => !kept.has(tupleKey(row)));
@@ -139,10 +165,15 @@ export async function retractRemovedTimelineEntries(
     `SELECT DISTINCT v.compiled_truth, v.timeline FROM page_versions v JOIN pages p ON p.id = v.page_id
       WHERE p.source_id = $1 AND p.slug = $2`, [sourceId, slug]);
   const produced = new Set<string>();
+  // #6226: rows the older citation reading filed for this text or a stored version.
+  const superseded = new Set(supersededCitationTimeline(currentText).map(tupleKey));
   for (const version of versions) {
-    for (const key of markdownTimelineKeys(`${version.compiled_truth}\n${version.timeline ?? ''}`, slug)) produced.add(key);
+    const text = `${version.compiled_truth}\n${version.timeline ?? ''}`;
+    for (const key of markdownTimelineKeys(text, slug)) produced.add(key);
+    for (const entry of supersededCitationTimeline(text)) superseded.add(tupleKey(entry));
   }
-  const orphans = extra.filter(row => produced.has(tupleKey(row)));
+  const orphans = extra.filter(row => produced.has(tupleKey(row)) || (superseded.has(tupleKey(row)) && hasExtractorDetail(row)))
+    .map(({ detail: _detail, ...row }) => row);
   if (!orphans.length || opts.dryRun) return orphans;
   await engine.executeRaw(
     `DELETE FROM timeline_entries WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb)::int)`,

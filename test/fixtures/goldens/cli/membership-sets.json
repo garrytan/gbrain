@@ -272,6 +272,7 @@
         "projections",
         "protocol",
         "providers",
+        "quarantine",
         "reindex",
         "reinit-pglite",
         "remote",

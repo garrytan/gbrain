@@ -1,5 +1,5 @@
 /**
- * F6 engine parity on Postgres: migration v219 adds persistence_requests.client_request_id
+ * F6 engine parity on Postgres: migration v220 adds persistence_requests.client_request_id
  * (nullable text) on an upgraded brain, and a write sent with a non-UUID request_id
  * journals its UUIDv5 with the client string, replays, reads by either id, refuses reuse
  * for a different write and keeps the string through compaction. Zero model calls.
@@ -28,10 +28,10 @@ d('client request ids on Postgres', () => {
   afterAll(async () => { resetGateway(); await disposePersistenceConsumer(engine); await teardownDB(); });
   beforeEach(() => { configureGateway({ env: {} } as never); });
 
-  test('v219 adds a nullable text column on an upgraded brain', async () => {
+  test('v220 adds a nullable text column on an upgraded brain', async () => {
     await engine.executeRaw('ALTER TABLE persistence_requests DROP COLUMN IF EXISTS client_request_id');
     await setConfigVersion(215);
-    await runMigrationsUpTo(engine, 219);
+    await runMigrationsUpTo(engine, 220);
     const [column] = await engine.executeRaw<{ data_type: string; is_nullable: string }>(
       "SELECT data_type,is_nullable FROM information_schema.columns WHERE table_name='persistence_requests' AND column_name='client_request_id'");
     expect(column).toEqual({ data_type: 'text', is_nullable: 'YES' });

@@ -248,7 +248,7 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
       name: 'quarantined_pages',
       status: n > 0 ? 'warn' : 'ok',
       message: n > 0
-        ? `${n} page(s) quarantined as junk (hidden from search). Review with 'gbrain quarantine list'; clear a false positive with 'gbrain quarantine clear <slug>'.`
+        ? `${n} page(s) quarantined as junk (hidden from search). Review with 'gbrain quarantine list'; clear a false positive with 'gbrain quarantine clear <slug> --force' (it stays cleared until the page changes; a pattern that misfires brain-wide is turned off with content_sanity.disabled_patterns).`
         : 'No quarantined pages',
     });
   } catch (err) {

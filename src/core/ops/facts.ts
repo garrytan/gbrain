@@ -610,6 +610,21 @@ function parseEntityList(v: unknown): string[] {
 const lineCost = (line: string) => estimateTokens(line + '\n');
 const dropAll = <T>(items: T[]) => ({ items: [] as T[], meta: { budget: 0, used: 0, dropped: items.length, kept: 0 } });
 
+/**
+ * #6146: the stored provenance (`facts.source`, what `remember --provenance`
+ * wrote) of the facts a pack or delta delivers, in one batched read keyed by
+ * the facts' own ids, so hot memory (and every MCP `_meta`) stays unchanged.
+ * Fail-soft like the rest of the pack: a failed read leaves `provenance` null.
+ */
+async function withProvenance<T extends { id: number }>(engine: BrainEngine, sourceId: string, facts: T[]): Promise<Array<T & { provenance: string | null }>> {
+  if (facts.length === 0) return [];
+  const rows = await engine.executeRaw<{ id: number | string; source: string | null }>(
+    'SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])', [sourceId, facts.map((f) => f.id)],
+  ).catch(() => []);
+  const byId = new Map(rows.map((r) => [Number(r.id), r.source]));
+  return facts.map((f) => ({ ...f, provenance: byId.get(f.id) ?? null }));
+}
+
 const context_pack: Operation = {
   name: 'context_pack',
   mutating: false,
@@ -673,7 +688,7 @@ const context_pack: Operation = {
 
     // Pack, price and render the redacted presentation sets (one echo
     // dictionary); local callers get the delivered facts back raw below.
-    const rawFacts = res.facts ?? [];
+    const rawFacts = await withProvenance(ctx.engine, sourceId, res.facts ?? []);
     const view = redactRetrievalOutput([{ cards: res.cards ?? [], facts: rawFacts }], {}).results[0];
     let cards = view.cards;
     let facts = view.facts;
@@ -728,6 +743,9 @@ const context_pack: Operation = {
         // #4206: provenance context (parity with the recall projection).
         context: f.context ?? null,
         confidence: f.confidence,
+        // #6146: recall's v1 names, so a packed fact traces back to its record.
+        fact_id: String(f.id),
+        provenance: f.provenance,
       })),
       text,
       ...(core && core.enabled ? { core: { text: core.text, chars_used: core.chars_used, chars_limit: core.chars_limit, pages: core.pages,
@@ -893,7 +911,7 @@ const delta: Operation = {
     // (one echo dictionary). The cursors read the raw rows at the delivered
     // index and local callers get the delivered facts back raw below.
     const rawPages = res.deltaPages ?? [];
-    const rawFacts = res.facts ?? [];
+    const rawFacts = await withProvenance(ctx.engine, sourceId, res.facts ?? []);
     const view = redactRetrievalOutput([{ pages: rawPages, facts: rawFacts, threads: res.openThreads ?? [] }], {}).results[0];
     let pages = view.pages;
     let facts = view.facts;
@@ -1027,6 +1045,9 @@ const delta: Operation = {
         // #4206: provenance context (parity with the recall projection).
         context: f.context ?? null,
         confidence: f.confidence,
+        // #6146: recall's v1 names, so a packed fact traces back to its record.
+        fact_id: String(f.id),
+        provenance: f.provenance,
       })),
       threads,
       text,

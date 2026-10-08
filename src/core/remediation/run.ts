@@ -21,8 +21,10 @@ import { loadRecommendationContext } from './context.ts';
 import { computeRemediationPlan } from './plan.ts';
 import { planRepairStepsReport, previewFailureField, runRepairSteps, type RepairPlanStep, type RepairPreviewFailure, type RepairStepResult } from './repairs.ts';
 import { OperationError } from '../ops/contract.ts';
+import { isManualOnlyStep, manualOnlyFix } from './manual-only.ts';
 import type { RemediationCheckpoint } from '../remediation-checkpoint.ts';
 import type {
+  ManualOnlySkippedStep,
   RemediationHooks,
   RemediationOpts,
   RemediationResult,
@@ -57,6 +59,42 @@ function planJobSteps(planned: RemediationStep[], manifest: { job_ids: string[] 
     recs: freeRecs, freeRecs,
     jobStepsSkipped: { reason: 'target_unreachable' as const, ...unreachable, skipped: remediable.filter((r) => !freeRecs.includes(r)).map((r) => r.id) },
   };
+}
+
+/**
+ * Holds manual-only steps out of a run's job steps. `withoutManualOnly`
+ * returns the other steps and records each remediable manual-only one once
+ * (`manual_only_skipped`), naming the rows of its job an earlier run already
+ * queued: they still run once a worker picks them up.
+ */
+function manualOnlySkips(engine: BrainEngine) {
+  const skipped: ManualOnlySkippedStep[] = [];
+  const withoutManualOnly = async (steps: RemediationStep[]): Promise<RemediationStep[]> => {
+    const manual = steps.filter((s) => isManualOnlyStep(s) && s.status === 'remediable' && !skipped.some((m) => m.id === s.id));
+    if (manual.length) {
+      const { cliRenderContext, renderAction } = await import('../agent-output.ts');
+      const queued = await engine.executeRaw<{ id: number | string; name: string; status: string }>(
+        `SELECT id, name, status FROM minion_jobs
+          WHERE name = ANY($1::text[]) AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+          ORDER BY id`,
+        [[...new Set(manual.map((s) => s.job))]],
+      ).catch(() => []);
+      for (const step of manual) {
+        const jobs = queued.filter((q) => q.name === step.job).map((q) => ({ id: Number(q.id), status: q.status }));
+        skipped.push({
+          code: 'manual_only_skipped',
+          id: step.id, job: step.job, params: step.params,
+          ...(step.est_usd_cost !== undefined ? { est_usd_cost: step.est_usd_cost } : {}),
+          why: `${step.job} is manual-only, so this automatic run did not submit it`
+            + (jobs.length ? `; ${jobs.length} ${step.job} job(s) an earlier run queued (${jobs.map((j) => `#${j.id} ${j.status}`).join(', ')}) still run when a worker picks them up unless cancelled with gbrain jobs cancel <id>.` : '.'),
+          fix: renderAction(manualOnlyFix(step), cliRenderContext()),
+          ...(jobs.length ? { queued_jobs: jobs } : {}),
+        });
+      }
+    }
+    return steps.filter((s) => !isManualOnlyStep(s));
+  };
+  return { withoutManualOnly, field: () => (skipped.length ? { manual_only_skipped: skipped } : {}) };
 }
 
 /**
@@ -132,9 +170,10 @@ export async function runRemediation(
   const extraRemediations = opts.extraRemediations ?? [];
   const brainId = repairs ? (await (await import('../repair/core.ts')).resolveRepairScope(engine)).brain_id : undefined;
   let previewFailures: RepairPreviewFailure[] = [];
+  const manualOnly = manualOnlySkips(engine);
   const synthetic = (score: number, extra: Partial<RemediationResult> = {}): RemediationResult => ({
     doctor_run_id: crypto.randomUUID(), brain_score_initial: score, brain_score_final: score, brain_score_target: targetScore,
-    target_reached: false, submitted: [], aborted_count: 0, ...previewFailureField(previewFailures), ...extra,
+    target_reached: false, submitted: [], aborted_count: 0, ...previewFailureField(previewFailures), ...manualOnly.field(), ...extra,
   });
 
   // Resume loads its checkpoint first: a checkpoint that records a manifest
@@ -171,7 +210,7 @@ export async function runRemediation(
   // Embeddings a budget stop left behind after re-sealing; the re-sealed pages no longer show up in a repair plan.
   let pendingEmbedSources = includeRepairs && manifest ? [...(cp?.pending_embed_sources ?? [])] : [];
   const initialHealth = await engine.getHealth();
-  const { freeRecs, jobStepsSkipped, recs: plannedJobSteps } = planJobSteps(computeRecommendations(initialHealth, ctx, extraRemediations), manifest,
+  const { freeRecs, jobStepsSkipped, recs: plannedJobSteps } = planJobSteps(await manualOnly.withoutManualOnly(computeRecommendations(initialHealth, ctx, extraRemediations)), manifest,
     initialPlan.target_unreachable ? { target: targetScore, ceiling: initialPlan.max_reachable_score } : undefined);
   if (jobStepsSkipped && freeRecs.length === 0 && !(includeRepairs && (repairSteps.length || pendingEmbedSources.length))) {
     hooks.onTargetUnreachable?.(targetScore, initialPlan.max_reachable_score);
@@ -456,7 +495,7 @@ export async function runRemediation(
       // ids this run already processed (any terminal status), or the recheck
       // would resubmit completed extras every iteration, forever.
       const pendingExtras = extraRemediations.filter((r) => !attemptedIds.has(r.id));
-      recs = computeRecommendations(freshHealth, ctx, pendingExtras)
+      recs = (await manualOnly.withoutManualOnly(computeRecommendations(freshHealth, ctx, pendingExtras)))
         .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id) && (!manifest || manifest.job_ids.includes(r.id))
           && (!jobStepsSkipped || (r.est_usd_cost ?? 0) === 0));
     }
@@ -520,6 +559,6 @@ export async function runRemediation(
       repairs: repairResults, repairs_skipped: skippedRepairs,
       budget: { max_usd: maxUsd ?? null, spent_usd: settledUsd(), include_repairs: includeRepairs, plan_hash: planHash },
     } : {}),
-    ...previewFailureField(previewFailures),
+    ...previewFailureField(previewFailures), ...manualOnly.field(),
   };
 }

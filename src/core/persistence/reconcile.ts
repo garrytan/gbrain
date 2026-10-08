@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { relative } from 'node:path';
-import { hardenedGitSync } from '../hardened-git.ts';
+import { relative, sep } from 'node:path';
+import { hardenedPathDirty } from '../hardened-git.ts';
 import type { BrainEngine } from '../engine.ts';
 import { loadConfig, loadConfigWithEngine, type GBrainConfig } from '../config.ts';
 import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
@@ -79,10 +79,12 @@ function additiveNextAction(classification: DriftClassification, status: string,
   return 'Inserted text is structurally additive but can still contradict existing text. Read the inserted lines in the private preview file '
     + '(or show them to the user if the page is private or the claims matter), then rerun the preview with --auto-additive --accept-suggested.';
 }
-/** #6138: whether Git reports the canonical file as changed from its last commit; null when Git cannot say (not a Git checkout). */
-function canonicalFileGitDirty(root: string, path: string): boolean | null {
-  const status = hardenedGitSync(root, ['status', '--porcelain', '-z', '--', relative(root, path)], { timeoutMs: 10_000, maxBytes: 1024 * 1024 });
-  return status.ok ? status.stdout.length > 0 : null;
+/**
+ * #6138: whether Git reports the canonical file as changed from its last commit; null when Git cannot say (not a Git checkout).
+ * W4.3: filter-free plumbing, never `git status` (which runs the checkout's clean/process filters).
+ */
+export function canonicalFileGitDirty(root: string, path: string): boolean | null {
+  return hardenedPathDirty(root, relative(root, path).split(sep).join('/'));
 }
 async function config(engine: BrainEngine): Promise<GBrainConfig> {
   return await loadConfigWithEngine(engine, loadConfig()) ?? { engine: engine.kind } as GBrainConfig;

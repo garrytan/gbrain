@@ -129,8 +129,8 @@ describe('remediation writes onboard history (#6109)', () => {
   test("a step whose job moves no tracked metric records nothing, even once it is terminal", async () => {
     await seedUnextractedNote();
     const unmapped = makeRemediationStep({
-      id: 'onboard.unmapped-example', job: 'unify-types', params: { apply: false },
-      severity: 'low', est_seconds: 30, est_usd_cost: 0, protected: true, rationale: 'synthetic unmapped job',
+      id: 'onboard.unmapped-example', job: 'orphans', params: {},
+      severity: 'low', est_seconds: 30, est_usd_cost: 0, rationale: 'synthetic unmapped job',
     });
     const { result } = await withStderr(() => runRemediation(engine, { targetScore: 0, inlineJobs: true, extraRemediations: [unmapped] }));
     const unmappedStep = result.submitted.find((s) => s.id === 'onboard.unmapped-example');

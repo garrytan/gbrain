@@ -818,7 +818,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             const promptResult = await runPostUpgradeReembedPrompt(engine, modelString);
             if (promptResult.proceeded) {
               const { runReindex } = await import('./reindex.ts');
-              await runReindex(engine, ['--markdown']);
+              await runReindex(engine, ['--markdown'], { authorized: true }); // the TTY yes above is the consent
             }
           }
         } catch (re) {

@@ -7,7 +7,7 @@ import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
-import { enforceClientSlugFence, enforceSubagentSlugFence, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
+import { enforceClientSlugFence, enforceSubagentSlugFence, isLegacyStoredPageSlug, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
 import { suffixedSlugAdmission } from './suffixed-slug.ts';
 import { defaultSlug, detectBinaryNullByte, explicitCaptureType, mergeCaptureFrontmatter, normalizeForHash } from '../capture-content.ts';
 import { computeContentHash } from '../ingestion/types.ts';
@@ -92,6 +92,18 @@ export async function withBatchAdmission<T>(ctx: OperationContext, run: (own: Op
   return withVerifiedLocalRegistration(ctx.engine, registration, () => run(ctx, shared));
 }
 /** Validate explicit routing before any admission, including dry-run adapters. */
+/**
+ * validatePageSlug, except that delete and restore may name a slug an older
+ * gbrain stored and today's grammar refuses, when an existing row in
+ * `sourceId` holds exactly that slug (#6212). Such a row publishes
+ * database-only (page-prepare.ts prepareFileTarget).
+ */
+export async function validateMutationSlug(ctx: OperationContext, operation: string, slug: string, sourceId: string): Promise<void> {
+  if ((operation === 'delete_page' || operation === 'restore_page') && isLegacyStoredPageSlug(slug)
+    && await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true })) return;
+  validatePageSlug(slug);
+}
+
 export function pageMutationSource(ctx: OperationContext, params: Record<string, unknown>, operation: string): string {
   const sourceId = parseSourceIdParam(params.source_id, operation) ?? ctx.sourceId ?? 'default';
   if (sourceId === '__all__') {
@@ -256,7 +268,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     }
     if (typeof intent.capture_path === 'string') intent.capture_file_hash = sha256(p.content);
   }
-  validatePageSlug(slug);
+  await validateMutationSlug(ctx, input.operation, slug, sourceId);
   enforceClientSlugFence(ctx, slug, input.operation);
   enforceSubagentSlugFence(ctx, slug, input.operation);
   // Preserve same-source diagnostics for new timeline writes without making

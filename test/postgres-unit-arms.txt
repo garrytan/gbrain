@@ -24,6 +24,7 @@ test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
 test/doctor-frontmatter-holds.test.ts
+test/doctor-routing-skill-pack-source.test.ts
 test/embedding-completion-atomic.serial.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/extract-endpoint-revision.serial.test.ts
@@ -82,7 +83,9 @@ test/persistence-sync-fence-holds.test.ts
 test/persistence-sync-holds.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
+test/remediation-manual-only.test.ts
 test/repair-embedding-effects.test.ts
+test/repair-failed-writes-drift-w411.test.ts
 test/repair-fences.test.ts
 test/repair-frontmatter.test.ts
 test/scripts/test-stress-postgres.test.ts

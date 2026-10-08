@@ -255,4 +255,55 @@ describe('check-skill-refs', () => {
     expect(out).toContain('not-a-real-command');
     expect(code).toBe(1);
   }, 30_000);
+
+  test('W4.7: the CLI-ref lane fails closed when the CLI surface cannot load', () => {
+    const { code, out } = runOn((skills) => {
+      mkdirSync(join(skills, 'alpha'));
+      writeFileSync(join(skills, 'alpha', 'SKILL.md'), '```bash\ngbrain no-such-command\n```\n');
+    }, '', { cliRefs: true });
+    expect(code).toBe(1);
+    expect(out).toContain('[cli-refs] could not load the CLI surface');
+  });
+
+  test('W4.7: a paid command that pre-approves spend needs approval wording near it (migrations included)', () => {
+    const bad = runOn((skills) => {
+      mkdirSync(join(skills, 'alpha'));
+      writeFileSync(join(skills, 'alpha', 'SKILL.md'), 'Rebuild code chunks:\n\n```bash\ngbrain reindex-code --yes\n```\n');
+      mkdirSync(join(skills, 'migrations'));
+      writeFileSync(join(skills, 'migrations', 'v9.9.9.md'), 'Run `gbrain embed --stale --yes --max-usd 2` now.\n');
+    });
+    expect(bad.code).toBe(1);
+    expect(bad.out).toContain('[paid-consent] skills/alpha/SKILL.md:4');
+    expect(bad.out).toContain('[paid-consent] skills/migrations/v9.9.9.md:1');
+    const good = runOn((skills) => {
+      mkdirSync(join(skills, 'alpha'));
+      writeFileSync(join(skills, 'alpha', 'SKILL.md'), 'Preview first: `gbrain reindex-code --dry-run`.\n\n```bash\n# only after the user agrees:\ngbrain reindex-code --yes\n```\n\nFree runs need nothing: `gbrain reindex --markdown --dry-run`, `gbrain apply-migrations --yes`, `gbrain reindex-frontmatter --yes`.\n');
+    });
+    expect(good.out).not.toContain('paid-consent');
+    expect(good.code).toBe(0);
+  });
+
+  test('W4.7: titled, angle-bracket, bare .md and reference-definition links are checked; placeholders are not', () => {
+    const bad = runOn((skills) => {
+      mkdirSync(join(skills, 'alpha'));
+      writeFileSync(join(skills, 'alpha', 'SKILL.md'), [
+        'See [a](missing-one.md) and [b](./missing-two.md "Two") and [c](<missing three.md>).',
+        '',
+        '[d]: ../alpha/missing-four.md',
+      ].join('\n'));
+    });
+    expect(bad.code).toBe(1);
+    for (const target of ['missing-one.md', './missing-two.md', 'missing three.md', '../alpha/missing-four.md']) expect(bad.out).toContain(target);
+    const good = runOn((skills) => {
+      mkdirSync(join(skills, 'alpha'));
+      writeFileSync(join(skills, 'alpha', 'OTHER.md'), 'x\n');
+      writeFileSync(join(skills, 'alpha', 'SKILL.md'), [
+        'See [other](OTHER.md "Other") and [page title](type/slug.md) and [p](path/to/page.md) and [s](sibling-concept.md) and [web](https://example.test/x.md).',
+        '',
+        '[ref]: ./OTHER.md',
+      ].join('\n'));
+    });
+    expect(good.out).toContain('OK');
+    expect(good.code).toBe(0);
+  });
 });

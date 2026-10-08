@@ -130,3 +130,47 @@ export async function restoredTargetHeals(databaseUrl?: string) {
     expect(await backlinks(engine, 'people/carol-example')).toEqual([{ slug: 'notes/lunch' }]);
   }, { databaseUrl });
 }
+
+// #6228: bracketed code on a code page parses as a wikilink whose target no slug can be.
+// #6225: a citation prefix that names no registered source parses as a qualified wikilink.
+export const BRACKETED_CODE = 'const routes = mockFetch([[/api\\.example/, () => reply(200)]]);\n// see [[people/alice-example]] and [[people/bob-example]]';
+export const FOREIGN_PREFIXES = 'Noted in [[memory:4242]]. Ask [[people/alice-example]], [[people/bob-example]] and [[archive:people/erin-example]].';
+const registerArchive = async ({ engine }: { engine: BrainEngine }) => {
+  await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('archive', 'archive')");
+};
+export const wantedKeys = (engine: BrainEngine) => engine.executeRaw<{ key: string }>(
+  "SELECT DISTINCT target_source_id || ':' || target_ref AS key FROM wanted_links ORDER BY 1");
+export const POSSIBLE_WANTED = [{ key: 'archive:people/erin-example' }, { key: 'default:people/bob-example' }];
+
+/** A sweep meeting targets no page can have records only possible ones, lands every valid link and stamps every page. */
+export async function impossibleTargetsNeverAbortTheSweep(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    await put(ctx, 'people/alice-example', 'Alice.', 'person');
+    await engine.setConfig('wanted_pages.enabled', 'false');
+    await put(ctx, 'src/routes.test.ts', BRACKETED_CODE, 'code');
+    await put(ctx, 'notes/citations', FOREIGN_PREFIXES);
+    await engine.setConfig('wanted_pages.enabled', 'true');
+    await engine.setConfig('link_resolution.cross_source', 'true');
+    await engine.executeRaw("UPDATE pages SET links_extracted_at = NULL WHERE slug IN ('src/routes.test.ts', 'notes/citations')");
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    expect(await backlinks(engine, 'people/alice-example')).toEqual([{ slug: 'notes/citations' }, { slug: 'src/routes.test.ts' }]);
+    expect(await wantedKeys(engine)).toEqual(POSSIBLE_WANTED);
+  }, { databaseUrl, setup: registerArchive });
+}
+
+/** A put_page holding such targets succeeds, and its receipt lists exactly the wanted rows the store kept. */
+export async function impossibleTargetsStayOutOfWrites(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    await engine.setConfig('link_resolution.cross_source', 'true');
+    await put(ctx, 'people/alice-example', 'Alice.', 'person');
+    const code = (await put(ctx, 'src/routes.test.ts', BRACKETED_CODE, 'code')).outcome;
+    expect(code.auto_links.wanted).toEqual([{ slug: 'people/bob-example', source_id: 'default' }]);
+    const cited = (await put(ctx, 'notes/citations', FOREIGN_PREFIXES)).outcome;
+    expect(cited.auto_links.wanted_count).toBe(2);
+    expect(cited.auto_links.wanted).toEqual(expect.arrayContaining([{ slug: 'people/bob-example', source_id: 'default' },
+      { slug: 'people/erin-example', source_id: 'archive' }]));
+    expect(await backlinks(engine, 'people/alice-example')).toEqual([{ slug: 'notes/citations' }, { slug: 'src/routes.test.ts' }]);
+    expect(await wantedKeys(engine)).toEqual(POSSIBLE_WANTED);
+  }, { databaseUrl, setup: registerArchive });
+}

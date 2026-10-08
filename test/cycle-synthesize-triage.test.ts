@@ -423,7 +423,11 @@ describe('runTriagePass — degrade + failure contracts', () => {
     const r = await runTriagePass(engine, [t], baseCfg(judge));
     expect(r.unreliable).toBe(1);
     expect(r.reports[0].unreliable).toBe('truncated');
-    expect(rows.size).toBe(0);
+    // #6069: the only row is the backoff marker; its NULL score is never a verdict.
+    const stored = [...rows.values()];
+    expect(stored).toHaveLength(1);
+    expect(stored[0].score).toBeNull();
+    expect(stored[0].content_type).toBe('triage_unreliable');
     expect(r.byPath.has(t.filePath)).toBe(false);
   });
 });

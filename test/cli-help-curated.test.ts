@@ -23,8 +23,8 @@ import { curatedFlagError } from '../src/cli/help/validate.ts';
 import { unknownFlagError } from '../src/cli/cli-error.ts';
 
 const OPS_CRITICAL = ['apply-migrations', 'autopilot', 'doctor', 'import', 'onboard', 'serve', 'status'];
-/** Handlers that parse `--yes` (doctor --remediate, apply-migrations parseArgs, onboard --auto). */
-const PARSES_YES = ['apply-migrations', 'doctor', 'onboard'];
+/** Handlers that parse `--yes` (doctor --remediate, apply-migrations parseArgs). */
+const PARSES_YES = ['apply-migrations', 'doctor'];
 
 describe('curated help specs (D3)', () => {
   test('exactly the ops-critical commands carry a curated help module', () => {

@@ -404,6 +404,9 @@ describe('normalizeForGrounding — multi-code-unit case folding (security-revie
       '  leading and trailing   ',
       'plain ascii already normalized',
       '',
+      'run `gbrain doctor` to check the **sync** step',  // #6258: inline markup is skipped on both paths
+      '用户: **重要发现**:gbrain ~~old~~ ~5 my_var ```code```',
+      '[**Ana**](people/ana) said *this*',
     ];
     for (const c of cases) {
       expect(normForGrounding(c)).toBe(normalizeForGrounding(c).norm);

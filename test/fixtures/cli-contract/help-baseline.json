@@ -13,7 +13,6 @@
   "lint:stub",
   "notability-eval:stub",
   "publish:stub",
-  "quarantine:stub",
   "recall:stub",
   "reconcile-links:stub",
   "reindex-code:missing_yes",

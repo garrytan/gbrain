@@ -5,6 +5,7 @@
 
 import type { RemediationStep } from '../remediation-step.ts';
 import type { RemediationPlan } from '../remediation/types.ts';
+import { isManualOnlyStep } from '../remediation/manual-only.ts';
 import type {
   OnboardRecommendation,
   OnboardReport,
@@ -14,36 +15,13 @@ import type {
  * Translate a RemediationStep into an OnboardRecommendation. Layers the
  * apply_policy + prompt_text + migration_id metadata.
  *
- * Rules of thumb for apply_policy:
- *   - protected job (LLM-bearing) → 'prompt_required' or 'manual_only'
- *     based on job name (takes-bootstrap stays manual_only per A12).
- *   - non-protected (regex, SQL, etc.) → 'auto_apply'.
+ * apply_policy: a manual-only job (`isManualOnlyStep`, decided by job name,
+ * the same predicate the runner enforces) is 'manual_only'; any other
+ * protected job is 'prompt_required'; everything else is 'auto_apply'.
  */
-/**
- * v0.42 (D17): jobs that stay manual_only — autopilot will NOT surface
- * these as auto-apply candidates; user must explicitly run
- * `gbrain onboard --auto-with-prompt` or submit the handler directly.
- *
- * Membership criteria: one-time consenting decisions OR LLM-bearing
- * handlers without a mature eval. Adding a new entry here is a load-
- * bearing choice — confirm the apply_policy posture before commit.
- */
-const MANUAL_ONLY_PROTECTED_JOBS: ReadonlySet<string> = new Set([
-  // v0.41.18.0 (A12, A24): takes-bootstrap classifier stays manual_only
-  // until v0.42.1 lands the 100+-case eval.
-  'extract-takes-from-pages',
-  // v0.42 (D17): pack-upgrade migration. Taxonomy change is a one-time
-  // consenting user decision; autopilot must not auto-flip the schema pack.
-  'unify-types',
-]);
-
 export function toOnboardRecommendation(step: RemediationStep): OnboardRecommendation {
-  let apply_policy: OnboardRecommendation['apply_policy'] = 'auto_apply';
-  if (step.protected) {
-    // Manual-only allowlist takes precedence; everything else protected
-    // is prompt_required (needs --yes but can run via --auto --yes).
-    apply_policy = MANUAL_ONLY_PROTECTED_JOBS.has(step.job) ? 'manual_only' : 'prompt_required';
-  }
+  const apply_policy: OnboardRecommendation['apply_policy'] = isManualOnlyStep(step) ? 'manual_only'
+    : step.protected ? 'prompt_required' : 'auto_apply';
   return {
     ...step,
     apply_policy,

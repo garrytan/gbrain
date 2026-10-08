@@ -4,7 +4,7 @@ import { constants, existsSync, lstatSync, openSync, fstatSync, readSync, closeS
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Action } from '../agent-output.ts';
 import { opError } from '../ops/contract.ts';
-import { HARDENED_GIT_ARGS, hardenedGitEnvironment } from '../hardened-git.ts';
+import { HARDENED_GIT_ARGS, assertHardenedGitArgs, hardenedGitEnvironment } from '../hardened-git.ts';
 import {
   COMPANY_BRAIN_MAX_ENTRIES, COMPANY_BRAIN_MAX_FILE_BYTES, COMPANY_BRAIN_MAX_METADATA_BYTES,
   type CommittedEntry, type InspectionLimits, type RevisionIdentity, type UncommittedEntry,
@@ -33,6 +33,7 @@ export function safeRepositoryPath(path: string): boolean {
 }
 
 async function gitRead(root: string, args: string[], maxBytes: number, onChunk?: (chunk: Buffer) => void): Promise<Buffer> {
+  assertHardenedGitArgs(args);
   return await new Promise((accept, reject) => {
     const child = spawn('git', [...HARDENED_GIT_ARGS, '-C', root, ...args],
     { env: hardenedGitEnvironment(), stdio: ['ignore', 'pipe', 'pipe'] });

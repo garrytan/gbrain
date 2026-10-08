@@ -6,6 +6,17 @@ import type { MinionJob } from '../../core/minions/types.ts';
 import { reportInlineWorkerConfiguration } from '../jobs-readiness.ts';
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'dead', 'cancelled'];
+/** Job names of the rescue probes: no handler serves them, so only the smoke's own claim can take each one. */
+const SIGKILL_PROBE = 'smoke-sigkill-probe';
+const WEDGE_PROBE = 'smoke-wedge-probe';
+
+/** Moves probe `id` to `active` the way a worker does (`queue.claim`); 1 with a SMOKE FAIL line when the claim takes anything else. */
+async function claimProbe(queue: MinionQueue, id: number, name: string, flag: string): Promise<1 | null> {
+  const claimed = await queue.claim(`smoke-${name}-${id}`, 30_000, 'smoke', [name]);
+  if (claimed?.id === id) return null;
+  console.error(`SMOKE FAIL (${flag}) — could not claim probe job #${id} through the queue (claimed: ${claimed ? `#${claimed.id}` : 'nothing'}).`);
+  return 1;
+}
 
 /**
  * Cancel a smoke job that is still live, then delete it. Production workers
@@ -79,23 +90,24 @@ async function runSmokeChecks({ args, engine, queue }: JobsCommandContext, owned
   }
 
   // --sigkill-rescue: regression case for #219. Simulates a SIGKILL
-  // mid-flight by directly manipulating lock_until via handleStalled.
+  // mid-flight by aging a claimed job's lock and running handleStalled.
   // Verifies that with the v0.13.1 schema default (max_stalled=5), a
   // stalled job is REQUEUED rather than dead-lettered on first stall.
   // Full subprocess-level SIGKILL lives in test/e2e/minions.test.ts.
+  // W4.9: the job enters `active` through queue.claim (the queue protocol
+  // trigger refuses a forged transition), under its own job name so the
+  // claim can only take it; only its timestamps are aged afterwards.
   if (sigkillRescue) {
-    const rescueJob = await queue.add('noop', {}, { queue: 'smoke' });
+    const rescueJob = await queue.add(SIGKILL_PROBE, {}, { queue: 'smoke' });
     owned.push(rescueJob.id);
+    const failed = await claimProbe(queue, rescueJob.id, SIGKILL_PROBE, '--sigkill-rescue');
+    if (failed) return failed;
 
-    // Transition to active with a past lock_until, mimicking a worker
-    // that claimed and then got SIGKILL'd mid-run.
+    // A past lock_until, mimicking a worker that claimed and then got SIGKILL'd mid-run.
     await engine.executeRaw(
       `UPDATE minion_jobs
-              SET status='active',
-                  lock_token='smoke-sigkill-rescue',
-                  lock_until=now() - interval '1 minute',
-                  started_at=now() - interval '2 minute',
-                  attempts_started = attempts_started + 1
+              SET lock_until=now() - interval '1 minute',
+                  started_at=now() - interval '2 minute'
             WHERE id=$1`,
       [rescueJob.id]
     );
@@ -135,19 +147,18 @@ async function runSmokeChecks({ args, engine, queue }: JobsCommandContext, owned
   //   - started_at 10s ago with timeout_ms=1000 → wall-clock matches
   //     (2 × timeout_ms = 2000ms threshold exceeded)
   if (wedgeRescue) {
-    const wedgedJob = await queue.add('noop', {}, {
+    const wedgedJob = await queue.add(WEDGE_PROBE, {}, {
       queue: 'smoke',
       timeout_ms: 1000,
     });
     owned.push(wedgedJob.id);
+    const failed = await claimProbe(queue, wedgedJob.id, WEDGE_PROBE, '--wedge-rescue');
+    if (failed) return failed;
     await engine.executeRaw(
       `UPDATE minion_jobs
-              SET status='active',
-                  lock_token='smoke-wedge-rescue',
-                  lock_until=now() + interval '30 seconds',
+              SET lock_until=now() + interval '30 seconds',
                   started_at=now() - interval '10 seconds',
-                  timeout_at=NULL,
-                  attempts_started = attempts_started + 1
+                  timeout_at=NULL
             WHERE id=$1`,
       [wedgedJob.id]
     );

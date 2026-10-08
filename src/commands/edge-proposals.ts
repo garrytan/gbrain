@@ -17,6 +17,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { applyEdgeProposal, rejectEdgeProposal, undoEdgeProposal, DREAM_TIMELINE_SOURCE } from '../core/cycle/edge-contradictions.ts';
 import { isCalendarDate, dateKey } from '../core/link-validity.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { intFlagValue } from '../cli/flag-values.ts';
 import { EDGE_PROPOSALS_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 import { bigintToStringReplacer } from '../core/utils.ts';
 
@@ -75,7 +76,11 @@ export async function runEdgeProposals(engine: BrainEngine, args: string[]): Pro
   if (subcommandHelpRequested(args, ROUTERS['edge-proposals'])) { printUsage(); return; }
   const [sub, ...rest] = args as [(typeof EDGE_PROPOSALS_SUBCOMMANDS)[number] | undefined, ...string[]];
   const json = rest.includes('--json');
-  const flag = (name: string) => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] : undefined; };
+  const flag = (name: string) => {
+    const at = rest.findIndex(a => a === name || a.startsWith(`${name}=`));
+    if (at < 0) return undefined;
+    return rest[at] === name ? rest[at + 1] ?? '' : rest[at]!.slice(name.length + 1);
+  };
   const id = Number(rest.find(a => /^\d+$/.test(a)));
   const out = (value: unknown, text: string) => console.log(json ? JSON.stringify(value, bigintToStringReplacer, 2) : text);
 
@@ -83,8 +88,10 @@ export async function runEdgeProposals(engine: BrainEngine, args: string[]): Pro
   if (sub === 'list') {
     const status = flag('--status');
     if (status && status !== 'all' && !STATUSES.includes(status)) { console.error(`Unknown status ${status}. One of: ${STATUSES.join(', ')}, all`); setCliExitVerdict(2); return; }
-    const list = status === 'all' ? await rows(engine, 'TRUE', [], Number(flag('--limit') ?? 50))
-      : await rows(engine, 'p.status = ANY($1::text[])', [status ? [status] : ['proposed', 'undated_unresolved']], Number(flag('--limit') ?? 50));
+    const rawLimit = flag('--limit');
+    const limit = rawLimit === undefined ? 50 : intFlagValue(rawLimit, '--limit', { min: 1, example: 50 });
+    const list = status === 'all' ? await rows(engine, 'TRUE', [], limit)
+      : await rows(engine, 'p.status = ANY($1::text[])', [status ? [status] : ['proposed', 'undated_unresolved']], limit);
     out(list, list.length ? list.map(describe).join('\n') + '\n\nNext: gbrain edge-proposals accept <id> | reject <id>' : 'No open relationship proposals.');
     return;
   }

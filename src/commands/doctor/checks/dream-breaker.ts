@@ -5,7 +5,7 @@
  * using the same counting function the breaker enforces with.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
-import { countDeadDreamSubmissions, dreamBreakerResetCommand, loadDreamBreakerThreshold, DREAM_BREAKER_CONFIG_KEY, DREAM_PHASE_KEY_PREFIX } from '../../../core/cycle/dream-breaker.ts';
+import { countDeadDreamSubmissions, dreamBreakerResetCommand, loadDreamBreakerThreshold, DREAM_BREAKER_CONFIG_KEY, DREAM_PATTERNS_SOURCE_KEY_PREFIX, DREAM_PHASE_KEY_PREFIX } from '../../../core/cycle/dream-breaker.ts';
 import type { Check } from '../../doctor.ts';
 
 export async function dreamPaidLoopCheck(engine: BrainEngine): Promise<Check> {
@@ -14,7 +14,8 @@ export async function dreamPaidLoopCheck(engine: BrainEngine): Promise<Check> {
   const limit = threshold === 0 ? 3 : threshold;
   const looping = rows.filter(row => row.dead_submissions >= limit);
   const details = { threshold, breaker_enabled: threshold > 0, inspected_keys: rows.length, count_exact: true,
-    keys: looping.map(row => ({ key_prefix: row.base_key.startsWith('dream:patterns:') ? 'dream:patterns:'
+    keys: looping.map(row => ({ key_prefix: row.base_key.startsWith(DREAM_PATTERNS_SOURCE_KEY_PREFIX) ? DREAM_PATTERNS_SOURCE_KEY_PREFIX
+      : row.base_key.startsWith('dream:patterns:') ? 'dream:patterns:'
       : row.base_key.startsWith(DREAM_PHASE_KEY_PREFIX) ? DREAM_PHASE_KEY_PREFIX : 'dream:synth-v2:', ...row })) };
   if (looping.length === 0) {
     return { name: 'dream_paid_loop', status: 'ok', message: `No dream key died ${limit}+ times in 24h`, details };

@@ -495,3 +495,37 @@ describe('#2753 — doctor and the subagent worker share one truthiness set', ()
     }
   });
 });
+
+describe('#6231 facts.page_write_notability_filter', () => {
+  async function setCapture(value: string) {
+    const setCalls: Array<[string, string]> = [];
+    const engine = { getConfig: async () => null, setConfig: async (key: string, v: string) => { setCalls.push([key, v]); } } as unknown as BrainEngine;
+    const errs: string[] = [];
+    let exit: number | null = null;
+    const logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    const errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errs.push(a.join(' ')); });
+    const outSpy = spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const stderrSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => { errs.push(String(chunk)); return true; }) as never);
+    const exitSpy = spyOn(process, 'exit').mockImplementation(((code?: number) => { exit = code ?? 0; throw new Error(`EXIT:${code}`); }) as never);
+    try { await runConfig(engine, ['set', 'facts.page_write_notability_filter', value]); }
+    catch (e) { if (!(e as Error).message.startsWith('EXIT:')) throw e; }
+    finally { logSpy.mockRestore(); errSpy.mockRestore(); outSpy.mockRestore(); stderrSpy.mockRestore(); exitSpy.mockRestore(); }
+    return { setCalls, errs: errs.join('\n'), exit };
+  }
+
+  test('the key is registered', () => { expect(KNOWN_CONFIG_KEYS).toContain('facts.page_write_notability_filter'); });
+
+  test.each(['all', 'medium-and-up', 'high-only'])('%p is written as given', async (value) => {
+    const { setCalls, exit } = await setCapture(value);
+    expect(exit).toBeNull();
+    expect(setCalls).toEqual([['facts.page_write_notability_filter', value]]);
+  });
+
+  test.each(['low', 'medium'])('%p is refused and nothing is written', async (value) => {
+    const { setCalls, errs, exit } = await setCapture(value);
+    expect(exit).not.toBeNull();
+    expect(exit).not.toBe(0);
+    expect(errs).toContain('facts.page_write_notability_filter must be one of all, high-only, medium-and-up');
+    expect(setCalls).toEqual([]);
+  });
+});

@@ -131,3 +131,26 @@ describe('isFactsBackstopEligible — eligible-types coverage', () => {
     });
   }
 });
+
+describe('#6232 facts_backstop opt-out', () => {
+  test.each([false, 'false', 'no', 'off', 0, '0', 'OFF', ' No '])('facts_backstop: %p opts the page out', (value) => {
+    const { slug, parsed } = fixture({ frontmatter: { facts_backstop: value } });
+    expect(isFactsBackstopEligible(slug, parsed)).toEqual({ ok: false, reason: 'opted_out' });
+  });
+
+  test.each([true, 'true', 'yes', undefined, null, 'maybe'])('facts_backstop: %p leaves an eligible page eligible', (value) => {
+    const { slug, parsed } = fixture({ frontmatter: { facts_backstop: value } });
+    expect(isFactsBackstopEligible(slug, parsed)).toEqual({ ok: true });
+  });
+
+  test('the meeting-ingestion skill writes opt-outs the predicate honors', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { parseMarkdown } = await import('../src/core/markdown.ts');
+    const skill = readFileSync(new URL('../skills/meeting-ingestion/SKILL.md', import.meta.url), 'utf8');
+    expect(skill).toContain('`facts_backstop: false` in the sidecar\'s frontmatter');
+    const template = skill.match(/```markdown\n(---\ntype: meeting\n[\s\S]*?\n---\n)/)?.[1];
+    expect(template).toBeDefined();
+    const meeting = parseMarkdown(`${template}\n# Kickoff\n\n${LONG_BODY}\n`, 'meetings/2026-05-09-kickoff');
+    expect(isFactsBackstopEligible('meetings/2026-05-09-kickoff', meeting)).toEqual({ ok: false, reason: 'opted_out' });
+  });
+});

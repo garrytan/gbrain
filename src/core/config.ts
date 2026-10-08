@@ -1472,6 +1472,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // src/core/facts/visibility.ts; explicit caller values always win.
   'facts.default_visibility',
   'facts.entity_inference', // #5836: write-time subject inference kill switch (subject-infer.ts)
+  'facts.page_write_notability_filter', // #6231: tiers page-write extraction keeps (facts/notability-filter.ts)
   // Ambient memory writeback (opt-in, default OFF): 'off' | 'salient' | 'all'.
   // DUAL-PLANE: `gbrain config set` writes the DB plane (authoritative — the
   // serve-side harvest gate re-checks it) AND mirrors into the file plane's

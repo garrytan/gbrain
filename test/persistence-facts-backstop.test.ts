@@ -240,3 +240,24 @@ test('a slug-bound writer\'s backstop refusal says the page was written and who 
   await expect(authorizeFactsBackstop(engine, row)).rejects.toMatchObject({ code: 'permission_denied',
     suggestion: expect.stringContaining('the page itself is written') });
 });
+
+test.each([
+  [null, 'all'], ['medium-and-up', 'medium-and-up'], ['high-only', 'high-only'], ['all', 'all'], ['  Medium-And-Up ', 'medium-and-up'], ['low', 'all'],
+])('#6231: facts.page_write_notability_filter=%p queues the page-write extraction with %p', (setting, expected) => fixture(async () => {
+  const row = await publish();
+  const effect = await claimFacts(row);
+  // Read at dispatch, after the claim: a change before the job is queued still applies.
+  if (setting !== null) await engine.setConfig('facts.page_write_notability_filter', setting);
+  await dispatchFactsBackstopEffect(engine, effect, localHostId());
+  const work = await jobs();
+  expect(work).toHaveLength(1);
+  expect(work[0].data.notabilityFilter).toBe(expected);
+}));
+
+test('#6232: a page that sets facts_backstop: false queues no extraction, and removing the line queues it with the same body', () => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  const optedOut = content.replace('title: Field notes', 'title: Field notes\nfacts_backstop: false');
+  expect(await rewrite(optedOut)).toEqual({ status: { skipped: 'opted_out' }, effectQueued: false });
+  expect(await rewrite(content)).toEqual({ status: { queued: true }, effectQueued: true });
+}));

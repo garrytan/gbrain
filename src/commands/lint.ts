@@ -286,19 +286,24 @@ export function lintContent(content: string, filePath: string, opts: LintContent
     }
   }
 
-  // Rule: Empty/stub sections
+  // Rule: Empty/stub sections. #6257: headings and section boundaries are
+  // found in the code-masked text (a `## ` line inside a fence is not a
+  // section); the body and title are read from the original at the same
+  // offsets, so a section whose body is only a code block is not empty.
+  const masked = prose.join('\n');
   const sectionPattern = /^##\s+(.+)$/gm;
   let sectionMatch;
-  while ((sectionMatch = sectionPattern.exec(content)) !== null) {
+  while ((sectionMatch = sectionPattern.exec(masked)) !== null) {
     const sectionStart = sectionMatch.index + sectionMatch[0].length;
-    const nextSection = content.indexOf('\n## ', sectionStart);
+    const nextSection = masked.indexOf('\n## ', sectionStart);
     const sectionBody = content.slice(sectionStart, nextSection > 0 ? nextSection : undefined).trim();
 
     if (sectionBody === '' || sectionBody === '[No data yet]' || sectionBody === '*[To be filled by agent]*') {
       const lineNum = content.slice(0, sectionMatch.index).split('\n').length;
+      const title = content.slice(sectionStart - sectionMatch[1].length, sectionStart);
       issues.push({
         file: filePath, line: lineNum, rule: 'empty-section',
-        message: `Empty section: ## ${sectionMatch[1]}`,
+        message: `Empty section: ## ${title}`,
         fixable: false,
       });
     }

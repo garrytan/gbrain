@@ -109,7 +109,19 @@ forms are recognized, with bare, quoted or backticked values:
   `username/password`, followed by `:`, `=`, `：`, ` - ` or nothing, then
   `user / pass` or `user:pass` — `login alice / hunter2`,
   `creds: alice:hunter2`. Only the password half is redacted. A pair whose
-  password starts the next line is redacted too.
+  password starts the next line is redacted too;
+- a command-line flag with its value after a space, `--password hunter2`,
+  `--pass "two words"` (`--password-file` and other suffixed flags are not
+  labels);
+- an environment name with more after the label, `PASSWORD_DB=…`,
+  `FOO_PASSWORD_BAR=…`, unless the suffix names a setting (`_FILE`, `_PATH`,
+  `_MIN_LENGTH`, `_HINT`, `_POLICY` and similar);
+- a single label that ends its line, with the value alone on the next line
+  (`password:` then `hunter2`);
+- Markdown table cells: every cell under a column headed `Password`, `pwd`,
+  `DB password` and the like, and the value in a `| password | … |` row,
+  including rows without outer pipes, escaped `\|` pipes and tables with
+  several credential columns.
 
 To keep prose and code intact, a value is never redacted when it is a
 placeholder (`<…>`, `${…}`, `$VAR`), a mask (`****`), a URL, a path, a
@@ -120,12 +132,13 @@ list is `LABELED_STOPLIST` in `src/core/secret-scan-labeled.ts`). A pair's
 password must also be 4+ characters with a letter and a digit or symbol, so
 `login: Google/GitHub SSO` and `credentials: docs/auth.md` stay. Known
 misses: an unquoted multi-word passphrase, a label with no delimiter
-(`the password is …`), and a meeting link's `?pwd=` passcode. A redacted
+(`the password is …`), a short flag joined to its value (`mysql -phunter2`),
+and a meeting link's `?pwd=` passcode. A redacted
 value of 8+ characters that is not a stoplisted word is also scrubbed where
 the session repeats it bare.
 
-Pages imported before this detector shipped are not rewritten
-automatically. `gbrain transcripts audit-secrets --json` (read-only; all
+Pages imported before this detector (or a later widening of it) shipped are
+not rewritten automatically, so run the audit again after upgrading. `gbrain transcripts audit-secrets --json` (read-only; all
 sources, or one with `--source-id`) lists the conversation pages that still
 carry a credential: slug, source, hit count per pattern and line numbers,
 never the text. The doctor check `transcript_secret_exposure` reads the

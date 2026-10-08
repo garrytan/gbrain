@@ -12,6 +12,7 @@ import { parseMarkdown, serializePageToMarkdown } from '../src/core/markdown.ts'
 import { acceptWriterTransfer, acquireWorktree, claimWorktree, getWorktreeBinding, prepareWriterTransfer } from '../src/core/persistence/ownership.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../src/core/persistence/identity.ts';
 import { runReconcileApply, runReconcileBackups, runReconcilePreview, assertReconcileOutputPath } from '../src/core/persistence/reconcile.ts';
+import { fileClaimCandidatesSql } from '../src/core/persistence/reconcile-state.ts';
 import { prepareFileTarget } from '../src/core/persistence/page-prepare.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { admitWrite, claimNextWrite, compactWriteReceipts, getWriteRequest } from '../src/core/persistence/journal.ts';
@@ -631,19 +632,75 @@ test('genuine shared-file origins through explicit paths or URI fallback still r
   }
 }), 120_000);
 
-test('candidate-origin fanout stops at a bounded verification limit rather than scanning the source', async () => isolated(async engine => {
-  const f = await fixture(engine), uri = pathToFileURL(f.file).href;
+// #6222 (fix wave 12, W1.3): the census was capped at 100 candidates, so a common file name
+// (date-named archives such as channels/<name>/2015-09.md) refused every page that had it.
+// It now pages through every same-name candidate and realpath still decides ownership.
+test('same-name pages in other directories and a shared provenance URI no longer refuse reconciliation', async () => isolated(async engine => {
+  const f = await fixture(engine, true), uri = pathToFileURL(f.file).href;
   await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], async () => {
     await tx.executeRaw('UPDATE pages SET source_uri=$3 WHERE source_id=$1 AND slug=$2', [f.id, f.slug, uri]);
     await tx.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,frontmatter,source_path,source_uri)
-      SELECT $1,'other/candidate-'||n,'note','Independent origin','Independent candidate '||n,'{}'::jsonb,'other/candidate-'||n||'.md',$2
-      FROM generate_series(1,101) n`, [f.id, uri]);
+      SELECT $1,'channels/c'||n||'/example','note','Channel '||n,'Independent channel '||n,'{}'::jsonb,'channels/c'||n||'/example.md',
+        CASE WHEN n % 2 = 0 THEN $2 END FROM generate_series(1,205) n`, [f.id, uri]);
+  }, TEST_WRITE_ATTRIBUTION));
+  for (let n = 1; n <= 205; n++) {
+    mkdirSync(join(f.root, 'channels', `c${n}`), { recursive: true });
+    writeFileSync(join(f.root, 'channels', `c${n}`, 'example.md'), `Independent channel ${n}\n`);
+  }
+  const neighbours = () => engine.executeRaw('SELECT slug,source_path,knowledge_revision FROM pages WHERE source_id=$1 AND slug<>$2 ORDER BY id', [f.id, f.slug]);
+  const before = await neighbours();
+  await local(engine, f.registration, async () => {
+    const result = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
+    expect(result).toMatchObject({ status: 'ready', relative_path: 'notes/example.md' });
+    expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id])).toHaveLength(0);
+    expect((await runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview: result.preview, request_id: randomUUID() })).state).toBe('committed');
+  });
+  expect(await neighbours()).toEqual(before);
+  for (const n of [1, 102, 205]) expect(readFileSync(join(f.root, 'channels', `c${n}`, 'example.md'), 'utf8')).toBe(`Independent channel ${n}\n`);
+}), 180_000);
+
+test.each(['path', 'uri'])('a real second claimant behind 200 same-name pages still refuses, in preview and on a stale-preview apply (%s)', async origin => isolated(async engine => {
+  const f = await fixture(engine, true), raw = readFileSync(f.file);
+  await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], async () => {
+    await tx.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,frontmatter,source_path)
+      SELECT $1,'channels/c'||n||'/example','note','Channel '||n,'Independent channel '||n,'{}'::jsonb,'channels/c'||n||'/example.md'
+      FROM generate_series(1,200) n`, [f.id]);
   }, TEST_WRITE_ATTRIBUTION));
   await local(engine, f.registration, async () => {
-    await expect(runReconcilePreview(engine, { source_id: f.id, slug: f.slug })).rejects.toMatchObject({
-      code: 'source_changed', message: 'Too many candidate page origins to verify this exact file safely.' });
+    const { preview } = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
+    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.putPage('other/late-claimant', {
+      type: 'note', title: 'Late claimant', compiled_truth: 'Another page claiming the same file.', frontmatter: {},
+      source_path: origin === 'path' ? './notes//example.md' : null, source_uri: origin === 'uri' ? pathToFileURL(f.file).href : null,
+    }, { sourceId: f.id }), TEST_WRITE_ATTRIBUTION));
+    const snapshot = await engine.readPageSnapshot(f.slug, { sourceId: f.id });
+    const collision = { code: 'source_changed', message: 'Several pages claim the recorded canonical file.' };
+    await expect(runReconcilePreview(engine, { source_id: f.id, slug: f.slug })).rejects.toMatchObject(collision);
+    await expect(runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview, request_id: randomUUID() })).rejects.toMatchObject(collision);
+    expect(await engine.readPageSnapshot(f.slug, { sourceId: f.id })).toEqual(snapshot);
+    expect(readFileSync(f.file)).toEqual(raw);
     expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id])).toHaveLength(0);
   });
+}), 180_000);
+
+test('a fresh PGLite schema builds the v219 name indexes inline', async () => {
+  const engine = engines[0]!;
+  const rows = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('pages_source_path_name_idx') IS NOT NULL AS present UNION ALL SELECT to_regclass('pages_file_uri_name_idx') IS NOT NULL");
+  expect(rows.map(row => row.present)).toEqual([true, true]);
+});
+
+// #6254: the census runs about five times per reconciled page; on Postgres it must use the
+// v219 expression indexes instead of evaluating a regexp over every page of the source.
+test('the file-claim census is served by the v219 name indexes on Postgres', async () => isolated(async engine => {
+  if (engine.kind !== 'postgres') return;
+  const f = await fixture(engine);
+  await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,frontmatter,source_path)
+    SELECT $1,'bulk/p'||n,'note','Bulk '||n,'Bulk '||n,'{}'::jsonb,'bulk/p'||n||'.md' FROM generate_series(1,3000) n`, [f.id]), TEST_WRITE_ATTRIBUTION));
+  await engine.executeRaw('ANALYZE pages');
+  const plan = (await engine.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN ${fileClaimCandidatesSql('linux')}`,
+    [f.id, 0, 0, 2147483647, 'example.md', 'example.md', ['example.md']]))
+    .map(row => row['QUERY PLAN']).join('\n');
+  expect(plan).toContain('pages_source_path_name_idx');
+  expect(plan).toContain('pages_file_uri_name_idx');
 }), 120_000);
 
 // The parser must not normalize an already-resolved identity a second time.

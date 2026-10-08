@@ -74,10 +74,10 @@ export const STRICT_SUBCOMMANDS: Readonly<Record<string, StrictSpec>> = {
   },
   'search modes': {
     flags: ['--reset', '--json'],
-    values: { '--source': null },
+    values: { '--mode': null, '--source': null },
     separateValues: true,
     maxPositionals: 0,
-    when: args => args.includes('--reset'),
+    when: args => args.includes('--reset') || args.includes('--mode') || args.includes('--source'),
     fix: { argv: ['search', 'modes'], why: 'Shows every search.* override and its value; changes nothing.' },
   },
 };

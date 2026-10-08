@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 208738,
-    "stdoutSha256": "f0d7ddb98466882484ff212040f7970e921989f074683aae476be22ad75b2ee0",
+    "stdoutBytes": 208735,
+    "stdoutSha256": "6a30a00a780d41d8635c0b26d361242c1219ce6bb91aec84312dbd3d36a5db84",
     "toolNames": [
       "remember",
       "entity",
@@ -415,7 +415,7 @@
         "scope": "read"
       },
       {
-        "description": "Complete content REPLACES the whole page: read get_page include_content:true, then send its revision as expected_revision and a request_id. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Edits: edit_page; over 3 pages: put_pages.",
+        "description": "Complete content REPLACES the whole page: read get_page include_content:true; send its revision as expected_revision. Keep a request_id UUID; retry with identical arguments. Remote callers: existing-page [[links]] become mentions; typed links are skipped (stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Edits: edit_page; >3 pages: put_pages.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -442,7 +442,7 @@
               "type": "boolean"
             },
             "content": {
-              "description": "Complete markdown with frontmatter; read get_page include_content:true first.",
+              "description": "Complete markdown (get_page include_content:true).",
               "type": "string"
             },
             "drop_timeline": {

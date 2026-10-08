@@ -605,3 +605,35 @@ test('managed patterns scopes evidence and publishes through the real admitted s
     } finally { __setChatTransportForTests(null); }
   });
 }, 90_000);
+
+test('#6236: a held claim-source rewrite of an existing pattern page submits no patterns child (0 model calls)', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    for (let i = 0; i < 3; i++) await seed(engine, sourceId, `wiki/personal/reflections/example-${i}`);
+    const list = Array.from({ length: 50 }, (_, i) => `      - wiki/personal/reflections/old-${i}`).join('\n');
+    const ctx = { engine, sourceId, remote: false as const, config: { engine: engine.kind, embedding_disabled: true },
+      dryRun: false, logger: { info() {}, warn() {}, error() {} } };
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'wiki/personal/patterns/legacy', request_id: randomUUID(),
+      content: `---\ntitle: Legacy\ntype: note\ndream_generated: true\nunverified_claims:\n  - text: a claim\n    reason: quote_not_in_source\n    sources:\n${list}\n---\nA legacy pattern.` } });
+    await engine.setConfig('dream.patterns.enabled', 'true');
+    await engine.setConfig('models.dream.patterns', 'anthropic:claude-sonnet-4-6');
+    await engine.setConfig('agent.use_gateway_loop', 'true');
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    let calls = 0;
+    __setChatTransportForTests(async opts => {
+      calls++;
+      return { text: 'done', blocks: [{ type: 'text', text: 'done' }], stopReason: 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: opts.model!, providerId: 'anthropic' };
+    });
+    const lock = (await acquireWorktree((await getWorktreeBinding(engine, sourceId))!, 5000))!;
+    expect(lock).not.toBeNull();
+    try {
+      await withEnv({ ANTHROPIC_API_KEY: 'sk-test-maintenance' }, async () => {
+        const result = await pendingWait(() => runPhasePatterns(engine, { brainDir: root, sourceId, dryRun: false, once: true, cycleDate: '2026-02-03' }));
+        expect(result.status).toBe('skipped');
+        expect(result.details).toMatchObject({ reason: 'pattern_claims_pending', held: ['wiki/personal/patterns/legacy'] });
+        expect(calls).toBe(0);
+        expect(await engine.executeRaw("SELECT id FROM minion_jobs WHERE name='subagent' AND data->>'source_id'=$1", [sourceId])).toHaveLength(0);
+      });
+    } finally { await lock.release(); __setChatTransportForTests(null); }
+  });
+}, 90_000);

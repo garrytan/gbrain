@@ -42,8 +42,9 @@ before applying. Apply preserves both originals and uses the current canonical
 owner without changing ownership, activation, roots, or sync checkpoints.
 The caller must already have a trusted CLI registration whose original and
 current grants permit put_page for this source and exact slug.
-get_write_request needs its own operation grant; identical apply replay is
-available without that receipt helper. Inspect the private artifact's .conflicts
+Read a pending apply's receipt with gbrain write-request --brain <id> -- <request-id>
+(MCP: get_write_request), which needs its own operation grant; identical apply
+replay is available without that receipt helper. Inspect the private artifact's .conflicts
 and .result locally before applying; stdout contains only a summary.
 Use the same request ID and arguments after a lost response or pending receipt.
 After a terminal conflict, make a new preview and use a new request ID.
@@ -55,6 +56,9 @@ timeline lines are suggested, not decided, because an added line can still
 contradict an old one; read them in the private preview, then rerun with
 --accept-suggested. Anything else (changed or removed text, policy, privacy,
 title, type, tags, fences) keeps the preview unready for a person to decide.
+Writes to one source publish one at a time on its canonical owner, so running
+many applies at once only queues them (commits coalesce); reconcile a large set
+from one client, one or two at a time.
 Audit is bounded and read-only; its cursor is not a sync checkpoint. --classify
 adds each drifted page's structural classification and counts, never values.
 Backups persist until explicitly removed. Removal deletes that private history,

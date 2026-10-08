@@ -113,7 +113,7 @@ describe('runRemediation extraRemediations threading', () => {
     const { runRemediation } = await import('../src/core/remediation/run.ts');
     submittedJobs.length = 0;
     const paid = makeRemediationStep({
-      id: 'onboard.paid_step', job: 'extract-takes-from-pages', params: {}, severity: 'medium', est_seconds: 5,
+      id: 'onboard.paid_step', job: 'enrich', params: {}, severity: 'medium', est_seconds: 5,
       est_usd_cost: 2, rationale: 'synthetic paid extra', status: 'remediable',
     });
     let unreachable = false;

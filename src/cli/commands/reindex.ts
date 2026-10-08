@@ -60,5 +60,14 @@ export async function run(engine: BrainEngine, args: string[]): Promise<void> {
     return;
   }
   const { runReindex } = await import('../../commands/reindex.ts');
-  await runReindex(engine, args);
+  try {
+    await runReindex(engine, args);
+  } catch (e) {
+    // W4.5: the paid-reindex consent gate (exit 3) and an over-cap estimate (exit 1) render as agent envelopes.
+    const { isConsentRefusal, printConsentRefusal } = await import('../../core/consent.ts');
+    if (isConsentRefusal(e)) { setCliExitVerdict(printConsentRefusal(e, { json: args.includes('--json') })); return; }
+    const { OperationError } = await import('../../core/ops/contract.ts');
+    if (e instanceof OperationError) { setCliExitVerdict(writeCliError(e, 'reindex')); return; }
+    throw e;
+  }
 }

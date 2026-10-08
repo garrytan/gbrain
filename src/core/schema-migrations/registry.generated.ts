@@ -219,7 +219,8 @@ import { v215 } from './v215-facts-attributed-to.ts';
 import { v216 } from './v216-chronicle-campaign-stamps.ts';
 import { v217 } from './v217-persistence-request-claim-phase.ts';
 import { v218 } from './v218-purge-legacy-worktree-manifest-files.ts';
-import { v219 } from './v219-persistence-client-request-id.ts';
+import { v219 } from './v219-pages-reconcile-name-indexes.ts';
+import { v220 } from './v220-persistence-client-request-id.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -438,4 +439,5 @@ export const MIGRATIONS: Migration[] = [
   v217,
   v218,
   v219,
+  v220,
 ];

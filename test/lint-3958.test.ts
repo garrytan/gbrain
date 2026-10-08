@@ -76,6 +76,49 @@ describe('#3958 placeholder-date skips fenced code blocks', () => {
   });
 });
 
+// #6257: `## ` lines inside code fences are code, not sections.
+describe('#6257 empty-section ignores headings inside code fences', () => {
+  const FM = ['---', 'title: Meeting template', 'type: note', 'created: 2026-01-05', '---', ''];
+  const sections = (content: string) =>
+    lintContent(content, 'test.md', { contentSanity: SANITY_OFF }).filter(i => i.rule === 'empty-section');
+
+  test('a ```markdown template with `## ` lines gives no findings', () => {
+    const content = [...FM,
+      '## Template', '',
+      '```markdown',
+      '## One-line overview',
+      '## Decisions',
+      '## Action items',
+      '```', '',
+      'Copy it into each meeting note.',
+    ].join('\n');
+    expect(sections(content)).toEqual([]);
+  });
+
+  test('a real empty section after a fenced block still fires, with the right line and title', () => {
+    const content = [...FM,
+      '## Example', '',
+      '~~~',
+      '## not a heading',
+      '~~~', '',
+      '## Open `questions`', '',
+      '## Notes', '', 'Some text.',
+    ].join('\n');
+    const hits = sections(content);
+    expect(hits.map(h => [h.line, h.message])).toEqual([[13, 'Empty section: ## Open `questions`']]);
+  });
+
+  test('a section whose only body is a code block is not empty', () => {
+    const content = [...FM, '## Example', '', '```bash', 'gbrain doctor', '```', '', '## Notes', '', 'Text.'].join('\n');
+    expect(sections(content)).toEqual([]);
+  });
+
+  test('an unclosed fence masks every heading after it', () => {
+    const content = [...FM, '## Usage', '', 'Run this:', '', '```', '## Empty one', '', '## Empty two', ''].join('\n');
+    expect(sections(content)).toEqual([]);
+  });
+});
+
 describe('#3958 missing-created is fixable via capture-timestamp promotion', () => {
   test('captured_at present -> missing-created is fixable', () => {
     const content = '---\ntitle: T\ntype: note\ncaptured_at: 2026-01-05T10:00:00Z\n---\n\n# T\n\nBody.\n';

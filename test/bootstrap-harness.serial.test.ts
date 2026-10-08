@@ -1760,6 +1760,27 @@ describe('harness hooks without their marker (#6092, #6171)', () => {
     expect(existsSync(join(project, '.claude', 'settings.local.json'))).toBe(false);
   });
 
+  test('W4.8: cross-HOME guard counts an EDITED user-scope harness hook (appended redirect, wrapper) too', async () => {
+    for (const edit of [(c: string) => `${c} 2>/dev/null`, (c: string) => `timeout 5 ${c}`]) {
+      const f = makeFake();
+      const hooks = Object.fromEntries(CLAUDE_HOOK_EVENTS.map((e) => [e, [{ hooks: [{
+        type: 'command', command: edit(buildClaudeHookCommand('/opt/other-home/gbrain', e, { GBRAIN_HOOK_LANE: 'harness' })),
+      }] }]]));
+      writeFileSync(f.userSettings, JSON.stringify({ hooks }));
+      const project = mkdtempSync(join(tmpdir(), 'gb-harness-proj-'));
+      expect(await applyHarness(flags([...CLAUDE, '--project', project]), f.deps)).toBe(2);
+      expect(f.err.join('\n')).toMatch(/user-scope harness hooks already exist .*edited entries included/);
+      expect(existsSync(join(project, '.claude', 'settings.local.json'))).toBe(false);
+    }
+  });
+
+  test('W4.8: an unrelated user-scope hook does not block --project wiring', async () => {
+    const f = makeFake();
+    writeFileSync(f.userSettings, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo hello' }] }] } }));
+    const project = mkdtempSync(join(tmpdir(), 'gb-harness-proj-'));
+    expect(await applyHarness(flags([...CLAUDE, '--project', project]), f.deps)).toBe(0);
+  });
+
   test('--status reports each hook carrier, counting unmarked entries as ours', async () => {
     const f = makeFake();
     expect(await applyHarness(flags(CLAUDE), f.deps)).toBe(0);

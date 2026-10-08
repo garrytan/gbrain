@@ -54,19 +54,10 @@ import { assertAmbientCaptureAdmissible, type FactsBackstopSource } from './capt
 import { appendContextNote, type InferredVia } from './subject-infer.ts';
 import { inferenceNote, inferMissingSubjects } from './subject-infer-write.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import type { FactNotabilityFilter } from './notability-filter.ts';
 
-/**
- * Notability-filter vocabulary shared by the durable facts-absorb payload
- * writer (queue mode below) and its only reader, the minion handler in
- * commands/jobs.ts. #4870: the reader must accept every value the writer can
- * send; `coerceNotabilityFilter` is the validated pass-through (unknown or
- * absent → 'all', the documented default).
- */
-export const NOTABILITY_FILTERS = ['all', 'high-only', 'medium-and-up'] as const;
-export type FactNotabilityFilter = typeof NOTABILITY_FILTERS[number];
-export function coerceNotabilityFilter(v: unknown): FactNotabilityFilter {
-  return (NOTABILITY_FILTERS as readonly unknown[]).includes(v) ? (v as FactNotabilityFilter) : 'all';
-}
+// The notability-filter vocabulary lives in notability-filter.ts; re-exported for existing importers.
+export { NOTABILITY_FILTERS, coerceNotabilityFilter, type FactNotabilityFilter } from './notability-filter.ts';
 
 /**
  * Context cell for a fact whose entity came from the bare-name
@@ -114,7 +105,8 @@ export interface FactsBackstopCtx {
   /** Execution mode — D8. Default 'queue' (fire-and-forget). */
   mode?: 'queue' | 'inline';
   /** Notability filter — D4. Default 'all'; sync uses 'high-only'; the
-   * ambient-writeback lane uses 'medium-and-up' in salient mode. */
+   * ambient-writeback lane uses 'medium-and-up' in salient mode; page-write
+   * jobs carry `facts.page_write_notability_filter` (notability-filter.ts). */
   notabilityFilter?: FactNotabilityFilter;
   /** Abort signal for shutdown propagation. */
   abortSignal?: AbortSignal;

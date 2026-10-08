@@ -20,6 +20,7 @@ import { VERB_NAMES } from './verbs.ts';
 import { classifyPgAccessError, formatDbAccessMarker } from './pg-access-classify.ts';
 import { redactConnectionInfo } from './audit/redact-connection-info.ts';
 import { redactUrlsInText } from './url-redact.ts';
+import { parseRepoBase } from './repo-base.ts';
 import { recordAgentContractEvent } from './agent-contract-log.ts';
 import { cliRouting, pinRouting, type FixRouting } from './fix-routing.ts';
 
@@ -207,8 +208,17 @@ function docsRef(): string {
 export function docsUrl(anchor: string): string {
   if (/^https?:\/\//.test(anchor)) return anchor;
   const path = anchor.replace(/^\.?\//, '');
-  const forkBase = process.env.LLMS_REPO_BASE?.replace(/\/+$/, '');
-  return forkBase ? `${forkBase}/${path}` : `${REPO_BLOB}/${docsRef()}/${path}`;
+  const forkBase = parseRepoBase(process.env.LLMS_REPO_BASE);
+  if (forkBase !== null && typeof forkBase !== 'string') warnInvalidRepoBase(forkBase.invalid);
+  return typeof forkBase === 'string' ? `${forkBase}/${path}` : `${REPO_BLOB}/${docsRef()}/${path}`;
+}
+
+let warnedRepoBase: string | null = null;
+/** W4.12: an invalid `LLMS_REPO_BASE` is ignored (default links), with one stderr line per value. */
+function warnInvalidRepoBase(value: string): void {
+  if (warnedRepoBase === value) return;
+  warnedRepoBase = value;
+  process.stderr.write('[gbrain] LLMS_REPO_BASE is not a plain https URL, so documentation links use the default repository. Unset it or set an https base.\n');
 }
 
 // ── next + rendering ───────────────────────────────────────────────────────

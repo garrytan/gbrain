@@ -81,6 +81,39 @@ per-source cron pattern doesn't benefit from the parallelism that
 `gbrain doctor` surfaces the recommended line as a `sync_consolidation`
 check whenever it detects 2+ active sources. Paste-ready from there.
 
+### Managed brain
+
+A managed brain refuses the line above: managed sync needs `--no-pull` and
+rejects `--skip-failed` (`writer_coordinator_required`). Check the mode first:
+`gbrain sources writer status --json` reports `"mode": "managed"` or
+`"mode": "classic"`, and its `bindings` name each source's owner host.
+
+On a managed brain, install this line instead, on the host that owns the
+sources:
+
+```cron
+*/15 * * * * gbrain sources refresh <id>; gbrain sync --all --no-pull --hard-deadline 13m
+```
+
+- `gbrain sources refresh <id>` is the only way a managed checkout takes
+  upstream commits (a fetch and `git merge --ff-only`, then a managed sync of
+  the sources on that checkout). Add one refresh per checkout that tracks a
+  remote, with its real source id; drop it for checkouts with no remote. The
+  `;` is deliberate: the sync still runs when a refresh refuses.
+- `--hard-deadline 13m` stays under the 15-minute interval. Managed sync takes
+  no per-source lock, so a run that outlives the interval would overlap the
+  next tick. A run stopped at its deadline ends `resumable` and the next tick
+  continues it. Sources drain one at a time, so `--parallel` does not apply.
+- `owner_unavailable` for a source: another host owns it. Install a
+  per-source line on that host (`gbrain sync --source <id> --no-pull
+  --hard-deadline 13m`, plus its refresh) instead of claiming the source here.
+- Failed files: run the `--retry-failed` command the failure prints
+  (`gbrain sync --source <id> --no-pull --retry-failed …`) after fixing the
+  files; never add `--skip-failed`.
+
+`gbrain doctor` prints this managed line in `sync_consolidation` on a managed
+brain with 2+ active sources.
+
 ## When it fails
 
 Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
@@ -88,6 +121,9 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - A scheduled `gbrain sync` hits `sync_in_progress` / `lock_busy`: an earlier tick still runs. Widen the interval or stagger the job; never add a second overlapping schedule.
 - Doctor reports a stale source after the cron change: check `gbrain sources status <id>` for held items or errors before changing the schedule again.
 - `checkpoint_validation_timeout` in a sync log: run the retry command the error prints; do not cancel the request.
+- `writer_coordinator_required` from a scheduled sync: the brain is managed. Replace the line with the [managed brain](#managed-brain) recipe; never retry with `--skip-failed` or without `--no-pull`.
+- `sync_in_progress` from `gbrain sources refresh`: a managed sync cursor is unfinished, and the refresh never waits on it. Run the `gbrain sync --source <id> --no-pull …` command the refusal prints; the next tick's refresh then runs.
+- `worktree_refreshing` from a sync: a refresh is draining or merging that checkout. Leave it; the next tick syncs it.
 
 ## Anti-Patterns
 

@@ -149,6 +149,17 @@ export async function settleConnectorWrites(engine: BrainEngine, sourceId: strin
   expect(settled.map(row => [row.slug, row.state])).toEqual(rows.map(row => [row.slug, 'committed']));
 }
 
+/**
+ * The fixture's 1.5 s wait budget is for runs against a paused owner. A run whose assertions need every write
+ * published (a healthy owner) runs on the production budget, so a slow host waits for the owner instead of
+ * stopping the sweep `writer_pending`. A committed write returns at once, so this costs nothing on a fast host.
+ */
+export async function withHealthyOwnerBudget<T>(run: () => Promise<T>): Promise<T> {
+  const budget = connectorWaitBudget.ms;
+  connectorWaitBudget.ms = CONNECTOR_WAIT_BUDGET_MS;
+  try { return await run(); } finally { connectorWaitBudget.ms = budget; }
+}
+
 /** #5600: the pending set a managed connector run ended with (connector state row). */
 export async function connectorPendingSet(engine: BrainEngine, sourceId: string) {
   const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [sourceId]);

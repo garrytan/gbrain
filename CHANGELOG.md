@@ -53,7 +53,7 @@ gbrain config set search.alias_fanout_max 0           # turn the alias fan-out o
 ### Things to watch
 
 - **One-time rescan.** The alias and mention extractor versions moved (`MENTION_EXTRACTOR_VERSION` 3, `ALIAS_DERIVATION_VERSION` 2), so every brain re-derives aliases and rescans mentions once on its next `gbrain extract --stale`; cards show `coverage: pending` until it finishes, even on a brain where no page changed.
-- **Migration v219** adds `persistence_requests.client_request_id` (nullable).
+- **Migration v220** adds `persistence_requests.client_request_id` (nullable).
 - **Search output grew** by one count line and one date line per call; the starter tool list stays within its 25,000-character budget.
 - **Settings:** `mentions.multiword_aliases`, `mentions.sibling_merge`, frontmatter `identity: separate`, `search.demote_generated` (all on by default) are the off switches.
 - **Latency.** Alias fan-out measured 16 ms p50 on a 3,100-page PGLite brain. The keyword count runs beside the search with a 2-second deadline; a late count says "unavailable", never zero. Per-cell latency on the benchmark was harness scheduling (slot queue and restore), not gbrain; the slowest gbrain searches were email-typed filters on the real corpus, filed for profiling.
@@ -73,6 +73,70 @@ gbrain config set search.alias_fanout_max 0           # turn the alias fan-out o
 - `remember` refuses a withdrawn claim before admission (`fact_withdrawn`); `replaces` accepts a target with no entity; failed receipts name their code.
 - Rerank failure reasons (`src/core/ai/gateway.ts`, `src/core/search/rerank.ts`, `src/core/interop-notices.ts`): a rerank timeout is reported as `timeout` (it was filed as a network failure); `reranker_health` names `provider_base_urls.<provider>` after repeated `unreachable` failures.
 - `docs/what-schemas-unlock.md` is linked, not inlined, in `llms-full.txt`.
+
+## [0.60.106.0] - 2026-10-07
+
+**Fix wave 12: one bad link no longer stops extraction, cut-off model answers stop counting as real ones, and paid loops stop paying.**
+
+About 25 bug reports and 16 contributor PRs arrived after wave 11's cutoff, plus the findings wave 11's own security review left open. Each bug was reproduced on the wave 11 tree first. Good contributor ideas were rewritten in our own code with tests that fail before the fix and pass after; no contributor lines were merged. The worst ones: one odd wikilink aborted every extract run with nothing saved; a model answer cut off by its output cap marked a page atom-free forever (and on managed brains deleted its atoms); dream patterns could outgrow a 1M-token window every night while the paid-loop breaker never tripped; `onboard --auto` ran steps labeled manual-only; and a few typed passwords still got past transcript redaction.
+
+### How to use it
+
+```bash
+gbrain extract --stale                             # finishes past a bad link and keeps the pages it already did
+gbrain dream reset-key 'dream:patterns:source:<id>' # clear a tripped per-source patterns breaker
+gbrain dream retriage --force                      # re-judge transcripts in triage backoff now
+gbrain quarantine clear <slug> --force             # works on managed brains; stays cleared until title, type or body change
+gbrain reindex --markdown --dry-run                # the real run now asks first (--yes or --max-usd)
+gbrain config set facts.page_write_notability_filter medium-and-up   # optional; default stays all
+gbrain search modes --reset --mode <mode>          # --source <mode> still works, with a notice
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Link extraction | `extract --stale`, `extract links`, the serve sweep and managed `put_page` skip a link no page can have (bracketed code on a code page, `[[memory:123]]` naming no source) instead of aborting; a stale sweep keeps the pages it finished before an error. |
+| Dream atoms and concepts | An answer that hit its output cap or was refused (claude-cli included) is a failure, never "nothing to extract". Managed brains keep the page's earlier atoms and wait for an approved retry; a concept that fails 3 times on unchanged atoms stops paying until they change. |
+| Dream patterns | Quarantined claims store their reflection list once per page, every path kept, and existing pages are rewritten that way before the next run; the breaker counts deaths per source, including paid runs cancelled at their timeout. |
+| Dream synthesize | A transcript the triage model can't score backs off 24 h, doubling to 7 days, instead of being re-judged nightly; logs carry the stop reason, length and a digest, never the model's text. Quote checks count `**bold**`, `` `code` `` and `~~strike~~` source text as found. |
+| `gbrain dream` beside autopilot | The run that starts second skips only the brain-wide phases (`maintenance_lock_busy`) and still runs its source phases. |
+| Onboard and remediation | `onboard --auto`, `doctor --remediate` and MCP `run_onboard` never run the schema-pack upgrade or the paid takes bootstrap; they list them under `manual_only_skipped` with the command to run. |
+| `gbrain reindex --markdown` | Asks before re-embedding: without a terminal it exits 3 with the page count and estimate. An inline run stops at its cap (`budget_exhausted`, exit 1); a queued `reindex` job re-embeds only with approval stored at submit. Migration notes and the conversation-archive skill now ask first too. |
+| Transcript redaction | Also redacts `--password X`, `--db-password X`, `--pass "…"`, openssl `-passin pass:X`, `PASSWORD_DB=`, `FOO_PASSWORD_BAR=`, a value on the line after `password:`, and Markdown table password cells. Pages imported earlier are not rewritten: rerun `gbrain transcripts audit-secrets --json`. |
+| Managed Git effects | A failed durability check retries as `git_unavailable` instead of completing without a commit or push; only a directory with no Git checkout at or above it reads as not durable. |
+| Reconcile | No longer refuses a page whose file name more than 100 pages share, and its ownership check is indexed (458 ms to 0.1 ms per call at 490k pages). `poll_command` is the working `gbrain write-request --brain <id> -- <request_id>`. |
+| `embed --stale` | Embeds everything else when a few pages (usually images) still need a text projection, and names those pages with the command that rebuilds them. |
+| Timeline citations | `[Source: A, date; B, date]` files one entry per dated source, without emphasis markers. Rows the older reading stored are deleted on the page's next write or extraction, never written back. |
+| `context_pack` / `delta` | Facts carry `fact_id` and `provenance`. |
+| Legacy slugs | Pages stored under a slug that's now invalid (`people/jane doe`) can be deleted, restored and purged, database-only. |
+
+### Things to watch
+
+- **Scripts:** `reindex --markdown` now exits 3 without approval; `edge-proposals list` with a bad `--limit` exits 2; `search modes --reset` refuses a missing or conflicting `--mode`/`--source`.
+- **The patterns breaker counts per source,** so a brain in the reported overflow state is refused right after the upgrade; clear it with `gbrain dream reset-key 'dream:patterns:source:<id>'`.
+- **Upgrade builds two indexes on `pages`** (online on Postgres) for the reconcile check.
+- **put_page asks for a request_id UUID again.** A smoke on the newest Opus, GPT and Sonnet models compared the instruction and tool text with wave 11's: no regression. Moving the `forget` caveat inside the 2,048 characters Claude Code reads cost Opus write-back accuracy, so that change was left out.
+- **Not fixed here:** the hard ceiling for a stuck write (waits for the sync-speed rework), the free relabel for a legacy bare `embedding_model` (the refusal now names the migrate preview), the transcript budget for dream patterns, and Cyrillic slug folding (#6235 declined; the bug stays open). See TODOS.md.
+
+### Itemized changes
+
+- Wanted-links store filters rows `lockPageKeys` would reject before locking, so one invalid slug or unknown source can't abort a run (#6228, #6225); stale sweeps stamp finished pages before rethrowing.
+- Timeline citations: per-source dates and emphasis stripping on wave 11's comment handling; a `superseded` row state retires extractor-written rows of the old reading, and annotated rows stay database-only (#6226).
+- `facts.page_write_notability_filter` (`all` | `medium-and-up` | `high-only`, default `all`) for page-write fact extraction (#6231); `facts_backstop: false` page opt-out, and meeting-ingestion drafts with extraction off until verified (#6232).
+- Legacy-slug delete/restore/purge admitted only for an exact existing row and published database-only; remote purge stays denied (#6212). The enrich skill files by the active schema pack (#6030).
+- Dream: top-level-only honest `[]` atom parsing, claude-cli `stop_reason` mapping, a managed atoms failure receipt, a concept retry bound per member hash (#6260); lossless pattern-claim dedupe, a per-source breaker, claude-cli tool-call replay arguments (#6236); triage backoff with digest-only logging (#6069); lock-set split so a source-scoped dream takes `gbrain-cycle` only for brain-wide phases, and `SYNTH_PHASE_FAIL` names the slug (#6242); markup-tolerant quote verification (#6258).
+- `isManualOnlyStep` is the one predicate onboard, remediation and autopilot dispatch share (#6248). Doctor `sync_consolidation` and the cron-scheduler and cold-start skills give the cron line a managed brain accepts (#6244); `source_routing_health` accepts a dedicated skills source (#6076). `lint` `empty-section` skips fenced code (#6257).
+- Git durability probes run with `LC_ALL=C` and settle per root; `classifyGitCheckout` decides "not a checkout" from the filesystem, shared with the writer manifest, which now refuses `writer_manifest_unsafe` when Git can't read a checkout (#6210).
+- Reconcile pages through every same-name candidate; migration v219 adds `pages_source_path_name_idx` and `pages_file_uri_name_idx` (#6222, #6254). `poll_command` matches the envelope's `fix.argv`; `write-request --help` (#6255).
+- `quarantine clear` publishes through the canonical owner with the snapshot's `expected_revision`; `--force` writes `quarantine_override` bound to title, type and body and stripped from every remote route; `scan --apply` refuses on managed brains (#6259).
+- `embed --stale` and embed-backfill drain past blocked projections with a keyset walk (#6223). A bare legacy `embedding_model` row refuses naming `gbrain migrate embeddings --to <provider>:<model> --dry-run` (#6113).
+- Hardened Git allows only filter-free plumbing, and `hardenedPathDirty` replaces `git status` in the reconcile preview, so a checkout's clean or process filters never run. Writeback-off records are keyed per brain, unioned from the legacy record and held when unreadable. `--project` counts edited harness hooks. `LLMS_REPO_BASE` must be https.
+- Skill-refs lint fails closed, checks every link form, and fails a paid command that pre-approves spend; `jobs smoke --sigkill-rescue`/`--wedge-rescue` claim through the queue; `schema remove-*` and `add-link-type --inverse` parse names after flag values; `repair failed-writes` classifies hand-edit drift as `file_database_drift`; filesystem link extraction builds its basename index once.
+- `edge-proposals list` reads `--limit=N` and `--status=X` (#6249). The put_page description restores the request_id UUID guidance within its 1,460-character budget.
+- `llms-full.txt` drops the MCP deployment runbook (still linked from `llms.txt`) to stay under its budget.
+
+Contributed by @andreineacsu (#6233, #6237, #6238, #6239, #6241, #6245, #6250, #6251), @javieraldape (#6234, #6240, #6256), @MarvinDontPanic (#6210). Each idea was re-implemented; their PRs are superseded.
 
 ## [0.60.105.0] - 2026-10-07
 

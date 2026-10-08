@@ -41,6 +41,25 @@ const INPUT_HOW: Record<string, string> = {
   PREFIX: 'The directory the type\'s pages live in, ending in / (for example people/researchers/). For a type set by frontmatter only, use --no-prefix instead of --prefix <PREFIX>.',
 };
 
+/** Value flags every pack-authoring subcommand accepts. */
+export const SCHEMA_PACK_VALUE_FLAGS: readonly string[] = ['--pack', '--source', '--source-id'];
+
+/**
+ * W4.10: the positional arguments of a `schema` subcommand, skipping the value
+ * of each flag in `valueFlags` (`--f v`; `--f=v` is one token), so
+ * `remove-type --pack mine people` names `people`, not `mine`.
+ */
+export function schemaPositionals(args: readonly string[], valueFlags: readonly string[]): string[] {
+  const takesValue = new Set([...SCHEMA_PACK_VALUE_FLAGS, ...valueFlags]);
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (!a.startsWith('--')) { out.push(a); continue; }
+    if (takesValue.has(a)) i++;
+  }
+  return out;
+}
+
 /** Drop a value flag (both `--f v` and `--f=v`) from argv. */
 function withoutFlag(args: string[], flag: string): string[] {
   return args.filter((a, i) => !(a === flag || a.startsWith(`${flag}=`) || args[i - 1] === flag));

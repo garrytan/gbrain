@@ -195,3 +195,62 @@ describe('PGLite cycle: file lock + per-source DB lock ordering', () => {
     expect(dbRows.length).toBe(0);
   });
 });
+
+// #6242: a source cycle that selects brain-wide phases also needs the shared
+// `gbrain-cycle` lease; while another cycle (autopilot maintenance) holds it,
+// only the source phases run and each brain-wide phase reports
+// `maintenance_lock_busy`.
+describe('PGLite cycle: shared maintenance lease for brain-wide phases', () => {
+  async function holdMaintenanceLease(): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
+       VALUES ('gbrain-cycle', $1, 'maintenance-host', NOW(), NOW() + INTERVAL '30 minutes')`,
+      [process.pid + 99999],
+    );
+  }
+  const lockIds = async () =>
+    (await engine.executeRaw<{ id: string }>(`SELECT id FROM gbrain_cycle_locks ORDER BY id`)).map(r => r.id);
+
+  test('held gbrain-cycle: lint runs, patterns is skipped as maintenance_lock_busy, nothing is left held', async () => {
+    await holdMaintenanceLease();
+    const r = await runCycle(engine, { brainDir, sourceId: 'default', phases: ['lint', 'patterns'] });
+    expect(['ok', 'clean']).toContain(r.status);
+    const lint = r.phases.find(p => p.phase === 'lint');
+    const patterns = r.phases.find(p => p.phase === 'patterns');
+    expect(lint?.status).not.toBe('skipped');
+    expect(patterns?.status).toBe('skipped');
+    expect(patterns?.details.reason).toBe('maintenance_lock_busy');
+    expect((patterns?.details.lock_holder as { holder_host: string }).holder_host).toBe('maintenance-host');
+    expect(await lockIds()).toEqual(['gbrain-cycle']);
+    expect(existsSync(join(gbrainHome, '.gbrain', 'cycle.lock'))).toBe(false);
+  });
+
+  test('held gbrain-cycle with only brain-wide phases selected: the cycle reports skipped', async () => {
+    await holdMaintenanceLease();
+    const r = await runCycle(engine, { brainDir, sourceId: 'default', phases: ['patterns'] });
+    expect(r.status).toBe('skipped');
+    expect(r.phases.map(p => [p.phase, p.details.reason])).toEqual([['patterns', 'maintenance_lock_busy']]);
+    expect(await lockIds()).toEqual(['gbrain-cycle']);
+  });
+
+  test('a source-only cycle ignores the held maintenance lease', async () => {
+    await holdMaintenanceLease();
+    const r = await runCycle(engine, { brainDir, sourceId: 'default', phases: ['lint', 'backlinks'] });
+    expect(['ok', 'clean']).toContain(r.status);
+    expect(r.phases.every(p => p.details.reason !== 'maintenance_lock_busy')).toBe(true);
+  });
+
+  test('a named mixed cycle holds both its source lease and gbrain-cycle while phases run', async () => {
+    await seed('alpha');
+    let seen: string[] = [];
+    await runCycle(engine, {
+      brainDir,
+      sourceId: 'alpha',
+      phases: ['lint', 'purge'],
+      dryRun: true,
+      yieldBetweenPhases: async () => { if (seen.length === 0) seen = await lockIds(); },
+    });
+    expect(seen).toEqual(['gbrain-cycle', 'gbrain-cycle:alpha']);
+    expect(await lockIds()).toEqual([]);
+  });
+});

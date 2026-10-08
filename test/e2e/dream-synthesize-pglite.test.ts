@@ -726,12 +726,21 @@ describe('E2E synthesize — degenerate verdicts are NOT cached in dream_verdict
     }
   }
 
+  // #6069: a degenerate verdict leaves only a backoff marker (score NULL), never a cached verdict.
+  function expectBackoffMarkerOnly(verdictRow: unknown, kind: string): void {
+    const row = verdictRow as { score: number | null; content_type: string | null; reasons: string[] } | null;
+    expect(row).not.toBeNull();
+    expect(row!.score).toBeNull();
+    expect(row!.content_type).toBe('triage_unreliable');
+    expect(row!.reasons).toEqual([`unreliable:${kind}`, 'attempt:1']);
+  }
+
   test('truncated judge response (stop_reason=length) → no dream_verdicts row + warning', async () => {
     const { verdictRow, stderr } = await runWithStubbedJudge({
       text: '{"scor', // reasoning ate the budget; partial JSON
       stopReason: 'length',
     });
-    expect(verdictRow).toBeNull();
+    expectBackoffMarkerOnly(verdictRow, 'truncated');
     expect(stderr).toMatch(/\[dream\] triage for 2026-05-01-session was truncated/);
     expect(stderr).toMatch(/not caching in dream_verdicts/);
   }, 30_000);
@@ -741,7 +750,7 @@ describe('E2E synthesize — degenerate verdicts are NOT cached in dream_verdict
       text: 'not json at all',
       stopReason: 'end',
     });
-    expect(verdictRow).toBeNull();
+    expectBackoffMarkerOnly(verdictRow, 'unparseable');
     expect(stderr).toMatch(/\[dream\] triage for 2026-05-01-session was unparseable/);
     expect(stderr).toMatch(/not caching in dream_verdicts/);
   }, 30_000);
@@ -753,7 +762,7 @@ describe('E2E synthesize — degenerate verdicts are NOT cached in dream_verdict
       text: '{"worth_processing": false, "reasons": ["routine ops"]}',
       stopReason: 'end',
     });
-    expect(verdictRow).toBeNull();
+    expectBackoffMarkerOnly(verdictRow, 'unparseable');
     expect(stderr).toMatch(/\[dream\] triage for 2026-05-01-session was unparseable/);
   }, 30_000);
 

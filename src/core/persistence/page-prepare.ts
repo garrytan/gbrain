@@ -9,6 +9,7 @@ import { importFromContent, type ParsedPage } from '../import-file.ts';
 import { frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParseOpts } from '../markdown.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { isOpPageSlug } from '../ops/context.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { pageIdentityError } from './page-identity.ts';
@@ -138,6 +139,9 @@ export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, byt
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,
   content: string | null, hostId?: string, options: { allowMissing?: boolean; deleting?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
+  // #6212: a legacy slug (admitted only to delete or restore its existing row) never owns a file: its recorded
+  // source_uri or source_path may name the file of another page, such as the one sync now slugs it to.
+  if (!isOpPageSlug(row.slug)) return undefined;
   // #5409: a read-only mirror's checkout belongs to its Git remote; nothing is written or removed there.
   if (await sourceMirrorReadOnly(engine, row.source_id)) return undefined;
   if (snapshot && !snapshot.page.source_path && await isMirrorOnlyPage(engine, row.source_id, row.slug)) return undefined;

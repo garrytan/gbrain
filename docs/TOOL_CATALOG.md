@@ -172,7 +172,7 @@ Every non-localOnly operation on the MCP surface: 140 tools across 23 areas. **S
 | `get_write_request` | Read your write's receipt by request_id (after write_pending or a lost reply). | write | yes |  |
 | `list_pages` | List pages with filters. | read | yes |  |
 | `list_write_requests` | List your write receipts in one source, newest first. | write | yes |  |
-| `put_page` | Complete content REPLACES the whole page: read get_page include_content:true, then send its revision as expected_revision and a request_id. | write | yes |  |
+| `put_page` | Complete content REPLACES the whole page: read get_page include_content:true; send its revision as expected_revision. | write | yes |  |
 | `put_pages` | Write up to 50 complete Markdown pages (8 MB total) in one call; use instead of put_page for more than 3 pages. | write |  |  |
 | `put_raw_data` | Store a raw provider payload (API response JSON) alongside a page, keyed by source. | write |  |  |
 | `resolve_slugs` | Fuzzy-match a partial slug or title to page slugs. | read | yes |  |

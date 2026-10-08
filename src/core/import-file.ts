@@ -3,6 +3,7 @@ import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { assertImportBase, sameCanonicalImport, sameContentAnyKeyOrder } from './page-state/import-guard.ts';
 import { stabilizeSafetyAssessments } from './persistence/reconcile-safety.ts';
+import { carryStoredQuarantineOverride, settleGateOwnedMarkers } from './quarantine-override.ts';
 import { decideImportIdentity, collidingSlugOwner, fileOriginUri } from './import-identity.ts';
 import { readSourceFileSync } from './minions/source-filesystem.ts';
 import { readFileSync, statSync, lstatSync } from 'fs';
@@ -352,25 +353,8 @@ export async function importFromContent(
   parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
   parsed.timeline = sanitizeText(parsed.timeline);
 
-  // v0.42 (#1699 trust boundary): strip gate-owned markers from UNTRUSTED
-  // input. parseMarkdown preserves every frontmatter key except type/title/
-  // tags/slug, so a remote MCP put_page (ctx.remote !== false, threaded as
-  // opts.remote) could otherwise plant `quarantine` (hide a page from search +
-  // suppress chunks) or `content_flag.detail` (inject text into the agent's
-  // trusted "this looks odd" channel) on clean content. Only the content-
-  // sanity gate (below) and trusted local CLIs may set these. Fail-closed:
-  // strip whenever opts.remote === true.
-  if (opts.remote === true && parsed.frontmatter) {
-    delete parsed.frontmatter[QUARANTINE_KEY];
-    delete parsed.frontmatter[CONTENT_FLAG_KEY];
-    delete parsed.frontmatter[EMBED_SKIP_KEY];
-    // #1699 part 2: the extract_atoms completion marker is phase-owned. A
-    // remote writer planting a matching marker would suppress atom mining
-    // for the page (a silent extraction bypass); planting a stale one is
-    // harmless but still not the caller's to set. Trusted local sync/export
-    // round-trips (remote unset/false) preserve it.
-    delete parsed.frontmatter[ATOMS_SCAN_HASH_KEY];
-  }
+  // #1699 trust boundary: only the gate and trusted local callers set gate-owned markers (quarantine-override.ts).
+  settleGateOwnedMarkers(parsed, opts.remote === true);
 
   // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
   // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
@@ -430,7 +414,7 @@ export async function importFromContent(
     // Disposition for the high-confidence junk path: quarantine (hide) by
     // default, or reject (throw → sync-failure) when the operator opts in.
     const junkDisposition = sanityCfg.junkDisposition;
-    const sanityResult = assessImportSanity(parsed, sanityCfg);
+    const sanityResult = await carryStoredQuarantineOverride(engine, parsed, assessImportSanity(parsed, sanityCfg), { slug, sourceId, remote: opts.remote === true });
     if (!sanityDisabled && !sanityResult.shouldQuarantine && sanityResult.flag_reason !== 'oversized' && (parsed.frontmatter[EMBED_SKIP_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized') {
       delete parsed.frontmatter[EMBED_SKIP_KEY];
       if ((parsed.frontmatter[CONTENT_FLAG_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized') delete parsed.frontmatter[CONTENT_FLAG_KEY];

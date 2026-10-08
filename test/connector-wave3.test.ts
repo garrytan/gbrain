@@ -25,7 +25,7 @@ import { ALL_SOURCES } from '../src/core/source-id.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, withGoogleAccount, connectorPendingSet } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, withGoogleAccount, connectorPendingSet, withHealthyOwnerBudget } from './helpers/connector-fixture.ts';
 
 const { home, engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
@@ -507,7 +507,7 @@ test('pending set: a checkpoint still pending at the end of a run is recorded an
     const f = await boundSource(engine, googleConfig);
     let token = 0;
     const { fetcher } = people(() => [contact('first', 'First Example')], { token: () => `contacts-${++token}` });
-    await google(engine, f, fetcher);
+    await withHealthyOwnerBudget(() => google(engine, f, fetcher));
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     await disposePersistenceConsumer(engine);
     expect(await google(engine, f, fetcher)).toMatchObject({ status: 'partial', reason: 'writer_pending' });
@@ -515,7 +515,7 @@ test('pending set: a checkpoint still pending at the end of a run is recorded an
     expect(checkpoint).toMatchObject({ itemRef: '__managed_connector_checkpoint__' });
     await disposePersistenceConsumer(engine);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid", [f.binding.worktree_id]);
-    expect((await google(engine, f, fetcher)).status).not.toBe('partial');
+    expect((await withHealthyOwnerBudget(() => google(engine, f, fetcher))).status).not.toBe('partial');
     expect(await connectorPendingSet(engine, f.id)).toEqual([]);
   }
   for (const engine of engines) {
@@ -535,10 +535,10 @@ test('pending set: a checkpoint still pending at the end of a run is recorded an
     rmSync(path);
     await disposePersistenceConsumer(engine);
     // The provider no longer lists the item: a delta run cannot tell deletion from absence, so it keeps the entry.
-    expect((await run(githubFetch({ deleted: true }))).status).not.toBe('partial');
+    expect((await withHealthyOwnerBudget(() => run(githubFetch({ deleted: true })))).status).not.toBe('partial');
     expect((await connectorPendingSet(engine, f.id)).map(pending => pending.requestId)).toEqual([accepted.request_id]);
     await disposePersistenceConsumer(engine);
-    await run(githubFetch({ deleted: true }), { full: true });
+    await withHealthyOwnerBudget(() => run(githubFetch({ deleted: true }), { full: true }));
     expect(await connectorPendingSet(engine, f.id)).toEqual([]);
     expect((await readConnectorSourceStatuses(engine)).get(f.id)!.last_run).toMatchObject({ dropped_upstream: 1 });
   }

@@ -37,9 +37,30 @@ const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
  */
 export type AtomsParseOutcome =
   | { ok: true; atoms: ExtractedAtom[] }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; stopped?: true };
 
-export function parseAtomsOutcome(raw: string): AtomsParseOutcome {
+/**
+ * #6260: the gateway stop reason decides how far a response is trusted. A
+ * response stopped by the output cap, a refusal or a content filter is never
+ * parsed; `other` and `tool_calls` (some local providers report a normal end
+ * as `other`) are parsed, but their zero-yield is never taken as a
+ * completion. Both come back `ok: false, stopped: true`, so the caller counts
+ * them like malformed output (the bounded streak; managed: a failure receipt,
+ * which never retires earlier atoms). A missing reason (legacy chat seams)
+ * reads as a normal end.
+ */
+export function parseAtomsOutcome(raw: string, stopReason?: string): AtomsParseOutcome {
+  if (stopReason === 'length' || stopReason === 'refusal' || stopReason === 'content_filter') {
+    return { ok: false, stopped: true, reason: `output stopped before the end (stopReason=${stopReason})` };
+  }
+  const outcome = parseAtomsText(raw);
+  if ((stopReason === 'other' || stopReason === 'tool_calls') && outcome.ok && outcome.atoms.length === 0) {
+    return { ok: false, stopped: true, reason: `an empty answer under stopReason=${stopReason} is not taken as complete` };
+  }
+  return outcome;
+}
+
+function parseAtomsText(raw: string): AtomsParseOutcome {
   const direct = parseAtomsOutcomeInner(raw);
   if (direct.ok) return direct;
   // Same reasoning-block hazard as the facts extractor: `indexOf('[')` below
@@ -122,9 +143,20 @@ function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
   // elements all fail the shape gate is malformed output: it rides the
   // failure streak like every other parse failure instead of tombstoning the
   // item forever on the first try.
+  //
+  // #6260: the honest `[]` counts only at top level. An empty array that sits
+  // inside an earlier `[` that is still open at its offset (a clipped
+  // response, or complete JSON broken by a missing comma) is an atom's own
+  // `"concepts": []`, not the model saying "nothing here", so it must not
+  // turn malformed output into a zero-yield stamp.
   let firstAttempt: ReturnType<typeof parseArrayAtOffset> | null = null;
   let sawEmptyArray = false;
   let candidates = 0;
+  const priorStarts: number[] = [];
+  const enclosed = (at: number): boolean => priorStarts.some((s) => {
+    const end = matchingCloseBracket(cleaned, s);
+    return end === -1 || end > at;
+  });
   for (
     let start = firstStart;
     start !== -1 && candidates < MAX_ARRAY_ANCHOR_CANDIDATES;
@@ -135,8 +167,10 @@ function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
     // Captured on the FIRST iteration only — every reason string this function
     // can return still describes the first bracket, unchanged.
     if (firstAttempt === null) firstAttempt = attempt;
+    const nested = enclosed(start);
+    priorStarts.push(start);
     if (attempt.ok) {
-      if (attempt.parsed.length === 0) { sawEmptyArray = true; continue; }
+      if (attempt.parsed.length === 0) { if (!nested) sawEmptyArray = true; continue; }
       const atoms = atomsFromParsedArray(attempt.parsed);
       if (atoms.length > 0) return { ok: true, atoms };
     }

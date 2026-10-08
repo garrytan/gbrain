@@ -24,6 +24,7 @@ export const HOOK_SUBCOMMANDS = ['session-start', 'user-prompt', 'stop', 'sessio
 export const SEARCH_SUBCOMMANDS = ['modes', 'stats', 'tune', 'diagnose'] as const;
 export const EDGE_PROPOSALS_SUBCOMMANDS = ['list', 'show', 'accept', 'reject', 'undo', 'date'] as const;
 export const CONFIG_SUBCOMMANDS = ['show', 'get', 'set', 'unset'] as const;
+export const QUARANTINE_SUBCOMMANDS = ['list', 'clear', 'scan'] as const;
 export const SCHEMA_SUBCOMMANDS = [
   'active', 'list', 'show', 'validate', 'use', 'detect', 'suggest', 'review-candidates', 'init', 'fork', 'edit',
   'diff', 'graph', 'lint', 'explain', 'review-orphans', 'downgrade', 'usage', 'stats', 'cardinality-preview',
@@ -50,6 +51,7 @@ export const ROUTERS: Readonly<Record<string, RouterInventory>> = {
   'edge-proposals': { subcommands: EDGE_PROPOSALS_SUBCOMMANDS, bareHelpFirst: true },
   schema: { subcommands: SCHEMA_SUBCOMMANDS, bareHelpFirst: true },
   config: { subcommands: CONFIG_SUBCOMMANDS, bareHelpFirst: true },
+  quarantine: { subcommands: QUARANTINE_SUBCOMMANDS, bareHelpFirst: true },
 };
 
 /** `--help` / `-h` before any `--` terminator. */

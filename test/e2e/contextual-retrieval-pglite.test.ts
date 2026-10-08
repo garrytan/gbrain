@@ -272,7 +272,8 @@ describe('per-source CR mode on the import path (#3885)', () => {
       [sourceId, slug],
     );
 
-    const result = await runReindex(engine, ['--markdown', '--json', '--limit', '10']);
+    // W4.5: a re-embedding reindex needs the user's approval; --yes is it.
+    const result = await runReindex(engine, ['--markdown', '--json', '--limit', '10', '--yes']);
     expect(result.reindexed).toBeGreaterThanOrEqual(1);
     expect(await pageMode(slug, sourceId)).toBe('none');
     const wrapped = embedderInputs.flat();

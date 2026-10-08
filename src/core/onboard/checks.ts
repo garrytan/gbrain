@@ -603,7 +603,7 @@ export async function checkPackUpgradeAvailable(
           severity: 'medium',
           est_seconds: 600,  // ~10min on 186K-page brain (production proxy)
           est_usd_cost: 0,   // pure SQL; no LLM spend
-          protected: true,   // PROTECTED handler + manual_only via render allowlist
+          protected: true,   // PROTECTED handler; manual-only by job name (remediation/manual-only.ts)
           rationale:
             `Pack upgrade ${active.manifest.name} → ${successor.manifest.name}; ` +
             `collapses redundant page types into the new canonical taxonomy. ` +

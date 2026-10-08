@@ -321,3 +321,63 @@ describe('#5567 marker parsing', () => {
     expect(renderMaterializedBullet({ date: '2026-07-01', source: 'notes', summary: 'x', detail: '**2026-07-02** | nested' }, slug)).toBeNull();
   });
 });
+
+describe('#6226 rows the older citation reading stored', () => {
+  const cited = '- **Widget-co:** per Alice, builds widgets. [Source: meeting transcript, 2026-10-06; Gmail "Intro", 2026-09-28]';
+  const oldSource = 'meeting transcript, 2026-10-06; Gmail "Intro"';
+  const oldRow = { date: '2026-09-28', source: oldSource, summary: 'Widget-co:** per Alice, builds widgets.' };
+  const current = [
+    { date: '2026-09-28', source: 'Gmail "Intro"', summary: 'Widget-co: per Alice, builds widgets.', detail: 'Source: Gmail "Intro"' },
+    { date: '2026-10-06', source: 'meeting transcript', summary: 'Widget-co: per Alice, builds widgets.', detail: 'Source: meeting transcript' },
+  ];
+
+  test('an editing write retires the old multi-source row instead of writing it back into the page', async () => {
+    await fixture(async f => {
+      await f.put(slug, page(cited));
+      await f.legacy(slug, { ...oldRow, detail: `Source: ${oldSource}` });
+      await f.put(slug, page(`${cited}\n\nA later edit.`), { expected_revision: await f.revision(slug) });
+      expect(await f.body(slug)).not.toContain('gbrain:materialized');
+      expect(f.file(slug)).not.toContain(`| ${oldSource} —`);
+      expect(await f.timeline(slug)).toEqual(current);
+    });
+  });
+
+  test('a file-extracted old row (no detail) is retired too', async () => {
+    await fixture(async f => {
+      await f.put(slug, page(cited));
+      await f.legacy(slug, oldRow);
+      await f.put(slug, page(`${cited}\n\nA later edit.`), { expected_revision: await f.revision(slug) });
+      expect(await f.timeline(slug)).toEqual(current);
+    });
+  });
+
+  test('a row sharing the old tuple but carrying its own detail stays in the database and is never materialized (T3)', async () => {
+    await fixture(async f => {
+      await f.put(slug, page(cited));
+      await f.legacy(slug, { ...oldRow, detail: 'confirmed by phone' });
+      await f.put(slug, page(`${cited}\n\nA later edit.`), { expected_revision: await f.revision(slug) });
+      expect(await f.body(slug)).not.toContain('gbrain:materialized');
+      expect(await f.timeline(slug)).toEqual([{ ...oldRow, detail: 'confirmed by phone' }, ...current]
+        .sort((a, b) => a.date.localeCompare(b.date) || a.summary.localeCompare(b.summary)));
+    });
+  });
+
+  test('a preserving write that omits the Timeline section still retires the old row and never renders it', async () => {
+    await fixture(async f => {
+      await f.put(slug, page(cited, '- **2026-08-01** | markdown — Launch review'));
+      await f.legacy(slug, { ...oldRow, detail: `Source: ${oldSource}` });
+      await f.put(slug, page(`${cited}\n\nA later edit.`), { force: true });
+      expect(await f.body(slug)).not.toContain(`| ${oldSource} —`);
+      expect((await f.timeline(slug)).some(row => row.source === oldSource)).toBe(false);
+    });
+  });
+
+  test('a database-only row the citation text never produced is still materialized', async () => {
+    await fixture(async f => {
+      await f.put(slug, page(cited));
+      await f.legacy(slug, { date: '2026-10-06', source: 'meeting transcript', summary: 'Signed the pilot' });
+      await f.put(slug, page(`${cited}\n\nA later edit.`), { expected_revision: await f.revision(slug) });
+      expect(await f.body(slug)).toContain('- **2026-10-06** | meeting transcript — Signed the pilot');
+    });
+  });
+});

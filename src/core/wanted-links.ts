@@ -19,7 +19,7 @@ import { isValidSourceId } from './source-id.ts';
 import type { WantedLinkInput } from './wanted-links-store.ts';
 
 export type { WantedLinkInput, WantedLinksReplacement, WantedProducer } from './wanted-links-store.ts';
-export { replaceWantedLinks } from './wanted-links-store.ts';
+export { possibleWantedRows, replaceWantedLinks } from './wanted-links-store.ts';
 
 type Resolution = { ok: true } | { ok: false; reason: string };
 

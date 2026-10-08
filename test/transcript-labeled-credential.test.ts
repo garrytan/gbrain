@@ -52,6 +52,37 @@ const MUST_REDACT: Array<[string, string]> = [
   ['pwd label', `pwd=${PW}`],
   ['passcode label', `passcode: ${PW}`],
   ['trailing sentence punctuation', `The password: ${PW}.`],
+  // W4.1
+  ['CLI flag with a separate value', `mysql -u root --password ${PW} -h db.example`],
+  ['short CLI flag word', `psql --pass ${PW}`],
+  ['quoted CLI value with a space', `tool --password "a b ${PW}"`],
+  ['value alone on the next line', `password:\n${PW}`],
+  ['digitless value on the next line', `password:\n${['hunter', 'abc'].join('')}${PW}`],
+  ['next-line value with CRLF and indentation', `Password:\r\n    ${PW}\r\n`],
+  ['quoted next-line value (pretty JSON)', `"password":\n  "${PW}",`],
+  ['suffix after the label', `PASSWORD_DB=${PW}`],
+  ['label inside an env name', `FOO_PASSWORD_BAR=${PW}`],
+  ['table column', `| user | password |\n|---|---|\n| alice-example | ${PW} |`],
+  ['table without outer pipes', `user | password\n--- | ---\nalice-example | ${PW}`],
+  ['table cell with an escaped pipe', `| user | password |\n|---|---|\n| alice-example | a\\|${PW} |`],
+  ['table with two credential columns', `| password | user | pwd |\n|---|---|---|\n| ${PW} | alice-example | x${PW}y |`],
+  ['key/value table row', `| password | ${PW} |`],
+  ['table with CRLF', `| user | password |\r\n|---|---|\r\n| alice-example | ${PW} |\r\n`],
+  // W12 S1: a password that starts with "-" (redacted before W4.1; only a CLI flag's value may not start with "-")
+  ['single label, value starting with -', `password: -${PW}`],
+  ['pair, password starting with -', `login: alice-example / -Xy9${PW}!q`],
+  ['quoted env value starting with -', `DB_PASSWORD="-${PW}"`],
+  ['single label, value starting with --', `password: --${PW}x9`],
+  // W12 S2: a pair whose user half looks like a setting suffix
+  ['pair with a setting-like user name', `login: pass_auth / ${PW}x9`],
+  // W12 S4
+  ['prefixed CLI flag', `aws rds modify-db-instance --master-user-password ${PW}x9`],
+  ['db-password flag', `tool --db-password ${PW}x9`],
+  ['openssl -passin', `openssl rsa -in key.pem -passin pass:${PW}x9`],
+  ['pw flag', `client --pw ${PW}x9`],
+  ['table with |-|-| separators', `|user|password|\n|-|-|\n|alice-example|${PW}|`],
+  ['pw column header', `| user | pw |\n|---|---|\n| alice-example | ${PW} |`],
+  ['qualified column header', `| user | Password (prod) |\n|---|---|\n| alice-example | ${PW} |`],
 ];
 
 const MUST_KEEP: Array<[string, string]> = [
@@ -82,6 +113,20 @@ const MUST_KEEP: Array<[string, string]> = [
   ['await', 'const passphrase = await passphraseFrom(args);'],
   ['code span label', 'the libpq form (`password=`, `sslpassword=`) is scrubbed'],
   ['already redacted', 'password: <REDACTED:high_entropy_assignment>'],
+  // W4.1
+  ['setting suffix', 'PASSWORD_MIN_LENGTH=12345'],
+  ['file flag', '--password-file /run/secrets/db'],
+  ['file env', 'POSTGRES_PASSWORD_FILE=/run/secrets/db'],
+  ['n/a table cell', '| password | n/a |'],
+  ['policy header table', '| Password policy | Notes |\n|---|---|\n| strong | yes please |'],
+  ['password header row is not a key/value row', '| Password | Notes |\n|---|---|\n| x | y |'],
+  ['pass the test', 'make sure we pass the test suite'],
+  ['prose under a password heading', 'Password:\nYou can change it in the settings page'],
+  ['pass/fail column', '| test | pass |\n|---|---|\n| auth | ok2 |'],
+  // W12 S1/S4: a flag is never a flag's value; boolean and action flags are not labels
+  ['flag followed by another flag', 'tool --password --interactive --verbose'],
+  ['no-password boolean flag', 'ssh-keygen --no-password build-key'],
+  ['skip-password flag', 'tool --skip-password-check release2'],
 ];
 
 describe('labeled_credential on the transcript page lane', () => {

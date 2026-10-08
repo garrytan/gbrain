@@ -635,9 +635,10 @@ candidate one class:
 | `replay` | No later write supersedes it. | Replayed on apply. |
 | `already_written` | A later request with the same intent committed, or an earlier apply replayed it. | Kept. |
 | `duplicate` | A later request with the same intent exists; that one is the candidate. | Kept. |
-| `superseded` | A later write or delete of the page committed or is still pending; for `put_page`, also a later failed `put_page` of the page (the newer content) or a page that changed after the revision the caller read. | Kept. Read the page and re-issue the change by hand if it is still wanted. |
+| `superseded` | A later write or delete of the page committed or is pending; for `put_page`, also a later failed `put_page` (newer content) or a page changed since the caller read it. | Kept; re-issue by hand if still wanted. |
 | `unpinned_target` | A `remember` saved unattributed; replaying would infer its subject again and could pick another page. | Kept. Re-issue it with an explicit `entity` if it is still wanted. |
-| `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content, such as `gbrain sync --source <id> --no-pull --retry-failed --json`. |
+| `file_database_drift` | Its last replay hit `source_changed` (file and database differ). | Kept until the page changes; reconcile it first. |
+| `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content (sync: `gbrain sync --source <id> --no-pull --retry-failed`). |
 
 The apply replays exactly the previewed set. Each write is classified again
 and its original caller's authority is checked again first: a write that

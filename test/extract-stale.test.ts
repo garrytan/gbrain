@@ -325,6 +325,34 @@ describe('gbrain extract --stale', () => {
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
   });
 
+  test('S4 (#6228): pages extracted before an aborting page keep their stamp; the failing page and later ones stay stale', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('notes/first', { type: 'note', title: 'First', compiled_truth: 'Met [Alice](people/alice).', timeline: '- **2026-01-02** | call — First call' });
+    await engine.putPage('notes/boom', { type: 'note', title: 'Boom', compiled_truth: 'Met [Alice](people/alice) again.', timeline: '' });
+    await engine.putPage('notes/after', { type: 'note', title: 'After', compiled_truth: 'Later.', timeline: '' });
+    const origBatch = engine.replaceDerivedLinks.bind(engine);
+    (engine as unknown as { replaceDerivedLinks: unknown }).replaceDerivedLinks = async (origin: { slug: string }, ...rest: unknown[]) => {
+      if (origin.slug === 'notes/boom') throw new Error('__page_boom__');
+      return (origBatch as (...a: unknown[]) => unknown)(origin, ...rest);
+    };
+    let threw = false;
+    try {
+      await extractStaleFromDB(engine, { dryRun: false, jsonMode: true, quiet: true, catchUp: true });
+    } catch (e) {
+      if ((e as Error).message === '__page_boom__') threw = true; else throw e;
+    } finally {
+      (engine as unknown as { replaceDerivedLinks: unknown }).replaceDerivedLinks = origBatch;
+    }
+    expect(threw).toBe(true);
+    expect(await stampOf('people/alice')).not.toBeNull();
+    expect(await stampOf('notes/first')).not.toBeNull();
+    expect(await engine.executeRaw(`SELECT t.summary FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.slug = 'notes/first'`))
+      .toEqual([{ summary: 'First call' }]);
+    expect(await stampOf('notes/boom')).toBeNull();
+    expect(await stampOf('notes/after')).toBeNull();
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(2);
+  });
+
   test('D4 race: a concurrent edit landing during the sweep is NOT masked', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) backs [Acme](companies/acme).'));

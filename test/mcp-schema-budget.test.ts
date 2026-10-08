@@ -77,7 +77,8 @@ const TOOL_BUDGETS: Record<string, number> = {
 const MINIMUM_GUIDANCE: Record<string, string[]> = {
   search: ['no LLM expansion', 'top 20', 'NOT proof of coverage', '`query`', 'list_pages', 'return_unit', 'fields: "full"'],
   query: ['expansion', 'Still top-K', 'return_unit', 'list_pages', '`search` is cheaper', 'LLM call', 'fields: "full"'],
-  put_page: ['REPLACES the whole page', 'get_page include_content:true', 'expected_revision', 'request_id', 'edit_page'],
+  // Wave 12: the request_id UUID rule is back (gbrain-evals#92: without it Opus sent a non-UUID first request_id more often).
+  put_page: ['REPLACES the whole page', 'get_page include_content:true', 'expected_revision', 'Keep a request_id UUID; retry with identical arguments', 'edit_page'],
   edit_page: ['prefer this over put_page', 'expected_revision', 'exactly once', 'all or none', 'revision_conflict'],
   get_page: ['include_content:true', 'put_page', 'edit_page'],
   list_pages: ['sort=updated_desc', 'Default 50', 'truncated', 'updated_after_slug'],

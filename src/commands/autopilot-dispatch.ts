@@ -15,6 +15,7 @@ import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../co
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
+  autopilotTargetedSteps,
   shouldRunAutopilotFullCycle,
   shouldSleepHealthyAutopilot,
 } from './autopilot-remediation-policy.ts';
@@ -182,7 +183,7 @@ export async function dispatchAutopilotTick(
       // the remediation slot forever (#4046).
       // maxWaiting:1 per submit per codex #17 bounds the cross-window
       // backlog if a targeted handler runs longer than one interval.
-      for (const step of plan) {
+      for (const step of autopilotTargetedSteps(plan)) {
         try {
           const isProtected = !!step.protected;
           const submitOpts = {
