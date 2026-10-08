@@ -49,7 +49,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
 
     for (const mode of ['links', 'all', 'stale']) {
       for (const qualified of [false, true]) {
-        test(`${mode}: ${qualified ? 'qualified foreign' : 'local'} target retyping rejects stale typing and preserves graph/freshness`, async () => {
+        test(`${mode}: ${qualified ? 'qualified foreign' : 'local'} target retyping defers only its origin and preserves graph/freshness`, async () => {
           const targetSourceId = qualified ? otherSourceId : sourceId;
           const duplicateSourceId = qualified ? sourceId : otherSourceId;
           await engine.putPage(targetSlug, { type: 'person', title: 'Alice Example', compiled_truth: 'A person.' }, { sourceId: targetSourceId });
@@ -67,6 +67,10 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
           expect(before.filter(row => row.link_source === 'markdown').map(row => [row.link_type, row.peer_source]))
             .toEqual([['attended', targetSourceId]]);
           await engine.executeRaw('UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1 AND slug=$2', [sourceId, originSlug]);
+          const laterSlug = 'meetings/zz-later';
+          const laterTarget = 'people/zoe-example';
+          await engine.putPage(laterTarget, { type: 'person', title: 'Zoe Example', compiled_truth: 'Another person.' }, { sourceId });
+          await engine.putPage(laterSlug, { type: 'meeting', title: 'Later Meeting', compiled_truth: `Attendees: [[${laterTarget}]].` }, { sourceId });
           const targetSnapshot = (await engine.readPageSnapshot(targetSlug, { sourceId: targetSourceId }))!;
           const original = engine.replaceDerivedLinks;
           let retyped = false;
@@ -84,22 +88,37 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
           const errors: string[] = [];
           const errorSpy = spyOn(console, 'error').mockImplementation((...args) => { errors.push(args.join(' ')); });
           const exitSpy = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`extract exited ${code}`); });
+          const output: string[] = [];
+          const logSpy = spyOn(console, 'log').mockImplementation((...args) => { output.push(args.join(' ')); });
           try {
-            await expect(run()).rejects.toThrow(mode === 'stale' ? 'endpoint changed after type resolution' : 'extract exited 1');
-            if (mode !== 'stale') {
-              expect(exitSpy).toHaveBeenCalledWith(1);
-              expect(errors).toContain('A derived link endpoint changed after type resolution');
+            const result = await run();
+            if (mode === 'stale') {
+              if (!result || !('linksCreated' in result)) throw new Error('Expected stale extraction result');
+              expect(result.skippedEndpointChanged).toBe(1);
+              expect(result.pagesProcessed).toBe(2);
+              expect(result.linksCreated).toBe(1);
+              expect(result.staleRemaining).toBeGreaterThan(0);
             }
+            else expect(JSON.parse(output.at(-1)!).skipped_endpoint_changed).toBe(1);
+            expect(exitSpy).not.toHaveBeenCalled();
+            expect(errors).toEqual([]);
           } finally {
             engine.replaceDerivedLinks = original;
             errorSpy.mockRestore();
             exitSpy.mockRestore();
+            logSpy.mockRestore();
           }
           expect(retyped).toBe(true);
           expect(captured.some(link => link.link_type === 'attended' && link.from_slug === targetSlug && link.from_source_id === targetSourceId)).toBe(true);
           expect(fences).toContainEqual({ slug: targetSlug, sourceId: targetSourceId, revision: targetSnapshot.revision });
           expect(await graph()).toEqual(before);
           expect(await stamp()).toBeNull();
+          const laterLinks = await engine.getLinks(laterTarget, { sourceId });
+          expect(laterLinks.some(link => link.to_slug === laterSlug && link.link_type === 'attended')).toBe(true);
+          const laterStamp = await engine.executeRaw<{ links_extracted_at: string | null }>(
+            'SELECT links_extracted_at FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, laterSlug]);
+          if (mode === 'links') expect(laterStamp[0].links_extracted_at).toBeNull();
+          else expect(laterStamp[0].links_extracted_at).not.toBeNull();
           expect((await engine.readPageSnapshot(targetSlug, { sourceId: targetSourceId }))!.page.type).toBe('decision');
           await run();
           expect((await graph()).filter(row => row.link_source === 'markdown').map(row => row.link_type)).toEqual(['mentions']);
@@ -108,6 +127,30 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
           else expect(await stamp()).not.toBeNull();
         });
       }
+    }
+    for (const mode of ['links', 'all', 'stale']) {
+      test(`${mode}: unrelated revision_conflict remains fatal`, async () => {
+        await engine.putPage(originSlug, { type: 'meeting', title: 'Weekly Meeting', compiled_truth: 'No links.' }, { sourceId });
+        const original = engine.replaceDerivedLinks;
+        engine.replaceDerivedLinks = async () => { throw Object.assign(new Error('origin revision conflict'), { code: 'revision_conflict' }); };
+        const errors: string[] = [];
+        const errorSpy = spyOn(console, 'error').mockImplementation((...args) => { errors.push(args.join(' ')); });
+        const exitSpy = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`extract exited ${code}`); });
+        try {
+          if (mode === 'stale') {
+            await expect(extractStaleFromDB(engine, { dryRun: false, jsonMode: true, quiet: true,
+              sourceIdFilter: sourceId, catchUp: true })).rejects.toThrow('origin revision conflict');
+          } else {
+            await expect(runExtract(engine, [mode, '--source', 'db', '--source-id', sourceId, '--json'])).rejects.toThrow('extract exited 1');
+            expect(errors).toContain('origin revision conflict');
+          }
+          expect(await stamp()).toBeNull();
+        } finally {
+          engine.replaceDerivedLinks = original;
+          errorSpy.mockRestore();
+          exitSpy.mockRestore();
+        }
+      });
     }
   });
 }

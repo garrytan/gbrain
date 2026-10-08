@@ -48,6 +48,7 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import { resolveCandidateSources, resolveLinkFallbackDefault, loadLinkPageMetadata, capturedLinkEndpoints, fileLinkOwnership, replaceFileLinks, replacePageFileLinks, type LinkPageMetadata } from '../core/link-reconciliation.ts';
 import { collectWantedLinks, isWantedPagesEnabled } from '../core/wanted-links.ts';
+import { DerivedLinkEndpointChangedError } from '../core/derived-links.ts';
 import { lineGrammarOptions, statedRelationTypes } from '../core/line-grammar.ts';
 export { reconcileSourceLinks, type SourceLinkReconciliationResult } from '../core/link-reconciliation.ts';
 export { extractMarkdownLinks } from '../core/link-extraction.ts';
@@ -252,6 +253,7 @@ interface ExtractResult {
   /** #2589: drop counters, present on the DB links path only (additive). */
   skipped_missing_target?: number;
   skipped_attendance_incomplete?: number;
+  skipped_endpoint_changed?: number;
   skipped_cross_source?: number;
   /** #5904: timeline writes the writer refused or left pending (DB path); the command exits non-zero. */
   timeline_refused?: number;
@@ -1235,6 +1237,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
           // additive fields, only present on the DB links path.
           result.skipped_missing_target = r.skippedMissingTarget;
           result.skipped_cross_source = r.skippedCrossSource;
+          result.skipped_endpoint_changed = r.skippedEndpointChanged;
           if (r.skippedAttendanceIncomplete) result.skipped_attendance_incomplete = r.skippedAttendanceIncomplete;
         }
         if (subcommand === 'timeline' || subcommand === 'all') {
@@ -1800,7 +1803,7 @@ async function extractLinksFromDB(
   typeFilter: PageType | undefined,
   since: string | undefined,
   opts?: { includeFrontmatter?: boolean; sourceIdFilter?: string; stampWatermark?: boolean },
-): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[]; skippedMissingTarget: number; skippedCrossSource: number; skippedAttendanceIncomplete: number }> {
+): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[]; skippedMissingTarget: number; skippedCrossSource: number; skippedAttendanceIncomplete: number; skippedEndpointChanged: number }> {
   const includeFrontmatter = opts?.includeFrontmatter ?? false;
   const sourceIdFilter = opts?.sourceIdFilter;
   // C3 (D6): the links_extracted_at watermark covers links AND timeline, so a
@@ -1869,6 +1872,7 @@ async function extractLinksFromDB(
   if ([...packs.values()].some(pack => !pack)) throw new Error('Cannot extract links: active schema pack is unavailable.');
   let processed = 0, created = 0;
   let skippedAttendanceIncomplete = 0;
+  let skippedEndpointChanged = 0;
   // #2576: skipped-candidate counter — see extractStaleFromDB's twin.
   let skippedMissingTarget = 0;
   // #2589: target resolved (via global_basename) to a page that exists only
@@ -1965,6 +1969,13 @@ async function extractLinksFromDB(
           expectedEndpoints: capturedLinkEndpoints(batch, targetMetadata) });
         created += written.created;
       } catch (error) {
+        // The transaction preserved the prior graph. Leave this origin
+        // unstamped for a later run without blocking unrelated pages.
+        if (error instanceof DerivedLinkEndpointChangedError) {
+          skippedEndpointChanged++;
+          progress.tick(1);
+          continue;
+        }
         if (jsonMode) process.stderr.write(JSON.stringify({ event: 'batch_error', size: batch.length, code: 'graph_write_failed' }) + '\n');
         throw error;
       }
@@ -1989,6 +2000,7 @@ async function extractLinksFromDB(
   if (!jsonMode) {
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Links: ${label} ${created} from ${processed} pages (db source)`);
+    if (skippedEndpointChanged) console.log(`Skipped ${skippedEndpointChanged} page(s) whose link endpoints changed mid-run; left stale for the next run.`);
     if (skippedAttendanceIncomplete) console.log(`Skipped ${skippedAttendanceIncomplete} page(s) with unresolved attendance; prior links and extraction watermarks were preserved.`);
     if (skippedMissingTarget > 0) {
       console.log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
@@ -2014,7 +2026,7 @@ async function extractLinksFromDB(
   // #2589: the counters ride the return value so machine consumers (and the
   // --json path, which has no summary event on this path) can see the drops —
   // "counted, never silent" must hold beyond human-mode console lines.
-  return { created, pages: processed, unresolved, skippedMissingTarget, skippedCrossSource, skippedAttendanceIncomplete };
+  return { created, pages: processed, unresolved, skippedMissingTarget, skippedCrossSource, skippedAttendanceIncomplete, skippedEndpointChanged };
 }
 
 /**
@@ -2052,7 +2064,7 @@ export async function extractStaleFromDB(
      */
     timeBudgetMs?: number;
   },
-): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; mentions?: MentionPassResult }> {
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedEndpointChanged?: number; skippedChanged?: number; mentions?: MentionPassResult }> {
   const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
   const includeFrontmatter = opts.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
   const log = opts.quiet ? (..._args: unknown[]) => {} : console.log;
@@ -2128,6 +2140,7 @@ export async function extractStaleFromDB(
   let afterPageId = 0;
   let linksCreated = 0, timelineCreated = 0, pagesProcessed = 0;
   let skippedAttendanceIncomplete = 0;
+  let skippedEndpointChanged = 0;
   let budgetHit = false;
   let packUnavailable = false;
   // #2576: candidates whose endpoint pages don't exist are skipped, not
@@ -2211,8 +2224,16 @@ export async function extractStaleFromDB(
         const linkOpts = { includeFrontmatter, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata),
           wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] as const : ['body'] as const, rows: wanted } };
         const stampIso = page.updated_at.getTime() >= Date.parse(versionTs) ? page.updated_at_iso : versionTs;
-        const written = await engine.replaceDerivedLinks(origin, linkRows, linkOpts);
-        linksCreated += written.created;
+        try {
+          const written = await engine.replaceDerivedLinks(origin, linkRows, linkOpts);
+          linksCreated += written.created;
+        } catch (error) {
+          if (!(error instanceof DerivedLinkEndpointChangedError)) throw error;
+          // Do not extract timeline or stamp a page whose typed graph was
+          // refused. The keyset cursor still advances; retry on the next run.
+          skippedEndpointChanged++;
+          continue;
+        }
         await retractRemovedTimelineEntries(engine, page.slug, page.source_id, fullContent);
         for (const entry of parseTimelineEntries(fullContent)) {
           // #3957: carry the parsed source label — omitting it wrote source=''
@@ -2267,6 +2288,7 @@ export async function extractStaleFromDB(
     if (totalStale === 0 && !mentionLine) log('No stale pages — extraction is up to date.');
     else log(`Extract --stale: ${linksCreated} link(s) + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
     if (mentionLine) log(mentionLine);
+    if (skippedEndpointChanged) log(`Skipped ${skippedEndpointChanged} page(s) whose link endpoints changed mid-run; left stale for the next run.`);
     if (skippedAttendanceIncomplete) log(`Skipped ${skippedAttendanceIncomplete} page(s) with unresolved attendance; prior links and extraction watermarks were preserved.`);
     if (skippedMissingTarget > 0) {
       log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
@@ -2282,10 +2304,11 @@ export async function extractStaleFromDB(
       action: 'extract_stale_done', links_created: linksCreated, timeline_created: timelineCreated,
       pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
       skipped_missing_target: skippedMissingTarget, skipped_cross_source: skippedCrossSource,
+      skipped_endpoint_changed: skippedEndpointChanged,
       ...(skippedAttendanceIncomplete ? { skipped_attendance_incomplete: skippedAttendanceIncomplete } : {}), ...mentionJsonFields(mentions),
     }) + '\n');
   }
-  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget, skippedCrossSource,
+  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget, skippedCrossSource, skippedEndpointChanged,
     ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}), mentions };
 }
 
