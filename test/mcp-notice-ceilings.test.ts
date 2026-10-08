@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'bun:test';
 import { OTHER_NAMES_NOTICE_MAX_CHARS, SAVED_FACTS_NOTICE_MAX_CHARS, retrievalNoticeBlocks } from '../src/mcp/dispatch.ts';
 
-const FACTS_HEAD = 'Saved facts (remember) matching this query, newest first; recall returns more:\n';
+const FACTS_HEAD = 'Saved facts (remember): about the entity this query names (newest first), then facts those point to, then matches for its words; recall returns more:\n';
 const NAMES_HEAD = 'Other names in these results (documents may use either; search the one you have not tried): ';
 
 const fact = (text: string, i = 0) => ({ fact: text, entity_slug: `e${i}`, valid_from: '2026-09-01T00:00:00Z', source: 'user update' });

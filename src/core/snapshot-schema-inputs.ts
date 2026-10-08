@@ -52,6 +52,8 @@ export const SNAPSHOT_DYNAMIC_IMPORTS_NOT_HASHED: Readonly<Record<string, string
   'model-pricing.ts': 'verbs.ts request-time verb handlers',
   'interop-notices.ts': 'verbs.ts request-time verb handlers (agent contract notices)',
   'remember-batch.ts': 'verbs.ts request-time verb handlers (remember items[])',
+  'mentions/siblings.ts': 'entities/resolve.ts request-time entity resolution (identity-sibling names)',
+  'mentions/policy.ts': 'entities/resolve.ts request-time entity resolution (pack linkable types)',
 };
 
 const STATIC_SPECIFIER =

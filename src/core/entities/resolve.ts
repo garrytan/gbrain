@@ -21,11 +21,13 @@
  * unprefixed holding path rather than guessing from connection count.
  */
 
-import { siblingCanonical } from '../mentions/siblings.ts';
-import { loadLinkableTypes } from '../mentions/policy.ts';
 import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
+
+/** Lazy: the mentions graph stays out of the OpenClaw plugin's static import graph. */
+const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonical = async (...args) =>
+  (await import('../mentions/siblings.ts')).siblingCanonical(...args);
 import { isUndefinedTableError } from '../utils.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 
@@ -339,7 +341,7 @@ export async function resolveStrictEntityReference(
   let linkable: Set<string> | null = null;
   const isEntity = async (r: { slug: string; type: string | null }) => {
     if (isFactEntityPage(r.slug, r.type)) return true;
-    linkable ??= new Set((await loadLinkableTypes(engine, source_id).catch(() => ({ types: [] as string[] }))).types);
+    linkable ??= new Set((await (await import('../mentions/policy.ts')).loadLinkableTypes(engine, source_id).catch(() => ({ types: [] as string[] }))).types);
     return r.type != null && linkable.has(r.type);
   };
   const pick = async (rows: Array<{ slug: string; type: string | null }>, arm: StrictResolutionArm): Promise<StrictResolution | null> => {
