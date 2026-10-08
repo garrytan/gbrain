@@ -3,7 +3,8 @@
  *
  * DB-plane values that `gbrain config set` accepted for years, `config get`
  * echoed back, and NOTHING read: provider credentials, chat/expansion model
- * pins, the chat fallback chain and its refusal switch, and flat `cycle.*` knobs. This module owns
+ * pins, the chat fallback chain and its refusal switch, provider chat options,
+ * and flat `cycle.*` knobs. This module owns
  * their sparse-merge into the loaded config — called by
  * `loadConfigWithEngine()` (src/core/config.ts) after its per-key merges,
  * with the same precedence: env > file > DB.
@@ -86,16 +87,88 @@ export function parseDbChatFallbackChain(raw: string): { chain?: string[]; error
   }
 }
 
-/** The flat scalar keys the batched read fetches (plus the `cycle.` prefix). */
+/** The root keys the batched read fetches (plus cycle/chat-option prefixes). */
 const DB_MERGED_SCALAR_KEYS: readonly string[] = [
   ...DB_MERGED_PROVIDER_KEY_FIELDS,
   'expansion_model',
   'chat_model',
   'chat_fallback_chain',
   'chat_fallback_on_refusal',
+  'provider_chat_options',
 ];
 
 const CYCLE_PREFIX = 'cycle.';
+
+function optionsObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function safeOptionKey(key: string): boolean {
+  return key !== '' && !['__proto__', 'constructor', 'prototype'].includes(key);
+}
+
+/** Merge nested option objects; arrays/scalars (including false/0/null) are leaves. */
+function overlayOptions(low: Record<string, unknown>, high: Record<string, unknown>): Record<string, unknown> {
+  const next: Record<string, unknown> = {};
+  for (const source of [low, high]) {
+    for (const [key, value] of Object.entries(source)) {
+      if (!safeOptionKey(key) || value === undefined) continue;
+      next[key] = optionsObject(value)
+        ? overlayOptions(optionsObject(next[key]) ? next[key] : {}, value)
+        : value;
+    }
+  }
+  return next;
+}
+
+/**
+ * DB root JSON supplies defaults; dotted rows override those defaults, then
+ * the file plane wins per leaf. Selector IDs in root JSON stay literal (a
+ * model may contain dots). A declared selector is matched longest-first;
+ * otherwise the first dot separates the recipe/model from its option path.
+ * Use the root JSON form for otherwise ambiguous dotted model IDs, e.g.
+ * config set provider_chat_options '{"openai:gpt-5.4":{"reasoningEffort":"none"}}'.
+ */
+function mergeProviderChatOptions(merged: GBrainConfig, values: Map<string, string>): void {
+  let db: Record<string, unknown> = {};
+  const root = values.get('provider_chat_options');
+  if (root !== undefined) {
+    try {
+      const parsed: unknown = JSON.parse(root);
+      if (optionsObject(parsed)) db = overlayOptions({}, parsed);
+      else console.warn('[gbrain] config: provider_chat_options DB value is not a JSON object; ignoring');
+    } catch {
+      console.warn('[gbrain] config: provider_chat_options DB value is not valid JSON; ignoring');
+    }
+  }
+  const selectors = [...new Set([...Object.keys(db), ...Object.keys(merged.provider_chat_options ?? {})])]
+    .filter(safeOptionKey).sort((a, b) => b.length - a.length);
+  for (const [key, raw] of [...values.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (!key.startsWith('provider_chat_options.')) continue;
+    const suffix = key.slice('provider_chat_options.'.length);
+    const selector = selectors.find(id => suffix === id || suffix.startsWith(`${id}.`)) ?? suffix.split('.')[0];
+    const path = suffix === selector ? [] : suffix.slice(selector.length + 1).split('.');
+    if (!safeOptionKey(selector) || !path.every(safeOptionKey)) continue;
+    let value: unknown;
+    try { value = JSON.parse(raw); } catch { value = raw; }
+    if (path.length === 0) {
+      if (optionsObject(value)) db[selector] = overlayOptions(optionsObject(db[selector]) ? db[selector] : {}, value);
+      continue;
+    }
+    if (!optionsObject(db[selector])) db[selector] = {};
+    let target = db[selector] as Record<string, unknown>;
+    for (const part of path.slice(0, -1)) {
+      if (!optionsObject(target[part])) target[part] = {};
+      target = target[part] as Record<string, unknown>;
+    }
+    target[path[path.length - 1]] = optionsObject(value) ? overlayOptions({}, value) : value;
+  }
+  // Reject malformed selector containers rather than sending them to the SDK.
+  db = Object.fromEntries(Object.entries(db).filter(([, value]) => optionsObject(value)));
+  if (Object.keys(db).length > 0) {
+    merged.provider_chat_options = overlayOptions(db, merged.provider_chat_options ?? {}) as NonNullable<GBrainConfig['provider_chat_options']>;
+  }
+}
 
 /**
  * D2 remediation: this merge used to issue ~12 sequential `engine.getConfig`
@@ -123,7 +196,7 @@ export function _resetDbPlaneMergeMemoForTests(now?: () => number): void {
 
 /**
  * Fetch every DB-plane value this module merges, in ONE round trip when the
- * engine exposes `executeRaw` (`key = ANY($1) OR key LIKE 'cycle.%'`), else
+ * engine exposes `executeRaw` (root keys plus cycle/chat-option prefixes), else
  * via the legacy per-key `getConfig` walk. Empty-string values are treated
  * as unset (dbStr semantics). Quiet-failure: a missing config table
  * (pre-v36 brain mid-migration) yields an empty map and file/env wins.
@@ -138,7 +211,7 @@ async function readDbPlaneMergeValues(
   if (typeof engine.executeRaw === 'function') {
     try {
       const rows = await engine.executeRaw<{ key: string; value: string | null }>(
-        `SELECT key, value FROM config WHERE key = ANY($1) OR key LIKE 'cycle.%'`,
+        `SELECT key, value FROM config WHERE key = ANY($1) OR key LIKE 'cycle.%' OR key LIKE 'provider_chat_options.%'`,
         [[...DB_MERGED_SCALAR_KEYS]],
       );
       for (const row of rows) {
@@ -159,14 +232,16 @@ async function readDbPlaneMergeValues(
       }
     }
     if (typeof engine.listConfigKeys === 'function') {
-      try {
-        for (const key of await engine.listConfigKeys(CYCLE_PREFIX)) {
-          if (!key.startsWith(CYCLE_PREFIX)) continue;
-          const v = await engine.getConfig(key).catch(() => undefined);
-          if (v !== undefined && v !== null && v !== '') values.set(key, v);
+      for (const prefix of [CYCLE_PREFIX, 'provider_chat_options.']) {
+        try {
+          for (const key of await engine.listConfigKeys(prefix)) {
+            if (!key.startsWith(prefix)) continue;
+            const v = await engine.getConfig(key).catch(() => undefined);
+            if (v !== undefined && v !== null && v !== '') values.set(key, v);
+          }
+        } catch {
+          // quiet failure per prefix — healthy siblings can still merge
         }
-      } catch {
-        // quiet failure — no cycle merge this load
       }
     }
   }
@@ -186,6 +261,7 @@ export async function applyDbPlaneReadSideMerge(
   engine: DbPlaneEngineReader,
 ): Promise<void> {
   const values = await readDbPlaneMergeValues(engine);
+  mergeProviderChatOptions(merged, values);
 
   const dbMergedStringFields = [
     ...DB_MERGED_PROVIDER_KEY_FIELDS,

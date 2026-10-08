@@ -236,13 +236,13 @@ describe('applyDbPlaneReadSideMerge — per-key fallback (no executeRaw)', () =>
     expect(merged.cycle?.['enrich_thin.enabled']).toBe('true');
     expect(counts.executeRaw).toBe(0);
     expect(counts.getConfig).toBeGreaterThan(0);
-    expect(counts.listConfigKeys).toBe(1);
+    expect(counts.listConfigKeys).toBe(2);
 
     // Second merge on the same handle: fully memoized, zero new reads.
     const before = counts.getConfig;
     await applyDbPlaneReadSideMerge({ engine: 'pglite' }, engine);
     expect(counts.getConfig).toBe(before);
-    expect(counts.listConfigKeys).toBe(1);
+    expect(counts.listConfigKeys).toBe(2);
   });
 });
 
@@ -264,11 +264,13 @@ describe('batched SQL shape on a real engine (PGLite)', () => {
     await engine.setConfig('chat_model', 'anthropic:claude-haiku-4-5');
     await engine.setConfig('cycle.auto_think.enabled', 'true');
     await engine.setConfig('cycle.empty_value', ''); // dbStr semantics: unset
+    await engine.setConfig('provider_chat_options.deepseek.thinking.type', 'disabled');
 
     const merged: GBrainConfig = { engine: 'pglite' };
     await applyDbPlaneReadSideMerge(merged, engine);
 
     expect(merged.chat_model).toBe('anthropic:claude-haiku-4-5');
     expect(merged.cycle).toEqual({ 'auto_think.enabled': 'true' });
+    expect(merged.provider_chat_options).toEqual({ deepseek: { thinking: { type: 'disabled' } } });
   }, 60_000);
 });
