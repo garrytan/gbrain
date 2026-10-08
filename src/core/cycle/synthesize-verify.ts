@@ -1425,7 +1425,7 @@ export async function verifyAndRepairDreamPages(
         // noEmbed: the phase-end embed sweep backfills. Provenance fields
         // null → engine COALESCE keeps the first-write record intact.
         await importFromContent(engine, ref.slug, md, {
-          noEmbed: true, remote: false, sourceId: ref.source_id,
+          noEmbed: true, remote: false, preserveGateMarkers: true, sourceId: ref.source_id,
           beforeCommit: async tx => { await project(tx); await links?.apply(tx); },
         });
         stats.pages_repaired++;

@@ -16,7 +16,7 @@ import type { Page } from '../types.ts';
 import { decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { projectGetPage } from './get-page-projection.ts';
+import { projectGetPage, readQuarantined } from './get-page-projection.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
@@ -82,7 +82,7 @@ const get_page: Operation = {
   name: 'get_page',
   idempotent: true,
   outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
-  description: 'Read a page by slug (fuzzy optional; renamed slugs redirect). To edit, pass include_content:true and send `content` to put_page, or use edit_page. Timeline rows need include_timeline_entries.',
+  description: 'Read a page by slug. To edit, pass include_content:true and send `content` to put_page, or use edit_page.',
   params: {
     slug: { type: 'string', description: 'Page slug.', required: true },
     fuzzy: { type: 'boolean', description: 'Fuzzy slug match.' },
@@ -91,6 +91,7 @@ const get_page: Operation = {
     include_deleted: { type: 'boolean', description: 'Include soft-deleted pages.' },
     include_timeline_entries: { type: 'boolean', description: 'Also return timeline rows.' },
     source_id: { type: 'string', description: "One source, or '__all__'." },
+    include_quarantined: { type: 'boolean', description: 'Admin: quarantined body.' },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
@@ -174,11 +175,8 @@ const get_page: Operation = {
     // inside bumpLastRetrievedAt (D2).
     bumpLastRetrievedAt(ctx.engine, [page.id]);
 
-    // #2200: resolve tags against the concrete page's source. `sourceOpts` may
-    // be { sourceIds:[...] } (federated) with no scalar sourceId, which getTags
-    // would otherwise fall back to 'default' for — the wrong source for a
-    // non-default page. We already hold the resolved page, so its source is
-    // unambiguous.
+    // #2200: tags come from the concrete page's source: federated `sourceOpts` has no
+    // scalar sourceId, and getTags would fall back to 'default' (the wrong source).
     const tags = snapshot!.tags;
     // Only explicitly trusted local reads retain protected body sections.
     // Holder grants and page-visibility opt-outs do not bypass this boundary.
@@ -205,8 +203,9 @@ const get_page: Operation = {
     // it would double every reader's payload for the round-trip minority.
     const timelineEntries = includeTimelineEntries
       ? await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) : undefined;
+    const quarantined = readQuarantined(ctx, page, p.include_quarantined === true); // #6259
     return projectGetPage(visibleBody, {
-      revision: snapshot!.revision, tags, includeContent, contentOnly: (p.content_only as boolean) === true, resolved_slug, content_flag,
+      revision: snapshot!.revision, tags, includeContent, contentOnly: (p.content_only as boolean) === true, resolved_slug, content_flag, quarantined,
       ...(timelineEntries ? { timeline_entries: timelineEntries } : {}),
       ...(held ? { file_held: fileHeldField(held, isUntrustedReader) } : {}),
     });
@@ -222,6 +221,7 @@ const fetch_page: Operation = {
   description: "Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). Pass the id unchanged; it does not grant access. Legacy slug ids work only when unambiguous within your current read scope. Returns { id, title, text, url, metadata } — `text` is the page's canonical markdown. For fuzzy slugs, soft-delete recovery, or lossless edit round-trips, use get_page.",
   params: {
     id: { type: 'string', required: true, description: 'Opaque result id from a prior `search` call. Pass unchanged. Unambiguous legacy slugs are also accepted.' },
+    include_quarantined: { type: 'boolean', description: 'Admin: quarantined body.' },
   },
   handler: async (ctx, p) => {
     const id = p.id as string;
@@ -262,15 +262,13 @@ const fetch_page: Operation = {
     if (!page || (excludePrivate && isPrivatePage(page))) throw missing();
     bumpLastRetrievedAt(ctx.engine, [page.id]);
     const tags = snapshot!.tags;
-    // Same privacy boundary as get_page: untrusted readers (ctx.remote ===
-    // true — every MCP transport) never see takes or private facts fences.
-    const visibleBody = ctx.remote === false
-      ? page
-      : stripPrivacyFencesForRemoteReader(page);
+    // Same boundaries as get_page: untrusted readers never see takes or private facts fences, nor a quarantined body (#6259).
+    const visibleBody = ctx.remote === false ? page : stripPrivacyFencesForRemoteReader(page);
+    const quarantined = readQuarantined(ctx, page, p.include_quarantined === true);
     return {
       id: identity ? id : page.slug,
       title: page.title,
-      text: serializePageToMarkdown(visibleBody as Page, tags),
+      text: quarantined?.body_omitted ? '' : serializePageToMarkdown(visibleBody as Page, tags),
       // Pages have no public http home; a stable brain-local URI satisfies
       // the contract's citation slot without inventing a fake web URL.
       url: deepResearchPageUrl(page.source_id, page.slug),
@@ -279,7 +277,7 @@ const fetch_page: Operation = {
         type: page.type,
         source_id: page.source_id,
         updated_at: page.updated_at,
-        tags,
+        tags, ...(quarantined ? { quarantined } : {}),
       },
     };
   },

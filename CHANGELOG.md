@@ -10,6 +10,33 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.107.0] - 2026-10-08
+
+**A page the quarantine gate hid stays hidden: no more planted markers, no facts mined from it, and no body handed to remote agents.**
+
+The content-quality gate quarantines junk and unsafe pages so search skips them. Four paths still leaked them. Any non-remote writer could plant or fake the gate's own markers; a quarantined page still fed automatic fact extraction and its facts and takes fences; `get_page` and `fetch` returned its body verbatim; and `put_page` never told the agent its page had been hidden.
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Gate-owned frontmatter | `quarantine`, `embed_skip`, `content_flag`, `atoms_scan_hash` and `quarantine_override` are stripped from a local `put_page`, a connector, an ingest event or any other non-owner write. Sync and import of your own files, reindex, repair, reconcile, the cycle and `quarantine clear` keep them. |
+| Facts and takes | A quarantined page is not mined for facts (`facts_backstop.skipped: quarantined`) and its fences are not projected. Rows projected before it was quarantined stay. |
+| `get_page` / `fetch` | Carry `quarantined` (fetch: `metadata.quarantined`) and a `page_quarantined` notice. Remote callers get no body or text unless an admin-scoped caller passes `include_quarantined: true`; local reads keep the body. |
+| `put_page` / `put_pages` | A write the gate hid reports `quarantined: { reason, detail }` with a notice. |
+
+### Things to watch
+
+- **Scripts that planted markers through `put_page`** (for example to force `embed_skip`) now have them stripped; use the owner paths above or `gbrain quarantine clear --force`.
+- **Remote agents reading a quarantined page** get the notice instead of its text; an admin can still ask for it.
+
+### Itemized changes
+
+- `stripGateOwnedMarkers` (`src/core/import-screen.ts`) runs once per write; only callers passing `preserveGateMarkers: true` keep the markers. Managed `quarantine clear` submits the owner-internal `managed_quarantine_clear` intent so `quarantine_override` stays writable. `opts.remote` keeps only its fence-merge and hidden-row meaning.
+- `isFactsBackstopEligible` refuses a quarantined page; the canonical projection and the unmanaged `extract_facts` / `extract_takes` reconcilers skip it.
+- `readQuarantined` shapes `get_page` and `fetch`; `include_quarantined` is honored only for admin scope.
+- New key-files cluster `docs/architecture/key-files/quarantine.md`.
+
 ## [0.60.106.0] - 2026-10-07
 
 **Fix wave 12: one bad link no longer stops extraction, cut-off model answers stop counting as real ones, and paid loops stop paying.**

@@ -131,13 +131,23 @@ describe('#2822 — chunk_skip_reason on 0-chunk puts', () => {
     expect(result.chunk_skip_reason).toBe('empty_body');
   });
 
-  test('embed_skip-marked content (trusted local) → embed_skip', async () => {
+  test('oversized content the gate marks embed_skip → embed_skip', async () => {
     const result = (await putPage.handler(makeCtx(), {
       slug: 'inbox/skipped-embed',
-      content: '---\ntitle: Big\nembed_skip: true\n---\n\nSome body text that will not be chunked.',
+      content: `---\ntitle: Big\n---\n\n${'Some prose that keeps going past the block threshold. '.repeat(10_000)}`,
     })) as { chunks: number; chunk_skip_reason?: string };
     expect(result.chunks).toBe(0);
     expect(result.chunk_skip_reason).toBe('embed_skip');
+  });
+
+  // #6259: a local put_page is not an owner-tier path, so an embed_skip it plants is stripped.
+  test('an embed_skip marker planted by a local put_page is stripped and the page chunks', async () => {
+    const result = (await putPage.handler(makeCtx(), {
+      slug: 'inbox/planted-skip',
+      content: '---\ntitle: Big\nembed_skip: true\n---\n\nSome body text that a planted marker must not hide.',
+    })) as { chunks: number; chunk_skip_reason?: string };
+    expect(result.chunks).toBeGreaterThan(0);
+    expect(result.chunk_skip_reason).toBeUndefined();
   });
 
   test('normal content chunks → no chunk_skip_reason', async () => {

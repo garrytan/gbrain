@@ -346,7 +346,7 @@ describe('importFromContent — stale size-gate recovery', () => {
   test('with the sanity gate bypassed (GBRAIN_NO_SANITY=1) a stale oversized marker is left alone', async () => {
     await withIsolatedHome(async () => withEnv({ GBRAIN_NO_SANITY: '1' }, async () => {
       const content = FRONTMATTER.replace('---\n\n', 'embed_skip:\n  reason: oversized\n---\n\n') + 'A small useful note.';
-      await importFromContent(engine, 'notes/bypassed', content, { noEmbed: true, remote: false });
+      await importFromContent(engine, 'notes/bypassed', content, { noEmbed: true, remote: false, preserveGateMarkers: true });
       expect(isEmbedSkipped((await engine.getPage('notes/bypassed'))!.frontmatter)).toBe(true);
       expect((await engine.getChunks('notes/bypassed')).length).toBe(0);
     }));
@@ -355,7 +355,7 @@ describe('importFromContent — stale size-gate recovery', () => {
   test('unknown local skip reasons stay skipped', async () => {
     await withIsolatedHome(async () => {
       const content = FRONTMATTER.replace('---\n\n', 'embed_skip:\n  reason: manual\n---\n\n') + 'A small useful note.';
-      await importFromContent(engine, 'notes/manual-skip', content, { noEmbed: true, remote: false });
+      await importFromContent(engine, 'notes/manual-skip', content, { noEmbed: true, remote: false, preserveGateMarkers: true });
       expect(isEmbedSkipped((await engine.getPage('notes/manual-skip'))!.frontmatter)).toBe(true);
       expect((await engine.getChunks('notes/manual-skip')).length).toBe(0);
     });
@@ -421,7 +421,9 @@ A perfectly normal note with real prose and nothing wrong with it.`;
     });
   });
 
-  test('trusted caller (remote unset) preserves a user-authored marker', async () => {
+  // #6259: only an owner-tier path (sync or import of the owner's own file) keeps gate markers;
+  // a call that does not say so strips them (test/gate-marker-strip.test.ts).
+  test('an owner-tier caller (preserveGateMarkers) preserves a user-authored marker', async () => {
     await withIsolatedHome(async () => {
       // A local user deliberately editing their own file is trusted.
       const content = `---
@@ -433,7 +435,7 @@ content_flag:
 ---
 
 my own note.`;
-      await importFromContent(engine, 'notes/mine', content, { noEmbed: true });
+      await importFromContent(engine, 'notes/mine', content, { noEmbed: true, preserveGateMarkers: true });
       const page = await engine.getPage('notes/mine');
       expect(getContentFlag(page!.frontmatter as Record<string, unknown>)?.reason).toBe('markup_heavy');
     });

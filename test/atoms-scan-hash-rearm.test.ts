@@ -129,8 +129,9 @@ A perfectly normal note that has never actually been mined for atoms.`;
     expect(fm[ATOMS_SCAN_HASH_KEY]).toBeUndefined();
   });
 
-  test('trusted caller (remote unset) preserves the marker (export -> sync round trip)', async () => {
-    await importFromContent(engine, 'notes/trusted-scan-hash', planted, { noEmbed: true });
+  // #6259: the export -> sync round trip is an owner-tier path; a call that does not say so strips the marker.
+  test('an owner-tier caller (preserveGateMarkers) preserves the marker (export -> sync round trip)', async () => {
+    await importFromContent(engine, 'notes/trusted-scan-hash', planted, { noEmbed: true, preserveGateMarkers: true });
     const page = await engine.getPage('notes/trusted-scan-hash'); // gbrain-allow-unscoped-getpage
     const fm = page!.frontmatter as Record<string, unknown>;
     expect(fm[ATOMS_SCAN_HASH_KEY]).toBe('deadbeefdeadbeef');

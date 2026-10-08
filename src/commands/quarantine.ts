@@ -246,8 +246,9 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
       writeWaitMs: resolveCliWriteWaitMs({ config: loadConfig() }),
       logger: { info: () => {}, warn: (m: string) => console.error(m), error: (m: string) => console.error(m) } } as unknown as OperationContext;
     try {
-      await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: page.source_id, content: markdown,
-        expected_revision: snapshot.revision, request_id: randomUUID() } });
+      // #6259: the owner-internal kind keeps the override this clear writes (a plain put_page has gate markers stripped).
+      await submitPageMutation(ctx, { operation: 'put_page', managedFileImport: true, params: { slug, source_id: page.source_id, content: markdown,
+        kind: 'managed_quarantine_clear', expected_revision: snapshot.revision, request_id: randomUUID() } });
     } catch (error) {
       if (await reportPersistenceCliError(error, json)) return;
       throw error;
@@ -257,7 +258,7 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
     flagReason = getContentFlag(after)?.reason;
     flagged = !!flagReason;
   } else {
-    const result = await importFromContent(engine, slug, markdown, { sourceId: page.source_id, noEmbed, forceRechunk: true });
+    const result = await importFromContent(engine, slug, markdown, { sourceId: page.source_id, noEmbed, forceRechunk: true, preserveGateMarkers: true });
     reQuarantined = result.quarantined === true;
     flagged = result.flagged ?? false;
     flagReason = result.flag_reason;
@@ -359,7 +360,7 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
     const tags = await engine.getTags(ref.slug, { sourceId: ref.source_id });
     const markdown = serializePageToMarkdown(page, tags);
     const result = await importFromContent(engine, ref.slug, markdown, {
-      sourceId: ref.source_id,
+      sourceId: ref.source_id, preserveGateMarkers: true,
       noEmbed,
       forceRechunk: true,
     });

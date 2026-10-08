@@ -3,7 +3,7 @@ import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { assertImportBase, sameCanonicalImport, sameContentAnyKeyOrder } from './page-state/import-guard.ts';
 import { stabilizeSafetyAssessments } from './persistence/reconcile-safety.ts';
-import { carryStoredQuarantineOverride, settleGateOwnedMarkers } from './quarantine-override.ts';
+import { carryStoredQuarantineOverride } from './quarantine-override.ts';
 import { decideImportIdentity, collidingSlugOwner, fileOriginUri } from './import-identity.ts';
 import { readSourceFileSync } from './minions/source-filesystem.ts';
 import { readFileSync, statSync, lstatSync } from 'fs';
@@ -11,7 +11,7 @@ import { basename, extname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { classifyImportHold, parseMarkdown, resolveParsedSubtype, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
-import { assessImportSanity, loadImportSanityConfig, MAX_FILE_SIZE, screenImportContent, type ContentRefusal, type FenceScreen } from './import-screen.ts';
+import { assessImportSanity, loadImportSanityConfig, MAX_FILE_SIZE, screenImportContent, stripGateOwnedMarkers, type ContentRefusal, type FenceScreen } from './import-screen.ts';
 import { applyImportFences } from './fence-repair/import-step.ts';
 import type { FenceIssueWire } from './fence-repair/tier1.ts';
 import type { FenceFix } from './fence-repair/types.ts';
@@ -299,20 +299,16 @@ export async function importFromContent(
     source_kind?: string | null;
     source_uri?: string | null;
     ingested_via?: string | null;
-    /**
-     * v0.42 (#1699 trust boundary). When `true` (untrusted caller — remote MCP
-     * put_page), gate-owned frontmatter markers (`quarantine`, `content_flag`,
-     * `embed_skip`) are STRIPPED from the incoming content before the content-
-     * sanity gate runs, so only the gate itself can set them. Without this, a
-     * write-scoped OAuth client could `put_page` clean content carrying a
-     * hand-crafted `quarantine` marker to hide arbitrary pages from search, or
-     * a `content_flag.detail` to inject text into the agent-trusted warning
-     * channel. `put_page` passes `ctx.remote !== false` (fail-closed: anything
-     * not strictly local is untrusted, matching the v0.26.9 F7b posture).
-     * Local/trusted callers (sync, capture, dream, `quarantine clear/scan`)
-     * leave it unset → markers preserved (the gate + CLI own them).
-     */
+    /** Untrusted caller (remote MCP put_page: `ctx.remote !== false`); drives the remote fence merge and hidden rows. */
     remote?: boolean;
+    /**
+     * #1699/#6259: gate-owned markers (`quarantine`, `content_flag`, `embed_skip`,
+     * `atoms_scan_hash`, `quarantine_override`) are stripped from incoming content
+     * unless an owner-tier path (owner sync/import, reindex, file repair,
+     * reconcile, cycle derivers, `quarantine clear/scan`) sets this
+     * (`stripGateOwnedMarkers`, import-screen.ts). Local put_page does not.
+     */
+    preserveGateMarkers?: boolean;
     /**
      * Threaded to `tx.putPage` as its empty-overwrite escape hatch (the
      * engine refuses to blank a non-empty body otherwise). Only two callers
@@ -353,8 +349,8 @@ export async function importFromContent(
   parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
   parsed.timeline = sanitizeText(parsed.timeline);
 
-  // #1699 trust boundary: only the gate and trusted local callers set gate-owned markers (quarantine-override.ts).
-  settleGateOwnedMarkers(parsed, opts.remote === true);
+  // #1699/#6259 trust boundary: only the gate and owner-tier paths keep gate-owned markers (import-screen.ts).
+  stripGateOwnedMarkers(parsed, opts);
 
   // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
   // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
@@ -414,7 +410,7 @@ export async function importFromContent(
     // Disposition for the high-confidence junk path: quarantine (hide) by
     // default, or reject (throw → sync-failure) when the operator opts in.
     const junkDisposition = sanityCfg.junkDisposition;
-    const sanityResult = await carryStoredQuarantineOverride(engine, parsed, assessImportSanity(parsed, sanityCfg), { slug, sourceId, remote: opts.remote === true });
+    const sanityResult = await carryStoredQuarantineOverride(engine, parsed, assessImportSanity(parsed, sanityCfg), { slug, sourceId, stripped: opts.preserveGateMarkers !== true });
     if (!sanityDisabled && !sanityResult.shouldQuarantine && sanityResult.flag_reason !== 'oversized' && (parsed.frontmatter[EMBED_SKIP_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized') {
       delete parsed.frontmatter[EMBED_SKIP_KEY];
       if ((parsed.frontmatter[CONTENT_FLAG_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized') delete parsed.frontmatter[CONTENT_FLAG_KEY];
@@ -1274,7 +1270,7 @@ export async function importFromFile(
   // filename `2024-03-15`.
   const fileBasename = basename(relativePath, '.md');
   const imported = await importFromContent(engine, resolvedSlug, content, {
-    ...opts,
+    ...opts, preserveGateMarkers: true,
     filename: fileBasename,
     sourcePath: relativePath,
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- walks up from the caller's own file path by the depth of its own relative path to recover the import root; import-identity confines every probe under that root

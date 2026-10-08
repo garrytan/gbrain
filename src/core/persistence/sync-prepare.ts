@@ -417,7 +417,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   }
   let prepared: PreparedContentImport | undefined;
   // #6188: the import reuses this screen's fence verdict for the same bytes (one fence scan per file at prepare).
-  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, activePack, coordinated: true, fences: 'coordinated' as const,
+  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, preserveGateMarkers: true, activePack, coordinated: true, fences: 'coordinated' as const,
     ...(importContent === p.content && screen.status === 'importable' ? { fenceScreen: screen.fences ?? null } : {}),
     filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
   const result = await importFromContent(engine, renamed?.slug ?? row.slug, importContent, { ...importOptions,

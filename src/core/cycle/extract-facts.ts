@@ -42,6 +42,7 @@
  * slugs from the inline writer) are structurally unfenceable and never gate.
  */
 
+import { isQuarantined } from '../quarantine.ts';
 import { existsSync, readFileSync } from 'node:fs';
 
 import type { BrainEngine } from '../engine.ts';
@@ -659,6 +660,8 @@ export async function runExtractFacts(
       return 'skipped';
     }
     revision = page.knowledge_revision ?? null;
+    // #6259: a quarantined page projects no fence facts; its existing index is left as it is.
+    if (isQuarantined(page.frontmatter as Record<string, unknown> | null)) return 'skipped';
 
     const body = page.compiled_truth ?? '';
     const parsed = parseFactsFence(body);

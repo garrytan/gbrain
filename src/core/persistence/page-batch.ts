@@ -10,6 +10,7 @@
  * `put_pages` with only `request_id` reads the batch status without resending
  * any content.
  */
+import { pageQuarantinedNotice } from '../quarantine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { fenceNormalizedNotice, mergeFencesNormalized, type FencesNormalized } from '../fence-repair/report.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -120,6 +121,7 @@ function pageEntry(result: PageResult): Record<string, unknown> {
       status: outcome.status, ...(typeof outcome.slug === 'string' && outcome.slug !== result.slug ? { duplicate_of: outcome.slug } : {}),
       ...(outcome.embedding_state !== undefined ? { embedding_state: outcome.embedding_state } : {}), ...warning,
       ...(outcome.fences_normalized ? { fences_normalized: outcome.fences_normalized } : {}),
+      ...(outcome.quarantined ? { quarantined: outcome.quarantined } : {}),
       ...(outcome.timeline_rows_removed ? { timeline_rows_removed: outcome.timeline_rows_removed } : {}) };
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
@@ -162,6 +164,10 @@ function batchReceipt(ctx: OperationContext, batchId: string, sourceId: string, 
   // #6188 (D12, D21): one `fences_normalized` and one coaching notice for every page whose fence Tier 1 rewrote.
   const fences = mergeFencesNormalized(pages.flatMap(page => page.fences_normalized ? [page.fences_normalized as FencesNormalized] : []));
   if (fences) ctx.emitNotice?.(fenceNormalizedNotice(fences));
+  // #6259: one safety notice for the pages the content-quality gate quarantined (each page carries `quarantined`).
+  const hidden = pages.filter(page => page.quarantined);
+  if (hidden.length) ctx.emitNotice?.(pageQuarantinedNotice(hidden.length === 1 ? String(hidden[0]!.slug) : `${hidden.length} pages (${hidden.slice(0, 3).map(page => page.slug).join(', ')}${hidden.length > 3 ? ', ...' : ''})`,
+    hidden[0]!.quarantined as { reason: string; detail: string }, 'write'));
   return { batch_request_id: batchId, source_id: sourceId, state, terminal: pending === 0, counts: { total: pages.length, committed, pending, failed },
     ...(retryAfterMs !== null ? { retry_after_ms: retryAfterMs } : {}), next, links, pages, ...(fences ? { fences_normalized: fences } : {}) };
 }

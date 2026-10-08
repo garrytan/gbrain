@@ -4457,7 +4457,7 @@
         "kind": "function",
         "name": "importFromContent",
         "signature": [
-          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; coordinated?: boolean; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; remote?: boolean; allowEmptyOverwrite?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
+          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; coordinated?: boolean; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; remote?: boolean; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
         ]
       },
       {
