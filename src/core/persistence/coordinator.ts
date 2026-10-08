@@ -224,7 +224,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await releaseUnpublishedClaim(engine, row, 'owner_unavailable');
         return (await getWriteRequestById(engine, row.id))!;
       }
-      lock = await acquireWorktree(binding, 0, undefined, engine);
+      lock = await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true });
       if (!lock) {
         await releaseUnpublishedClaim(engine, row, 'writer_busy');
         return (await getWriteRequestById(engine, row.id))!;
@@ -390,7 +390,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
   if (!binding || binding.owner_host_id !== hostId) throw opError('owner_unavailable', 'Recovery requires the canonical owner.',
     `Request ${row.request_id} in source ${row.source_id} holds a publication recovery record that only the host owning the source's canonical worktree can finish, and this host does not own it. Inspect the owner; its resident writer finishes the recovery.`,
     { fix: ownerStatusFix(row.source_id) });
-  const lock = alreadyLocked ? null : await acquireWorktree(binding, 0, undefined, engine);
+  const lock = alreadyLocked ? null : await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true });
   if (!alreadyLocked && !lock) return row;
   const releaseCapacity = capacityAlreadyHeld ? null : tryAcquirePublicationCapacity(engine);
   try {

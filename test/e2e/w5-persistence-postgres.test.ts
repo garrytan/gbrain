@@ -6,7 +6,7 @@
 import { describe, test } from 'bun:test';
 import {
   capacityWarnsAndRefusalNamesTheKey, compactionSkipsUnfinishedReceipts, failuresDoNotCarryToAnotherTarget, healthyScanAndContentionNeverPark,
-  managedStaleSweep, managedStaleSweepKeepsNormalizedTimeline, scanParksOneTargetAndContinues, singleTargetParksAndRetries, staleExtractionWithheldWhenItCannotRun,
+  managedStaleSweep, managedStaleSweepKeepsNormalizedTimeline, managedStaleSweepManyPages, scanParksOneTargetAndContinues, singleTargetParksAndRetries, staleExtractionWithheldWhenItCannotRun,
 } from '../helpers/w5-scenarios.ts';
 
 const url = process.env.DATABASE_URL;
@@ -18,6 +18,7 @@ describe.skipIf(!url)('Postgres managed capacity, parking and stale extraction',
   test('configured retention compacts past unfinished receipts', () => compactionSkipsUnfinishedReceipts(url), 240_000);
   test('capacity warning and refusal hint', () => capacityWarnsAndRefusalNamesTheKey(url), 180_000);
   test('managed extract --stale is coordinated', () => managedStaleSweep(url), 180_000);
+  test('managed extract --stale derives several pages at once', () => managedStaleSweepManyPages(url), 180_000);
   test('managed extract --stale keeps normalized timeline rows single', () => managedStaleSweepKeepsNormalizedTimeline(url), 180_000);
   test('extract.stale withheld when it cannot run', () => staleExtractionWithheldWhenItCannotRun(url), 180_000);
 });

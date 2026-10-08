@@ -37,6 +37,7 @@
 
 import { createHash } from 'node:crypto';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
+import { pipelined } from '../page-state/transactions.ts';
 import { isCrossSourceLinksEnabled } from '../link-extraction.ts';
 import {
   buildGazetteer, findMentionedEntities, gazetteerEntryKeys, tokenizeTitle,
@@ -168,8 +169,11 @@ export async function writeDerivedAliases(tx: Pick<BrainEngine, 'executeRaw' | '
 export async function writePageAliases(tx: BrainEngine, slug: string, sourceId: string,
   page: { title: string; type: string; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> }, pack: unknown,
   policy: MentionPolicy | null): Promise<void> {
-  await tx.setPageAliases(slug, sourceId, normalizeAliasList(page.frontmatter.aliases));
-  await writeDerivedAliases(tx, sourceId, { slug, ...page }, { pack: (pack as PackTypes | undefined) ?? null, policy });
+  // #5984: the frontmatter and derived rows are independent; their statements are pipelined, in the caller's transaction.
+  await pipelined(tx, [
+    () => tx.setPageAliases(slug, sourceId, normalizeAliasList(page.frontmatter.aliases), { inline: true }),
+    () => writeDerivedAliases(tx, sourceId, { slug, ...page }, { pack: (pack as PackTypes | undefined) ?? null, policy }),
+  ]);
 }
 
 /** Turn the index off for one source: plain mention links, derived aliases, entries and page state go; typed_ner rows stay. */

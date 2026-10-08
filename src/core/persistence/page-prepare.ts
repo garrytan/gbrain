@@ -5,7 +5,7 @@ import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
-import { importFromContent, type ParsedPage } from '../import-file.ts';
+import { importFromContent, verifyPageReadable, type ParsedPage } from '../import-file.ts';
 import { frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParseOpts } from '../markdown.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -31,6 +31,7 @@ import type { PreparedMutation } from './coordinator.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
+import { pipelined } from '../page-state/transactions.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { materializeTimeline, prepareCanonicalProjections, type TimelineRowsRemoved } from './canonical-projections.ts';
 import { assertTimelineNotOmitted, timelineWritePolicy } from './timeline-omission.ts';
@@ -247,22 +248,31 @@ async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteRequest,
   return reason.databaseOnlyReason && await isUnboundSourcePage(engine, row.source_id, row.slug) ? { databaseOnlyReason: 'unbound_source' } : reason;
 }
 
-/** Providers and parsing run before the OS lock and before any publication transaction. */
+/**
+ * Providers and parsing run before the OS lock and before any publication transaction.
+ * `coordinated`: the caller publishes this mutation itself through the coordinator, whose
+ * page guard and revision check on `row.slug` cover this import (the put_page apply diet).
+ */
 export async function preparePageMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig,
   preparedIntent?: { content: string; expectedRevision: string; tags?: string[] }, signal?: AbortSignal,
-  options: { allowMissingFile?: boolean } = {}): Promise<PreparedMutation> {
+  options: { allowMissingFile?: boolean; coordinated?: boolean } = {}): Promise<PreparedMutation> {
   signal?.throwIfAborted();
   if (!row.intent) throw pageRefusal('storage_error', 'A pending write lost its normalized intent.', row,
     `The request has no stored intent for ${row.slug} (its payload was compacted or never recorded), so it cannot be published and wrote nothing.`);
-  await assertKnowledgePublicationAllowed(engine, row);
   const p = row.intent;
   const source = { sourceId: row.source_id };
-  const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
+  // A coordinated (single-write) preparation sends its independent reads together; the first refusal in this order is reported.
+  const together = options.coordinated ? engine : { kind: 'sequential' };
+  const [, snapshot, pack] = await pipelined(together, [
+    () => assertKnowledgePublicationAllowed(engine, row),
+    () => engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true }),
+    () => loadActivePackForEngine(engine, { remote: row.authority.remote, sourceId: row.source_id }).catch(() => null),
+  ]) as [unknown, PageSnapshot | null, Awaited<ReturnType<typeof loadActivePackForEngine>> | null];
   signal?.throwIfAborted();
   assertPageRevision(snapshot, preparedIntent ? { expectedRevision: preparedIntent.expectedRevision } : engineMutationPrecondition(parseMutationPrecondition(p)));
   if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
-  const activePack = (await loadActivePackForEngine(engine, { remote: row.authority.remote, sourceId: row.source_id }).catch(() => null))?.manifest;
+  const activePack = pack?.manifest;
   if (row.operation === 'put_page' && p.allow_empty !== true && snapshot && !snapshot.page.deleted_at
     && typeof p.content === 'string' && `${snapshot.page.compiled_truth}\n${snapshot.page.timeline ?? ''}`.trim()) {
     const incoming = parseMarkdown(p.content, row.slug, { activePack });
@@ -370,8 +380,12 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   }
   let prepared: PreparedContentImport | undefined;
   let provenance: CanonicalProvenance | undefined;
+  // The apply diet: the publisher's locked read of row.slug is the import base, and one read after the
+  // last page write serves the read-back check, the seal, the core notice and the receipt (as sync does).
+  const lean = options.coordinated === true && !targetDeleted && row.operation !== 'restore_page' && !versionTags;
   const result = await importFromContent(engine, row.slug, content, {
-    ...source, noEmbed: true, remote: row.authority.remote, activePack, fences: projected ? 'coordinated' : 'lenient',
+    ...source, noEmbed: true, remote: row.authority.remote, activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean,
+    ...(lean ? { existingSnapshot: snapshot } : {}),
     // #6259: only owner-tier intents keep gate-owned markers; an ordinary put_page, local or remote, has them stripped.
     preserveGateMarkers: !row.authority.remote && (p.kind === 'managed_maintenance_page' || p.kind === 'managed_quarantine_clear'),
     forceRechunk: row.operation === 'restore_page' || row.operation === 'revert_version',
@@ -421,60 +435,77 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const rendered = serializePageToMarkdown(renderedPage, tags);
   const logicalNoop = snapshot !== null && digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(ready.parsedPage, tags));
   const noop = logicalNoop && (snapshot?.page.deleted_at != null) === targetDeleted;
-  const project = projected ? await prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer,timelinePolicy) : undefined;
   const ordinaryPage = ['put_page','capture','restore_page','revert_version','edit_page'].includes(row.operation);
-  const advisories = noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : await preparePageAdvisories(engine,row,ready.parsedPage,snapshot);
   // A managed maintenance page (e.g. the dream write-back after grounding
   // quarantine) republishes a body; its automatic links follow that body.
   const autoLinkedPage = ordinaryPage || p.kind === 'managed_maintenance_page';
-  const links = !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
-    ? await prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id) : undefined;
   const capture = row.operation === 'capture' && typeof p.capture_path === 'string' && typeof p.capture_file_hash === 'string'
     ? { path: p.capture_path, hash: p.capture_file_hash } : undefined;
+  const [project, advisories, links, target, core] = await pipelined(together, [
+    async () => projected ? prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer,timelinePolicy) : undefined,
+    async () => noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : preparePageAdvisories(engine,row,ready.parsedPage,snapshot),
+    async () => !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
+      ? prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id,options.coordinated === true) : undefined,
+    () => prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote }),
+    // Always-loaded core tier: owner-only marking, brain-wide budget, remote-edit policy (core-guard.ts).
+    async () => noop ? null : prepareCoreGuard(engine, { row, snapshot, incoming: targetDeleted ? null : ready.parsedPage }),
+  ]) as [Awaited<ReturnType<typeof prepareCanonicalProjections>> | undefined, Record<string, unknown>,
+    Awaited<ReturnType<typeof prepareAutomaticLinks>> | undefined, PreparedMutation['file'], Awaited<ReturnType<typeof prepareCoreGuard>> | null];
   // #6188 (D12): what Tier 1 rewrote; a remote caller is never told about the takes fence it cannot read (preserved verbatim).
   const shownFixes = (ready.result.fences_normalized ?? []).filter(fix => !row.authority.remote || fix.fence !== 'takes');
   const fencesNormalized = shownFixes.length ? { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: shownFixes,
     writer: row.principal_kind, path: snapshot?.page.source_path ?? null, remote: row.authority.remote }) } : {};
-  const target = await prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote });
   const file = target && fenceRepair ? { ...target, commit: fenceRepairCommit(relative(target.root, target.path).split(sep).join('/'), fenceRepair.classes) } : target;
-  const mintMode = file && !snapshot?.page.source_path ? await scannerSlugRootMode(engine, row.source_id, file.root) : undefined;
+  const [mintMode, databaseOnly] = await pipelined(together, [
+    async () => file && !snapshot?.page.source_path ? scannerSlugRootMode(engine, row.source_id, file.root) : undefined,
+    () => pageDatabaseOnlyPublication(engine, row, file),
+  ]) as [Awaited<ReturnType<typeof scannerSlugRootMode>> | undefined, Pick<PreparedMutation, 'databaseOnlyReason'>];
   const sourcePath = file && mintMode ? scannerSourcePath(file.root, file.path, mintMode) : undefined;
   // An inferred mode is pinned with the first origin it mints, so later pages cannot flip the inference (#5610).
   const pinMode = sourcePath && mintMode && scannerSourcePath(file!.root, file!.root) && !await readSlugRootMode(engine, row.source_id) ? mintMode : undefined;
-  // Always-loaded core tier: owner-only marking, brain-wide budget, remote-edit policy (core-guard.ts).
-  const core = noop ? null : await prepareCoreGuard(engine, { row, snapshot, incoming: targetDeleted ? null : ready.parsedPage });
-  return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...await pageDatabaseOnlyPublication(engine, row, file),
+  const publication: PreparedMutation = { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...databaseOnly,
     ...(core ? { exclusiveSources: core.exclusiveSources } : {}),
-    validate: async tx => { await ready.validate(tx); await core?.validate(tx); }, apply: async tx => {
+    validate: async tx => { await ready.validate(tx); await core?.validate(tx); }, apply: async (tx, preimage) => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     let removedTimeline: TimelineRowsRemoved | null = null;
     if (!noop) {
-      const applied = await ready.apply(tx);
-      // Mandatory metadata shares publication rollback; exact no-ops never heal it.
-      if (sourcePath && !snapshot?.page.source_path) await tx.executeRaw(`UPDATE pages SET source_path = $1
-        WHERE source_id=$2 AND slug=$3 AND source_path IS NULL`, [sourcePath, row.source_id, row.slug]);
-      if (pinMode) {
-        const [pinned] = await tx.executeRaw<{ mode: string | null }>(`UPDATE sources SET config=CASE WHEN config->>'slug_root_mode' IS NULL
+      const applied = await ready.apply(tx, lean ? preimage : undefined);
+      // Mandatory metadata shares publication rollback; exact no-ops never heal it. These, and the
+      // projections (facts, takes, timeline rows of the page the import just wrote live), are independent and sent together.
+      const [, pinned] = await pipelined(tx, [
+        async () => { if (sourcePath && !snapshot?.page.source_path) await tx.executeRaw(`UPDATE pages SET source_path = $1
+          WHERE source_id=$2 AND slug=$3 AND source_path IS NULL`, [sourcePath, row.source_id, row.slug]); },
+        async () => pinMode ? (await tx.executeRaw<{ mode: string | null }>(`UPDATE sources SET config=CASE WHEN config->>'slug_root_mode' IS NULL
           THEN jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($2::text)) ELSE config END WHERE id=$1 RETURNING config->>'slug_root_mode' AS mode`,
-        [row.source_id, pinMode]);
-        if (pinned?.mode !== pinMode) throw pageRefusal('revision_conflict', 'The source slug-root mode changed during preparation.', row,
-          `Another write pinned source ${row.source_id}'s slug-root mode while ${row.slug} was being prepared, so this publication rolled back. Once the request is final, submit the write again; it is prepared under the pinned mode.`);
-      }
-      if (provenance) await tx.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=$5::timestamptz
-        WHERE source_id=$1 AND slug=$2`, [row.source_id, row.slug, provenance.source_kind, provenance.ingested_via, provenance.ingested_at]);
+        [row.source_id, pinMode]))[0] : undefined,
+        async () => { if (provenance) await tx.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=$5::timestamptz
+          WHERE source_id=$1 AND slug=$2`, [row.source_id, row.slug, provenance.source_kind, provenance.ingested_via, provenance.ingested_at]); },
+        async () => { if (lean) removedTimeline = (await project?.(tx, applied?.pageId))?.timelineRowsRemoved ?? null; },
+      ]) as [unknown, { mode: string | null } | undefined, unknown, unknown];
+      if (pinMode && pinned?.mode !== pinMode) throw pageRefusal('revision_conflict', 'The source slug-root mode changed during preparation.', row,
+        `Another write pinned source ${row.source_id}'s slug-root mode while ${row.slug} was being prepared, so this publication rolled back. Once the request is final, submit the write again; it is prepared under the pinned mode.`);
       if (row.operation === 'restore_page') await tx.restorePage(row.slug, source);
       if (versionTags) {
         for (const tag of snapshot!.tags) if (!versionTags.includes(tag)) await tx.removeTag(row.slug, tag, source);
         for (const tag of versionTags) await tx.addTag(row.slug, tag, source);
       }
       // #6007: the page the import just wrote live is the page the projections describe; no re-read.
-      removedTimeline = (await project?.(tx, row.operation === 'restore_page' ? undefined : applied?.pageId))?.timelineRowsRemoved ?? null;
+      if (!lean) removedTimeline = (await project?.(tx, row.operation === 'restore_page' ? undefined : applied?.pageId))?.timelineRowsRemoved ?? null;
       autoLinks = await links?.apply(tx);
-      if (targetDeleted) await tx.softDeletePage(row.slug, source);
-      // Index installation and terminal receipt share this transaction. The import sealed the projection
-      // as its last revision-changing step; only a later revision change (restore, tags, links, delete) reseals.
-      if (!(applied?.sealed && row.operation !== 'restore_page' && !versionTags && !links && !targetDeleted)) await sealPageTextProjection(tx, row.slug, row.source_id);
-      if (core) await core.record(tx, (await tx.readPageSnapshot(row.slug, source))?.revision ?? null);
+      if (lean) {
+        const final = await tx.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
+        const live = final && final.page.deleted_at == null ? final : null;
+        await verifyPageReadable(tx, row.slug, ready.contentHash!, row.source_id, 'importFromContent', live?.page ?? null);
+        if (live) await sealPageTextProjection(tx, row.slug, row.source_id, live);
+        if (core) await core.record(tx, final?.revision ?? null);
+        publication.postimage = final;
+      } else {
+        if (targetDeleted) await tx.softDeletePage(row.slug, source);
+        // Index installation and terminal receipt share this transaction. The import sealed the projection
+        // as its last revision-changing step; only a later revision change (restore, tags, links, delete) reseals.
+        if (!(applied?.sealed && row.operation !== 'restore_page' && !versionTags && !links && !targetDeleted)) await sealPageTextProjection(tx, row.slug, row.source_id);
+        if (core) await core.record(tx, (await tx.readPageSnapshot(row.slug, source))?.revision ?? null);
+      }
     }
     const coreUsage = core?.usage();
     return { ...advisories, ...(autoLinks ? {auto_links:autoLinks} : {}), ...(coreUsage ? { core: coreUsage } : {}),
@@ -488,6 +519,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
       ...(row.operation === 'capture' ? { channel: 'capture', content_hash: p.capture_hash } : {}),
       ...(edited ? editDiff(row.slug, edited.before, edited.after) : {}), ...fencesNormalized, ...fenceRepairOutcome };
   } };
+  return publication;
 }
 
 function editLockedPage(row: WriteRequest, snapshot: PageSnapshot | null) {

@@ -1,8 +1,10 @@
 /**
  * #6075: a bulk drain groups a frozen head under its request ID (adding `group`, and `lane` under lanes)
  * while another owner loop that read the head before it was grouped admits it on the single path. The
- * group step must not wedge on `idempotency_conflict`, and the single-path guard must notice the
- * grouped intent instead of admitting the stale one. Bulk groups are Postgres-only.
+ * drain admits a group with the cursor save that records it (#5984 Phase 1), so the race is between
+ * that admission and the single path's: the drain must not wedge on `idempotency_conflict` when the
+ * single path won, and the single-path guard must notice the grouped intent when the drain won.
+ * Bulk groups are Postgres-only.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -78,13 +80,13 @@ for (const lanes of [1, 2]) {
     if (!engine) return;
     const e = engine, sourceId = await fixture(e, 10);
     let stale = false;
+    // The drain has frozen the head's followers and is about to admit the group; the stored cursor still holds the ungrouped head.
     installFaultHook(async (point, detail) => {
-      if (point !== 'sync:mid_checkpoint' || detail.sourceId !== sourceId || stale) return;
+      if (point !== 'sync:before_group_admission' || detail.sourceId !== sourceId || stale) return;
       const c = await storedCursor(e, sourceId);
-      if (!c?.pending || !c.group) return;
+      if (!c?.pending || c.group) return;
       stale = true;
-      expect(c.pending.intent.group).toBe(c.pending.requestId);
-      if (lanes > 1) expect(typeof c.pending.intent.lane).toBe('string');
+      expect(c.pending.intent.group).toBeUndefined();
       await admitAsStaleSinglePass(e, sourceId, c, ungrouped(c.pending.intent));
     });
     try {
@@ -104,9 +106,9 @@ test('a head admitted under its request ID with a different intent still refuses
   const e = engine, sourceId = await fixture(e, 6);
   let stale = false;
   installFaultHook(async (point, detail) => {
-    if (point !== 'sync:mid_checkpoint' || detail.sourceId !== sourceId || stale) return;
+    if (point !== 'sync:before_group_admission' || detail.sourceId !== sourceId || stale) return;
     const c = await storedCursor(e, sourceId);
-    if (!c?.pending || !c.group) return;
+    if (!c?.pending || c.group) return;
     stale = true;
     await admitAsStaleSinglePass(e, sourceId, c, { ...ungrouped(c.pending.intent), content: 'different bytes' });
   });
@@ -126,9 +128,9 @@ test('a non-bulk pass that read the head before a drain grouped it does not admi
   const lockHeld = new Promise<void>(resolve => { release = resolve; });
   let locked: Promise<unknown> | undefined;
   installFaultHook(async (point, detail) => {
-    if (point !== 'sync:mid_checkpoint' || detail.sourceId !== sourceId) return;
+    if (detail.sourceId !== sourceId) return;
     const c = await storedCursor(e, sourceId);
-    if (stage === 0 && c?.pending && !c.group) {
+    if (point === 'sync:mid_checkpoint' && stage === 0 && c?.pending && !c.group) {
       stage = 1;
       let acquired!: () => void;
       const ready = new Promise<void>(resolve => { acquired = resolve; });
@@ -145,7 +147,8 @@ test('a non-bulk pass that read the head before a drain grouped it does not admi
         if (waiting!.n > 0) break;
         await new Promise(resolve => setTimeout(resolve, 10));
       }
-    } else if (stage === 1 && c?.pending && c.group) {
+    } else if (point === 'sync:before_group_admission' && stage === 1) {
+      // The drain grouped the head and its admission now races the blocked single pass's.
       stage = 2;
       release!();
       await locked;
@@ -161,6 +164,14 @@ test('a non-bulk pass that read the head before a drain grouped it does not admi
   const resumed = await performSync(e, { sourceId, noPull: true, noEmbed: true, noExtract: true, drain: true });
   expect(['synced', 'first_sync', 'up_to_date']).toContain(resumed.status);
   expect(await importedTitles(e, sourceId, 10)).toEqual(Array.from({ length: 10 }, (_, i) => `Note ${i}`));
-  const [head] = await e.executeRaw<{ grp: string | null }>(`SELECT intent->>'group' AS grp FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence LIMIT 1`, [sourceId]);
-  expect(head?.grp).not.toBeNull();
+  // Whichever admission won, the head was admitted once, under the intent its cursor held then: grouped, with its
+  // followers in the same group, or ungrouped (the single path won), with no request naming the head as its group.
+  const requests = await e.executeRaw<{ request_id: string; grp: string | null; state: string }>(`SELECT request_id,intent->>'group' AS grp,state
+    FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [sourceId]);
+  expect(requests).toHaveLength(10);
+  expect(requests.every(row => row.state === 'committed')).toBe(true);
+  const head = requests[0]!;
+  const members = requests.filter(row => row.grp === head.request_id);
+  if (head.grp === null) expect(members).toEqual([]);
+  else { expect(head.grp).toBe(head.request_id); expect(members.length).toBeGreaterThan(1); }
 }), 120_000);

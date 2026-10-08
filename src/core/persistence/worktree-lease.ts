@@ -28,13 +28,41 @@ const leases = new Map<string, Lease>();
 /** A native lock acquisition in flight per path: lanes arriving meanwhile wait for it and join the lease it creates. */
 const opening = new Map<string, Promise<unknown>>();
 
+/**
+ * Background writers (effects) that found a live lease: since when each waits. They never wound the lanes; the
+ * lease drains once one has waited `DEFER_WAIT_MS`, and no new lease starts until the writer took the lock (or
+ * `DEFER_HOLD_MS` passed without it retrying).
+ */
+const deferred = new Map<string, number>();
+/** How long a background writer waits for running lanes before the lease drains for it. */
+export const DEFER_WAIT_MS = 10_000;
+const DEFER_HOLD_MS = 5_000;
+
 /** Whether lanes of this worktree should stop: an exclusive writer waits, or the lease used up its turn. */
 export function leaseDraining(path: string): boolean {
   const lease = leases.get(path);
-  if (!lease) return false;
-  if (!lease.draining && Date.now() - lease.since >= LEASE_TURN_MS) lease.draining = true;
+  const waiting = deferred.get(path);
+  if (!lease) {
+    if (waiting === undefined) return false;
+    if (Date.now() - waiting < DEFER_WAIT_MS + DEFER_HOLD_MS) return true;
+    deferred.delete(path);
+    return false;
+  }
+  if (!lease.draining && (Date.now() - lease.since >= LEASE_TURN_MS || waiting !== undefined && Date.now() - waiting >= DEFER_WAIT_MS)) lease.draining = true;
   return lease.draining;
 }
+
+/**
+ * #5984: a background writer's try-acquire (no wait, no yield) on a worktree whose lanes hold this process's
+ * lease. Records that it waits and reports busy, without wounding the lanes; true when there is no lease.
+ */
+export function deferToLease(path: string): boolean {
+  if (!leases.has(path)) return true;
+  if (!deferred.has(path)) deferred.set(path, Date.now());
+  return false;
+}
+/** An exclusive writer took the native lock: a deferred writer no longer holds back new lanes. */
+export function exclusiveAcquired(path: string): void { deferred.delete(path); }
 
 /** Whether an exclusive writer in this process waits for the lease: lanes still waiting to commit roll back. */
 export function leaseWounded(path: string): boolean {
@@ -71,6 +99,18 @@ export async function acquireShared(path: string, acquire: () => Promise<NativeL
   const lease: Lease = { lock, holders: 1, since: Date.now(), draining: false, wounded: false, ended, end };
   leases.set(path, lease);
   return share(path, lease);
+}
+
+/**
+ * #5984 Phase 4.5: a foreground page write joins this process's live lane lease and publishes beside the lane
+ * groups (they are database-only, so its file is the only one written under the lease). Null without a live,
+ * unwounded lease; the caller then takes the lock exclusively.
+ */
+export function joinLease(path: string): NativeLockHandle | null {
+  const live = leases.get(path);
+  if (!live || live.wounded || live.holders === 0 || live.lock.released) return null;
+  live.holders++;
+  return share(path, live);
 }
 
 function share(path: string, lease: Lease): NativeLockHandle {

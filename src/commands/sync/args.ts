@@ -99,10 +99,11 @@ Options:
                        'gbrain config set sync.bulk false' or
                        GBRAIN_SYNC_BULK=0; tune with sync.bulk_size and
                        sync.bulk_max_txn_ms.
-  --lanes N            Managed Postgres sync: publish up to N bulk groups at
-                       once (1-8, default 6, capped by the connection pool).
-                       Pages still commit in file order. Persist with
-                       'gbrain config set sync.lanes N' or GBRAIN_SYNC_LANES.
+  --lanes N            Managed Postgres sync: publish at most N bulk groups at
+                       once (1-16, default 16, capped by the connection pool:
+                       GBRAIN_POOL_SIZE minus 4). Pages still commit in file
+                       order. Persist with 'gbrain config set sync.lanes N' or
+                       GBRAIN_SYNC_LANES; the drain reports what limited it.
   --no-lanes           Same as --lanes 1: one bulk group at a time.
   --no-delegate        On a PGLite brain with a live 'gbrain serve', sync
                        normally delegates the run to the serve process over
@@ -195,7 +196,7 @@ export function parseSyncFlags(args: string[]) {
   const noPull = args.includes('--no-pull');
   const noBulk = args.includes('--no-bulk');
   const lanesAt = args.indexOf('--lanes');
-  const lanes = args.includes('--no-lanes') ? 1 : lanesAt === -1 ? undefined : intFlagValue(args[lanesAt + 1], '--lanes', { min: 1, max: 8, example: 4 });
+  const lanes = args.includes('--no-lanes') ? 1 : lanesAt === -1 ? undefined : intFlagValue(args[lanesAt + 1], '--lanes', { min: 1, max: 16, example: 8 });
   let noEmbed = resolveNoEmbed(args, loadConfig());
   const noExtract = args.includes('--no-extract'); // v0.42.7 #1696
   const skipFailed = args.includes('--skip-failed');

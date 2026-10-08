@@ -23,7 +23,7 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
 /** Preserve the dynamic receiver, including every transaction/savepoint clone. */
 async function withBrokenReadback(slug: string, fault: 'missing' | 'stale', run: () => Promise<void>) {
-  const originalPut = engine.putPage; const originalGet = engine.getPage;
+  const originalPut = engine.putPage; const originalGet = engine.getPage; const originalSnapshot = engine.readPageSnapshot;
   let written = false; let injected = false;
   engine.putPage = async function(this: PGLiteEngine, target, input, opts) {
     const page = await originalPut.call(this, target, input, opts);
@@ -36,8 +36,15 @@ async function withBrokenReadback(slug: string, fault: 'missing' | 'stale', run:
     injected = true;
     return fault === 'missing' ? null : { ...page!, content_hash: 'synthetic-stale-hash' } as Page;
   };
+  // A coordinated put_page apply reads the page once after its last write (a snapshot) for the read-back check.
+  engine.readPageSnapshot = async function(this: PGLiteEngine, target, opts) {
+    const snapshot = await originalSnapshot.call(this, target, opts);
+    if (target !== slug || !written || !snapshot) return snapshot;
+    injected = true;
+    return fault === 'missing' ? null : { ...snapshot, page: { ...snapshot.page, content_hash: 'synthetic-stale-hash' } };
+  };
   try { await run(); expect(injected).toBe(true); }
-  finally { engine.putPage = originalPut; engine.getPage = originalGet; }
+  finally { engine.putPage = originalPut; engine.getPage = originalGet; engine.readPageSnapshot = originalSnapshot; }
 }
 
 describe('post-write read-back verification', () => {

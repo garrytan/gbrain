@@ -1,5 +1,6 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
-import { assertPageRevision } from './page-state/types.ts';
+import { assertPageRevision, type PageSnapshot } from './page-state/types.ts';
+import { pipelined } from './page-state/transactions.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
 import { replaceWantedLinks, type WantedLinksReplacement } from './wanted-links-store.ts';
@@ -12,6 +13,12 @@ export interface DerivedLinkOrigin {
   sourceId: string;
   expectedRevision: string;
   sourceIncarnation: string;
+  /**
+   * The caller's own read of the origin (live rows only) in the transaction this
+   * replacement nests in, taken under that transaction's guard of every key the
+   * replacement locks and after its last write to the origin; skips the re-read.
+   */
+  snapshot?: PageSnapshot | null;
 }
 
 export interface DerivedLinkReplacementOptions {
@@ -21,6 +28,8 @@ export interface DerivedLinkReplacementOptions {
   expectedEndpoints?: Array<{ slug: string; sourceId: string; revision: string }>;
   /** The origin's unresolved authored references, replaced in the same transaction (wanted pages). */
   wanted?: WantedLinksReplacement;
+  /** The caller installed the pack relation semantics already (links-preparation.ts `primeSemantics`). */
+  semanticsPrimed?: boolean;
 }
 
 export class DerivedLinkRepairRequiredError extends Error {
@@ -84,42 +93,54 @@ export async function replaceDerivedLinks(
   }
   const rows = [...unique.values()];
   return engine.transaction(async tx => {
-    await primeRelationSemantics(tx);
-    await tx.lockPageKeys([{ sourceId: origin.sourceId, slug: origin.slug }, ...rows.flatMap(row => [
-      { sourceId: row.from_source_id!, slug: row.from_slug }, { sourceId: row.to_source_id!, slug: row.to_slug },
-    ])]);
-    const snapshot = await tx.readPageSnapshot(origin.slug, { sourceId: origin.sourceId });
+    await pipelined(tx, [
+      async () => { if (!opts.semanticsPrimed) await primeRelationSemantics(tx); },
+      () => tx.lockPageKeys([{ sourceId: origin.sourceId, slug: origin.slug }, ...rows.flatMap(row => [
+        { sourceId: row.from_source_id!, slug: row.from_slug }, { sourceId: row.to_source_id!, slug: row.to_slug },
+      ])]),
+    ]);
+    const snapshot = origin.snapshot !== undefined ? origin.snapshot : await tx.readPageSnapshot(origin.slug, { sourceId: origin.sourceId });
     assertPageRevision(snapshot, { expectedRevision: origin.expectedRevision });
     if (!snapshot || snapshot.sourceIncarnation !== origin.sourceIncarnation || snapshot.page.deleted_at) {
       throw new Error('Derived link origin changed or was deleted');
     }
     const id = snapshot.page.id;
-    if (opts.wanted) await replaceWantedLinks(tx, { pageId: id, sourceId: origin.sourceId }, opts.wanted);
+    // The wanted-page replacement and every read the checks below need are sent together, then judged in order.
     // Temporal evidence (tense, dated transitions, relationship state) is part
     // of the same derived projection: captured before, replaced after.
-    const temporalKeysBefore = await relationshipKeysForOrigin(tx, Number(id));
-    const withTemporal = async (result: { created: number; removed: number }) => {
-      await applyTemporalEvidence(tx, snapshot.page, rows, temporalKeysBefore, { inlineRanges: await effectiveRangesEnabled(tx) });
-      return result;
-    };
-    if (opts.includeFrontmatter !== false && !opts.preserveExisting) {
-      const ambiguous = await tx.executeRaw(`SELECT 1 FROM links WHERE link_source='frontmatter'
-        AND origin_page_id IS NULL AND (from_page_id=$1 OR to_page_id=$1) LIMIT 1`, [id]);
-      if (ambiguous.length) throw new DerivedLinkRepairRequiredError();
-    }
-    const missing = await executeRawJsonb(tx, `SELECT 1 FROM jsonb_to_recordset(($1::jsonb)->'rows')
+    type Existing = { id: number; from_slug: string; to_slug: string; from_source_id: string; to_source_id: string; link_type: string;
+      link_source: string | null; origin_slug: string | null; origin_source_id: string | null; context: string; origin_field: string | null };
+    const [, temporalKeysBefore, ambiguous, missing, changed, existing, inlineRanges] = await pipelined(tx, [
+      async () => { if (opts.wanted) await replaceWantedLinks(tx, { pageId: id, sourceId: origin.sourceId }, opts.wanted); },
+      () => relationshipKeysForOrigin(tx, Number(id)),
+      () => opts.includeFrontmatter !== false && !opts.preserveExisting ? tx.executeRaw(`SELECT 1 FROM links WHERE link_source='frontmatter'
+        AND origin_page_id IS NULL AND (from_page_id=$1 OR to_page_id=$1) LIMIT 1`, [id]) : Promise.resolve([]),
+      () => executeRawJsonb(tx, `SELECT 1 FROM jsonb_to_recordset(($1::jsonb)->'rows')
       AS v(from_slug text, to_slug text, from_source_id text, to_source_id text)
       LEFT JOIN pages f ON f.slug=v.from_slug AND f.source_id=v.from_source_id AND f.deleted_at IS NULL
       LEFT JOIN pages t ON t.slug=v.to_slug AND t.source_id=v.to_source_id AND t.deleted_at IS NULL
-      WHERE f.id IS NULL OR t.id IS NULL LIMIT 1`, [], [{ rows }]);
-    if (missing.length) throw new DerivedLinkEndpointChangedError('A derived link endpoint changed or was deleted');
-    if (opts.expectedEndpoints?.length) {
-      const changed = await executeRawJsonb(tx, `SELECT 1 FROM jsonb_to_recordset(($1::jsonb)->'rows')
+      WHERE f.id IS NULL OR t.id IS NULL LIMIT 1`, [], [{ rows }]),
+      () => opts.expectedEndpoints?.length ? executeRawJsonb(tx, `SELECT 1 FROM jsonb_to_recordset(($1::jsonb)->'rows')
         AS v(slug text, "sourceId" text, revision text)
         LEFT JOIN pages p ON p.slug=v.slug AND p.source_id=v."sourceId" AND p.deleted_at IS NULL
-        WHERE p.id IS NULL OR p.knowledge_revision::text <> v.revision LIMIT 1`, [], [{ rows: opts.expectedEndpoints }]);
-      if (changed.length) throw new DerivedLinkEndpointChangedError('A derived link endpoint changed after type resolution');
-    }
+        WHERE p.id IS NULL OR p.knowledge_revision::text <> v.revision LIMIT 1`, [], [{ rows: opts.expectedEndpoints }]) : Promise.resolve([]),
+      () => opts.preserveExisting ? tx.executeRaw<Existing>(`SELECT l.id, f.slug from_slug, t.slug to_slug,
+          f.source_id from_source_id, t.source_id to_source_id, l.link_type, l.link_source,
+          o.slug origin_slug, o.source_id origin_source_id, l.context, l.origin_field
+        FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
+        LEFT JOIN pages o ON o.id=l.origin_page_id
+        WHERE (l.link_source=ANY($2::text[]) OR ($3::boolean AND l.link_source IS NULL))
+          AND (l.origin_page_id=$1 OR (l.origin_page_id IS NULL AND l.from_page_id=$1
+            AND (l.link_source IN ('markdown','wikilink-resolved') OR l.link_source IS NULL)))`, [id, producers, opts.includeLegacyNullProducer !== false]) : Promise.resolve([]),
+      () => effectiveRangesEnabled(tx),
+    ]) as [unknown, Awaited<ReturnType<typeof relationshipKeysForOrigin>>, unknown[], unknown[], unknown[], Existing[], boolean];
+    const withTemporal = async (result: { created: number; removed: number }) => {
+      await applyTemporalEvidence(tx, snapshot.page, rows, temporalKeysBefore, { inlineRanges });
+      return result;
+    };
+    if (ambiguous.length) throw new DerivedLinkRepairRequiredError();
+    if (missing.length) throw new DerivedLinkEndpointChangedError('A derived link endpoint changed or was deleted');
+    if (changed.length) throw new DerivedLinkEndpointChangedError('A derived link endpoint changed after type resolution');
     const reversed = rows.filter(row => row.link_type === 'attended' && row.origin_slug
       && row.to_slug === origin.slug && row.to_source_id === origin.sourceId
       && (row.from_slug !== origin.slug || row.from_source_id !== origin.sourceId));
@@ -135,16 +156,6 @@ export async function replaceDerivedLinks(
       if (invalid.length) throw new TypeError('Canonical attendance requires person endpoints');
     }
     if (opts.preserveExisting) {
-      const existing = await tx.executeRaw<{ id: number; from_slug: string; to_slug: string;
-        from_source_id: string; to_source_id: string; link_type: string; link_source: string | null;
-        origin_slug: string | null; origin_source_id: string | null; context: string; origin_field: string | null }>(`SELECT l.id, f.slug from_slug, t.slug to_slug,
-          f.source_id from_source_id, t.source_id to_source_id, l.link_type, l.link_source,
-          o.slug origin_slug, o.source_id origin_source_id, l.context, l.origin_field
-        FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
-        LEFT JOIN pages o ON o.id=l.origin_page_id
-        WHERE (l.link_source=ANY($2::text[]) OR ($3::boolean AND l.link_source IS NULL))
-          AND (l.origin_page_id=$1 OR (l.origin_page_id IS NULL AND l.from_page_id=$1
-            AND (l.link_source IN ('markdown','wikilink-resolved') OR l.link_source IS NULL)))`, [id, producers, opts.includeLegacyNullProducer !== false]);
       const identity = (row: Pick<LinkBatchInput, 'from_source_id' | 'from_slug' | 'to_source_id' | 'to_slug' | 'link_type'>
         & { link_source?: string | null; origin_slug?: string | null }) => JSON.stringify([row.from_source_id, row.from_slug,
         row.to_source_id, row.to_slug, row.link_type ?? '', row.link_source ?? 'markdown', row.origin_slug ?? null]);

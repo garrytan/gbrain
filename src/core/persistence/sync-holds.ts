@@ -221,6 +221,13 @@ export async function clearGitHold(tx: Exec, input: { sourceId: string; incarnat
   return true;
 }
 
+/** #5984: which of these paths have a hold row (one indexed read), so a batched waiver run clears only those. */
+export async function heldGitPaths(tx: Exec, sourceId: string, incarnation: string, paths: readonly string[]): Promise<Set<string>> {
+  if (!paths.length) return new Set();
+  const byPrint = new Map(paths.map(path => [gitHoldFingerprint(sourceId, incarnation, path), path]));
+  const rows = await tx.executeRaw<{ fingerprint: string }>('SELECT fingerprint FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])', [GIT_HOLD_OP, [...byPrint.keys()]]);
+  return new Set(rows.map(row => byPrint.get(row.fingerprint)!));
+}
 /**
  * #6188: records on a fence hold why the last repair left it held (the repair kind and the maintenance phase call it),
  * without touching its observation time or counts. False when the hold is gone or is not a fence hold.

@@ -340,7 +340,7 @@ export interface SyncOpts {
   /** #5984: wall-clock ms the current drain started; managed cursors measure their rate from it. */
   drainStartedAt?: number;
   /** #5984: `--no-bulk`; and the drain's resolved bulk settings (internal; absent = one request per pass step). */ noBulk?: boolean; bulk?: import('../core/persistence/sync-group.ts').BulkSettings;
-  /** #5984 lanes: `--lanes N` (1..8) or `--no-lanes` (1). */ lanes?: number;
+  /** #5984 lanes: `--lanes N` (1..16) or `--no-lanes` (1). */ lanes?: number;
 }
 
 // The git-plumbing cluster (git(), discoverGitRoot, createSyncBaselineCommit,

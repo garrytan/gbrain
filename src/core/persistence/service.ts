@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
-import { PersistenceConsumer, type PrepareMutation } from './consumer.ts';
+import { LANE_BUSY, PersistenceConsumer, type PrepareMutation } from './consumer.ts';
 import { preparePageMutation } from './page-prepare.ts';
 import { prepareSemanticPageMutation } from './semantic-pages.ts';
 import { getWriteRequestById, getWriteRequestProgress, receiptFor, type WriteRequestProgress } from './journal.ts';
@@ -9,6 +9,7 @@ import { isTerminal, type WriteRequest } from './model.ts';
 import { isWriteErrorCode, type WriteReceipt } from './types.ts';
 import { registerPgliteReopen } from '../pglite-lifecycle.ts';
 import { assertMutationProtocol } from './protocol.ts';
+import { writeSwitchOn } from './switches.ts';
 import { pendingWriteHint } from './health.ts';
 import { receiptDeliveredHint } from './connector-errors.ts';
 import type { PgAccessReason } from '../pg-access-classify.ts';
@@ -74,7 +75,8 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (row.operation === 'relink_facts') return (await import('../facts/relink-publish.ts')).prepareRelinkMutation(e, row, cfg);
   if (['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
-  if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal);
+  if (['put_page','capture','delete_page','restore_page','revert_version','edit_page'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal,
+    { coordinated: await writeSwitchOn(e, 'single_write_group').catch(() => true) });
   throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.', `Request ${row.request_id} (${row.operation}) was accepted by a gbrain version whose preparer this one lacks, so it has not run. Run gbrain upgrade on every host that serves this brain; the request stays journaled and resumes after the upgrade.`);
 }
 export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConfig): PersistenceConsumer {
@@ -119,6 +121,17 @@ export async function disposePersistenceConsumer(engine: BrainEngine): Promise<v
 }
 function discardStoppedService(engine: BrainEngine, service: Service): void {
   service.unregisterStop?.(); service.unregisterReopen?.(); services.delete(engine);
+}
+/**
+ * Phase 4.4: runs `run` on this process's warm single-write lane (consumer.ts `onLane`) when its
+ * consumer is running and the lane is free; otherwise `fallback()`, on the pool.
+ */
+export async function onPersistenceLane<T>(engine: BrainEngine,
+  run: (transaction: <R>(fn: (tx: BrainEngine) => Promise<R>) => Promise<R>) => Promise<T>, fallback: () => Promise<T>): Promise<T> {
+  const service = services.get(engine);
+  if (!service || service.stopping) return fallback();
+  const done = await service.consumer.onLane(run);
+  return done === LANE_BUSY ? fallback() : done;
 }
 export function foregroundWriteCompletions(engine: BrainEngine, worktreeId: string): number {
   return services.get(engine)?.consumer.foregroundCompletions(worktreeId) ?? 0;
@@ -171,7 +184,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
   const listener = (settled: WriteRequest) => { handed = settled; wake?.(); };
   listeners.add(listener); waiters.set(id, listeners);
   // The admission transaction has committed: publish now, not after the idle backoff.
-  consumer.wake();
+  consumer.wake(true);
   const waitMs = opts.waitMs ?? 5000;
   const deadline = performance.now() + waitMs;
   const firstPoll = Math.min(WRITE_POLL_START_MS, waitMs / 2);

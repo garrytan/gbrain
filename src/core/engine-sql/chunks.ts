@@ -41,6 +41,7 @@ import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type Ch
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
+import { pipelined } from '../page-state/transactions.ts';
 
 /** The engine's page-state guards, run on the same (transaction) engine. */
 export interface ChunkPageGuards {
@@ -64,7 +65,7 @@ export async function upsertChunksOnce(
   guards: ChunkPageGuards,
   slug: string,
   chunks: ChunkInput[],
-  opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number },
+  opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number },
 ): Promise<void> {
     const memo = guards.memo ?? (<T>(_key: string, read: () => Promise<T>) => read());
     // Normalize the same way putPage does — pages.slug is stored lowercased,
@@ -86,10 +87,29 @@ export async function upsertChunksOnce(
     // every chunk of the page earlier in this transaction, so nothing stale can
     // remain, and the seal (which also locks the page row and yields its id)
     // commits only together with the insert below.
+    // #5984: a seal whose caller knows the page id (`pageId`, its own write of the page in
+    // this transaction) is sent in one pipeline with the insert and checked after both ran.
     const seal = opts?.sealChunkerVersion;
-    const pages = (await exec.run<{ id: number }>(seal === undefined
-      ? sqlFragment`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId} FOR UPDATE`
-      : sqlFragment`UPDATE pages SET chunker_version = ${seal} WHERE slug = ${slug} AND source_id = ${sourceId} RETURNING id`)).rows;
+    // The config reads the insert below needs go out with the page lookup (one round trip on Postgres).
+    let gatewayModel: string | null = null;
+    try {
+      // Keep the gateway lazy so module-load failure remains inside this soft
+      // fallback boundary; eager evaluation would bypass the config-row fallback.
+      const gw = await import('../ai/gateway.ts'); // engine-dynamic-import-ok
+      gatewayModel = gw.getEmbeddingModelProvenance();
+    } catch {}
+    const writesRows = chunks.length > 0;
+    const columnRows = writesRows && !opts?.embeddingColumn ? memo('config:embedding-columns', async () =>
+      (await exec.run<{ key: string; value: string }>(sqlFragment`SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')`)).rows)
+      .then(rows => rows, () => null) : undefined;
+    const modelRows = writesRows && !gatewayModel ? memo('config:embedding-model', async () =>
+      (await exec.run<{ value?: string }>(sqlFragment`SELECT value FROM config WHERE key = 'embedding_model'`)).rows)
+      .then(rows => rows, () => null) : undefined;
+    const sealed = seal !== undefined && opts?.pageId !== undefined && chunks.length > 0 ? opts.pageId : undefined;
+    const sealPage = () => exec.run<{ id: number }>(sqlFragment`UPDATE pages SET chunker_version = ${seal} WHERE slug = ${slug} AND source_id = ${sourceId} RETURNING id`);
+    const pages = sealed !== undefined ? [{ id: sealed }] : (await (seal === undefined
+      ? exec.run<{ id: number }>(sqlFragment`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId} FOR UPDATE`)
+      : sealPage())).rows;
     if (pages.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
     const pageId = pages[0].id;
 
@@ -138,15 +158,10 @@ export async function upsertChunksOnce(
     } else {
       let searchEmbeddingColumn: string | null = null;
       let embeddingColumnsJson: string | null = null;
-      try {
-        const cfgRows = await memo('config:embedding-columns', async () =>
-          (await exec.run<{ key: string; value: string }>(sqlFragment`SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')`)).rows);
-        for (const r of cfgRows) {
-          if (r.key === 'search_embedding_column') searchEmbeddingColumn = r.value;
-          else if (r.key === 'embedding_columns') embeddingColumnsJson = r.value;
-        }
-      } catch {
-        // config table unreadable — legacy column via the resolver default.
+      // A null read (config table unreadable) leaves the legacy column via the resolver default.
+      for (const r of await columnRows ?? []) {
+        if (r.key === 'search_embedding_column') searchEmbeddingColumn = r.value;
+        else if (r.key === 'embedding_columns') embeddingColumnsJson = r.value;
       }
       writeCol = resolveWriteColumnFromConfigRows({ searchEmbeddingColumn, embeddingColumnsJson });
     }
@@ -158,20 +173,8 @@ export async function upsertChunksOnce(
     // later text rewrite that keeps the vector is detectable as content
     // drift (invalidateContentDriftEmbeddings). NULL when no embedding lands.
     const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
-    let resolvedModel: string | null = null;
-    try {
-      // Keep the gateway lazy so module-load failure remains inside this soft
-      // fallback boundary; eager evaluation would bypass the config-row fallback.
-      const gw = await import('../ai/gateway.ts'); // engine-dynamic-import-ok
-      resolvedModel = gw.getEmbeddingModelProvenance();
-    } catch {}
-    if (!resolvedModel) {
-      try {
-        const cfg = await memo('config:embedding-model', async () =>
-          (await exec.run<{ value?: string }>(sqlFragment`SELECT value FROM config WHERE key = 'embedding_model'`)).rows);
-        resolvedModel = cfg[0]?.value ?? null;
-      } catch {}
-    }
+    let resolvedModel: string | null = gatewayModel;
+    if (!resolvedModel) resolvedModel = (await modelRows)?.[0]?.value ?? null;
     resolvedModel = writeCol.embeddingModel || resolvedModel;
     if (!resolvedModel && chunks.some(chunk => chunk.embedding && !chunk.model)) {
       throw new Error('Embedding model provenance is unknown. Supply an explicit chunk model or run gbrain migrate embeddings --status before an explicit migration.');
@@ -303,7 +306,10 @@ export async function upsertChunksOnce(
          symbol_name_qualified = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name_qualified ELSE COALESCE(EXCLUDED.symbol_name_qualified, content_chunks.symbol_name_qualified) END,
          modality = EXCLUDED.modality,
          embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)`);
-    await exec.query(text, params);
+    if (sealed === undefined) { await exec.query(text, params); return; }
+    const [{ rows }] = await pipelined({ kind: exec.dialect }, [sealPage, () => exec.query(text, params)]) as [{ rows: Array<{ id: number }> }];
+    if (rows.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
+    if (Number(rows[0]!.id) !== Number(sealed)) throw new Error(`Page ${slug} (source=${sourceId}) is not the page this transaction wrote`);
   }
 
 export async function getChunks(

@@ -126,7 +126,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
     const local = [...new Map(initial.filter(binding => binding.owner_host_id === hostId).map(binding => [binding.worktree_id, binding])).values()]
       .sort((a, b) => a.worktree_id.localeCompare(b.worktree_id));
     for (const binding of local) {
-      const lock = await acquireWorktree(binding);
+      const lock = await acquireWorktree(binding, 0, undefined, undefined, { yieldLanes: true });
       if (!lock) throw quiescence();
       locks.push(lock);
     }

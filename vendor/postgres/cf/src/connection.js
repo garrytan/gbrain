@@ -243,10 +243,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     q.onlyDescribe && (delete statements[q.signature])
     q.parameters = q.parameters || parameters
     q.prepared = q.prepare && q.signature in statements
-    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared)
+    // GBrain: a statement this pool already described on another connection reuses its parameter
+    // types, so it is parsed, described and executed in one pipelined message group (no describe first).
+    q.typesKey = options.shared_types && parameters.length && !q.onlyDescribe ? types + string : null
+    const shared = !q.prepared && q.typesKey && options.shared_types.get(q.typesKey)
+    q.sharedTypes = !!shared
+    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !shared)
     q.statement = q.prepared
       ? statements[q.signature]
-      : { string, types, name: q.prepare ? statementId + statementCount++ : '' }
+      : { string, types: shared ? shared.slice() : types, name: q.prepare ? statementId + statementCount++ : '' }
 
     typeof options.debug === 'function' && options.debug(id, string, parameters, types)
   }
@@ -553,6 +558,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     connection.status = x[5]
     if (query) {
       if (errorResponse) {
+        // GBrain: a failed statement describes again next time instead of trusting shared parameter types.
+        query.sharedTypes && options.shared_types.delete(query.typesKey)
         query.retried
           ? errored(query.retried)
           : query.prepared && retryRoutines.has(errorResponse.routine)
@@ -650,6 +657,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
       !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
 
     query.prepare && (statements[query.signature] = query.statement)
+    // GBrain: only built-in parameter types are shared; a database's own types may be recreated under a new oid.
+    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
+      && options.shared_types.set(query.typesKey, query.statement.types.slice())
     query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
   }
 

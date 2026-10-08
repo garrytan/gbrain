@@ -43,7 +43,7 @@ import { describeFixes } from '../fence-repair/report.ts';
 import { fenceFixesWire } from '../fence-repair/tier1.ts';
 import type { FenceFix } from '../fence-repair/types.ts';
 import { VERSION } from '../../version.ts';
-import { windowPredecessor, windowPredecessorAllows } from './sync-window.ts';
+import { earlierGroupMemberFailed, windowPredecessor, windowPredecessorAllows } from './sync-window.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -100,6 +100,30 @@ function sharedSyncValidation(tx: BrainEngine, key: string, run: () => Promise<{
   let shared = byKey.get(key);
   if (!shared) { shared = run(); byKey.set(key, shared); }
   return shared;
+}
+/**
+ * #5984: the source-wide part of sync validation as one pipeline: coordinator switch, configured root,
+ * cursor, window predecessor and owner epoch, each checked in that order. The rows stay locked FOR SHARE.
+ */
+async function sourceSyncChecks(tx: BrainEngine, row: WriteRequest, p: SyncIntent, root: string, after: string | null) {
+  const [, , held] = await pipelined(tx, [
+    () => assertManagedSyncActive(tx, true),
+    async () => {
+      const [configuredSource] = await tx.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 FOR SHARE', [row.source_id]);
+      assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
+    },
+    () => readSyncCursorFence(tx, p.cursorKey),
+    async () => {
+      if (after && !await windowPredecessorAllows(tx, row)) throw syncPublicationRefusal('revision_conflict', 'An earlier page of this sync did not commit.', row, p,
+        `Request ${row.request_id} was admitted ahead of request ${after} of the same sync run, which did not commit, so this page must not publish after it.`);
+    },
+    async () => {
+      const current = await getWorktreeBinding(tx, row.source_id);
+      if (!current || String(current.owner_epoch) !== p.ownerEpoch) throw syncPublicationRefusal('owner_unavailable', 'The accepted sync owner epoch changed.', row, p,
+        `The owner epoch of ${row.source_id} changed after this sync was admitted. Do not claim or transfer the source to repair content.`, true);
+    },
+  ]) as [unknown, unknown, Awaited<ReturnType<typeof readSyncCursorFence>>];
+  return held ?? null;
 }
 /**
  * Read-only: the receipt itself for the local CLI writer's own request;
@@ -266,33 +290,32 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
         `Page ${moved.slug}, which this file was renamed from, changed or was deleted after the sync was admitted.`);
     }
   };
+  // #5984: validation's reads are pipelined; each check runs in the order it always did, so the first failing one is reported.
   const validate = async (tx: BrainEngine) => {
     const after = windowPredecessor(row);
-    const cursor = await sharedSyncValidation(tx, `${row.source_id}\0${p.cursorKey}\0${p.ownerEpoch}\0${root}\0${after ?? ''}`, async () => {
-      await assertManagedSyncActive(tx, true);
-      const [configuredSource] = await tx.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 FOR SHARE', [row.source_id]);
-      assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
-      const held = await readSyncCursorFence(tx, p.cursorKey);
-      if (after && !await windowPredecessorAllows(tx, row)) throw syncPublicationRefusal('revision_conflict', 'An earlier page of this sync did not commit.', row, p,
-        `Request ${row.request_id} was admitted ahead of request ${after} of the same sync run, which did not commit, so this page must not publish after it.`);
-      const current = await getWorktreeBinding(tx, row.source_id);
-      if (!current || String(current.owner_epoch) !== p.ownerEpoch) throw syncPublicationRefusal('owner_unavailable', 'The accepted sync owner epoch changed.', row, p,
-        `The owner epoch of ${row.source_id} changed after this sync was admitted. Do not claim or transfer the source to repair content.`, true);
-      return held ?? null;
-    });
-    await validateSyncAuthority(tx, p.syncAuthority, row.slug);
-    if (cursor && (cursor.run_id !== p.runId || (cursor.request_id !== row.request_id && !cursor.group?.includes(row.request_id)))) throw syncPublicationRefusal('revision_conflict', 'The accepted sync cursor changed before publication.', row, p,
-      `Another sync run of ${row.source_id} replaced the cursor this request belongs to.`);
-    if (p.kind !== 'managed_sync_checkpoint') await assertKnowledgePublicationAllowed(tx, row,
-      p.path === null ? undefined : { root, path: join(root, p.path) });
-    if (p.path !== null && syncRawHash(root, p.path) !== p.rawHash) throw syncPublicationRefusal('source_changed', 'The imported file changed after sync admission.', row, p,
-      `The file of ${row.slug} changed on disk after this sync was admitted; review the change and commit it.`);
-    if (origin && originContext) {
-      assertSyncEntryOrigin(originContext, origin);
-      await assertSyncPageOrigin(tx, row.source_id, origin.sourcePath, originPageId, p.kind === 'managed_sync_delete', originScope);
-      if (moved) await assertSyncPageOrigin(tx, row.source_id, moved.sourcePath, moved.pageId, true, originScope);
-      await assertRenameSource(tx);
-    }
+    const shared = sharedSyncValidation(tx, `${row.source_id}\0${p.cursorKey}\0${p.ownerEpoch}\0${root}\0${after ?? ''}`, () => sourceSyncChecks(tx, row, p, root, after));
+    await pipelined(tx, [
+      () => shared,
+      () => validateSyncAuthority(tx, p.syncAuthority, row.slug),
+      async () => { if (await earlierGroupMemberFailed(tx, row)) throw syncPublicationRefusal('revision_conflict', 'An earlier page of this sync did not commit.', row, p, `Request ${row.request_id} follows a page of the same bulk group that did not commit, so this page must not publish after it.`); },
+      async () => {
+        const cursor = await shared;
+        if (cursor && (cursor.run_id !== p.runId || (cursor.request_id !== row.request_id && !cursor.group?.includes(row.request_id)))) throw syncPublicationRefusal('revision_conflict', 'The accepted sync cursor changed before publication.', row, p,
+          `Another sync run of ${row.source_id} replaced the cursor this request belongs to.`);
+      },
+      async () => { if (p.kind !== 'managed_sync_checkpoint') await assertKnowledgePublicationAllowed(tx, row, p.path === null ? undefined : { root, path: join(root, p.path) }); },
+      async () => {
+        if (p.path !== null && syncRawHash(root, p.path) !== p.rawHash) throw syncPublicationRefusal('source_changed', 'The imported file changed after sync admission.', row, p,
+          `The file of ${row.slug} changed on disk after this sync was admitted; review the change and commit it.`);
+      },
+      async () => {
+        if (!origin || !originContext) return;
+        assertSyncEntryOrigin(originContext, origin);
+        await assertSyncPageOrigin(tx, row.source_id, origin.sourcePath, originPageId, p.kind === 'managed_sync_delete', originScope);
+      },
+      async () => { if (origin && originContext && moved) await assertSyncPageOrigin(tx, row.source_id, moved.sourcePath, moved.pageId, true, originScope); },
+      async () => { if (origin && originContext) await assertRenameSource(tx); },
+    ]);
     if (p.companyApproval) {
       const [source] = await tx.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [row.source_id]);
       const policy = companyBrainProfile(source?.config);
@@ -480,16 +503,17 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
       }
       // A moved page is versioned from its own (rename source) read.
       await applied.apply(tx, renamed ? undefined : preimage);
-      // Hash no-ops still repair a missing physical origin under the same guard.
-      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
+      // Hash no-ops still repair a missing physical origin under the same guard (a page write records it itself).
+      if (applied.noop) await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
       // #5984: the one read of the page after its last page write (the projections
       // below and the seal leave its revision unchanged): read-back check, projection
       // target, seal input, receipt revision and effects.
       const final = await tx.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
       const live = final && final.page.deleted_at == null ? final : null;
       if (!applied.noop) await verifyPageReadable(tx, row.slug, applied.contentHash!, row.source_id, 'managed sync', live?.page ?? null);
-      if (!applied.noop || p.companyApproval) await project(tx, final?.page.id);
+      // The projections, the text seal, the hold and the provenance touch separate rows; their pipelines run together.
       await pipelined(tx, [
+        async () => { if (!applied.noop || p.companyApproval) await project(tx, final?.page.id); },
         async () => { if (!applied.noop && live) await sealPageTextProjection(tx, row.slug, row.source_id, live); },
         () => releaseHold(tx),
         async () => { if (final) await recordSyncImportProvenance(tx, { source_id: row.source_id, incarnation: row.source_incarnation, page_id: Number(final.page.id), origin: p.sourcePath!,

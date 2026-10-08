@@ -3,8 +3,8 @@
  * seam sits at a point where a process death leaves durable state the
  * recovery path must finish: publication boundaries, after an effect's side
  * effect but before its completion is recorded, before a recovery record is
- * cleared, between sync checkpoints, and after the consumer prepared a
- * claimed request. Production never installs a hook, so every call is a
+ * cleared, between sync checkpoints, after the consumer prepared a
+ * claimed request, and (`lane:applied`) when a lane group has applied its pages and waits for its commit turn. Production never installs a hook, so every call is a
  * no-op there; the gate's workers install one that SIGKILLs or stalls the
  * process at a chosen point.
  */
@@ -14,7 +14,8 @@ import type { WriteRequest } from './model.ts';
 
 export type PublicationBoundary = Parameters<NonNullable<PublicationHooks['boundary']>>[0];
 export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${EffectKind}:mid`
-  | 'effect_recovery:before_clear' | 'publication_recovery:before_clear' | 'sync:mid_checkpoint' | 'consumer:prepared';
+  | 'effect_recovery:before_clear' | 'publication_recovery:before_clear' | 'sync:mid_checkpoint' | 'sync:before_group_admission' | 'sync:mid_waiver_run' | 'consumer:prepared'
+  | 'lane:applied';
 export interface FaultDetail { requestId?: string; effectId?: string | number; sourceId?: string; operation?: string | null }
 type FaultHook = (point: FaultPoint, detail: FaultDetail) => Promise<void> | void;
 

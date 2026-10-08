@@ -15,7 +15,7 @@ const declared = new WeakSet<object>();
  * any other row lock. A transaction needing the exclusive brain lock takes it
  * first and declares after it.
  */
-const BRAIN_SHARE = '(SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE) AS brain';
+const BRAIN_SHARE = '(SELECT brain_id::text FROM persistence_brain WHERE singleton=1 FOR SHARE) AS brain';
 
 /** Transaction-local; #5984: a transaction engine declares it once (a savepoint is its own engine object). */
 export async function declarePersistenceProtocol(tx: SqlEngine): Promise<void> {
@@ -31,10 +31,12 @@ export async function declarePersistenceProtocol(tx: SqlEngine): Promise<void> {
  * under that lock timeout. Later `declarePersistenceProtocol` calls on the
  * same transaction engine are free.
  */
-export async function declareDurablePersistence(tx: SqlEngine, lockTimeout = '1s', statementTimeout = '5s'): Promise<void> {
-  await tx.executeRaw(`SELECT set_config('gbrain.persistence_protocol','2',true),set_config('synchronous_commit','on',true),
+/** Returns the brain id read under that lock (null when the row is missing). */
+export async function declareDurablePersistence(tx: SqlEngine, lockTimeout = '1s', statementTimeout = '5s'): Promise<string | null> {
+  const [row] = await tx.executeRaw<{ brain: string | null }>(`SELECT set_config('gbrain.persistence_protocol','2',true),set_config('synchronous_commit','on',true),
     set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true),${BRAIN_SHARE}`, [lockTimeout, statementTimeout]);
   if ((tx as { _pageTransaction?: boolean })._pageTransaction === true) declared.add(tx);
+  return row?.brain ?? null;
 }
 
 export const PERSISTENCE_PROTOCOL_PREDICATE = "set_config('gbrain.persistence_protocol','2',true)='2'";

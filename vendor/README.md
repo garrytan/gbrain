@@ -37,6 +37,18 @@ must settle or retire the connection before another query can own it. This
 is necessary for worker admission, query timeout and lease-release safety.
 See issues #5466 and #5560 and `test/e2e/persistence-chaos.test.ts`.
 
+The patch also lets a pool share the parameter types of a described statement
+across its connections (`shared_types`, on by default; GBrain turns it off with
+`GBRAIN_PG_TYPE_CACHE=0`). Stock postgres.js describes every parameterized
+statement once per connection, and with `prepare: false` (transaction-mode
+poolers) on every run, before it can execute it; that describe costs a round
+trip and stops pipelining behind it. With the types known, the statement is
+parsed, described and executed in one message group. Only built-in types (oid
+below 16384) are shared, since a database's own types (pgvector) can be
+recreated under a new oid; a statement that fails forgets its shared types, and
+`PostgresEngine.initSchema` clears them after applying migrations (#5984,
+`test/e2e/postgres-shared-types.test.ts`).
+
 ## Reproduce and update
 
 Run `bash vendor/update-postgres.sh --check` to download the pinned upstream

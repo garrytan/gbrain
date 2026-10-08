@@ -42,6 +42,8 @@ test/harness-skills-epoch.test.ts
 test/held-read-signals.test.ts
 test/import-frontmatter-key-order-5158.test.ts
 test/import-revision-concurrency.test.ts
+test/lane-apply-pipelining.test.ts
+test/link-preparation-shared-index.test.ts
 test/links-attendance-blocked.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-lint.test.ts
@@ -53,9 +55,12 @@ test/managed-sync-bulk.test.ts
 test/managed-sync-chunker-version.test.ts
 test/managed-sync-concurrent-write-hold.test.ts
 test/managed-sync-drain.test.ts
+test/managed-sync-foreground-priority.test.ts
 test/managed-sync-group-completion.test.ts
+test/managed-sync-group-uncommitted-head.test.ts
 test/managed-sync-images-5493.test.ts
 test/managed-sync-lanes.test.ts
+test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
 test/pack-relation-direction-engine.test.ts
 test/page-embedding-install-batch.test.ts

@@ -224,6 +224,35 @@ export async function managedStaleSweep(databaseUrl?: string) {
   }, { databaseUrl });
 }
 
+/** #5984: on Postgres a managed extraction derives several pages at once; every page is stamped and every link resolves either way. */
+export async function managedStaleSweepManyPages(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    await engine.setConfig('auto_link', 'false');
+    const count = 12;
+    for (let i = 0; i < count; i++) await put(ctx, `notes/n${i}`, `Links [[notes/n${(i + 1) % count}]] and [[notes/hub]].`);
+    await put(ctx, 'notes/hub', 'The hub.');
+    await disposePersistenceConsumer(engine);
+    let open = 0, most = 0;
+    const transaction = engine.transaction;
+    engine.transaction = (async function (this: BrainEngine, fn: Parameters<BrainEngine['transaction']>[0]) {
+      if (this !== engine) return transaction.call(this, fn);
+      open++; most = Math.max(most, open);
+      try { return await transaction.call(this, fn); } finally { open--; }
+    }) as BrainEngine['transaction'];
+    try {
+      const { extractManagedStaleLinks, MANAGED_LINK_EXTRACTION_WIDTH } = await import('../../src/core/persistence/links-maintenance.ts');
+      const result = await extractManagedStaleLinks(engine, { sourceId: 'default', mentions: false, slugs: Array.from({ length: count }, (_, i) => `notes/n${i}`) });
+      expect(result).toMatchObject({ pages: count + 1, skipped: 0, remaining: 0 });
+      expect(most).toBe(engine.kind === 'postgres' ? MANAGED_LINK_EXTRACTION_WIDTH : 1);
+    } finally { engine.transaction = transaction; }
+    const links = await engine.executeRaw<{ f: string; t: string }>(`SELECT f.slug AS f, t.slug AS t FROM links l JOIN pages f ON f.id=l.from_page_id
+      JOIN pages t ON t.id=l.to_page_id ORDER BY 1, 2`);
+    expect(links).toEqual(Array.from({ length: 12 }, (_, i) => [{ f: `notes/n${i}`, t: 'notes/hub' }, { f: `notes/n${i}`, t: `notes/n${(i + 1) % 12}` }]).flat()
+      .sort((a, b) => a.f < b.f ? -1 : a.f > b.f ? 1 : a.t < b.t ? -1 : 1));
+    expect(await stale(engine)).toBe(0);
+  }, { databaseUrl });
+}
+
 /** A stored row that differs from its bullet only by whitespace is the same entry to the coordinator; stale extraction must not add a twin. */
 export async function managedStaleSweepKeepsNormalizedTimeline(databaseUrl?: string) {
   await managedBrain(async ({ engine, ctx }) => {

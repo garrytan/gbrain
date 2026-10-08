@@ -16,8 +16,10 @@
  * drained, fenced and merged points; no production behavior is replaced.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -38,6 +40,7 @@ import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
 
 const backends = testBackends();
@@ -116,6 +119,58 @@ test('3. a fetch killed by its bound leaves no refresh row and HEAD unchanged', 
   expect(error.suggestion).toContain('--fetch-timeout-ms');
   expect(await f.refreshRows()).toEqual([]);
   expect(f.head()).toBe(head);
+}), 120_000);
+
+/** Runs `fn` with a PATH git that fails (stderr line, then `code`) whenever an argument equals `token`; every other command is the real git. */
+async function withFailingGit<T>(token: string, code: number, fn: () => Promise<T>): Promise<T> {
+  const bin = mkdtempSync(join(tmpdir(), 'gbrain-failing-git-'));
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(join(bin, 'git'), `#!/bin/sh
+for a in "$@"; do if [ "$a" = "${token}" ]; then echo "fatal: injected failure of ${token}" >&2; exit ${code}; fi; done
+exec ${realGit} "$@"
+`, { mode: 0o755 });
+  try { return await withEnv({ PATH: `${bin}:${process.env.PATH}` }, fn); } finally { rmSync(bin, { recursive: true, force: true }); }
+}
+const refusedOnGit = async (f: RefreshFixture, token: string, code: number, command: string) => {
+  const head = f.head();
+  const error = await withFailingGit(token, code, () => refusedWith(refreshWorktree(f.engine, f.alpha), 'git_unavailable'));
+  expect(error.message).toContain(`git ${command} failed (fatal: injected failure of ${token})`);
+  expect(error.suggestion).toContain(`gbrain sources refresh ${f.alpha}`);
+  expect(await f.refreshRows()).toEqual([]);
+  expect(f.head()).toBe(head);
+};
+
+test('3b. a failing git symbolic-ref is a git failure, not a detached HEAD', () => each(async f => {
+  f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  await refusedOnGit(f, 'symbolic-ref', 128, 'symbolic-ref --quiet --short HEAD');
+  git(f.root, 'checkout', '-q', '--detach');
+  const detached = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_no_upstream');
+  expect(detached.message).toContain('(detached HEAD)');
+}), 120_000);
+
+test('3c. a failing git remote is a git failure, not a checkout without remotes', () => each(async f => {
+  git(f.root, 'branch', '--unset-upstream');
+  await refusedOnGit(f, 'remote', 128, 'remote');
+  const noUpstream = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_no_upstream');
+  expect(noUpstream.suggestion).toContain('branch --set-upstream-to origin/main');
+}), 120_000);
+
+test('3d. a failing git config --get of the branch remote or merge is a git failure, not an unset key', () => each(async f => {
+  const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  await refusedOnGit(f, 'branch.main.remote', 3, 'config --get branch.main.remote');
+  await refusedOnGit(f, 'branch.main.merge', 3, 'config --get branch.main.merge');
+  expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');
+  expect(f.head()).toBe(target);
+}), 120_000);
+
+test('3e. a checkout that is not a Git checkout is refresh_no_upstream naming that, not a detached HEAD or a git failure', () => each(async f => {
+  renameSync(join(f.root, '.git'), join(f.dir, 'moved.git'));
+  try {
+    const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_no_upstream');
+    expect(error.message).toContain(`The checkout ${f.root} is not a Git checkout`);
+    expect(error.suggestion).toContain('Nothing to refresh');
+    expect(await f.refreshRows()).toEqual([]);
+  } finally { renameSync(join(f.dir, 'moved.git'), join(f.root, '.git')); }
 }), 120_000);
 
 test('4. a diverged checkout is refused with no row and HEAD unchanged', () => each(async f => {
@@ -265,13 +320,16 @@ test('12. an unmanaged brain refuses refresh_not_managed naming gbrain sync, on 
 test('13. drain starvation: a writer every 50 ms is refused during draining and the refresh completes inside --wait-drain', () => each(async f => {
   const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
   await f.put(f.alpha, 'notes/seed', page('Seed', 'Has a git effect.'));
-  await requeueGitEffect(f, 1000);
+  // The git effect the refresh drains becomes runnable once the writer has been refused four times (not after a fixed
+  // delay), so the draining window always spans several writer attempts however slow one write is on the host.
+  const effect = await requeueGitEffect(f, 60_000);
   let stop = false;
   const outcomes: string[] = [];
   const writer = (async () => {
     while (!stop) {
       try { await f.put(f.alpha, `notes/w-${randomUUID().slice(0, 8)}`, page('W', 'steady traffic')); outcomes.push('accepted'); }
       catch (error) { outcomes.push((error as { code?: string }).code ?? 'error'); }
+      if (outcomes.filter(code => code === 'worktree_refreshing').length === 4) await f.engine.executeRaw('UPDATE persistence_effects SET next_attempt_at=now() WHERE id=$1', [effect]);
       await new Promise(resolve => setTimeout(resolve, 50));
     }
   })();

@@ -197,7 +197,7 @@
           "searchVector: (embedding: Float32Array, opts?: SearchOpts) => Promise<SearchResult[]>",
           "setConfig: (key: string, value: string) => Promise<void>",
           "setEmotionalWeightBatch: (rows: EmotionalWeightWriteRow[]) => Promise<number>",
-          "setPageAliases: (slug: string, sourceId: string, aliasNorms: string[]) => Promise<void>",
+          "setPageAliases: (slug: string, sourceId: string, aliasNorms: string[], opts?: { inline?: boolean; }) => Promise<void>",
           "setPageEmbeddingSignature: (slug: string, opts: { sourceId?: string; signature: string; }) => Promise<void>",
           "softDeletePage: (slug: string, opts?: { sourceId?: string; }) => Promise<{ slug: string; } | null>",
           "softDeletePages: (slugs: string[], opts: { sourceId: string; }) => Promise<string[]>",
@@ -216,7 +216,7 @@
           "updateSourceConfig: (sourceId: string, patch: Record<string, unknown>) => Promise<boolean>",
           "updateTake: (pageId: number, rowNum: number, fields: { weight?: number; since_date?: string; source?: string; }) => Promise<void>",
           "updateTakeEmbeddings: (rows: TakeEmbeddingInput[], opts?: BatchOpts) => Promise<number>",
-          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; } & BatchOpts) => Promise<void>",
+          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
           "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; selfContained?: boolean; }) => Promise<T>",
@@ -1180,7 +1180,7 @@
           "searchVector: (embedding: Float32Array, opts?: SearchOpts) => Promise<SearchResult[]>",
           "setConfig: (key: string, value: string) => Promise<void>",
           "setEmotionalWeightBatch: (rows: EmotionalWeightWriteRow[]) => Promise<number>",
-          "setPageAliases: (slug: string, sourceId: string, aliasNorms: string[]) => Promise<void>",
+          "setPageAliases: (slug: string, sourceId: string, aliasNorms: string[], opts?: { inline?: boolean; }) => Promise<void>",
           "setPageEmbeddingSignature: (slug: string, opts: { sourceId?: string; signature: string; }) => Promise<void>",
           "softDeletePage: (slug: string, opts?: { sourceId?: string; }) => Promise<{ slug: string; } | null>",
           "softDeletePages: (slugs: string[], opts: { sourceId: string; }) => Promise<string[]>",
@@ -1200,7 +1200,7 @@
           "updateSourceConfig: (sourceId: string, patch: Record<string, unknown>) => Promise<boolean>",
           "updateTake: (pageId: number, rowNum: number, fields: { weight?: number; since_date?: string; source?: string; }) => Promise<void>",
           "updateTakeEmbeddings: (rowsIn: TakeEmbeddingInput[], opts?: BatchOpts) => Promise<number>",
-          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; } & BatchOpts) => Promise<void>",
+          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
           "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; selfContained?: boolean; }) => Promise<T>",
@@ -3352,7 +3352,7 @@
           "searchVector: (embedding: Float32Array, opts?: SearchOpts) => Promise<SearchResult[]>",
           "setConfig: (key: string, value: string) => Promise<void>",
           "setEmotionalWeightBatch: (rows: EmotionalWeightWriteRow[]) => Promise<number>",
-          "setPageAliases: (slug: string, sourceId: string, aliasNorms: string[]) => Promise<void>",
+          "setPageAliases: (slug: string, sourceId: string, aliasNorms: string[], opts?: { inline?: boolean; }) => Promise<void>",
           "setPageEmbeddingSignature: (slug: string, opts: { sourceId?: string; signature: string; }) => Promise<void>",
           "softDeletePage: (slug: string, opts?: { sourceId?: string; }) => Promise<{ slug: string; } | null>",
           "softDeletePages: (slugs: string[], opts: { sourceId: string; }) => Promise<string[]>",
@@ -3371,7 +3371,7 @@
           "updateSourceConfig: (sourceId: string, patch: Record<string, unknown>) => Promise<boolean>",
           "updateTake: (pageId: number, rowNum: number, fields: { weight?: number; since_date?: string; source?: string; }) => Promise<void>",
           "updateTakeEmbeddings: (rows: TakeEmbeddingInput[], opts?: BatchOpts) => Promise<number>",
-          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; } & BatchOpts) => Promise<void>",
+          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
           "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; selfContained?: boolean; }) => Promise<T>",
@@ -3615,6 +3615,7 @@
       {
         "kind": "interface",
         "members": [
+          "incarnation?: string | undefined",
           "slug: string",
           "sourceId: string"
         ],
@@ -3667,8 +3668,10 @@
         "kind": "interface",
         "members": [
           "allowEmptyOverwrite?: boolean | undefined",
+          "contextualRetrieval?: { mode: string; corpusGeneration: string | null; } | undefined",
           "expectedRevision?: string | undefined",
           "force?: boolean | undefined",
+          "inline?: boolean | undefined",
           "sourceId?: string | undefined"
         ],
         "name": "PageWriteOptions"
@@ -4464,7 +4467,7 @@
         "kind": "function",
         "name": "importFromContent",
         "signature": [
-          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; coordinated?: boolean; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; remote?: boolean; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
+          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; coordinated?: boolean; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; remote?: boolean; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
         ]
       },
       {
@@ -4865,7 +4868,7 @@
         "kind": "function",
         "name": "buildBasenameIndex",
         "signature": [
-          "(slugs: Iterable<string>) => Map<string, string[]>"
+          "(slugs: Iterable<string>, idx?: Map<string, string[]>) => Map<string, string[]>"
         ]
       },
       {
@@ -4970,7 +4973,7 @@
         "kind": "function",
         "name": "makeResolver",
         "signature": [
-          "(engine: BrainEngine, opts?: { mode: \"batch\" | \"live\"; sourceId?: string; }) => SlugResolver"
+          "(engine: BrainEngine, opts?: { mode: \"batch\" | \"live\"; sourceId?: string; basenameIndex?: () => Promise<Map<string, string[]>>; }) => SlugResolver"
         ]
       },
       {
@@ -6254,7 +6257,7 @@
           "searchVector: (embedding: Float32Array, opts?: SearchOpts) => Promise<SearchResult[]>",
           "setConfig: (key: string, value: string) => Promise<void>",
           "setEmotionalWeightBatch: (rows: EmotionalWeightWriteRow[]) => Promise<number>",
-          "setPageAliases: (slug: string, sourceId: string, aliasNorms: string[]) => Promise<void>",
+          "setPageAliases: (slug: string, sourceId: string, aliasNorms: string[], opts?: { inline?: boolean; }) => Promise<void>",
           "setPageEmbeddingSignature: (slug: string, opts: { sourceId?: string; signature: string; }) => Promise<void>",
           "softDeletePage: (slug: string, opts?: { sourceId?: string; }) => Promise<{ slug: string; } | null>",
           "softDeletePages: (slugs: string[], opts: { sourceId: string; }) => Promise<string[]>",
@@ -6273,7 +6276,7 @@
           "updateSourceConfig: (sourceId: string, patch: Record<string, unknown>) => Promise<boolean>",
           "updateTake: (pageId: number, rowNum: number, fields: { weight?: number; since_date?: string; source?: string; }) => Promise<void>",
           "updateTakeEmbeddings: (rowsIn: TakeEmbeddingInput[], opts?: BatchOpts) => Promise<number>",
-          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; } & BatchOpts) => Promise<void>",
+          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
           "walRepairReceipt: WalRepairReceipt | null",

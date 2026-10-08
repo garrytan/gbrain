@@ -1681,7 +1681,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync.bulk',
   'sync.bulk_size',
   'sync.bulk_max_txn_ms',
-  'sync.lanes',
+  'sync.lanes', 'sync.waive_batch', 'persistence.single_write_group', 'persistence.preadmit_cache', // the last three: write-path kill switches (persistence/switches.ts)
   // Persisted indexing scope (comma/newline-separated glob list; trailing '/'
   // normalizes to a '/**' subtree glob). Read best-effort at the top of
   // performSyncInner and UNIONED with any per-call --exclude so internal

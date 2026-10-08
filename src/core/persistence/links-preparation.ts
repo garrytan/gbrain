@@ -1,13 +1,14 @@
 import type { BrainEngine } from '../engine.ts';
 import { isUndefinedTableError } from '../utils.ts';
 import type { ParsedPage } from '../import-file.ts';
-import { extractPageLinks, isGlobalBasenameEnabled, makeResolver, resolvedLinkCandidate } from '../link-extraction.ts';
+import { buildBasenameIndex, extractPageLinks, isGlobalBasenameEnabled, makeResolver, resolvedLinkCandidate } from '../link-extraction.ts';
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
 import { DerivedLinkEndpointChangedError } from '../derived-links.ts';
 import { capturedLinkEndpoints, indexLinkSources, loadLinkSourcePolicy, resolveCandidateSources } from '../link-reconciliation.ts';
 import { collectWantedLinks, isWantedPagesEnabled, possibleWantedRows } from '../wanted-links.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { lineGrammarOptions } from '../line-grammar.ts';
+import { primeRelationSemantics } from '../link-semantics-pack.ts';
 
 async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: string[]): Promise<Map<string, string>> {
   if (!targets.length) return new Map();
@@ -23,9 +24,63 @@ async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: s
   }
 }
 
+interface SourceSlugIndex { count: number; hash: bigint; maxId: number; index: Map<string, string[]> }
+const sourceSlugIndexes = new WeakMap<BrainEngine, Map<string, Promise<SourceSlugIndex | null>>>();
+const SLUG_FINGERPRINT = 'count(*)::int AS n, coalesce(sum(hashtextextended(slug, 0)), 0)::text AS h, coalesce(max(id), 0)::int AS m';
+
+async function refreshSourceSlugIndex(engine: BrainEngine, sourceId: string, state: SourceSlugIndex | null): Promise<SourceSlugIndex> {
+  if (state) {
+    const [probe] = await engine.executeRaw<{ n: number; h: string; m: number; added: string[]; added_h: string }>(`SELECT ${SLUG_FINGERPRINT},
+      coalesce(array_agg(slug) FILTER (WHERE id > $2), '{}') AS added, coalesce(sum(hashtextextended(slug, 0)) FILTER (WHERE id > $2), 0)::text AS added_h
+      FROM pages WHERE source_id=$1`, [sourceId, state.maxId]);
+    const hash = BigInt(probe!.h);
+    if (!probe!.added.length && probe!.n === state.count && hash === state.hash) return state;
+    if (probe!.n === state.count + probe!.added.length && hash === state.hash + BigInt(probe!.added_h)) {
+      return { count: probe!.n, hash, maxId: probe!.m, index: buildBasenameIndex(probe!.added, state.index) };
+    }
+  }
+  const [all] = await engine.executeRaw<{ n: number; h: string; m: number; slugs: string[] }>(
+    `SELECT ${SLUG_FINGERPRINT}, coalesce(array_agg(slug), '{}') AS slugs FROM pages WHERE source_id=$1`, [sourceId]);
+  return { count: all!.n, hash: BigInt(all!.h), maxId: all!.m, index: buildBasenameIndex(all!.slugs) };
+}
+
+/**
+ * The basename index of every slug in a source (getAllSlugs' set), kept per
+ * engine and source across link preparations. Each call fingerprints the
+ * source's slugs (count, hash sum, max id) and reuses the index when nothing
+ * changed, adds the new rows when only inserts happened, else rebuilds; so a
+ * write from any process is seen exactly as the per-page slug read saw it.
+ */
+async function sourceBasenameIndex(engine: BrainEngine, sourceId: string): Promise<Map<string, string[]>> {
+  const bySource = sourceSlugIndexes.get(engine) ?? new Map<string, Promise<SourceSlugIndex | null>>();
+  sourceSlugIndexes.set(engine, bySource);
+  const next = (bySource.get(sourceId) ?? Promise.resolve(null)).then(state => refreshSourceSlugIndex(engine, sourceId, state));
+  bySource.set(sourceId, next.catch(() => null));
+  return (await next).index;
+}
+
+/**
+ * Link endpoints by slug: every live page in the origin source, plus other
+ * sources' pages for the slugs the origin lacks or a link names elsewhere ($3).
+ * The origin read and each source's residual read use (source_id, slug).
+ */
+export const LINK_ENDPOINTS_SQL = `WITH own AS (
+    SELECT slug, source_id, type, knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL),
+  elsewhere AS (SELECT array_agg(k) AS refs FROM unnest($2::text[]) k WHERE k=ANY($3::text[]) OR NOT EXISTS (SELECT 1 FROM own WHERE own.slug=k))
+  SELECT slug, source_id, type, knowledge_revision FROM own
+  UNION ALL
+  SELECT p.slug, p.source_id, p.type, p.knowledge_revision FROM elsewhere e, sources s, LATERAL (SELECT slug, source_id, type, knowledge_revision
+    FROM pages WHERE source_id=s.id AND slug=ANY(e.refs) AND deleted_at IS NULL OFFSET 0) p
+  WHERE s.id<>$1`;
+
+/**
+ * `primeSemantics`: install the pack relation semantics now, during preparation, so apply's
+ * replacement does not read them again inside the publication transaction.
+ */
 export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
-  page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'>, sourceId: string) {
-  const resolver = makeResolver(engine, { mode: 'live', sourceId });
+  page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'>, sourceId: string, primeSemantics = false) {
+  if (primeSemantics) await primeRelationSemantics(engine);
+  const resolver = makeResolver(engine, { mode: 'live', sourceId, basenameIndex: () => sourceBasenameIndex(engine, sourceId) });
   const opts = { globalBasename: await isGlobalBasenameEnabled(engine), lineGrammar: await lineGrammarOptions(engine),
     pack: (await loadActivePackForLocalEngine(engine, { sourceId }))?.manifest ?? null };
   if (!opts.pack) return { pageKeys: [{ sourceId, slug }], attendanceComplete: true,
@@ -39,8 +94,9 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   const retarget = <T extends { targetSlug: string; targetSourceId?: string }>(c: T): T =>
     aliases.has(c.targetSlug) && (c.targetSourceId ?? sourceId) === sourceId ? { ...c, targetSlug: aliases.get(c.targetSlug)! } : c;
   const keys = [...new Set([...referenced, ...initial.candidates.map(retarget).flatMap(c => [c.targetSlug, c.fromSlug ?? slug])])].sort();
-  const endpointRows = await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(
-    'SELECT slug, source_id, type, knowledge_revision FROM pages WHERE slug=ANY($1::text[]) AND deleted_at IS NULL', [keys]);
+  // Another source's same-slug page only decides a slug the origin lacks (a counted cross_source drop) or one a link names there.
+  const endpointRows = await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(LINK_ENDPOINTS_SQL,
+    [sourceId, keys, [...new Set(initial.candidates.filter(c => c.targetSourceId && c.targetSourceId !== sourceId).map(c => c.targetSlug))]]);
   const endpoints = indexLinkSources(endpointRows);
   const policy = await loadLinkSourcePolicy(engine, sourceId);
   const metadata = new Map(endpointRows.map(row => [`${row.source_id}\0${row.slug}`, row]));
@@ -73,7 +129,7 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
     if (!snapshot) throw new Error('Automatic link origin disappeared');
     try {
       const result = await tx.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
-        sourceIncarnation: snapshot.sourceIncarnation }, rows, { preserveExisting: true, wanted: { ...wanted, producers: [...wanted.producers] },
+        sourceIncarnation: snapshot.sourceIncarnation, snapshot }, rows, { preserveExisting: true, semanticsPrimed: primeSemantics, wanted: { ...wanted, producers: [...wanted.producers] },
         expectedEndpoints: capturedLinkEndpoints(rows, new Map([...metadata,
           [`${sourceId}\0${slug}`, { slug, source_id: sourceId, type: page.type, knowledge_revision: snapshot.revision }]]))
           .filter(endpoint => endpoint.slug !== slug || endpoint.sourceId !== sourceId) });

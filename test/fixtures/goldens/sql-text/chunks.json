@@ -621,8 +621,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -630,8 +630,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -641,6 +641,12 @@
             ],
             "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
             "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
           },
           {
             "lane": "tx",
@@ -669,12 +675,6 @@
             ],
             "sql": "DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index != ALL($2)",
             "textSha256": "dc4fdfddf00f65b0aad2aa0ec3f1e3a981e7c61f2253f485925d90c371ba372c"
-          },
-          {
-            "lane": "tx",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
           },
           {
             "lane": "tx",
@@ -709,8 +709,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -718,8 +718,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -729,6 +729,12 @@
             ],
             "sql": "SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE",
             "textSha256": "6c2eb61492fe7470a32169e89b9f04d471f3311d55ff790ad08f4736af483a2c"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
           },
           {
             "lane": "tx",
@@ -757,12 +763,6 @@
             ],
             "sql": "DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index != ALL($2)",
             "textSha256": "dc4fdfddf00f65b0aad2aa0ec3f1e3a981e7c61f2253f485925d90c371ba372c"
-          },
-          {
-            "lane": "tx",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
           },
           {
             "lane": "tx",
@@ -797,8 +797,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -806,8 +806,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -879,8 +879,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -888,8 +888,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -951,8 +951,8 @@
               "string",
               "string"
             ],
-            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) VALUES ($1::uuid,$2) ON CONFLICT DO NOTHING",
-            "textSha256": "fa56fa770a66caa8ae77b19c2c3ae9caac336d8e8281bc16f09d36a7fcdd74fd"
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$1 FROM sources WHERE id=$2 ON CONFLICT DO NOTHING",
+            "textSha256": "91584b13aae786f054e246bcc667c9ebe8c065d61b42d5ae775634739bce9f54"
           },
           {
             "lane": "tx",
@@ -960,8 +960,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT slug FROM page_write_guards WHERE source_incarnation=$1::uuid AND slug=$2 FOR UPDATE",
-            "textSha256": "3d08e10394edab70fb78946e378dd11528213526b214a8516d8cf3825e87ac19"
+            "sql": "SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g",
+            "textSha256": "becdf4418f95796c9bab86a61f0f6e9d42bba2f74baedfe40ba9d9705977d77a"
           },
           {
             "lane": "tx",
@@ -982,6 +982,12 @@
             ],
             "sql": "WITH chosen AS ( SELECT p.* FROM pages p WHERE p.slug=$1 AND p.source_id=$2 AND p.deleted_at IS NULL ORDER BY (p.slug=$3) DESC, (p.source_id=$4) DESC, p.source_id ASC LIMIT 1 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body, (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline FROM chosen p",
             "textSha256": "22ce659b8fb6104bf08b6ee101bd0e0bafb2769bb7c399380a38e9a4a26c693e"
+          },
+          {
+            "lane": "tx",
+            "params": [],
+            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
+            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
           },
           {
             "lane": "tx",
@@ -1010,12 +1016,6 @@
             ],
             "sql": "DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index != ALL($2)",
             "textSha256": "dc4fdfddf00f65b0aad2aa0ec3f1e3a981e7c61f2253f485925d90c371ba372c"
-          },
-          {
-            "lane": "tx",
-            "params": [],
-            "sql": "SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')",
-            "textSha256": "0c97097b286eb3415cffbfa812bc301187d88bc7a5266678332b0f4c8c571371"
           },
           {
             "lane": "tx",

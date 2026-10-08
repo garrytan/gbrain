@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { viewedEngine } from '../persistence/switches.ts';
 import { fileURLToPath } from 'node:url';
 import { OperationError } from '../ops/contract.ts';
 import { isRelativeFileUri, resolveSourceLocalFilePath } from '../markdown.ts';
@@ -31,7 +32,7 @@ const packsInTransaction = new WeakMap<object, Promise<PackRoot[]>>();
 /** Engines (the connection owner, not a transaction view of it) whose schema has shared_skill_packs; migrations never drop it. */
 const packTablePresent = new WeakSet<object>();
 function connectionOwner(engine: object): object {
-  let owner = engine;
+  let owner = viewedEngine(engine);
   while (Object.hasOwn(owner, '_pageTransaction') && (owner as { _pageTransaction?: boolean })._pageTransaction === true) owner = Object.getPrototypeOf(owner);
   return owner;
 }

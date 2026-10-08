@@ -12,6 +12,7 @@
  * `SyncResult.drain`; the CLI turns it into the exit code and `next`.
  */
 import { randomUUID } from 'node:crypto';
+import type { LanesCap } from './sync-group.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -53,8 +54,16 @@ export interface DrainReport {
     /** #5984 admit-ahead: groups admitted while the previous group was still publishing. */
     admitted_ahead: number;
     /** #5984 lanes: groups published at once, as asked and as in effect at the end, and why fewer. */
-    lanes: { configured: number; effective: number; reason: string | null; step_down: string | null; overlapped_groups: number; fallbacks: number } };
+    lanes: LanesReport };
 }
+
+/** #5984 lanes: groups published at once (maximum asked, ceiling at start, in effect at the end), and what limited them. */
+export interface LanesReport { maximum: number; configured: number; effective: number; reason: string | null; step_down: string | null; overlapped_groups: number; fallbacks: number;
+  /** Mean lane transactions open while at least one was, apply time per page, share of lane time spent waiting to commit in order. */
+  busy?: number | null; apply_ms_per_page?: number | null; turn_wait_share?: number | null;
+  limited_by?: LanesLimit }
+/** What held the drain's throughput, and what raises it (none when nothing a setting changes would help). */
+export interface LanesLimit { kind: 'lanes_off' | 'database_contention' | 'feeder' | 'pool' | 'maximum'; message: string; raise: string | null }
 
 const TERMINAL_STATUSES = new Set(['synced', 'first_sync', 'up_to_date', 'dry_run']);
 const BLOCKED_HEAD_REASONS = new Set(['recovery_required', 'owner_unavailable', 'unexpected_file_bytes', 'unexpected_staging_bytes']);
@@ -150,7 +159,7 @@ export interface DrainInput {
   /** Throttled progress lines on stderr (CLI). */
   announce?: boolean;
   /** Publication mode for the report and the start line. */
-  bulk?: { enabled: boolean; reason: string | null; lanes?: number; lanesReason?: string | null };
+  bulk?: { enabled: boolean; reason: string | null; lanes?: number; lanesMax?: number; lanesReason?: string | null; lanesCap?: LanesCap };
   /** Test seams: the no-progress window, the pause after a pending write and the transient backoff base. */
   stallMs?: number;
   pauseMs?: number;
@@ -196,7 +205,8 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     return { ...result, drain: { outcome, ...(stopReason ? { stop_reason: stopReason } : {}), passes, processed: written + waived, written, waived,
       remaining: left, ...drainEstimate(left, written + waived, Date.now() - startedAt),
       ...(input.bulk ? { bulk: { enabled: input.bulk.enabled, reason: input.bulk.reason, groups, grouped_pages: groupedPages, largest_group: largestGroup, admitted_ahead: admittedAhead,
-        lanes: { configured: input.bulk.lanes ?? 1, effective: lanes?.effective ?? input.bulk.lanes ?? 1, reason: input.bulk.lanesReason ?? null, step_down: lanes?.stepDown ?? null, overlapped_groups: lanes?.overlapped ?? 0, fallbacks: lanes?.fallbacks ?? 0 } } } : {}), ...extra } };
+        lanes: { maximum: input.bulk.lanesMax ?? input.bulk.lanes ?? 1, configured: input.bulk.lanes ?? 1, effective: lanes?.effective ?? input.bulk.lanes ?? 1, reason: input.bulk.lanesReason ?? null,
+          step_down: lanes?.stepDown ?? null, overlapped_groups: lanes?.overlapped ?? 0, fallbacks: lanes?.fallbacks ?? 0 } } } : {}), ...extra } };
   };
   try {
     for (;;) {
@@ -292,21 +302,52 @@ export async function drainManagedSync(engine: BrainEngine, opts: SyncOpts, anno
   const { performManagedSync } = await import('./sync-run.ts');
   const { resolveBulkSettings } = await import('./sync-group.ts');
   const drainStartedAt = opts.drainStartedAt ?? Date.now();
-  const bulk = await resolveBulkSettings(engine, opts.noBulk, opts.lanes);
+  const { preparationConfigView } = await import('./config-snapshot.ts');
+  const bulk = await resolveBulkSettings(await preparationConfigView(engine), opts.noBulk, opts.lanes);
+  // #5984 G3: open the pool's connections while the run's startup reads go one at a time, so the waiver screen and
+  // the first group do not wait for connection setup.
+  if (bulk.enabled) void Promise.all(Array.from({ length: Math.min(8, (bulk.lanes ?? 1) + 2) }, () => engine.executeRaw('SELECT 1').catch(() => undefined)));
   // #5984 lanes: one lane run per drain; its groups carry the id and this process claims them out of FIFO order.
   const laneRun = bulk.enabled && (bulk.lanes ?? 1) > 1 ? randomUUID() : undefined;
   const { closeLaneRun } = await import('./sync-lanes.ts');
+  let result: SyncResult | undefined;
   try {
-    return await runDrain({ signal: opts.signal, onProgress: opts.onProgress, probe: engineStallProbe(engine), announce,
-      bulk: { enabled: bulk.enabled, reason: bulk.reason, lanes: bulk.lanes ?? 1, lanesReason: bulk.lanesReason ?? null },
+    result = await runDrain({ signal: opts.signal, onProgress: opts.onProgress, probe: engineStallProbe(engine), announce,
+      bulk: { enabled: bulk.enabled, reason: bulk.reason, lanes: bulk.lanes ?? 1, lanesMax: bulk.lanesMax, lanesReason: bulk.lanesReason ?? null, lanesCap: bulk.lanesCap },
       pass: (signal, onProgress) => performManagedSync(engine, { ...opts, signal, onProgress, drainStartedAt, ...(bulk.enabled ? { bulk: { ...bulk, laneRun } } : {}) }) });
   } finally {
     if (laneRun) {
-      await closeLaneRun(laneRun);
+      const stats = await closeLaneRun(laneRun);
       const { cancelOrphanedLaneRows } = await import('./sync-window.ts');
-      await cancelOrphanedLaneRows(engine, laneRun).catch(() => undefined);
+      await cancelOrphanedLaneRows(engine, laneRun, result?.drain?.outcome === 'blocked' ? 10_000 : 0).catch(() => undefined);
+      const lanes = result?.drain?.bulk?.lanes;
+      if (lanes && stats) Object.assign(lanes, { busy: stats.busy, apply_ms_per_page: stats.applyMsPerPage, turn_wait_share: stats.turnWaitShare });
     }
   }
+  const lanes = result.drain?.bulk?.enabled ? result.drain.bulk.lanes : undefined;
+  if (lanes && (result.drain!.written > 0 || lanes.configured === 1)) {
+    lanes.limited_by = lanesLimit(lanes, bulk.lanesCap);
+    if (announce) serr(`[sync] lanes: ${lanes.effective} of ${lanes.maximum}${lanes.busy != null ? `, ${lanes.busy} busy on average` : ''}; ${lanes.limited_by.message}${lanes.limited_by.raise ? ` ${lanes.limited_by.raise}` : ''}`);
+  }
+  return result;
+}
+
+/**
+ * #5984 (E5): what limited a drain's lanes, for the agent. A lock or statement timeout that lowered the lane
+ * count comes first, then lanes that were mostly idle (the sync side did not prepare groups fast enough), then
+ * the connection pool, then the configured maximum.
+ */
+export function lanesLimit(lanes: Pick<LanesReport, 'maximum' | 'configured' | 'effective' | 'step_down' | 'busy'>, cap: LanesCap | undefined): LanesLimit {
+  if (lanes.configured <= 1) return { kind: 'lanes_off', message: 'lanes are off, so one group publishes at a time.',
+    raise: 'Drop --no-lanes, or run gbrain config set sync.lanes 16, to publish groups in parallel.' };
+  if (lanes.step_down) return { kind: 'database_contention', message: `lanes stepped down to ${lanes.effective} after ${lanes.step_down}.`,
+    raise: 'The database was contended; rerun when it is less busy. No setting raises this.' };
+  if (lanes.busy != null && lanes.busy < 0.75 * lanes.effective) return { kind: 'feeder',
+    message: `lanes waited for the sync loop to prepare groups (${lanes.busy} of ${lanes.effective} busy on average).`, raise: null };
+  if (cap === 'pool') return { kind: 'pool', message: `the connection pool allowed ${lanes.configured} of ${lanes.maximum} lanes.`,
+    raise: `Set GBRAIN_POOL_SIZE=${lanes.maximum + 4} for ${lanes.maximum} lanes, if the database has the connections to spare.` };
+  return { kind: 'maximum', message: `the configured maximum of ${lanes.maximum} lanes was in use.`,
+    raise: lanes.maximum < 16 ? 'Pass gbrain sync --lanes 16, or run gbrain config set sync.lanes 16, to allow more.' : null };
 }
 
 export interface DrainNext {

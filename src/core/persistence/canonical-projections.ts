@@ -417,15 +417,16 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       await pipelined(tx, timelineRows);
       return { timelineRowsRemoved: removedSummary(removedDates) };
     }
+    // The timeline rows are independent of the fact and take rows, so they ride in the first pipeline.
     if (factRows.length) {
-      await pipelined(tx, [expireFacts]);
+      await pipelined(tx, [expireFacts, ...timelineRows]);
       await tx.insertFacts(factRows, { source_id: sourceId }); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction
       await pipelined(tx, [...factFields, checkTakes, dropTakes]);
-    } else await pipelined(tx, [expireFacts, checkTakes, dropTakes]);
+    } else await pipelined(tx, [expireFacts, checkTakes, dropTakes, ...timelineRows]);
     if (takes.length) {
       await tx.addTakesBatch(takes.map(t => takesPreparation.toCanonicalBatchInput(id, t)));
-      await pipelined(tx, [...resolveTakes, ...timelineRows]);
-    } else await pipelined(tx, timelineRows);
+      await pipelined(tx, resolveTakes);
+    }
     return { timelineRowsRemoved: removedSummary(removedDates) };
   };
 }

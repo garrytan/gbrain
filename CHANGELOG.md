@@ -10,6 +10,85 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.111.0] - 2026-10-08
+
+**Managed Postgres sync catches up more than twice as fast, starts committing in about 18 seconds instead of 80, and a page you save during a catch-up no longer waits behind it.**
+
+When a git source falls behind on a managed brain whose database is far away (57 ms round trips in our test), `gbrain sync` used to spend most of its time with idle connections: one process prepared the next batch of pages one statement at a time while up to six publishers waited. A 10,000-page backlog took about 75 minutes, the first page landed after about 80 seconds, and a `put_page` from your agent took 9 to 12 seconds even when nothing else was running. Now batches are prepared in bulk, publishers stay busy, a single page write takes about 2.5 seconds, and a foreground write publishes beside the running sync batches when it doesn't touch the same page.
+
+### How to use it
+
+```bash
+gbrain sync --source <id>                          # nothing to change: the defaults pick up the new path
+gbrain config set sync.lanes 12                    # up to 16 publishers, clamped by the connection pool
+gbrain config set sync.foreground_priority false   # back to strict arrival order for page writes during a sync
+GBRAIN_PG_TYPE_CACHE=0 gbrain serve                # turn off the shared parameter-type cache if a driver issue appears
+```
+
+### The numbers that matter
+
+Same 16-core machine and same Postgres, 57 ms round trips, default settings, master before vs this release.
+
+| What you do | Before | Now |
+|---|---|---|
+| Catch up a 10,000-page backlog | 74.5 min | 33.6 min |
+| Pages per minute once the catch-up is running | 175 | 368 |
+| Time until the first page is committed | 79 s | 18 s |
+| Save one page with nothing else running (typical / slow) | 8.6 s / 11.6 s | 2.5 s / 2.7 s |
+| Save one page during a catch-up (typical / slow) | 11.3 s / 17.1 s | 3.1 s / 4.1 s |
+| Catch-up speed while your agent saves a page every 5 s | 0.4 pages/min, 115 of 120 saves failed | 174 pages/min, no saves failed |
+| Catch-up next to the database (about 0 ms) | 2,404 pages/min | 3,332 pages/min |
+
+### Things to watch
+
+- **More publishers help up to a point.** With a 20-connection pool, 8 to 16 publishers all run at about 400 to 410 pages/min against 378 at the default 6. The drain prints a `[sync] lanes:` line saying what limited it (the pool, the server's free connections or your setting).
+- **Writes during a catch-up still cost something.** A page save takes about 1.5 s longer at the slow end than with nothing running, and a save every 5 s slows the catch-up to about 45% of its idle speed. With a save every 5 s the slowest saves (p95) take about 22 s.
+- **Every new path has a switch** that accepts `0` or `false`: `persistence.single_write_group`, `persistence.preadmit_cache`, `sync.waive_batch`, `sync.foreground_priority` (environment: `GBRAIN_SINGLE_WRITE_GROUP`, `GBRAIN_PREADMIT_CACHE`, `GBRAIN_SYNC_WAIVE_BATCH`, `GBRAIN_SYNC_FOREGROUND_PRIORITY`). A running `serve` picks up a config change within 5 seconds.
+
+### Itemized changes
+
+- Sync feeder: a group's admission and the cursor save that records it are one transaction; window groups are admitted in batches with the request inserts and counter updates pipelined; admit-ahead never asks for more requests than the writer's outstanding limit leaves room for (it used to refuse at 8+ lanes and on a local database, serializing the lanes).
+- Lanes: up to 16 (`sync.lanes`, `--lanes`), clamped by the pool and the server's free connections; groups are sized by measured apply time inside a 5 s budget (2 s while foreground writes are recent), and the first group is one or two pages. Group publication pipelines the page apply.
+- Startup: runs of entries that need no write (already-deleted files, unchanged imports) are waived in one transaction instead of one each.
+- Single page writes publish as a group of one on a warm reserved connection, with a per-process cache of pre-admission reads that admission rechecks under lock, and the writer's own admission claims the request directly.
+- Foreground priority: a page write that names no queued or running sync group's page (slug, page id or rename source) publishes beside the running lane groups in the sync process; new lane groups wait only while such a write waits to be claimed, and background effects defer to lanes instead of interrupting them. A sync group naming the page keeps its place. Every reader of request sequence order was audited for writes committed out of order; receipt health now judges a claimed write only against earlier started writes.
+- Postgres: described parameter types are shared across a pool's connections (patched `postgres@3.4.9`, `GBRAIN_PG_TYPE_CACHE=0` turns it off); managed link extraction derives four pages at once with one config read per run.
+- A sync group member after an uncommitted member is cancelled, never published ahead of it (#6252).
+- Write receipts no longer call an ordinary publication in progress `blocked` / `recovery_required`: a request needs recovery only when it is recovering or holds a recovery record without a live claim, and the requests behind a live publication show as waiting (#6275).
+- Remote `put_page` skips the similar-pages advisory while `put_page.similar_pages` is off (the default) and runs it with JIT off when on; remote `get_page` / `fetch` read the page with JIT off, so brains past about 1,000 pages stop paying JIT compile time on every call (#6276).
+- `gbrain sources refresh` refuses `git_unavailable` when a git read of the checkout's branch or remote (`symbolic-ref`, `remote`, `config --get`) fails or times out, instead of reading it as a detached HEAD or no remote and skipping the fetch; a checkout that is not Git refuses `refresh_no_upstream` with its own message.
+- Bench: `scripts/bench/managed-sync-catchup.ts` reports feeder and lane timing, steady state, per-write foreground spans, an open-loop foreground row and `--pool-size`; results in `docs/eval/managed-sync-catchup.md`.
+
+## [0.60.110.0] - 2026-10-08
+
+**Reverts the Windows backup cold-start retry from v0.60.109.0, which turned master red.**
+
+The retry launched PowerShell a second time after any 15-second timeout. The Windows ARM backup controls deliberately run a PowerShell program that hangs, and they require every failing launch to be bounded to one attempt; with the retry each took two launches (30 s). A first Windows backup on a cold machine whose PowerShell start passes 15 s fails again, as before v0.60.109.0. The order hunt, the contract drain fix and the shard weights from v0.60.109.0 stay.
+
+## To take advantage of v0.60.110.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
+## [0.60.109.0] - 2026-10-08
+
+**A Windows backup no longer fails on a cold machine's first PowerShell start, and a new nightly job catches tests that leak state into the next one.**
+
+On Windows, gbrain runs PowerShell to make a new backup folder owner-only, with a 15-second limit. On a freshly started machine PowerShell's first launch alone sometimes takes longer (measured 3.3 to 27.7 seconds on fresh CI runners; later launches take 0.2 to 1.5 seconds), so the first backup failed. A launch killed by that limit is now retried once. Any other failure, or a second timeout, still refuses with `private_backup_path_unavailable`. This is a single bounded retry on a classified timeout, not a longer limit: the script only sets and verifies the access rules of the same new empty path, so running it again is safe.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| First Windows backup on a cold machine whose PowerShell start passes 15 s | fails with `private_backup_path_unavailable` | retried once and protected |
+
+For contributors and agents working on gbrain:
+
+- **Order hunt.** The nightly E2E workflow's new `order-hunt` job runs every E2E file in a seeded random order on one shared database per shard. A file that fails after the files before it but passes alone is reported as order-dependent, with the exact command to replay that order. It is keyless and outside `e2e-status`. Run it on demand with `gh workflow run e2e.yml -f order_hunt=true`. Runbook: `docs/ci-red-runbook.md#order-hunt`.
+- **Contract harness.** The managed connector job contract's queue drain registers only the drained jobs' handlers, so a page write's `facts-absorb` follow-up queued mid-drain is no longer claimed and counted as an extraction model call (the E2E nightly's `extract_conversation_facts_prose` failure).
+- **Shard weights.** Unit weights are re-mined from master push run 37737296716, so the scheduled `check:weight-coverage` passes.
+
+## To take advantage of v0.60.109.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
 ## [0.60.108.0] - 2026-10-08
 
 **Wave 9 follow-ups: managed brains get receipts for every fact and take they write, old "Date:" facts can be cleaned up for free, and a handful of quiet overwrites and false "done" reports stop.**

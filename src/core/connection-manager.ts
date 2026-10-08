@@ -38,7 +38,7 @@
 
 import postgres from '#postgres'
 import { traceSqlOptions } from './sql-trace.ts';
-import { resolvePrepare, resolveSessionTimeouts, resolvePoolSize, resolveMaxLifetimeSeconds, resolveUrlConnectTimeout, endPoolBounded } from './db.ts';
+import { resolvePrepare, resolveSessionTimeouts, resolvePoolSize, resolveMaxLifetimeSeconds, resolveUrlConnectTimeout, resolveSharedTypes, endPoolBounded } from './db.ts';
 import { redactPgUrl } from './url-redact.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 
@@ -353,6 +353,7 @@ export class ConnectionManager {
       types: { bigint: postgres.BigInt },
       onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
       onpoisoned: (status: string) => this.opts.onpoisoned?.('read', status),
+      shared_types: resolveSharedTypes(),
     };
     const timeouts = resolveSessionTimeouts();
     if (Object.keys(timeouts).length > 0) opts.connection = timeouts;
@@ -504,6 +505,7 @@ export class ConnectionManager {
       prepare: true,
       onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
       onpoisoned: (status: string) => this.opts.onpoisoned?.('direct', status),
+      shared_types: resolveSharedTypes(),
       // Apply DDL session GUCs as connection startup parameters (durable
       // through any intermediary pooling layer, same trick as
       // resolveSessionTimeouts).

@@ -13,6 +13,9 @@ import { inspectUnchanged, screeningRequest, type NoopKernelWaiver } from './noo
 import { validateSyncAuthority, type SyncAuthority } from './sync-authority.ts';
 import { readSyncFile } from './sync-discovery.ts';
 import { assertSyncPageOrigin, syncOriginScope } from './sync-origin.ts';
+import { faultPoint } from './fault-points.ts';
+import { pipelined } from '../page-state/transactions.ts';
+import { REVISION_BACKFILL_PENDING } from '../page-state/types.ts';
 
 export interface WaiverCursor { sourceId: string; incarnation: string; root: string; gitRoot: string; slugMode: 'git-root' | 'source-root';
   binding: { worktree_id: string }; authority: SyncAuthority; runId: string; index: number }
@@ -42,21 +45,9 @@ export const UNFINISHED_PAGE_REQUEST_SQL = `SELECT 1 FROM (
  */
 export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine, cursor: C, pending: WaiverEntry, config: GBrainConfig, key: string,
   advance: (tx: BrainEngine, waived: NoopWaiver) => Promise<C>, reread: (tx: BrainEngine) => Promise<C>): Promise<C | null> {
-  if (!noopWaiversEnabled() || pending.pageId === null) return null;
+  const waived = await screenWaiver(engine, cursor, pending, config);
+  if (!waived) return null;
   const intent = pending.intent;
-  let waived: NoopWaiver;
-  if (intent.kind === 'managed_sync_delete') {
-    if (intent.unownedDeletion || intent.renameFrom || intent.rawHash !== null || typeof intent.path !== 'string' || typeof intent.sourcePath !== 'string') return null;
-    const snapshot = await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
-    if (!softDeletedAt(snapshot, pending)) return null;
-    await validateSyncAuthority(engine, cursor.authority, pending.slug);
-    waived = { kind: 'delete', kernel: [] };
-  } else {
-    const kernel = await unchangedSyncImport(engine, cursor, pending, config);
-    if (!kernel) return null;
-    await validateSyncAuthority(engine, cursor.authority, pending.slug);
-    waived = { kind: 'import', kernel };
-  }
   return engine.transaction(async tx => {
     await tx.lockPageKeys([{ sourceId: cursor.sourceId, slug: pending.slug }]);
     const [held] = await tx.executeRaw<{ run_id: string | null; index: number | string | null; request_id: string | null }>(`SELECT completed_keys->0->>'runId' AS run_id,
@@ -72,6 +63,87 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
     if (unfinished.length) return null;
     return advance(tx, waived);
   });
+}
+
+/**
+ * The screen half of a waiver, before its transaction: whether this frozen,
+ * unadmitted entry's publication would change nothing (a delete of a page
+ * already soft-deleted at its frozen revision, or an unchanged import). A
+ * revoked sync authority throws.
+ */
+export async function screenWaiver(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig): Promise<NoopWaiver | null> {
+  if (!noopWaiversEnabled() || pending.pageId === null) return null;
+  const intent = pending.intent;
+  if (intent.kind === 'managed_sync_delete') {
+    if (intent.unownedDeletion || intent.renameFrom || intent.rawHash !== null || typeof intent.path !== 'string' || typeof intent.sourcePath !== 'string') return null;
+    const snapshot = await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
+    if (!softDeletedAt(snapshot, pending)) return null;
+    await validateSyncAuthority(engine, cursor.authority, pending.slug);
+    return { kind: 'delete', kernel: [] };
+  }
+  const kernel = await unchangedSyncImport(engine, cursor, pending, config);
+  if (!kernel) return null;
+  await validateSyncAuthority(engine, cursor.authority, pending.slug);
+  return { kind: 'import', kernel };
+}
+
+/** #5984: `GBRAIN_SYNC_WAIVE_BATCH=0` (or `sync.waive_batch=false`) waives one entry per transaction, as before. */
+export async function waiverBatchEnabled(engine: BrainEngine, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  const value = env.GBRAIN_SYNC_WAIVE_BATCH ?? await engine.getConfig('sync.waive_batch').catch(() => null);
+  return !(value === '0' || value === 'false');
+}
+export interface WaiverRunEntry { pending: WaiverEntry; waived: NoopWaiver }
+/**
+ * #5984 Phase 3: commits a run of consecutive screened waivers at the cursor
+ * head in one transaction. It takes every page guard (in the engine's key
+ * order) and then the cursor row, which must still be at the run's first entry
+ * with nothing pending; it re-validates each entry inside the transaction
+ * (page identity, revision and deleted state, file absence and origin for a
+ * delete, no unfinished request for the page) and advances only past the
+ * contiguous validated prefix. Returns null when not even the first entry
+ * holds, or on a lock or statement timeout, so the caller takes the per-entry
+ * path; `next` is the frozen entry that stopped the prefix, for that path to
+ * screen again without re-freezing; `reread` answers when another run moved
+ * the cursor.
+ */
+export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, cursor: C, run: readonly WaiverRunEntry[], key: string,
+  advance: (tx: BrainEngine, prefix: readonly WaiverRunEntry[]) => Promise<C>, reread: (tx: BrainEngine) => Promise<C>): Promise<{ cursor: C; waived: number; next?: WaiverEntry } | null> {
+  if (!run.length) return null;
+  try {
+    return await engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)");
+      await tx.lockPageKeys(run.map(entry => ({ sourceId: cursor.sourceId, slug: entry.pending.slug })));
+      const [held] = await tx.executeRaw<{ run_id: string | null; index: number | string | null; request_id: string | null }>(`SELECT completed_keys->0->>'runId' AS run_id,
+        completed_keys->0->'index' AS index,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE`, [key]);
+      if (held?.run_id !== cursor.runId || Number(held.index) !== cursor.index || held.request_id != null) return { cursor: await reread(tx), waived: 0 };
+      await faultPoint('sync:mid_waiver_run', { sourceId: cursor.sourceId });
+      const pages = await tx.executeRaw<{ id: number | string; slug: string; deleted: boolean; knowledge_revision: string | number | null }>(
+        'SELECT id,slug,deleted_at IS NOT NULL AS deleted,knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])', [cursor.sourceId, run.map(entry => entry.pending.slug)]);
+      const bySlug = new Map(pages.map(page => [page.slug, page]));
+      const scope = syncOriginScope(cursor);
+      const checks = await pipelined(tx, run.flatMap(({ pending, waived }) => [
+        () => tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, [cursor.binding.worktree_id, cursor.incarnation, cursor.sourceId, pending.slug, pending.pageId, String(pending.pageId)]),
+        () => waived.kind === 'delete'
+          ? assertSyncPageOrigin(tx, cursor.sourceId, pending.intent.sourcePath!, pending.pageId, true, scope).then(() => true, () => false)
+          : Promise.resolve(true),
+      ])) as Array<unknown[] | boolean>;
+      let valid = 0;
+      for (const [i, { pending, waived }] of run.entries()) {
+        const page = bySlug.get(pending.slug);
+        const revision = page ? page.knowledge_revision == null ? REVISION_BACKFILL_PENDING : String(page.knowledge_revision) : null;
+        if (!page || Number(page.id) !== pending.pageId || revision !== pending.intent.expected_revision) break;
+        if (waived.kind === 'delete' ? !page.deleted || readSyncFile(cursor.root, pending.intent.path!) !== null : page.deleted) break;
+        if ((checks[2 * i] as unknown[]).length || checks[2 * i + 1] !== true) break;
+        valid++;
+      }
+      if (!valid) return null;
+      return { cursor: await advance(tx, run.slice(0, valid)), waived: valid, ...(valid < run.length ? { next: run[valid]!.pending } : {}) };
+    });
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === '55P03' || code === '57014') return null;
+    throw error;
+  }
 }
 
 /** #5984: whether `waiveNoopEntry` would waive this frozen entry now (read-only; the bulk group stops before such an entry). */
