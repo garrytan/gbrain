@@ -10,6 +10,34 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.118.0] - 2026-10-08
+
+**The weight-miner's unit-test probe no longer depends on wall-clock scheduling: a fixed-timestamp fixture replaces a race-prone real-time assertion (#6312).**
+
+`test/scripts/capture-test-log.test.ts` asserted that a real captured unit-test
+run always mines a positive weight. The capture pipeline stamps every line
+with `new Date().toISOString()` (millisecond resolution) at the moment the
+parent process reads it from the child's pipe, so under a loaded test runner
+the start marker and the completion line for a fast fixture can land on the
+same millisecond — the weight miner then legitimately mines `0`, and the test
+failed even though nothing was actually broken. The fix adds a synthetic
+unit-capture fixture with fixed, injected millisecond offsets so the miner's
+own delta computation is proven deterministic (a positive delta mines
+exactly that value; a zero delta mines `0`), and loosens the real-capture
+assertion to allow the legitimately-possible zero case. No production code
+changed. Contributed by @harjothkhara.
+
+### How to use it
+
+No user-facing change; this is a CI-stability fix for the shard
+weight-mining test suite.
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `test/scripts/capture-test-log.test.ts` | A new `syntheticUnitArtifact()` helper builds a unit-lane capture artifact with fixed, injected timestamps; a new test proves the weight miner mines a positive delta deterministically and a zero delta as `0`. The existing real-capture assertion now allows `0` as a legitimate outcome instead of asserting strictly positive. |
+
 ## [0.60.117.0] - 2026-10-08
 
 **A managed brain no longer calls itself healthy while its sync moves nothing: one consumer per host, a stall the drain can see from the same host, and `gbrain sources writer movement` as the deploy gate.**
