@@ -42,9 +42,10 @@ export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: Pa
       JOIN sources alias_source ON alias_source.id=a.source_id
     WHERE a.alias_slug=$1 AND p.slug<>$1${opts?.includeDeleted ? '' : ' AND NOT alias_source.archived'}
       ${opts?.preserveExactIdentity ? 'AND NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.source_id=p.source_id AND exact_page.slug=$1)' : ''}${filter}` : ''}`;
+  const selection = opts?.resolveAlias === true ? `(${candidates}) p` : `pages p WHERE p.slug=$1${filter}`;
   params.push(opts?.sourceIds?.[0] ?? 'default');
   const rows = await query<Record<string, unknown>>(`WITH chosen AS (
-    SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM (${candidates}) p
+    SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM ${selection}
     ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id ASC LIMIT 1
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
