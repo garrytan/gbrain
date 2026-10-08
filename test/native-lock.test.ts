@@ -109,6 +109,15 @@ describe('native writer locks', () => {
     await expect(acquireNativeLock(join(temporary(), 'nul\0.lock'))).rejects.toThrow(TypeError);
     await expect(acquireNativeLock(join(temporary(), 'x'), { timeoutMs: Infinity })).rejects.toThrow(RangeError);
     await expect(tryAcquireNativeLock(temporary())).rejects.toBeInstanceOf(NativeLockUnavailableError);
+    // #6305: the OS error behind a lock file that cannot be opened stays on the error. Windows reports
+    // its own system error code for a directory, and the errno table names none.
+    await expect(tryAcquireNativeLock(temporary())).rejects.toMatchObject({ code: 'writer_lock_unavailable',
+      osError: process.platform === 'win32' ? expect.stringMatching(/^os_error_[1-9]\d*$/) : 'EISDIR' });
+    // A lock directory that cannot be created fails in node:fs, which names its errno.
+    const file = join(temporary(), 'file');
+    writeFileSync(file, '');
+    await expect(tryAcquireNativeLock(join(file, 'locks', 'writer.lock'))).rejects.toMatchObject({ code: 'writer_lock_unavailable',
+      osError: process.platform === 'win32' ? expect.stringMatching(/^E[A-Z]+$/) : 'ENOTDIR' });
   });
 
   test('missing native assets allow module import but refuse capability and writes', async () => {

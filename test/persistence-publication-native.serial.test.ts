@@ -23,6 +23,7 @@ import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { prepareFileTarget } from '../src/core/persistence/page-prepare.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { publicEffectsForRequest } from '../src/core/persistence/effect-journal.ts';
+import { PARK_AFTER_FAILURES } from '../src/core/persistence/effect-model.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { git, gitFixture } from './helpers/git-publication.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -358,6 +359,22 @@ test('queued Git work respects the native owner lock and expected file hash', as
   expect(await run(effect.id)).toMatchObject({ state: 'committed', outcome: { git: 'superseded' } });
   expect(git(f.remote, 'ls-tree', '-r', '--name-only', 'refs/heads/main')).toBe('initial.md\n');
   expect(readFileSync(join(f.root, '.git', 'index'))).toEqual(index);
+});
+
+test('#6305: Git work whose worktree lock this process cannot open waits without counting toward parking', async () => {
+  const f = await fixture();
+  const { effect, file } = await publish(f, 'notes/unopenable');
+  // A directory where the lock file is: no process can open it, as with a sandbox that denies the lock directory.
+  const path = f.binding.coordination_path!;
+  renameSync(path, `${path}.held`); mkdirSync(path);
+  try {
+    for (let attempt = 0; attempt <= PARK_AFTER_FAILURES; attempt++) {
+      expect(await run(effect.id)).toMatchObject({ state: 'queued', error_code: 'writer_lock_unavailable' });
+    }
+    expect((await run(effect.id)).data).not.toHaveProperty('target_failures');
+  } finally { rmSync(path, { recursive: true }); renameSync(`${path}.held`, path); }
+  expect(await run(effect.id)).toMatchObject({ state: 'committed', outcome: { git: 'committed', push: 'committed' } });
+  expectBlob(f, relative(f.root, file.path).split(sep).join('/'));
 });
 
 test('root replacement refuses queued work without changing canonical receipts', async () => {

@@ -8,6 +8,7 @@ import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
+import { NativeLockUnavailableError } from './native-lock.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -399,7 +400,8 @@ function embeddingStorageFailure(error: unknown): unknown {
 }
 
 async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, error: unknown, signal?: AbortSignal, target?: string): Promise<void> {
-  const code = error instanceof OperationError ? error.code : 'effect_unavailable';
+  // #6305: a process that cannot open or take the worktree lock says nothing about the effect's target.
+  const code = error instanceof OperationError || error instanceof NativeLockUnavailableError ? error.code : 'effect_unavailable';
   // Source replacement is final only without recovery. Unknown physical bytes
   // retain their record and continue to block this root for explicit repair.
   if (code === 'source_changed' && !effect.recovery) {
@@ -449,7 +451,7 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
 
 /** Waits that say nothing about the target never count toward parking. */
 const CONTENTION_CODES = ['projection_pending', 'revision_conflict', 'writer_busy', 'writer_pool_capacity', 'git_index_locked'];
-const DEPENDENCY_CODES = ['recovery_required', 'owner_unavailable', 'write_claim_lost', 'queue_capacity'];
+const DEPENDENCY_CODES = ['recovery_required', 'owner_unavailable', 'write_claim_lost', 'queue_capacity', 'writer_lock_unavailable'];
 
 /**
  * A scan sets its failing target aside and moves on; a single-target effect,

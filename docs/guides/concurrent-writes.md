@@ -371,7 +371,16 @@ The admin health indicators count it as `accepted_pending`, outside the error
 rate, with `pending_writes`, `oldest_pending_write_age_seconds` and
 `pending_writes_later_failed`. `owner_unavailable`
 and `writer_lock_unavailable` do not authorize a competing owner or a fresh
-request ID. `queue_capacity` refuses additional admission without evicting
+request ID. As a pending reason, `writer_lock_unavailable` means the process
+that claimed the write could not open or take the worktree's coordination lock
+(a lock directory it cannot write, as from a sandbox, or a missing native
+addon). It published nothing, and the write stays queued for an owner process
+that can take the lock. That process claims none of the worktree's writes for
+30 s, logs the OS error, and retries the worktree's effects later without
+counting the failure toward parking them. A managed sync drain stops as
+`blocked` with this reason when the page it waits on is still in this state
+after the pass's wait. It is not a busy lock: retrying from the same process
+fails the same way, so ask the operator to inspect the owner. `queue_capacity` refuses additional admission without evicting
 existing requests. `revision_required`, `revision_conflict`,
 `idempotency_conflict`, and `source_changed` require correcting the caller's
 intent or authority. `recovery_required` names unresolved publication state.

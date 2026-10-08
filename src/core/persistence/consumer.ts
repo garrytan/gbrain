@@ -23,10 +23,21 @@ import { maybeRefreshPlannerStats } from '../planner-stats.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { faultPoint } from './fault-points.ts';
 import { releaseAbandonedClaims } from './effect-journal.ts';
+import { INSPECT_OWNER_RETRY_MS } from './health.ts';
+import type { NativeLockUnavailableError } from './native-lock.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
-/** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
-type RootHold = { until?: Promise<void> };
+/**
+ * #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles.
+ * #6305: `retryAfterMs` replaces the poll interval before this process claims the root again.
+ */
+type RootHold = { until?: Promise<void>; retryAfterMs?: number };
+/**
+ * #6305: how long a process that could not open or take a worktree's native lock
+ * leaves that root's writes to an owner process that can, instead of preparing the
+ * same write again on every poll: the interval its pending receipt tells callers to wait.
+ */
+const LOCK_UNAVAILABLE_RETRY_MS = INSPECT_OWNER_RETRY_MS;
 /** When this process started; on PGLite no claim written earlier can belong to a live owner. */
 const PROCESS_STARTED_AT = new Date(performance.timeOrigin);
 /** #5801: the phase a connection checkout belongs to, carried through its async chain. */
@@ -415,7 +426,7 @@ export class PersistenceConsumer {
     let progressed = false;
     const root: RootHold = {};
     const task = this.executeOrGroup(row, root).then(result => { progressed = result; }).catch(error => this.report(error)).finally(() => {
-      if (!progressed) this.rootRetryAfter.set(key, Date.now() + (this.opts.pollMs ?? 250));
+      if (!progressed) this.rootRetryAfter.set(key, Date.now() + (root.retryAfterMs ?? this.opts.pollMs ?? 250));
       else { this.progressWake = true; this.publishedSinceMaintenance++; }
       this.active.delete(task);
       // The slot is free now; the root (or lane slot) waits for an abandoned preparation so nothing on it overtakes that work.
@@ -569,7 +580,9 @@ export class PersistenceConsumer {
       preparationActive = false;
       enterClaimPhase(clock, 'publishing');
       await faultPoint('consumer:prepared', { requestId: row.request_id, sourceId: row.source_id, operation: row.operation });
-      const done = await publishMutation(this.engine, row, prepared, this.hostId);
+      let lockUnavailable: NativeLockUnavailableError | undefined;
+      const done = await publishMutation(this.engine, row, prepared, this.hostId, { lockUnavailable: (_, error) => { lockUnavailable = error; } });
+      if (lockUnavailable) { root.retryAfterMs = LOCK_UNAVAILABLE_RETRY_MS; this.report(lockUnavailable); }
       if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', failureLogText(done));
       if (done.state === 'committed' && row.worktree_id && !String(row.intent?.kind).startsWith('managed_sync_')) {
         this.foregroundCounts.set(row.worktree_id, this.foregroundCompletions(row.worktree_id) + 1);

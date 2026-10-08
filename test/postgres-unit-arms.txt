@@ -68,6 +68,7 @@ test/persistence-git-subdir-origin.test.ts
 test/persistence-graph-publication.test.ts
 test/persistence-history-fixture.test.ts
 test/persistence-image-import.serial.test.ts
+test/persistence-lock-unavailable-6305.test.ts
 test/persistence-managed-lifecycle.test.ts
 test/persistence-managed-sync.test.ts
 test/persistence-manifest-git-scope.test.ts

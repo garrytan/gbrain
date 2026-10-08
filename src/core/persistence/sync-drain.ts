@@ -23,7 +23,7 @@ import { ERROR_CATALOGUE, type CatalogueName } from '../error-catalogue.ts';
 export type DrainOutcome = 'synced' | 'resumable' | 'blocked';
 /** Why a drain ended short of `synced`. Each value has an error-catalogue entry (DX-A4). */
 export type DrainStopReason = 'deadline' | 'drain_stalled' | 'database_contention' | 'recovery_required' | 'owner_unavailable'
-  | 'unexpected_file_bytes' | 'unexpected_staging_bytes' | 'blocked_by_failures';
+  | 'writer_lock_unavailable' | 'unexpected_file_bytes' | 'unexpected_staging_bytes' | 'blocked_by_failures';
 export interface DrainStall {
   request_id: string;
   state: string;
@@ -225,6 +225,8 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
       if (wait?.status === 'blocked') {
         return finish(result, 'blocked', BLOCKED_HEAD_REASONS.has(wait.cause) ? wait.cause as DrainStopReason : 'recovery_required');
       }
+      // #6305: the pass already waited for this write, and no owner process that can take the worktree lock published it.
+      if (result.reason === 'writer_pending' && result.managedWrite?.reason === 'writer_lock_unavailable') return finish(result, 'blocked', 'writer_lock_unavailable');
       if (wait?.status === 'read_failed') {
         if (!wait.transient || ++readFailures >= TRANSIENT_ATTEMPTS) return finish(result, 'blocked', 'database_contention');
       } else readFailures = 0;
@@ -321,7 +323,8 @@ export interface DrainNext {
 
 const STOP_DOCS: Record<DrainStopReason, CatalogueName> = {
   deadline: 'sync_drain_deadline', drain_stalled: 'sync_drain_stalled', database_contention: 'sync_drain_database_contention',
-  recovery_required: 'sync_drain_writer_blocked', owner_unavailable: 'sync_drain_writer_blocked', unexpected_file_bytes: 'sync_drain_writer_blocked',
+  recovery_required: 'sync_drain_writer_blocked', owner_unavailable: 'sync_drain_writer_blocked', writer_lock_unavailable: 'sync_drain_writer_blocked',
+  unexpected_file_bytes: 'sync_drain_writer_blocked',
   unexpected_staging_bytes: 'sync_drain_writer_blocked', blocked_by_failures: 'sync_drain_blocked_by_failures',
 };
 

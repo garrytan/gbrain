@@ -15,7 +15,7 @@ import { localHostId } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, guardOwnership, type WorktreeBinding } from './ownership.ts';
 import { clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters, markRecovering, prepareRecovery, releaseUnpublishedClaim } from './journal.ts';
 import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
-import type { NativeLockHandle } from './native-lock.ts';
+import { NativeLockUnavailableError, type NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { lockCoreSources } from './core-guard.ts';
 import { requestAttribution } from './attribution.ts';
@@ -78,6 +78,8 @@ export interface PublicationHooks {
   stagingFlushed?(request: WriteRequest): void;
   fileBoundary?(name: 'before_file' | 'staging_flushed' | 'file_replaced' | 'directory_flushed' | 'after_file'
     | 'before_restore' | 'restoration_staging_flushed' | 'restoration_file_replaced' | 'restoration_directory_flushed' | 'after_restore', request: WriteRequest, index: number): void;
+  /** #6305: this process could not open or take the worktree's native lock, so the request goes back to the queue unpublished. */
+  lockUnavailable?(request: WriteRequest, error: NativeLockUnavailableError): void;
 }
 function fileHash(path: string): string | null { return existsSync(path) ? sha256(readFileSync(path)) : null; }
 const ownerStatusFix = (sourceId?: string): Action => readFix(sourceId
@@ -224,7 +226,15 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await releaseUnpublishedClaim(engine, row, 'owner_unavailable');
         return (await getWriteRequestById(engine, row.id))!;
       }
-      lock = await acquireWorktree(binding, 0, undefined, engine);
+      try { lock = await acquireWorktree(binding, 0, undefined, engine); }
+      catch (error) {
+        // #6305: this process cannot open or take the lock (a sandbox, an unwritable lock directory, a missing addon).
+        // Like a busy lock, it publishes nothing and leaves the request queued for an owner process that can take it.
+        if (!(error instanceof NativeLockUnavailableError)) throw error;
+        await releaseUnpublishedClaim(engine, row, 'writer_lock_unavailable');
+        hooks.lockUnavailable?.(row, error);
+        return (await getWriteRequestById(engine, row.id))!;
+      }
       if (!lock) {
         await releaseUnpublishedClaim(engine, row, 'writer_busy');
         return (await getWriteRequestById(engine, row.id))!;

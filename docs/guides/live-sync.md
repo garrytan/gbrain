@@ -92,7 +92,7 @@ Timing knobs the drain uses:
 | `GBRAIN_SYNC_MAX_RUNTIME_SECONDS` | Whole process, non-interactive runs. Extends while pages keep committing. | 3600 (non-TTY) | Stops only after `GBRAIN_SYNC_STALL_ABORT_SECONDS` without progress. |
 | `GBRAIN_SYNC_STALL_ABORT_SECONDS` | Progress window for the deadline above. | 900 | The watchdog stops the run and prints the resume command. |
 | No-progress detector | Awaited write and checkout head unchanged. | 30 s and 3 passes | Stops as `blocked` / `drain_stalled` with diagnostics. |
-| Page write wait | One page's (or group's) publication before the drain re-checks. | 30 s inside a drain (5 s, checkpoint 8 s, for a single pass) | The drain re-enters; this is not a stop. |
+| Page write wait | One page's (or group's) publication before the drain re-checks. | 30 s inside a drain (5 s, checkpoint 8 s, for a single pass) | The drain re-enters; this is not a stop, unless the page still waits for a process that can take the worktree lock, which stops it as `blocked` / `writer_lock_unavailable`. |
 | `sync.bulk_max_txn_ms` / `GBRAIN_SYNC_BULK_MAX_TXN_MS` | Target time per bulk group; sizes the next group from the last one's time per page. | 15000 | A smaller next group. |
 | `sync.bulk_size` / `GBRAIN_SYNC_BULK_SIZE` | Largest bulk group. | 16 | — |
 

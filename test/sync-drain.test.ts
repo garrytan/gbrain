@@ -201,4 +201,16 @@ describe('classified write waits', () => {
     const auth = { ...failing, writeWait: { ...failing.writeWait, reason: 'auth_failed', transient: false } };
     expect((await runDrain({ pass: async () => auth, pauseMs: 1 })).drain?.passes).toBe(1);
   });
+
+  test('#6305: a page still waiting for a process that can take the worktree lock after its wait stops the drain', async () => {
+    const page = pending(2);
+    const unlocked = { ...page, managedWrite: { ...page.managedWrite!, reason: 'writer_lock_unavailable' } };
+    const result = await runDrain({ pass: async () => unlocked, pauseMs: 1 });
+    expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'writer_lock_unavailable', passes: 1 });
+    expect(drainNext(result, RESUME, 's')).toMatchObject({ command: 'gbrain sources writer status s', safe_to_loop: false,
+      why: expect.stringContaining('(writer_lock_unavailable)'), docs: 'docs/guides/write-refusals.md#drain-writer-blocked' });
+    // An ordinary pending page still re-enters the drain.
+    const s = scripted([page, done()]);
+    expect((await runDrain({ pass: s.pass, pauseMs: 1 })).drain).toMatchObject({ outcome: 'synced', passes: 2 });
+  });
 });

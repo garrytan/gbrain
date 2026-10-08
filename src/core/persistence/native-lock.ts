@@ -1,5 +1,6 @@
 /** Stable OS locks for cooperating writers on one owner host. No TTL takeover. */
 import { mkdir } from 'node:fs/promises';
+import { constants } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { family, GLIBC, MUSL } from 'detect-libc';
@@ -22,10 +23,26 @@ interface NativeBinding extends NativeExportPublisher {
 
 export class NativeLockUnavailableError extends Error {
   readonly code = 'writer_lock_unavailable';
+  /** #6305: the OS error behind the failure (`EACCES`, `EPERM`, `EISDIR`, ...) when its cause names one. */
+  readonly osError?: string;
   constructor(message = 'Native writer locking is unavailable on this host', cause?: unknown) {
-    super(message, { cause });
+    const osError = osErrorOf(cause);
+    super(osError ? `${message} (${osError})` : message, { cause });
     this.name = 'NativeLockUnavailableError';
+    this.osError = osError;
   }
+}
+
+/** node:fs names its errno; the addon reports `Native lock <action> failed (OS error <n>)` (native/locks/locks.c). */
+function osErrorOf(cause: unknown): string | undefined {
+  const { code, message } = (cause && typeof cause === 'object' ? cause : {}) as { code?: unknown; message?: unknown };
+  if (typeof code === 'string' && /^E[A-Z0-9]{1,30}$/.test(code)) return code;
+  const number = code === 'GBRAIN_NATIVE_LOCK_IO' && typeof message === 'string' ? /\(OS error (\d{1,10})\)/.exec(message)?.[1] : undefined;
+  // The addon reports its own failures (allocation, shutdown) as OS error 0.
+  if (!number || Number(number) === 0) return undefined;
+  // Windows reports a system error code, which the errno table does not name.
+  const name = process.platform === 'win32' ? undefined : Object.entries(constants.errno).find(([, value]) => value === Number(number))?.[0];
+  return name ?? `os_error_${number}`;
 }
 
 export interface NativeLockHandle {
