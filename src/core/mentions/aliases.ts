@@ -41,6 +41,8 @@ const CUES = [
   'd/b/a', 'dba', 'short name', 'short for', 'abbreviated as', 'abbreviated', 'code ?name', 'account code', 'customer code',
   'account id', 'ticker', 'alias(?:es)?',
 ];
+/** Cues that declare a name only when it is quoted ("the team calls it \"Copper Fox\""). */
+const QUOTED_CUE_RE = /(?<![A-Za-z])(?:calls?|called|call) it\s+/gi;
 const CUE_RE = new RegExp(`(?<![A-Za-z0-9])(?:${CUES.join('|')})(?![A-Za-z0-9])`, 'gi');
 const LABEL_NOUN_RE = /(?<![a-z])(?:nicknames?|alias(?:es)?|aka|a\.k\.a\.?|also known as|short name|trading name|trade name|brand name|former (?:legal )?name|previous name|legal name|display name|dba|d\/b\/a|code ?name|account code|customer code|ticker)(?![a-z])/i;
 const RELATIONAL_NOUN_RE = /\b(?:competitors?|rivals?|partners?|parent(?: company)?|subsidiar(?:y|ies)|affiliates?|vendors?|suppliers?|customers?|clients?|acquirers?|investors?)\b/i;
@@ -124,6 +126,11 @@ function labelValues(value: string, multiword: boolean): string[] {
 const stripLineMarkup = (line: string) => line.replace(/^\s*(?:[-*+>]|\d+[.)])\s+/, '').replace(/\*\*|__/g, '').trim();
 const isTableSeparator = (line: string | undefined) => !!line && /^\s*\|?\s*:?-{2,}/.test(line);
 const isLabel = (label: string) => label.split(/\s+/).length <= 6 && LABEL_NOUN_RE.test(label);
+/** A label opening a sentence inside a line: an alias noun within its first two words, at most 7 words ("Nickname used by the team"). */
+const isLeadingLabel = (label: string) => {
+  const words = label.trim().split(/\s+/);
+  return words.length <= 7 && LABEL_NOUN_RE.test(words.slice(0, 2).join(' ')) && !RELATIONAL_NOUN_RE.test(label);
+};
 
 /** Every declaration in `text` with its line, in line order, deduped by alias (first line wins). Not post-filtered. */
 export function declarationsIn(text: string, opts: DeclarationOpts = {}): Declaration[] {
@@ -163,12 +170,26 @@ export function declarationsIn(text: string, opts: DeclarationOpts = {}): Declar
     if (colon > 0 && colon <= 60 && isLabel(plain.slice(0, colon))) {
       for (const name of labelValues(plain.slice(colon + 1), multiword)) push(name, i);
     }
+    // A label can also open a later sentence of the line ("Account: X. Nickname used by the team: Y.").
+    for (const segment of plain.split(/(?<=[.;!?])\s+/).slice(1)) {
+      const at = segment.indexOf(':');
+      if (at > 0 && at <= 60 && isLeadingLabel(segment.slice(0, at))) {
+        for (const name of labelValues(segment.slice(at + 1), multiword)) push(name, i);
+      }
+    }
+    const sentenceBefore = (at: number) => {
+      const before = plain.slice(0, at);
+      return before.slice(Math.max(before.lastIndexOf('. '), before.lastIndexOf('; '), -1) + 1);
+    };
     CUE_RE.lastIndex = 0;
     for (const m of plain.matchAll(CUE_RE)) {
-      const before = plain.slice(0, m.index);
-      const sentence = before.slice(Math.max(before.lastIndexOf('. '), before.lastIndexOf('; '), -1) + 1);
-      if (RELATIONAL_NOUN_RE.test(sentence)) continue;
+      if (RELATIONAL_NOUN_RE.test(sentenceBefore(m.index!))) continue;
       push(captureName(plain.slice(m.index! + m[0].length), { multiword }), i);
+    }
+    for (const m of plain.matchAll(QUOTED_CUE_RE)) {
+      const rest = plain.slice(m.index! + m[0].length);
+      if (!QUOTES[rest[0] ?? ''] || RELATIONAL_NOUN_RE.test(sentenceBefore(m.index!))) continue;
+      push(captureName(rest, { multiword }), i);
     }
     if (ownLower.length) {
       for (const m of plain.matchAll(PAREN_TERM_RE)) {

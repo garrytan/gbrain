@@ -69,6 +69,7 @@ A cue is followed by an optional `:`, `,`, `(` or `-`, an optional article
 | Short names | `short name`, `short for`, `abbreviated`, `abbreviated as` | `Short name: QCAP` → `QCAP` | — |
 | Codes | `code name`, `codename`, `account code`, `ticker`, `customer code`, `account ID` | `Account code: QUCO` → `QUCO` | — |
 | Alias | `alias`, `aliases` | `alias "Red Kite"` → `Red Kite` | — |
+| Calls it (quoted only) | `calls it`, `call it`, `called it` followed by a quoted name | `the team also calls it "Copper Fox"` → `Copper Fox` | `the team calls it a success` → nothing |
 
 ## Label and value forms
 
@@ -92,6 +93,13 @@ record systems qualify their fields (`Internal nickname:`, `Team alias:`,
 A table row qualifies when its first cell is a label (the `:` is optional
 there) and its second cell is the value. A header row or a separator row
 (`---`) never qualifies.
+
+A label can also open a later sentence of a line, as record exports and
+generated sheets often write several fields on one line (`Account: Widget Co.
+Nickname used by the team: Copper Fox. Region: EMEA.`). Inside a line the label
+must carry the label noun within its first two words and have at most 7
+words, so `Account owner: Dana Example` or `Notes from the call: ...` never
+qualify; the value ends at the sentence's end.
 
 ## Quoted and parenthetical alternate names
 
@@ -121,3 +129,12 @@ prose cue and needs no name.
 - Names declared only in free prose without a cue ("we just say Copper Fox")
   are not parsed; the entity card's `identity_excerpt` shows such lines
   verbatim instead.
+
+## Changelog
+
+- 2026-10-08: added labels that open a later sentence of a line and the
+  quoted-only "calls it" cue. Origin: the Cat 40 Hard development (calibration)
+  world, whose account sheets write `Nickname used by the team: X` mid-line and
+  `the team also calls it "X"`; both are general record-export and prose forms,
+  measured on that development split only (nicknames derived 0 of 2,845 before,
+  2,829 of 2,845 after, no false aliases among 5,690 derived on its entity pages).

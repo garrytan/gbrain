@@ -192,3 +192,24 @@ describe('declared-name grammar (alias conventions spec)', () => {
     expect(performance.now() - t0).toBeLessThan(200);
   });
 });
+
+// Cat 40 Hard development round 1: a label can open a later sentence of the line, and "calls it" declares a quoted name.
+describe('declared-name grammar: mid-line labels and quoted "calls it"', () => {
+  const names = (text: string, name = 'Widget Co') => declaredNames(text, name);
+  test.each([
+    ['label after a first sentence, with qualifier words', 'Account: Widget Co. Nickname used by the team: Copper Fox. Industry: freight.', ['Copper Fox']],
+    ['parenthetical qualifier', 'Owner: Dana Example. Alias (legacy): Red Kite.', ['Red Kite']],
+    ['comma qualifier', 'Status: open. Short name, internal: WGCO.', ['WGCO']],
+    ['prepositional qualifier', 'Region: UK. Trading name in the UK: Northwind Ops.', ['Northwind Ops']],
+    ['quoted name after "calls it"', 'In notes and tickets the team also calls it "Copper Fox", or "the freight account".', ['Copper Fox']],
+  ])('%s', (_label, text, want) => { expect(names(text)).toEqual(want); });
+
+  test.each([
+    'Region: west. Account owner: Dana Example.',
+    'Status: closed. Notes from the call: Quarterly Review went well.',
+    'Note: done. Our competitor alias: Blue Harbor.',
+    'the team calls it a success',
+    'We call it "the plan".',
+    'Status: open. Our partner calls it "Blue Harbor".',
+  ])('no alias: %s', text => { expect(names(text)).toEqual([]); });
+});
