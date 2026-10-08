@@ -41,7 +41,7 @@ import { resolveBoostMap, resolveHardExcludes } from '../search/source-boost.ts'
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION, SEARCH_MATCH_DESCRIPTION } from '../operations-descriptions.ts';
 import { declaredNames, titleName } from '../mentions/aliases.ts';
-import { withAliasFanOut, type FanoutMeta, type ResolvedEntity } from '../search/alias-fanout.ts';
+import { aliasPhrase, wholeQueryEntityNames, withAliasFanOut, type FanoutMeta, type ResolvedEntity } from '../search/alias-fanout.ts';
 import { entitySavedFacts } from '../search/entity-facts.ts';
 import { mentionCoverageNotice, readMentionCoverage } from '../mentions/coverage.ts';
 import { keepEnumeratedRows, keywordCountMeta, parseSearchPaging, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
@@ -706,7 +706,18 @@ const search: Operation = {
       const sourceBoosts = resolveBoostMap(undefined, await ctx.engine.getConfig(SOURCE_BOOSTS_KEY));
       const keywordOpts = { ...readOpts, source_boosts: sourceBoosts, ...(types ? { types } : {}) };
       // F2 `match: "keyword"`: page-grain enumeration, no diversity pruning, every page keeps a row.
-      const page = paging.match === 'keyword' ? await readKeywordPage(ctx.engine, p, keywordOpts, paging, Math.min(limit, searchLimitCap())) : null;
+      // A query that is one entity's name lists records filed under any of its names (the agent no longer walks each alias).
+      const names = paging.match === 'keyword' && !paging.cursor ? await wholeQueryEntityNames(ctx.engine, queryText, { ...scope, excludePrivate }) : null;
+      const pageParams = names ? { ...p, query: names.map(aliasPhrase).join(' OR ') } : p;
+      const page = paging.match === 'keyword' ? await readKeywordPage(ctx.engine, pageParams, keywordOpts, paging, Math.min(limit, searchLimitCap())) : null;
+      if (page && names) {
+        page.meta.match_names = names;
+        for (const row of page.rows) {
+          const text = (row.chunk_text ?? '').toLowerCase();
+          const hit = names.slice(1).find(n => text.includes(n.toLowerCase()));
+          if (hit && !text.includes(names[0]!.toLowerCase())) row.matched_alias = hit;
+        }
+      }
       const keywordCount = page ? null : startKeywordCount(ctx.engine, queryText, undefined, keywordOpts);
       const results = (page ? page.rows : dedupResults(await ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts }))).map(r => ({ ...r }));
       await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt);

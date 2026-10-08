@@ -164,6 +164,23 @@ async function namesOf(engine: BrainEngine, pages: Array<{ slug: string; source_
   return [...names.values()].sort((a, b) => a.rank - b.rank || b.alias.length - a.alias.length);
 }
 
+/**
+ * When the whole query is one entity's name or alias, every name it goes by
+ * (the query first, then aliases by origin and length, at most `max`);
+ * otherwise null. `match: "keyword"` lists the records filed under any of
+ * them in one walk, like grepping every name at once.
+ */
+export async function wholeQueryEntityNames(engine: BrainEngine, query: string, scope: Scope, max = 8): Promise<string[] | null> {
+  const tokens = queryTokens(query);
+  if (!tokens.length || tokens.length > MAX_NGRAM) return null;
+  const entity = await resolveQueryEntity(engine, query, scope);
+  if (!entity || entity.tokens[0] !== 0 || entity.tokens[1] !== tokens.length - 1) return null;
+  const names = [query.trim(), ...(await namesOf(engine, entity.pages, scope)).map(n => n.alias)];
+  const seen = new Set<string>();
+  const out = names.filter(n => { const k = normalizeAlias(n); if (!k || seen.has(k)) return false; seen.add(k); return true; }).slice(0, max);
+  return out.length > 1 ? out : null;
+}
+
 export async function aliasFanoutMax(engine: BrainEngine): Promise<number> {
   const raw = await engine.getConfig('search.alias_fanout_max').catch(() => null);
   const n = raw == null || raw === '' ? DEFAULT_ALIAS_FANOUT_MAX : Number(raw);

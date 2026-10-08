@@ -208,8 +208,10 @@ export function searchCountLine(rows: unknown, retrieval: unknown): string | nul
   const stage = Array.isArray(r.degraded) ? r.degraded.find(d => (d as { stage?: unknown })?.stage === 'keyword_count_unavailable') : undefined;
   const reason = (stage as { reason?: unknown } | undefined)?.reason === 'timeout' ? 'timed out' : 'failed';
   if (r.match === 'keyword') {
+    const names = Array.isArray(r.match_names) && r.match_names.length > 1
+      ? ` for any of this entity's names (${(r.match_names as string[]).map(n => `"${n}"`).join(', ')})` : '';
     const total = typeof r.total === 'number'
-      ? `Keyword matches: ${countWords(r.total, r.total_capped === true)}`
+      ? `Keyword matches${names}: ${countWords(r.total, r.total_capped === true)}`
       : `Keyword match count unavailable (${reason}; not a count of zero)`;
     const omitted = Array.isArray(rows) ? rows.filter(x => (x as { evidence_omitted?: unknown })?.evidence_omitted === true).length : 0;
     const shown = Number(r.shown_to) < Number(r.shown_from) ? 'none on this page' : `showing ${r.shown_from}-${r.shown_to}, keyword-score order`;

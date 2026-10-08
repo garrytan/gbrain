@@ -92,6 +92,26 @@ describe('alias fan-out', () => {
     expect((await search('Widget Co discount history')).visible).toContain('mention_index');
   });
 
+  test('match: "keyword" on an entity name lists records filed under any of its names, and pages through them', async () => {
+    await account();
+    const first = await dispatchToolCall(engine, 'search', { query: 'Widget Co', match: 'keyword', limit: 3 }, remote as never);
+    const visible = first.content.map(c => c.text ?? '').join('\n');
+    expect(visible).toContain('Keyword matches for any of this entity\'s names ("Widget Co", "Copper Fox", "WGCO"');
+    const slugs = new Set((JSON.parse(first.content[0].text!) as Array<{ slug: string }>).map(r => r.slug));
+    const next = (first._meta?.retrieval as { next?: Record<string, unknown> }).next!;
+    let page: Record<string, unknown> | undefined = next;
+    while (page) {
+      const r = await dispatchToolCall(engine, 'search', page, remote as never);
+      for (const row of JSON.parse(r.content[0].text!) as Array<{ slug: string }>) slugs.add(row.slug);
+      page = (r._meta?.retrieval as { next?: Record<string, unknown> }).next;
+    }
+    expect(slugs).toContain('tickets/t1');
+    expect(slugs).toContain('contracts/a1');
+    expect(slugs).toContain('notes/n0');
+    const plain = await dispatchToolCall(engine, 'search', { query: 'Widget Co weekly', match: 'keyword' }, remote as never);
+    expect(plain.content.map(c => c.text ?? '').join('\n')).not.toContain('any of this entity');
+  });
+
   test('search.alias_fanout_max=0 turns fan-out off', async () => {
     await account();
     await engine.setConfig('search.alias_fanout_max', '0');
