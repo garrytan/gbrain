@@ -501,7 +501,7 @@ export async function runPhaseSynthesizeConcepts(
         // #4416: target the cycle's resolved source, not the 'default' literal.
         baseline = await publishClassicConcept(engine, conceptSlug, opts.sourceId ?? 'default', synthesized(pageVisibility), narrative,
           baseline, { writeThrough: conceptFiles !== null, importPage: (markdown) => importFromContent(engine, conceptSlug, markdown, {
-            noEmbed: !isAvailable('embedding'), sourceId: opts.sourceId,
+            noEmbed: !isAvailable('embedding'), sourceId: opts.sourceId, preserveGateMarkers: true,
           }) });
       };
       // A publication that lost a revision race or would lose canonical

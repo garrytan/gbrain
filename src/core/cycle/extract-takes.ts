@@ -24,6 +24,7 @@
  * v0.22.12 classifier path (extension follow-up — not blocking v0.28).
  */
 
+import { isQuarantined, QUARANTINE_KEY } from '../quarantine.ts';
 import { readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine, TakeBatchInput } from '../engine.ts';
@@ -196,6 +197,8 @@ export async function extractTakesFromFs(
       if (takes.length > 0) result.warnings.push(`TAKES_PAGE_NOT_IN_DB: slug=${slug} has takes fence but no page row; run 'gbrain sync' first`);
       continue;
     }
+    // #6259: the stored page decides (the gate stamps quarantine on it); a quarantined page projects no takes.
+    if ((await engine.executeRaw('SELECT 1 FROM pages WHERE id=$1 AND frontmatter ? $2', [pageId, QUARANTINE_KEY])).length) continue;
     await pruneRemovedTakes(engine, pageId, body, takes, warnings, dryRun);
     if (takes.length === 0) continue;
 
@@ -242,6 +245,8 @@ export async function extractTakesFromDb(
     result.pagesScanned++;
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
+    // #6259: a quarantined page projects no takes (its existing rows are left as they are).
+    if (isQuarantined(page.frontmatter as Record<string, unknown> | null)) continue;
     if (coordinated) {
       // A page with no takes marker at all yields no prune, no upsert and no
       // warning; near-miss and unbalanced markers still reach the parser.

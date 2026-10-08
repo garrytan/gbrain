@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { pageQuarantinedNotice } from '../quarantine.ts';
 import { fenceNormalizedNotice, type FencesNormalized } from '../fence-repair/report.ts';
 import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { realpathSync } from 'node:fs';
@@ -162,10 +163,13 @@ function pendingAwareResponse(ctx: OperationContext, row: WriteRequest): Record<
 export function emitFenceNotice(ctx: Pick<OperationContext, 'emitNotice'>, response: Record<string, unknown>, slug?: string): void {
   const report = response.fences_normalized as FencesNormalized | undefined;
   if (report) ctx.emitNotice?.(fenceNormalizedNotice(report, slug));
+  // #6259: a write the content-quality gate quarantined says so (`quarantined` plus one safety notice).
+  const quarantined = response.quarantined as { reason: string; detail: string } | undefined;
+  if (quarantined && slug) ctx.emitNotice?.(pageQuarantinedNotice(slug, quarantined, 'write'));
 }
 
-/** Owner-internal `put_page` kinds the trusted local file writers (import, frontmatter repair) submit; every other caller is refused them. */
-const OWNER_FILE_INTENTS: ReadonlySet<string> = new Set(['managed_file_import', 'managed_file_repair']);
+/** Owner-internal `put_page` kinds the trusted local file writers (import, frontmatter repair, quarantine clear) submit; every other caller is refused them. */
+const OWNER_FILE_INTENTS: ReadonlySet<string> = new Set(['managed_file_import', 'managed_file_repair', 'managed_quarantine_clear']);
 
 /** #6007: a `put_pages` child: its batch, its position and the batch size are part of its identity. */
 export interface PageBatchMember { id: string; index: number; size: number; requestId: string }

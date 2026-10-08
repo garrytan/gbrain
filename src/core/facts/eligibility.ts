@@ -37,6 +37,7 @@
  * groups by reason).
  */
 
+import { isQuarantined } from '../quarantine.ts';
 import type { PageType } from '../types.ts';
 import { isFrontmatterFlagOff } from './conversation-types.ts';
 
@@ -91,6 +92,8 @@ export function isFactsBackstopEligible(
 ): EligibilityResult {
   if (!parsed) return { ok: false, reason: 'no_parsed_page' };
   if (slug.startsWith('wiki/agents/')) return { ok: false, reason: 'subagent_namespace' };
+  // #6259: the content-quality gate hid this page as junk; its text must not become facts.
+  if (isQuarantined(parsed.frontmatter)) return { ok: false, reason: 'quarantined' };
   if (parsed.frontmatter && parsed.frontmatter.dream_generated === true) {
     return { ok: false, reason: 'dream_generated' };
   }

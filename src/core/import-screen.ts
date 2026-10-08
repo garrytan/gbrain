@@ -11,7 +11,10 @@
 import type { BrainEngine } from './engine.ts';
 import { loadConfig, loadConfigWithEngine } from './config.ts';
 import { assessContentSanity, type ContentSanityResult } from './content-sanity.ts';
-import { withQuarantineOverride } from './quarantine-override.ts';
+import { dropClassifierMarkers, hasCurrentQuarantineOverride, QUARANTINE_OVERRIDE_KEY, withQuarantineOverride } from './quarantine-override.ts';
+import { CONTENT_FLAG_KEY, QUARANTINE_KEY } from './quarantine.ts';
+import { EMBED_SKIP_KEY } from './embed-skip.ts';
+import { ATOMS_SCAN_HASH_KEY } from './utils.ts';
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
 import { classifyImportHold, contentSizeHold, parseMarkdown, type ContentHold, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
 import { isCodeFilePath } from './sync.ts';
@@ -55,6 +58,30 @@ export async function loadImportSanityConfig(engine: BrainEngine): Promise<Impor
     extraLiterals: cs.junk_patterns_enabled !== false && !disabled ? loadOperatorLiterals() : [],
     junkDisposition: cs.junk_disposition === 'reject' ? 'reject' : 'quarantine',
   };
+}
+
+/** Frontmatter keys only the content-quality gate, the extract_atoms phase and the operator's clear may set. */
+export const GATE_OWNED_FRONTMATTER_KEYS = [QUARANTINE_KEY, CONTENT_FLAG_KEY, EMBED_SKIP_KEY, ATOMS_SCAN_HASH_KEY, QUARANTINE_OVERRIDE_KEY] as const;
+
+/**
+ * #1699/#6259 trust boundary, fail closed: incoming content loses every
+ * gate-owned marker unless an owner-tier path passes `preserveGateMarkers`
+ * (owner sync and file import, reindex, file repair, reconcile, the cycle
+ * derivers, `quarantine clear/scan`). Otherwise any writer, a local put_page,
+ * a connector or an ingest lane included, could hide a page from search
+ * (`quarantine`), inject text into the agent's warning channel
+ * (`content_flag.detail`), stop its embedding (`embed_skip`), suppress atom
+ * mining (`atoms_scan_hash`) or forge a cleared state (`quarantine_override`).
+ * A preserving path keeps its own override only while it binds the content,
+ * and a current override drops classifier markers the content still carries.
+ */
+export function stripGateOwnedMarkers(parsed: Pick<ParsedMarkdown, 'frontmatter' | 'title' | 'type' | 'compiled_truth' | 'timeline'>, opts: { preserveGateMarkers?: boolean }): void {
+  if (opts.preserveGateMarkers !== true) {
+    for (const key of GATE_OWNED_FRONTMATTER_KEYS) delete parsed.frontmatter[key];
+    return;
+  }
+  if (Object.hasOwn(parsed.frontmatter, QUARANTINE_OVERRIDE_KEY) && !hasCurrentQuarantineOverride(parsed)) delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
+  dropClassifierMarkers(parsed as ParsedMarkdown);
 }
 
 /** #6259: a page carrying a current `quarantine_override` keeps the classifier's verdict off (see quarantine-override.ts). */

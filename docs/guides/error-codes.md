@@ -912,7 +912,7 @@ More: [docs/guides/write-refusals.md#facts_absorb_write_refused](../../docs/guid
 |---|---|---|---|---|---|---|
 | A page write queued no automatic fact extraction; the receipt's `facts_backstop.skipped` reason says why (a `kind:<type>` reason names a page type that is not extracted). | A capability this request needs is not configured or not reachable on this brain. | Nothing failed. `opted_out` means the page frontmatter sets `facts_backstop: false`; remove that line and save the page to extract it. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `gbrain doctor --json` | 1 | no |
 
-Reasons: `opted_out`, `body_unchanged`, `extraction_disabled`, `dream_generated`, `subagent_namespace`, `too_short`, `no_parsed_page`, `slug_bound_client`, `operation_bound_client`, `not_imported`, `backstop_error`.
+Reasons: `opted_out`, `quarantined`, `body_unchanged`, `extraction_disabled`, `dream_generated`, `subagent_namespace`, `too_short`, `no_parsed_page`, `slug_bound_client`, `operation_bound_client`, `not_imported`, `backstop_error`.
 
 More: [docs/guides/concurrent-writes.md#facts-backstop](../../docs/guides/concurrent-writes.md#facts-backstop)
 

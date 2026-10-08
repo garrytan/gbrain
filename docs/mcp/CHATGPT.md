@@ -125,7 +125,10 @@ chat: the server must expose a `search`/`fetch` tool PAIR, where every
   URI for the citation slot, and `metadata` carries type/source/tags.
 
 `fetch` is a thin read-only adapter over the same page read as `get_page`
-(same source scoping, same privacy fences for remote readers). Normal chat
+(same source scoping, same privacy fences for remote readers). A page the
+content-quality gate quarantined comes back with `metadata.quarantined` and a
+`page_quarantined` notice; for a remote caller `text` is empty unless an
+admin-scoped caller passes `include_quarantined: true`. Normal chat
 keeps using the richer gbrain-native tools; deep research uses the pair.
 An ID does not grant access: fetch rechecks current source grants and page
 visibility. Legacy bare-slug IDs still work when unambiguous within the current

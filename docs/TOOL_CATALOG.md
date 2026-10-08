@@ -166,7 +166,7 @@ Every non-localOnly operation on the MCP surface: 140 tools across 23 areas. **S
 | `edit_page` | Change part of a page: prefer this over put_page for small changes. | write | yes |  |
 | `fetch` | Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
 | `get_chunks` | Return a page's indexed content chunks (the units search ranks). | read |  |  |
-| `get_page` | Read a page by slug (fuzzy optional; renamed slugs redirect). | read | yes |  |
+| `get_page` | Read a page by slug. | read | yes |  |
 | `get_raw_data` | Retrieve raw data for a page. | read |  |  |
 | `get_versions` | Page version history, newest snapshot first. | read |  |  |
 | `get_write_request` | Read your write's receipt by request_id (after write_pending or a lost reply). | write | yes |  |

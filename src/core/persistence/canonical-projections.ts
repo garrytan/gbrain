@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import { isQuarantined } from '../quarantine.ts';
 import type { ParsedPage } from '../import-file.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { pipelined } from '../page-state/transactions.ts';
@@ -338,6 +339,9 @@ function takeCollision(rows: number[], sections: Map<number, FenceSection>, slug
 export async function prepareCanonicalProjections(engine: BrainEngine, page: ParsedPage, slug: string, sourceId: string,
   prior: PageSnapshot | null, writer: ProjectionWriter, policy?: TimelineWritePolicy): Promise<(tx: BrainEngine, pageId?: number) => Promise<CanonicalProjectionResult>> {
   const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId);
+  // #6259: a page the content-quality gate hid as junk projects no facts or takes. Rows projected before it
+  // was quarantined are left as they are (hiding them would need a new row state); only new projection stops.
+  const projectFences = !isQuarantined(page.frontmatter);
   const { timeline, exactIncoming, pinned } = classifyTimeline(prior ? await storedTimeline(engine, prior.page.id) : [],
     page, prior?.page ?? null, slug, writer, policy);
   const deletions = JSON.stringify(pinned.filter(row => row.action === 'delete')
@@ -360,7 +364,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     const rows = await collisions(db, pageId);
     if (rows.length) throw takeCollision(rows, sections.takes, slug, sourceId);
   };
-  if (prior) await refuseCollisions(engine, prior.page.id);
+  if (prior && projectFences) await refuseCollisions(engine, prior.page.id);
   // #5984: `pageId` is the caller's own read of the page in this transaction. The
   // statements are issued as pipelines; an engine call that sends more than one
   // statement (insertFacts, addTakesBatch) ends one, so order is kept.
@@ -369,7 +373,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     if (id == null) return { timelineRowsRemoved: null };
     // #5969: only rows this statement actually deleted count; a row changed since preparation is left alone and uncounted.
     const removedDates: string[] = [];
-    if (quoted) await refuseQuotedFenceLoss(tx, id, quoted, takeRowsGone, factRows, slug, sourceId);
+    if (quoted && projectFences) await refuseQuotedFenceLoss(tx, id, quoted, takeRowsGone, factRows, slug, sourceId);
     // Fact IDs in permanent receipts remain meaningful when a canonical row is
     // removed/replaced. Expire and detach its row position instead of deleting it.
     // Conversation-extractor rows share the page coordinate without a fence
@@ -409,6 +413,10 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       () => tx.executeRaw(`UPDATE timeline_entries t SET detail=r.next FROM jsonb_to_recordset($2::text::jsonb) AS r(id integer,detail text,next text)
         WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=r.id AND t.detail=r.detail`, [id, refreshes]),
     ];
+    if (!projectFences) {
+      await pipelined(tx, timelineRows);
+      return { timelineRowsRemoved: removedSummary(removedDates) };
+    }
     if (factRows.length) {
       await pipelined(tx, [expireFacts]);
       await tx.insertFacts(factRows, { source_id: sourceId }); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction

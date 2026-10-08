@@ -181,7 +181,7 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
     ? await importImageFile(engine, p.inputPath, p.sourcePath, { ...source, noEmbed: p.noEmbed, bytes: imageBytes, prepare })
     : code
     ? await importCodeFile(engine, p.sourcePath, p.content, { ...source, noEmbed: true, prepare })
-    : await importFromContent(engine, row.slug, p.content, { ...source, noEmbed: true, remote: false, prepare, fences: 'coordinated',
+    : await importFromContent(engine, row.slug, p.content, { ...source, noEmbed: true, remote: false, preserveGateMarkers: true, prepare, fences: 'coordinated',
       activePack: p.activePack, sourcePath: p.sourcePath, filename: basename(p.sourcePath, '.md'), allowEmptyOverwrite: true });
   if (!prepared && result.refusal?.code === 'invalid_fence') throw managedImportRefusal(result.refusal, p.sourcePath);
   if (!prepared) throw opError('invalid_params', result.error ?? 'The file could not be prepared.',

@@ -686,10 +686,11 @@ describe('ingest_capture handler — write-source attribution', () => {
     expect(updated.status).not.toBe('error');
   });
 
-  test('a trusted daemon event KEEPS gate-owned markers (stripping is untrusted-only)', async () => {
-    // The mirror of the case above: local/trusted emitters own these markers
-    // (the quarantine CLI and the sanity gate write them), so stripping must be
-    // conditioned on the event's trust flag, not applied unconditionally.
+  test('a trusted daemon event cannot plant gate-owned markers either (#6259)', async () => {
+    // Gate-owned markers are stripped from every writer except an owner-tier
+    // path (sync/import of the owner's files, reindex, repair, reconcile, the
+    // cycle derivers, quarantine clear); an ingest lane is not one, whatever
+    // the event's trust flag says.
     await engine.executeRaw(
       `INSERT INTO sources (id, name) VALUES ('trusted-marker-source', 'trusted-marker-source')`,
     );
@@ -706,7 +707,7 @@ describe('ingest_capture handler — write-source attribution', () => {
       `SELECT frontmatter FROM pages WHERE slug = $1`,
       ['inbox/trusted-markers'],
     );
-    expect((rows[0]?.frontmatter ?? {}).quarantine).toBe(true);
+    expect((rows[0]?.frontmatter ?? {}).quarantine).toBeUndefined();
   });
 });
 
