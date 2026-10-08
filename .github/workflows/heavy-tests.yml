@@ -164,8 +164,10 @@ jobs:
       GROK_VERSION: "1.0.4"
       # Same posture for opencode: a provisioned runner's version pin.
       OPENCODE_VERSION: "1.18.18"
-      # Same pins as plugin-doors; update both jobs together.
+      # Same codex/claude pins as plugin-doors; update both jobs together.
+      # pi is pinned here only (the plugin-doors job has no pi door).
       CODEX_NPM_VERSION: "0.147.0"
+      PI_NPM_VERSION: "1.0.4"
       CLAUDE_NPM_VERSION: "2.1.233"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -210,7 +212,7 @@ jobs:
         if: steps.keys.outputs.keyed == 'true'
         timeout-minutes: 10
         run: |
-          npm install -g "@openai/codex@$CODEX_NPM_VERSION" "@anthropic-ai/claude-code@$CLAUDE_NPM_VERSION"
+          npm install -g "@openai/codex@$CODEX_NPM_VERSION" "@anthropic-ai/claude-code@$CLAUDE_NPM_VERSION" "@earendil-works/pi-coding-agent@$PI_NPM_VERSION"
           codex_v=$(codex --version)
           printf '%s' "$codex_v" | grep -qF "$CODEX_NPM_VERSION" || { echo "::error::codex version drift — expected $CODEX_NPM_VERSION in: $codex_v (re-pin deliberately)" >&2; exit 1; }
           claude_v=$(claude --version)
@@ -232,12 +234,13 @@ jobs:
             test/e2e/bootstrap-real-codex.serial.test.ts \
             test/e2e/install-real-hermes.serial.test.ts \
             test/e2e/install-real-grok.serial.test.ts \
-            test/e2e/install-real-opencode.serial.test.ts > real-agent-doors.txt 2>&1 || EXIT=$?
+            test/e2e/install-real-opencode.serial.test.ts \
+            test/e2e/bootstrap-real-pi.serial.test.ts > real-agent-doors.txt 2>&1 || EXIT=$?
           tail -80 real-agent-doors.txt
           if [ "$EXIT" -ne 0 ]; then exit "$EXIT"; fi
           if [ "$KEYED" != "true" ]; then exit 0; fi
           ok=1
-          for door in 'bootstrap real Claude Code door' 'bootstrap real-codex door'; do
+          for door in 'bootstrap real Claude Code door' 'bootstrap real-codex door' 'real pi door'; do
             if ! grep -qF "(pass) $door" real-agent-doors.txt; then
               echo "::error::Keyed run executed no passing '$door' test. Why: the secrets are set but the live door self-skipped (binary or auth not detected). Fix: read real-agent-doors.txt above for the skip reason, then gh workflow run heavy-tests.yml --ref <branch>." >&2
               ok=0

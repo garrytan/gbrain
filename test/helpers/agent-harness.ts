@@ -287,6 +287,13 @@ export function hasCodexAuth(): boolean {
  *  a present-but-empty object means no provider is signed in, so it does not
  *  count. */
 export function hasPiAuth(): boolean {
+  // Either shape drives a spawned `pi -p`: the operator's auth.json (copied
+  // into the hermetic agent dir) or an ambient provider key, which
+  // hermeticChildEnv passes through (ANTHROPIC_API_KEY is in ALLOW_EXACT).
+  // The keyless CI lane has no ~/.pi/agent, so the key is what makes the door
+  // executable there — without it the door self-skips and a keyed run fails
+  // its refusal check.
+  if (process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY) return true;
   try {
     const raw = fs.readFileSync(path.join(os.homedir(), '.pi', 'agent', 'auth.json'), 'utf8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
