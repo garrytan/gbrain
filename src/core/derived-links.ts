@@ -6,7 +6,7 @@ import { sanitizeForJsonb } from './batch-rows.ts';
 import { replaceWantedLinks, type WantedLinksReplacement } from './wanted-links-store.ts';
 import { applyTemporalEvidence, relationshipKeysForOrigin } from './link-temporal-apply.ts';
 import { primeRelationSemantics } from './link-semantics-pack.ts';
-import { effectiveRangesEnabled } from './line-grammar.ts';
+import { effectiveRangesEnabled, LINK_EXTRACTION_GENERATION_KEY, type LineGrammarSettings } from './line-grammar.ts';
 
 export interface DerivedLinkOrigin {
   slug: string;
@@ -30,6 +30,13 @@ export interface DerivedLinkReplacementOptions {
   wanted?: WantedLinksReplacement;
   /** The caller installed the pack relation semantics already (links-preparation.ts `primeSemantics`). */
   semanticsPrimed?: boolean;
+  /**
+   * The line-grammar settings the links were prepared under. Publication uses
+   * them for validity ranges (never a second read) and refuses with
+   * DerivedLinkSettingsChangedError when the extraction generation moved since,
+   * so a page is never published from one setting and ranged from another.
+   */
+  lineGrammar?: LineGrammarSettings;
 }
 
 export class DerivedLinkRepairRequiredError extends Error {
@@ -43,6 +50,22 @@ export class DerivedLinkRepairRequiredError extends Error {
 export class DerivedLinkEndpointChangedError extends Error {
   readonly code = 'revision_conflict';
 }
+
+/** The line-grammar settings changed between preparation and publication; the page stays stale and re-extracts. */
+export class DerivedLinkSettingsChangedError extends DerivedLinkEndpointChangedError {
+  constructor() { super('Line-grammar settings changed after these links were prepared'); this.name = 'DerivedLinkSettingsChangedError'; }
+}
+
+/** replaceDerivedLinks, or null when the line-grammar settings moved since preparation (the page stays stale). */
+export async function replaceDerivedLinksUnlessSettingsChanged(engine: Pick<BrainEngine, 'replaceDerivedLinks'>,
+  ...args: Parameters<BrainEngine['replaceDerivedLinks']>): Promise<{ created: number; removed: number } | null> {
+  try { return await engine.replaceDerivedLinks(...args); }
+  catch (error) { if (error instanceof DerivedLinkSettingsChangedError) return null; throw error; }
+}
+
+/** The operator line for pages a settings change left stale mid-run. */
+export const settingsChangedSkipLine = (n: number) =>
+  `Skipped ${n} page(s) because the line-grammar settings changed during this run; they stay stale. Run \`gbrain extract --stale\` to finish them.`;
 
 export async function applyAttendanceDelta(tx: Pick<BrainEngine, 'executeRaw' | 'addLinksBatch'>,
   origin: { id: string; slug: string; source_id: string; type: string }, remove: string[], additions: LinkBatchInput[]) {
@@ -99,6 +122,11 @@ export async function replaceDerivedLinks(
         { sourceId: row.from_source_id!, slug: row.from_slug }, { sourceId: row.to_source_id!, slug: row.to_slug },
       ])]),
     ]);
+    if (opts.lineGrammar) {
+      // FOR SHARE: a concurrent setting change (which updates this row) waits for this publication, or this one sees it.
+      const [gen] = await tx.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1 FOR SHARE', [LINK_EXTRACTION_GENERATION_KEY]);
+      if ((gen?.value ?? null) !== opts.lineGrammar.generation) throw new DerivedLinkSettingsChangedError();
+    }
     const snapshot = origin.snapshot !== undefined ? origin.snapshot : await tx.readPageSnapshot(origin.slug, { sourceId: origin.sourceId });
     assertPageRevision(snapshot, { expectedRevision: origin.expectedRevision });
     if (!snapshot || snapshot.sourceIncarnation !== origin.sourceIncarnation || snapshot.page.deleted_at) {
@@ -132,7 +160,7 @@ export async function replaceDerivedLinks(
         WHERE (l.link_source=ANY($2::text[]) OR ($3::boolean AND l.link_source IS NULL))
           AND (l.origin_page_id=$1 OR (l.origin_page_id IS NULL AND l.from_page_id=$1
             AND (l.link_source IN ('markdown','wikilink-resolved') OR l.link_source IS NULL)))`, [id, producers, opts.includeLegacyNullProducer !== false]) : Promise.resolve([]),
-      () => effectiveRangesEnabled(tx),
+      () => opts.lineGrammar ? Promise.resolve(opts.lineGrammar.effectiveRanges) : effectiveRangesEnabled(tx),
     ]) as [unknown, Awaited<ReturnType<typeof relationshipKeysForOrigin>>, unknown[], unknown[], unknown[], Existing[], boolean];
     const withTemporal = async (result: { created: number; removed: number }) => {
       await applyTemporalEvidence(tx, snapshot.page, rows, temporalKeysBefore, { inlineRanges });

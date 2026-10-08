@@ -650,6 +650,7 @@
         "attendanceEvidenceRanges",
         "buildBasenameIndex",
         "deriveTimelineAnchor",
+        "explainLinkType",
         "extractCodeRefs",
         "extractEntityRefs",
         "extractFrontmatterLinks",
@@ -671,6 +672,7 @@
         "queryBasenameIndex",
         "resolvedLinkCandidate",
         "stripCodeBlocks",
+        "traceLinkType",
         "unwrapWikilink"
       ],
       "./markdown": [

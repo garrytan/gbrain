@@ -1,0 +1,19 @@
+{
+  "id": "q2-dev-role-for",
+  "note": "Development-only phrasing for the Q2 typing units (gbrain test/fixtures/q2-dev-phrasings). Not held-out material.",
+  "templates": {
+    "current": "{name} is {role} for {company} these days.",
+    "stale_summary": "{name} works as {role} for {company}.",
+    "rejoin_eu": "{name} came back to {company} and is now in charge of its EU team.",
+    "former": "Before that, {name} put in a few years at {company}.",
+    "advises": "{name} also advises {company} on pricing.",
+    "tl_move": "linkedin — Left {prev}; now {role} for {company}",
+    "tl_join": "linkedin — New role: {role} for {company}",
+    "tl_leave": "linkedin — Wrapped up at {company}",
+    "tl_advise": "note — Agreed to advise {company}",
+    "tl_invest": "note — Put money into {company}'s growth round",
+    "tl_alumni": "event — Caught up with old {company} colleagues at a reunion",
+    "explicit_start": "note — Started works_at [[{slug}]] as {role}",
+    "explicit_end": "note — Ended works_at [[{slug}]]"
+  }
+}

@@ -13,7 +13,7 @@ import { probeSourceGitState } from '../../../core/git-head.ts';
 import { lagFromContentMs, loadSyncFreshnessSources, resolveStalenessCeilingSeconds } from '../../../core/source-health.ts';
 import { resolveEnvNumber, resolveHoursEnv, warnOnceForEnv } from '../../../core/env-number.ts';
 import { CHUNKER_VERSION } from '../../../core/chunkers/code.ts';
-import { LINK_EXTRACTOR_VERSION_TS } from '../../../core/link-extraction.ts';
+import { effectiveLinkExtractorWatermark, smallBrainBacklogNote } from '../../../core/link-extraction-watermark.ts';
 import { previewMentionPass } from '../../../core/mentions/stale.ts';
 import { isUndefinedColumnError } from '../../../core/utils.ts';
 import {
@@ -121,13 +121,13 @@ export async function checkLinksExtractionLag(
     // Vacuous-skip tiny brains unless explicitly source-scoped. Shared floor
     // const so the sync nudge (D6/C4) skips on the exact same predicate.
     if (total < EXTRACTION_LAG_MIN_PAGES && !sourceId) {
-      return { name, status: 'ok', message: `Extraction lag not applicable (${total} pages — too few to assess)` };
+      return { name, status: 'ok', message: `Extraction lag not applicable (${total} pages — too few to assess)${await smallBrainBacklogNote(engine)}` };
     }
 
     // #5761: a page left stale only by an unresolved attendee, and not edited
     // since, is attendance-blocked: `extract --stale` cannot clear it, so it
     // is reported apart from lag. Pre-v180 brains have no marker column.
-    const versionTs = LINK_EXTRACTOR_VERSION_TS;
+    const versionTs = await effectiveLinkExtractorWatermark(engine);
     let stale: number;
     let attendanceBlocked = 0;
     try {

@@ -39,7 +39,7 @@
  */
 import type { BrainHealth } from '../types.ts';
 import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../types.ts';
-import { LINK_EXTRACTOR_VERSION_TS } from '../link-extraction.ts';
+import { effectiveLinkExtractorWatermark } from '../link-extraction-watermark.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 import { loadOrphanPolicyOverrides, orphanExclusionSql } from '../orphan-policy.ts';
 import { loadTimelineGradedPredicate } from '../timeline-grading.ts';
@@ -204,10 +204,11 @@ export async function getHealth(
      LIMIT 5
   `);
 
+  const watermark = await effectiveLinkExtractorWatermark(deps);
   const stalePages = scope === null
-    ? await deps.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })
+    ? await deps.countStalePagesForExtraction({ versionTs: watermark })
     : (await Promise.all(scope.map(sourceId =>
-        deps.countStalePagesForExtraction({ sourceId, versionTs: LINK_EXTRACTOR_VERSION_TS }),
+        deps.countStalePagesForExtraction({ sourceId, versionTs: watermark }),
       ))).reduce((a, b) => a + b, 0);
 
   let linkablePageCount = 0;

@@ -61,7 +61,7 @@ export async function maybeBackupCoverageRefresh(engine: BrainEngine): Promise<v
 export async function maybeExtractionNudge(engine: BrainEngine, sourceId?: string): Promise<void> {
   if (process.env.GBRAIN_SYNC_NO_EXTRACT_NUDGE) return;
   try {
-    const { LINK_EXTRACTOR_VERSION_TS } = await import('../../core/link-extraction.ts');
+    const { effectiveLinkExtractorWatermark } = await import('../../core/link-extraction-watermark.ts');
     // D3/C4: resolve the warn threshold + vacuous-skip floor through the SAME
     // helpers the doctor check uses (dynamic import keeps doctor.ts off sync's
     // eager-load path) so "the nudge fires iff doctor would warn" can't drift.
@@ -76,7 +76,7 @@ export async function maybeExtractionNudge(engine: BrainEngine, sourceId?: strin
     // Match doctor's predicate EXACTLY (C4): skip tiny brains only when NOT
     // source-scoped (a small explicit source IS assessed, like orphan_ratio).
     if (total < EXTRACTION_LAG_MIN_PAGES && !sourceId) return;
-    const stale = await engine.countStalePagesForExtraction({ sourceId, versionTs: LINK_EXTRACTOR_VERSION_TS });
+    const stale = await engine.countStalePagesForExtraction({ sourceId, versionTs: await effectiveLinkExtractorWatermark(engine) });
     const warnPct = _resolveEnvNumber('GBRAIN_EXTRACTION_LAG_WARN_PCT', EXTRACTION_LAG_WARN_PCT_DEFAULT, { unit: '%' });
     if ((stale / total) * 100 > warnPct) {
       serr(`[sync] ${stale} page(s) have un-extracted edges — run 'gbrain extract --stale'`);
