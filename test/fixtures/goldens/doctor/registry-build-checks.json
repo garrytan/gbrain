@@ -439,6 +439,14 @@
       },
       {
         "category": "brain",
+        "name": "conversation_label_facts"
+      },
+      {
+        "category": "brain",
+        "name": "conversation_outcomes_stale"
+      },
+      {
+        "category": "brain",
         "name": "captured_facts_active"
       },
       {

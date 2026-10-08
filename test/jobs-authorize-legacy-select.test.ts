@@ -29,6 +29,7 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await engine?.disconnect(); }, 60_000);
 beforeEach(async () => {
+  _resetCliExitVerdictForTests();
   await engine.executeRaw('DELETE FROM minion_jobs');
   await engine.executeRaw('DELETE FROM op_checkpoints WHERE op = $1', [PREVIEW_APPROVAL_OP]);
 });

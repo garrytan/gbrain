@@ -54,6 +54,8 @@ export type ChildSupervisorEvent =
   | { kind: 'worker_spawn_failed'; error: string; phase: 'sync' | 'async'; errnoCode?: string }
   | {
       kind: 'worker_exited';
+      /** The exited child's pid (absent when the spawn never produced a process). */
+      pid?: number;
       code: number | null;
       signal: NodeJS.Signals | null;
       runDurationMs: number;
@@ -555,6 +557,7 @@ export class ChildWorkerSupervisor {
 
         this.opts.onEvent({
           kind: 'worker_exited',
+          pid: child.pid,
           code: null,
           signal: null,
           runDurationMs: runDuration,
@@ -598,7 +601,7 @@ export class ChildWorkerSupervisor {
           this.opts.processingState?.workerExited();
           this._lastExitCode = code;
           this.markConfigurationBlocked();
-          this.opts.onEvent({ kind: 'worker_exited', code, signal: signal ?? null,
+          this.opts.onEvent({ kind: 'worker_exited', pid: child.pid, code, signal: signal ?? null,
             runDurationMs: this.now() - this._lastStartTime, likelyCause: 'configuration_blocked', crashCount: this._crashCount });
           resolve();
           return;
@@ -692,6 +695,7 @@ export class ChildWorkerSupervisor {
 
         this.opts.onEvent({
           kind: 'worker_exited',
+          pid: child.pid,
           code: code ?? null,
           signal: signal ?? null,
           runDurationMs: runDuration,

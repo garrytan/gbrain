@@ -2804,6 +2804,8 @@ export function isThinkingModel(modelStr: string | undefined): boolean {
 export function defaultMaxOutputTokens(modelStr: string | undefined): number {
   return isThinkingModel(modelStr) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS;
 }
+/** The cap `chat({ thinking: 'off', maxTokens: requested })` sends (thinking-off.ts table); judge preflight estimates price with it. */
+export const thinkingOffOutputCap = (modelStr: string, requested: number): number => thinkingOffMaxOutputTokens(modelStr, requested, isThinkingModel(modelStr), THINKING_MODEL_MAX_OUTPUT_TOKENS);
 
 /**
  * Deep-serialize a tool output into a plain JSON value for the AI SDK v6
@@ -3457,7 +3459,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
-  const maxOutputTokens = thinkingOffMaxOutputTokens(modelStrEarly, opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly), opts.thinking === 'off' && isThinkingModel(modelStrEarly), THINKING_MODEL_MAX_OUTPUT_TOKENS);
+  const maxOutputTokens = opts.thinking === 'off' ? thinkingOffOutputCap(modelStrEarly, opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly)) : (opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly));
 
   // TX5: reserve BEFORE the provider call (BudgetExhausted on cost, runtime,
   // or no_pricing under a user cap) with the pre-resolution model id. record()

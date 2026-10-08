@@ -355,6 +355,7 @@ test/sync.test.ts	isSyncable	8	source-surface-helper
 test/sync.test.ts	resolveSlugByPathOrSourcePath (CJK wave v0.32.7, codex F4)	3	source-surface-helper
 test/sync.test.ts	sync auto-embed arguments	2	source-surface-helper
 test/sync.test.ts	sync regression — #132 nested transaction deadlock	3	source-surface-helper
+test/takes-reservation-callers.test.ts	(file-level)	1	readFileSync
 test/template-repo-generator.test.ts	generateTemplateTree	0	readFileSync
 test/template-repo-generator.test.ts	renderTemplateReadme	5	readFileSync
 test/think-embed-question-wiring.serial.test.ts	#3734 — CRAG think escalation wires embedQuestion (source pin)	1	readFileSync

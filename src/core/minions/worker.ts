@@ -86,7 +86,7 @@ export const INFRASTRUCTURE_ABORT_REASONS = new Set<string>([
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
-import { releaseUndrainedClaims, settleShutdownInterruptedJob } from './worker-shutdown.ts';
+import { endedByShutdown, releaseUndrainedClaims, settleShutdownInterruptedJob } from './worker-shutdown.ts';
 import { readFileSync } from 'fs';
 
 /**
@@ -1640,7 +1640,7 @@ export class MinionWorker extends EventEmitter {
         }
         return;
       }
-      if (err instanceof ChildWorkerShutdownError || (!isolated && this.shutdownAbort.signal.aborted && !abort.signal.aborted)) {
+      if (err instanceof ChildWorkerShutdownError || (!isolated && endedByShutdown(err, this.shutdownAbort.signal, abort.signal))) {
         return settleShutdownInterruptedJob(this.engine, job, lockToken, errorText, !(err instanceof ChildWorkerShutdownError) || err.executionStopped === true);
       }
       if (err instanceof ChildNotClaimedError) {

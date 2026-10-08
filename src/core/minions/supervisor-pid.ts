@@ -8,6 +8,7 @@
  */
 
 import { existsSync, readFileSync } from 'fs';
+import { processStartTime } from '../pglite-lock.ts';
 
 export interface SupervisorPidStatus {
   /** Parsed pid from the PID file, or null if missing/corrupt. */
@@ -38,4 +39,21 @@ export function readSupervisorPid(pidFile: string): SupervisorPidStatus {
   } catch {
     return { pid: null, running: false };
   }
+}
+
+/**
+ * W9F item 7: process identity for `jobs supervisor stop`. The PID file body
+ * is the supervisor pid and then (Linux) its kernel start time, so a stale
+ * PID file whose pid was recycled is told apart from the supervisor; every
+ * reader takes the first line.
+ */
+export function pidFileContents(pid: number = process.pid): string {
+  const start = processStartTime(pid);
+  return start ? `${pid}\n${start}\n` : String(pid);
+}
+
+/** `{ [key]: <kernel start time of pid> }` for an audit row, or nothing when it is unknowable. */
+export function processStartStamp(key: string, pid: number): Record<string, string> {
+  const start = processStartTime(pid);
+  return start ? { [key]: start } : {};
 }

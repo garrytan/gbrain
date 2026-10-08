@@ -24,7 +24,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { __setChatTransportForTests, configureGateway, resetGateway, type ChatOpts, type ChatResult } from '../src/core/ai/gateway.ts';
+import { __setChatTransportForTests, configureGateway, resetGateway, thinkingOffOutputCap, type ChatOpts, type ChatResult } from '../src/core/ai/gateway.ts';
 import { dailyLedger, FENCE_REPAIR_LEDGER } from '../src/core/budget/daily-ledger.ts';
 import { attemptStore } from '../src/core/fence-repair/attempts.ts';
 import { buildTier3Prompt, callTier3, correctionMessage, extractSingleTable, FENCE_REPAIR_PROMPT_VERSION, spliceTier3, tier3Requests, tier3TokenBudget, TIER3_REASONING_TOKENS } from '../src/core/fence-repair/llm.ts';
@@ -108,6 +108,11 @@ describe('Tier 3 requests and prompt', () => {
     const table = tier3TokenBudget(req, 'anthropic:claude-opus-4-7').maxOutputTokens;
     expect(tier3TokenBudget(req, 'anthropic:claude-fable-5-1').maxOutputTokens).toBe(table + TIER3_REASONING_TOKENS);
     expect(tier3TokenBudget(req, 'openai:gpt-6.1-sol').maxOutputTokens).toBe(table + TIER3_REASONING_TOKENS);
+    expect(tier3TokenBudget(req, 'google:gemini-2.5-flash').maxOutputTokens).toBe(table);
+    expect(tier3TokenBudget(req, 'google:gemini-3.8-flash').maxOutputTokens).toBe(32000);
+    for (const model of ['anthropic:claude-fable-5-1', 'openai:gpt-6.1-sol', 'google:gemini-2.5-flash', 'google:gemini-3.8-flash']) {
+      expect(tier3TokenBudget(req, model).maxOutputTokens).toBe(thinkingOffOutputCap(model, tier3TokenBudget(req, model).maxOutputTokens));
+    }
     expect(tier3TokenBudget(req, 'claude-cli:claude-fable-5-1').maxOutputTokens).toBe(32000);
   });
 

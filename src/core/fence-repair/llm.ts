@@ -35,7 +35,7 @@
  * through the gateway's chat transport seam (`__setChatTransportForTests`).
  */
 import { chat, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS, type ChatMessage, type ChatResult } from '../ai/gateway.ts';
-import { thinkingOffMaxOutputTokens, thinkingOffNamespace } from '../ai/thinking-off.ts';
+import { thinkingOffControl, thinkingOffMaxOutputTokens } from '../ai/thinking-off.ts';
 import { isSeparatorRow, parseRowCells } from '../fence-shared.ts';
 import { sectionsOf } from './page-checks.ts';
 import { extractRawRows, primaryFence, type RawFence, type RawRow } from './raw-rows.ts';
@@ -192,9 +192,9 @@ export function correctionMessage(gate: GateLetter, rows: readonly number[]): st
     + `Return the corrected full table following every rule above, or ${TIER3_DECLINE} if a row has more than one reasonable reading. Output only the table or ${TIER3_DECLINE}.`;
 }
 
-/** The model may reason whatever the call asks: a thinking-by-default model, or a route with no per-call thinking switch. */
+/** The model may reason whatever the call asks: a thinking-by-default model, or a route whose thinking-off option does not turn reasoning fully off. */
 function mayReason(model: string): boolean {
-  return isThinkingModel(model) || !thinkingOffNamespace(model);
+  return isThinkingModel(model) || !thinkingOffControl(model)?.disables;
 }
 
 /**

@@ -43,3 +43,27 @@ export const AUDIT_ROW_SOURCES = [
   NON_EXTRACTABLE_AUDIT_SOURCE,
   LEGACY_TERMINAL_AUDIT_SOURCE,
 ] as const;
+
+/**
+ * Decision 8 (wave 9 follow-ups): the conversation parser + extractor
+ * semantic version. Bump it when a parser or extractor change alters what an
+ * already-scanned page yields. New outcome rows carry it in their `context`
+ * (`extractor_version=<n>`) and a managed publication carries it in its
+ * generation identity. An outcome recorded under an older version stays
+ * fresh: nothing reopens automatically; doctor counts it as stale.
+ */
+export const CONVERSATION_EXTRACTOR_VERSION = 1;
+
+const EXTRACTOR_VERSION_RE = /(?:^|; )extractor_version=(\d+)$/;
+
+/** The outcome row context with the current extractor version stamped on it. */
+export function stampExtractorVersion(context: string | null | undefined): string {
+  const stamp = `extractor_version=${CONVERSATION_EXTRACTOR_VERSION}`;
+  return context ? `${context}; ${stamp}` : stamp;
+}
+
+/** The extractor version an outcome row was recorded under, or null for a row older than the stamp. */
+export function outcomeExtractorVersion(context: string | null | undefined): number | null {
+  const match = context ? EXTRACTOR_VERSION_RE.exec(context) : null;
+  return match ? Number(match[1]) : null;
+}

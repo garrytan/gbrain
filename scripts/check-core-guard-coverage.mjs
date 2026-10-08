@@ -37,9 +37,14 @@ const EXEMPT = {
   'src/core/persistence/effect-journal.ts': 'post-publication effects; no page text',
   'src/core/repair/captured-facts.ts': 'owner-run repair that expires fact rows (shrinks only)',
   'src/core/repair/extractor-facts.ts': 'owner-run repair restoring expired fact rows',
+  'src/core/repair/conversation-labels.ts': 'owner-run repair expiring fact rows and writing an outcome row (shrinks only; page text unchanged)',
   'src/core/shared-skills/publication.ts': 'skill bundles, not pages',
   'src/core/persistence/prepared-import.ts': 'type definitions shared by import preparers; prepares nothing itself',
   'src/commands/extract-timeline-db.ts': 'writes timeline rows; timeline never enters core',
+  'src/core/facts/conversation-publication.ts': 'writes database-only conversation fact rows; page text is unchanged',
+  'src/core/cycle/extract-facts.ts': 'fence reconcile and deleted-page expiry write fact rows only; page text is unchanged',
+  'src/core/cycle/extract-takes.ts': 'takes reextract writes take rows only; page text is unchanged',
+  'src/core/repair/take-supersession.ts': 'reprojection writes takes.superseded_by only; fence edits go through put_page (preparePageMutation)',
 };
 
 const GUARDED = /\b(preparePageMutation|prepareMemoryMutation|prepareCoreGuard)\b/;

@@ -985,6 +985,33 @@
         {
           "category": "brain",
           "details": {
+            "capped": false,
+            "docs": "docs/guides/repair.md#conversation-labels",
+            "evidenced": 0,
+            "repair": "conversation-labels"
+          },
+          "message": "No conversation fact carries the pre-fix meeting-label signature (a 1970-01-01 segment on a label page).",
+          "name": "conversation_label_facts",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "capped": false,
+            "docs": "docs/guides/repair.md#conversation-labels",
+            "extractor_version": 1,
+            "sample": [],
+            "scanned": 0,
+            "stale": 0,
+            "unstamped": 0
+          },
+          "message": "No conversation extraction outcome predates extractor version 1.",
+          "name": "conversation_outcomes_stale",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "ambiguous": 0,
             "docs": "docs/guides/repair.md#explicit-only-repair-kinds",
             "evidenced": 0,

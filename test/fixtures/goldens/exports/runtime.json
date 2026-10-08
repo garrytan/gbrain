@@ -472,6 +472,7 @@
         "resetGateway",
         "resolveNativeBaseUrl",
         "splitByTokenBudget",
+        "thinkingOffOutputCap",
         "toAISDKTools",
         "toModelMessages",
         "toolLoop",
@@ -759,6 +760,7 @@
         "msSinceLastReap",
         "peekLock",
         "pgliteLockDirFor",
+        "processStartTime",
         "readBootId",
         "readPidNs",
         "releaseLock"

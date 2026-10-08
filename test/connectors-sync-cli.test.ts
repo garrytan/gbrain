@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,8 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { renderCliError } from '../src/core/agent-output.ts';
 
 const tempHomes: string[] = [];
+
+beforeEach(() => { _resetCliExitVerdictForTests(); });
 
 afterEach(() => {
   for (const home of tempHomes.splice(0)) rmSync(home, { recursive: true, force: true });

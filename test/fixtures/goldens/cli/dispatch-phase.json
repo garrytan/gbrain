@@ -224,7 +224,7 @@
         "phase": "pre-connect-own-engine",
         "preConnectRules": [
           {
-            "condition": "command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove'].includes(args[0]) && !hasHelpFlag(args)",
+            "condition": "command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove', 'rebuild'].includes(args[0]) && !hasHelpFlag(args)",
             "connectsEngine": true,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -245,7 +245,7 @@
         "phase": "pre-connect-own-engine",
         "preConnectRules": [
           {
-            "condition": "command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove'].includes(args[0]) && !hasHelpFlag(args)",
+            "condition": "command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove', 'rebuild'].includes(args[0]) && !hasHelpFlag(args)",
             "connectsEngine": true,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -845,7 +845,7 @@
         "phase": "pre-connect-own-engine",
         "preConnectRules": [
           {
-            "condition": "command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove'].includes(args[0]) && !hasHelpFlag(args)",
+            "condition": "command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove', 'rebuild'].includes(args[0]) && !hasHelpFlag(args)",
             "connectsEngine": true,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -1706,7 +1706,7 @@
         "phase": "post-connect",
         "preConnectRules": [
           {
-            "condition": "command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove'].includes(args[0]) && !hasHelpFlag(args)",
+            "condition": "command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove', 'rebuild'].includes(args[0]) && !hasHelpFlag(args)",
             "connectsEngine": true,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -1841,7 +1841,7 @@
         "phase": "post-connect",
         "preConnectRules": [
           {
-            "condition": "command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove'].includes(args[0]) && !hasHelpFlag(args)",
+            "condition": "command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve', 'remove', 'rebuild'].includes(args[0]) && !hasHelpFlag(args)",
             "connectsEngine": true,
             "refusesThinClient": false,
             "routesThinClient": false,

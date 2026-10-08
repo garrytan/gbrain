@@ -45,18 +45,21 @@ function gitIgnores(root: string, filePath: string): boolean {
 }
 
 /**
- * Write one generated page's markdown file. Never throws; returns whether a
- * file was written. Ignored and db_only targets are skipped on purpose.
+ * Write one generated page's markdown file. Never throws; the result says
+ * whether a file was written, why not, or the write error. Ignored and db_only
+ * targets are skipped on purpose (`skipped: 'not_canonical'`).
+ * `expectedFileBytes` binds the write to the file the caller read.
  */
-export async function writeDerivedPageThrough(engine: BrainEngine, slug: string, sourceId: string): Promise<boolean> {
+export async function writeDerivedPageThrough(engine: BrainEngine, slug: string, sourceId: string,
+  opts: { expectedFileBytes?: string | null } = {}): Promise<{ written: boolean; skipped?: string; error?: string }> {
   const target = await resolvePageWriteTarget(engine, slug, sourceId);
-  if (!target.ok) return false;
+  if (!target.ok) return { written: false, skipped: target.skipped };
   let storage = null;
   try { storage = loadStorageConfig(target.writeRoot); } catch { /* unreadable gbrain.yml: sync reports it */ }
-  if ((storage && isDbOnly(slug, storage)) || gitIgnores(target.writeRoot, target.filePath)) return false;
-  const result = await writePageThrough(engine, slug, { sourceId });
+  if ((storage && isDbOnly(slug, storage)) || gitIgnores(target.writeRoot, target.filePath)) return { written: false, skipped: 'not_canonical' };
+  const result = await writePageThrough(engine, slug, { sourceId, expectedFileBytes: opts.expectedFileBytes });
   if (result.error) console.error(`[write-through] ${slug}: ${result.error}`);
-  return result.written;
+  return result;
 }
 
 /**

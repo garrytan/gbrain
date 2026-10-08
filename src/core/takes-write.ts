@@ -393,8 +393,12 @@ function assertFenceRoundTrips(parsed: ParseResult): void {
   }
 }
 
-function replaceFence(body: string, rows: ParsedTake[]): string {
-  const newFence = renderTakesFence(rows);
+/**
+ * Re-render the body's takes fence with `rows`. The fence's reservation rows
+ * stay, and `reserve` adds new ones (W9F item 4: `takes remove`).
+ */
+function replaceFence(body: string, rows: ParsedTake[], reserve: readonly number[] = []): string {
+  const newFence = renderTakesFence(rows, [...parseTakesFence(body).reservedRowNums, ...reserve]);
   const { beginIdx, endIdx } = locateOutsideCode(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
   return body.slice(0, beginIdx) + newFence + body.slice(endIdx + TAKES_FENCE_END.length);
 }

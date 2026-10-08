@@ -249,6 +249,28 @@ describe('runJobInChild (real children)', () => {
     await expect(p).rejects.toBeInstanceOf(ChildWorkerShutdownError);
   }, TEST_TIMEOUT_MS);
 
+  test('UnrecoverableError outcome during worker shutdown dead-letters as usual (W9F item 6, Decision 7)', async () => {
+    // A deterministic failure that coincides with a deploy must not be handed
+    // back for a second (possibly paid) run with its real error lost.
+    const harness = makeHarness(
+      'shutdown-unrecoverable-report',
+      `process.on('SIGTERM', () => {\n` +
+      `  writeOutcome({ outcome: 'error', errorKind: 'unrecoverable', message: 'invalid params: slug is required' });\n` +
+      `  process.exit(0);\n` +
+      `});\n` +
+      `setInterval(() => {}, 1000);\n`,
+    );
+    const shutdown = new AbortController();
+    const ready = readiness('shutdown-unrecoverable-report');
+    const opts = { ...baseOpts(harness), shutdownSignal: shutdown.signal, killGraceMs: 5_000, env: ready.env };
+    const p = runJobInChild(opts);
+    await ready.wait();
+    shutdown.abort(new Error('worker-shutdown'));
+    const err = await p.then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(UnrecoverableError);
+    expect((err as Error).message).toBe('invalid params: slug is required');
+  }, TEST_TIMEOUT_MS);
+
   test('watchdog drain (BOTH signals aborted, non-per-job reason) → shutdown class, not a burned attempt (adversarial P3)', async () => {
     const harness = makeHarness(
       'watchdog-stubborn',

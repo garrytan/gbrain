@@ -51,6 +51,7 @@ import { currentBrainId, readWorkers } from './worker-registry.ts';
 import { autopilotOperatorPauseMarkerPath, autopilotPaused } from '../autopilot-paths.ts';
 import { registerSignalOwner, triggerCleanupAndExit } from '../process-cleanup.ts';
 import { resolveEnvNumber } from '../env-number.ts';
+import { pidFileContents, processStartStamp } from './supervisor-pid.ts';
 
 export type SupervisorEvent =
   | 'started'
@@ -833,6 +834,7 @@ export class MinionSupervisor {
     // 5. Announce start.
     this.emit('started', {
       supervisor_pid: process.pid,
+      ...processStartStamp('supervisor_start', process.pid),
       // Resolved to absolute at emit time (relative to THIS process's cwd,
       // the only context in which a relative --pid-file was meaningful) so a
       // later reader (e.g. `gbrain doctor`, possibly running from a
@@ -1091,7 +1093,7 @@ export class MinionSupervisor {
       // O_CREAT | O_EXCL | O_WRONLY — fails with EEXIST if the file exists.
       const fd = openSync(this.opts.pidFile, 'wx');
       try {
-        writeSync(fd, String(process.pid));
+        writeSync(fd, pidFileContents());
       } finally {
         closeSync(fd);
       }
@@ -1117,7 +1119,7 @@ export class MinionSupervisor {
         try {
           const fd = openSync(this.opts.pidFile, 'wx');
           try {
-            writeSync(fd, String(process.pid));
+            writeSync(fd, pidFileContents());
           } finally {
             closeSync(fd);
           }
@@ -1225,6 +1227,7 @@ export class MinionSupervisor {
         this.consecutiveWedgedChecks = 0;
         this.emit('worker_spawned', {
           pid: event.pid >= 0 ? event.pid : undefined,
+          ...(event.pid >= 0 ? processStartStamp('pid_start', event.pid) : {}),
           cli_path: this.opts.cliPath,
           ...(event.tini ? { tini: true } : {}),
           ...(this.opts.nice_requested !== undefined ? { nice: this.opts.nice_requested } : {}),
@@ -1245,6 +1248,7 @@ export class MinionSupervisor {
           ? `signal ${event.signal}`
           : `code ${event.code ?? 'null'}`;
         this.emit('worker_exited', {
+          pid: event.pid ?? null,
           code: event.code,
           signal: event.signal,
           reason: exitReason,

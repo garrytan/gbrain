@@ -48,6 +48,7 @@ import { embeddingEffectsRepair } from './embedding-effects.ts';
 import { googleFileModesRepair } from './google-file-modes.ts';
 import { staleAtomsRepair } from './stale-atoms.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
+import { conversationLabelsRepair } from './conversation-labels.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
 import { loopFactsRepair } from './loop-facts.ts';
 import { ontologyFactsRepair } from './ontology-facts.ts';
@@ -73,8 +74,10 @@ export interface RepairKindSpec {
   explicit_only?: true;
   /** The preview prints a hash and `--apply --expect <hash>` applies exactly that set (accepted with or without `explicit_only`). */
   preview_bound?: true;
-  /** `destructive`: the apply rewrites user files, so it also needs the user's consent (`--yes` with the preview hash, or a terminal prompt). */
+  /** `destructive`: the apply rewrites user files or retires stored rows, so it also needs the user's consent (`--yes` with the preview hash, or a terminal prompt). */
   consent?: 'destructive';
+  /** The consent payload's wording for a destructive kind: what the apply does and how to undo it (default: the frontmatter file rewrite). */
+  consentText?: { what: string; why: string; risk: string; user_message: string };
   /** `llm`: the kind may call a paid chat model; its spend is metered by the daily USD ledger and reported in `cost.llm_usd`. */
   spends?: 'llm';
 }
@@ -158,6 +161,21 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + '(a committed write of the page completed in the same transaction, by an older consumer); --include-ambiguous widens the hashed set to facts '
       + 'without that evidence. Preview-bound: --apply --expect <hash> restores exactly the previewed set; a fact that changed since reports '
       + 'changed_since_preview and stays expired. Superseded, withdrawn and duplicated facts are never restored. Database-only; no page is rewritten.',
+  },
+  'conversation-labels': {
+    handler: conversationLabelsRepair, embeds: 'none', checks: ['conversation_label_facts'], explicit_only: true, consent: 'destructive',
+    consentText: {
+      what: 'Retire the previewed label-misattributed conversation facts in the database',
+      why: 'The preview listed each fact; applying it expires exactly those rows (and the page completion markers they invalidate), with no model calls.',
+      risk: 'Database rows only: no page or file changes. Retired facts are expired, not deleted, and keep "retired: conversation-labels" in their context; '
+        + 'recall stops returning them. Re-extracting a page writes fresh facts (gbrain extract-conversation-facts --slugs <page> --dry-run, then with --max-cost-usd).',
+      user_message: 'Retire the previewed label-misattributed conversation facts? They stop appearing in recall; the rows are expired, not deleted, and nothing calls a model.',
+    },
+    summary: 'Retire conversation facts the pre-v0.60.69 parser attributed to meeting-note labels (**Date:**, **Attendees:**, …) instead of speakers. '
+      + 'Default set: facts whose context names a 1970-01-01 segment, which only that parser wrote; --include-ambiguous adds the other extractor facts of '
+      + 'label pages, listed fact by fact. Preview-bound and destructive: --apply --expect <hash> --yes expires exactly the previewed rows, expires the '
+      + 'page completion marker and writes the not-extractable outcome for prose or undated pages. No model calls; the other pages re-enter the '
+      + 'extraction backlog and the preview prints the capped re-extract commands. Withdrawn, superseded and referenced facts are kept.',
   },
   'captured-facts': {
     handler: capturedFactsRepair, embeds: 'effect', checks: ['captured_facts_active'], explicit_only: true,

@@ -807,6 +807,9 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
     `for ${rows.length} questions x ${cycles} cycle(s) x 3 slots ` +
     `(per-question ~$${perQuestion.perRunMaxUSD.toFixed(2)}, concurrent=${concurrent})\n`,
   );
+  for (const note of perQuestion.notes) {
+    process.stderr.write(`[eval cross-modal batch] note: ${note}\n`);
+  }
   if (estTotal > maxUsd && !parsed.yes) {
     process.stderr.write(
       `Error: estimated cost $${estTotal.toFixed(2)} exceeds --max-usd $${maxUsd.toFixed(2)}; ` +

@@ -522,7 +522,7 @@ Common flags:
     case 'supersede':
     case 'resolve':
     case 'remove': { const { runTakesMutation } = await import('./takes-mutation.ts'); return runTakesMutation(engine, args); }
-    case 'rebuild':     return cmdRebuild(engine, rest);
+    case 'rebuild':     { const { runTakesRebuild } = await import('./takes-mutation.ts'); return runTakesRebuild(engine, rest); }
     // #2411: `takes propose` used to fall through to the slug path and print
     // "No takes on propose." — the LLM proposal queue had no drain surface.
     case 'propose':     return cmdPropose(engine, rest, await resolveTakesSourceId(engine));
@@ -534,32 +534,6 @@ Common flags:
       // No subcommand keyword → treat first arg as <slug> for the list path.
       return cmdList(engine, args);
   }
-}
-
-/**
- * #5167: `gbrain takes rebuild <slug> [--source-id <id>]` rebuilds one page's
- * takes index from the canonical fence its page holds (trusted local CLI).
- * Rows whose number and claim still match keep their resolution and vector;
- * rows the index and the fence disagree on are re-inserted from the fence.
- */
-async function cmdRebuild(engine: BrainEngine, rest: string[]): Promise<void> {
-  const slug = rest[0];
-  if (!slug || slug.startsWith('-')) {
-    process.stderr.write('Usage: gbrain takes rebuild <slug> [--source-id <id>] [--json]\n');
-    process.exit(1);
-  }
-  const sourceId = await resolveSourceId(engine, flagValue(rest, '--source-id') ?? null);
-  const { extractTakes } = await import('../core/cycle/extract-takes.ts');
-  const result = await extractTakes(engine, { source: 'db', slugs: [slug], sourceId, rebuild: true });
-  if (flagPresent(rest, '--json')) {
-    process.stdout.write(`${JSON.stringify({ slug, source_id: sourceId, ...result }, null, 2)}\n`);
-  } else if (result.pagesScanned === 0) {
-    process.stderr.write(`No page ${slug} in source ${sourceId}.\n`);
-  } else {
-    for (const warning of result.warnings) process.stderr.write(`[takes rebuild] ${warning}\n`);
-    console.log(`Rebuilt ${result.takesUpserted} take row(s) on ${slug} from its takes fence.`);
-  }
-  if (result.pagesScanned === 0 || result.warnings.length) process.exit(1);
 }
 
 /**

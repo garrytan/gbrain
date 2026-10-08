@@ -9,7 +9,8 @@
  * transaction. The fix stopped new expiries; this kind restores the old ones.
  *
  * Candidates: `source` starts with `cli:extract-conversation-facts`,
- * `expired_at` set, `row_num` NULL (the projection's signature). Each is
+ * `expired_at` set, `row_num` NULL (the projection's signature), and not
+ * retired by `gbrain repair conversation-labels` (its context marker). Each is
  * classified, in this order:
  *   - excluded (listed, never restored): the page is missing or deleted; the
  *     fact was superseded (`superseded_by`, E-T5); its claim was withdrawn
@@ -129,6 +130,7 @@ export async function classifyExtractorFacts(db: BrainEngine, sourceIds: string[
         FROM facts f
        WHERE f.source_id=ANY($1::text[]) AND f.source LIKE '${EXTRACTOR_FACTS_SOURCE_PREFIX}%'
          AND f.expired_at IS NOT NULL AND f.row_num IS NULL AND f.source_markdown_slug IS NOT NULL
+         AND COALESCE(f.context, '') NOT LIKE '%retired: conversation-labels%'
          AND ($2::text IS NULL OR f.source_markdown_slug=$2::text)
     ), receipts AS (
       SELECT DISTINCT ON (r.source_id, r.slug, r.completed_at) r.source_id, r.slug, r.completed_at,
