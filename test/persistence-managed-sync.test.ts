@@ -221,6 +221,29 @@ test('interrupted cursor resumes its pinned target before a newer HEAD and never
   }
 }),120_000);
 
+test('a resumed cursor imports a page committed past its pinned target instead of refusing it (#6320)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const engine of engines) {
+    const f = await fixture(engine, {'a.md':'First observation, version one.\n','b.md':'Second observation, version one.\n'});
+    expect((await performManagedSync(engine,{sourceId:f.id,noPull:true})).status).toBe('first_sync');
+    writeFileSync(join(f.root,'a.md'),'First observation, version two.\n'); writeFileSync(join(f.root,'b.md'),'Second observation, version two.\n');
+    const pin = commit(f.root,'version two of both');
+    const abort = new AbortController();
+    const partial = await performManagedSync(engine,{sourceId:f.id,noPull:true,signal:abort.signal,onProgress:p=>{if(p.bankedFiles===1) abort.abort();}});
+    expect(partial).toMatchObject({status:'partial',filesImported:1});
+    // A live checkout keeps committing while the cursor drains: b.md moves past the pin.
+    writeFileSync(join(f.root,'b.md'),'Second observation, version three.\n'); const head = commit(f.root,'version three of b, past the pin');
+    const resumed = await performManagedSync(engine,{sourceId:f.id,noPull:true});
+    expect(resumed.status).not.toBe('blocked_by_failures'); expect(resumed.managedWrite).toBeUndefined(); expect(resumed.toCommit).toBe(pin);
+    expect((await engine.getPage('b',{sourceId:f.id}))?.compiled_truth).toContain('version three');
+    expect(readFileSync(join(f.root,'b.md'),'utf8')).toBe('Second observation, version three.\n');
+    expect(git(f.root,'status','--porcelain')).toBe('');
+    const next = await performManagedSync(engine,{sourceId:f.id,noPull:true});
+    expect(next.toCommit).toBe(head); expect(next.status).not.toBe('blocked_by_failures');
+    expect((await engine.getPage('b',{sourceId:f.id}))?.compiled_truth).toContain('version three');
+    expect(loadSyncFailures().filter(row => row.source_id === f.id)).toHaveLength(0);
+  }
+}),120_000);
+
 test('attached working-tree changes require opt-in and delete retains exact physical identity', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   for (const engine of engines) {
     const f=await fixture(engine,{'notes/a.md':'Committed observation for the source.\n'});

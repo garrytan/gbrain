@@ -1,4 +1,5 @@
 import { realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -189,6 +190,15 @@ export function screenSyncImport(input: SyncImportScreenInput): { screen: Import
   return { screen, parsedInput, newerWorkingTree };
 }
 
+function committedWorkingTreeBytes(root: string, path: string): { bytes: Buffer; oid: string } | null {
+  try {
+    const bytes = readSyncFile(root, path);
+    if (!bytes) return null;
+    const oid = createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes])).digest('hex');
+    const head = syncGit(root, ['rev-parse', `HEAD:./${path}`]).trim();
+    return head === oid ? { bytes, oid } : null;
+  } catch { return null; }
+}
 /** #6188: the prepare screen with `fences.normalize` settled; the switch is read only for a file Tier 1 would rewrite. */
 async function settledSyncScreen(engine: BrainEngine, input: SyncImportScreenInput): Promise<ReturnType<typeof screenSyncImport>> {
   const screened = screenSyncImport(input);
@@ -205,7 +215,7 @@ function companyWritebackRefusal(row: WriteRequest, p: SyncIntent, fenceFixes: r
 }
 
 export async function prepareManagedSyncMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
-  const p = row.intent as SyncIntent | null;
+  let p = row.intent as SyncIntent | null;
   if (!p || !['managed_sync_import', 'managed_sync_delete', 'managed_sync_checkpoint'].includes(p.kind)) throw syncPublicationRefusal('invalid_params', 'Unsupported internal sync intent.', row, p,
     'The request does not carry a managed sync intent this release can publish.');
   if (p.unownedDeletion && p.kind !== 'managed_sync_delete') throw syncPublicationRefusal('invalid_params', 'Only a deletion can record an unowned path.', row, p,
@@ -356,6 +366,14 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     } };
   if (typeof p.content !== 'string' || typeof p.sourcePath !== 'string' || typeof p.path !== 'string') throw syncPublicationRefusal('storage_error', 'The frozen import content is missing.', row, p,
     'The stored intent has no frozen file content to import.');
+  // LOCAL PATCH (wintermute 2026-10-08, see /data/.gbrain/LOCAL-PATCHES.md): on a live-committed checkout the
+  // working tree routinely holds a commit PAST the pinned target. Those bytes are committed at HEAD, so they are
+  // not an uncoordinated local edit; import them (the pin..HEAD diff later re-imports the same bytes as a no-op)
+  // instead of refusing `pinned_git_worktree_conflict`, which blocks the whole cursor on every post-pin commit.
+  if (p.kind === 'managed_sync_import' && snapshot && !p.companyApproval && !p.lineEndingOnly && p.rawHash !== sha256(p.content)) {
+    const committed = committedWorkingTreeBytes(root, p.path);
+    if (committed && sha256(committed.bytes) === p.rawHash) p = { ...p, content: committed.bytes.toString('utf8'), blobOid: committed.oid };
+  }
   if (isCodeFilePath(p.sourcePath)) {
     if (p.companyApproval) throw syncPublicationRefusal('profile_incompatible', 'Company source approval permits only committed Markdown content.', row, p,
       `A company-brain source imports only committed Markdown, and ${row.slug} is a code file; remove it from the approved revision.`);
