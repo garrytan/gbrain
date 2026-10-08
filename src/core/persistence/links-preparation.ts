@@ -7,7 +7,7 @@ import { DerivedLinkEndpointChangedError } from '../derived-links.ts';
 import { capturedLinkEndpoints, indexLinkSources, loadLinkSourcePolicy, resolveCandidateSources } from '../link-reconciliation.ts';
 import { collectWantedLinks, isWantedPagesEnabled, possibleWantedRows } from '../wanted-links.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { lineGrammarOptions } from '../line-grammar.ts';
+import { readLineGrammarSettings, type LineGrammarSettings } from '../line-grammar.ts';
 import { primeRelationSemantics } from '../link-semantics-pack.ts';
 
 async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: string[]): Promise<Map<string, string>> {
@@ -81,9 +81,13 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'>, sourceId: string, primeSemantics = false) {
   if (primeSemantics) await primeRelationSemantics(engine);
   const resolver = makeResolver(engine, { mode: 'live', sourceId, basenameIndex: () => sourceBasenameIndex(engine, sourceId) });
-  const opts = { globalBasename: await isGlobalBasenameEnabled(engine), lineGrammar: await lineGrammarOptions(engine),
+  // One settings snapshot for the whole extraction; publication validates it (derived-links.ts). An unreadable
+  // setting leaves the page's links unpublished (stale) rather than extracted under defaults.
+  const settings: LineGrammarSettings | null = await readLineGrammarSettings(engine).catch(() => null);
+  const opts = { globalBasename: await isGlobalBasenameEnabled(engine),
+    lineGrammar: { enabled: settings?.enabled ?? false, allowUndeclaredTypes: settings?.allowUndeclaredTypes ?? false },
     pack: (await loadActivePackForLocalEngine(engine, { sourceId }))?.manifest ?? null };
-  if (!opts.pack) return { pageKeys: [{ sourceId, slug }], attendanceComplete: true,
+  if (!opts.pack || !settings) return { pageKeys: [{ sourceId, slug }], attendanceComplete: true, settings,
     apply: async () => ({ created: 0, removed: 0, errors: 1, unresolved_count: 1 }) };
   const content = `${page.compiled_truth}\n${page.timeline}`;
   const referenced = new Set([slug]);
@@ -121,7 +125,7 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
     if (!candidate.canonicalAttendance && (resolved.fromSourceId !== sourceId || resolved.toSourceId !== sourceId)) return [];
     return [resolvedLinkCandidate(candidate, slug, sourceId, resolved)];
   });
-  return { attendanceComplete, pageKeys: [{ sourceId, slug }, ...rows.flatMap(row => [
+  return { attendanceComplete, settings, pageKeys: [{ sourceId, slug }, ...rows.flatMap(row => [
     { sourceId: row.from_source_id!, slug: row.from_slug }, { sourceId: row.to_source_id!, slug: row.to_slug },
   ])], apply: async (tx: BrainEngine) => {
     if (!attendanceComplete) return { created: 0, removed: 0, errors: 1, unresolved_count: Math.max(1, unresolved.length) };
@@ -129,7 +133,7 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
     if (!snapshot) throw new Error('Automatic link origin disappeared');
     try {
       const result = await tx.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
-        sourceIncarnation: snapshot.sourceIncarnation, snapshot }, rows, { preserveExisting: true, semanticsPrimed: primeSemantics, wanted: { ...wanted, producers: [...wanted.producers] },
+        sourceIncarnation: snapshot.sourceIncarnation, snapshot }, rows, { preserveExisting: true, semanticsPrimed: primeSemantics, lineGrammar: settings, wanted: { ...wanted, producers: [...wanted.producers] },
         expectedEndpoints: capturedLinkEndpoints(rows, new Map([...metadata,
           [`${sourceId}\0${slug}`, { slug, source_id: sourceId, type: page.type, knowledge_revision: snapshot.revision }]]))
           .filter(endpoint => endpoint.slug !== slug || endpoint.sourceId !== sourceId) });

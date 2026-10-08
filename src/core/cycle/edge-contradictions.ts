@@ -21,6 +21,8 @@
  * different targets whose combined evidence hash has no proposal yet.
  * Bounded by max_subjects and the cycle budget meter (max_usd).
  */
+import { LINK_EXTRACTION_GENERATION_KEY } from '../line-grammar.ts';
+import { linkExtractorWatermarkFor } from '../link-extraction-watermark.ts';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
@@ -181,6 +183,10 @@ interface SubjectGroup { sourceId: string; fromId: number; slug: string; title: 
 
 async function findCandidateGroups(engine: BrainEngine, maxSubjects: number): Promise<SubjectGroup[]> {
   const today = utcToday();
+  // After a line-grammar change, a subject whose links have not been re-derived yet is skipped: no closure is
+  // decided on a half-reconciled graph. Before any change (generation unset) every subject is eligible, as before.
+  const generation = await engine.getConfig(LINK_EXTRACTION_GENERATION_KEY);
+  const pendingCutoff = generation ? linkExtractorWatermarkFor(generation) : null;
   const rows = await engine.executeRaw<CandidateRow>(
     `WITH live AS (
        SELECT lr.* FROM link_relationships lr
@@ -195,9 +201,10 @@ async function findCandidateGroups(engine: BrainEngine, maxSubjects: number): Pr
             f.slug AS subject_slug, f.title AS subject_title, t.slug AS target_slug, t.title AS target_title
        FROM live l JOIN multi m USING (source_id, from_page_id, link_type)
        JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
+         AND ($3::timestamptz IS NULL OR f.links_extracted_at >= $3::timestamptz)
        JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
       ORDER BY l.from_page_id, l.link_type, l.last_start NULLS FIRST, t.slug`,
-    [today, maxSubjects]);
+    [today, maxSubjects, pendingCutoff]);
   const groups = new Map<string, SubjectGroup>();
   for (const r of rows) {
     const key = `${r.from_page_id}\0${r.link_type}`;

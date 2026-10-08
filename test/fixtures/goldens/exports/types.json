@@ -4740,6 +4740,7 @@
       {
         "kind": "interface",
         "members": [
+          "explain?: ((e: LinkTypeExplanation) => void) | undefined",
           "globalBasename?: boolean | undefined",
           "lineGrammar?: { enabled?: boolean; allowUndeclaredTypes?: boolean; } | undefined",
           "onResolvedFrontmatterTarget?: ((slug: string) => void) | undefined",
@@ -4789,7 +4790,7 @@
         "kind": "variable",
         "name": "LINK_EXTRACTOR_VERSION_TS",
         "signature": [
-          "\"2026-10-05T03:00:00Z\""
+          "\"2026-10-08T00:00:00Z\""
         ]
       },
       {
@@ -4809,6 +4810,18 @@
         "name": "LinkCandidate"
       },
       {
+        "kind": "interface",
+        "members": [
+          "occurrences: LinkTypeExplanation[]",
+          "stints: Record<string, Stint[]>",
+          "target: string",
+          "tense: Record<string, AssertionTense>",
+          "transitions: (DerivedTransition & { rule: string; })[]",
+          "types: string[]"
+        ],
+        "name": "LinkExplanation"
+      },
+      {
         "kind": "type",
         "name": "LinkExtractionPack",
         "signature": [
@@ -4821,6 +4834,35 @@
         "signature": [
           "\"qualified\" | \"unqualified\""
         ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "attachment: \"none\" | \"attached\" | \"window\" | \"other-links\"",
+          "context: string",
+          "index?: number | undefined",
+          "linkType: string",
+          "packRule: string | null",
+          "prior: string | null",
+          "rule: string | null",
+          "stated: string | null",
+          "suppressed: string[]",
+          "target: string",
+          "unit: \"U1\" | \"U3\" | \"U4\" | null"
+        ],
+        "name": "LinkTypeExplanation"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "attachment: \"none\" | \"attached\" | \"window\" | \"other-links\"",
+          "prior: string | null",
+          "rule: string | null",
+          "suppressed: string[]",
+          "type: string",
+          "unit: \"U1\" | \"U3\" | \"U4\" | null"
+        ],
+        "name": "LinkTypeTrace"
       },
       {
         "kind": "interface",
@@ -4903,6 +4945,13 @@
         "name": "deriveTimelineAnchor",
         "signature": [
           "(input: TimelineAnchorInput) => TimelineCandidate | null"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "explainLinkType",
+        "signature": [
+          "(input: { slug: string; content: string; pageType: PageType; target: string; frontmatter?: Record<string, unknown>; lineGrammar?: ExtractPageLinksOptions[\"lineGrammar\"]; pack?: LinkExtractionPack | null; }) => Promise<LinkExplanation>"
         ]
       },
       {
@@ -5050,6 +5099,13 @@
         "name": "stripCodeBlocks",
         "signature": [
           "(content: string, opts?: { onHtmlComment?: (start: number, end: number) => void; }) => string"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "traceLinkType",
+        "signature": [
+          "(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null, anchor?: number, pageText?: string, explain?: boolean) => LinkTypeTrace"
         ]
       },
       {
@@ -6603,7 +6659,7 @@
           "caller?: { remote?: boolean; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; } | undefined",
           "detail?: \"low\" | \"medium\" | \"high\" | undefined",
           "hits: FrozenHit[]",
-          "return_unit: \"auto\" | \"chunk\" | \"window\" | \"section\" | \"page\"",
+          "return_unit: \"auto\" | \"window\" | \"chunk\" | \"section\" | \"page\"",
           "return_window?: number | undefined"
         ],
         "name": "AssembleEvidenceInput"
@@ -6679,13 +6735,13 @@
         "kind": "type",
         "name": "DeliveredUnit",
         "signature": [
-          "\"chunk\" | \"window\" | \"section\" | \"page\""
+          "\"window\" | \"chunk\" | \"section\" | \"page\""
         ]
       },
       {
         "kind": "interface",
         "members": [
-          "applied_unit: \"auto\" | \"chunk\" | \"window\" | \"section\" | \"page\"",
+          "applied_unit: \"auto\" | \"window\" | \"chunk\" | \"section\" | \"page\"",
           "blocks: number",
           "budget_clamped?: { requested: number; max: number; } | undefined",
           "budget_tokens: number",
@@ -6695,7 +6751,7 @@
           "dropped: number",
           "dropped_reasons: Record<string, number>",
           "fallbacks: string[]",
-          "requested_unit: \"auto\" | \"chunk\" | \"window\" | \"section\" | \"page\"",
+          "requested_unit: \"auto\" | \"window\" | \"chunk\" | \"section\" | \"page\"",
           "return_window: number",
           "tokenizer: \"cl100k\" | \"heuristic\"",
           "tokens_delivered: number"
@@ -6748,7 +6804,7 @@
           "budgetTokens: number",
           "dateHeader?: true | undefined",
           "explicitUnit: boolean",
-          "requestedUnit: \"auto\" | \"chunk\" | \"window\" | \"section\" | \"page\"",
+          "requestedUnit: \"auto\" | \"window\" | \"chunk\" | \"section\" | \"page\"",
           "unit: \"auto\" | \"window\" | \"section\" | \"page\"",
           "window: number"
         ],
@@ -6841,7 +6897,7 @@
         "kind": "type",
         "name": "ReturnUnit",
         "signature": [
-          "\"auto\" | \"chunk\" | \"window\" | \"section\" | \"page\""
+          "\"auto\" | \"window\" | \"chunk\" | \"section\" | \"page\""
         ]
       },
       {
