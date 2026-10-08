@@ -117,6 +117,11 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'anthropic:claude-sonnet-5-5':          anthro( 2.00, 10.00),
   'anthropic:claude-sonnet-5':            anthro( 2.00, 10.00),
   'anthropic:claude-sonnet-4-6':          anthro( 3.00, 15.00),
+  // Haiku 5.5: $0.10 in / $0.50 out for prompts up to 100,000 tokens
+  // (platform.claude.com/docs/en/about-claude/pricing, checked 2026-10-08).
+  // Longer prompts bill 5x ($0.50 / $2.50); that tier is not modeled. The
+  // default facts extraction model on Anthropic-keyed installs.
+  'anthropic:claude-haiku-5-5':           anthro( 0.10,  0.50),
   // Haiku 4.5 — both the dateless canonical id and the dated snapshot.
   'anthropic:claude-haiku-4-5':           anthro( 1.00,  5.00),
   'anthropic:claude-haiku-4-5-20251001':  anthro( 1.00,  5.00),

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, PageSnapshot } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { loadConfig } from '../config.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -318,6 +318,15 @@ function writeDiagnostic(cursor: Cursor, pending: Pending, row: WriteRequest): M
   }
   return diagnostic;
 }
+/**
+ * #5984 G3: the page snapshot each frozen entry was validated against, read right before its sync authority check;
+ * a waiver run's screen of that entry uses it instead of reading the page and the authority again.
+ */
+const frozenSnapshots = new WeakMap<Pending, PageSnapshot | null>();
+function remember(snapshot: PageSnapshot | null | undefined, pending: Pending): Pending {
+  if (snapshot !== undefined) frozenSnapshots.set(pending, snapshot);
+  return pending;
+}
 async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, assertActive: () => void,
   run: { syncOptions: SyncCursorOptions; repoPath?: string; screen?: SyncScreenRun | null; observedAt?: string; signal?: AbortSignal }): Promise<Pending | Held> {
   assertActive();
@@ -326,6 +335,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
   let slug = '__managed_sync_checkpoint__', pageId: number | null = null, revision: string | null = null;
   let content: string | null = null, rawHash: string | null = null;
   let lineEndingOnly = false, occupantRebound = false;
+  let frozenSnapshot: PageSnapshot | null | undefined;
   // #5988: company-profile sources never hold; their approved manifest keeps refusing.
   const screening = entry?.action === 'import' && !cursor.companyPlan ? run.screen ?? null : null;
   let blob: TreeBlob | null = null, oversize: { size: number | null } | undefined;
@@ -339,7 +349,9 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     }
     const originScope = syncOriginScope(cursor);
     // #5522: another cursor of this source may have imported this new file since enumeration.
-    const occupant = await alreadyImportedAtOrigin(engine, cursor, entry, originScope);
+    // #5984 G3: the page snapshot is read beside the origin check (they are independent reads of committed state).
+    const [occupant, snapshot] = await Promise.all([alreadyImportedAtOrigin(engine, cursor, entry, originScope),
+      engine.readPageSnapshot(entry.slug!, { sourceId: cursor.sourceId, includeDeleted: true })]);
     assertActive();
     let bytes: Buffer | null = null;
     try { bytes = readSyncFile(cursor.root, entry.path); }
@@ -362,8 +374,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     lineEndingOnly = bytes !== null && content !== null && bytes.equals(Buffer.from(bytes.toString('utf8'))) &&
       bytes.toString('utf8').replace(/\r\n/g, '\n') === content.replace(/\r\n/g, '\n');
     slug = entry.slug!; pageId = occupant?.page.id ?? entry.pageId ?? null; revision = occupant ? occupant.revision : entry.revision ?? null;
-    const snapshot = await engine.readPageSnapshot(slug, { sourceId: cursor.sourceId, includeDeleted: true });
-    assertActive();
+    frozenSnapshot = snapshot;
     if (occupant && (content === null || !await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly, run.signal))) {
       throw syncRunRefusal('page_identity_changed', 'The imported origin no longer identifies exactly the accepted page.', retry,
         `Page ${slug} was imported from ${entry.path} by another run of source ${cursor.sourceId} with different content after this run enumerated it, so the run stopped before admitting it.`);
@@ -394,7 +405,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
   }
   await validateSyncAuthority(engine, cursor.authority, slug);
   assertActive();
-  return { requestId: randomUUID(), slug, pageId, ...(occupantRebound ? { rebound: true as const } : {}), intent: { kind: !entry ? 'managed_sync_checkpoint' : entry.action === 'import' ? 'managed_sync_import' : 'managed_sync_delete',
+  return remember(frozenSnapshot, { requestId: randomUUID(), slug, pageId, ...(occupantRebound ? { rebound: true as const } : {}), intent: { kind: !entry ? 'managed_sync_checkpoint' : entry.action === 'import' ? 'managed_sync_import' : 'managed_sync_delete',
     expected_revision: revision, sourcePath: entry?.sourcePath ?? null, path: entry?.path ?? null, rawHash, content, lineEndingOnly,
     ...(entry?.unownedDeletion ? { unownedDeletion: true } : {}),
     ...(entry?.renameFrom ? { renameFrom: entry.renameFrom } : {}),
@@ -408,7 +419,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     ownerEpoch: String(cursor.binding.owner_epoch), syncAuthority: cursor.authority, cursorKey: key, runId: cursor.runId,
     slugMode: cursor.slugMode, index: cursor.index, total: cursor.entries.length, from: cursor.from, target: cursor.target, working: entry?.working ?? false,
     ...(cursor.companyPlan ? { companyApproval: { schema: cursor.companyPlan.schema!, planDigest: cursor.companyPlan.plan_digest, extractorVersion: cursor.companyPlan.extractor_version,
-      policyFingerprint: currentCompanyBrainSync(cursor.sourceId)!.policyFingerprint } } : {}) } };
+      policyFingerprint: currentCompanyBrainSync(cursor.sourceId)!.policyFingerprint } } : {}) } });
 }
 
 /** A resume adopts the cursor's stored processing options unless the caller set a conflicting one explicitly. */
@@ -757,7 +768,8 @@ async function waiveRun(engine: BrainEngine, cursor: Cursor, head: Pending, key:
     const batch = Array.from({ length: Math.min(4, max - run.length, cursor.entries.length - next) }, (_, i) => next + i);
     const frozen = await Promise.all(batch.map(index => freezeEntry(engine, { ...cursor, index }, key, assertActive, frozenRun).catch(() => null)));
     const screened = await Promise.all(frozen.map((entry, i) => entry && !('hold' in entry) && !entry.rebound
-      ? screenWaiver(engine, { ...cursor, index: batch[i]! }, entry, config, frozenRun.signal).catch(() => null) : null));
+      ? screenWaiver(engine, { ...cursor, index: batch[i]! }, entry, config, frozenRun.signal,
+        frozenSnapshots.has(entry as Pending) ? { snapshot: frozenSnapshots.get(entry as Pending)! } : undefined).catch(() => null) : null));
     for (const [i, waived] of screened.entries()) {
       if (!waived) break extend;
       run.push({ pending: frozen[i] as Pending, waived });

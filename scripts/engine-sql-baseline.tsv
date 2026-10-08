@@ -52,7 +52,6 @@ method	src/core/pglite-engine.ts	probePgliteScratchStore
 method	src/core/pglite-engine/checkpoint-guard.ts	PgliteCheckpointGuard.issueProbe
 method	src/core/pglite-engine/code-edges.ts	getEdgesByChunk
 method	src/core/postgres-engine.ts	PostgresEngine._searchKeywordCJK
-method	src/core/postgres-engine.ts	PostgresEngine.connect
 method	src/core/postgres-engine.ts	PostgresEngine.deleteEvalCandidatesBefore
 method	src/core/postgres-engine.ts	PostgresEngine.discoverOntologyDimensions
 method	src/core/postgres-engine.ts	PostgresEngine.findOntologyConflicts

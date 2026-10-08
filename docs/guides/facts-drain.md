@@ -17,7 +17,11 @@ the brain:
 - the dream/autopilot cycle, as the `facts_drain` phase.
 
 No command is needed. This is **on by default**. Each extracted page is one
-paid chat call to the configured facts model (`facts.extraction_model`).
+paid chat call to the configured facts model (`facts.extraction_model`). Unset,
+that is `anthropic:claude-haiku-5-5` when the reasoning tier resolves through
+Anthropic, and the reasoning tier's default otherwise (`gbrain models` shows
+which); `gbrain config set facts.extraction_model <provider:model>` picks
+another.
 
 To turn it off:
 
@@ -58,7 +62,7 @@ queued page count, the estimated spend, the caps and the opt-out command, on
 stderr and as a `facts_drain_first_run` notice on the next MCP call:
 
 ```
-[gbrain notice facts_drain] Automatic fact extraction is on: 12 queued page(s), about $0.21 with anthropic:claude-sonnet-4-6, at most $1.00 per run and $5.00 per day. To opt out: gbrain config set facts.extraction_enabled false
+[gbrain notice facts_drain] Automatic fact extraction is on: 12 queued page(s), about $0.01 with anthropic:claude-haiku-5-5, at most $1.00 per run and $5.00 per day. To opt out: gbrain config set facts.extraction_enabled false
 ```
 
 A model with no known price runs under the default caps with a warning. Once

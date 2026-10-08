@@ -130,7 +130,7 @@ interface BaseOptions<T extends Record<string, postgres.PostgresType>> {
    * round trip and keeps pipelining. Only built-in types are shared.
    * @default true
    */
-  shared_types: boolean;
+  shared_types: boolean | Map<string, number[]>;
   backoff: boolean | ((attemptNum: number) => number);
   max_lifetime: number | null;
   keep_alive: number | null;
