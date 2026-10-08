@@ -8274,7 +8274,7 @@ title prefix, shown, never merged; more than 3 is `capped` with an
 `identity_siblings_capped` notice); `identity_excerpt[]` (`{ slug, line }`,
 verbatim name-like lines from the remote-sanitized body, 600 characters per
 page and 1,200 per card, `identity_excerpt_omitted[]`); `alias_guidance`
-(`{ text, requires_surface? }`).
+(`{ text, requires_surface? }`). `recent_facts[]` (`{ id, fact, kind, valid_from, entity_slug? }`, the 5 newest active saved facts, also those saved under an identity sibling or the bare subject slug, which carry that `entity_slug`); `active_fact_count` and `recall {entity}` cover the same slugs.
 
 #### entity open_threads loop backing (additive)
 
