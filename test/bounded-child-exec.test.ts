@@ -14,16 +14,18 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
  * exit events too (oven-sh/bun#30301), which is how managed-maintenance, persistence-reconcile
  * and google-attachments hung behind a persistence consumer's git probe.
  */
-function nestedTickDuring<T>(work: () => Promise<T>[]): Promise<T[]> {
+async function nestedTickDuring<T>(work: () => Promise<T>[]): Promise<T[]> {
   let nested = false;
-  for (let i = 0; i < 20; i++) {
-    Bun.spawn(['true'], { stdio: ['ignore', 'ignore', 'ignore'], onExit() {
-      if (nested) return;
-      nested = true;
-      void expect(Bun.sleep(1)).resolves.toBeUndefined();
-    } });
-  }
-  return Promise.all(work());
+  const children = Array.from({ length: 20 }, () => Bun.spawn(['true'], { stdio: ['ignore', 'ignore', 'ignore'], onExit() {
+    if (nested) return;
+    nested = true;
+    void expect(Bun.sleep(1)).resolves.toBeUndefined();
+  } }));
+  const results = await Promise.all(work());
+  // A child still exiting after the work settled would re-enter the event loop
+  // during the next test and drop that test's child events.
+  await Promise.all(children.map(child => child.exited));
+  return results;
 }
 
 function within<T>(ms: number, promise: Promise<T>): Promise<T | 'unsettled'> {
