@@ -64,6 +64,7 @@ const FORMATS: readonly TranscriptFormat[] = [
   'openclaw',
   'hermes',
   'grok',
+  'pi',
   'chatgpt',
   'claude-export',
 ];

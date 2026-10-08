@@ -112,7 +112,7 @@ function injectedBlock(customType: unknown, content: unknown): string | null {
 }
 
 /** String or (text|image)[] content → its text parts joined. */
-function textOf(content: unknown): string {
+export function textOf(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content
@@ -126,7 +126,7 @@ function isGenuineUserText(text: string): boolean {
 }
 
 /** Keep only entries on the active path (newest id-bearing entry → root). */
-function activeBranch(entries: Rec[]): { kept: Rec[]; dropped: number } {
+export function activeBranch(entries: Record<string, unknown>[]): { kept: Record<string, unknown>[]; dropped: number } {
   const byId = new Map<string, Rec>();
   let leaf: Rec | undefined;
   for (const e of entries) {

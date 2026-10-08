@@ -18,12 +18,15 @@ import { codexAdapter } from '../src/core/transcripts/codex.ts';
 import { claudeCodeAdapter } from '../src/core/transcripts/claude-code.ts';
 import { parseCodexHookTranscript } from '../src/core/transcripts/codex-hook-lane.ts';
 import { parseTranscript } from '../src/core/transcripts/claude-code-jsonl.ts';
+import { piAdapter } from '../src/core/transcripts/pi.ts';
+import { parsePiHookTranscript } from '../src/core/transcripts/pi-hook-lane.ts';
+import { withEnv } from './helpers/with-env.ts';
 import type { FileDiagnostics, ParsedSession, TranscriptAdapter } from '../src/core/transcripts/types.ts';
 
 const FIXTURES = join(import.meta.dir, 'fixtures');
 
 interface HarnessFixture {
-  harness: 'codex' | 'claude-code';
+  harness: 'codex' | 'claude-code' | 'pi';
   /** Host version the fixture's line shapes were recorded from. */
   hostVersion: string;
   path: string;
@@ -34,12 +37,14 @@ const RECORDED: HarnessFixture[] = [
   { harness: 'codex', hostVersion: '0.154 / 0.159 (item_completed UserMessage)', path: join(FIXTURES, 'transcripts', 'codex-rollout-0154.jsonl') },
   { harness: 'claude-code', hostVersion: '1.0.0', path: join(FIXTURES, 'conversation-formats', 'claude-code.jsonl') },
   { harness: 'claude-code', hostVersion: 'pasted-content capture', path: join(FIXTURES, 'claude-code-paste', 'session.jsonl') },
+  { harness: 'pi', hostVersion: '1.0.4', path: join(FIXTURES, 'transcripts', 'pi-session.jsonl') },
 ];
 
-const ADAPTERS: Record<HarnessFixture['harness'], TranscriptAdapter> = { codex: codexAdapter, 'claude-code': claudeCodeAdapter };
+const ADAPTERS: Record<HarnessFixture['harness'], TranscriptAdapter> = { codex: codexAdapter, 'claude-code': claudeCodeAdapter, pi: piAdapter };
 const HOOK_PARSERS: Record<HarnessFixture['harness'], (p: string) => { turns: Array<{ role: string }> }> = {
   codex: (p) => parseCodexHookTranscript(p),
   'claude-code': (p) => parseTranscript(p),
+  pi: (p) => parsePiHookTranscript(p),
 };
 
 async function drain(gen: AsyncGenerator<ParsedSession, FileDiagnostics>) {
@@ -71,10 +76,14 @@ describe('harness-format contract (X7): every recorded session keeps both sides'
     });
   }
 
-  test('every adapter fixture is detected as its own harness', () => {
-    for (const f of RECORDED) {
-      const sample = readFileSync(f.path).subarray(0, 64 * 1024);
-      expect(ADAPTERS[f.harness].detect(f.path, sample)).toBe(true);
-    }
+  test('every adapter fixture is detected as its own harness', async () => {
+    // pi detection is store-scoped (its header is shared with another agent's
+    // format), so point pi's session store at the fixture directory.
+    await withEnv({ PI_CODING_AGENT_SESSION_DIR: join(FIXTURES, 'transcripts') }, async () => {
+      for (const f of RECORDED) {
+        const sample = readFileSync(f.path).subarray(0, 64 * 1024);
+        expect(ADAPTERS[f.harness].detect(f.path, sample)).toBe(true);
+      }
+    });
   });
 });

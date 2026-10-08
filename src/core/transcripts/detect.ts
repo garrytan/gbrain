@@ -23,6 +23,8 @@ import { codexAdapter } from './codex.ts';
 import { openclawAdapter } from './openclaw.ts';
 import { hermesAdapter } from './hermes.ts';
 import { grokAdapter } from './grok.ts';
+import { piAdapter } from './pi.ts';
+import { piSessionsDir } from '../bootstrap/host-specs.ts';
 import { chatgptExportAdapter } from './chatgpt-export.ts';
 import { claudeExportAdapter } from './claude-export.ts';
 
@@ -58,6 +60,10 @@ export function harnessRoots(overrides?: HarnessRoot[]): HarnessRoot[] {
       root: join(process.env.GROK_HOME ?? join(home, '.grok'), 'sessions'),
       extension: '.jsonl',
     },
+    // pi keeps one JSONL per session under <agent dir>/sessions/<cwd-slug>/
+    // (PI_CODING_AGENT_SESSION_DIR / PI_CODING_AGENT_DIR honored, the same
+    // resolution as the hook lane's confinement root).
+    { format: 'pi', root: piSessionsDir(), extension: '.jsonl' },
   ];
 }
 
@@ -76,6 +82,8 @@ export function harnessRoots(overrides?: HarnessRoot[]): HarnessRoot[] {
 export function transcriptAdapters(): TranscriptAdapter[] {
   return [
     hermesAdapter,
+    // pi BEFORE openclaw: same session header; pi claims only files in its own store.
+    piAdapter,
     openclawAdapter,
     codexAdapter,
     claudeCodeAdapter,

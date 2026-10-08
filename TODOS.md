@@ -53,7 +53,6 @@ Context: the wave 9 follow-up wave (plan reviewed 2026-10-06; Garry approved eve
 Context: `docs/mcp/PI.md`, the pi entries in `docs/architecture/key-files/agent-bootstrap.md`.
 
 - [ ] **P2 — Sweep for pi sessions that never ran session-end.** **What:** pi's `session_shutdown` does not fire on SIGKILL or a crash, so those sessions never reach the dream corpus, and `discoverPiSessionFile` is id-matched only (no newest-file guess). **Fix:** a bounded sweep over `piSessionsDir()` for session files with no corpus file and no recent writes, reusing the pi capture spec. **Effort:** M. **Priority:** P2.
-- [ ] **P2 — pi import adapter for `gbrain transcripts ingest`.** **What:** pi session files are read by the hook lane only. **Why:** `test/harness-format-contract.test.ts` requires both an import adapter and a hook parser per harness, so the pi fixture (`test/fixtures/transcripts/pi-session.jsonl`) is not in it yet. **Fix:** a `TranscriptAdapter` over the same active-branch parse; add the fixture to the contract table. **Effort:** M. **Priority:** P2.
 - [ ] **P3 — pi in the `bootstrap harness` lane.** **What:** `bootstrap harness --harness all` (token-minted HTTP wiring) does not wire pi; pi's HTTP form is `bootstrap hooks --harness pi --url … --mcp-auth-command …` with a user-supplied auth command. **Fix:** mint a token and store it where a pi `!command` can read it (Keychain / 0600 file), then write the same entry. **Effort:** M. **Priority:** P3.
 ## Fix wave 10 lane H follow-ups (filed 2026-10-06, GBRA-51)
 

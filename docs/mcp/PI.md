@@ -106,6 +106,21 @@ warns `pi_hooks_missing` when pi has the MCP entry but not gbrain's extension. H
 health lands in gbrain's usual heartbeat
 (`<gbrain home>/integrations/hooks/heartbeat.jsonl`).
 
+## Import past sessions
+
+The hooks capture new sessions as they end. To bring in sessions from before the
+hooks were installed, import pi's session store:
+
+```bash
+gbrain transcripts ingest            # discovery: lists what was found, imports nothing
+gbrain transcripts ingest --all      # import everything discovered (pi included)
+gbrain transcripts ingest --format pi <file.jsonl>   # a pi session file kept elsewhere
+```
+
+Each session becomes one page under `conversations/sessions/`. Only the branch you
+kept is imported: when you rewound with `/tree`, the abandoned branch stays out.
+Thinking, tool output and the context gbrain itself injected are not imported.
+
 ## Remove
 
 ```bash
