@@ -106,8 +106,39 @@ export function scanTranscriptPressure(text: string): TranscriptPressure | null 
   return usage ? { usedTokens: usage.used, model: usage.model, boundary } : null;
 }
 
+/**
+ * Parses the newest usage and compaction boundary from a pi session file
+ * (oldest → newest lines). pi assistant rows are `{type:"message", message:
+ * {role:"assistant", model, usage:{input, cacheRead, cacheWrite, output}}}`;
+ * the context size of that turn is input + cacheRead + cacheWrite. A
+ * `{type:"compaction", id}` row is the boundary; its own `usage` is the
+ * summarizer call's, never the conversation's, so it is not read.
+ */
+export function scanPiTranscriptPressure(text: string): TranscriptPressure | null {
+  const lines = text.split('\n');
+  let usage: { used: number; model: string | null } | null = null;
+  let boundary: string | null = null;
+  for (let i = lines.length - 1; i >= 0 && (!usage || !boundary); i--) {
+    const line = lines[i]!.trim();
+    if (!line.startsWith('{')) continue;
+    let row: Record<string, unknown>;
+    try { row = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+    if (!boundary && row.type === 'compaction' && typeof row.id === 'string') {
+      boundary = row.id;
+      if (!usage) return null; // nothing measured since the compaction: fill is unknown, so no warning
+    }
+    const msg = row.message as { usage?: Record<string, unknown>; model?: unknown; role?: unknown } | undefined;
+    if (!usage && row.type === 'message' && msg?.role === 'assistant' && msg.usage && typeof msg.usage === 'object') {
+      const n = (k: string) => (typeof msg.usage![k] === 'number' ? msg.usage![k] as number : 0);
+      const used = n('input') + n('cacheRead') + n('cacheWrite');
+      if (used > 0) usage = { used, model: typeof msg.model === 'string' ? msg.model : null };
+    }
+  }
+  return usage ? { usedTokens: usage.used, model: usage.model, boundary } : null;
+}
+
 /** Reads the transcript tail and scans it; null when unreadable or unmeasured. */
-export function readTranscriptPressure(path: string): TranscriptPressure | null {
+export function readTranscriptPressure(path: string, scan: (text: string) => TranscriptPressure | null = scanTranscriptPressure): TranscriptPressure | null {
   let fd: number | null = null;
   try {
     fd = openSync(path, 'r');
@@ -117,7 +148,7 @@ export function readTranscriptPressure(path: string): TranscriptPressure | null 
     readSync(fd, buf, 0, len, size - len);
     const text = buf.toString('utf8');
     // Drop the partial first line of a mid-file window.
-    return scanTranscriptPressure(size > len ? text.slice(text.indexOf('\n') + 1) : text);
+    return scan(size > len ? text.slice(text.indexOf('\n') + 1) : text);
   } catch {
     return null;
   } finally {
@@ -229,5 +260,16 @@ export function claudeCodePressure(gate: PressureGate | null | undefined, transc
     gate, sessionKey: `claude-${sessionId ?? 'nosession'}`, stateDir: stateDir ?? join(resolveGbrainHome(), 'hooks', 'pressure'),
     usedTokens: measured.usedTokens, model: measured.model, boundary: measured.boundary,
     configuredModel: process.env.ANTHROPIC_MODEL ?? null,
+  });
+}
+
+/** pi user-prompt lane: same decision as Claude Code, measured from the pi session file. */
+export function piPressure(gate: PressureGate | null | undefined, transcriptPath: string, sessionId: string | undefined, stateDir?: string): PressureDecision | null {
+  if (!gate?.enabled || !gate.remember_callable || process.env.GBRAIN_PRESSURE === '0') return null;
+  const measured = readTranscriptPressure(transcriptPath, scanPiTranscriptPressure);
+  if (!measured) return null;
+  return decidePressure({
+    gate, sessionKey: `pi-${sessionId ?? 'nosession'}`, stateDir: stateDir ?? join(resolveGbrainHome(), 'hooks', 'pressure'),
+    usedTokens: measured.usedTokens, model: measured.model, boundary: measured.boundary,
   });
 }

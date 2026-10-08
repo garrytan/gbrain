@@ -86,7 +86,7 @@ import {
 } from '../core/context/hook-heartbeat.ts';
 import { CLAUDE_HOOK_OUTPUT_CAP_CHARS } from '../core/bootstrap/host-specs.ts';
 import { composeSessionStartOutput } from '../core/context/session-start-output.ts';
-import { claudeCodePressure } from '../core/context/pressure.ts';
+import { claudeCodePressure, piPressure } from '../core/context/pressure.ts';
 import { readManifest, readReceipt, type InstallReceipt } from '../core/bootstrap/format.ts';
 import { githubOwnerRepoString } from '../core/repo-visibility.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
@@ -1205,7 +1205,8 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
       return { outcome: 'degraded', reason: reasonCode(resp.error ?? 'server_error'), turns: turns.length };
     }
     // Context-pressure notice (pressure.ts) leads the block so the cap loop never trims it.
-    const pressure = transcriptPath ? claudeCodePressure(resp.block?.pressure, transcriptPath, sessionId) : null;
+    const pressureFor = io.harness === 'pi' ? piPressure : claudeCodePressure;
+    const pressure = transcriptPath ? pressureFor(resp.block?.pressure, transcriptPath, sessionId) : null;
     const text = [pressure?.notice, resp.block?.text].filter(Boolean).join('\n\n');
     if (!text) return { outcome: 'ok', reason: 'empty_block', turns: turns.length };
 

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  decidePressure, readTranscriptPressure, resolveContextWindow, scanTranscriptPressure, shouldWarn, validatePressureConfigValue,
+  decidePressure, piPressure, readTranscriptPressure, resolveContextWindow, scanPiTranscriptPressure, scanTranscriptPressure, shouldWarn, validatePressureConfigValue,
   type PressureGate,
 } from '../src/core/context/pressure.ts';
 
@@ -106,5 +106,64 @@ describe('growth-aware trigger', () => {
     expect(shouldWarn({ used: 100, window: 200, warnRatio: 0.8, growth: 0 })).toBe(false);
     expect(shouldWarn({ used: 100, window: 200, warnRatio: 0.8, growth: 42 })).toBe(true);
     expect(shouldWarn({ used: 10, window: 0, warnRatio: 0.8, growth: 99 })).toBe(false);
+  });
+});
+
+// pi session rows: {type:"message", message:{role:"assistant", model, usage:{input, cacheRead, cacheWrite}}}
+// and {type:"compaction", id, usage} (the summarizer's usage, never the conversation's).
+const piAssistant = (used: number, model = 'claude-opus-4-8') => JSON.stringify({
+  type: 'message', id: `m${used}`, message: { role: 'assistant', model, usage: { input: 2, cacheRead: used - 1002, cacheWrite: 1000, output: 50 } },
+});
+const piCompaction = (id: string) => JSON.stringify({ type: 'compaction', id, tokensBefore: 190_000, usage: { input: 999_999, cacheRead: 0, cacheWrite: 0 } });
+
+describe('pi transcript scan', () => {
+  test('newest assistant usage sums input, cacheRead and cacheWrite', () => {
+    expect(scanPiTranscriptPressure([piAssistant(10_000), piAssistant(170_000)].join('\n')))
+      .toEqual({ usedTokens: 170_000, model: 'claude-opus-4-8', boundary: null });
+  });
+  test('a compaction row keys the segment and its own usage is not read', () => {
+    const r = scanPiTranscriptPressure([piAssistant(190_000), piCompaction('c-1'), piAssistant(30_000)].join('\n'));
+    expect(r).toEqual({ usedTokens: 30_000, model: 'claude-opus-4-8', boundary: 'c-1' });
+  });
+  test('nothing measured since the last compaction means no reading', () => {
+    expect(scanPiTranscriptPressure([piAssistant(190_000), piCompaction('c-1')].join('\n'))).toBeNull();
+  });
+  test('Claude Code rows are not read as pi usage (and vice versa)', () => {
+    expect(scanPiTranscriptPressure(assistant(170_000))).toBeNull();
+    expect(scanTranscriptPressure(piAssistant(170_000))).toBeNull();
+  });
+  test('user, toolResult and custom_message rows are ignored', () => {
+    const rows = [piAssistant(170_000),
+      JSON.stringify({ type: 'message', message: { role: 'user', usage: { input: 5 } } }),
+      JSON.stringify({ type: 'custom_message', customType: 'gbrain-context', content: 'x' })];
+    expect(scanPiTranscriptPressure(rows.join('\n'))?.usedTokens).toBe(170_000);
+  });
+  test('the redacted real pi 1.0.4 fixture is measurable', () => {
+    const r = readTranscriptPressure(join(import.meta.dir, 'fixtures', 'transcripts', 'pi-session.jsonl'), scanPiTranscriptPressure);
+    expect(r?.model).toBe('claude-opus-4-8');
+    expect(r!.usedTokens).toBeGreaterThan(0);
+  });
+});
+
+describe('piPressure', () => {
+  test('fires once at 80% on a pi session file, then stays quiet in the same segment', () => {
+    const d = tmp(); const f = join(d, 's.jsonl');
+    writeFileSync(f, piAssistant(170_000) + '\n');
+    const first = piPressure(gate, f, 'sess-1', d);
+    expect(first?.notice).toContain('85% full');
+    writeFileSync(f, [piAssistant(170_000), piAssistant(175_000)].join('\n') + '\n');
+    expect(piPressure(gate, f, 'sess-1', d)?.reason).toBe('already_warned');
+  });
+  test('a compaction re-arms the notice', () => {
+    const d = tmp(); const f = join(d, 's.jsonl');
+    writeFileSync(f, piAssistant(170_000) + '\n');
+    piPressure(gate, f, 'sess-2', d);
+    writeFileSync(f, [piAssistant(170_000), piCompaction('c-9'), piAssistant(175_000)].join('\n') + '\n');
+    expect(piPressure(gate, f, 'sess-2', d)?.notice).toContain('88% full');
+  });
+  test('below the threshold: no notice', () => {
+    const d = tmp(); const f = join(d, 's.jsonl');
+    writeFileSync(f, piAssistant(40_000) + '\n');
+    expect(piPressure(gate, f, 'sess-3', d)?.notice).toBeNull();
   });
 });

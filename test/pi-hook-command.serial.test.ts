@@ -70,7 +70,7 @@ function writeConfig(extra: Record<string, unknown> = {}): string {
   return dataDir;
 }
 
-async function startServer(dataDir: string, onRequest: (req: TurnContextRequest) => void): Promise<void> {
+async function startServer(dataDir: string, onRequest: (req: TurnContextRequest) => void, extra: Record<string, unknown> = {}): Promise<void> {
   mkdirSync(dataDir, { recursive: true });
   const secret = ensureIpcSecret(dataDir);
   const server = await startResolveIpcServer(
@@ -79,7 +79,7 @@ async function startServer(dataDir: string, onRequest: (req: TurnContextRequest)
       resolve: async () => null,
       turn_context: async (req) => {
         onRequest(req);
-        return { text: 'CTX block', pointers: [], factsCount: 0 };
+        return { text: 'CTX block', pointers: [], factsCount: 0, ...extra } as never;
       },
     },
     { secret },
@@ -126,6 +126,23 @@ const CONVO: Parameters<typeof piSession>[1] = [
 ];
 
 describe('user-prompt --harness pi', () => {
+  test('context-pressure notice: measured from the pi session file (input + cacheRead + cacheWrite)', async () => {
+    const dataDir = writeConfig();
+    await startServer(dataDir, () => {}, { pressure: { enabled: true, warn_ratio: 0.8, context_window: null, remember_callable: true } });
+    const transcript = seed('pi-press-1', CONVO);
+    // Newest assistant turn at 170k of a 200k window: 85%.
+    writeFileSync(transcript, readFileSync(transcript, 'utf8') + JSON.stringify({
+      type: 'message', id: 'u1', parentId: null, timestamp: 't',
+      message: { role: 'assistant', model: 'claude-opus-4-8', content: [{ type: 'text', text: 'ok' }], usage: { input: 2, cacheRead: 168_998, cacheWrite: 1000, output: 10 }, stopReason: 'stop', timestamp: 3 },
+    }) + '\n');
+    const payload = JSON.stringify({ session_id: 'pi-press-1', prompt: 'next', transcript_path: transcript, cwd: tmp });
+    let out = '';
+    expect(await runHook(['user-prompt', '--harness', 'pi'], { write: (s) => { out += s; }, stdin: payload, transcriptRoot: sessionsRoot() })).toBe(0);
+    const ctx = JSON.parse(out).hookSpecificOutput.additionalContext as string;
+    expect(ctx).toContain("context is about 85% full");
+    expect(ctx.indexOf('85% full')).toBeLessThan(ctx.indexOf('CTX block'));
+  });
+
   test('window comes from the pi session; prior gbrain-context blocks ride priorContextText; channel is pi', async () => {
     const dataDir = writeConfig();
     const seen: TurnContextRequest[] = [];
