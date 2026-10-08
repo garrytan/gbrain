@@ -1307,6 +1307,8 @@ CREATE INDEX IF NOT EXISTS persistence_requests_sync_run_open
   ON persistence_requests(worktree_id,(intent->>'runId')) WHERE state<>'committed' AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete');
 CREATE INDEX IF NOT EXISTS persistence_requests_sync_run_committed
   ON persistence_requests(source_id,(intent->>'runId'),(intent->>'index')) WHERE state='committed' AND intent ? 'runId';
+CREATE INDEX IF NOT EXISTS persistence_requests_committed_watermark
+  ON persistence_requests(worktree_id,completed_at DESC) WHERE state='committed';
 CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC);
 CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,
@@ -1318,6 +1320,24 @@ CREATE TABLE IF NOT EXISTS persistence_effects (
     execution_token uuid,
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(request_id,kind)
+  );
+CREATE TABLE IF NOT EXISTS persistence_consumers (
+    host_id uuid NOT NULL,
+    pid integer NOT NULL,
+    nonce text NOT NULL,
+    pid_ns text,
+    kind text NOT NULL,
+    mode text NOT NULL CHECK (mode IN ('probing','full','waiter_only','promoted')),
+    started_at timestamptz NOT NULL DEFAULT now(),
+    renewed_at timestamptz NOT NULL DEFAULT now(),
+    restart_required boolean NOT NULL DEFAULT false,
+    root_barrier_age_ms integer,
+    pool jsonb,
+    host_json_path text NOT NULL,
+    persistence_home text NOT NULL,
+    minted_under jsonb,
+    version text NOT NULL,
+    PRIMARY KEY(host_id,pid,nonce)
   );
 
 CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$fn\$

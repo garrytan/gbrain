@@ -8,7 +8,7 @@
  *     [--marker-pages 20] [--doomed-pages 12] [--drip-rows 20] [--backlog-marker-pages 20] [--rtt 57] [--pool-size 10] [--pooler pgbouncer|none]
  *     [--cli-repo <checkout>] [--max-minutes 90] [--passes 3] [--sample-seconds 30] [--adoption-interval 60]
  *     [--stall-minutes 5] [--stall-kill-minutes 15] [--stall-signal SIGUSR2] [--seed 1] [--label <name>] [--out <dir>] [--keep] [--inspect] [--inspect-port 6499]
- *     [--chaos-at <minutes>] [--chaos-toxicity 0.3] [--chaos-kind timeout|reset|lock] [--chaos-stream downstream|upstream] [--chaos-for <seconds>]
+ *     [--chaos-at <minutes>] [--chaos-toxicity 0.3] [--chaos-kind timeout|reset|lock|partition] [--chaos-stream downstream|upstream] [--chaos-for <seconds>]
  *     [--chaos-lock 'LOCK TABLE pages IN ACCESS EXCLUSIVE MODE']
  *     [--pg-port 55432] [--proxy-port 55433] [--api-port 58474] [--pooler-port 55434]
  *
@@ -126,6 +126,37 @@ const CHAOS_GAP_MS = Number(flag('chaos-gap', '300')) * 1000;
 const FENCE_REPAIR_AT_MS = Number(flag('fence-repair-at', '0')) * 60_000;
 /** Phase 4.1: `--retry-held-after` runs `gbrain sources retry-held` plus the sync it prints once the passes end, and records what the held files did (`retry-held.json`). */
 const RETRY_HELD_AFTER = process.argv.includes('--retry-held-after');
+/**
+ * #6317 (GBRA-61 Phase 0): `--scenario two-consumer` builds the reporter's two-process shape instead of the pass loop.
+ * A seeding drain (`gbrain sync`, bulk lanes `--lanes`) runs `--seed-seconds` and is killed with `--seed-kill` (the
+ * reporter's watchdog kill), leaving its lane groups queued; then `gbrain serve --http` and a fresh `gbrain sync` start
+ * `--gap-seconds` apart in `--order` (serve-first: serve boots, claims the FIFO head, the CLI arrives later, as in the
+ * reporter's timeline; cli-first: the reverse). `--cli-restart-seconds N` kills the CLI with SIGTERM every N s and
+ * restarts it 10 s later (the reporter's passes were restarted after each watchdog kill). A wedge is a `preparing`
+ * claim older than `--wedge-minutes` while nothing in pg_stat_activity is older than 10 s; on detection the sampler
+ * writes `wedge-<n>.json`, sends `--stall-signal` to every gbrain process it started and records each dump.
+ * `--seed-settle-seconds` lets the seed's claims lapse before the first consumer boots. `--serve-port` is the serve's HTTP port; `--wedge-hold-minutes` keeps a wedge alive that long before the scenario
+ * ends (0 = until --max-minutes).
+ */
+const SCENARIO = flag('scenario', 'passes');
+const LANES = flag('lanes', '6');
+const SEED_S = Number(flag('seed-seconds', '90'));
+const SEED_KILL = flag('seed-kill', 'SIGTERM');
+/** After the seed kill, time for its claims to lapse (30 s lease) before the first consumer boots, so that consumer sweeps and claims the dead run's groups alone, as serve did in the reporter's timeline. */
+const SEED_SETTLE_S = Number(flag('seed-settle-seconds', '40'));
+const ORDER = flag('order', 'serve-first');
+const GAP_S = Number(flag('gap-seconds', '75'));
+const CLI_RESTART_S = Number(flag('cli-restart-seconds', '0'));
+const SERVE_PORT = Number(flag('serve-port', '53131'));
+const WEDGE_MS = Number(flag('wedge-minutes', '5')) * 60_000;
+const WEDGE_HOLD_MS = Number(flag('wedge-hold-minutes', '0')) * 60_000;
+/** `--direct-pool`: every scenario process also gets GBRAIN_DIRECT_DATABASE_URL (the database without the pooler), so the engine runs its dual pool (claims, followers, renewals and DDL on a 3-connection direct pool) as a Supabase deployment does. */
+const DIRECT_POOL = process.argv.includes('--direct-pool');
+/** `--hang-after N` (debug instrument applied): the N-th managed_sync_import preparation of the scenario's `--hang-role` process (serve | cli-sync; default any) parks forever, the reporter's wedge on demand. */
+const HANG_AFTER = Number(flag('hang-after', '0'));
+const HANG_ROLE = flag('hang-role', '');
+if (!['passes', 'two-consumer'].includes(SCENARIO)) { console.error(`--scenario takes passes or two-consumer; got ${SCENARIO}`); process.exit(2); }
+if (!['serve-first', 'cli-first'].includes(ORDER)) { console.error(`--order takes serve-first or cli-first; got ${ORDER}`); process.exit(2); }
 const LABEL = flag('label', `${gitDescribe(CLI_REPO)}-pool${POOL_SIZE}-${POOLER}`).replace(/[^\w.-]/g, '_');
 const OUT = resolve(flag('out', join(REPO, '.context', 'bench', `stall-repro-${LABEL}-${Date.now()}`)));
 if (POOLER !== 'pgbouncer' && POOLER !== 'none') { console.error(`--pooler takes pgbouncer or none; got ${POOLER}`); process.exit(2); }
@@ -349,7 +380,10 @@ const SAMPLE_SQL = {
 };
 
 interface SyncPass { pass: number; pid: number; inspect?: string; startedAt: number; endedAt?: number; code?: number; killedBy?: string; committedAtStart: number; committedAtEnd?: number; stallAt?: number; stallCaptured?: boolean }
-const state = { committed: 0, committedChangedAt: Date.now(), pass: null as SyncPass | null, samples: 0, stalls: [] as Array<Record<string, unknown>>, lastSample: null as Record<string, unknown> | null };
+interface Proc { label: string; kind: 'serve' | 'cli' | 'seed'; pid: number; startedAt: number; endedAt?: number; code?: number; killedBy?: string; exited: Promise<number>; stderrPath: string; child: ReturnType<typeof Bun.spawn> }
+const state = { committed: 0, committedChangedAt: Date.now(), pass: null as SyncPass | null, samples: 0, stalls: [] as Array<Record<string, unknown>>, lastSample: null as Record<string, unknown> | null,
+  procs: [] as Proc[], wedges: [] as Array<Record<string, unknown>>, wedgeSince: null as number | null, wedgeCaptured: false };
+const liveProcs = () => state.procs.filter(p => p.endedAt === undefined);
 
 function append(file: string, record: Record<string, unknown>): void { appendFileSync(join(OUT, file), JSON.stringify(record) + '\n'); }
 
@@ -404,6 +438,7 @@ async function sampler(row: Row, stop: () => boolean): Promise<void> {
       log(`sample ${n}: pass=${sample.pass} committed=${state.committed} stale=${Math.round(stale / 1000)}s running=${running.length}`
         + (running.length ? ` [${running.slice(0, 4).map(r => `${r.kind ?? r.operation}:${(r.claim_phase as { phase?: string } | null)?.phase ?? '?'}${r.blocked_reason ? '/' + r.blocked_reason : ''}`).join(', ')}]` : '')
         + ` activity=${Array.isArray(sample.activity) ? (sample.activity as unknown[]).length : '?'} locks=${Array.isArray(sample.locks) ? (sample.locks as unknown[]).length : '?'}`);
+      if (SCENARIO === 'two-consumer') await detectWedge(row, sample);
       const pass = state.pass;
       if (pass && !pass.endedAt && stale >= STALL_MS) {
         if (!pass.stallAt) { pass.stallAt = Date.now() - stale; log(`STALL: no committed sync request for ${Math.round(stale / 1000)} s in pass ${pass.pass} (pid ${pass.pid})`); }
@@ -517,6 +552,22 @@ async function chaos(stop: () => boolean): Promise<void> {
   if (CHAOS_AT_MS <= 0) return;
   while (!stop() && !(state.pass && state.pass.pass === 1 && Date.now() - state.pass.startedAt >= CHAOS_AT_MS)) await Bun.sleep(1000);
   if (stop()) return;
+  if (CHAOS_KIND === 'partition') {
+    // #6317: the client->pooler half of every gbrain connection is dropped (iptables, never closed): statements already sent park
+    // in JS while their backend waits in ClientRead for the rest of the exchange; new connections time out. The reporter's
+    // Supavisor wedge, deterministically and for every connection at once; lifted after --chaos-for.
+    const rule = ['OUTPUT', '-p', 'tcp', '--dport', flag('proxy-port', '55433'), '-j', 'DROP'];
+    execFileSync('sudo', ['iptables', '-I', ...rule], { stdio: 'inherit' });
+    append('chaos.jsonl', { t: Date.now(), at: new Date().toISOString(), action: 'partition', rule: rule.join(' '), pass: state.pass?.pass ?? null, committed: state.committed });
+    log(`CHAOS: partition: iptables -I ${rule.join(' ')}${CHAOS_FOR_MS > 0 ? ` for ${CHAOS_FOR_MS / 1000} s` : ''}`);
+    if (CHAOS_FOR_MS <= 0) return;
+    const until = Date.now() + CHAOS_FOR_MS;
+    while (!stop() && Date.now() < until) await Bun.sleep(1000);
+    execFileSync('sudo', ['iptables', '-D', ...rule], { stdio: 'inherit' });
+    append('chaos.jsonl', { t: Date.now(), at: new Date().toISOString(), action: 'partition_lifted', committed: state.committed });
+    log('CHAOS: partition lifted');
+    return;
+  }
   if (CHAOS_KIND === 'lock') {
     for (let episode = 1; episode <= Math.max(1, CHAOS_REPEAT) && !stop(); episode++) {
       if (episode > 1) { const gapUntil = Date.now() + CHAOS_GAP_MS; while (!stop() && Date.now() < gapUntil) await Bun.sleep(1000); if (stop()) return; }
@@ -657,7 +708,7 @@ async function syncPass(row: Row, pass: number): Promise<SyncPass> {
   const out = Bun.file(join(OUT, `pass-${pass}.stdout`)).writer();
   const err = Bun.file(join(OUT, `pass-${pass}.stderr`)).writer();
   const child = Bun.spawn(['timeout', '3600', process.execPath, ...(INSPECT ? [`--inspect=127.0.0.1:${INSPECT_PORT}`] : []), CLI, ...SYNC_ARGS], { cwd: row.home, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
-    env: childEnv(row.home, { GBRAIN_SQL_TRACE: row.trace, GBRAIN_SQL_TRACE_LABEL: 'cli-sync' }) });
+    env: childEnv(row.home, { GBRAIN_SQL_TRACE: row.trace, GBRAIN_SQL_TRACE_LABEL: 'cli-sync', GBRAIN_SYNC_LANES: LANES, ...(DIRECT_POOL ? { GBRAIN_DIRECT_DATABASE_URL: row.directUrl } : {}) }) });
   // `timeout` is the parent; the gbrain process is its child. Find it for the kill and trace attribution.
   await Bun.sleep(1500);
   let gbrainPid = child.pid;
@@ -682,6 +733,155 @@ async function syncPass(row: Row, pass: number): Promise<SyncPass> {
   append('passes.jsonl', { ...record, stdout_tail: stdout.slice(-1500), stderr_persistence_lines: stderr.split('\n').filter(l => l.includes('[persistence]')).slice(0, 40),
     stderr_tail: stderr.slice(-1500) });
   return record;
+}
+
+/** Oldest `preparing` claim (phase age from the stamp's `since`) and the oldest non-idle backend statement, both in ms. */
+function wedgeSignature(sample: Record<string, unknown>): { preparing_age_ms: number; preparing: number; oldest_active_query_ms: number; idle_in_tx_ms: number; running: number } {
+  const running = Array.isArray(sample.running) ? sample.running as Array<Record<string, unknown>> : [];
+  const now = Date.now();
+  let preparingAge = 0, preparing = 0;
+  for (const r of running) {
+    const phase = r.claim_phase as { phase?: string; since?: string; phase_since?: string } | null;
+    if (!phase || phase.phase !== 'preparing' || r.state !== 'running') continue;
+    preparing++;
+    const since = Date.parse(phase.phase_since ?? phase.since ?? '');
+    if (!Number.isNaN(since)) preparingAge = Math.max(preparingAge, now - since);
+  }
+  const activity = Array.isArray(sample.activity) ? sample.activity as Array<Record<string, unknown>> : [];
+  let oldestActive = 0, idleInTx = 0;
+  for (const a of activity) {
+    if (a.state === 'active') oldestActive = Math.max(oldestActive, Number(a.query_age_ms ?? 0));
+    if (String(a.state).startsWith('idle in transaction')) idleInTx = Math.max(idleInTx, Number(a.state_age_ms ?? 0));
+  }
+  return { preparing_age_ms: preparingAge, preparing, oldest_active_query_ms: oldestActive, idle_in_tx_ms: idleInTx, running: running.length };
+}
+
+/** Sends `signal` to every live gbrain process the scenario started and collects the `[stall-debug]` line each wrote. */
+async function dumpAll(signal: string): Promise<Array<Record<string, unknown>>> {
+  const procs = liveProcs();
+  for (const p of procs) { try { process.kill(p.pid, signal as NodeJS.Signals); } catch { /* gone */ } }
+  await Bun.sleep(2000);
+  const dumps: Array<Record<string, unknown>> = [];
+  for (const p of procs) {
+    const line = existsSync(p.stderrPath) ? readFileSync(p.stderrPath, 'utf8').split('\n').filter(l => l.startsWith('[stall-debug]')).at(-1) : undefined;
+    dumps.push({ label: p.label, pid: p.pid, dump: line ? safeJson(line.slice('[stall-debug] '.length)) : null });
+  }
+  return dumps;
+}
+
+/** #6317: the wedge rule (preparing > --wedge-minutes, nothing old at the server); one capture per episode, dumps on every sample while it lasts. */
+async function detectWedge(row: Row, sample: Record<string, unknown>): Promise<void> {
+  const sig = wedgeSignature(sample);
+  sample.wedge_signature = sig;
+  const wedged = sig.preparing_age_ms >= WEDGE_MS && sig.oldest_active_query_ms < 10_000;
+  if (!wedged) { if (state.wedgeSince) log(`wedge over: preparing_age=${Math.round(sig.preparing_age_ms / 1000)}s`); state.wedgeSince = null; state.wedgeCaptured = false; return; }
+  if (!state.wedgeSince) { state.wedgeSince = Date.now() - sig.preparing_age_ms; log(`WEDGE: ${sig.preparing} preparing claim(s), oldest ${Math.round(sig.preparing_age_ms / 1000)} s, oldest active statement ${sig.oldest_active_query_ms} ms, idle-in-tx ${sig.idle_in_tx_ms} ms; live procs ${liveProcs().map(p => `${p.label}:${p.pid}`).join(',')}`); }
+  const dumps = STALL_SIGNAL ? await dumpAll(STALL_SIGNAL) : [];
+  for (const d of dumps) { const dump = d.dump as { inflight?: Array<Record<string, unknown>>; sql_inflight?: unknown[]; pools?: unknown } | null; log(`stall-debug ${d.label}:${d.pid}: ${dump ? `inflight=${(dump.inflight ?? []).map(i => `${String(i.id).slice(0, 8)}@${i.step}/${Math.round(Number(i.step_age_ms) / 1000)}s`).join(' ')} sql_inflight=${(dump.sql_inflight ?? []).length} pools=${JSON.stringify(dump.pools ?? null).slice(0, 300)}` : 'no dump'}`); }
+  if (dumps.length) append('wedge-dumps.jsonl', { t: Date.now(), at: new Date().toISOString(), wedge: state.wedges.length, dumps });
+  if (state.wedgeCaptured) return;
+  state.wedgeCaptured = true;
+  const n = state.wedges.length + 1;
+  const via = row.poolerUrl ?? row.directUrl;
+  const pids = liveProcs().map(p => p.pid);
+  const capture: Record<string, unknown> = { ...sample, wedge_since: new Date(state.wedgeSince).toISOString(), procs: state.procs.map(({ child: _c, exited: _e, ...p }) => p), dumps,
+    running_detail: await admin(via, sql => sql.unsafe(`${BENCH_SQL} SELECT * FROM persistence_requests WHERE state IN ('running','recovering') ORDER BY sequence`), false).catch(e => String(e)),
+    queued_head: await admin(via, sql => sql.unsafe(`${BENCH_SQL} SELECT request_id, operation, intent->>'kind' AS kind, intent->>'group' AS grp, intent->>'lane' AS lane, intent->>'after' AS after, blocked_reason, created_at FROM persistence_requests WHERE state='queued' ORDER BY sequence LIMIT 20`), false).catch(e => String(e)),
+    cursor: await admin(via, sql => sql.unsafe(`${BENCH_SQL} SELECT fingerprint, completed_keys->0 AS cursor FROM op_checkpoints WHERE op='managed-sync'`), false).catch(e => String(e)),
+    pg_locks: await admin(harness.adminUrl, sql => sql.unsafe(`${BENCH_SQL} SELECT l.locktype, l.relation::regclass::text AS relation, l.mode, l.granted, l.pid, a.application_name, a.state FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid WHERE a.datname=$1 AND l.locktype IN ('relation','transactionid','tuple','advisory') ORDER BY l.pid`, [row.db])).catch(e => String(e)),
+    traces: Object.fromEntries(pids.map(pid => [pid, traceTail(row.trace, pid, 40)])),
+    os: { lslocks: sh('lslocks', '-n', '-o', 'PID,TYPE,MODE,PATH'), fds: Object.fromEntries(pids.map(pid => [pid, sh('sh', '-c', `ls -l /proc/${pid}/fd 2>/dev/null | grep -v socket | tail -n 30`)])),
+      ps: sh('ps', '-o', 'pid,ppid,stat,%cpu,etime,cmd', '-p', pids.join(',') || '0'), children: Object.fromEntries(pids.map(pid => [pid, sh('pgrep', '-P', String(pid))])) } };
+  writeFileSync(join(OUT, `wedge-${n}.json`), JSON.stringify(capture, null, 2) + '\n');
+  state.wedges.push({ n, wedge_since: capture.wedge_since, signature: sig, procs: capture.procs, dumps_summary: dumps.map(d => ({ label: d.label, pid: d.pid, inflight: ((d.dump as { inflight?: unknown[] } | null)?.inflight ?? []).length })) });
+  log(`wedge capture written: wedge-${n}.json`);
+}
+
+function sh(cmd: string, ...args: string[]): string {
+  try { return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 }).trim(); } catch (error) { return `(${cmd} failed: ${error instanceof Error ? error.message.split('\n')[0] : String(error)})`; }
+}
+
+/** One gbrain process of the scenario, output to `<label>.stdout` / `<label>.stderr`; the gbrain pid is the child itself (no `timeout` wrapper). */
+function spawnProc(row: Row, label: string, kind: Proc['kind'], args: string[], env: Record<string, string | undefined> = {}): Proc {
+  const out = Bun.file(join(OUT, `${label}.stdout`)).writer();
+  const err = Bun.file(join(OUT, `${label}.stderr`)).writer();
+  const child = Bun.spawn([process.execPath, ...(INSPECT && kind !== 'seed' ? [`--inspect=127.0.0.1:${INSPECT_PORT + state.procs.length}`] : []), CLI, ...args], { cwd: row.home, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
+    env: childEnv(row.home, { GBRAIN_SQL_TRACE: row.trace, GBRAIN_SQL_TRACE_LABEL: label, GBRAIN_SYNC_LANES: LANES, ...(DIRECT_POOL ? { GBRAIN_DIRECT_DATABASE_URL: row.directUrl } : {}),
+      ...(HANG_AFTER > 0 && kind !== 'seed' ? { STALL_DEBUG_HANG_KIND: 'managed_sync_import', STALL_DEBUG_HANG_AFTER: String(HANG_AFTER), ...(HANG_ROLE ? { STALL_DEBUG_HANG_ROLE: HANG_ROLE } : {}) } : {}), ...env }) });
+  const pump = async (stream: ReadableStream<Uint8Array>, sink: { write(chunk: Uint8Array): unknown; flush(): unknown; end(): unknown }) => {
+    for await (const chunk of stream) { sink.write(chunk); await sink.flush(); }
+    await sink.end();
+  };
+  const proc: Proc = { label, kind, pid: child.pid, startedAt: Date.now(), stderrPath: join(OUT, `${label}.stderr`), child,
+    exited: Promise.all([child.exited, pump(child.stdout as ReadableStream<Uint8Array>, out), pump(child.stderr as ReadableStream<Uint8Array>, err)]).then(([code]) => { proc.endedAt = Date.now(); proc.code = code; return code; }) };
+  state.procs.push(proc);
+  log(`${label} started: pid ${child.pid} (${args.join(' ')})`);
+  append('procs.jsonl', { t: Date.now(), at: new Date().toISOString(), event: 'start', label, kind, pid: child.pid, args });
+  void proc.exited.then(code => { append('procs.jsonl', { t: Date.now(), at: new Date().toISOString(), event: 'exit', label, pid: child.pid, code, killed_by: proc.killedBy ?? null, wall_s: round1((proc.endedAt! - proc.startedAt) / 1000) });
+    log(`${label} exited: code=${code} ${proc.killedBy ?? ''} after ${round1((proc.endedAt! - proc.startedAt) / 1000)} s; stderr tail: ${readFileSync(proc.stderrPath, 'utf8').slice(-300).replace(/\n/g, ' | ')}`); });
+  return proc;
+}
+async function killProc(proc: Proc, signal: string, why: string): Promise<number> {
+  if (proc.endedAt !== undefined) return proc.code!;
+  proc.killedBy = `${signal}:${why}`;
+  log(`killing ${proc.label} (pid ${proc.pid}) with ${signal}: ${why}`);
+  try { process.kill(proc.pid, signal as NodeJS.Signals); } catch { /* gone */ }
+  const escalate = setTimeout(() => { try { process.kill(proc.pid, 'SIGKILL'); } catch { /* gone */ } }, 30_000);
+  const code = await proc.exited;
+  clearTimeout(escalate);
+  return code;
+}
+async function sleepUntil(until: number, stop: () => boolean): Promise<void> { while (!stop() && Date.now() < until) await Bun.sleep(500); }
+
+/** #6317: the reporter's two-consumer shape (see the `--scenario two-consumer` flags). */
+async function twoConsumerScenario(row: Row): Promise<void> {
+  const started = Date.now();
+  const stop = () => stopped || Date.now() - started >= MAX_MS;
+  const syncArgs = [...SYNC_ARGS];
+  // 1. seed: a lane drain that is killed mid-run, its admitted groups left queued (the reporter's killed passes).
+  const seed = spawnProc(row, 'seed-sync', 'seed', syncArgs);
+  state.pass = { pass: 0, pid: seed.pid, startedAt: seed.startedAt, committedAtStart: await committedCount(row) };
+  await Promise.race([seed.exited, sleepUntil(seed.startedAt + SEED_S * 1000, stop)]);
+  const seedCommitted = await committedCount(row);
+  if (seed.endedAt === undefined) await killProc(seed, SEED_KILL, `seed window of ${SEED_S} s over`);
+  state.pass = null;
+  const afterSeed = await admin(row.poolerUrl ?? row.directUrl, sql => sql.unsafe(`${BENCH_SQL} SELECT state, intent->>'lane' AS lane, count(*)::int AS n, min(sequence) AS first_seq FROM persistence_requests WHERE intent->>'kind' IN ('managed_sync_import','managed_sync_delete') GROUP BY 1,2 ORDER BY 1,2`), false).catch(e => [{ error: String(e) }]);
+  append('scenario.jsonl', { t: Date.now(), at: new Date().toISOString(), event: 'seeded', committed: seedCommitted, requests_by_state_and_lane: afterSeed });
+  log(`seeded: ${seedCommitted} committed; requests by state/lane: ${JSON.stringify(afterSeed).slice(0, 600)}`);
+  await sleepUntil(Date.now() + SEED_SETTLE_S * 1000, stop);
+  if (stop()) return;
+  // 2. the two consumers, --gap-seconds apart.
+  const startServe = () => spawnProc(row, `serve-${state.procs.filter(p => p.kind === 'serve').length + 1}`, 'serve', ['serve', '--http', '--port', String(SERVE_PORT), '--bind', '127.0.0.1'],
+    { GBRAIN_ADMIN_BOOTSTRAP_TOKEN: 'bench-admin-token-0123456789abcdefghijklmnopqrstuvwxyz' });
+  let passNo = 0;
+  const startCli = async () => { passNo++; const p = spawnProc(row, `cli-sync-${passNo}`, 'cli', syncArgs); state.pass = { pass: passNo, pid: p.pid, startedAt: p.startedAt, committedAtStart: await committedCount(row) }; state.committedChangedAt = Date.now(); return p; };
+  let serve: Proc | null = null, cli: Proc | null = null;
+  if (ORDER === 'serve-first') { serve = startServe(); await sleepUntil(Date.now() + GAP_S * 1000, stop); if (!stop()) cli = await startCli(); }
+  else { cli = await startCli(); await sleepUntil(Date.now() + GAP_S * 1000, stop); if (!stop()) serve = startServe(); }
+  // 3. keep the shape alive: restart the CLI on exit or on --cli-restart-seconds; end on synced, the wedge hold or --max-minutes.
+  let cliRestarts = 0;
+  while (!stop()) {
+    await Bun.sleep(1000);
+    if (serve && serve.endedAt !== undefined && Date.now() - serve.endedAt > 5000) { log(`serve exited on its own (code ${serve.code}); restarting it`); serve = startServe(); }
+    if (cli && cli.endedAt !== undefined) {
+      const status = readFileSync(join(OUT, `${cli.label}.stdout`), 'utf8').concat(readFileSync(cli.stderrPath, 'utf8'));
+      const synced = /Managed sync synced|"sync_status"\s*:\s*"synced"/.test(status);
+      const pass = state.pass as SyncPass | null;
+      if (pass && pass.pid === cli.pid) { pass.endedAt = cli.endedAt; pass.code = cli.code; pass.committedAtEnd = await committedCount(row); append('passes.jsonl', { ...pass, label: cli.label, killed_by: cli.killedBy ?? null }); state.pass = null; }
+      if (synced) { log('CLI reports synced; scenario ends'); append('scenario.jsonl', { t: Date.now(), at: new Date().toISOString(), event: 'synced', cli: cli.label }); break; }
+      if (cliRestarts >= PASSES) { log(`CLI exited ${cliRestarts + 1} times; no more restarts (--passes ${PASSES})`); cli = null; }
+      else { cliRestarts++; await sleepUntil(Date.now() + 10_000, stop); if (!stop()) cli = await startCli(); }
+      continue;
+    }
+    if (cli && CLI_RESTART_S > 0 && Date.now() - cli.startedAt >= CLI_RESTART_S * 1000) { await killProc(cli, 'SIGTERM', `--cli-restart-seconds ${CLI_RESTART_S}`); continue; }
+    if (WEDGE_HOLD_MS > 0 && state.wedgeSince && Date.now() - state.wedgeSince >= WEDGE_HOLD_MS) { log(`wedge held ${Math.round(WEDGE_HOLD_MS / 60_000)} min; scenario ends`); break; }
+  }
+  // 4. teardown: stop both, recording whether the stuck preparation settles when the other process dies.
+  if (cli && cli.endedAt === undefined) { await killProc(cli, 'SIGTERM', 'scenario end'); await Bun.sleep(15_000); const after = await sampleOnce(row, true); writeFileSync(join(OUT, 'after-cli-exit.json'), JSON.stringify({ ...after, wedge_signature: wedgeSignature(after), dumps: STALL_SIGNAL ? await dumpAll(STALL_SIGNAL) : [] }, null, 2) + '\n'); log(`after CLI exit: ${JSON.stringify(wedgeSignature(after))} committed=${after.committed}`); }
+  if (serve && serve.endedAt === undefined) await killProc(serve, 'SIGTERM', 'scenario end');
+  for (const p of liveProcs()) await killProc(p, 'SIGKILL', 'scenario end');
+  report.scenario = { kind: SCENARIO, direct_pool: DIRECT_POOL, hang_after: HANG_AFTER, hang_role: HANG_ROLE || null, lanes: LANES, seed_seconds: SEED_S, seed_kill: SEED_KILL, seed_settle_seconds: SEED_SETTLE_S, order: ORDER, gap_seconds: GAP_S, cli_restart_seconds: CLI_RESTART_S, serve_port: SERVE_PORT,
+    wedge_minutes: WEDGE_MS / 60_000, procs: state.procs.map(({ child: _c, exited: _e, ...p }) => p), wedges: state.wedges, cli_restarts: cliRestarts };
 }
 
 function statusOf(pass: number): string | null {
@@ -730,7 +930,8 @@ try {
   const passes: SyncPass[] = [];
   const passExtras = new Map<number, Record<string, unknown>>();
   const started = Date.now();
-  for (let pass = 1; pass <= PASSES && Date.now() - started < MAX_MS; pass++) {
+  if (SCENARIO === 'two-consumer') await twoConsumerScenario(row);
+  for (let pass = 1; SCENARIO === 'passes' && pass <= PASSES && Date.now() - started < MAX_MS; pass++) {
     const result = await syncPass(row, pass);
     passes.push(result);
     const status = statusOf(pass);
@@ -761,7 +962,7 @@ try {
   const doctorChecks = (doctorFences.json?.checks as Array<Record<string, unknown>> | undefined) ?? [];
   const fenceCheck = doctorChecks.find(c => c.name === 'fence_integrity' || c.check === 'fence_integrity' || c.id === 'fence_integrity') ?? doctorChecks[0] ?? null;
   const unrenderable = ((fenceCheck?.details ?? fenceCheck?.data ?? fenceCheck ?? {}) as Record<string, unknown>).unrenderable_legacy_facts as { total?: number; complete?: boolean; pages?: Array<{ slug: string; rows: Array<{ class: string; reason: string }> }> } | undefined;
-  report.result = { committed_sync_requests: state.committed, chaos: chaosEvents, stall_debug_last: stallDebug.at(-1) ?? null, backlog_entries: backlogPages.length, states: final.states, stalls: state.stalls,
+  report.result = { committed_sync_requests: state.committed, chaos: chaosEvents, wedges: state.wedges, stall_debug_last: stallDebug.at(-1) ?? null, backlog_entries: backlogPages.length, states: final.states, stalls: state.stalls,
     preparing_claims_observed: preparingClaimsObserved(),
     doctor_fence_integrity: { exit: doctorFences.code, status: fenceCheck?.status ?? null, unrenderable_total: unrenderable?.total ?? null, unrenderable_complete: unrenderable?.complete ?? null,
       unrenderable_by_class: Object.fromEntries([...(unrenderable?.pages ?? []).flatMap(p => p.rows).reduce((m, r) => m.set(`${r.class}/${r.reason}`, (m.get(`${r.class}/${r.reason}`) ?? 0) + 1), new Map<string, number>())]),

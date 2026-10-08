@@ -38,7 +38,7 @@
 
 import postgres from '#postgres'
 import { traceSqlOptions } from './sql-trace.ts';
-import { resolvePrepare, resolveSessionTimeouts, resolvePoolSize, resolveMaxLifetimeSeconds, resolveUrlConnectTimeout, resolveSharedTypes, endPoolBounded } from './db.ts';
+import { gbrainApplicationName, resolvePrepare, resolveSessionTimeouts, resolvePoolSize, resolveMaxLifetimeSeconds, resolveUrlConnectTimeout, resolveSharedTypes, endPoolBounded } from './db.ts';
 import { redactPgUrl } from './url-redact.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 
@@ -513,6 +513,7 @@ export class ConnectionManager {
         statement_timeout: String(DDL_STMT_TIMEOUT_MS),
         idle_in_transaction_session_timeout: String(DDL_IDLE_TX_TIMEOUT_MS),
         maintenance_work_mem: BULK_MAINTENANCE_WORK_MEM,
+        application_name: gbrainApplicationName(),
       },
     };
     const t0 = Date.now();

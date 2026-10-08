@@ -16,6 +16,7 @@ import { bigintToStringReplacer } from '../core/utils.ts';
 
 export const WRITER_HELP = `Usage:
   gbrain sources writer status [<source>] [--probe] [--json]
+  gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]
   gbrain sources writer retry-effects <source> --request-id <uuid> [--dry-run] [--json]
   gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
   gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
@@ -25,7 +26,10 @@ export const WRITER_HELP = `Usage:
   gbrain sources writer lock [--json]
   gbrain sources writer unlock [--json]
 
-Inspect status first. Routine diagnosis, doctor --fix, startup, and maintenance
+Inspect status first. movement proves that managed sync data moves over a window
+(committed pages and the head's step, never a lease or a lock): run it after
+restarting serve and the workers; see movement --help for its states and exits.
+Routine diagnosis, doctor --fix, startup, and maintenance
 must not change ownership or activate managed persistence. Read the operator
 procedure in docs/architecture/topologies.md before deliberate administration.
 Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_deactivate|writer_transfer_prepare|writer_transfer_accept>
@@ -165,7 +169,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
       if (phase !== 'prepare' && phase !== 'accept') throw invalid(group, 'Transfer requires prepare or accept.',
         'Run gbrain sources writer transfer prepare on the current owner host first, then gbrain sources writer transfer accept on the successor with the epoch and manifest prepare printed.');
       operation = phase === 'prepare' ? 'writer_transfer_prepare' : 'writer_transfer_accept';
-    } else throw invalid(group, 'Writer administration requires status, retry-effects, claim, activate, deactivate, transfer, lock, or unlock.',
+    } else throw invalid(group, 'Writer administration requires status, movement, retry-effects, claim, activate, deactivate, transfer, lock, or unlock.',
       `Name the action after gbrain sources writer${verb ? ` instead of ${verb}` : ''}; start with gbrain sources writer status --json, which changes nothing.`);
     const source = positional.shift();
     if (source !== undefined) {
@@ -187,6 +191,11 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
 }
 
 export async function runPersistenceAdminCli(group: Group, args: string[], connected?: BrainEngine): Promise<void> {
+  // #6317 (I2): the movement check waits a window on this process's own engine; it never crosses the owner IPC.
+  if (group === 'writer' && args[0] === 'movement') {
+    const { runWriterMovementCli } = await import('./sources-writer-movement.ts');
+    return runWriterMovementCli(args.slice(1), connected);
+  }
   if (!args.length || args.some(arg => arg === '--help' || arg === '-h')) {
     console.log(group === 'writer' ? WRITER_HELP : LOCAL_WRITER_HELP);
     return;

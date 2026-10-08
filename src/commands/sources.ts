@@ -1250,6 +1250,9 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const sharedSkills = new Map(await Promise.all(sources.map(async source => [source.id, await sharedSkillsView.readSharedSkillsSourceView(engine, source.id).catch(() => null)] as const)));
   const uncommittedView = await import('../core/fence-repair/uncommitted.ts');
   const uncommitted = await uncommittedView.uncommittedFenceRepairsBySource(engine, sources.map(source => source.id));
+  // #6317 (B4): whether managed sync data moves, beside sync_running (a live lock is not progress); the writer-status command rides along.
+  const movementView = await import('../core/persistence/sync-movement.ts');
+  const movement = new Map((await movementView.readSourceMovement(engine, { sourceIds: sources.map(source => source.id) }).catch(() => [])).map(m => [m.source_id, m]));
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,
@@ -1258,6 +1261,8 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
       ...(ingestion.get(m.source_id) ? { ingestion: ingestion.get(m.source_id) } : {}),
       ...(connectors.get(m.source_id) ? { connector: connectors.get(m.source_id) } : {}),
       ...(backlog.get(m.source_id) ? { managed_backlog: backlog.get(m.source_id) } : {}),
+      ...(movement.get(m.source_id) ? { data_moving: movement.get(m.source_id)!.data_moving, not_moving_since: movement.get(m.source_id)!.not_moving_since,
+        movement_state: movement.get(m.source_id)!.movement_state, movement: movement.get(m.source_id) } : {}),
       ...(gitHolds.get(m.source_id) ? { git_holds: gitHolds.get(m.source_id) } : {}),
       ...(sharedSkills.get(m.source_id) ? { shared_skills: sharedSkills.get(m.source_id) } : {}),
       ...(uncommitted.get(m.source_id) ? { fence_repairs_uncommitted: uncommitted.get(m.source_id) } : {}),
@@ -1301,6 +1306,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   for (const [sourceId, status] of connectors) for (const line of statusView.connectorStatusLines(sourceId, status)) console.log(line);
   for (const [sourceId, status] of gitHolds) for (const line of statusView.gitHoldStatusLines(sourceId, status)) console.log(line);
   for (const b of backlog.values()) console.log(`  ${drainMod.formatManagedSyncBacklog(b)}`);
+  for (const m of movement.values()) { const line = movementView.formatSourceMovement(m); if (line) console.log(`  ${line}`); }
   for (const [sourceId, notices] of uncommitted) for (const line of uncommittedView.uncommittedFenceRepairLines(sourceId, notices)) console.log(line);
   for (const view of sharedSkills.values()) if (view && (only || view.configured === false || view.parked)) for (const line of sharedSkillsView.sharedSkillsStatusLines(view)) console.log(`  ${line}`);
   for (const m of metrics) {
@@ -1943,7 +1949,7 @@ Subcommands:
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
   list [--json]                     List registered sources with page counts.
-  writer status|claim|activate|transfer  Inspect, activate or transfer canonical ownership (see writer --help).
+  writer status|movement|claim|activate|transfer  Inspect ownership, prove data moves, activate or transfer (see writer --help).
   reconcile <id> <slug> --brain <id> Preview or apply a guarded file/database repair (see reconcile --help).
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.

@@ -28,9 +28,19 @@
  * running-overdue verdict (`preparation_overdue`) writer status and doctor
  * attach as `claim.stall`; the terminal give-up is the `preparation_stalled`
  * receipt, so the two never share a name.
+ *
+ * #6317 adds the process identity and the last statement: the owner is
+ * `{kind, pid, nonce, pid_ns, version}` (a per-process nonce, because
+ * containers sharing one home reuse pids; `isOwnerThisProcess` compares the
+ * nonce whenever the stamp has one), and `recordClaimSql` keeps the label of
+ * the last raw statement a preparer issued (first keyword plus table, never
+ * text or parameters; `boundedReads` records it), stamped as `last_sql` so
+ * writer status, the drain's stall line and the consumer's log lines
+ * (`claimTripleText`) name the same step / waiting_on / last_sql triple.
  */
 import type { BrainEngine } from '../engine.ts';
 import { VERSION } from '../../version.ts';
+import { consumerIdentity, sameProcess } from './consumer-heartbeat.ts';
 
 export type ClaimPhaseName = 'preparing' | 'publishing';
 export const WAITING_ON = ['git', 'fs', 'db', 'pool', 'unknown'] as const;
@@ -57,9 +67,16 @@ export interface ClaimPhaseClock {
    * Absent with the deadlines switch off.
    */
   deadlineAt?: number;
+  /** #6317: the last raw statement the preparation issued (label only) and when. */
+  lastSql?: { label: string; at: number };
 }
-/** The process that holds a claim, as the stamp records it. */
-export interface ClaimOwner { kind: string; pid: number; version: string }
+/**
+ * The process that holds a claim, as the stamp records it. #6317: `nonce` (random per process) and `pid_ns` (the pid
+ * namespace where readable) tell a reused pid or another container's pid from this process; an older owner stamps neither.
+ */
+export interface ClaimOwner { kind: string; pid: number; version: string; nonce?: string; pid_ns?: string | null }
+/** #6317: the step / waiting_on / last_sql triple of a claim, as stamped and as read back. */
+export interface ClaimLastSql { label: string; age_ms: number | null }
 
 export function startClaimPhase(now = Date.now(), signal?: AbortSignal, budgetMs?: number): ClaimPhaseClock {
   return { phase: 'preparing', claimedAt: now, since: now, step: null, stepSince: now, waitingOn: 'unknown', ...(signal ? { signal } : {}),
@@ -86,14 +103,45 @@ export function enterClaimStep(clock: ClaimPhaseClock | undefined, step: string,
   if (clock.step !== step) { clock.step = step; clock.stepSince = now; }
   clock.waitingOn = waitingOn;
 }
+/** #6317: the label of a raw statement for the stamp: its first keyword and the first table it names; never text or parameters. */
+export function sqlLabel(sql: string): string {
+  const text = sql.replace(/\s+/g, ' ').trim();
+  const keyword = /^[A-Za-z]+/.exec(text)?.[0]?.toUpperCase() ?? 'SQL';
+  const table = /\b(?:FROM|INTO|UPDATE|JOIN)\s+(?:ONLY\s+)?("?[A-Za-z_][\w.]*"?)/i.exec(text)?.[1]?.replaceAll('"', '');
+  return table ? `${keyword} ${table}` : keyword;
+}
+/** #6317: records the statement a preparer is about to issue on its clock (`boundedReads` calls it at every raw read). */
+export function recordClaimSql(clock: ClaimPhaseClock | undefined, sql: string, now = Date.now()): void {
+  if (clock) clock.lastSql = { label: sqlLabel(sql), at: now };
+}
+/** #6317: the ` step=… waiting_on=… last_sql=…` text every `[persistence]` cut-off and hold line carries (C3). */
+export function claimTripleText(clock: Pick<ClaimPhaseClock, 'step' | 'waitingOn' | 'lastSql'> | undefined, now = Date.now()): string {
+  if (!clock) return ' step=none waiting_on=unknown last_sql=none';
+  const last = clock.lastSql ? `${clock.lastSql.label.replaceAll(' ', '_')}@${Math.round((now - clock.lastSql.at) / 1000)}s` : 'none';
+  return ` step=${clock.step ?? 'none'} waiting_on=${clock.waitingOn} last_sql=${last}`;
+}
+/** #6317: whether a stamped owner is this process: the pid, and the nonce when the stamp carries one (a reused pid is another process). */
+export function isOwnerThisProcess(owner: Pick<ClaimOwner, 'pid' | 'nonce'> | null | undefined): boolean {
+  return claimOwnerIsThisProcess(owner);
+}
 
 const OWNER_COMMANDS = new Set(['sync', 'serve', 'jobs', 'autopilot', 'mcp', 'dream', 'cycle', 'sources', 'migrate-graduation', 'put', 'import']);
 let ownerOverride: ClaimOwner | undefined;
-/** The owning process for the stamp: the gbrain command this process runs (`cli` when none is recognisable), its pid and build. */
+/** The gbrain command this process runs (`cli` when none is recognisable). */
+export function claimOwnerKind(): string {
+  if (ownerOverride) return ownerOverride.kind;
+  const command = process.argv.slice(2).find(arg => !arg.startsWith('-'));
+  return command && OWNER_COMMANDS.has(command) ? command : 'cli';
+}
+/** The owning process for the stamp: the gbrain command this process runs (`cli` when none is recognisable), its pid, nonce, pid namespace and build. */
 export function claimOwner(): ClaimOwner {
   if (ownerOverride) return ownerOverride;
-  const command = process.argv.slice(2).find(arg => !arg.startsWith('-'));
-  return { kind: command && OWNER_COMMANDS.has(command) ? command : 'cli', pid: process.pid, version: VERSION };
+  const { pid, nonce, pid_ns } = consumerIdentity();
+  return { kind: claimOwnerKind(), pid, version: VERSION, nonce, pid_ns };
+}
+/** Whether a stamped owner is this process: the pid and, when the stamp carries one, the nonce (#6317: `owner_pid === process.pid` alone is not enough). */
+export function claimOwnerIsThisProcess(owner: Pick<ClaimOwner, 'pid' | 'nonce'> | null | undefined): boolean {
+  return sameProcess(owner);
 }
 /** Test seam. */
 export function setClaimOwnerForTest(owner: ClaimOwner | undefined): void { ownerOverride = owner; }
@@ -101,7 +149,8 @@ export function setClaimOwnerForTest(owner: ClaimOwner | undefined): void { owne
 /** The `claim_phase` jsonb a renewal (or a claim, or a group's dispatch mark) stores for the claim holding `token`. */
 export function claimPhaseStamp(clock: ClaimPhaseClock, token: string | null, owner: ClaimOwner = claimOwner()): string {
   return JSON.stringify({ phase: clock.phase, claimed_at: new Date(clock.claimedAt).toISOString(), since: new Date(clock.since).toISOString(), token,
-    step: clock.step, step_since: new Date(clock.stepSince).toISOString(), waiting_on: clock.waitingOn, owner });
+    step: clock.step, step_since: new Date(clock.stepSince).toISOString(), waiting_on: clock.waitingOn, owner,
+    last_sql: clock.lastSql ? { label: clock.lastSql.label, at: new Date(clock.lastSql.at).toISOString() } : null });
 }
 
 /**
@@ -154,6 +203,8 @@ export interface ClaimState {
   waiting_on: WaitingOn;
   /** The process holding the claim, when its stamp recorded one. */
   owner: ClaimOwner | null;
+  /** #6317: the last raw statement the owner's preparation issued (label and age), null when none was recorded. */
+  last_sql: ClaimLastSql | null;
   /** Whether the same request continues without anyone acting (after its lease lapses or its transaction ends). */
   resumes_on_its_own: boolean;
   why: string;
@@ -174,7 +225,13 @@ const age = (at: unknown, now: number): number | null => {
 function stampOwner(raw: unknown): ClaimOwner | null {
   const owner = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
   if (!owner || typeof owner.kind !== 'string' || typeof owner.pid !== 'number' || typeof owner.version !== 'string') return null;
-  return { kind: owner.kind, pid: owner.pid, version: owner.version };
+  return { kind: owner.kind, pid: owner.pid, version: owner.version, ...(typeof owner.nonce === 'string' ? { nonce: owner.nonce } : {}),
+    ...(typeof owner.pid_ns === 'string' || owner.pid_ns === null ? { pid_ns: owner.pid_ns } : {}) };
+}
+/** #6317: the stamp's `last_sql` read back with its age; null when the stamp has none (an owner older than #6317 included). */
+export function stampLastSql(raw: unknown, now: number): ClaimLastSql | null {
+  const last = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+  return last && typeof last.label === 'string' ? { label: last.label, age_ms: age(last.at, now) } : null;
 }
 
 export function claimStateOf(row: ClaimRow, now = Date.now()): ClaimState | null {
@@ -186,7 +243,7 @@ export function claimStateOf(row: ClaimRow, now = Date.now()): ClaimState | null
   const step = own && typeof stamp!.step === 'string' ? stamp!.step : null;
   const detail = { step, step_age_ms: step ? age(stamp!.step_since, now) : null,
     waiting_on: own && (WAITING_ON as readonly unknown[]).includes(stamp!.waiting_on) ? stamp!.waiting_on as WaitingOn : 'unknown' as const,
-    owner: own ? stampOwner(stamp!.owner) : null };
+    owner: own ? stampOwner(stamp!.owner) : null, last_sql: own ? stampLastSql(stamp!.last_sql, now) : null };
   if (row.publication_started) return { phase: 'file_publication', claim_age_ms: claimAge, phase_age_ms: null, ...detail, resumes_on_its_own: false,
     why: 'Its files were being published; the publication recovery path restores or finishes them when the owning process scans its roots again (after a restart if it hung).' };
   if (row.claim_lapsed) return { phase: 'publication_transaction', claim_age_ms: claimAge, phase_age_ms: null, ...detail, resumes_on_its_own: true,

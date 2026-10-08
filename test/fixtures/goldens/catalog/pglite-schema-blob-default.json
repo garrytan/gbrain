@@ -148,6 +148,8 @@
       "persistence_brain.persistence_brain_pkey": "p PRIMARY KEY (singleton)",
       "persistence_brain.persistence_brain_singleton_check": "c CHECK ((singleton = 1))",
       "persistence_brain.persistence_brain_writer_protocol_floor_check": "c CHECK ((writer_protocol_floor = ANY (ARRAY[1, 2])))",
+      "persistence_consumers.persistence_consumers_mode_check": "c CHECK ((mode = ANY (ARRAY['probing'::text, 'full'::text, 'waiter_only'::text, 'promoted'::text])))",
+      "persistence_consumers.persistence_consumers_pkey": "p PRIMARY KEY (host_id, pid, nonce)",
       "persistence_counters.persistence_counters_intent_bytes_check": "c CHECK ((intent_bytes >= 0))",
       "persistence_counters.persistence_counters_lifetime_ids_check": "c CHECK ((lifetime_ids >= 0))",
       "persistence_counters.persistence_counters_outstanding_count_check": "c CHECK ((outstanding_count >= 0))",
@@ -467,6 +469,9 @@
       "persistence_brain": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "persistence_consumers": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "persistence_counters": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -754,12 +759,14 @@
       "pages_pkey": "CREATE UNIQUE INDEX pages_pkey ON public.pages USING btree (id)",
       "pages_source_slug_key": "CREATE UNIQUE INDEX pages_source_slug_key ON public.pages USING btree (source_id, slug)",
       "persistence_brain_pkey": "CREATE UNIQUE INDEX persistence_brain_pkey ON public.persistence_brain USING btree (singleton)",
+      "persistence_consumers_pkey": "CREATE UNIQUE INDEX persistence_consumers_pkey ON public.persistence_consumers USING btree (host_id, pid, nonce)",
       "persistence_counters_pkey": "CREATE UNIQUE INDEX persistence_counters_pkey ON public.persistence_counters USING btree (key)",
       "persistence_effects_pkey": "CREATE UNIQUE INDEX persistence_effects_pkey ON public.persistence_effects USING btree (id)",
       "persistence_effects_request_id_kind_key": "CREATE UNIQUE INDEX persistence_effects_request_id_kind_key ON public.persistence_effects USING btree (request_id, kind)",
       "persistence_host_bindings_pkey": "CREATE UNIQUE INDEX persistence_host_bindings_pkey ON public.persistence_host_bindings USING btree (worktree_id, host_id)",
       "persistence_local_writers_credential_hash_key": "CREATE UNIQUE INDEX persistence_local_writers_credential_hash_key ON public.persistence_local_writers USING btree (credential_hash)",
       "persistence_local_writers_pkey": "CREATE UNIQUE INDEX persistence_local_writers_pkey ON public.persistence_local_writers USING btree (id)",
+      "persistence_requests_committed_watermark": "CREATE INDEX persistence_requests_committed_watermark ON public.persistence_requests USING btree (worktree_id, completed_at DESC) WHERE (state = 'committed'::text)",
       "persistence_requests_database_pending": "CREATE INDEX persistence_requests_database_pending ON public.persistence_requests USING btree (source_incarnation, sequence) WHERE ((worktree_id IS NULL) AND (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text])))",
       "persistence_requests_pending": "CREATE INDEX persistence_requests_pending ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text]))",
       "persistence_requests_pkey": "CREATE UNIQUE INDEX persistence_requests_pkey ON public.persistence_requests USING btree (id)",
@@ -1794,6 +1801,26 @@
           "4 activated_at timestamp with time zone/timestamptz NULL",
           "5 writer_protocol_floor integer/int4 NOT NULL DEFAULT 1",
           "6 skill_bundles_enabled boolean/bool NOT NULL DEFAULT false"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "persistence_consumers": {
+        "columns": [
+          "1 host_id uuid/uuid NOT NULL",
+          "2 pid integer/int4 NOT NULL",
+          "3 nonce text/text NOT NULL",
+          "4 pid_ns text/text NULL",
+          "5 kind text/text NOT NULL",
+          "6 mode text/text NOT NULL",
+          "7 started_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "8 renewed_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "9 restart_required boolean/bool NOT NULL DEFAULT false",
+          "10 root_barrier_age_ms integer/int4 NULL",
+          "11 pool jsonb/jsonb NULL",
+          "12 host_json_path text/text NOT NULL",
+          "13 persistence_home text/text NOT NULL",
+          "14 minted_under jsonb/jsonb NULL",
+          "15 version text/text NOT NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

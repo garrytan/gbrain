@@ -1,8 +1,9 @@
 /**
  * Kill switches for write-path behaviors, read from one per-process snapshot.
  *
- * Every switch is on by default. An environment variable overrides the brain
- * config key; `0` or `false` (either source) turns a switch off. The snapshot
+ * Every switch is on by default unless its entry says `defaultOn: false`. An
+ * environment variable overrides the brain config key; `0` or `false` (either
+ * source) turns a switch off, `1` or `true` turns it on. The snapshot
  * reads every switch key in one statement and is reused for SWITCH_TTL_MS, so
  * `gbrain config set <key> false` reaches a running `serve` within that time
  * without a round trip per write. Config writes are trusted-local only (no
@@ -22,6 +23,11 @@ export const WRITE_SWITCHES = {
   foreground_priority: { key: 'sync.foreground_priority', env: 'GBRAIN_SYNC_FOREGROUND_PRIORITY' },
   /** #6278: every preparation has a deadline and a counted attempt; off restores the 30 s budget for remember/put_page/edit_page only and never counts. */
   preparation_deadlines: { key: 'persistence.preparation_deadlines', env: 'GBRAIN_PREPARATION_DEADLINES' },
+  /**
+   * #6317 (B1): resident processes (`sync`, `jobs`, `autopilot`, `mcp`) defer to the first live full consumer of their host
+   * (consumer-election.ts) instead of starting their own. Off by default until Phase 0's preregistered reading sets it.
+   */
+  single_consumer: { key: 'persistence.single_consumer', env: 'GBRAIN_SINGLE_CONSUMER', defaultOn: false },
 } as const;
 export type WriteSwitch = keyof typeof WRITE_SWITCHES;
 export type WriteSwitches = Record<WriteSwitch, boolean>;
@@ -38,9 +44,10 @@ const SNAPSHOT_KEYS: readonly string[] = [...WRITE_SWITCH_KEYS, ...PREPARATION_B
 
 function resolve(configured: Map<string, string>): WriteSwitchSnapshot {
   const out = {} as WriteSwitches;
-  for (const [name, { key, env }] of Object.entries(WRITE_SWITCHES) as Array<[WriteSwitch, { key: string; env: string }]>) {
+  for (const [name, { key, env, defaultOn }] of Object.entries(WRITE_SWITCHES) as Array<[WriteSwitch, { key: string; env: string; defaultOn?: boolean }]>) {
     const fromEnv = process.env[env];
-    out[name] = off(fromEnv) ? false : on(fromEnv) ? true : !off(configured.get(key));
+    const fromConfig = configured.get(key);
+    out[name] = off(fromEnv) ? false : on(fromEnv) ? true : fromConfig === undefined ? defaultOn ?? true : !off(fromConfig);
   }
   return { switches: out, preparation: resolvePreparationPolicy(configured) };
 }

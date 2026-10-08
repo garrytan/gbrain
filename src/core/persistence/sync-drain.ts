@@ -20,8 +20,10 @@ import { getCode, isRetryableConnError, isStatementTimeoutError } from '../retry
 import { currentRunDeadline, noteForwardProgress } from '../forward-progress.ts';
 import { serr } from '../console-prefix.ts';
 import { ERROR_CATALOGUE, type CatalogueName } from '../error-catalogue.ts';
+import { cliRenderContext, renderAction, type Action, type RenderedAction } from '../agent-output.ts';
 import { managedSyncResumeArgs, syncResumeCommand } from '../sync-reconcile.ts';
 import { isWriteCapacityWait, outstandingCapacityOf } from './admission-retry.ts';
+import { isOwnerThisProcess, stampLastSql, type ClaimLastSql } from './claim-phase.ts';
 
 export type DrainOutcome = 'synced' | 'resumable' | 'blocked';
 /** Why a drain ended short of `synced`. Each value has an error-catalogue entry (DX-A4). */
@@ -45,10 +47,27 @@ export interface DrainClaim {
   claim_age_ms: number | null;
   /** The lease expired (nobody renews it): a dead owner or a transaction holding the row, never a live preparation. */
   lapsed: boolean;
-  /** The owner's pid when it stamped one; this process's pid means the drain's own consumer holds it. */
+  /** The owner's pid when it stamped one; this process's pid (and nonce, #6317) means the drain's own consumer holds it. */
   owner_pid: number | null;
+  /** #6317: the owner's command kind and per-process nonce from the stamp (null on a stamp from an owner older than #6317). */
+  owner_kind: string | null;
+  owner_nonce: string | null;
+  /** #6317: the last raw statement the owner's preparation issued (label and age), when its stamp recorded one. */
+  last_sql: ClaimLastSql | null;
   /** How long a live preparation may hold the head before the drain calls it stalled: its budget plus a grace, capped by the ceiling allowance. */
   allowance_ms: number;
+  /** #6317: `persistence.preparation_ceiling_ms`, measured from the claim: past it #6298 frees the root and the drain stops waiting. */
+  ceiling_ms: number;
+}
+/** #6317: what the head owner's heartbeat row (`persistence_consumers`, same host) says about it; null when it wrote none. */
+export interface DrainOwnerRow {
+  kind: string;
+  pid: number;
+  nonce: string | null;
+  mode: string;
+  live: boolean;
+  restart_required: boolean;
+  root_barrier_age_ms: number | null;
 }
 export interface DrainStall {
   request_id: string;
@@ -63,8 +82,22 @@ export interface DrainStall {
   phase?: DrainClaim['phase'];
   step?: string | null;
   waiting_on?: DrainClaim['waiting_on'];
-  /** #6278: why the drain called it a stall: no renewal (`owner_missing`), a preparation or publication past its allowance, or no change at all. */
-  cause?: 'owner_missing' | 'preparation_overdue' | 'publication_overdue' | 'no_progress';
+  /**
+   * #6278: why the drain called it a stall: no renewal (`owner_missing`), a preparation or publication past its allowance, or no change at all.
+   * #6317: `owner_wedged_here` is a live same-host owner whose preparation passed the ceiling, or whose own heartbeat row says it is wedged
+   * (`restart_required`, a root barrier past the ceiling); `preparation_overdue` is kept for an owner on another host.
+   */
+  cause?: 'owner_missing' | 'preparation_overdue' | 'publication_overdue' | 'no_progress' | 'owner_wedged_here';
+  /** #6317: the head owner as the stamp names it, so the stop can say which process to restart. */
+  owner_pid?: number | null;
+  owner_kind?: string | null;
+  owner_nonce?: string | null;
+  last_sql?: ClaimLastSql | null;
+  /** #6317: the owner's heartbeat row, when the stop read one (`owner_wedged_here`). */
+  owner_row?: DrainOwnerRow | null;
+  /** #6317: whether the stop came at the ceiling (true) or on the owner's own wedged verdict before it (false), and the ceiling judged against. */
+  past_ceiling?: boolean;
+  ceiling_ms?: number;
 }
 export interface DrainReport {
   outcome: DrainOutcome;
@@ -196,6 +229,10 @@ export interface StallProbe {
   fingerprint(result: SyncResult): Promise<{ key: string; stall: Omit<DrainStall, 'stalled_seconds'>; claim?: DrainClaim | null } | null>;
   /** #6278: the source's head while a pass runs (its oldest running request, else its oldest queued one); null when nothing is unfinished. Bounded; may reject. */
   head?(): Promise<{ head_state: string; claim: DrainClaim | null } | null>;
+  /** #6317: the head owner's heartbeat row on this host, or null (no row: an older owner, PGLite, the table absent, or another host). Never rejects. */
+  owner?(claim: DrainClaim): Promise<DrainOwnerRow | null>;
+  /** #6317: whether a consumer here could reclaim a lapsed head: this process's own, or a live full row on this host. Never rejects. */
+  reclaimableHere?(): Promise<boolean>;
 }
 
 export interface DrainInput {
@@ -214,11 +251,19 @@ export interface DrainInput {
   progressMs?: number;
 }
 
-/** #6278: the line the drain prints while nothing commits, naming the head's step, wait cause and allowance. */
+/**
+ * #6278: the line the drain prints while nothing commits, naming the head's step, wait cause and allowance. #6317: past the
+ * allowance it names the owner (kind, pid), the last statement and the ceiling the drain waits for (B2, C3).
+ */
 function stallText(index: number, total: number | null, stalledMs: number, claim: DrainClaim | null, headState: string | null): string {
+  const live = !!claim && !claim.lapsed && claim.phase === 'preparing';
+  const overdue = live && stalledMs >= claim.allowance_ms;
+  const owner = claim?.owner_pid !== null && claim?.owner_pid !== undefined ? `${claim.owner_kind ?? 'owner'} pid ${claim.owner_pid}` : null;
   return `[sync] ${index}/${total ?? '?'} processed · stalled ${Math.round(stalledMs / 1000)}s on ${claim?.step ?? claim?.phase ?? headState ?? 'the writer head'}`
     + `${claim?.waiting_on && claim.waiting_on !== 'unknown' ? ` (waiting on ${claim.waiting_on})` : ''}${claim?.lapsed ? ' (claim lapsed: owner missing)' : ''}`
-    + `${claim && !claim.lapsed && claim.phase === 'preparing' ? ` · allowed ${formatDuration(Math.round(claim.allowance_ms / 1000))}` : ''}`;
+    + `${overdue && owner ? ` · held by ${owner}` : ''}${overdue && claim.last_sql ? ` · last_sql ${claim.last_sql.label}${claim.last_sql.age_ms === null ? '' : ` ${Math.round(claim.last_sql.age_ms / 1000)}s ago`}` : ''}`
+    + `${live ? overdue ? ` · past the ${formatDuration(Math.round(claim.allowance_ms / 1000))} allowance; the root is freed at the ${formatDuration(Math.round(claim.ceiling_ms / 1000))} ceiling`
+      : ` · allowed ${formatDuration(Math.round(claim.allowance_ms / 1000))}` : ''}`;
 }
 
 /** Re-enter `pass` until the managed cursor is done, the caller stops it, or it is blocked. */
@@ -229,7 +274,8 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
   let passes = 0, attempt = 0, readFailures = 0, refreshWaitedMs = 0, written = 0, waived = 0, index = 0, total: number | null = null;
   let announcedStart = false, lastLine = 0, groups = 0, groupedPages = 0, largestGroup = 0, admittedAhead = 0;
   let lanes: { effective: number; stepDown: string | null; overlapped: number; fallbacks: number } | null = null;
-  let stall: { key: string; since: number; passes: number; claim: DrainClaim | null; stallInfo: Omit<DrainStall, 'stalled_seconds'> } | null = null;
+  // #6317: `extended` marks the one extra window a lapsed head gets while a consumer here can reclaim it; `ownerAt`/`owner` throttle the owner-row read to one per progress interval.
+  let stall: { key: string; since: number; passes: number; claim: DrainClaim | null; stallInfo: Omit<DrainStall, 'stalled_seconds'>; extended?: boolean; ownerAt?: number; owner?: DrainOwnerRow | null } | null = null;
   let lastCommitAt = startedAt, inPass = false, readingHead = false;
   // #6278 (B7): a pass refused for write capacity keeps the last pass's result for the report; `capacity` spans the refusals since the last pass that ran.
   let last: SyncResult | undefined, capacity: { since: number; attempts: number } | null = null;
@@ -359,12 +405,35 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
             const live = !!claim && !claim.lapsed && claim.phase !== null;
             const window = live ? Math.max(input.stallMs ?? STALL_MS, claim.allowance_ms) : input.stallMs ?? STALL_MS;
             const elapsed = Math.max(Date.now() - stall.since, live ? claim.step_age_ms ?? 0 : 0);
-            if (++stall.passes >= STALL_PASSES && elapsed >= window && !print.stall.claimable_here) {
+            // #6317 (B2): `claimable_here` no longer gates the stop (it sees queued rows only, and a same-host owner made it always false).
+            if (++stall.passes >= STALL_PASSES && elapsed >= window) {
               const cause: DrainStall['cause'] = claim?.lapsed ? 'owner_missing' : live ? claim.phase === 'publishing' ? 'publication_overdue' : 'preparation_overdue' : 'no_progress';
-              const detail: DrainStall = { ...print.stall, stalled_seconds: Math.round(elapsed / 1000), phase: claim?.phase ?? null, step: claim?.step ?? null, waiting_on: claim?.waiting_on ?? null, cause };
+              const detail: DrainStall = { ...print.stall, stalled_seconds: Math.round(elapsed / 1000), phase: claim?.phase ?? null, step: claim?.step ?? null, waiting_on: claim?.waiting_on ?? null, cause,
+                owner_pid: claim?.owner_pid ?? null, owner_kind: claim?.owner_kind ?? null, owner_nonce: claim?.owner_nonce ?? null, last_sql: claim?.last_sql ?? null };
               // A preparation this process's own consumer holds past its allowance ends with the process: resumable, and the next pass holds the entry.
-              if (cause === 'preparation_overdue' && claim?.owner_pid === process.pid) return finish(result, 'resumable', 'preparation_abandoned', { stall: detail });
-              return finish(result, 'blocked', 'drain_stalled', { stall: detail });
+              if (cause === 'preparation_overdue' && claim && isOwnerThisProcess({ pid: claim.owner_pid ?? -1, ...(claim.owner_nonce ? { nonce: claim.owner_nonce } : {}) })) {
+                return finish(result, 'resumable', 'preparation_abandoned', { stall: detail });
+              }
+              // #6317: a lapsed head a consumer on this host can reclaim (`head_lapsed` + owner host + a live consumer) gets exactly one more window.
+              if (cause === 'owner_missing' && !stall.extended && print.stall.owner_is_this_host !== false && await (input.probe.reclaimableHere?.().catch(() => false) ?? false)) {
+                stall.extended = true; stall.since = Date.now(); stall.passes = 0;
+              } else if (cause === 'preparation_overdue' && claim && print.stall.owner_is_this_host !== false) {
+                // #6317 (B2, G5): a live same-host owner keeps the drain running past the allowance (the stall line names it every interval);
+                // the drain stops only past the ceiling, where #6298 frees the root and the next pass holds the entry, or when the owner's own
+                // heartbeat row says it is wedged (restart_required, a root barrier past the ceiling). The envelope then says how long until
+                // the ceiling (`retry_after_ms`), so a looping caller waits instead of hammering.
+                if (stall.ownerAt === undefined || Date.now() - stall.ownerAt >= every) {
+                  stall.ownerAt = Date.now();
+                  stall.owner = await (input.probe.owner?.(claim).catch(() => null) ?? null);
+                }
+                const age = claim.claim_age_ms ?? elapsed;
+                const pastCeiling = age >= claim.ceiling_ms;
+                const wedged = !!stall.owner && (stall.owner.restart_required || (stall.owner.root_barrier_age_ms !== null && stall.owner.root_barrier_age_ms > claim.ceiling_ms));
+                if (pastCeiling || wedged) {
+                  return finish(result, 'blocked', 'drain_stalled', { stall: { ...detail, cause: 'owner_wedged_here', owner_row: stall.owner ?? null, past_ceiling: pastCeiling, ceiling_ms: claim.ceiling_ms },
+                    retry_after_ms: Math.max(0, claim.ceiling_ms - age) });
+                }
+              } else return finish(result, 'blocked', 'drain_stalled', { stall: detail });
             }
           }
         }
@@ -388,11 +457,13 @@ export function drainClaimOf(row: { head_state: string | null; head_claim_phase:
   const budget = String(row.head_kind ?? '').startsWith('managed_sync_') ? budgets.syncMs : budgets.maintenanceMs;
   const phase = own ? stamp!.phase === 'publishing' ? 'publishing' : 'preparing' : null;
   const waiting = own ? stamp!.waiting_on : null;
+  const owner = own && stamp!.owner && typeof stamp!.owner === 'object' ? stamp!.owner as Record<string, unknown> : null;
   return { phase, step: own && typeof stamp!.step === 'string' ? stamp!.step : null,
     waiting_on: typeof waiting === 'string' && ['git', 'fs', 'db', 'pool', 'unknown'].includes(waiting) ? waiting as DrainClaim['waiting_on'] : own ? 'unknown' : null,
     step_age_ms: own ? age(stamp!.step_since ?? stamp!.since) : null, claim_age_ms: own ? age(stamp!.claimed_at) : null, lapsed: row.head_lapsed === true,
-    owner_pid: own ? ownerPid(stamp!) : null,
-    allowance_ms: Math.min(budgets.ceilingMs + STALL_GRACE_MS, budget + STALL_GRACE_MS) };
+    owner_pid: own ? ownerPid(stamp!) : null, owner_kind: owner && typeof owner.kind === 'string' ? owner.kind : null, owner_nonce: owner && typeof owner.nonce === 'string' ? owner.nonce : null,
+    last_sql: own ? stampLastSql(stamp!.last_sql, now) : null,
+    allowance_ms: Math.min(budgets.ceilingMs + STALL_GRACE_MS, budget + STALL_GRACE_MS), ceiling_ms: budgets.ceilingMs };
 }
 function safeJson(text: string): unknown { try { return JSON.parse(text); } catch { return null; } }
 /** The stamp stores the owner as `owner: { kind, pid, version }` (claim-phase.ts); a top-level `pid` is the pre-release shape test fixtures used. */
@@ -454,6 +525,22 @@ export function engineStallProbe(engine: BrainEngine, sourceId?: string): StallP
       // Lease columns (updated_at, claim_expires_at) are deliberately absent: a renewal is not progress.
       return { key: [row.state, row.blocked_reason, row.head_id, row.head_state, claim?.phase ?? '', claim?.step ?? '', stamp?.since ?? '', row.head_lapsed ? 'lapsed' : ''].join('|'),
         stall: await describe(found.requestId, row), claim };
+    },
+    // #6317: the owner's heartbeat row by pid (and nonce when both sides have one); a consumer here that could reclaim a lapsed head.
+    async owner(claim) {
+      if (claim.owner_pid === null) return null;
+      const { localHostId } = await import('./identity.ts');
+      const { listHostConsumers } = await import('./consumer-heartbeat.ts');
+      const rows = await listHostConsumers(engine, localHostId()).catch(() => []);
+      const row = rows.find(r => r.pid === claim.owner_pid && (claim.owner_nonce === null || r.nonce === claim.owner_nonce));
+      return row ? { kind: row.kind, pid: row.pid, nonce: row.nonce, mode: row.mode, live: row.liveness === 'live', restart_required: row.restart_required, root_barrier_age_ms: row.root_barrier_age_ms } : null;
+    },
+    async reclaimableHere() {
+      const { persistenceConsumerStatus } = await import('./service.ts');
+      if (persistenceConsumerStatus(engine).state === 'open') return true;
+      const { localHostId } = await import('./identity.ts');
+      const { listHostConsumers } = await import('./consumer-heartbeat.ts');
+      return (await listHostConsumers(engine, localHostId()).catch(() => [])).some(row => (row.mode === 'full' || row.mode === 'promoted') && row.liveness === 'live');
     },
     ...(sourceId ? { async head() {
       const [row] = await engine.executeRaw<{ head_state: string; head_claim_phase: unknown; head_token: string | null; head_lapsed: boolean | null; head_kind: string | null }>(
@@ -530,6 +617,14 @@ export interface DrainNext {
   rate_pages_per_min: number | null;
   why: string;
   docs?: string;
+  /**
+   * #6317: the stop's code and cause, and its agent-operator fix: while the ceiling is ahead the agent reruns the same command after
+   * `retry_after_ms` (`next: run`, `safe_to_loop: true`; `wait` is reserved for provider-side work, agent-output.ts deriveNext);
+   * once it passed, `tell_user_to_run` names the owner process to restart.
+   */
+  code?: string;
+  cause?: DrainStall['cause'];
+  fix?: RenderedAction;
 }
 
 const STOP_DOCS: Record<DrainStopReason, CatalogueName> = {
@@ -577,15 +672,36 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
       why: `The drain could not read its write's state from the database${wait ? ` (${wait.reason}: ${wait.why})` : ''}. The accepted write keeps its request ID. Fix database access, then rerun.`,
       ...(docs ? { docs } : {}) };
   }
+  // #6317 (B2): a live same-host owner stopped the drain at the ceiling or on its own wedged verdict; the fix is to wait for the ceiling
+  // (the root is freed there and the next pass holds the entry) or, past it, to restart the named process.
+  if (d?.stop_reason === 'drain_stalled' && d.stall?.cause === 'owner_wedged_here') {
+    const stall = d.stall, owner = `${stall.owner_kind ?? 'owner'} pid ${stall.owner_pid ?? '?'}`;
+    const where = `${stall.step ? ` at step ${stall.step}` : ''}${stall.waiting_on && stall.waiting_on !== 'unknown' ? `, waiting on ${stall.waiting_on}` : ''}${stall.last_sql ? `, last statement ${stall.last_sql.label}` : ''}`;
+    const ahead = !stall.past_ceiling && (d.retry_after_ms ?? 0) > 0;
+    const action: Action = ahead
+      ? { argv: resumeCommand.split(' '), consent: [], actor: 'agent', requires_exclusive: false,
+        why: `The ${owner} on this host still renews the claim; its own budget frees the root at the ceiling in ${formatDuration(Math.ceil((d.retry_after_ms ?? 0) / 1000))}. Rerun this after retry_after_ms (safe in a loop): it resumes the cursor and holds the entry if it stalls again.`,
+        verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] } }
+      : { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'host_admin', requires_exclusive: false,
+        why: `The ${owner} on this host holds the claim past the ceiling${stall.owner_row?.restart_required ? ' and reports restart_required' : ''}; only restarting that process ends the preparation it is parked in. Status names the request, step and owner, read-only.`,
+        user_message: `Restart the gbrain ${stall.owner_kind ?? 'owner'} process (pid ${stall.owner_pid ?? '?'}) on this host, then run: ${resumeCommand}`,
+        verify: { argv: ['gbrain', 'sources', 'writer', 'movement', sourceId, '--json'] } };
+    return { command: ahead ? resumeCommand : `gbrain sources writer status --source ${sourceId} --json`, safe_to_loop: ahead, retry_after_ms: d.retry_after_ms ?? 0, ...estimate,
+      why: `The write at the head of this source has been preparing for ${stall.stalled_seconds}s${where}, held by the ${owner} on this host`
+        + `${stall.past_ceiling ? `, past the ${stall.ceiling_ms ? formatDuration(Math.round(stall.ceiling_ms / 1000)) : 'preparation'} ceiling` : stall.owner_row?.restart_required ? ', which reports restart_required' : ', whose heartbeat reports a root barrier past the ceiling'}. `
+        + (ahead ? `Wait ${formatDuration(Math.ceil((d.retry_after_ms ?? 0) / 1000))} for the owner's own budget to free the root, then rerun: ${resumeCommand}`
+          : `Restart that process, then rerun: ${resumeCommand}`),
+      code: 'drain_stalled', cause: 'owner_wedged_here', fix: renderAction(action, cliRenderContext()), ...(docs ? { docs } : {}) };
+  }
   const writerBlocked = d?.stop_reason && d.stop_reason !== 'blocked_by_failures' && d.stop_reason !== 'deadline';
   if (writerBlocked) {
     return { command: `gbrain sources writer status ${sourceId}`, safe_to_loop: false, retry_after_ms: 0, ...estimate,
       why: d!.stop_reason === 'drain_stalled'
         ? `No write for this source made progress for ${d!.stall?.stalled_seconds ?? 30}s${d!.stall?.step ? ` (stuck at step ${d!.stall.step}${d!.stall.waiting_on && d!.stall.waiting_on !== 'unknown' ? `, waiting on ${d!.stall.waiting_on}` : ''})` : ''}`
-          + `${d!.stall?.cause === 'owner_missing' ? '; its claim lapsed, so its owner is gone or a transaction holds the row' : d!.stall?.cause === 'preparation_overdue' ? '; its owner keeps renewing the claim past the preparation budget (an owner that predates deadlines, or one that ignores cancellation)' : ''}`
-          + ` and nothing here can claim it. Inspect the writer, fix what it names, then rerun: ${resumeCommand}`
+          + `${d!.stall?.cause === 'owner_missing' ? '; its claim lapsed and no consumer here reclaimed it, so its owner is gone or a transaction holds the row' : d!.stall?.cause === 'preparation_overdue' ? `; its owner${d!.stall.owner_pid ? ` (${d!.stall.owner_kind ?? 'process'} pid ${d!.stall.owner_pid} on another host)` : ''} keeps renewing the claim past the preparation budget (an owner that predates deadlines, or one that ignores cancellation)` : ''}`
+          + `. Inspect the writer, fix what it names, then rerun: ${resumeCommand}`
         : `The source's writer needs intervention (${d!.stop_reason}) before more pages can publish. Inspect it, fix what it names, then rerun: ${resumeCommand}`,
-      ...(docs ? { docs } : {}) };
+      ...(d!.stop_reason === 'drain_stalled' ? { code: 'drain_stalled', cause: d!.stall?.cause } : {}), ...(docs ? { docs } : {}) };
   }
   const retry = resumeCommand.includes(' --retry-failed') ? resumeCommand : `${resumeCommand} --retry-failed`;
   return { command: retry, safe_to_loop: false, retry_after_ms: 0, ...estimate,
@@ -608,9 +724,11 @@ export function formatDrainSummary(result: SyncResult, resumeCommand: string, so
     + (d.remaining ? `, ${d.remaining} remaining` : '') + (d.rate_pages_per_min !== null ? `, ${d.rate_pages_per_min} pages/min` : '')
     + (d.remaining && d.eta_seconds !== null ? `, indexing ETA ${formatDuration(d.eta_seconds)}` : '') + '.'];
   if (d.capacity) lines.push(`  Waited ${d.capacity.waited_seconds}s for write capacity: ${d.capacity.outstanding ?? '?'} of ${d.capacity.limit ?? '?'} ${d.capacity.scope ?? 'principal'} outstanding-request slots in use.`);
+  // #6317 (C3): the summary line carries the same step / waiting_on / last_sql triple as the log lines, and the owner process.
   if (d.stall) lines.push(`  Oldest unfinished request ${d.stall.head_request_id ?? d.stall.request_id} (${d.stall.head_state ?? d.stall.state})`
     + `${d.stall.blocked_reason ? `, blocked_reason=${d.stall.blocked_reason}` : ''}${d.stall.step ? `, step=${d.stall.step}` : ''}${d.stall.waiting_on ? `, waiting_on=${d.stall.waiting_on}` : ''}`
-    + `${d.stall.cause ? `, cause=${d.stall.cause}` : ''}; claimable here: ${d.stall.claimable_here ? 'yes' : 'no'}.`);
+    + `${d.stall.last_sql ? `, last_sql=${d.stall.last_sql.label}${d.stall.last_sql.age_ms === null ? '' : ` (${Math.round(d.stall.last_sql.age_ms / 1000)}s ago)`}` : ''}`
+    + `${d.stall.cause ? `, cause=${d.stall.cause}` : ''}${d.stall.owner_pid ? `, owner=${d.stall.owner_kind ?? 'process'} pid ${d.stall.owner_pid}` : ''}; claimable here: ${d.stall.claimable_here ? 'yes' : 'no'}.`);
   const next = drainNext(result, resumeCommand, sourceId);
   if (next) lines.push(`  Next: ${next.command}${next.safe_to_loop ? ' (safe to rerun in a loop)' : ''}`, `  Why: ${next.why}`);
   return lines;
@@ -624,6 +742,8 @@ export interface ManagedSyncBacklog {
   rate_pages_per_min: number | null;
   eta_seconds: number | null;
   last_progress_at: string | null;
+  /** #6317: entries this cursor advanced past as holds (no page committed for them). */
+  held: number;
   resume_command: string;
   /** #6278: the arguments after `gbrain sync` that resume this cursor with its stored options. */
   resume_args: string[];
@@ -635,7 +755,7 @@ export interface ManagedSyncBacklog {
  */
 export async function readManagedSyncBacklog(engine: BrainEngine, sourceIds?: string[]): Promise<ManagedSyncBacklog[]> {
   const rows = await engine.executeRaw<{ header: { sourceId: string; index: number; total: number; done?: boolean; progress?: { startedAt: number; startIndex: number; lastAt: number; lastIndex: number };
-    processingOptions?: { noEmbed?: boolean; noExtract?: boolean; noSchemaPack?: boolean }; syncOptions?: Parameters<typeof managedSyncResumeArgs>[0]['syncOptions'] } }>(
+    counts?: { held?: number }; processingOptions?: { noEmbed?: boolean; noExtract?: boolean; noSchemaPack?: boolean }; syncOptions?: Parameters<typeof managedSyncResumeArgs>[0]['syncOptions'] } }>(
     `SELECT completed_keys->0 AS header FROM op_checkpoints WHERE op='managed-sync' AND COALESCE(completed_keys->0->>'done','false')<>'true'`);
   return rows.map(({ header }) => header).filter(h => h?.sourceId && (!sourceIds || sourceIds.includes(h.sourceId))).map(h => {
     const remaining = Math.max(0, Number(h.total) - Number(h.index));
@@ -643,7 +763,7 @@ export async function readManagedSyncBacklog(engine: BrainEngine, sourceIds?: st
     const estimate = p ? drainEstimate(remaining, p.lastIndex - p.startIndex, p.lastAt - p.startedAt) : { rate_pages_per_min: null, eta_seconds: null };
     const args = managedSyncResumeArgs({ sourceId: h.sourceId, processingOptions: h.processingOptions, syncOptions: h.syncOptions });
     return { source_id: h.sourceId, index: Number(h.index), total: Number(h.total), remaining, ...estimate,
-      last_progress_at: p ? new Date(p.lastAt).toISOString() : null, resume_command: syncResumeCommand(args), resume_args: args };
+      last_progress_at: p ? new Date(p.lastAt).toISOString() : null, held: Number(h.counts?.held ?? 0), resume_command: syncResumeCommand(args), resume_args: args };
   });
 }
 

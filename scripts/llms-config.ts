@@ -316,6 +316,7 @@ export const SECTIONS: DocSection[] = [
         description:
           "`gbrain repair <kind>`: dry run vs --apply, --source/--limit/--json, resume, capacity stop, thin-client refusal, what each kind fixes and costs; held files walkthrough (sync holds a broken file, `gbrain repair frontmatter` two-pass preview and apply).",
         path: "docs/guides/repair.md",
+        includeInFull: false,
       },
       {
         title: "docs/guides/write-refusals.md",

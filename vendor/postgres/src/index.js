@@ -68,6 +68,20 @@ function Postgres(a, b) {
 
   Object.assign(sql, {
     get parameters() { return options.parameters },
+    // GBrain: the pool's own queue lengths, read-only, for the consumer's pool diagnostics (#6317).
+    get pool() {
+      return {
+        max: options.max,
+        open: open.length,
+        busy: busy.length,
+        full: full.length,
+        reserved: reserved.length,
+        connecting: connecting.length,
+        closed: closed.length,
+        ended: ended.length,
+        queued: queries.length
+      }
+    },
     largeObject: largeObject.bind(null, sql),
     subscribe,
     CLOSE,

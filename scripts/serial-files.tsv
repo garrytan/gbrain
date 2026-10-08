@@ -324,6 +324,7 @@ test/serve-idle-sweep-source.serial.test.ts	R2	R2: mock.module(../src/core/sweep
 test/serve-source-guard.serial.test.ts	R1	R1: mutates process.env (GBRAIN_SOURCE)
 test/serve-status-mode.serial.test.ts	global-state	global-state: binds local servers/ports
 test/serve-sync-embed-drain.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; process-wide test seams __setEmbedTransportForTests, __resetDelegatedSyncForTests; configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console
+test/serve-sync-handoff.serial.test.ts	global-state	global-state: process-wide test seams __resetDelegatedSyncForTests; binds local servers/ports; patches process stdout/stderr/console
 test/serve-sync-ipc-killswitch.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; patches process stdout/stderr/console
 test/serve-sync-runner.serial.test.ts	global-state	global-state: process-wide test seams __resetDelegatedSyncForTests
 test/session-seat-capture.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_SEAT)

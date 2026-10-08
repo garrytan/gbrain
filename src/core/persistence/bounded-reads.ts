@@ -25,9 +25,13 @@
  * and the ceiling. Without a deadline (switch off, a clock from an older
  * caller) or on PGLite (one in-process connection, no other session to wait
  * on) the engine is returned as it is.
+ *
+ * #6317 (C1): the same wrapper records each statement's label on the clock
+ * (`recordClaimSql`) before issuing it, so the claim stamp's `last_sql` names
+ * the read a parked preparation is waiting on.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { ClaimPhaseClock } from './claim-phase.ts';
+import { recordClaimSql, type ClaimPhaseClock } from './claim-phase.ts';
 import { registerEngineView, viewedEngine } from './switches.ts';
 
 /** The SQLSTATEs a bounded read ends with when its server-side bound passes. */
@@ -60,6 +64,7 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
   if (deadlineAt === undefined || engine.kind !== 'postgres') return engine;
   return registerEngineView(new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) => {
+      recordClaimSql(clock, sql);
       if (opts?.signal) return target.executeRaw(sql, params, opts);
       try {
         // The clock's signal ends only the wait for a free connection (a saturated pool); the statement itself ends at the bound.

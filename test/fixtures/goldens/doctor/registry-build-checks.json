@@ -706,6 +706,22 @@
         "name": "core_memory"
       },
       {
+        "category": "ops",
+        "name": "managed_sync_not_moving"
+      },
+      {
+        "category": "ops",
+        "name": "two_consumers_on_host"
+      },
+      {
+        "category": "ops",
+        "name": "consumers_without_heartbeat"
+      },
+      {
+        "category": "ops",
+        "name": "host_identity_mismatch"
+      },
+      {
         "category": "brain",
         "name": "fence_integrity"
       },

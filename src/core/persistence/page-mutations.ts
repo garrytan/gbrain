@@ -15,7 +15,7 @@ import { computeContentHash } from '../ingestion/types.ts';
 import { resolveSlugForPath } from '../sync.ts';
 import { scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { sha256 } from './digest.ts';
-import { assertPersistenceAccepting, estimatedRetryAfterMs, onPersistenceLane, waitForWrite, writeResponse } from './service.ts';
+import { assertPersistenceAccepting, estimatedRetryAfterMs, waiterOnlyOwner, onPersistenceLane, waitForWrite, writeResponse } from './service.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
 import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type TimelineSection } from './timeline-omission.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
@@ -153,7 +153,7 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
 }
 
 function pendingAwareResponse(ctx: OperationContext, row: WriteRequest): Record<string, unknown> {
-  try { return writeResponse(row, { retryAfterMs: estimatedRetryAfterMs(ctx.engine, 1) }); } catch (error) {
+  try { return writeResponse(row, { retryAfterMs: estimatedRetryAfterMs(ctx.engine, 1), waiterOnlyOwner: waiterOnlyOwner(ctx.engine) }); } catch (error) {
     // #5929: a trusted local caller is told when an owner on another build ran the failed attempt.
     const mismatch = ctx.remote === false ? ownerBuildMismatch(row.error_detail, VERSION) : null;
     if (mismatch && error instanceof OperationError) { error.why = mismatch.why; error.fix = mismatch.fix; }

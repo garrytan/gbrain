@@ -9,8 +9,8 @@ import type { Migration } from './types.ts';
 // it after a restart or compaction. Column-only and nullable (NULL when the
 // client sent a UUID or nothing); like v198 it is migration-created on PGLite
 // and no index references it (lookups map the string to its UUID first).
-export const v222: Migration = {
-  version: 222,
+export const v223: Migration = {
+  version: 223,
   name: 'persistence_client_request_id',
   idempotent: true,
   sql: `

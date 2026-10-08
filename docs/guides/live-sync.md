@@ -88,6 +88,7 @@ The run ends in exactly one outcome:
 | `resumable` | 0 | A deadline, `--timeout` or Ctrl-C stopped it; the cursor and accepted writes are intact. | Rerun `next.command`; safe in a loop. |
 | `resumable` / `preparation_abandoned` | 0 | A write this process's own writer holds was still preparing past its allowance (its budget plus 30 s) and cannot be cancelled in-process, so the sync exited to end it; `drain.stall.step` says where. | Rerun `next.command`; safe in a loop. The next pass holds the entry if it stalls again. |
 | `blocked` | 1 | A page failed or the writer needs intervention. | Follow `next.why`, then run `next.command`. See [drain stops](write-refusals.md#managed-sync-drain-stops). |
+| `blocked` / `drain_stalled` | 1 | The head write made no progress (no commit, no step advance) for the whole window. With a live owner on this host the drain waits until the 600 s ceiling (printing `stalled <N>s on <step>` with the owner's pid and kind meanwhile) and stops with `cause: owner_wedged_here`, the owner `{kind, pid, nonce}` and `retry_after_ms` to the ceiling; a lapsed claim stops at once as `owner_missing`. | Before the ceiling: wait `retry_after_ms`, then rerun `next.command` (`safe_to_loop` is true). Past it, or with a wedged owner: restart the named owner process, `gbrain sources retry-held <id>`, then the same sync. `gbrain sources writer status --source <id> --json` ends the claim in a `next_action` that says which. See [drain stops](write-refusals.md#drain-stalled). |
 | `blocked` / `write_capacity` | 1 | Other writers' requests held the sync writer's outstanding-request cap (`persistence.limits.principal_outstanding`) for the whole no-progress window, so no sync write could be admitted; the drain waited and printed `waiting for write capacity (N outstanding of M)` first. Nothing failed; the cursor is intact. | `gbrain sources writer status --source <id> --json`, let the outstanding requests finish or raise the cap, then rerun the same sync. See [drain stops](write-refusals.md#drain-write-capacity). |
 | `blocked` / `preparation_systemic` | 1 | Too many writes stalled while preparing in one run (the hold-escalation rule, or five in a row with no commit between), so the run stopped with one diagnostic instead of holding every file. | `gbrain sources writer status --source <id> --json`, fix what it names, then rerun the same sync. Runbook: [catch-up stuck](troubleshooting.md#catch-up-stuck). |
 
@@ -102,7 +103,7 @@ Timing knobs the drain uses:
 | `--hard-deadline <dur>` | Whole process, enforced out of band. | none | The drain stops itself about 15 s early as `resumable`; the watchdog stops a hung process. |
 | `GBRAIN_SYNC_MAX_RUNTIME_SECONDS` | Whole process, non-interactive runs. Extends while pages keep committing. | 3600 (non-TTY) | Stops only after `GBRAIN_SYNC_STALL_ABORT_SECONDS` without progress. |
 | `GBRAIN_SYNC_STALL_ABORT_SECONDS` | Progress window for the deadline above. | 900 | The watchdog stops the run and prints the resume command. |
-| No-progress detector | Awaited write and checkout head unchanged (state, blocked reason and the head claim's phase/step; a lease renewal is not a change). A live preparation is allowed its budget plus 30 s. | 30 s and 3 passes | Stops as `blocked` / `drain_stalled` with `stall.step`, `stall.waiting_on` and `stall.cause`; a preparation this process owns past its allowance stops as `resumable` / `preparation_abandoned`. The progress line prints `stalled <N>s on <step>` meanwhile. |
+| No-progress detector | Awaited write and checkout head unchanged (state, blocked reason and the head claim's phase/step; a lease renewal is not a change). A live preparation is allowed its budget plus 30 s. | 30 s and 3 passes; with a live owner on this host, the exit waits for `persistence.preparation_ceiling_ms` | Stops as `blocked` / `drain_stalled` with `stall.step`, `stall.waiting_on`, `stall.cause` and the owner; a live same-host owner is given until the ceiling (`cause: owner_wedged_here`, `retry_after_ms`) unless its heartbeat row reads wedged; a preparation this process owns past its allowance stops as `resumable` / `preparation_abandoned`. The progress line prints `stalled <N>s on <step>` with the owner's pid and kind meanwhile. |
 | `persistence.sync_preparation_ms` | One sync member's preparation. | 120000 | The claim is released and retried once; the second expiry finishes the request `preparation_stalled` and the sync holds the file. |
 | `persistence.maintenance_preparation_ms` | One maintenance write's preparation (fact-fence adoption, maintenance page writes). | 120000 | As above; a maintenance write gets a terminal `preparation_stalled` receipt (no hold). |
 | `persistence.preparation_ceiling_ms` | Hard ceiling for a preparation that ignores cancellation (any kind), from claim start. | 600000 (60000–3600000, at least the largest budget plus 30 s) | The owner frees the root, sets the request's attempts to the limit (its next claim finishes it `preparation_stalled`), and stops claiming once it holds one such stuck preparation (`restart_required` in its log line). |
@@ -111,6 +112,58 @@ Timing knobs the drain uses:
 | Page write wait | One page's (or group's) publication before the drain re-checks. | 30 s inside a drain (5 s, checkpoint 8 s, for a single pass) | The drain re-enters; this is not a stop. |
 | `sync.bulk_max_txn_ms` / `GBRAIN_SYNC_BULK_MAX_TXN_MS` | Target time per bulk group; sizes the next group from the last one's time per page. | 15000 | A smaller next group. |
 | `sync.bulk_size` / `GBRAIN_SYNC_BULK_SIZE` | Largest bulk group. | 16 | — |
+
+### One consumer per host
+
+Every gbrain process that waits on a managed write starts a *persistence
+consumer*, the loop that claims queued writes and publishes them: `gbrain serve`,
+the sync CLI, the jobs worker (its adoption writes), autopilot and the MCP server
+all qualify. Two full consumers on one host claim the same roots, and every
+`preparing` wedge observed so far had at least two alive. On Postgres, gbrain
+therefore prefers one full consumer per host:
+
+- A `gbrain serve` always runs a full consumer. Every other resident kind
+  (`sync`, `jobs`, `autopilot`, `mcp`) probes the `persistence_consumers`
+  heartbeat table when it starts and on every tick: while a live, full,
+  not-wedged consumer of this host exists, the process runs *waiter-only* (it
+  submits writes and waits on their receipts, claims nothing, writes no row) and
+  promotes itself to a full consumer when that owner's row lapses (60 s without
+  renewal), reads wedged (`restart_required`, or a root barrier older than the
+  ceiling), stops being full or disappears. A consumer promoted this way drains
+  back to waiter-only once the owner has been live and healthy for three ticks.
+- Short-lived foreground commands (`put`, `import`, `dream`, `cycle`,
+  `sources`, `cli`) keep their own consumer for the life of their write, because
+  the owner's wake is in-process only and a waiter-only `gbrain put` would often
+  return `writer_pending`.
+- This is a preference, not a fenced role. Two processes that start within one
+  heartbeat of each other can both start full, and a sync CLI that took its
+  consumer before the `serve` started keeps it for that run; doctor reports the
+  overlap as `two_consumers_on_host` until one of them exits. An older `serve`
+  writes no heartbeat row, so a new CLI beside it starts full and says so on its
+  start line (`owner row missing: older serve or no serve; running own consumer`);
+  doctor lists such owners under `consumers_without_heartbeat`.
+- PGLite is unchanged: its single-writer lock already allows one process, and a
+  sync beside a live `serve` delegates the run to it over the IPC socket.
+
+The managed catch-up on Postgres follows the same rule: `gbrain sync` beside a
+live `serve` hands the drain to the serve (the serve-delegated sync family,
+`sync_start` / `sync_status` / `sync_abort`, with the CLI's own verified writer
+registration so grants and revocations still apply) and prints progress from
+`sync_status`; the serve's consumer publishes, and only its pid appears in the
+members' `claim_phase.owner`.
+
+Two switches restore the previous behavior:
+
+| Switch | Scope | Effect |
+| --- | --- | --- |
+| `gbrain sync --no-delegate` (or `GBRAIN_SYNC_NO_DELEGATE=1`) | One run, either engine | The run keeps its own full consumer and publishes itself. On PGLite it also opts out of delegating to a live `serve` (the run then fails fast if a live serve holds the brain). |
+| `persistence.single_consumer` (`gbrain config set persistence.single_consumer false`, or `GBRAIN_SINGLE_CONSUMER=0`) | Brain-wide | Every process keeps its own consumer, as before the preference; a supervisor running several gbrain processes restores the old behavior in one place. `two_consumers_on_host` then describes the configured behavior. A running `serve` picks the change up within 5 seconds. |
+
+When no live full resident consumer exists, or the probe cannot be answered
+(one log line), the process behaves as before. `gbrain sources writer status
+--json` lists the consumers alive on this host under `host.consumers` (pid,
+kind, mode, age, pool), and `gbrain doctor` warns `two_consumers_on_host`
+only for two resident kinds both alive for longer than 30 s.
 
 Two more tips:
 

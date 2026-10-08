@@ -290,6 +290,8 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   }
   console.log(`Binary: installed ${newVersion || 'a new version (could not verify)'}`);
   console.log(migrationsLine);
+  // #6317 (I2): upgrade owns no relaunch, so the supervisor proves data movement after it restarts serve and the workers.
+  console.log(`Next: ${(await import('./sources-writer-movement.ts')).MOVEMENT_SUPERVISOR_STEP}`);
 }
 
 /**
@@ -888,6 +890,8 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   } catch {
     // Fail-open per A18: never crash post-upgrade from the banner.
   }
+  // #6317 (I2): the supervisor's step; bare, so the check inherits its default window.
+  (json ? console.error : console.log)(`Next: ${(await import('./sources-writer-movement.ts')).MOVEMENT_SUPERVISOR_STEP}`);
   if (json) await writeJsonDocument(JSON.stringify(report));
 }
 

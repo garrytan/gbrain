@@ -3,7 +3,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 0,
           "raw": 0,
@@ -16,7 +18,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 0,
           "raw": 1,
@@ -29,7 +33,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 1,
           "raw": 1,
@@ -42,7 +48,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 1,
           "raw": 2,
@@ -55,7 +63,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 1,
           "raw": 2,
@@ -68,7 +78,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 1,
           "raw": 2,
@@ -81,7 +93,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 1,
           "raw": 2,
@@ -94,7 +108,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 1,
           "raw": 2,
@@ -107,7 +123,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 1,
           "raw": 3,
@@ -120,7 +138,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 1,
           "raw": 2,
@@ -133,7 +153,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 1,
           "raw": 2,
@@ -146,7 +168,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 1,
           "raw": 1,
@@ -159,7 +183,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 0,
           "raw": 1,
@@ -172,7 +198,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 0,
           "raw": 0,
@@ -185,7 +213,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 0,
           "raw": 0,
@@ -198,7 +228,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 0,
           "raw": 0,
@@ -211,7 +243,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 0,
           "raw": 1,
@@ -224,7 +258,9 @@
     {
       "diagnostics": {
         "poisonedDiscards": 0,
+        "pool": null,
         "poolMax": 10,
+        "prepare": null,
         "tracked": {
           "direct": 0,
           "raw": 0,

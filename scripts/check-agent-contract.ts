@@ -263,7 +263,9 @@ const READ_ONLY_SUBCOMMANDS = new Set(['config get', 'sources list', 'sources st
   // Engine graduation: --status and --plan are zero-mutation (pre-connect; no schema migration, no target DDL).
   'migrate --status', 'migrate --plan',
   // Reads the pack resolution only; never connects without a configured brain (#6090).
-  'schema active']);
+  'schema active',
+  // #6317: trusted-local writer administration reads (owners, running claims, consumers, movement); `sources writer claim|transfer|deactivate` stay mutating.
+  'sources writer status', 'sources writer movement']);
 
 function tsFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -419,7 +421,7 @@ export function scan(root: string = ROOT): Hit[] {
             if (!ts.isPropertyAssignment(p) || propName(p) !== 'argv' || !ts.isArrayLiteralExpression(p.initializer)) continue;
             const words = p.initializer.elements.map(e => stringText(e));
             if (words[0] !== 'gbrain' || words[1] === undefined) continue;
-            if (!readOnly.has(words[1]!) && !READ_ONLY_SUBCOMMANDS.has(`${words[1]} ${words[2]}`)) add('verify-not-read-only', p);
+            if (!readOnly.has(words[1]!) && !READ_ONLY_SUBCOMMANDS.has(`${words[1]} ${words[2]}`) && !READ_ONLY_SUBCOMMANDS.has(`${words[1]} ${words[2]} ${words[3]}`)) add('verify-not-read-only', p);
           }
         }
       }

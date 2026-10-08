@@ -1062,7 +1062,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // v178/v198/v217: migration-created on PGLite, no index references the
   // column, and every reader treats a missing value as 0 attempts.
   'persistence_requests.preparation_attempts',
-  // Cat 40 Hard F6 (migration v222) — the client's original request_id. Same
+  // Cat 40 Hard F6 (migration v223) — the client's original request_id. Same
   // posture as v178/v198: persistence_requests is migration-created on PGLite,
   // no index references the column, and every reader treats NULL as "sent a UUID or nothing".
   'persistence_requests.client_request_id',
