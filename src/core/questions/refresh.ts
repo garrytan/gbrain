@@ -28,6 +28,7 @@ import { chat as gatewayChat, probeChatModel } from '../ai/gateway.ts';
 import { classifyLlmCallFailure } from '../think/index.ts';
 import { PINNED_QUESTION_MARKER, normalizeQuestion, sentenceId } from './identity.ts';
 import { entityAnchoredPages, prefixAnchoredPages } from '../search/entity-anchor.ts';
+import { quarantinedProvenanceFilterFragment, quarantineFilterFragment } from '../quarantine.ts';
 import { FACT_HASH_SQL, TAKE_HASH_SQL, TIMELINE_HASH_SQL, evaluateAnswer, type EvidenceKind } from './freshness.ts';
 import { ownerClaims, readQuestionPage } from './pages.ts';
 import { acquireLease, getPin, pinId, releaseLease, type AnswerSentence, type PinRow } from './store.ts';
@@ -170,7 +171,7 @@ export async function retrieveEvidence(engine: BrainEngine, pin: PinRow): Promis
   const candidates = slugs.size === 0 ? [] : await engine.executeRaw<CandidatePage>(
     `SELECT id, slug, source_id, generation, knowledge_revision::text AS revision, type, compiled_truth, updated_at,
        (frontmatter ? '${PINNED_QUESTION_MARKER}') AS marker
-     FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL`, [pin.source_id, [...slugs]]);
+     FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL AND ${quarantineFilterFragment('pages')}`, [pin.source_id, [...slugs]]);
   const laundered = launderingIndex(await engine.executeRaw<PublishedAnswer>(
     `SELECT q.answer, q.last_refresh_at AS published_at,
        COALESCE(array_agg(e.page_id) FILTER (WHERE e.page_id IS NOT NULL), ARRAY[]::integer[]) AS cited
@@ -199,7 +200,7 @@ export async function retrieveEvidence(engine: BrainEngine, pin: PinRow): Promis
     const facts = await engine.executeRaw<{ id: string | number; fact: string; entity_slug: string | null; valid_from: unknown; hash: string }>(
       `SELECT f.id, f.fact, f.entity_slug, f.valid_from, ${FACT_HASH_SQL('f')} AS hash FROM facts f
        WHERE f.source_id = $1 AND f.entity_slug = ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
-         AND (f.valid_until IS NULL OR f.valid_until > now())
+         AND (f.valid_until IS NULL OR f.valid_until > now()) AND ${quarantinedProvenanceFilterFragment('f')}
          AND NOT EXISTS (SELECT 1 FROM pages fp WHERE fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
            AND (fp.type IN ('question', 'synthesis') OR fp.frontmatter ? '${PINNED_QUESTION_MARKER}'))
        ORDER BY f.valid_from DESC, f.id DESC LIMIT ${MAX_FACTS}`, [pin.source_id, entitySlugs]);

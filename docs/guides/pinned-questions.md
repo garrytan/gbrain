@@ -92,6 +92,7 @@ sentence is stale when its evidence:
 - was edited, renamed away or made private (the page's revision changed);
 - was soft-deleted or hard-deleted, or its source was archived;
 - was forgotten, superseded, or expired because its `valid_until` passed;
+- is a fact whose source page the content-quality gate has since quarantined;
 - is a take that was deactivated or changed, or a timeline entry that was removed;
 - can't be found or verified (a sentence with no citation is always stale).
 
@@ -114,8 +115,9 @@ JSON-only reminder (both calls count toward spend); if that also fails, the
 refresh fails with `refresh_failed:model_output_not_json`. A failed refresh
 never removes the previous answer.
 
-Question pages, synthesis pages and pages that copy a published answer are
-never used as evidence.
+Question pages, synthesis pages, pages that copy a published answer, and
+quarantined pages (with the facts extracted from them) are never used as
+evidence.
 
 ## Your own notes
 

@@ -5,7 +5,8 @@
  * pages leave of the token budget), never displacing a page; a remote caller never sees a
  * private fact; page-unit delivery passes the fact row through as written;
  * a page whose typed claim a newer fact covers is stamped superseded_claim;
- * the key is on when unset, and with it off the rows are unchanged. PGLite, keyword-only, no network.
+ * the key is on when unset, and with it off the rows are unchanged; a fact
+ * whose source page is quarantined never comes back. PGLite, keyword-only, no network.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -139,5 +140,19 @@ describe('facts arm', () => {
       expect(stamped.map(r => r.slug)).toEqual(['conversations/chat-0']);
       expect(stamped[0]!.superseded_claim!.fact_id).toBe(newer.id);
     } finally { await engine.setConfig(QUERY_FACTS_ARM_KEY, 'false'); }
+  });
+
+  test('a fact whose source page is quarantined is never a facts-arm row, local or remote (#6284)', async () => {
+    const lq = 'Where is the Lantern retreat held?';
+    await putPage(engine, sourceId, 'notes/lantern-scrape', page('note', 'Lantern scrape', 'Scraped listing about the Lantern retreat venue and its rooms.'));
+    const scraped = await engine.insertFact({ fact: 'The Lantern retreat is held in Boise.', kind: 'fact', entity_slug: 'lantern', source: 'extracted', visibility: 'world', valid_from: new Date('2025-08-01T00:00:00Z') }, { source_id: sourceId });
+    await engine.executeRaw(`UPDATE facts SET source_markdown_slug = 'notes/lantern-scrape' WHERE id = $1`, [scraped.id]);
+    const ids = async (remote: boolean) => (await matchQueryFacts(engine, lq, { sourceId, remote })).map(f => Number(f.id));
+    expect(await ids(false)).toContain(Number(scraped.id));
+    expect(await ids(true)).toContain(Number(scraped.id));
+    await engine.executeRaw(`UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"quarantine": {"reason": "junk_pattern", "detail": "test"}}'::jsonb
+      WHERE source_id = $1 AND slug = 'notes/lantern-scrape'`, [sourceId]);
+    expect(await ids(false)).not.toContain(Number(scraped.id));
+    expect(await ids(true)).not.toContain(Number(scraped.id));
   });
 });

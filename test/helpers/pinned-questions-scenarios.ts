@@ -7,7 +7,8 @@
  * Protects: restricted grants never see a question page or answer on any
  * read surface; answer text never enters pages, chunks, versions or export;
  * every evidence change (edit, soft and hard delete, forget, clock expiry,
- * supersession, visibility, take, timeline, owner edit) marks the dependent
+ * supersession, visibility, take, timeline, owner edit, a fact's source page
+ * quarantined) marks the dependent
  * sentence stale on the next read with no cycle; refresh never publishes over
  * a concurrent change, a duplicate worker, a crash between publication
  * stages, or a failure; consent, keyless, budget and worker states carry an
@@ -229,6 +230,11 @@ export function registerPinnedQuestionSuite(label: string, getEngine: () => Brai
         putPage(engine, s.sourceId, 'notes/widget-plan', page('note', 'Widget plan', 'The widget plan for acme-example ships in March.', 'visibility: private\n'), await revisionOf(engine, s.sourceId, 'notes/widget-plan')) },
       { name: 'deactivated take', needle: 'take on people/alice-example', reason: 'take_inactive', mutate: async (engine, s) => { await engine.executeRaw('UPDATE takes SET active = false WHERE id = $1', [s.takeId]); } },
       { name: 'removed timeline entry', needle: 'timeline people/alice-example', reason: 'timeline_missing', mutate: async (engine, s) => { await engine.executeRaw('DELETE FROM timeline_entries WHERE id = $1', [s.timelineId]); } },
+      { name: 'fact whose source page was quarantined after it was projected', needle: '40 employees', reason: 'fact_source_quarantined', mutate: async (engine, s) => {
+        await engine.executeRaw('UPDATE facts SET source_markdown_slug = $2 WHERE id = $1', [s.factId, 'notes/widget-plan']);
+        await engine.executeRaw(`UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"quarantine": {"reason": "junk_pattern", "detail": "test"}}'::jsonb
+          WHERE source_id = $1 AND slug = 'notes/widget-plan'`, [s.sourceId]);
+      } },
     ];
     for (const c of cases) {
       run(`${c.name} makes the dependent sentence stale on read, and context_pack withholds it`, async (engine) => {
@@ -375,6 +381,26 @@ export function registerPinnedQuestionSuite(label: string, getEngine: () => Brai
         'SELECT DISTINCT page_slug FROM question_evidence WHERE question_id = (SELECT id FROM pinned_questions WHERE source_id = $1 AND slug = $2)', [s.sourceId, slug])).map(r => r.page_slug);
       for (const banned of ['synthesis/acme-widgets', 'notes/retyped-question', 'notes/copied-answer', slug]) expect(cited).not.toContain(banned);
       for (const banned of ['synthesis/acme-widgets', 'notes/retyped-question', 'notes/copied-answer']) expect(chat.calls.join('\n')).not.toContain(banned);
+    });
+
+    run('a quarantined page, and facts projected from it before it was quarantined, are never evidence (#6284)', async (engine) => {
+      const s = await seedBrain(engine);
+      await putPage(engine, s.sourceId, 'notes/widget-scrape', page('note', 'Widget scrape', 'Scraped listing: acme-example widgets are built in Lisbon by Alice example.'));
+      await engine.executeRaw('UPDATE facts SET source_markdown_slug = $2 WHERE id = $1', [s.factId, 'notes/widget-scrape']);
+      await engine.executeRaw(`UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"quarantine": {"reason": "junk_pattern", "detail": "test"}}'::jsonb
+        WHERE source_id = $1 AND slug = ANY($2::text[])`, [s.sourceId, ['notes/widget-scrape', 'notes/widget-plan']]);
+      const pinned = await pinQuestion(localCtx(engine, s.sourceId), { question: QUESTION, scope: { slug_prefix: 'notes/' } }, { chat: stubChat().fn });
+      const { slug } = parseQuestionId(pinned.receipt.id, 'default')!;
+      const chat = stubChat();
+      await refreshPin(engine, s.sourceId, slug, { trigger: 'manual', chat: chat.fn, leaseOwner: 't', full: true });
+      const scoped = await pinQuestion(localCtx(engine, s.sourceId), { question: 'How many employees does acme-example have?', scope: { entity: ENTITY } }, { chat: chat.fn });
+      const cited = await engine.executeRaw<{ page_slug: string | null; item_id: string | number | null; kind: string }>(
+        'SELECT page_slug, item_id, kind FROM question_evidence WHERE question_id IN (SELECT id FROM pinned_questions WHERE source_id = $1)', [s.sourceId]);
+      expect(cited.map(r => r.page_slug)).not.toContain('notes/widget-scrape');
+      expect(cited.map(r => r.page_slug)).not.toContain('notes/widget-plan');
+      expect(cited.filter(r => r.kind === 'fact').map(r => Number(r.item_id))).not.toContain(s.factId);
+      expect(scoped.receipt.answer!.some(x => x.text.includes('widget sale'))).toBe(true);
+      for (const banned of ['notes/widget-scrape', 'notes/widget-plan', '40 employees']) expect(chat.calls.join('\n')).not.toContain(banned);
     });
 
     run('the first answer is a bounded wait: a slow model leaves awaiting_refresh and releases the lease', async (engine) => {

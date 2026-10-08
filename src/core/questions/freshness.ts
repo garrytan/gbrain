@@ -8,17 +8,18 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AnswerSentence, PinRow } from './store.ts';
+import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 
 export type StaleReason =
   | 'page_missing' | 'page_deleted' | 'page_changed' | 'source_archived'
-  | 'fact_missing' | 'fact_withdrawn' | 'fact_expired' | 'fact_superseded' | 'fact_changed'
+  | 'fact_missing' | 'fact_withdrawn' | 'fact_expired' | 'fact_superseded' | 'fact_changed' | 'fact_source_quarantined'
   | 'timeline_missing' | 'timeline_changed' | 'take_missing' | 'take_inactive' | 'take_changed'
   | 'owner_edited' | 'unverifiable';
 
 /** Reasons that remove or contradict evidence: an incremental edit can't recover from them, so refresh recomputes. */
 const FULL_RECOMPUTE_REASONS: ReadonlySet<StaleReason> = new Set([
   'page_missing', 'page_deleted', 'source_archived', 'fact_missing', 'fact_withdrawn', 'fact_expired',
-  'fact_superseded', 'fact_changed', 'timeline_missing', 'take_missing', 'take_inactive', 'take_changed', 'unverifiable',
+  'fact_superseded', 'fact_changed', 'fact_source_quarantined', 'timeline_missing', 'take_missing', 'take_inactive', 'take_changed', 'unverifiable',
 ]);
 
 export type EvidenceKind = 'page' | 'fact' | 'timeline' | 'take' | 'owner';
@@ -63,6 +64,7 @@ interface EvidenceJoinRow {
   f_valid_until_passed: boolean | null;
   f_superseded: string | number | null;
   f_hash: string | null;
+  f_source_quarantined: boolean | null;
   t_id: number | null;
   t_hash: string | null;
   k_id: string | number | null;
@@ -95,6 +97,7 @@ export function evidenceReasons(r: EvidenceJoinRow): StaleReason[] {
       if (r.f_superseded !== null && r.f_superseded !== undefined) return ['fact_superseded'];
       if (r.f_valid_until_passed) return ['fact_expired'];
       if (r.f_hash !== r.content_hash) return ['fact_changed'];
+      if (r.f_source_quarantined) return ['fact_source_quarantined'];
       return [];
     }
     case 'timeline': {
@@ -128,6 +131,7 @@ export async function evaluateAnswer(
        s.archived AS p_source_archived, md5(p.compiled_truth) AS p_body_hash,
        f.id AS f_id, f.expired_at AS f_expired, (f.valid_until IS NOT NULL AND f.valid_until <= now()) AS f_valid_until_passed,
        f.superseded_by AS f_superseded, ${FACT_HASH_SQL('f')} AS f_hash,
+       (f.id IS NOT NULL AND NOT ${quarantinedProvenanceFilterFragment('f')}) AS f_source_quarantined,
        t.id AS t_id, ${TIMELINE_HASH_SQL('t')} AS t_hash,
        k.id AS k_id, k.active AS k_active, k.superseded_by AS k_superseded, ${TAKE_HASH_SQL('k')} AS k_hash
      FROM question_evidence e

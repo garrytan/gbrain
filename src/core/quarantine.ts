@@ -56,6 +56,12 @@ export function quarantineFilterFragment(pageAlias: string): string {
  *  and for any future stale/orphan-chunk query that needs it. */
 export const QUARANTINE_FILTER_FRAGMENT = quarantineFilterFragment('p');
 
+/** Fact-row twin: excludes facts whose source page (same source, `source_markdown_slug`) is quarantined. */
+export function quarantinedProvenanceFilterFragment(factAlias: string): string {
+  return `NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = ${factAlias}.source_id `
+    + `AND qp.slug = ${factAlias}.source_markdown_slug AND NOT ${quarantineFilterFragment('qp')})`;
+}
+
 export interface QuarantineMarker {
   /** Why the page was quarantined. The high-confidence junk reasons. */
   reason: 'junk_pattern' | 'literal_substring';

@@ -22,6 +22,7 @@ import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { privateProvenanceFilterFragment } from './private-visibility.ts';
+import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 import { namedEntity } from './entity-anchor.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
@@ -86,7 +87,7 @@ async function collectFactCandidates(engine: BrainEngine, query: string, scope: 
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'];
   const params: unknown[] = [sources, [...AUDIT_ROW_SOURCES]];
   const base = `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
-    AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[])
+    AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[]) AND ${quarantinedProvenanceFilterFragment('f')}
     ${scope.remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : ''}`;
   const cols = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period';
   const found = new Map<number, ScoredCandidate>();
