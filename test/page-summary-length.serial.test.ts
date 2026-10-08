@@ -105,6 +105,15 @@ describe('maxTokens threading (#3883)', () => {
   });
 });
 
+describe('thinking off', () => {
+  test('the synopsis call turns thinking off so reasoning cannot exhaust the cap', async () => {
+    const captured: ChatOpts[] = [];
+    stubChat({ stopReason: 'end' }, captured);
+    await generatePerChunkSynopsis(baseArgs);
+    expect(captured[0].thinking).toBe('off');
+  });
+});
+
 describe('resolveSynopsisMaxTokens config resolver (#3883)', () => {
   test('reads models.synopsis_max_tokens, clamps junk to undefined', async () => {
     const { resolveSynopsisMaxTokens } = await import('../src/core/contextual-retrieval-service.ts');

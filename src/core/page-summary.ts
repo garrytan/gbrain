@@ -174,6 +174,11 @@ export async function generatePerChunkSynopsis(
     maxTokens,
     abortSignal: args.abortSignal,
     cacheSystem: true,
+    // A thinking-by-default model (Claude 5, DeepSeek v4) spends the small
+    // synopsis cap on reasoning and stops at 'length', which demotes the whole
+    // page to title-only below. One plain sentence needs no reasoning, so the
+    // call turns thinking off (#5331; per-route mapping in thinking-off.ts).
+    thinking: 'off',
   };
 
   let result: ChatResult;
