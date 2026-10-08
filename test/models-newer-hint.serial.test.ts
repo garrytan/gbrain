@@ -73,7 +73,7 @@ describe('gbrain models — newer-available hint', () => {
     expect(row).toContain('gbrain config set models.tier.reasoning anthropic:claude-sonnet-5-5');
   });
 
-  test('current, newer-than-recipe, dated/undated-equal and non-Anthropic models get no hint', async () => {
+  test('current, newer-than-recipe and non-Anthropic models get no hint', async () => {
     const engine = new StubConfigEngine();
     engine.set('models.tier.reasoning', 'anthropic:claude-sonnet-5-5');
     engine.set('models.tier.deep', 'anthropic:claude-opus-6');
