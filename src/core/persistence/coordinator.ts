@@ -157,6 +157,8 @@ export function preparationAbortReason(error: unknown, signal?: AbortSignal): Pr
   if (!own) return null;
   if (error === signal!.reason || e?.name === 'AbortError') return own;
   if (e?.code === '57014' && typeof e.message === 'string' && /canceling statement due to user request/.test(e.message)) return own;
+  // #6278: the engine discards a reserved connection whose cancel a pooler never completed; after our abort that end is ours.
+  if (e?.code === 'CONNECTION_DESTROYED' || e?.code === 'CONNECTION_CLOSED') return own;
   return null;
 }
 

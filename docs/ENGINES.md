@@ -665,6 +665,14 @@ one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
 `loop_lag_ms` is the longest event-loop delay during the phase (a busy or
 starved process). The same fields appear in the consumer's status snapshot
 under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `gbrain sources writer status --json` to see what is waiting.
+A `deadline_exceeded` phase is also how a round-trip a transaction-mode pooler
+(Supavisor port 6543, PgBouncer) never completed ends: the backend sits in
+`ClientRead`, the cancel request the deadline sends may never reach it, so
+`GBRAIN_CANCEL_SETTLE_MS` (default 2000) after the cancel the owner discards
+that reserved connection, the statement settles client-side, and the next tick
+runs. The connection end is not reported as `storage_error`; doctor's
+`persistence_session_timeouts` names a transaction-mode URL, and the
+session-mode URL of the same pooler (Supabase: port 5432) avoids the class.
 `phase=preparation` lines name a write whose preparation ran past its budget:
 `reason=deadline_exceeded` (the claim is released with `blocked_reason`
 `preparation_deadline` and one attempt is counted; the budget is

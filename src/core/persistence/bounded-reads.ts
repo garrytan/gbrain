@@ -42,6 +42,12 @@ export class PreparationDeadlineError extends Error {
   }
 }
 
+/** Whether `error` is the client ending a round-trip the pooler never completed (`runUnsafe`'s settle discard). */
+export function isConnectionEnd(error: unknown): error is { code: string } {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === 'CONNECTION_DESTROYED' || code === 'CONNECTION_CLOSED';
+}
+
 /** Whether `error` is the server ending a statement at a timeout (ours, or a shorter session one). */
 export function isStatementTimeout(error: unknown): error is { code: string } {
   const code = (error as { code?: unknown } | null)?.code;
@@ -59,9 +65,11 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
         // The clock's signal ends only the wait for a free connection (a saturated pool); the statement itself ends at the bound.
         return await target.executeRaw(sql, params, { ...opts, timeoutMs: Math.max(1, deadlineAt - Date.now()), ...(clock!.signal ? { signal: clock!.signal } : {}) });
       } catch (error) {
-        if (!isStatementTimeout(error)) throw error;
+        // A connection the engine discarded after the budget's cancel (a pooler that never completed the round-trip) is the deadline too.
+        const discarded = isConnectionEnd(error) && (clock!.signal?.aborted || Date.now() >= deadlineAt);
+        if (!isStatementTimeout(error) && !discarded) throw error;
         if (clock!.signal?.aborted) throw clock!.signal.reason;
-        throw new PreparationDeadlineError(clock!.step, error.code, error);
+        throw new PreparationDeadlineError(clock!.step, (error as { code: string }).code, error);
       }
     };
     const value = Reflect.get(target, key, target);

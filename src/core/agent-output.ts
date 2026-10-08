@@ -555,6 +555,7 @@ const ROWS: Row[] = [
         protocol_version: e.protocolVersion === 1 ? 1 : undefined,
         write_request: j.write_request, write_error: e.writeError,
         ...(e.fence ? { fence: e.fence } : {}), ...(e.fenceIssues?.length ? { fence_issues: e.fenceIssues } : {}),
+        ...(e.retryable !== undefined ? { retryable: e.retryable } : {}),
       };
     },
   },

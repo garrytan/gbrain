@@ -90,6 +90,20 @@ export const LANE_BUSY = Symbol('gbrain.laneBusy');
 
 /** `clock` (#6278): the claim's phase clock, for `enterClaimStep` at the preparer's await boundaries. */
 export type PrepareMutation = (engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) => Promise<PreparedMutation>;
+/** #6278: a consumer phase ended by its own deadline (server cancel or client-side discard), never a storage fault. */
+export class PhaseDeadlineError extends Error {
+  readonly code = 'deadline_exceeded';
+  constructor(readonly phase: string, cause: unknown) {
+    super(`Consumer phase ${phase} did not finish within its deadline.`, { cause });
+    this.name = 'PhaseDeadlineError';
+  }
+}
+/** A server-honoured cancel (57014) keeps its SQLSTATE as before; only a connection the engine had to discard is reclassified. */
+const PHASE_DEADLINE_CODES = new Set(['CONNECTION_DESTROYED', 'CONNECTION_CLOSED']);
+function isPhaseDeadlineOutcome(error: { name?: unknown; code?: unknown } | null): boolean {
+  return !!error && typeof error.code === 'string' && PHASE_DEADLINE_CODES.has(error.code);
+}
+
 export class PersistenceConsumer {
   private stopping = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -624,12 +638,24 @@ export class PersistenceConsumer {
             && /^(?:57014: )?canceling statement due to user request$/.test(cancelled.message))) {
         throw this.abort.signal.reason;
       }
-      this.lastPhaseError = name; this.lastPhaseTiming = this.timingText(observation, startedAt); throw error;
+      this.lastPhaseError = name; this.lastPhaseTiming = this.timingText(observation, startedAt);
+      // #6278: past the phase deadline, the client-side discard of a round-trip a pooler never completed is the
+      // deadline itself: the tick moves on instead of reporting storage_error.
+      if (observation.deadline_exceeded && isPhaseDeadlineOutcome(cancelled)) throw new PhaseDeadlineError(name, error);
+      throw error;
     }
     finally { clearTimeout(timer); this.abort.signal.removeEventListener('abort', stop); this.phaseObservation = undefined; }
   }
   private report(error: unknown): void {
     if (this.stopping && error === this.abort.signal.reason) return;
+    if (error instanceof PhaseDeadlineError) {
+      // The timer already logged deadline_exceeded for this phase: record it under the phase, hand it to onError
+      // (fail-closed scheduling still sees one failure per tick), write no second line, and let the next tick run.
+      this.lastError = { code: 'deadline_exceeded', at: new Date().toISOString(), phase: error.phase };
+      this.lastPhaseError = undefined; this.lastPhaseTiming = undefined;
+      this.opts.onError?.(error);
+      return;
+    }
     const code = (error as { code?: unknown })?.code;
     this.lastError = { code: typeof code === 'string' && (/^[A-Z0-9]{5}$/.test(code) || isWriteErrorCode(code)) ? code : 'storage_error', at: new Date().toISOString(),
       ...(this.lastPhaseError ? { phase: this.lastPhaseError } : {}) };

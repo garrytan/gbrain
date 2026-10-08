@@ -10,6 +10,86 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.114.0] - 2026-10-08
+
+**A write owner no longer parks forever on a database round-trip that a transaction-mode pooler never completes.**
+
+On the managed brain behind the #6278 report, one `gbrain sync` with no lanes and no `serve` still stopped after 45 pages: the consumer's `expired_claims` statement sat with its Postgres backend in `ClientRead` through Supavisor's transaction pooler (port 6543), the owner's 5 s phase deadline fired, but the cancel request never reached the backend and the awaited promise never settled, so the owner was parked until the watchdog. The same command on the session-mode URL (port 5432) drained cleanly. Now a cancelled statement that is still unsettled `GBRAIN_CANCEL_SETTLE_MS` (default 2000 ms) after its cancel request has its reserved connection discarded, which settles the promise client-side; the phase ends `deadline_exceeded`, the consumer keeps ticking and the catch-up continues.
+
+### How to use it
+
+```bash
+gbrain sync --source <id> --no-pull --no-embed                 # nothing to change
+gbrain doctor --only persistence_session_timeouts --json       # names a transaction-mode pooler URL and the session-mode alternative
+GBRAIN_CANCEL_SETTLE_MS=5000 gbrain serve                      # a longer settle window if a slow pooler honours cancels late
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A consumer phase whose statement never completes | Ends as `deadline_exceeded` once (the connection is discarded after the settle window), never as `storage_error` / `CONNECTION_DESTROYED`; the next tick runs and the drain proceeds. |
+| A preparation read ended that way | Classified as the preparation deadline (released `preparation_deadline`, counted toward `preparation_stalled`), with the step and `waiting_on: db` on the claim. |
+| doctor `persistence_session_timeouts` | Warns `transaction_mode_pooler` when the configured URL is a transaction-mode pooler even if the session timeout reaches the server, and names the port 5432 session-mode URL as the alternative for the persistence owner. |
+
+### Things to watch
+
+- **Interim mitigation that works today:** point the persistence owner (`gbrain sync`, `gbrain serve`) at the session-mode URL of the same pooler (Supabase: port 5432). That is the configuration the reporter measured as the longest clean drain in weeks.
+- **A discarded connection is a reconnect**, not a lost write: the statement's request stays claimed or queued and is retried on the next tick; the pooler's backend is released when the client socket closes.
+
+### Itemized changes
+
+- `src/core/postgres-engine.ts`: `runUnsafe` arms a settle timer after `cancel()`; a statement still pending at `cancelSettleMs()` has its reserved connection discarded (`CONNECTION_DESTROYED`), once. `GBRAIN_CANCEL_SETTLE_MS` (>= 100) overrides the 2 s default.
+- `src/core/persistence/consumer.ts`: a phase past its deadline that ends with `CONNECTION_DESTROYED` or `CONNECTION_CLOSED` (the discarded connection) throws `PhaseDeadlineError` (`code: deadline_exceeded`); `report()` records it under the phase without a second log line.
+- `src/core/persistence/bounded-reads.ts` and `coordinator.ts`: a discarded connection after the budget is the preparation deadline, never `storage_error` or `database_contention`.
+- Doctor `persistence_session_timeouts` gains the `transaction_mode_pooler` warning (`resolvePrepare(url) === false`).
+- Tests: `test/postgres-engine-cancel-settle.test.ts` (never-settling statement is discarded at the window; a honoured cancel is not), `test/persistence-consumer-log.test.ts` (the consumer logs one `deadline_exceeded`, no `storage_error`, and ticks again), `test/e2e/persistence-pooler-wedge-postgres.test.ts` (a wedged `expired_claims` statement inside a real 60-page managed catch-up: cancel swallowed, discarded at the window, the run drains `synced`; hangs on the previous release).
+
+Refs #6278 (the mechanism behind the never-settling `preparing` wedge); the two-consumer and direct-URL work continues in #6317.
+
+## [0.60.113.0] - 2026-10-08
+
+**Fence repair and chronicle now run while a sync is in progress, and a refused owner check says exactly which host or state is in the way.**
+
+On a managed brain, `gbrain repair fences` used to skip a whole source as soon as one managed sync of it was unfinished, and a long catch-up is unfinished for most of an hour. The held fences it should have cleared stayed held until the sync ended. Now the repair looks at each file on its own: only a file that a write in flight or the running sync's frozen list still names waits, and every other candidate, held files included, is repaired and committed during the catch-up. A file the sync held earlier is never considered busy, because the sync retries a held file only once its bytes change, and the repair is what changes them.
+
+The other refusal from the same report, `fence_repair` and chronicle saying `owner_unavailable` with no further word, now names the condition. The common one on a single machine is `host_mismatch`: a maintenance worker started with a different `GBRAIN_HOME` or user than the shell that ran the sync reads a different identity file and is, to the brain, another host. The message prints both host ids and, for a local caller, the identity file this process read, and tells the agent not to retry. A worktree draining for a transfer or recovering from a clone is a short wait and says so.
+
+### How to use it
+
+```bash
+gbrain repair fences --source <id>                         # preview: files a running sync still names are listed as sync_in_progress, the rest are planned
+gbrain repair fences --source <id> --apply --expect <hash> # applies the previewed set while the sync runs; a file the sync froze since the preview is skipped, not written
+gbrain errors owner_unavailable                            # the reasons and what each one asks of you
+gbrain sources writer status --source <id> --json          # read-only: the owner host id, the worktree state and this host's registration
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `gbrain repair fences` during a sync | Per-file `sync_in_progress` instead of a source-wide skip. Busy: a file a queued, running or recovering write names (both ends of a rename, and a finished write whose recovery is still open), and a file still ahead in the running sync's frozen manifest. Not busy: a held file. When the busy set cannot be read at all, every candidate waits and the hold's text says why. |
+| The busy check | Runs when the plan is made, again when each item is applied, and once more when the file write is admitted, because a sync can start while the repair waits on its model call. A write caught there is skipped, nothing is written, and the model attempt is not counted against the file. |
+| `owner_unavailable` | Carries `reason`: `host_mismatch` (both ids' first 8 characters; local callers also see the `host.json` path; `retryable: false`), `transfer_in_progress` and `clone_in_progress` (`fix.next: wait`, 30 s), `binding_missing`, `incarnation_changed`, `local_path_missing`, `coordination_path_missing`. The fix is always the read-only writer status; nothing claims or transfers ownership to run maintenance. Remote callers get the ids, never a local path. |
+| Fence holds | A hold the owner check refused records the reason (`host_mismatch`, `transfer_in_progress`, ...) instead of a bare `owner_unavailable`; `gbrain sources status` and doctor route all of them as owner-host holds with the exact command. |
+| The maintenance `fence_repair` phase, chronicle, fact-fence adoption | The phase repairs under the same per-file rule while a sync runs; every maintenance writer's owner check refuses with the same reasons when this is not the owner host. |
+
+### Things to watch
+
+- **A file still ahead in the sync waits on purpose.** Repairing it would change the bytes the sync is about to admit, and the sync would then refuse that entry. The next repair run, or the maintenance phase, picks it up once the sync has passed it.
+- **`host_mismatch` is not a retry.** If the sync shell and the maintenance worker report different host ids, point both at one `GBRAIN_HOME`. Do not copy or regenerate `host.json`; a new identity orphans the ownership recorded for the old one.
+- **A doctor check for a split host identity is not in this release.** It waits on evidence from the field; the refusal text already carries both ids.
+
+### Itemized changes
+
+- `src/core/persistence/owner-refusal.ts`: the `owner_unavailable` reasons matrix. `checkOwner` names the first failing condition in a fixed order or returns the usable binding; `ownerRefusal` / `ownerUnavailableError` give each reason its message, `why`, actor (`provider` for the two in-progress reasons, so `fix.next` renders `wait`; `host_admin` otherwise), the read-only `gbrain sources writer status --source <id> --json` as fix and verify, and `retryable` (`host_mismatch` false). `maintenancePreflight` (`prepared-maintenance.ts`), `loadFenceSource` (`fence-repair/repair-io.ts`) and `managedRepairRoot` (`file-repair.ts`) refuse through it. `OperationError` and `opError` gain a site-level `retryable` the envelope carries.
+- `src/core/persistence/repair-busy.ts`: `loadRepairBusySet` (in-flight requests with rename endpoints and open recoveries, plus the not-yet-admitted entries of every unfinished `managed-sync` cursor of the incarnation from its frozen manifest, held paths excluded; fails closed), `repairBusy`, `repairBusyMessage`, `repairBusyError` (`sync_in_progress`, reasons `candidate_in_flight` / `busy_set_unreadable`). `repair/fences.ts` drops the source-wide `syncUnfinished` skip and checks the set at plan and apply; `submitManagedFileRepair` checks it again at admission and `writeFenceRepair` reports that refusal as `sync_in_progress` (the Tier 3 attempt memo records it as transient).
+- Registry: `owner_unavailable` gains `reasons`, `why`, a docs anchor (`troubleshooting.md#owner-unavailable`) and a suggestion; `sync_in_progress` gains `reasons` and `why`. `FENCE_REASONS` and the hold-fix OWNER list gain `host_mismatch`, `transfer_in_progress`, `clone_in_progress`, `incarnation_changed`, `local_path_missing`, `coordination_path_missing` (`owner_unavailable` stays the fallback for a source with no binding).
+- Docs: `docs/guides/repair.md` (fence repair during a sync, owner reasons), `docs/guides/troubleshooting.md` (the `owner_unavailable` table and symptom rows), `docs/guides/write-refusals.md` rows, regenerated `docs/guides/error-codes.md`, KEY_FILES entries, two behavior-change rows.
+- Tests: `test/owner-refusal.test.ts` (the matrix, every preflight condition on a claimed worktree, the HTTP envelope without a local path), `test/repair-busy.test.ts`, `test/repair-fences.test.ts` (far-ahead manifest, held path not busy, admission race during the model wait, host mismatch and worktree states), `test/repair-fences-during-catchup.test.ts` with its Postgres arm `test/e2e/repair-fences-during-catchup-postgres.test.ts` (a real catch-up paused at a sync member's preparation and between two entries).
+
+Fixes the third problem of #6278 (`fence_repair` and chronicle refusing with `owner_unavailable` while a sync runs); the first two, the stalled preparation and the fact-fence adoption failures, shipped in the previous release.
+
 ## [0.60.112.0] - 2026-10-08
 
 **A managed catch-up no longer stalls on one stuck write: the write is cut off, its file is held, and the rest of the source keeps syncing.**

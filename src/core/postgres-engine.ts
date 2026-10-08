@@ -134,6 +134,17 @@ import { searchKeywordCJK as searchKeywordCJKImpl } from './engine-sql/cjk-searc
 import * as titlesImpl from './engine-sql/titles.ts';
 import type { CjkKeywordCtx } from './search/cjk-keyword-sql.ts';
 import { postgresExecutor, type RunUnsafeOpts } from './engine-sql/dialect-postgres.ts';
+
+/**
+ * #6278: how long a cancelled statement may stay unsettled after its cancel request before the reserved
+ * connection is discarded to settle it client-side. A transaction-mode pooler (Supavisor :6543) may not
+ * forward the cancel, leaving the backend in ClientRead where no server timeout applies.
+ */
+export const DEFAULT_CANCEL_SETTLE_MS = 2_000;
+export function cancelSettleMs(): number {
+  const raw = Number(process.env.GBRAIN_CANCEL_SETTLE_MS);
+  return Number.isFinite(raw) && raw >= 100 ? raw : DEFAULT_CANCEL_SETTLE_MS;
+}
 import type { SqlExecutor } from './engine-sql/executor.ts';
 import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
 
@@ -2716,7 +2727,8 @@ export class PostgresEngine implements BrainEngine {
       let reserved: postgres.ReservedSql | undefined;
       let pending: ReturnType<typeof conn.unsafe> | undefined;
       let cancellation: Promise<void> | undefined;
-      let retired = false;
+      let retired = false, settled = false, discarded = false;
+      let settleTimer: ReturnType<typeof setTimeout> | undefined;
       let owner: postgres.TransactionSql | postgres.ReservedSql = conn as unknown as postgres.TransactionSql;
       signal?.addEventListener('abort', onAbort, { once: true });
       try {
@@ -2731,16 +2743,26 @@ export class PostgresEngine implements BrainEngine {
         // describe round trip plus an execute round trip.
         const driverOpts = { cancelFence: !!signal, prepare: opts?.prepare ?? true, ...(opts?.simple === undefined ? {} : { simple: opts.simple }) };
         pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1], driverOpts);
-        return await pending as unknown as T[];
+        try { return await pending as unknown as T[]; } finally { settled = true; }
       } finally {
         signal?.removeEventListener('abort', onAbort);
+        clearTimeout(settleTimer);
         try {
           if (cancellation) await cancellation;
-          if (retired) owner.discard();
+          if (retired && !discarded) owner.discard();
         } finally { reserved?.release(); }
       }
       function onAbort() {
         if (!pending || cancellation) return;
+        // #6278: a transaction-mode pooler may swallow the cancel request and leave the backend in ClientRead,
+        // so the statement never settles on its own. Past the settle window the reserved connection is
+        // discarded, which rejects the statement client-side (CONNECTION_DESTROYED) and frees the awaiting caller.
+        pending.then(() => { settled = true; }, () => { settled = true; });
+        settleTimer = setTimeout(() => {
+          if (settled) return;
+          retired = true; discarded = true;
+          owner.discard();
+        }, cancelSettleMs());
         try { cancellation = pending.cancel().catch(() => { retired = true; }); }
         catch { retired = true; }
       }

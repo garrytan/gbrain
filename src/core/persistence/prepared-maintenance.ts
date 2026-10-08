@@ -14,6 +14,7 @@ import { normalizeClaimWhitespace, parseFactsFence } from '../facts-fence.ts';
 import { submissionAuthority, authorizeStoredRequest, authorizeWrite } from './authority.ts';
 import { currentVerifiedLocalWriter, localHostId, registerLocalWriter } from './identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
+import { checkOwner, ownerUnavailableError } from './owner-refusal.ts';
 import { admitWrite, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
 import { preparePageMutation, prepareFileTarget } from './page-prepare.ts';
@@ -100,19 +101,16 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
   const writeThrough = !/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true');
   const configuredRoot = source.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
   if (writeThrough && (root || configuredRoot || binding)) {
-    if (!binding || binding.source_incarnation !== source.incarnation || binding.owner_host_id !== localHostId() ||
-      binding.state !== 'active' || !binding.local_path || !binding.coordination_path) {
-      throw opError('owner_unavailable', 'The maintenance source needs an active canonical owner before model work.',
-        `Source '${sourceId}' has no active canonical owner on this host, so no model work ran. Inspect the owner with the command in fix and run maintenance on the host it names; do not claim or transfer ownership just to run maintenance.`,
-        { fix: ownerStatusFix(sourceId) });
-    }
-    if (root && realpathSync(root) !== realpathSync(join(binding.local_path, binding.relative_path))) {
+    const hostId = localHostId();
+    const owner = checkOwner(binding, source.incarnation, hostId);
+    if (owner.reason) throw ownerUnavailableError({ sourceId, reason: owner.reason, binding, incarnation: source.incarnation, hostId, remote: false, work: 'maintenance' });
+    if (root && realpathSync(root) !== realpathSync(join(owner.binding.local_path, owner.binding.relative_path))) {
       throw opError('source_changed', 'The maintenance directory is not the canonical source root.',
         `Run maintenance for '${sourceId}' against its registered canonical root (the command in fix shows it), or without a directory argument; nothing was submitted.`,
         { fix: ownerStatusFix(sourceId) });
     }
     await nativeLockCapability();
-    assertPhysicalRoot(binding.local_path, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
+    assertPhysicalRoot(owner.binding.local_path, { worktreeId: owner.binding.worktree_id, coordinationPath: owner.binding.coordination_path });
   }
   if (!writeThrough) writer.databaseOnlyReason = 'disabled_by_config';
   else if (!binding) writer.databaseOnlyReason = 'no_repo_configured';

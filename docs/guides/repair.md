@@ -969,8 +969,10 @@ hash binds the selected files, their exact before and after bytes, and the
 page each import would store (bound to the page revision). The apply derives
 each change again from the file as it is: a file, proposal or page that
 changed since the preview reports `changed_since_preview` and is not written.
-The apply refuses while an unfinished managed sync still names a selected file
-(`sync_in_progress`; finish it with `gbrain sync --source <id> --no-pull`).
+The apply refuses a selected file a write in flight or an unfinished managed
+sync's frozen manifest still names (`sync_in_progress`, checked again when the
+write is admitted; finish the sync with `gbrain sync --source <id> --no-pull`
+or let the next run pick the file up).
 
 On a managed brain each file is one coordinated write (`managed_file_repair`):
 the exact approved bytes, the import, and the hold clear commit together, and
@@ -1162,11 +1164,54 @@ with the exact `git add`/`git commit` step until the path is committed; a
 stored page with no file by a revision-bound page write; a read-only mirror in
 the database only (the file is never written). Every write's receipt carries
 the actor `fence-repair`, the tier, the classes, rows and columns, the model,
-the before and after sha256 and the cost, never a cell value. A source this
-host does not own is skipped (`owner_unavailable`), and so is one whose sync is
-still running (`sync_in_progress`); the next run picks them up. MCP and
+the before and after sha256 and the cost, never a cell value. MCP and
 thin-client callers cannot run a repair or reach the model; a hold's fix hands
 them the owner-host command to give the user.
+
+<a id="fence-repair-during-a-sync"></a>
+#### Fence repair during a sync
+
+A running `gbrain sync` of the source no longer stops the repair. Each
+candidate is checked on its own against the sync's busy set, and only the
+ones below wait as `sync_in_progress`; every other candidate is repaired while
+the catch-up runs, including a file the sync held earlier (a held path is not
+busy, because the sync retries a held file only once its bytes change, and
+the repair is what changes them).
+
+| Busy (waits as `sync_in_progress`) | Why |
+| --- | --- |
+| A file or page a queued, running or recovering write names, or a finished write whose recovery is still open; both endpoints of a rename | The write is still publishing it. |
+| A file still ahead in the running sync's frozen manifest (from the cursor's index on) | The sync admits it later with the raw hash it reads then; a repair that changed the bytes first would make that entry refuse (`source_changed`). |
+| Every candidate, when the busy set cannot be read (a failed query, a cursor whose manifest is missing) | The check fails closed; the hold's text says so. |
+
+The busy set is read when the plan is made, again when each item is applied
+(a sync may have started since the preview), and once more when the managed
+file write is admitted, because a sync can freeze the candidate while the
+repair waits on its model call. An item caught at that last check is skipped
+`sync_in_progress`, nothing is written, and its model attempt is recorded as
+transient, so the next run sends the same bytes again.
+
+<a id="owner-reasons"></a>
+#### Owner reasons
+
+Fence repairs write only on the host that owns the source's checkout. When
+this host may not, the candidate is skipped with the condition as its reason
+(the same reasons `gbrain errors owner_unavailable` lists and chronicle and
+the other maintenance writers refuse with), and the hold records it:
+
+| Reason | What it means | Who acts | Next |
+| --- | --- | --- | --- |
+| `host_mismatch` | Another host id owns the checkout; the text prints both ids' first 8 characters and, for a local caller, the `host.json` path this process read. Two environments on one machine with different `GBRAIN_HOME` values (a launchd or cron worker and a shell) look exactly like this. Not retryable. | host administrator | Run the repair on the owner host (`gbrain sources writer status --source <id> --json` names it), or give the worker and the shell one `GBRAIN_HOME`. Never copy or regenerate `host.json`. |
+| `transfer_in_progress` | The worktree is draining for a prepared writer transfer. | nobody | Wait 30 s and retry; the next maintenance run repairs it once the transfer is accepted or cancelled. |
+| `clone_in_progress` | A topology clone or reclone is recovering the worktree. | nobody | Wait 30 s and retry; the next run repairs it once the clone finishes. |
+| `incarnation_changed` | The checkout binding is from an earlier incarnation of the source (removed and re-added, or restored). | host administrator | Review writer status and re-bind the checkout. |
+| `local_path_missing` | This host owns the worktree but has no checkout path registered. | host administrator | Review writer status and register the checkout again. |
+| `coordination_path_missing` | This host's registration has no coordination directory. | host administrator | Review writer status and repair the registration. |
+| `owner_unavailable` | The generic fallback: a source with no owner at all, or an older hold. | host administrator | Review writer status. |
+
+Nothing in this path claims or transfers ownership to get a repair through;
+the fix is always the read-only writer status. Remote callers get the host ids
+but never a local path.
 
 Inspect or undo a repair:
 

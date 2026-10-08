@@ -33,3 +33,14 @@ test('an applied timeout, a disabled one and PGLite are ok', async () => {
   });
   expect(await sessionTimeoutsCheck({ kind: 'pglite' } as BrainEngine)).toMatchObject({ status: 'ok', details: { configured: '5min', applied: null } });
 });
+
+test('#6278: a transaction-mode pooler URL is named even when the timeout reaches the server, with the client-side settle and the session-mode URL', async () => {
+  await withEnv({ GBRAIN_STATEMENT_TIMEOUT: '10min', GBRAIN_DATABASE_URL: 'postgresql://user:pw@db.example.supabase.co:6543/postgres', DATABASE_URL: undefined, GBRAIN_PREPARE: undefined }, async () => {
+    const check = await sessionTimeoutsCheck(postgres('10min'));
+    expect(check).toMatchObject({ status: 'warn', details: { applied: '10min', pooler: 'transaction_mode', reason: 'transaction_mode_pooler' } });
+    for (const text of ['transaction-mode pooler', 'GBRAIN_CANCEL_SETTLE_MS', 'port 5432']) expect(check.message).toContain(text);
+  });
+  await withEnv({ GBRAIN_STATEMENT_TIMEOUT: '10min', GBRAIN_DATABASE_URL: 'postgresql://user:pw@db.example.supabase.co:5432/postgres', DATABASE_URL: undefined, GBRAIN_PREPARE: undefined }, async () => {
+    expect(await sessionTimeoutsCheck(postgres('10min'))).toMatchObject({ status: 'ok' });
+  });
+});

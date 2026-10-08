@@ -63,6 +63,7 @@ test/managed-sync-lanes.test.ts
 test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
+test/owner-refusal.test.ts
 test/pack-relation-direction-engine.test.ts
 test/page-embedding-install-batch.test.ts
 test/page-state-engine.test.ts

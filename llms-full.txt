@@ -5710,6 +5710,14 @@ one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
 `loop_lag_ms` is the longest event-loop delay during the phase (a busy or
 starved process). The same fields appear in the consumer's status snapshot
 under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `gbrain sources writer status --json` to see what is waiting.
+A `deadline_exceeded` phase is also how a round-trip a transaction-mode pooler
+(Supavisor port 6543, PgBouncer) never completed ends: the backend sits in
+`ClientRead`, the cancel request the deadline sends may never reach it, so
+`GBRAIN_CANCEL_SETTLE_MS` (default 2000) after the cancel the owner discards
+that reserved connection, the statement settles client-side, and the next tick
+runs. The connection end is not reported as `storage_error`; doctor's
+`persistence_session_timeouts` names a transaction-mode URL, and the
+session-mode URL of the same pooler (Supabase: port 5432) avoids the class.
 `phase=preparation` lines name a write whose preparation ran past its budget:
 `reason=deadline_exceeded` (the claim is released with `blocked_reason`
 `preparation_deadline` and one attempt is counted; the budget is
@@ -9380,6 +9388,10 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | [Sync held a file (`Held <path>: invalid_frontmatter …`, `git_held_files`)](#held-files) | `gbrain sources status <id>`, then preview `gbrain repair frontmatter --source <id>` and apply the printed `--apply --expect <hash> --yes` | agent; the apply after the user agrees | `destructive` (rewrites the previewed lines of the files) | `gbrain doctor --only git_held_files --json` |
 | [Sync held a file for its facts or takes fence (`Held <path>: invalid_fence …`)](#held-fence-files) | nothing for most holds: the next maintenance run repairs and commits the fence. To see or do it now, preview `gbrain repair fences --source <id>` and run its printed `--apply --expect <hash>`; to pause automatic repair, `gbrain config set fences.repair.enabled false` (ask the user first). A `manual` reason needs the edit the hold names | agent; the apply needs no extra consent | none (model repair spends within the `fences.repair.*` caps; raising them is `paid`, the user's call) | `gbrain doctor --only fence_integrity --json` |
 | [Managed catch-up stuck, or `Held <path>: preparation_stalled`, or the drain stopped `preparation_abandoned` / `preparation_systemic` / `write_capacity`](#catch-up-stuck) | `gbrain sources writer status --source <id> --json` (what the stuck write was doing: step, `waiting_on`, owner, version), fix what it names or upgrade the owner, then `gbrain sources retry-held <id>` and the same sync with its options | agent; a restart or upgrade of the owner after the user agrees | none to inspect; `persistent_install` when the fix restarts a service | `gbrain sources status <id> --json`, then `gbrain doctor --only git_held_files,persistence_write_stall --json` |
+| [`fence_repair` or chronicle refused `owner_unavailable`, reason `host_mismatch`](#owner-unavailable) | `gbrain sources writer status --source <id> --json` on the brain host (the owner host id); run the step there, or give the worker and the shell one `GBRAIN_HOME`. Never copy or regenerate `host.json`. Do not retry from the same host | brain host | none | `gbrain sources writer status --source <id> --json` shows this host's id as the owner |
+| [`owner_unavailable`, reason `transfer_in_progress` or `clone_in_progress`](#owner-unavailable) | wait 30 s and retry the same step; the worktree is draining for a writer transfer or recovering from a topology clone | agent | none | `gbrain sources writer status --source <id> --json` shows state `active` |
+| [`owner_unavailable`, reason `binding_missing`, `incarnation_changed`, `local_path_missing` or `coordination_path_missing`](#owner-unavailable) | `gbrain sources writer status --source <id> --json`; the registration is missing or outdated and re-binding or re-registering the checkout is the host administrator's decision | brain host | none | the same status read shows an active binding for this host |
+| [`gbrain repair fences` skipped a file `sync_in_progress` while a sync runs](repair.md#fence-repair-during-a-sync) | nothing: a write in flight or the running sync's frozen manifest still names that file; every other candidate repairs now and the next run picks this one up (`gbrain sync --source <id> --no-pull` finishes the sync) | agent | none | `gbrain doctor --only fence_integrity --json` |
 | [A Google or GitHub item is held (`connector_held_items`)](#held-connector-items) | `gbrain sources status <id>`, fix the cause, then `gbrain sources retry-held <id>` and `gbrain sync --source <id>` | agent, after the user agrees | `egress` (fetches from the provider again) | `gbrain doctor --only connector_held_items --json` |
 | [`gbrain migrate --to` refused with `writer_coordinator_required`](../ENGINES.md#engine-migration-refused) | follow the refusal's `fix`: relay its `user_message` (stay on PGLite and share with `gbrain mcp expose`, or leave the brain as it is) | agent, after the user agrees | `persistent_install`, `egress` (for `gbrain mcp expose`) | `gbrain doctor --no-migrate --json` |
 | [A write was refused with a named reason](#write-refused) | the reason's recovery in [write refusal reasons](write-refusals.md) | as the refusal's `fix` | as the refusal's `fix` | the refusal's `verify` |
@@ -9452,6 +9464,21 @@ Turning the `preparation_deadlines` switch off (`gbrain config set persistence.p
 <a id="session-timeouts-not-applied"></a>**Doctor warns `persistence_session_timeouts` with `session_timeouts_not_applied`?** gbrain sets `statement_timeout` (`GBRAIN_STATEMENT_TIMEOUT`, default 5min) and `idle_in_transaction_session_timeout` as connection startup parameters, and a transaction-mode pooler (PgBouncer with `ignore_startup_parameters`, Supavisor) drops them: `SHOW statement_timeout` through the configured URL reads `0`, so a statement outside a transaction has no server-side bound and a relation lock held in another session (a migration's `ALTER TABLE pages` queued behind a long transaction, for example) holds it for as long as the lock lasts. Managed write *preparation* reads are not affected since v0.60.108: they run under a transaction-local `statement_timeout` of the write's remaining preparation budget, so a lock-blocked read ends at the budget and the member is released `preparation_deadline` with no statement left on the server (#6278). For every other autocommit statement, set the default on the role instead of the connection: `ALTER ROLE <gbrain role> SET statement_timeout = '5min'` (read-only to check: `gbrain doctor --only persistence_session_timeouts --json`). Setting `GBRAIN_STATEMENT_TIMEOUT` has no effect through such a pooler.
 
 <a id="persistence-write-stall"></a>**A managed write stays `running` and later writes queue behind it, or doctor warns `persistence_write_stall`?** The owner keeps renewing a hung claim; doctor warns past `persistence.max_claim_ms` (default 600000) and names the request, root, age, phase and, for a preparation, its step and what it waited on. A write stuck *preparing* is released at its deadline and finally held or failed `preparation_stalled` on its own: see [catch-up stuck](#catch-up-stuck). A write stuck *publishing*, or one whose owner predates the deadlines, still needs the owner restarted: run `gbrain sources writer status --source <id> --json` (read-only), then restart the `gbrain serve` that owns the root and attach that output when reporting it.
+
+<a id="owner-unavailable"></a>**`fence_repair`, chronicle, fact-fence adoption or another maintenance step refused `owner_unavailable`?** A managed source publishes only through the host that owns its checkout, and the refusal's `reason` says which condition this is; the fix is always the read-only `gbrain sources writer status --source <id> --json`, and nothing claims or transfers ownership to get a step through.
+
+| `reason` | What it means | Next |
+|---|---|---|
+| `host_mismatch` | Another host id owns the checkout. The message prints both ids' first 8 characters and, to a local caller, the `host.json` this process read (`<GBRAIN_HOME>/.gbrain/persistence/host.json`). A maintenance worker (launchd, cron, autopilot) started with a different `GBRAIN_HOME` or user than the shell that ran the sync reads a different identity file and is, to the brain, a different host. `retryable: false`: a retry from the same environment cannot change the answer. | Run the step on the owner host writer status names, or make both environments use one `GBRAIN_HOME`. Never copy or regenerate `host.json`: a new identity orphans the ownership and pending writes recorded for the old one. |
+| `transfer_in_progress` | The worktree is `draining`: a writer transfer was prepared and not yet accepted or cancelled. | `fix.next` is `wait`: retry after 30 s; the status read shows the state. |
+| `clone_in_progress` | The worktree is `recovering`: a topology clone or reclone is in progress. | `wait`: retry after 30 s; it is `active` when the clone finishes. |
+| `binding_missing` | The source has no canonical worktree binding at all. | Claiming a checkout is the host administrator's decision. |
+| `incarnation_changed` | The binding belongs to an earlier incarnation of the source (removed and re-added, or restored). | Re-bind the checkout on the brain host. |
+| `local_path_missing` | This host owns the worktree but has no checkout path registered. | Register the checkout again on the brain host. |
+| `coordination_path_missing` | This host's registration has no coordination directory. | Repair the registration on the brain host. |
+| `not_sent`, `outcome_unknown` | The local owner's IPC lane did not take the write, or lost its acknowledgment. | `gbrain sources writer status --probe --json`; for `outcome_unknown` read the receipt (`gbrain write-request -- <id>`) before resubmitting. |
+
+A running sync is not one of these: `gbrain repair fences` now runs during a catch-up for every candidate the sync does not still name ([fence repair during a sync](repair.md#fence-repair-during-a-sync)), and a candidate it does name is `sync_in_progress`, not `owner_unavailable`.
 
 <a id="write-capacity"></a>**Managed writes refused with `queue_capacity`, or doctor warns `persistence_capacity`?** A per-principal or per-brain write-journal limit (`persistence.limits.*`) is full (`queue_capacity`), or doctor sees lifetime request IDs or receipt bytes at 80% or more (`persistence_capacity`). For the cumulative limits (lifetime request IDs and receipt bytes), the warning and the refusal print a `gbrain config set persistence.limits.<limit> <value>` sized for about one more year; run it on the brain host, then retry with the same request ID. For outstanding-request or queued-byte limits, let outstanding writes finish and check `gbrain sources writer status`. Receipt compaction age is `persistence.receipt_retention_days` (default 30). Limits and defaults: [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).
 
@@ -11231,8 +11258,10 @@ hash binds the selected files, their exact before and after bytes, and the
 page each import would store (bound to the page revision). The apply derives
 each change again from the file as it is: a file, proposal or page that
 changed since the preview reports `changed_since_preview` and is not written.
-The apply refuses while an unfinished managed sync still names a selected file
-(`sync_in_progress`; finish it with `gbrain sync --source <id> --no-pull`).
+The apply refuses a selected file a write in flight or an unfinished managed
+sync's frozen manifest still names (`sync_in_progress`, checked again when the
+write is admitted; finish the sync with `gbrain sync --source <id> --no-pull`
+or let the next run pick the file up).
 
 On a managed brain each file is one coordinated write (`managed_file_repair`):
 the exact approved bytes, the import, and the hold clear commit together, and
@@ -11424,11 +11453,54 @@ with the exact `git add`/`git commit` step until the path is committed; a
 stored page with no file by a revision-bound page write; a read-only mirror in
 the database only (the file is never written). Every write's receipt carries
 the actor `fence-repair`, the tier, the classes, rows and columns, the model,
-the before and after sha256 and the cost, never a cell value. A source this
-host does not own is skipped (`owner_unavailable`), and so is one whose sync is
-still running (`sync_in_progress`); the next run picks them up. MCP and
+the before and after sha256 and the cost, never a cell value. MCP and
 thin-client callers cannot run a repair or reach the model; a hold's fix hands
 them the owner-host command to give the user.
+
+<a id="fence-repair-during-a-sync"></a>
+#### Fence repair during a sync
+
+A running `gbrain sync` of the source no longer stops the repair. Each
+candidate is checked on its own against the sync's busy set, and only the
+ones below wait as `sync_in_progress`; every other candidate is repaired while
+the catch-up runs, including a file the sync held earlier (a held path is not
+busy, because the sync retries a held file only once its bytes change, and
+the repair is what changes them).
+
+| Busy (waits as `sync_in_progress`) | Why |
+| --- | --- |
+| A file or page a queued, running or recovering write names, or a finished write whose recovery is still open; both endpoints of a rename | The write is still publishing it. |
+| A file still ahead in the running sync's frozen manifest (from the cursor's index on) | The sync admits it later with the raw hash it reads then; a repair that changed the bytes first would make that entry refuse (`source_changed`). |
+| Every candidate, when the busy set cannot be read (a failed query, a cursor whose manifest is missing) | The check fails closed; the hold's text says so. |
+
+The busy set is read when the plan is made, again when each item is applied
+(a sync may have started since the preview), and once more when the managed
+file write is admitted, because a sync can freeze the candidate while the
+repair waits on its model call. An item caught at that last check is skipped
+`sync_in_progress`, nothing is written, and its model attempt is recorded as
+transient, so the next run sends the same bytes again.
+
+<a id="owner-reasons"></a>
+#### Owner reasons
+
+Fence repairs write only on the host that owns the source's checkout. When
+this host may not, the candidate is skipped with the condition as its reason
+(the same reasons `gbrain errors owner_unavailable` lists and chronicle and
+the other maintenance writers refuse with), and the hold records it:
+
+| Reason | What it means | Who acts | Next |
+| --- | --- | --- | --- |
+| `host_mismatch` | Another host id owns the checkout; the text prints both ids' first 8 characters and, for a local caller, the `host.json` path this process read. Two environments on one machine with different `GBRAIN_HOME` values (a launchd or cron worker and a shell) look exactly like this. Not retryable. | host administrator | Run the repair on the owner host (`gbrain sources writer status --source <id> --json` names it), or give the worker and the shell one `GBRAIN_HOME`. Never copy or regenerate `host.json`. |
+| `transfer_in_progress` | The worktree is draining for a prepared writer transfer. | nobody | Wait 30 s and retry; the next maintenance run repairs it once the transfer is accepted or cancelled. |
+| `clone_in_progress` | A topology clone or reclone is recovering the worktree. | nobody | Wait 30 s and retry; the next run repairs it once the clone finishes. |
+| `incarnation_changed` | The checkout binding is from an earlier incarnation of the source (removed and re-added, or restored). | host administrator | Review writer status and re-bind the checkout. |
+| `local_path_missing` | This host owns the worktree but has no checkout path registered. | host administrator | Review writer status and register the checkout again. |
+| `coordination_path_missing` | This host's registration has no coordination directory. | host administrator | Review writer status and repair the registration. |
+| `owner_unavailable` | The generic fallback: a source with no owner at all, or an older hold. | host administrator | Review writer status. |
+
+Nothing in this path claims or transfers ownership to get a repair through;
+the fix is always the read-only writer status. Remote callers get the host ids
+but never a local path.
 
 Inspect or undo a repair:
 
