@@ -29,6 +29,28 @@ async function run(source: string, args: string[] = [], job = 'test (1)') {
   return { ...f, stdout, stderr, code, artifact: readFileSync(f.output, 'utf8') };
 }
 
+/**
+ * Builds a unit-lane capture artifact with fixed, injected millisecond
+ * offsets instead of real wall-clock timestamps, so the weight miner's own
+ * delta computation (#6312) can be exercised deterministically: the real
+ * capture pipeline stamps every line with `new Date().toISOString()` at the
+ * moment the parent reads it from the pipe, which only has millisecond
+ * resolution, so a loaded runner can legitimately record the same millisecond
+ * for the group-start and completion lines and mine a zero weight even
+ * though real work happened in between.
+ */
+function syntheticUnitArtifact(job: string, file: string, deltaMs: number): string {
+  const base = Date.parse('2024-01-01T00:00:00.000Z');
+  const ts = (offsetMs: number) => new Date(base + offsetMs).toISOString();
+  return [
+    `${job}\tcapture\t${ts(-2)} ##[gbrain-capture-start]`,
+    `${job}\tcapture\t${ts(0)} ##[group]${file}:`,
+    `${job}\tcapture\t${ts(0)} 0 fail`,
+    `${job}\tcapture\t${ts(deltaMs)} Ran 1 test across 1 file. [${deltaMs}ms]`,
+    `${job}\tcapture\t${ts(deltaMs + 1)} ##[gbrain-capture-complete] exit=0`,
+  ].join('\n') + '\n';
+}
+
 describe('timestamped test log capture', () => {
   it('preserves both live streams, group markers and final unterminated lines', async () => {
     const r = await run(`
@@ -64,7 +86,16 @@ await Bun.sleep(20);
 console.log(' 0 fail');
 console.log('Ran 1 test across 1 file. [20ms]');
 `);
-    expect(mineWeights(unit.artifact, 'unit').get('test/fixture.test.ts')).toBeGreaterThan(0);
+    // The real capture pipeline stamps every line with new Date().toISOString()
+    // when the parent reads it from the pipe, so the gap between the group-start
+    // and completion lines can legitimately mine as 0ms under a loaded runner
+    // (#6312) even though the fixture process genuinely slept 20ms. Assert the
+    // real artifact mines a defined, non-negative entry (proving the real
+    // capture format is minable) without depending on wall-clock scheduling for
+    // a specific value; `mines a positive unit-test weight deterministically`
+    // below proves a positive weight from fixed, injected timestamps instead.
+    const unitWeight = mineWeights(unit.artifact, 'unit').get('test/fixture.test.ts');
+    expect(unitWeight).toBeGreaterThanOrEqual(0);
     expect(() => mineWeights(unit.artifact.slice(0, unit.artifact.lastIndexOf('test (1)\tcapture')), 'unit')).toThrow();
     const e2e = await run(`
 console.log('=== fixture.e2e.test.ts ===');
@@ -72,7 +103,19 @@ console.log(' 0 fail');
 console.log('Ran 1 test across 1 file. [125ms]');
 console.log('Files: 1 total, 1 passed, 0 failed');
 `, [], 'Selected E2E (diff-relevant) (2)');
+    // E2E weight is parsed from Bun's own printed [125ms] text, not a real
+    // timestamp delta, so this half was never subject to #6312's race.
     expect([...mineWeights(e2e.artifact, 'e2e')]).toEqual([['test/e2e/fixture.e2e.test.ts', 125]]);
+  });
+
+  it('mines a positive unit-test weight deterministically from fixed, injected timestamps (#6312)', () => {
+    const artifact = syntheticUnitArtifact('test (1)', 'test/fixture.test.ts', 50);
+    const weights = mineWeights(artifact, 'unit');
+    expect(weights.get('test/fixture.test.ts')).toBe(50);
+    // Same timestamps, zero elapsed: proves the miner reports 0 rather than a
+    // phantom positive weight when the group-start and completion lines land
+    // on the same millisecond -- the exact scenario #6312 reports.
+    expect(mineWeights(syntheticUnitArtifact('test (1)', 'test/fixture.test.ts', 0), 'unit').get('test/fixture.test.ts')).toBe(0);
   });
 
   it('preserves exit codes and passes argv literally without shell interpretation', async () => {
