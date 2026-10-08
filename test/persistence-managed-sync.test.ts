@@ -670,12 +670,15 @@ const runRequests = (engine: BrainEngine, sourceId: string, runId: string) => en
   "SELECT intent->>'kind' AS kind,slug,state FROM persistence_requests WHERE source_id=$1 AND intent->>'runId'=$2 ORDER BY sequence", [sourceId, runId]);
 const deleteRequests = (engine: BrainEngine, sourceId: string) => engine.executeRaw<{ slug: string; state: string }>(
   "SELECT slug,state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_delete' ORDER BY sequence", [sourceId]);
-/** Runs `hook` when the screen re-reads `slug` (the second snapshot read: the first is the freeze). */
-function onScreen(engine: BrainEngine, slug: string, hook: () => Promise<void>): BrainEngine {
+/**
+ * Runs `hook` on the `nth` snapshot read of `slug`. The default (2) is a head entry's screen, which re-reads the
+ * page after its freeze; an entry frozen for a waiver run is read once (#5984 G3: its screen reuses the freeze's read).
+ */
+function onScreen(engine: BrainEngine, slug: string, hook: () => Promise<void>, nth = 2): BrainEngine {
   let reads = 0;
   return new Proxy(engine, { get(target, key) {
     if (key === 'readPageSnapshot') return async (read: string, opts: Parameters<BrainEngine['readPageSnapshot']>[1]) => {
-      if (read === slug && ++reads === 2) await hook();
+      if (read === slug && ++reads === nth) await hook();
       return target.readPageSnapshot(read, opts);
     };
     const value = Reflect.get(target, key);
@@ -825,7 +828,8 @@ test('a run of no-op deletes is waived in one transaction, and GBRAIN_SYNC_WAIVE
 test('a page restored in the middle of a waiver run ends the run there: earlier entries are waived, it is admitted, and nothing after it is passed', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
   for (const engine of engines) {
     const f = await deletedFixture(engine, manyNotes(8), manySlugs(8));
-    const proxy = onScreen(engine, 'n06', () => engine.transaction(tx => withCoordinatedWrite(tx, [f.id], async () => { await tx.restorePage('n02', { sourceId: f.id }); }, TEST_WRITE_ATTRIBUTION)));
+    // n06 is frozen (and screened) after n02 was screened and before the run's waiver transaction.
+    const proxy = onScreen(engine, 'n06', () => engine.transaction(tx => withCoordinatedWrite(tx, [f.id], async () => { await tx.restorePage('n02', { sourceId: f.id }); }, TEST_WRITE_ATTRIBUTION)), 1);
     try {
       const result = await performManagedSync(proxy, { sourceId: f.id, ...WAIVER_OPTS });
       expect(result.waived).toEqual({ imports: 0, deletes: 2 });
@@ -834,6 +838,28 @@ test('a page restored in the middle of a waiver run ends the run there: earlier 
       const [cursor] = await engine.executeRaw<{ index: number }>("SELECT (completed_keys->0->>'index')::int AS index FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]);
       expect(cursor!.index).toBe(2);
     } finally { await disposePersistenceConsumer(proxy); rmSync(syncFailuresPath(), { force: true }); }
+  }
+}), 120_000);
+
+test('an entry frozen for a waiver run is read once: its screen reuses the freeze\'s page read and authority check (#5984 G3)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const engine of engines) {
+    const f = await deletedFixture(engine, manyNotes(8), manySlugs(8));
+    const reads = new Map<string, number>();
+    const counted = new Proxy(engine, { get(target, key) {
+      if (key === 'readPageSnapshot') return (read: string, opts: Parameters<BrainEngine['readPageSnapshot']>[1]) => {
+        reads.set(read, (reads.get(read) ?? 0) + 1);
+        return target.readPageSnapshot(read, opts);
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    try {
+      const result = await performManagedSync(counted, { sourceId: f.id, ...WAIVER_OPTS });
+      expect(result).toMatchObject({ status: 'synced', waived: { imports: 0, deletes: 8 } });
+      const slugs = manySlugs(8);
+      expect(reads.get(slugs[0]!)).toBe(2);
+      expect(slugs.slice(1).map(slug => reads.get(slug))).toEqual(slugs.slice(1).map(() => 1));
+    } finally { await disposePersistenceConsumer(counted); }
   }
 }), 120_000);
 

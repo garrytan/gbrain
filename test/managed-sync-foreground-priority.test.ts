@@ -18,6 +18,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { setClaimOwnerForTest } from '../src/core/persistence/claim-phase.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-fg-priority-'));
 let engine: BrainEngine | undefined;
@@ -60,14 +61,15 @@ function recordClaims(e: BrainEngine): { claims: Map<string, number>; restore: (
   } as BrainEngine['executeRaw'];
   return { claims, restore: () => { e.executeRaw = execute; } };
 }
-function writer(source: string, slugs: string[], intervalMs = 0, go?: string) {
+function writer(source: string, slugs: string[], intervalMs = 0, go?: string, preparingHoldMs = 0) {
   const out = join(home, `worker-${randomUUID()}.json`);
   const child = Bun.spawn([process.execPath, join(import.meta.dir, 'fixtures', 'foreground-put-page-worker.ts')], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
-    env: { ...process.env, GBRAIN_HOME: home, WORKER_DATABASE_URL: databaseUrl, WORKER_SOURCE: source, WORKER_SLUGS: slugs.join(',') || '-', WORKER_INTERVAL_MS: String(intervalMs), WORKER_OUT: out, ...(go ? { WORKER_GO: go } : {}) } });
+    env: { ...process.env, GBRAIN_HOME: home, WORKER_DATABASE_URL: databaseUrl, WORKER_SOURCE: source, WORKER_SLUGS: slugs.join(',') || '-', WORKER_INTERVAL_MS: String(intervalMs), WORKER_OUT: out, ...(go ? { WORKER_GO: go } : {}),
+      ...(preparingHoldMs ? { WORKER_PREPARING_HOLD_MS: String(preparingHoldMs) } : {}) } });
   return async () => {
     const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
     if (code !== 0) throw new Error(`writer exited ${code}: ${stderr.slice(-2000)}`);
-    return JSON.parse(readFileSync(out, 'utf8')) as Array<{ slug: string; state: string; error?: string; submitted: number; returned: number; admitted?: number }>;
+    return JSON.parse(readFileSync(out, 'utf8')) as Array<{ slug: string; state: string; error?: string; submitted: number; returned: number; admitted?: number; held?: [number, number] }>;
   };
 }
 
@@ -89,7 +91,7 @@ afterAll(async () => {
  * Starts a drain, waits until it has sync groups queued that nobody claimed, then writes `slug` from another
  * process. Returns the queued sync rows admitted before the write, the drain's claims and the final rows.
  */
-async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, laneHold = 0) {
+async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, laneHold = 0, preparingHoldMs = 0) {
   const e = engine!, source = await fixture(e, 64);
   const recorder = recordClaims(e);
   // Each sync page holds its group open a little before commit, so groups stay queued while the writer starts. With
@@ -99,7 +101,16 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
   let laneOpen = 0, armed = false;
   const beside: boolean[] = [];
   const written = Promise.withResolvers<void>();
+  // With `preparingHoldMs`, whichever process claims the write holds its preparation that long, and this process stamps
+  // its claims with another process's owner, so either way the write is claimed elsewhere and unpublished meanwhile.
+  let heldHere: [number, number] | undefined;
+  if (preparingHoldMs) setClaimOwnerForTest({ kind: 'mcp', pid: 1, version: 'test', nonce: 'another-process' });
   installFaultHook(async (point, detail) => {
+    if (preparingHoldMs && point === 'consumer:preparing' && detail.operation === 'put_page' && !heldHere) {
+      const start = Date.now();
+      await Bun.sleep(preparingHoldMs);
+      heldHere = [start, Date.now()];
+    }
     if (detail.sourceId !== source) return;
     if (point === 'publication:before_commit' && detail.operation !== 'submit_job') beside.push(laneOpen > 0);
     if (point === 'publication:after_commit' && detail.operation !== 'submit_job') written.resolve();
@@ -114,7 +125,7 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
     let queued: Row[] = [];
     // The writer process starts now and writes (the slug the go file names) once a sync group is queued that nobody has started.
     const go = join(home, `go-${randomUUID()}`);
-    const finish = writer(source, [], 0, go);
+    const finish = writer(source, [], 0, go, preparingHoldMs);
     await until(async () => {
       const all = await rows(e, source);
       const begun = new Set(all.filter(row => row.state !== 'queued').map(row => row.request_id));
@@ -140,8 +151,8 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
     });
     const [written] = await finish();
     const result = await drain;
-    return { source, target, before, written: written!, result, claims: recorder.claims, final: await rows(e, source), beside };
-  } finally { recorder.restore(); installFaultHook(undefined); }
+    return { source, target, before, written: written!, result, claims: recorder.claims, final: await rows(e, source), beside, held: heldHere ?? written!.held };
+  } finally { recorder.restore(); installFaultHook(undefined); setClaimOwnerForTest(undefined); }
 }
 
 for (const lanes of [2, 1]) {
@@ -165,6 +176,20 @@ for (const lanes of [2, 1]) {
     expect(run.final.filter(row => row.kind?.startsWith('managed_sync_import')).every(row => row.state === 'committed')).toBe(true);
   }), 300_000);
 }
+
+test('a write the writer\'s own process claimed but cannot publish beside the lanes still holds back new lane heads', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_BULK_SIZE: '4' }, async () => {
+  if (!engine) return;
+  resetWriteSwitches();
+  // The write is claimed by a process other than the drain's (the writer's own, or the drain's stamped as another's) and
+  // held in preparation for 1.5 s. No lane head may be chosen while that claim is held.
+  const run = await writeDuringDrain(2, () => 'notes/claimed-elsewhere', 0, 1500);
+  expect(run.written.state).toBe('committed');
+  expect(run.result.status).toBe('first_sync');
+  expect(run.before.length).toBeGreaterThan(0);
+  const [start, end] = run.held!;
+  const heads = run.final.filter(row => row.kind?.startsWith('managed_sync_') && (row.grp ?? row.request_id) === row.request_id);
+  expect(heads.filter(row => { const claimed = run.claims.get(row.id) ?? Infinity; return claimed >= start && claimed < end; }).map(row => row.slug)).toEqual([]);
+}), 300_000);
 
 test('a write publishes beside the running lane groups instead of waiting for them, and the lanes keep starting groups', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_BULK_SIZE: '4' }, async () => {
   if (!engine) return;

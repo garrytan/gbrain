@@ -14,6 +14,7 @@ import { pipelined } from '../page-state/transactions.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
 import { writerStamp } from './writer-versions.ts';
 import { claimPhaseStamp, startClaimPhase } from './claim-phase.ts';
+import { consumerIdentity } from './consumer-heartbeat.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear } from './worktree-refresh-schema.ts';
@@ -337,9 +338,15 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
   if (!head.worktree_id || max <= 0) return [];
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
-    const next = await tx.executeRaw<{ id: string; state: string; grp: string | null; recovering: boolean; claim_phase: unknown }>(`SELECT id,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering,claim_phase
-      FROM persistence_requests WHERE worktree_id=$1::uuid AND sequence>$2 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL)
-      ORDER BY sequence LIMIT $3 FOR UPDATE`, [head.worktree_id, head.sequence, max]);
+    // #5984 G6: only the group's candidate prefix is locked. Locking every next row also held a foreground write's row
+    // (the first non-member) for the claim's round trips, so its recovery record and reads waited on the lane.
+    const next = await tx.executeRaw<{ id: string; state: string; grp: string | null; recovering: boolean; claim_phase: unknown }>(`WITH next AS (
+        SELECT id,sequence,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering FROM persistence_requests
+        WHERE worktree_id=$1::uuid AND sequence>$2 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence LIMIT $3),
+      bound AS (SELECT min(sequence) AS sequence FROM next WHERE grp IS DISTINCT FROM $4 OR state<>'queued' OR recovering)
+      SELECT r.id,r.state,${GROUP_KEY_SQL} AS grp,r.recovery IS NOT NULL AS recovering,r.claim_phase
+      FROM persistence_requests r WHERE r.id IN (SELECT id FROM next WHERE sequence<COALESCE((SELECT sequence FROM bound),9223372036854775807))
+      ORDER BY r.sequence FOR UPDATE OF r`, [head.worktree_id, head.sequence, max, group]);
     const members: string[] = [];
     const previous = new Map<string, unknown>();
     for (const row of next) {
@@ -582,14 +589,18 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
           AND (earlier.state IN ('queued','recovering') OR (earlier.state='running' AND COALESCE(earlier.intent->>'lane','')<>$3)))
         -- #5984 Phase 4.5: no new lane head while a foreground write that may go first waits to be claimed (a claimed
         -- one publishes beside the lanes), except one head after each foreground commit since this run's last head
-        -- claim, so a stream of writes cannot starve the drain.
-        AND NOT ((${foregroundPrioritySql()}) AND EXISTS (SELECT 1 FROM persistence_requests f WHERE f.worktree_id=r.worktree_id AND f.state IN ('queued','recovering')
+        -- claim, so a stream of writes cannot starve the drain. A write another process claimed but has not begun to
+        -- publish still waits: it cannot publish while this process's lanes hold the worktree, so it releases the claim
+        -- and this process takes it.
+        AND NOT ((${foregroundPrioritySql()}) AND EXISTS (SELECT 1 FROM persistence_requests f WHERE f.worktree_id=r.worktree_id
+            AND (f.state IN ('queued','recovering') OR (f.state='running' AND NOT f.publication_started
+              AND f.claim_phase->'owner'->>'nonce' IS DISTINCT FROM $5::text))
             AND f.recovery IS NULL AND NOT ${SYNC_KIND('f')}
             AND NOT EXISTS (SELECT 1 FROM persistence_requests named WHERE named.worktree_id=f.worktree_id AND named.sequence<f.sequence
               AND named.state IN ('queued','running','recovering') AND ${SYNC_KIND('named')} AND ${NAMES_PAGE('named', 'f')}))
           AND NOT EXISTS (SELECT 1 FROM persistence_requests c WHERE c.sequence>COALESCE($4::bigint,0) AND c.worktree_id=r.worktree_id
             AND c.state='committed' AND NOT ${SYNC_KIND('c')}))
-      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, [hostId, worktreeId, run, seenSequence]);
+      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, [hostId, worktreeId, run, seenSequence, consumerIdentity().nonce]);
     if (!row) return null;
     const token = randomUUID();
     const [claimed] = await tx.executeRaw<WriteRequest & { seen_sequence: string }>(`UPDATE persistence_requests SET state='running',

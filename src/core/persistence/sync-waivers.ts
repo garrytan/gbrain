@@ -6,7 +6,7 @@
  * unfinished request names the page, so a waiver never overtakes queued work.
  */
 import { join } from 'node:path';
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, PageSnapshot } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { prepareManagedSyncMutation, type SyncIntent } from './sync-prepare.ts';
 import { startClaimPhase } from './claim-phase.ts';
@@ -126,20 +126,25 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
  * unadmitted entry's publication would change nothing (a delete of a page
  * already soft-deleted at its frozen revision, or an unchanged import). A
  * revoked sync authority throws.
+ * #5984 G3: `frozen` is what the freeze of this entry just read and validated
+ * (its page snapshot, then the sync authority); the screen of an entry frozen
+ * for a waiver run uses it instead of reading both again. The run's waiver
+ * transaction re-validates every entry under its locks either way.
  */
-export async function screenWaiver(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal): Promise<NoopWaiver | null> {
+export async function screenWaiver(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal,
+  frozen?: { snapshot: PageSnapshot | null }): Promise<NoopWaiver | null> {
   if (!noopWaiversEnabled() || pending.pageId === null) return null;
   const intent = pending.intent;
   if (intent.kind === 'managed_sync_delete') {
     if (intent.unownedDeletion || intent.renameFrom || intent.rawHash !== null || typeof intent.path !== 'string' || typeof intent.sourcePath !== 'string') return null;
-    const snapshot = await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
+    const snapshot = frozen ? frozen.snapshot : await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
     if (!softDeletedAt(snapshot, pending)) return null;
-    await validateSyncAuthority(engine, cursor.authority, pending.slug);
+    if (!frozen) await validateSyncAuthority(engine, cursor.authority, pending.slug);
     return { kind: 'delete', kernel: [] };
   }
-  const kernel = await unchangedSyncImport(engine, cursor, pending, config, signal);
+  const kernel = await unchangedSyncImport(engine, cursor, pending, config, signal, frozen?.snapshot);
   if (!kernel) return null;
-  await validateSyncAuthority(engine, cursor.authority, pending.slug);
+  if (!frozen) await validateSyncAuthority(engine, cursor.authority, pending.slug);
   return { kind: 'import', kernel };
 }
 
@@ -228,11 +233,12 @@ function softDeletedAt(snapshot: Awaited<ReturnType<BrainEngine['readPageSnapsho
  * #6278: the preparation races the sync budget (`raceSyncBudget`); past it
  * nothing is waived, and a cancelled run propagates.
  */
-export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal): Promise<NoopKernelWaiver[] | null> {
+export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal,
+  frozenSnapshot?: PageSnapshot | null): Promise<NoopKernelWaiver[] | null> {
   const intent = pending.intent;
   if (intent.kind !== 'managed_sync_import' || intent.renameFrom || pending.pageId === null || typeof intent.path !== 'string' || typeof intent.content !== 'string') return null;
   try {
-    const snapshot = await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
+    const snapshot = frozenSnapshot !== undefined ? frozenSnapshot : await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
     const row = screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: pending.slug, page_id: pending.pageId,
       worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent, request_id: pending.requestId });
     // #6278 (1.4): the clock carries the budget, so the preparation's lock-prone reads end on the server at it (boundedReads).

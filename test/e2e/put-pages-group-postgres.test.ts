@@ -156,4 +156,45 @@ d('#6007 grouped put_pages publication on Postgres', () => {
     const status = await dispatch('put_pages', { request_id: batch!.batch_request_id });
     expect(status).toMatchObject({ state: 'partial', counts: { committed: 2, failed: 1 } });
   });
+
+  test('claiming a group\'s followers locks only the members, never the write queued after them (#5984 G6)', async () => {
+    await disposePersistenceConsumer(engine);
+    const holder = await acquireWorktree((await getWorktreeBinding(engine, 'default'))!, 5000);
+    expect(holder).not.toBeNull();
+    try {
+      expect((await dispatch('put_pages', { request_id: randomUUID(), wait_ms: 0, pages: [page('notes/l-1', 'One.'), page('notes/l-2', 'Two.'), page('notes/l-3', 'Three.')] })).state).toBe('pending');
+      const single = await dispatch('put_page', { ...page('notes/l-after', 'Foreground after the batch.'), request_id: randomUUID(), wait_ms: 0 });
+      expect(JSON.stringify(single)).toContain('pending');
+      await disposePersistenceConsumer(engine);
+    } finally { await holder!.release(); }
+    await engine.executeRaw("UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,blocked_reason=NULL WHERE state='running' AND recovery IS NULL");
+    const rows = await requests();
+    const after = rows.find(row => row.slug === 'notes/l-after')!;
+    const member = rows.find(row => row.slug === 'notes/l-3')!;
+    const head = (await claimNextWrite(engine, localHostId()))!;
+    expect(head.slug).toBe('notes/l-1');
+    const update = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    // Holds the claim transaction open between its locking read and its update, as a slow round trip would.
+    const held = new Proxy(engine, { get(target, key) {
+      if (key === 'transactionDirect') return <T>(fn: (tx: typeof engine) => Promise<T>) => target.transactionDirect(tx => fn(new Proxy(tx, { get(inner, name) {
+        if (name === 'executeRaw') return async (sql: string, params?: unknown[]) => {
+          if (sql.startsWith('UPDATE persistence_requests r SET state=')) { update.resolve(); await release.promise; }
+          return inner.executeRaw(sql, params as never);
+        };
+        const value = Reflect.get(inner, name);
+        return typeof value === 'function' ? value.bind(inner) : value;
+      } }) as typeof engine));
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } }) as typeof engine;
+    const claiming = claimGroupFollowers(held, head, publicationGroupKey(head)!, 7);
+    await update.promise;
+    const lockable = (id: string) => engine.transaction(tx => tx.executeRaw('SELECT id FROM persistence_requests WHERE id=$1::uuid FOR UPDATE NOWAIT', [id]))
+      .then(() => true, (error: { code?: string }) => { if (error.code === '55P03') return false; throw error; });
+    try {
+      expect(await lockable(after.id)).toBe(true);
+      expect(await lockable(member.id)).toBe(false);
+    } finally { release.resolve(); }
+    expect((await claiming).map(row => row.slug)).toEqual(['notes/l-2', 'notes/l-3']);
+  });
 });
