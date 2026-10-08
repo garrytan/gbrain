@@ -1,6 +1,6 @@
 # gbrain agent workspace — template
 
-<!-- gbrain-template-stamp: 0.60.109.0 -->
+<!-- gbrain-template-stamp: 0.60.110.0 -->
 
 This repository is the **"Use this template"** distribution artifact for a
 [gbrain](https://github.com/garrytan/gbrain) personal-agent workspace — the same

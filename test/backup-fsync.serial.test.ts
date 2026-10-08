@@ -177,8 +177,7 @@ process.stdin.on('end', () => {
       expect(callback).toBe(false);
       if (mode === 'success') await pending;
       else await expect(pending).rejects.toMatchObject({ code: 'private_backup_path_unavailable' });
-      // A timeout is PowerShell's cold start: launched once more, then final (withColdStartRetry).
-      expect(calls).toBe(mode === 'timeout' ? 2 : 1);
+      expect(calls).toBe(1);
       expect(callback).toBe(true);
       expect(child).toBeDefined();
       expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
@@ -186,8 +185,8 @@ process.stdin.on('end', () => {
       if (mode === 'nonzero') expect(child!.exitCode).toBe(7);
       if (!mode.startsWith('input-')) expect(child?.stdin?.writableEnded).toBe(true);
       if (mode === 'timeout') {
-        expect(performance.now() - started).toBeGreaterThanOrEqual(28_000);
-        expect(performance.now() - started).toBeLessThan(38_000);
+        expect(performance.now() - started).toBeGreaterThanOrEqual(14_000);
+        expect(performance.now() - started).toBeLessThan(19_000);
         expect(child?.killed).toBe(true);
         expect(processError).not.toBeNull();
       }
@@ -205,5 +204,5 @@ process.stdin.on('end', () => {
       }
       fs.rmSync(tmp, { recursive: true, force: true });
     }
-  }, mode === 'timeout' ? 45_000 : 25_000);
+  }, 25_000);
 }

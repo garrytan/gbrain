@@ -288,7 +288,6 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
     else fs.writeFileSync(path, '');
     const before = fs.lstatSync(path, { bigint: true });
     let launches = 0;
-    let boundKills = 0;
     let inspections = 0;
     let bounded = false;
     let fixedExecutable = false;
@@ -315,8 +314,6 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
         } else inspections++;
         const recordError = (error: unknown) => {
           const code = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
-          const killed = error as { killed?: boolean; code?: unknown };
-          if (protection && killed.killed === true && typeof killed.code !== 'string') boundKills++;
           if (protection) nativeError = code;
           else inspectionError = code;
         };
@@ -359,7 +356,7 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
       }
     } finally { inspect.mockRestore(); }
     const after = fs.lstatSync(path, { bigint: true });
-    observations.push({ mode, protectionElapsedMs, inspectionElapsedMs, launches, boundKills, inspections,
+    observations.push({ mode, protectionElapsedMs, inspectionElapsedMs, launches, inspections,
       bounded, fixedExecutable, stableProgram, nativeError, inspectionError, protectedPath, privateAcl,
       closedInput: protectionChild?.stdin?.writableEnded === true,
       pipedOutput: Boolean(protectionChild?.stdout && protectionChild?.stderr),
@@ -368,7 +365,7 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   }
   process.stderr.write(`Windows backup dotnet controls: ${JSON.stringify({ kind, arch: process.arch, runtime: Bun.version, observations })}\n`);
   for (const observation of observations) {
-    expect(observation.launches).toBe(observation.boundKills > 0 ? 2 : 1);
+    expect(observation.launches).toBe(1);
     expect(observation.bounded).toBe(true);
     expect(observation.fixedExecutable).toBe(true);
     expect(observation.stableProgram).toBe(true);

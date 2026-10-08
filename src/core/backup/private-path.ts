@@ -42,54 +42,24 @@ foreach ($rule in $rules) {
 [Console]::Write('private')
 `;
 
-type ProtectRunner = (path: string, kind: 'directory' | 'file') => Promise<string>;
-
-const runPowerShellProtect: ProtectRunner = (path, kind) => new Promise<string>((resolve, reject) => {
-  let inputFailed = false;
-  const child = execFile(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(protect, 'utf16le').toString('base64')], {
-      env: { ...process.env, GBRAIN_BACKUP_PRIVATE_PATH: path, GBRAIN_BACKUP_PRIVATE_KIND: kind },
-      encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true,
-    }, (error, stdout) => inputFailed ? reject(new Error('Private path input failed')) : error ? reject(error) : resolve(stdout));
-  const inputFailure = () => { inputFailed = true; child.kill(); };
-  if (!child.stdin) { inputFailure(); return; }
-  child.stdin.once('error', inputFailure);
-  try { child.stdin.end(); } catch { inputFailure(); }
-});
-
-let protectRunner: ProtectRunner = runPowerShellProtect;
-/** Test seam: replace the PowerShell invocation (undefined restores it). */
-export function __setPrivatePathRunnerForTests(runner?: ProtectRunner): void {
-  protectRunner = runner ?? runPowerShellProtect;
-}
-
-/**
- * PowerShell's first start on a cold Windows machine can take longer than the
- * 15 s bound (measured 3.3-27.7 s on fresh CI runners; later starts take
- * 0.2-1.5 s), which failed a user's first backup. A run killed by that bound is
- * retried once; any other failure (an output overflow included), or a second
- * timeout, is final. The script
- * only sets and verifies the ACL of the same new empty path, so a rerun is safe.
- */
-export async function withColdStartRetry<T>(run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (error) {
-    // execFile kills the child for the timeout and for an output overflow; only
-    // the timeout leaves `code` unset (the overflow is ERR_CHILD_PROCESS_STDIO_MAXBUFFER).
-    const killed = error as { killed?: boolean; code?: unknown } | null;
-    if (killed?.killed !== true || typeof killed.code === 'string') throw error;
-    return await run();
-  }
-}
-
 export async function protectNewBackupPath(path: string, kind: 'directory' | 'file'): Promise<void> {
   if (process.platform !== 'win32') return;
   try {
     assertNoSymlinks(path);
     const before = lstatSync(path, { bigint: true });
     if (!before.ino || (kind === 'directory' ? !before.isDirectory() || readdirSync(path).length !== 0 : !before.isFile() || before.size !== 0n || before.nlink !== 1n)) throw new Error('Expected a new empty path with stable identity');
-    const result = await withColdStartRetry(() => protectRunner(path, kind));
+    const result = await new Promise<string>((resolve, reject) => {
+      let inputFailed = false;
+      const child = execFile(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+        ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(protect, 'utf16le').toString('base64')], {
+          env: { ...process.env, GBRAIN_BACKUP_PRIVATE_PATH: path, GBRAIN_BACKUP_PRIVATE_KIND: kind },
+          encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true,
+        }, (error, stdout) => error || inputFailed ? reject(error ?? new Error('Private path input failed')) : resolve(stdout));
+      const inputFailure = () => { inputFailed = true; child.kill(); };
+      if (!child.stdin) { inputFailure(); return; }
+      child.stdin.once('error', inputFailure);
+      try { child.stdin.end(); } catch { inputFailure(); }
+    });
     assertNoSymlinks(path);
     const after = lstatSync(path, { bigint: true });
     if (result !== 'private' || before.dev !== after.dev || before.ino !== after.ino
