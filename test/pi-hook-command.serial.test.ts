@@ -12,7 +12,7 @@
  * against the real root, refuses it as transcript_outside_projects_dir).
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -204,6 +204,50 @@ describe('user-prompt --harness pi', () => {
     });
     expect(seen[0]!.window).toEqual([{ role: 'user', text: 'first prompt' }]);
     expect((await heartbeats()).at(-1)?.outcome).toBe('ok');
+  });
+});
+
+describe('session-start --harness pi: crashed-session sweep', () => {
+  test('a pi session killed before session-end reaches the corpus on the next pi start', async () => {
+    writeConfig();
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    // A session pi was SIGKILLed out of: written two hours ago, never captured.
+    const killed = seed('pi-killed-1', CONVO);
+    const t = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+    utimesSync(killed, t, t);
+    const sent: string[] = [];
+    expect(await runHook(['session-start', '--harness', 'pi'], {
+      stdin: JSON.stringify({ session_id: 'pi-now-1', cwd: ws, source: 'startup' }),
+      transcriptRoot: sessionsRoot(), cwd: ws, write: () => {}, spawnPiSessionEnd: (p) => sent.push(p),
+    })).toBe(0);
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]!)).toMatchObject({ session_id: 'pi-killed-1', transcript_path: killed });
+    expect(existsSync(join(corpusDir(), 'pi-killed-1.txt'))).toBe(false);
+
+    // The spawned child runs the ordinary session-end capture with that payload.
+    expect(await runHook(['session-end', '--harness', 'pi'], { stdin: sent[0]!, transcriptRoot: sessionsRoot(), cwd: ws })).toBe(0);
+    expect(readFileSync(join(corpusDir(), 'pi-killed-1.txt'), 'utf8')).toContain('what do we know about widget-co?');
+
+    // Captured now: the next start sends nothing.
+    const again: string[] = [];
+    await runHook(['session-start', '--harness', 'pi'], {
+      stdin: JSON.stringify({ session_id: 'pi-now-2', cwd: ws, source: 'startup' }),
+      transcriptRoot: sessionsRoot(), cwd: ws, write: () => {}, spawnPiSessionEnd: (p) => again.push(p),
+    });
+    expect(again).toEqual([]);
+  });
+
+  test('a Claude Code session-start never sweeps pi', async () => {
+    writeConfig();
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    const killed = seed('pi-killed-2', CONVO);
+    const t = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+    utimesSync(killed, t, t);
+    const sent: string[] = [];
+    await runHook(['session-start'], { stdin: JSON.stringify({ session_id: 'c-1', cwd: ws }), transcriptRoot: sessionsRoot(), cwd: ws, write: () => {}, spawnPiSessionEnd: (p) => sent.push(p) });
+    expect(sent).toEqual([]);
   });
 });
 

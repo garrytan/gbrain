@@ -84,9 +84,10 @@ import {
   writeHeartbeat as writeHeartbeatShared,
   type HookHeartbeatEntry,
 } from '../core/context/hook-heartbeat.ts';
-import { CLAUDE_HOOK_OUTPUT_CAP_CHARS } from '../core/bootstrap/host-specs.ts';
+import { CLAUDE_HOOK_OUTPUT_CAP_CHARS, piSessionsDir } from '../core/bootstrap/host-specs.ts';
 import { composeSessionStartOutput } from '../core/context/session-start-output.ts';
 import { claudeCodePressure, piPressure } from '../core/context/pressure.ts';
+import { sweepPiSessions } from '../core/transcripts/pi-sweep.ts';
 import { readManifest, readReceipt, type InstallReceipt } from '../core/bootstrap/format.ts';
 import { githubOwnerRepoString } from '../core/repo-visibility.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
@@ -196,6 +197,7 @@ export interface HookIo {
   spawnPush?: (root: string) => void;
   /** TEST SEAM: detached backup-check spawner (default spawnDetachedBackupCheck). */
   spawnBackupCheck?: () => void;
+  /** TEST SEAM: pi-sweep.ts detached session-end spawner (stdin payload JSON). */ spawnPiSessionEnd?: (payload: string) => void;
   /** TEST SEAM: user-prompt deadline override (wall-clock flake control). */
   userPromptDeadlineMs?: number;
   /** TEST SEAM: compact deadline override (drives the per-step degrade paths). */
@@ -490,6 +492,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
   try {
     const j = await readStdinJson(io, 250);
     const ws = io.cwd ?? (typeof j?.cwd === 'string' ? (j.cwd as string) : process.cwd());
+    if (io.harness === 'pi') sweepPiSessions({ home: await resolveHome(), sessionsDir: io.transcriptRoot ?? piSessionsDir(), corpusDir: await corpusDir(loadConfig()), currentSessionId: j?.session_id, spawn: io.spawnPiSessionEnd });
 
     const work = (async () => {
       // 1. MEMORY.md digest — allowlisted sections only, ≤3KB [A3].

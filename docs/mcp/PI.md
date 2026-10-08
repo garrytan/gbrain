@@ -88,6 +88,13 @@ session tree is read, and the `gbrain-context` messages gbrain injected
 earlier are read back so a page is volunteered once per session, not once
 per mention.
 
+`session_shutdown` does not fire when pi is killed, crashes or loses its
+terminal, so each pi session-start also looks for sessions that never reached
+the corpus: session files from the last 7 days, idle for at least 30 minutes,
+with no corpus copy (or an older one). Up to three per start, newest first,
+go through the same `session-end` capture in the background. A file version
+that was already tried is not retried. `GBRAIN_PI_SWEEP=0` turns this off.
+
 Every hook fails open: a missing binary, a timeout or an error never blocks
 pi. Run `/gbrain-hooks` inside pi to see each hook's last outcome.
 `GBRAIN_HOOKS=0` disables them all.
