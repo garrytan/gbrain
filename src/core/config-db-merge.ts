@@ -155,13 +155,10 @@ function mergeProviderChatOptions(merged: GBrainConfig, values: Map<string, stri
       if (optionsObject(value)) db[selector] = overlayOptions(optionsObject(db[selector]) ? db[selector] : {}, value);
       continue;
     }
-    if (!optionsObject(db[selector])) db[selector] = {};
-    let target = db[selector] as Record<string, unknown>;
-    for (const part of path.slice(0, -1)) {
-      if (!optionsObject(target[part])) target[part] = {};
-      target = target[part] as Record<string, unknown>;
-    }
-    target[path[path.length - 1]] = optionsObject(value) ? overlayOptions({}, value) : value;
+    // Construct a fresh branch from the leaf up; never walk a caller-supplied
+    // object's inherited properties while resolving a dotted path.
+    for (const part of path.toReversed()) value = Object.fromEntries([[part, value]]);
+    db[selector] = overlayOptions(optionsObject(db[selector]) ? db[selector] : {}, value as Record<string, unknown>);
   }
   // Reject malformed selector containers rather than sending them to the SDK.
   db = Object.fromEntries(Object.entries(db).filter(([, value]) => optionsObject(value)));
