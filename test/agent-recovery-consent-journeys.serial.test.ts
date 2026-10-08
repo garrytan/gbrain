@@ -45,7 +45,7 @@ import {
 
 const REPO = join(import.meta.dir, '..');
 const CLI = join(REPO, 'src', 'cli.ts');
-const MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID'];
+const MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID', 'PI_CODING_AGENT'];
 
 // ── in-process brain + serve-http ───────────────────────────────────────────
 

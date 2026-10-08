@@ -16,7 +16,7 @@ import {
 } from '../src/core/interaction.ts';
 
 const TTY = { stdinIsTTY: true, stdoutIsTTY: true } as const;
-const MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID'];
+const MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID', 'PI_CODING_AGENT'];
 
 describe('isInteractive decision table', () => {
   const rows: Array<[string, NodeJS.ProcessEnv, { stdinIsTTY: boolean; stdoutIsTTY: boolean }, boolean]> = [

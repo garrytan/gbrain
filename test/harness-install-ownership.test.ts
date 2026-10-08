@@ -56,8 +56,8 @@ test('thin setup resumes a recorded interrupted file write without claiming arbi
   expect(JSON.parse(readFileSync(receiptPath, 'utf8')).pending_files).toEqual({});
 });
 
-for (const harness of ['codex', 'opencode']) test(`${harness} refuses edited and same-URL unowned entries`, async () => {
-  const root = temp(); const configPath = join(root, harness === 'codex' ? 'config.toml' : 'config.jsonc');
+for (const harness of ['codex', 'opencode', 'pi']) test(`${harness} refuses edited and same-URL unowned entries`, async () => {
+  const root = temp(); const configPath = join(root, harness === 'codex' ? 'config.toml' : harness === 'pi' ? 'mcp.json' : 'config.jsonc');
   await installHarnessConnection(credentials, { harness, configPath });
   const original = readFileSync(configPath, 'utf8');
   writeFileSync(configPath, original.replace('fixture-token-not-real', 'edited-token'));

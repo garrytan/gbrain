@@ -235,14 +235,14 @@ export interface SessionReceiptEntry {
   ts: string;
   session_id: string;
   /**
-   * Producers today: 'claude-code' + 'codex' (session-end hook lanes) and
+   * Producers today: 'claude-code' + 'codex' + 'pi' (session-end hook lanes) and
    * 'openclaw' (context-engine compaction lane). 'opencode' is declared ahead
    * of its capture lane. NOTE: this union is NOT HookIo.harness — widening
    * THAT union also requires widening HARNESS_CHANNELS in volunteer-events.ts
    * (hook.ts's user-prompt path silently maps unknown channels to
    * 'claude-code', a misattribution, not a compile error).
    */
-  harness: 'claude-code' | 'codex' | 'opencode' | 'openclaw';
+  harness: 'claude-code' | 'codex' | 'opencode' | 'openclaw' | 'pi';
   corpus_path: string;
   content_hash: string;
   turn_count: number;

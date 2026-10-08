@@ -59,11 +59,7 @@ import {
   type ContextPackResponse,
 } from '../core/context/resolve-ipc.ts';
 import type { WindowTurn } from '../core/context/entity-salience.ts';
-import {
-  confineTranscriptPath,
-  parseTranscript,
-  toCorpusText,
-} from '../core/transcripts/claude-code-jsonl.ts';
+import { toCorpusText, type ParsedTranscript } from '../core/transcripts/claude-code-jsonl.ts';
 import {
   bankCompactSegment,
   bankWritebackTurn,
@@ -226,11 +222,11 @@ export interface HookIo {
    */
   disableTelemetry?: boolean;
   /**
-   * Feedback-loop attribution channel (`--harness <claude-code|codex|opencode>`).
-   * Default 'claude-code' — the only harness bootstrap registers hooks for
-   * today; a codex/opencode hook registration passes the flag explicitly.
+   * Harness (`--harness <claude-code|codex|opencode|pi>`): feedback-loop
+   * channel AND the capture-spec lane (confinement root + parser) for every
+   * transcript read. Default 'claude-code'; other registrations pass the flag.
    */
-  harness?: 'claude-code' | 'codex' | 'opencode';
+  harness?: 'claude-code' | 'codex' | 'opencode' | 'pi';
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -245,8 +241,8 @@ Events (wired into .claude/settings.local.json by gbrain bootstrap):
                   hook health) to stdout
   user-prompt     read hook JSON on stdin, request per-turn context from a
                   running 'gbrain serve' over IPC, print additionalContext JSON
-                  (--harness <claude-code|codex|opencode> sets the feedback-loop
-                  channel; default claude-code, unknown values fall back to the default)
+                  (--harness <claude-code|codex|opencode|pi> sets the feedback-loop
+                  channel and transcript lane; default claude-code, unknown values fall back)
   stop            bank the writeback backstop and spawn the workspace push
   session-end     ingest the session transcript into the dream corpus
                   (secret-scanned), prune old corpus files, push the workspace
@@ -265,13 +261,13 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
     write(io, USAGE + '\n');
     return 0;
   }
-  // `--harness <claude-code|codex|opencode>` — feedback-loop channel
-  // attribution for user-prompt. Unknown values fall back to the default
+  // `--harness <claude-code|codex|opencode|pi>` — feedback-loop channel and
+  // capture-spec lane for every event. Unknown values fall back to the default
   // (fail-open: a bad registration must never break the hook contract).
   const harnessIdx = args.indexOf('--harness');
   if (harnessIdx >= 0 && !io.harness) {
     const v = args[harnessIdx + 1];
-    if (v === 'claude-code' || v === 'codex' || v === 'opencode') io = { ...io, harness: v };
+    if (v === 'claude-code' || v === 'codex' || v === 'opencode' || v === 'pi') io = { ...io, harness: v };
   }
   if (!event || !(HOOK_EVENTS as readonly string[]).includes(event)) {
     process.stderr.write(USAGE + '\n');
@@ -1124,17 +1120,17 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     let priorContextText: string | undefined;
     let transcriptPath: string | undefined;
     if (j.transcript_path !== undefined && j.transcript_path !== null) {
-      const conf = confineTranscriptPath(j.transcript_path, {
+      // Per-harness capture seam: each lane pins its own root + parser.
+      const conf = captureSpecFor(io.harness).confine(j.transcript_path, {
         ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
         // #5701: bounded tail read below — the 50MiB whole-file gate must not
-        // reject a long session before it runs (full rationale in
-        // claude-code-jsonl.ts's confinement).
+        // reject a long session before it runs (claude-code-jsonl.ts).
         allowOversize: true,
       });
       if (!conf.ok) return { outcome: 'degraded', reason: `transcript_${conf.reason}` };
       transcriptPath = conf.path;
       try {
-        const parsed = parseTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES });
+        const parsed = captureSpecFor(io.harness).parse(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES });
         turns = parsed.turns.slice(-USER_PROMPT_WINDOW_TURNS);
         // Cross-turn dedupe: feed the blocks WE previously injected this
         // session back as priorContextText (slug-only suppression + volunteer
@@ -1194,8 +1190,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
       ...(sourceId ? { sourceId } : {}),
       // Feedback-loop attribution: the serve logs the delivered block's
       // volunteered pages/pointers under this channel. Bootstrap registers
-      // hooks for Claude Code only today; a future codex registration passes
-      // `--harness codex` on the hook command.
+      // registrations for other harnesses pass `--harness <id>` explicitly.
       channel: io.harness ?? 'claude-code',
     });
     if (res === IPC_UNAVAILABLE) {
@@ -1336,17 +1331,17 @@ async function hookCompact(io: HookIo): Promise<number> {
     let allTurns: WindowTurn[] = [];
     let transcriptPath: string | undefined;
     if (j.transcript_path !== undefined && j.transcript_path !== null) {
-      const conf = confineTranscriptPath(j.transcript_path, {
+      // Per-harness capture seam: each lane pins its own root + parser.
+      const conf = captureSpecFor(io.harness).confine(j.transcript_path, {
         ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
         // #5701: bounded tail read below — the 50MiB whole-file gate must not
-        // reject a long session before it runs (full rationale in
-        // claude-code-jsonl.ts's confinement).
+        // reject a long session before it runs (claude-code-jsonl.ts).
         allowOversize: true,
       });
       if (!conf.ok) { outcome = 'degraded'; reason = `transcript_${conf.reason}`; return; }
       transcriptPath = conf.path;
       try {
-        const parsed = parseTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES });
+        const parsed = captureSpecFor(io.harness).parse(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES });
         allTurns = parsed.turns;
         boundaryTurnIndexes = parsed.boundaryTurnIndexes;
         turns = parsed.turns.slice(-COMPACT_WINDOW_TURNS);
@@ -1474,7 +1469,8 @@ async function hookStop(io: HookIo): Promise<number> {
       if (sid === 'unknown') return 'no_session';
       const tp = j?.transcript_path;
       if (tp === undefined || tp === null) return 'no_transcript';
-      const conf = confineTranscriptPath(tp as string, {
+      const spec = captureSpecFor(io.harness);
+      const conf = spec.confine(tp, {
         ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
         // #5701: bounded tail reads (128KB probe, then the 2MB cap).
         allowOversize: true,
@@ -1485,7 +1481,7 @@ async function hookStop(io: HookIo): Promise<number> {
       // spawns another claude-cli call that banks again.
       const ws = io.cwd ?? (typeof j?.cwd === 'string' ? j.cwd : process.cwd());
       if (isClaudeCliSelfTranscriptPath(conf.path) || isClaudeCliSelfTranscriptPath(ws)) return 'self_capture';
-      const findLastUser = (parsed: ReturnType<typeof parseTranscript>): WindowTurn | undefined => {
+      const findLastUser = (parsed: ParsedTranscript): WindowTurn | undefined => {
         const index = parsed.genuineUserTurnIndexes.at(-1);
         return index === undefined ? undefined : parsed.turns[index];
       };
@@ -1500,11 +1496,11 @@ async function hookStop(io: HookIo): Promise<number> {
         // wide parse only ever runs when the cheap one failed, so the common
         // path keeps the 128KB cost inside this lane's 2s budget.
         lastUser = findLastUser(
-          parseTranscript(conf.path, { maxBytes: WRITEBACK_TRANSCRIPT_TAIL_BYTES }),
+          spec.parse(conf.path, { maxBytes: WRITEBACK_TRANSCRIPT_TAIL_BYTES }),
         );
         if (!lastUser) {
           lastUser = findLastUser(
-            parseTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES }),
+            spec.parse(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES }),
           );
         }
       } catch {
@@ -1676,7 +1672,7 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
     // the default gate-off population never pays tool-call collection.
     const memorableAllowed = (await memorableGateAllowed(cfg)).allowed;
 
-    // Per-harness capture seam: claude-code and codex each pin their OWN
+    // Per-harness capture seam: claude-code, codex and pi each pin their OWN
     // confinement root + parser; unknown harnesses resolve to the claude spec
     // (today's behavior, pinned by the capture-spec golden test).
     const spec = captureSpecFor(io.harness);

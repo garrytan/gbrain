@@ -13,6 +13,10 @@
  * confinement root exists for that store). Only stdin-driven hook lanes,
  * whose paths are untrusted, live here.
  *
+ * pi joins as a stdin-driven lane: its extension (templates/pi/gbrain-hooks.ts)
+ * spawns `gbrain hook … --harness pi` with the session file as
+ * transcript_path, confined to the pi session store (pi-hook-lane.ts).
+ *
  * `captureSpecFor(anything-else)` — 'opencode', undefined, unknown — returns
  * the claude-code spec: exactly today's behavior (a single hard-wired
  * parser), kept as the documented default rather than an accident. An
@@ -23,8 +27,9 @@
 import type { ConfineTranscriptResult, ParsedTranscript } from './claude-code-jsonl.ts';
 import { confineTranscriptPath, parseTranscript } from './claude-code-jsonl.ts';
 import { confineCodexTranscriptPath, discoverNewestCodexRollout, parseCodexHookTranscript } from './codex-hook-lane.ts';
+import { confinePiTranscriptPath, discoverPiSessionFile, parsePiHookTranscript } from './pi-hook-lane.ts';
 
-export type CaptureHarness = 'claude-code' | 'codex';
+export type CaptureHarness = 'claude-code' | 'codex' | 'pi';
 
 export interface HarnessCaptureSpec {
   /** Validate an untrusted transcript path against THIS harness's pinned root. */
@@ -50,8 +55,15 @@ export const CAPTURE_SPECS = {
     parse: (path, opts) => parseCodexHookTranscript(path, opts),
     discover: (sessionId, opts) => discoverNewestCodexRollout(sessionId, opts),
   },
+  pi: {
+    confine: (p, opts) => confinePiTranscriptPath(p, opts),
+    parse: (path, opts) => parsePiHookTranscript(path, opts),
+    discover: (sessionId, opts) => discoverPiSessionFile(sessionId, opts),
+  },
 } as const satisfies Record<CaptureHarness, HarnessCaptureSpec>;
 
 export function captureSpecFor(harness: string | undefined): HarnessCaptureSpec {
-  return harness === 'codex' ? CAPTURE_SPECS.codex : CAPTURE_SPECS['claude-code'];
+  if (harness === 'codex') return CAPTURE_SPECS.codex;
+  if (harness === 'pi') return CAPTURE_SPECS.pi;
+  return CAPTURE_SPECS['claude-code'];
 }

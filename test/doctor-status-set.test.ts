@@ -105,7 +105,7 @@ describe('doctor --only (E1)', () => {
   test('engine-free run returns exactly the requested checks', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-only-'));
     try {
-      await withEnv({ GBRAIN_HOME: home, HOME: home, CLAUDECODE: undefined, CLAUDE_CODE_ENTRYPOINT: undefined, CODEX_SANDBOX: undefined, CODEX_CI: undefined, CODEX_HOME: undefined, OPENCODE: undefined, OPENCODE_PID: undefined }, async () => {
+      await withEnv({ GBRAIN_HOME: home, HOME: home, CLAUDECODE: undefined, CLAUDE_CODE_ENTRYPOINT: undefined, CODEX_SANDBOX: undefined, CODEX_CI: undefined, CODEX_HOME: undefined, OPENCODE: undefined, OPENCODE_PID: undefined, PI_CODING_AGENT: undefined, PI_CODING_AGENT_DIR: undefined }, async () => {
         const checks = await buildChecks(null, ['--only', 'agent_contract,harness_wiring', '--json']);
         expect(checks.map(c => c.name).sort()).toEqual(['agent_contract', 'harness_wiring']);
       });

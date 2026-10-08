@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { harnessAdapter } from './registry.ts';
-import { claudeUserMcpConfigPath, codexConfigPath, opencodeGlobalConfigPath } from '../bootstrap/host-specs.ts';
+import { claudeUserMcpConfigPath, codexConfigPath, opencodeGlobalConfigPath, piMcpConfigPath } from '../bootstrap/host-specs.ts';
 import { assertNoSymlinks, checkedRoot, sha256 } from '../agent-install/state.ts';
 import { isValidName } from '../mcp-registration.ts';
 import type { SharedSkillsLocalReceipt } from '../shared-skills/adapter.ts';
@@ -18,7 +18,8 @@ export function harnessSharedSkillsRoot(options: HarnessStatusOptions): string |
     return join(checkedRoot(options.root), '.gbrain');
   }
   const config = options.configPath ?? (adapter.connection === 'claude-json' ? claudeUserMcpConfigPath()
-    : adapter.connection === 'codex-toml' ? codexConfigPath() : opencodeGlobalConfigPath());
+    : adapter.connection === 'codex-toml' ? codexConfigPath()
+      : adapter.connection === 'pi-json' ? piMcpConfigPath() : opencodeGlobalConfigPath());
   assertNoSymlinks(config);
   return join(dirname(config), `.gbrain-${adapter.id}-${name}`);
 }

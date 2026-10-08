@@ -17,8 +17,9 @@ export interface InteractiveProbe {
   stdinIsTTY?: boolean; stdoutIsTTY?: boolean;
 }
 
-/** Process-scoped markers only: a variable set inside an agent's child process, never a user-level home dir. */
-const AGENT_MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID'] as const;
+/** Process-scoped markers only: a variable set inside an agent's child process, never a user-level home dir.
+ * pi sets PI_CODING_AGENT=true in its own process (inherited by its bash tool), never in a human shell. */
+const AGENT_MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID', 'PI_CODING_AGENT'] as const;
 
 /** The first agent-process marker present in env, or null. Never CODEX_HOME (a human's shell sets it). */
 export function agentProcessMarker(env: NodeJS.ProcessEnv = process.env): string | null {

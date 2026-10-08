@@ -19,7 +19,7 @@ import { launchTty, ptySupported } from './helpers/tty-harness.ts';
 
 const REPO = join(import.meta.dir, '..');
 const MOD = join(REPO, 'src', 'core', 'interaction.ts');
-const MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID'];
+const MARKERS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_CI', 'OPENCODE', 'OPENCODE_PID', 'PI_CODING_AGENT'];
 const TMP = mkdtempSync(join(tmpdir(), 'gbrain-interaction-'));
 afterAll(() => rmSync(TMP, { recursive: true, force: true }));
 

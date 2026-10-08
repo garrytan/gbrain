@@ -1,0 +1,252 @@
+// gbrain:pi-hooks-v1 — managed by `gbrain bootstrap hooks --harness pi`.
+// Re-runs rewrite this file; `gbrain bootstrap uninstall --harness pi` deletes it.
+// Do not edit: local changes are overwritten. Set GBRAIN_HOOKS=0 to disable.
+//
+// pi has no shell-hook config, so gbrain's lifecycle hooks ride this extension.
+// Each pi event spawns `gbrain hook <event> --harness pi` with a hook-JSON
+// payload on stdin (session_id, cwd, transcript_path = this session's file):
+//
+//   session_start          -> session-start  digest, injected with the next prompt
+//   before_agent_start     -> user-prompt    per-turn brain context, returned as a
+//                                            hidden custom message (customType
+//                                            "gbrain-context"; gbrain reads these
+//                                            back from the session file to avoid
+//                                            volunteering a page twice)
+//   agent_settled          -> stop           writeback backstop + workspace push
+//   session_before_compact -> compact        bank the window before compaction
+//   session_compact        -> session-start  post-compaction rehydration pack
+//   session_shutdown       -> session-end    dream-corpus capture (detached, so
+//                                            pi's exit never waits on it)
+//
+// Every hook fails open: a missing binary, a timeout or a non-zero exit never
+// blocks pi. `/gbrain-hooks` shows the last outcome of each event.
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+const GBRAIN_BIN: string = "__GBRAIN_BIN__";
+const HOOK_ENV: Record<string, string> = { "__GBRAIN_HOOK_ENV__": "" };
+
+/** Must match PI_CONTEXT_CUSTOM_TYPE in gbrain's host-specs.ts. */
+const CONTEXT_CUSTOM_TYPE = "gbrain-context";
+/** Combined digest + per-turn context ceiling (each producer budgets below 10000). */
+const MAX_CONTEXT_CHARS = 20000;
+/** Per-event ceilings (ms), above each command's own self-deadline. */
+const TIMEOUT_MS = { "session-start": 5000, "user-prompt": 3000, stop: 10000, compact: 5000 } as const;
+/** How long session_shutdown waits for the detached child to take its stdin. */
+const SHUTDOWN_HANDOFF_MS = 1000;
+
+type HookName = "session-start" | "user-prompt" | "stop" | "compact" | "session-end";
+type HookResult = { ok: boolean; stdout: string; ms: number; error?: string };
+type Payload = Record<string, unknown>;
+
+function hookEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, ...HOOK_ENV };
+}
+
+function runHook(name: HookName, payload: Payload, timeoutMs: number): Promise<HookResult> {
+  const started = Date.now();
+  return new Promise((resolve) => {
+    let stdout = "";
+    let settled = false;
+    const done = (r: Omit<HookResult, "ms">) => {
+      if (settled) return;
+      settled = true;
+      resolve({ ...r, ms: Date.now() - started });
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(GBRAIN_BIN, ["hook", name, "--harness", "pi"], { env: hookEnv(), stdio: ["pipe", "pipe", "ignore"] });
+    } catch (e) {
+      return done({ ok: false, stdout: "", error: String(e) });
+    }
+    const timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+      done({ ok: false, stdout, error: `timeout ${timeoutMs}ms` });
+    }, timeoutMs);
+    child.stdout?.on("data", (d) => { stdout += d.toString(); });
+    child.on("error", (e) => { clearTimeout(timer); done({ ok: false, stdout, error: String(e) }); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      done({ ok: code === 0, stdout, error: code === 0 ? undefined : `exit ${code}` });
+    });
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(JSON.stringify(payload));
+  });
+}
+
+/** session-end outlives pi: detached child, stdin handed off before we return. */
+function runHookDetached(name: HookName, payload: Payload): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(GBRAIN_BIN, ["hook", name, "--harness", "pi"], {
+        env: hookEnv(),
+        stdio: ["pipe", "ignore", "ignore"],
+        detached: true,
+      });
+      const timer = setTimeout(resolve, SHUTDOWN_HANDOFF_MS);
+      child.on("error", () => { clearTimeout(timer); resolve(); });
+      child.stdin?.on("error", () => {});
+      child.stdin?.end(JSON.stringify(payload), () => { clearTimeout(timer); resolve(); });
+      child.unref();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+/** A transcript_path only for a session file that exists: pi writes it lazily
+ * (nothing lands before the first message), and an in-memory session has none. */
+function transcriptPath(ctx: any): string | undefined {
+  try {
+    const p = ctx.sessionManager?.getSessionFile?.();
+    return typeof p === "string" && p && existsSync(p) ? p : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function basePayload(ctx: any, event: string): Payload {
+  const out: Payload = { hook_event_name: event };
+  try {
+    const id = ctx.sessionManager?.getSessionId?.();
+    if (typeof id === "string" && id) out.session_id = id;
+  } catch { /* fail open */ }
+  const cwd = ctx.cwd ?? ctx.sessionManager?.getCwd?.();
+  if (typeof cwd === "string" && cwd) out.cwd = cwd;
+  const tp = transcriptPath(ctx);
+  if (tp) out.transcript_path = tp;
+  return out;
+}
+
+/** The user-prompt hook prints one JSON object; ignore any stray lines. */
+function parseUserPrompt(stdout: string): { context?: string; systemMessage?: string } {
+  const lines = stdout.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("{"));
+  for (const line of lines.reverse()) {
+    try {
+      const j = JSON.parse(line);
+      const context = j?.hookSpecificOutput?.additionalContext;
+      return {
+        ...(typeof context === "string" && context.trim() ? { context } : {}),
+        ...(typeof j?.systemMessage === "string" ? { systemMessage: j.systemMessage } : {}),
+      };
+    } catch { /* next line */ }
+  }
+  return {};
+}
+
+/** Claude Code SessionStart `source` vocabulary, which gbrain keys packs on. */
+function startSource(reason: unknown): string {
+  if (reason === "resume" || reason === "reload") return "resume";
+  if (reason === "fork") return "fork";
+  if (reason === "new") return "clear";
+  return "startup";
+}
+
+/**
+ * Join the session-start digest and the per-turn context without repeats. On
+ * the first prompt both hooks can return the same block (e.g. the same
+ * "Hot memory" section under the same envelope comment), and a plain join
+ * makes the model read it twice. Splits each part into sections that start at
+ * an HTML-comment line or a markdown heading, and keeps the first copy of each
+ * section (compared whitespace-normalized). Order is otherwise preserved.
+ */
+export function mergeContextParts(parts: string[]): string {
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const part of parts) {
+    const sections: string[][] = [];
+    for (const line of part.split("\n")) {
+      const t = line.trim();
+      const starts = /^<!--.*-->$/.test(t) || /^#{1,6} /.test(t);
+      if (starts || sections.length === 0) sections.push([]);
+      sections[sections.length - 1]!.push(line);
+    }
+    for (const lines of sections) {
+      const text = lines.join("\n").trim();
+      if (!text) continue;
+      const key = text.replace(/\s+/g, " ");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      kept.push(text);
+    }
+  }
+  return kept.join("\n\n");
+}
+
+export default function (pi: ExtensionAPI) {
+  if (process.env.GBRAIN_HOOKS === "0") return;
+
+  let digest: Promise<string | null> | null = null;
+  const last: Partial<Record<HookName, string>> = {};
+  const record = (name: HookName, r: HookResult, note = "") => {
+    last[name] = `${r.ok ? "ok" : "FAILED"} ${r.ms}ms${r.error ? ` (${r.error})` : ""}${note ? ` ${note}` : ""}`;
+  };
+  const startDigest = (ctx: any, source: string) => {
+    digest = runHook("session-start", { ...basePayload(ctx, "SessionStart"), source }, TIMEOUT_MS["session-start"]).then((r) => {
+      record("session-start", r, source === "startup" ? "" : `(${source})`);
+      const text = r.stdout.trim();
+      return r.ok && text ? text : null;
+    });
+  };
+
+  pi.on("session_start", async (event: any, ctx: any) => {
+    // Never block startup: the digest rides the first prompt's context message.
+    startDigest(ctx, startSource(event?.reason));
+  });
+
+  pi.on("before_agent_start", async (event: any, ctx: any) => {
+    const parts: string[] = [];
+    if (digest) {
+      const d = await digest;
+      digest = null;
+      if (d) parts.push(d);
+    }
+    const r = await runHook(
+      "user-prompt",
+      { ...basePayload(ctx, "UserPromptSubmit"), prompt: typeof event?.prompt === "string" ? event.prompt : "" },
+      TIMEOUT_MS["user-prompt"],
+    );
+    const { context, systemMessage } = parseUserPrompt(r.stdout);
+    record("user-prompt", r, context ? `${context.length} chars` : "no context");
+    if (context) parts.push(context);
+    if (systemMessage && ctx.hasUI) ctx.ui.notify(systemMessage, "warning");
+    const content = mergeContextParts(parts).slice(0, MAX_CONTEXT_CHARS);
+    if (!content) return;
+    return { message: { customType: CONTEXT_CUSTOM_TYPE, content, display: false } };
+  });
+
+  pi.on("agent_settled", async (_event: any, ctx: any) => {
+    // Not awaited: the writeback bank and workspace push must never hold the
+    // next prompt. The child is still bounded by its timeout.
+    void runHook("stop", basePayload(ctx, "Stop"), TIMEOUT_MS.stop).then((r) => record("stop", r));
+  });
+
+  pi.on("session_before_compact", async (event: any, ctx: any) => {
+    const trigger = event?.reason === "manual" ? "manual" : "auto";
+    const r = await runHook(
+      "compact",
+      { ...basePayload(ctx, "PreCompact"), trigger, custom_instructions: event?.customInstructions ?? "" },
+      TIMEOUT_MS.compact,
+    );
+    record("compact", r);
+  });
+
+  pi.on("session_compact", async (_event: any, ctx: any) => {
+    startDigest(ctx, "compact");
+  });
+
+  pi.on("session_shutdown", async (event: any, ctx: any) => {
+    // A reload keeps the same session running; every other reason ends it.
+    if (event?.reason === "reload") return;
+    await runHookDetached("session-end", { ...basePayload(ctx, "SessionEnd"), reason: String(event?.reason ?? "other") });
+  });
+
+  pi.registerCommand("gbrain-hooks", {
+    description: "Show the last outcome of each gbrain hook in this session",
+    handler: async (_args: string, ctx: any) => {
+      const names: HookName[] = ["session-start", "user-prompt", "stop", "compact"];
+      ctx.ui.notify([`gbrain: ${GBRAIN_BIN}`, ...names.map((h) => `${h}: ${last[h] ?? "not run yet"}`)].join("\n"), "info");
+    },
+  });
+}
