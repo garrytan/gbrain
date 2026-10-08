@@ -34,6 +34,8 @@ describeE2E('E2E: shared maintenance lease for source cycles (#6242)', () => {
   }, 60_000);
 
   afterAll(async () => {
+    // The source row would outlive its temp root and fail a later `gbrain init` in this shard (local_conflict).
+    await getConn().unsafe(`DELETE FROM sources WHERE id = 'beta'`);
     await teardownDB();
     rmSync(brainDir, { recursive: true, force: true });
     rmSync(otherDir, { recursive: true, force: true });
