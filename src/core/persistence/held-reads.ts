@@ -76,7 +76,7 @@ export function readHeldPages(engine: Exec, pageIds: number[], request?: object)
     const rows = await engine.executeRaw<{ record: GitHoldRecord; revision: string | null }>(`SELECT h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
       FROM op_checkpoints h
       JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-      LEFT JOIN pages p ON p.id::text=h.completed_keys->0->>'page_id'
+      LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
       WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[])
       ORDER BY h.fingerprint`, [GIT_HOLD_OP, ids.map(String)]);
     const out = new Map<number, HeldPage>();

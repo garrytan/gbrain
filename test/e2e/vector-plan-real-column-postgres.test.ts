@@ -8,9 +8,10 @@
  *   1. precondition: the pre-fix guard placement (the legacy-guard variant,
  *      byte-for-byte the guard 3a284ae emitted) does NOT use the index on this
  *      fixture, so an undersized fixture fails loudly instead of passing;
- *   2. the statement searchVector emits now uses idx_chunks_embedding, through
- *      the same tx.unsafe path, scoped read transaction and scan settings
- *      (PostgresEngine.explainVectorSearch), across a filter matrix incl. RLS;
+ *   2. the statement searchVector emits first (the index walk) uses
+ *      idx_chunks_embedding, through the same tx.unsafe path, scoped read
+ *      transaction and scan settings (PostgresEngine.explainVectorSearch),
+ *      across a filter matrix incl. remote readers, wide windows and RLS;
  *   3. stale-heavy pools escalate or fall back exactly instead of underfilling;
  *   4. doctor `vector_plan` reports each outcome.
  *
@@ -139,7 +140,7 @@ function axis(d: number): Float32Array {
         get(target, key) {
           if (key !== 'unsafe') return Reflect.get(target, key);
           return (sql: string, params: unknown[]) => {
-            if (sql.includes('WITH hnsw_candidates')) statements.push({ sql, params: [...params] });
+            if (sql.includes('WITH hnsw_candidates') || sql.includes('WITH ann AS MATERIALIZED')) statements.push({ sql, params: [...params] });
             return target.unsafe(sql, params);
           };
         },
@@ -222,7 +223,7 @@ function axis(d: number): Float32Array {
     const [explained, searched] = statements.slice(start);
     expect(explained.sql).toBe(`EXPLAIN (FORMAT JSON) ${searched.sql}`);
     expect(explained.params).toEqual(searched.params);
-    expect(searched.sql).toBe(buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 20, offset: 0, opts: { embeddingColumn: column } }).sql);
+    expect(searched.sql).toBe(buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 20, offset: 0, opts: { embeddingColumn: column } }).indexWalkSql!);
 
     // Diagnostic only: the generic plan (no parameter values), PG16+.
     const generic = await engine.executeRaw(`EXPLAIN (GENERIC_PLAN, FORMAT JSON) ${searched.sql}`).catch(error => String(error));
@@ -235,6 +236,9 @@ function axis(d: number): Float32Array {
       ['sourceIds covering most rows', { sourceIds: ['default', 'side'] }],
       ['common type', { type: 'note' }],
       ['wide date range', { afterDate: '2000-01-01', beforeDate: '2100-01-01' }],
+      ['remote reader (private-page rule)', { excludePrivate: true }],
+      ['remote reader, 50-row limit', { excludePrivate: true, limit: 50 }],
+      ['200-row limit', { limit: 200 }],
     ];
     for (const [label, opts] of matrix) {
       const plan = await engine.explainVectorSearch(query, { limit: 20, embeddingColumn: column, ...opts });

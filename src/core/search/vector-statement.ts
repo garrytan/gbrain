@@ -17,6 +17,23 @@
  * `candidate_pool` counts raw candidate rows (a full raw window escalates, a
  * short one means the index ran dry); `eligible_pool` counts the fresh ones
  * and is what `hasMore` compares against its guarded count.
+ *
+ * `indexWalkSql` (relaxed variant only) runs first. Even with freshness out
+ * of the CTE, the joined statement's plan sits on a cost knife edge: TOASTed
+ * vectors make a sequential scan look cheap, the HNSW estimate grows with
+ * `hnsw.ef_search` (the window), and the private-page rule's correlated
+ * subplans price every page lookup so high that the planner filters all
+ * pages up front. A 25k-chunk brain flips to a full scan, sort and
+ * nested-loop join at a 50-row limit or on any remote read. The index walk
+ * orders `content_chunks` alone (`ann`, chunk-level filters only, twice the
+ * window), then joins pages and sources by key and applies every page filter
+ * to those rows, keeping the nearest `innerLimit` eligible ones: the same set
+ * the joined statement selects whenever that many survive. Callers run it
+ * with sorting disabled so the HNSW scan is the only ordered path, accept it
+ * when its window is full, and otherwise run the joined statement as before,
+ * whose plans stay with the planner for selective filters. A type or date
+ * filter skips the walk: it is an explicit narrowing that usually leaves the
+ * window short, so the walk would only add its cost.
  */
 import type { SearchOpts } from '../types.ts';
 import { hnswIndexExpected } from '../vector-index.ts';
@@ -49,7 +66,18 @@ export interface VectorSearchStatement {
   indexed: boolean;
   /** True when freshness moved out of the candidate CTE (indexed `embedding`, legacy guard off). */
   relaxed: boolean;
+  /** Index-walk statement (relaxed variant without a type or date filter), same parameters as `sql`; trusted when `candidate_pool` reaches the window. */
+  indexWalkSql?: string;
 }
+
+/** Raw rows the index walk orders per window slot, so page filters can drop some and still fill the window. */
+export const INDEX_WALK_OVERFETCH = 2;
+
+/**
+ * Session settings for the index-walk attempt: with sorting disabled, the
+ * HNSW scan is the only path that delivers `ann` in distance order.
+ */
+export const INDEX_WALK_SETTINGS: Readonly<Record<string, string>> = { enable_sort: 'off' };
 
 export function buildVectorSearchStatement(input: VectorSearchStatementInput): VectorSearchStatement {
   const { dialect, limit, offset, opts } = input;
@@ -87,10 +115,16 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
   // candidate set before re-rank. Array form wins over scalar.
   if (opts?.sourceIds && opts.sourceIds.length > 0) filters.push(`AND p.source_id = ANY(${bind(opts.sourceIds)}::text[])`);
   else if (opts?.sourceId) filters.push(`AND p.source_id = ${bind(opts.sourceId)}`);
+  // The index walk applies chunk-level filters while it orders the index and page-level ones after the key joins.
+  const chunkFilters = filters.filter(sql => sql.startsWith('AND cc.'));
+  const pageFilters = filters.filter(sql => !sql.startsWith('AND cc.'));
 
   let modelParam: string | undefined;
   if (resolvedCol.name === 'embedding') modelParam = bind(resolvedCol.embeddingModel || null);
   const relaxed = indexed && modelParam !== undefined && opts?.vectorLegacyGuard !== true;
+  // A type or date filter is the caller narrowing the search; the walk would
+  // usually come back short, so those keep the joined statement alone.
+  const narrowed = !!(opts?.type || opts?.types?.length || opts?.afterDate || opts?.beforeDate);
   const preMigration = modelParam ? `(${modelParam}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state'))` : '';
   const hashCurrent = `(cc.embedded_text_hash=md5(cc.chunk_text) OR cc.embedded_text_hash IS NULL)`;
   const guardedGeneration = modelParam ? `AND ((cc.model=${modelParam} AND ${hashCurrent})
@@ -119,25 +153,57 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
           ${visibilityClause}`;
   const freshFilter = `${modelParam}::text IS NULL OR hash_current`;
 
-  const statement = (exact: boolean) => {
-    const relax = relaxed && !exact;
-    return `
-      WITH hnsw_candidates AS (
-        SELECT
-          p.slug, p.id as page_id, p.title, p.type, p.source_id,${dialect === 'pglite' ? ' p.updated_at,' : ''}
+  const candidateColumns = `p.slug, p.id as page_id, p.title, p.type, p.source_id,${dialect === 'pglite' ? ' p.updated_at,' : ''}
           p.effective_date, p.effective_date_source,
           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
             THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
             THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-          (${unverifiedExtractionFragment('p')}) AS unverified_stub,${relax ? `
+          (${unverifiedExtractionFragment('p')}) AS unverified_stub,`;
+
+  const joinedCandidates = (exact: boolean) => {
+    const relax = relaxed && !exact;
+    return `
+      WITH hnsw_candidates AS (
+        SELECT
+          ${candidateColumns}${relax ? `
           ${hashCurrent} AS hash_current,` : ''}
           1 - (cc.${col} <=> ${castSql}) AS raw_score
         ${candidateFrom(relax ? relaxedGeneration : guardedGeneration)}
         ORDER BY ${exact ? '(' : ''}cc.${col} <=> ${castSql}${exact ? ') + 0' : ''}
         LIMIT ${innerLimitParam}
+      ),`;
+  };
+
+  const indexWalkCandidates = `
+      WITH ann AS MATERIALIZED (
+        SELECT cc.id, cc.${col} <=> ${castSql} AS distance
+        FROM content_chunks cc
+        WHERE cc.${col} IS NOT NULL ${modalityFilter}
+          ${chunkFilters.join('\n          ')}
+          ${relaxedGeneration}
+        ORDER BY cc.${col} <=> ${castSql}
+        LIMIT ${innerLimitParam}::int * ${INDEX_WALK_OVERFETCH}
       ),
+      hnsw_candidates AS (
+        SELECT
+          ${candidateColumns}
+          ${hashCurrent} AS hash_current,
+          1 - ann.distance AS raw_score
+        FROM ann
+        JOIN content_chunks cc ON cc.id = ann.id
+        JOIN pages p ON p.id = cc.page_id
+        CROSS JOIN LATERAL (SELECT src.archived FROM sources src WHERE src.id = p.source_id OFFSET 0) s
+        WHERE true
+          ${pageFilters.join('\n          ')}
+          ${hardExcludeClause}
+          ${visibilityClause}
+        ORDER BY ann.distance, ann.id
+        LIMIT ${innerLimitParam}::int
+      ),`;
+
+  const statement = (candidates: string, relax: boolean) => `${candidates}
       -- score computed as a select-list expr (NOT in the inner ORDER BY, which
       -- must stay pure-distance so the HNSW index is usable).
       scored AS (
@@ -170,11 +236,10 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
       LEFT JOIN page_results ON true
       ORDER BY score DESC NULLS LAST, page_id ASC, chunk_id ASC
     `;
-  };
 
   return {
-    sql: statement(false),
-    exactSql: statement(true),
+    sql: statement(joinedCandidates(false), relaxed),
+    exactSql: statement(joinedCandidates(true), false),
     hasMoreSql: `SELECT count(*)::int AS eligible FROM (
             SELECT 1 ${candidateFrom(guardedGeneration)} AND $1::text IS NOT NULL LIMIT $${innerLimitIdx + 1}
           ) eligible`,
@@ -183,5 +248,6 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
     innerLimit,
     indexed,
     relaxed,
+    ...(relaxed && !narrowed ? { indexWalkSql: statement(indexWalkCandidates, true) } : {}),
   };
 }

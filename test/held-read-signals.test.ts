@@ -21,7 +21,7 @@ import { performSync } from '../src/commands/sync.ts';
 import { NOTICE_CODES } from '../src/core/error-registry.ts';
 import { PER_CALL_NOTICE_CODES } from '../src/core/notice-ledger.ts';
 import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
-import { readHeldCoverage } from '../src/core/persistence/held-reads.ts';
+import { readHeldCoverage, readHeldPages } from '../src/core/persistence/held-reads.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -109,6 +109,30 @@ async function countHoldReads<T>(run: () => Promise<T>): Promise<{ value: T; rea
   try { return { value: await run(), reads }; }
   finally { delete (target as Partial<typeof target>).executeRaw; }
 }
+
+test('the held-page read joins each hold to its page by key, not by a text cast of every page id', () => eachEngine(async () => {
+  const s = await heldSource();
+  const [page] = await engine.executeRaw<{ id: number; revision: string }>(`SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND slug='notes/a'`, [s.id]);
+  const target = engine as unknown as { executeRaw: (this: unknown, sql: string, params?: unknown[]) => Promise<unknown> };
+  const inherited = Object.getPrototypeOf(engine).executeRaw as typeof target.executeRaw;
+  let read: { sql: string; params: unknown[] } | undefined;
+  target.executeRaw = function (sql, params) {
+    if (Array.isArray(params) && params[0] === 'sync-hold' && sql.includes('LEFT JOIN pages p')) read = { sql, params };
+    return inherited.call(this, sql, params);
+  };
+  let held: Awaited<ReturnType<typeof readHeldPages>>;
+  try { held = await readHeldPages(engine, [page.id, page.id + 100_000]); }
+  finally { delete (target as Partial<typeof target>).executeRaw; }
+  expect([...held.keys()]).toEqual([page.id]);
+  expect(held.get(page.id)).toMatchObject({ revision: page.revision, record: { path: 'notes/a.md', page_id: page.id } });
+  const plan = await engine.transaction(async tx => {
+    await tx.executeRaw('SET LOCAL enable_seqscan = off');
+    return tx.executeRaw<Record<string, string>>(`EXPLAIN ${read!.sql}`, read!.params);
+  });
+  const text = plan.map(row => Object.values(row)[0]).join('\n');
+  expect(text).toContain('pages_pkey');
+  expect(text).not.toMatch(/Seq Scan on pages/);
+}), 120_000);
 
 test('get_page carries file_held with the path for local callers and without it for remote ones; it clears once the file imports', () => eachEngine(async () => {
   const s = await heldSource();

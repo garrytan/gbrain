@@ -96,6 +96,49 @@ describe('vector statement freshness placement (#5824)', () => {
   });
 });
 
+describe('vector index walk statement', () => {
+  /** The `ann` CTE: the only part that touches the HNSW index. */
+  function annCte(sql: string): string {
+    return sql.slice(sql.indexOf('WITH ann AS MATERIALIZED ('), sql.indexOf('hnsw_candidates AS ('));
+  }
+
+  test('orders content_chunks alone and applies page filters and visibility after the key joins', () => {
+    const stmt = build({ exclude_slugs: ['x'], sourceIds: ['a'], language: 'typescript', detail: 'low', excludePrivate: true });
+    const walk = stmt.indexWalkSql!;
+    const ann = annCte(walk);
+    expect(ann).toContain('FROM content_chunks cc');
+    expect(ann).not.toMatch(/JOIN|pages|sources|p\./);
+    expect(ann).toContain(`AND cc.chunk_source = 'compiled_truth'`);
+    expect(ann).toContain('AND cc.language = $3');
+    expect(ann).toContain('AND (cc.model=$5 OR');
+    expect(ann).not.toContain(MD5);
+    expect(ann).toContain(`LIMIT $${stmt.innerLimitIdx + 1}::int * 2`);
+    const candidates = walk.slice(walk.indexOf('hnsw_candidates AS ('), walk.indexOf('scored AS ('));
+    expect(candidates).toContain('JOIN content_chunks cc ON cc.id = ann.id');
+    expect(candidates).toContain('JOIN pages p ON p.id = cc.page_id');
+    expect(candidates).toContain('AND p.slug != ALL($2::text[])');
+    expect(candidates).toContain('AND p.source_id = ANY($4::text[])');
+    expect(candidates).toContain(`COALESCE(p.frontmatter->>'visibility'`);
+    expect(candidates).toContain('ORDER BY ann.distance, ann.id');
+    expect(candidates).toContain(`LIMIT $${stmt.innerLimitIdx + 1}::int`);
+    expect(scoredCte(walk)).toContain('WHERE $5::text IS NULL OR hash_current');
+  });
+
+  test('exists only for the relaxed variant without a type or date filter, and binds the same parameters', () => {
+    expect(build({ vectorLegacyGuard: true }).indexWalkSql).toBeUndefined();
+    expect(build({ embeddingColumn: wideColumn }).indexWalkSql).toBeUndefined();
+    for (const narrowing of [{ type: 'note' }, { types: ['note'] }, { afterDate: '2026-01-01' }, { beforeDate: '2026-01-01' }]) {
+      expect(build(narrowing).indexWalkSql).toBeUndefined();
+    }
+    const pg = build({ excludePrivate: true });
+    const lite = build({ excludePrivate: true }, 'pglite');
+    const placeholders = (sql: string) => [...new Set(sql.match(/\$\d+/g))].sort();
+    expect(placeholders(pg.indexWalkSql!)).toEqual(placeholders(pg.sql));
+    expect(lite.indexWalkSql!.replace(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale'))
+      .toBe(pg.indexWalkSql!);
+  });
+});
+
 describe('vector legacy guard setting', () => {
   afterEach(() => _resetVectorLegacyGuardForTests());
 

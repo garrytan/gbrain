@@ -10,6 +10,47 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.127.0] - 2026-10-09
+
+**Postgres search, list, page and backlink reads stop taking the slow plan: vector search walks the vector index first, remote reads stop compiling every statement before running it, and `get_page` looks up the exact page before trying aliases.**
+
+Three plan problems showed up while profiling synthetic brains shaped like a real 5,000-page brain. First, vector search often skipped the vector index. On a 25,000-chunk brain it read and sorted every chunk instead, at a 50-result limit and on some remote reads. Second, the rule that hides private pages looked so expensive to Postgres that it compiled any statement using it to machine code first, at 40 to 570 ms a call, then ran it in about one. That rule covers listing pages, backlink counts and the search legs. Third, the hold lookup that `get_page` and every search run could only join pages by text-casting every page id. Fourth, `get_page` matched the page or any alias in one statement, which scans the source's pages. Results don't change: the same rows come back in the same order.
+
+### What you'd see
+
+Warm reads on a 4 vCPU box, Postgres 16 + pgvector 0.8.7, synthetic brains (5,001 pages / 25,331 chunks and 50,010 pages / 248,802 chunks), p50 ms over 25 calls. Recall is measured against an exact scan:
+
+| Read | 5k before | 5k after | 50k before | 50k after |
+|---|---|---|---|---|
+| Vector search, 20 results | 177 (recall 0.90) | 24 (0.97) | 23 (0.53) | 31 (0.67) |
+| Vector search, 50 results | 193 (1.00) | 37 (0.995) | 42 (0.63) | 57 (0.79) |
+| Vector search, remote reader, 50 results | 93 (1.00) | 33 (0.995) | 52 (0.63) | 58 (0.79) |
+| Vector search, remote reader, type filter | 239 | 256 | 8,091 (2.8 of 20 results) | 1,064 (20 of 20) |
+| `list_pages` over MCP | 70 | 11 | 52 | 12 |
+| `get_page` over MCP | 18 | 12 | 15 | 9 |
+| Backlink count statement (search and query) | 265 | 4 | 571 | 8 |
+| `search` over MCP (includes the embedding call) | 880 | 668 | 866 | 715 |
+
+### What to watch for
+
+- On the 50k brain the planner already picked the vector index, and the walk reads twice the window to keep recall, so vector-only searches cost 6 to 15 ms more there while recall rises 14 to 16 points.
+- A vector search scoped to a small source (a tenth of a percent of the brain) costs about 25 ms more: the walk comes back short and the search falls back to the previous statement, with the same results. Type and date filters skip the walk.
+
+### Itemized changes
+
+- **Vector index walk.** `buildVectorSearchStatement` adds `indexWalkSql`. Its `ann` CTE orders `content_chunks` alone with only the chunk-level filters (modality, model, `detail`, language, symbol kind) over twice the candidate window. It then joins pages and sources by key and applies every page filter, visibility and the private-page rule to those rows, keeping the nearest `innerLimit`. Both engines run it first with `enable_sort = off` (the HNSW scan is then the only ordered path) and `hnsw.ef_search` sized for the doubled window. They accept it when the window is full and fills the limit; otherwise they run the joined statement and its escalation exactly as before. Type and date filters, the legacy guard and non-indexed columns skip it. Doctor `vector_plan` and `explainVectorSearch` explain the walk.
+- **Private-page rule.** `privatePagesFilterFragment` matches `derived_from` slugs with `= ANY(ARRAY(...))` instead of `IN (SELECT ... jsonb_array_elements_text(...))`. The rows are the same, but the planner stopped pricing a 100-row semi-join per page, which kept `list_pages`, backlink counts and remote search legs past `jit_above_cost`. No read needs a JIT-off wrapper.
+- **Held-page read.** `readHeldPages` joins `pages` on `p.id = (page_id)::int`, so the page lookup is a primary-key probe whatever the small-table statistics say.
+- **Page snapshot.** An alias-resolving `readPageSnapshot` (`get_page`, `fetch`) runs the exact-slug statement first and the `slug = $1 OR EXISTS (alias)` statement only on a miss: an exact match outranks every alias match there, so the row is the same. An ambiguity check (`requireUnambiguous`) still runs the alias statement alone. The statement drops from 3.8 to 0.7 ms at 5k and 1.8 to 0.8 ms at 50k.
+
+### For contributors
+
+- `test/search/vector-index-walk.test.ts` (PGLite) checks that a full walk window returns the joined statement's rows in the same order across a filter matrix (private-page rules, archived and quarantined pages, deleted pages, stale hashes). It also checks that a short window falls back to the joined result. `test/search/vector-statement.test.ts` pins the walk's shape.
+- `test/e2e/private-visibility-plan-postgres.test.ts` proves both spellings of the private-page rule hide exactly the same pages, and that the planner's cost per page now stays under `jit_above_cost / 500`. A precondition fails if the old spelling would also pass.
+- `test/e2e/vector-plan-real-column-postgres.test.ts` checks the walk uses `idx_chunks_embedding` for remote readers and 50- and 200-result windows. `test/held-read-signals.test.ts` checks the held-page read probes `pages_pkey` (it fails on the text-cast join). `test/page-snapshot-exact-first.test.ts` covers exact hits, alias fallback, an exact page in another source, deleted and private exact pages, the ambiguity check and a miss.
+- `test/bounded-child-exec.test.ts`: the SIGTERM test installs the child's trap before it writes the lockfile and waits for the lockfile instead of sleeping 200 ms; on a loaded runner the child had not started yet (forced probe: delaying the child 0.5 s fails the old test and passes the new one).
+- `test/no-allow-protected-flag.test.ts` skips a file or directory that another test deletes while the guard walks `test/` (ENOENT), instead of failing the run (forced probe: a dangling `test/.probe-vanished.md` fails the old guard and passes the new one).
+
 ## [0.60.126.0] - 2026-10-09
 
 **When you ask your agent about a person or a company, the brain now shows it the newest mails and notes that mention them, so a later correction reaches the agent before it answers.**
