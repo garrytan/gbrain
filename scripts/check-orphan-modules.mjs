@@ -55,6 +55,7 @@ const ALLOWLIST = new Map([
 const PERMITTED_TEST_ONLY = [
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/diagnostics.ts', reason: 'script-reachable' },
+  { path: 'src/eval/longmemeval/evidence-brief.ts', reason: 'held: eval-only wave 1 brief builder (10x memory advantage plan A3), loaded by path from gbrain-evals eval/runner/pilot; product wiring is plan item A8, conditional on the A5 pilot' },
   { path: 'src/eval/longmemeval/evidence-packet.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/locomo.ts', reason: 'script-reachable' },
   { path: 'src/eval/shared/autocut-replay.ts', reason: 'script-reachable' },

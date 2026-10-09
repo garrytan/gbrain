@@ -12,6 +12,7 @@ import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile } from '../../src/core/grants/service.ts';
 import { checkGrantNewOps } from '../../src/commands/doctor/checks/grant-new-ops.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
+import { NOTICE_PREFIX } from '../../src/core/agent-output.ts';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -142,18 +143,26 @@ suite('client capability grants — Postgres and admin HTTP', () => {
     expect(response.status).toBe(200);
     return (await response.json() as any).access_token;
   };
-  const callTool = async (token: string, name: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string }> => {
+  const callTool = async (token: string, name: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string; blocks: string[] }> => {
     const response = await fetch(base + '/mcp', { method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
     const raw = await response.text();
     const data = raw.split('\n').find(line => line.startsWith('data:'));
     const rpc = JSON.parse(data ? data.slice(5) : raw);
-    if (rpc.error) return { isError: true, text: JSON.stringify(rpc.error) };
-    return { isError: rpc.result?.isError === true, text: (rpc.result?.content ?? []).map((b: any) => b?.text ?? '').join('\n') };
+    if (rpc.error) return { isError: true, text: JSON.stringify(rpc.error), blocks: [] };
+    const blocks: string[] = (rpc.result?.content ?? []).map((b: any) => b?.text ?? '');
+    return { isError: rpc.result?.isError === true, text: blocks.join('\n'), blocks };
   };
   const onePage = (slug: string) => ({ pages: [{ slug, content: `---\ntitle: ${slug}\n---\nD4 bulk write fixture.\n` }], request_id: randomUUID() });
-  const whoamiDiagnosis = async (token: string) => JSON.parse((await callTool(token, 'whoami', {})).text).grant_diagnosis;
+  // A success result may carry prefixed notice blocks (for example the one-time behavior_changes disclosure, which a
+  // brain whose sources predate the fresh-brain grace receives on a client's first admitted call); the op's own
+  // result is the one block that is not a notice.
+  const whoamiDiagnosis = async (token: string) => {
+    const results = (await callTool(token, 'whoami', {})).blocks.filter(b => !b.startsWith(NOTICE_PREFIX));
+    expect(results).toHaveLength(1);
+    return JSON.parse(results[0]).grant_diagnosis;
+  };
 
   test('D4: a fresh memory-writer registered through the admin API calls put_pages', async () => {
     const registration = await post('/admin/api/register-client', { name: 'd4-writer-' + randomUUID(), profile: 'memory-writer', sourceId: 'default' });

@@ -50,6 +50,8 @@ beforeAll(async()=>{
   await withEnv(env,async()=>{
     await setup.connect(config);await setup.initSchema();
     await setup.setConfig('search.mcp_keyword_only','true');
+    // #6340 holds a pinned-worktree conflict when holds are on; `sync.holds=fail` keeps the failure receipt the diagnostics test below is about.
+    await setup.setConfig('sync.holds','fail');
     await setup.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES('workspace','workspace',$1,'{}')",[root]);
     const code = 'export function residentExample() { return 4; }\n';
     writeFileSync(join(root,'example.ts'),code);

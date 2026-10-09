@@ -2426,7 +2426,9 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   // deadline even when the main event loop is starved by a synchronous spin —
   // the only thing that stops the cron orphan-pileup. Disposed in the finally.
   let syncWatchdog: { dispose(): void } | null = null;
-  if (command === 'sync') {
+  // #6340: `sync status` / `sync unblock` read and schedule on the brain's own engine: no watchdog, no serve delegation (a delegate would refuse the subcommand).
+  const syncOperator = command === 'sync' && (args[0] === 'status' || args[0] === 'unblock');
+  if (command === 'sync' && !syncOperator) {
     try {
       const { resolveSyncHardDeadline } = await import('./commands/sync.ts');
       const res = resolveSyncHardDeadline(args, {
@@ -2452,7 +2454,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   // LiveServeLockError — instead the sync runs INSIDE the serve over its IPC
   // socket (commands/sync-delegate.ts). Handled === delegated or politely
   // refused (exit verdict set inside); false falls through unchanged.
-  if (command === 'sync') {
+  if (command === 'sync' && !syncOperator) {
     const cfgSync = loadConfig();
     if (await (await import('./commands/sync-persistence-delegate.ts')).maybeDelegateSyncToPersistence(cfgSync, args)) return null;
     if (cfgSync?.engine === 'pglite' && cfgSync.database_path && !cfgSync.database_url) {

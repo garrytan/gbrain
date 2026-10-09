@@ -156,11 +156,14 @@ test('a sliced run that has not reached a held file leaves its hold untouched; a
   const partial = await performManagedSync(engine, { sourceId: s.id, noPull: true, noEmbed: true, noExtract: true }, { maxPages: 1, maxMs: 60_000 });
   expect(partial).toMatchObject({ status: 'partial', reason: 'writer_yield', holds_pending_screen: true });
   expect(await s.holdRows()).toEqual(before);
-  // The committed fix is admitted, but newer uncommitted working-tree bytes make its publication refuse: the hold stays.
+  // The committed fix is admitted, but newer uncommitted working-tree bytes make its publication refuse. #6340: the refusal
+  // becomes a `worktree_dirty` hold of the same path (the run finishes; the frontmatter hold is replaced, never cleared).
   s.write('notes/z.md', note('Z newer uncommitted edit'));
-  const blocked = await s.sync();
-  expect(blocked.status).toBe('blocked_by_failures');
-  expect(await s.holdRows()).toEqual(before);
+  const held = await s.sync();
+  expect(held).toMatchObject({ status: 'synced', held: [{ path: 'notes/z.md', code: 'worktree_dirty' }] });
+  const code = (rows: Array<{ completed_keys: unknown }>) => rows.map(row => (row.completed_keys as Array<{ code?: string }>)[0]?.code).filter(Boolean);
+  expect(code(before)).toEqual(['invalid_frontmatter']);
+  expect(code(await s.holdRows())).toEqual(['worktree_dirty']);
 }), 180_000);
 
 test('renamed to a broken file keeps the old page, a later fix moves it with its id, and a full walk never deletes it meanwhile', () => each(async engine => {
@@ -300,7 +303,9 @@ test('a flagless sync converts a --no-embed cursor with its stored options, and 
   await t.sync();
   t.write('notes/z.md', note('Z committed')); commit(t.root, 'change z');
   t.write('notes/z.md', note('Z newer uncommitted edit'));
-  expect((await t.sync()).status).toBe('blocked_by_failures');
+  // #6340 holds this refusal when holds are on; `sync.holds=fail` leaves the blocked cursor the loop guard is about.
+  await engine.setConfig('sync.holds', 'fail');
+  try { expect((await t.sync()).status).toBe('blocked_by_failures'); } finally { await engine.executeRaw("DELETE FROM config WHERE key='sync.holds'"); }
   await engine.executeRaw("UPDATE persistence_requests SET error_code='invalid_params',error_message='Invalid YAML frontmatter: bad indentation of a mapping entry (3:1)' WHERE source_id=$1 AND state IN ('failed','conflict')", [t.id]);
   await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,pending,converted}','true'::jsonb)
     WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1`, [t.id]);

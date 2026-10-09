@@ -14,7 +14,7 @@ import { acquireWorktree } from '../src/core/persistence/ownership.ts';
 import { admission, assertCommittedSnapshot, assertConservation, fixtures, initializeFixtures, prepared, selectFixtureHost, type HarnessConfig } from '../scripts/persistence/harness.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { waitFor } from './helpers/wait-for.ts';
-import { awaitWrite, disposePersistenceConsumer, registerMutationPreparer, startPersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
+import { awaitWrite, disposePersistenceConsumer, registerMutationPreparer, startPersistenceConsumer, waitForWrite, WRITE_POLL_START_MS } from '../src/core/persistence/service.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-consumer-scheduling-'));
 const config: HarnessConfig = {
@@ -882,6 +882,28 @@ test('a write this process publishes resolves from the consumer handoff with zer
     expect(waited.row).toEqual((await getWriteRequestById(engine, row.id))!);
     expect(waited.row.state).toBe('committed');
     expect(counts).toEqual(before);
+  } finally { await disposePersistenceConsumer(proxy); }
+}), 15_000);
+
+test('a waiter that registers after this process settled its write reads at once instead of sleeping through the first poll', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  registerMutationPreparer('test_wait_settled_first', async (_e, row) => prepared(row, sources));
+  let firstRead: number | undefined;
+  const { proxy } = countingProxy(engine, sql => { if (sql === WRITE_PROGRESS_SQL) firstRead ??= performance.now(); });
+  const consumer = startPersistenceConsumer(proxy, { engine: 'pglite' });
+  try {
+    // Settled before anyone waits, as when a caller admits a window of writes and then waits on each in turn.
+    const row = await admitWrite(engine, admission(config, sources[0], 'wait-settled-first', 'settled body', 0, { operation: 'test_wait_settled_first' }));
+    consumer.wake(true);
+    await waitFor(async () => (await getWriteRequestById(engine, row.id))?.state === 'committed', { timeoutMs: 10_000, label: 'consumer settles the write' });
+    // Only the waiter runs from here: the wait's own consumer wake must not occupy the event loop.
+    (consumer as unknown as { doTick(): Promise<void> }).doTick = async () => {};
+    firstRead = undefined;
+    const started = performance.now();
+    const waited = await awaitWrite(proxy, row, { engine: 'pglite' }, { waitMs: 10_000 });
+    expect(waited.kind).toBe('terminal');
+    expect(waited.row.state).toBe('committed');
+    expect(firstRead! - started).toBeLessThan(WRITE_POLL_START_MS);
   } finally { await disposePersistenceConsumer(proxy); }
 }), 15_000);
 

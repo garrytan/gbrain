@@ -162,6 +162,18 @@ Options:
                        backlog on managed Postgres).
   --yes                Accept any interactive prompts (CI / non-TTY).
 
+Subcommands:
+  gbrain sync status --source <id> [--json]
+                       Where a managed catch-up stands: cursor, pages
+                       committed in the last 10 minutes, each hold and the
+                       last error with class / safe_actions / needs_human,
+                       and the next action (for an operator agent's loop).
+  gbrain sync unblock --source <id> [--apply] [--json]
+                       Performs the safe action for every hold (re-screens a
+                       held file whose edit is now committed, retries a
+                       stalled preparation) and refuses the rest by name.
+                       Runbook: docs/guides/sync-unblock-runbook.md
+
 See also:
   gbrain embed --stale    Re-embed all stale chunks (post --no-embed).
   gbrain doctor           Diagnose dim mismatches and other sync issues.

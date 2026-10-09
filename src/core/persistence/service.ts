@@ -29,9 +29,22 @@ const services = new WeakMap<BrainEngine, Service>();
 type ProgressRead = { row: WriteRequestProgress | null } | { error: unknown } | { cancelled: true };
 const receiptReads = new WeakMap<BrainEngine, Map<string, { read: Promise<ProgressRead>; abort: AbortController }>>();
 const settledWaiters = new WeakMap<BrainEngine, Map<string, Set<(row: WriteRequest) => void>>>();
+/**
+ * Requests this process's consumer settled most recently. A waiter that registers after its write already
+ * settled (a caller that admits a window, then waits on each in turn) missed the handoff, so it reads at once
+ * instead of sleeping through the first poll.
+ */
+const recentlySettled = new WeakMap<BrainEngine, Set<string>>();
+const RECENTLY_SETTLED_IDS = 1024;
 /** #6007: when this process last settled requests, for pending retry_after_ms estimates. */
 const settlements = new WeakMap<BrainEngine, number[]>();
 const SETTLEMENT_SAMPLES = 21;
+function rememberSettled(engine: BrainEngine, id: string): void {
+  let ids = recentlySettled.get(engine);
+  if (!ids) { ids = new Set(); recentlySettled.set(engine, ids); }
+  ids.add(id);
+  if (ids.size > RECENTLY_SETTLED_IDS) ids.delete(ids.values().next().value!);
+}
 function recordSettlement(engine: BrainEngine): void {
   let times = settlements.get(engine);
   if (!times) { times = []; settlements.set(engine, times); }
@@ -106,7 +119,7 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     return prior.consumer;
   }
   const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,
-    { onSettled: row => { recordSettlement(engine); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
+    { onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
   const kind = claimOwnerKind();
   const service: Service = kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres'
     ? { consumer: new WaiterOnlyConsumer(engine, config, full, { kind, hostId: localHostId(), pool: () => enginePoolStats(engine) }), stopping: false }
@@ -184,7 +197,7 @@ export function assertPersistenceAccepting(engine: BrainEngine): void {
 /** DX-A3: pending heads that need intervention, not more waiting. */
 export const BLOCKED_WRITE_REASONS = ['recovery_required', 'owner_unavailable', 'unexpected_file_bytes', 'unexpected_staging_bytes'] as const;
 const FATAL_READ_REASONS: readonly PgAccessReason[] = ['auth_failed', 'permission_denied', 'tenant_not_found', 'db_missing', 'schema_missing', 'storage_corrupt'];
-/** CEO-A7: the first poll waits this long (at most half the wait) for an in-process handoff; later polls back off from 50 to 250 ms. */
+/** CEO-A7: the first poll waits this long (at most half the wait) for an in-process handoff, or not at all when this process already settled the request; later polls back off from 50 to 250 ms. */
 export const WRITE_POLL_START_MS = 200;
 export type WriteWait =
   | { kind: 'terminal' | 'pending'; row: WriteRequest }
@@ -216,7 +229,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
   consumer.wake(true);
   const waitMs = opts.waitMs ?? 5000;
   const deadline = performance.now() + waitMs;
-  const firstPoll = Math.min(WRITE_POLL_START_MS, waitMs / 2);
+  const firstPoll = recentlySettled.get(engine)?.has(id) ? 0 : Math.min(WRITE_POLL_START_MS, waitMs / 2);
   let delay = firstPoll, failure: { error: unknown; attempts: number } | undefined;
   try {
     while (!service.stopping && !opts.signal?.aborted) {
