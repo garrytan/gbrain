@@ -106,7 +106,7 @@ import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
@@ -980,7 +980,7 @@ export class PostgresEngine implements BrainEngine {
       });
     }
 
-    const params: unknown[] = [query];
+    const params: unknown[] = [collapseWebsearchDashRuns(query)];
     let typeClause = '';
     if (type) {
       params.push(type);
@@ -1108,7 +1108,7 @@ export class PostgresEngine implements BrainEngine {
         const previous = relaxed ? await tx`SHOW enable_seqscan` : [];
         if (relaxed) await tx`SET LOCAL enable_seqscan = off`;
         const boundParams = [...params];
-        boundParams[0] = queryText;
+        boundParams[0] = collapseWebsearchDashRuns(queryText);
         const rows = await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
         if (relaxed) await tx`SELECT set_config('enable_seqscan', ${previous[0].enable_seqscan}, true)`;
         return rows;
@@ -1195,7 +1195,7 @@ export class PostgresEngine implements BrainEngine {
       });
     }
 
-    const params: unknown[] = [query];
+    const params: unknown[] = [collapseWebsearchDashRuns(query)];
     let typeClause = '';
     if (type) {
       params.push(type);

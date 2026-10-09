@@ -10,6 +10,31 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.138.0] - 2026-10-09
+
+**A query that quotes a passage verbatim now returns a clean read. Pasted text with a long dash rule no longer breaks keyword search, an inferred image query on a text-only brain keeps its keyword arm and expansion, and the query confidence block always reports the reranker score.**
+
+An eval readiness probe quotes the first 300 characters of a stored conversation turn and expects that conversation back. It counted 89 of 500 LongMemEval-S haystacks as misses. Rebuilt the same way, gbrain returned the target at rank 1 in all 89, but each read looked degraded to the probe for one of three reasons:
+- A verbatim quote embeds almost identically to its chunk, so the confidence grade was `high_vector_match`. That grade returned before the reranker score was attached, so `retrieval.crag.top_rerank_score` was missing even though the reranker ran (84 of 89).
+- A turn holding a markdown rule of 32 or more dashes overflowed `websearch_to_tsquery`'s operator stack (`tsquery stack too small`), failing the keyword and title arms (1 of 89).
+- Text such as "a photo of Half Dome" was routed to image search on a text-only install. That skipped the keyword arm and expansion, then the multimodal embed failed and reported `vector_arm_failed` (4 of 89).
+
+### What you'd see
+
+The same 89 missed haystacks plus 20 controls, rebuilt with the eval shim's page format through `put_page` on PGLite with shipped defaults (voyage-4, rerank-2.5, expansion on). This build reads 109 of 109 clean, with the target at rank 1. 0.60.106.0 read 36 of 108 clean.
+
+### What to watch for
+
+- `retrieval.crag.top_rerank_score` is now present whenever the reranker ran, whatever the grade's reason.
+- A query whose wording suggests images ("show me photos of ...") routes to the image arm only when `embedding_multimodal_model` (or `embedding_model`) can embed images. Otherwise it runs as a text query. An explicit `cross_modal: image` still routes as asked.
+- A run of 32 or more dash negations in a keyword query collapses to its parity, which is the query a deeper parser stack would build. Every query that parsed before is unchanged.
+
+### Itemized changes
+
+- **Rerank score on every grade (`src/core/search/crag.ts`).** `gradeRetrievalConfidence` attaches the rank-1 cross-encoder score to identity-tier grades too (`exact_lookup`, `alias_hit`, `exact_title_match`, `high_vector_match`, `decide_evidence`).
+- **Dash runs (`src/core/search/sql-ranking.ts`).** `collapseWebsearchDashRuns` runs before both engines' keyword statements and inside `boundWebsearchQuery`, which covers the title arm.
+- **Image routing (`src/core/ai/gateway.ts`, `src/core/search/hybrid/request.ts`).** `multimodalEmbeddingModel()` returns the model `embedMultimodal` would use when it can embed images. An inferred image intent and the LLM modality tie-break need it.
+
 ## [0.60.137.0] - 2026-10-09
 
 **A one-page sync stops re-analyzing the whole brain, edits rewrite only the chunks they changed, Postgres search and doctor stop compiling JIT code, and CJK pages chunk up to 6.7x faster with identical chunks.**

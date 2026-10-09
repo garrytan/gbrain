@@ -116,7 +116,7 @@ import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from
 import { PAGE_SORT_SQL } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import {
@@ -1414,7 +1414,7 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
-    const params: unknown[] = [query, innerLimit, limit, offset];
+    const params: unknown[] = [collapseWebsearchDashRuns(query), innerLimit, limit, offset];
     let extraFilter = '';
     if (opts?.language) {
       params.push(opts.language);
@@ -1614,7 +1614,7 @@ export class PGLiteEngine implements BrainEngine {
       });
     }
 
-    const params: unknown[] = [query, limit, offset];
+    const params: unknown[] = [collapseWebsearchDashRuns(query), limit, offset];
     let extraFilter = '';
     if (opts?.language) {
       params.push(opts.language);
