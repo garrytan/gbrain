@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.125.0] - 2026-10-09
+
+**A repair preview that finds nothing no longer prints an apply command that can only fail (#6351).**
+
+A preview-bound repair kind (for example `gbrain repair stale-atoms`) saves its approved set only when the preview lists something, but `--json` still returned `apply_command` with `--apply --expect <hash>` for an empty preview, so running the printed command could only end in `preview_changed`. An empty preview of a preview-bound kind now returns `apply_command: null`, matching `gbrain jobs authorize-legacy --select` and `gbrain jobs cancel --select` and the text output, which already omits the apply line when nothing is affected. Contributed by @harjothkhara.
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `gbrain repair <preview-bound kind> --json` with nothing to repair | `apply_command` is `null` instead of an `--expect` command that no saved set backs. Previews that list items are unchanged. |
+
 ## [0.60.124.0] - 2026-10-09
 
 **When you give `query`, `search`, `recall` or `assemble_evidence` a token budget for whole-conversation evidence, gbrain now stays inside it. Calls without a budget return exactly what they did before.**
