@@ -61,7 +61,6 @@ import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit } from './engine.ts';
 import { searchLimitCap } from './search/eval-pool-depth.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
-import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, supportsHnswIterativeScan } from './vector-index.ts';
@@ -559,7 +558,7 @@ export class PostgresEngine implements BrainEngine {
         await conn.unsafe(sqlText);
 
         // Run any pending migrations automatically
-        const { applied } = await runMigrations(this);
+        const { applied } = await (await import('./migrate.ts')).runMigrations(this); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
         if (applied > 0) {
           process.stderr.write(`  ${applied} migration(s) applied\n`);
         }

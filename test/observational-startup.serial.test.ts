@@ -90,7 +90,7 @@ beforeAll(async () => {
   mkdirSync(join(home, '.gbrain'), { recursive: true });
   writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: brainPath }, null, 2));
   await withBrain(engine => engine.initSchema());
-  main = (await import('../src/cli.ts')).__testing.main;
+  main = (await import('../src/cli/main.ts')).__testing.main;
 });
 
 afterAll(() => {

@@ -175,7 +175,7 @@ describe('untrusted callers cannot cross brains', () => {
   });
 
   test('makeContext ignores caller-supplied params.brain (stays on the connected engine)', async () => {
-    const { makeContext } = await import('../src/cli.ts');
+    const { makeContext } = await import('../src/cli/main.ts');
     const stub = {
       kind: 'pglite',
       executeRaw: async () => [],

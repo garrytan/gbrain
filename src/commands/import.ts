@@ -10,6 +10,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { importFile, importImageFile, isImageFilePath, type ImportResult } from '../core/import-file.ts';
 import { gitFirstCommitDates } from '../core/git-first-commit.ts';
+import { gitLsFiles } from '../core/git-visible-files.ts';
 import { currentCompanyBrainSync, getCompanyBrainProfile, importCompanyBrainFile } from '../core/company-brain/profile.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
@@ -1339,16 +1340,8 @@ function gitListSyncableFiles(
   onExcluded?: (relPath: string) => void,
   includeHidden?: string[],
 ): string[] | null {
-  let stdout: string;
-  try {
-    stdout = execFileSync(
-      'git',
-      ['-C', dir, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-      { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-  } catch {
-    return null; // not a git work tree, or git not on PATH → FS-walk fallback
-  }
+  const stdout = gitLsFiles(dir, ['--cached', '--others', '--exclude-standard', '-z']);
+  if (stdout === null) return null; // not a git work tree, or git not on PATH → FS-walk fallback
   // A directory the enclosing repository ignores (a scratch or cache folder inside a checkout) lists
   // nothing here, so an explicit import of it would succeed with zero files. Walk it directly instead.
   if (stdout === '' && gitIgnoresDir(dir)) return null;

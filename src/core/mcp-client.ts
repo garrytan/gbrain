@@ -20,8 +20,8 @@
 import { randomUUID } from 'node:crypto';
 import { isPersistenceIpcMutation } from './persistence/ipc.ts';
 import { replayWhilePending } from './persistence/write-wait.ts';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { anySignal } from './abort-check.ts';
 import { canonicalCodeFor } from './error-catalogue.ts';
@@ -161,6 +161,28 @@ function rateLimitedMintDetail(retryAfterS: number | undefined): RemoteMcpErrorD
   };
 }
 
+type HttpClientSdk = typeof import('@modelcontextprotocol/sdk/client/index.js')
+  & typeof import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+let httpClientSdk: HttpClientSdk | undefined;
+
+/**
+ * The SDK's client + Streamable HTTP transport, loaded by the first remote
+ * call (buildClient). Only thin-client calls use them, so a local CLI command
+ * never pays for their import graph.
+ */
+async function loadHttpClientSdk(): Promise<HttpClientSdk> {
+  httpClientSdk ??= {
+    ...(await import('@modelcontextprotocol/sdk/client/index.js')),
+    ...(await import('@modelcontextprotocol/sdk/client/streamableHttp.js')),
+  };
+  return httpClientSdk;
+}
+
+/** A transport error: only possible once loadHttpClientSdk has loaded the transport that throws it. */
+function isStreamableHttpError(e: unknown): e is StreamableHTTPError {
+  return httpClientSdk !== undefined && e instanceof httpClientSdk.StreamableHTTPError;
+}
+
 /**
  * v0.31.1: convert any thrown value into a RemoteMcpError. Used by the
  * outermost catch in `callRemoteTool` so the dispatcher's exhaustive switch
@@ -204,7 +226,7 @@ export function toRemoteMcpError(e: unknown, mcpUrl: string, signal?: AbortSigna
       {
         mcp_url: mcpUrl,
         kind: 'unreachable',
-        ...(e instanceof StreamableHTTPError && e.code !== undefined && e.code > 0
+        ...(isStreamableHttpError(e) && e.code !== undefined && e.code > 0
           ? { status: e.code } : {}),
       },
     );
@@ -345,6 +367,7 @@ async function getAccessToken(config: GBrainConfig, force = false, signal?: Abor
  * them in fetch so cancellation covers HTTP bodies as well as SDK requests.
  */
 async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSignal): Promise<Client> {
+  const { Client, StreamableHTTPClientTransport } = await loadHttpClientSdk();
   const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
     requestInit: {
       headers: {
@@ -511,7 +534,7 @@ export async function callRemoteTool(
       // Application errors can contain arbitrary text (including client IDs
       // with "401"). Only a rejected HTTP request authorizes a replay.
       signal.throwIfAborted();
-      if (!(e instanceof StreamableHTTPError) || e.code !== 401) throw e;
+      if (!isStreamableHttpError(e) || e.code !== 401) throw e;
       submitted = false; // This attempt was explicitly refused, not accepted.
       // Drop cached token and retry once with a fresh mint.
       tokenCache.delete(remote.mcp_url);
@@ -533,7 +556,7 @@ export async function callRemoteTool(
       } catch (e2) {
         if (e2 instanceof RemoteMcpError && e2.detail?.write_request) throw e2;
         signal.throwIfAborted();
-        if (e2 instanceof StreamableHTTPError && e2.code === 401) {
+        if (isStreamableHttpError(e2) && e2.code === 401) {
           submitted = false;
           tokenCache.delete(remote.mcp_url);
           throw new RemoteMcpError(

@@ -268,7 +268,7 @@ test/runtime-version.test.ts	stated Bun floor	1	readFileSync
 test/schema-bootstrap-coverage.test.ts	(file-level)	14	source-surface-helper
 test/schema-pack-unify-types-handler.test.ts	#1575 unify-types worker dry-run default	1	source-surface-helper
 test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural)	1	readFileSync
-test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	8	exec-scan
+test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	9	exec-scan
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/ci-executed-counts.test.ts	CLI	2	readFileSync

@@ -27,7 +27,7 @@ import {
   THIN_CLIENT_REFUSED_COMMANDS,
   findCliCommand,
 } from '../src/cli/command-table.ts';
-import { buildCliAliases } from '../src/cli.ts';
+import { buildCliAliases } from '../src/cli/main.ts';
 import type { Operation } from '../src/core/operations.ts';
 import { COMMAND_TABLE_PATH, parseSource, readCommandModule, readTableRecords } from '../scripts/lib/cli-pipeline.ts';
 import { extractCliDispatch } from './helpers/cli-dispatch-extract.ts';

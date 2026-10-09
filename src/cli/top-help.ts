@@ -1,0 +1,214 @@
+/**
+ * Top-level `gbrain` / `gbrain --help` usage text. Engine-free and import-light
+ * so src/cli.ts can answer it on the fast path without loading the dispatcher
+ * (src/cli/main.ts), which prints the same text on its own `--help` route.
+ */
+import { VERSION } from '../version.ts';
+
+export function printHelp() {
+  console.log(`gbrain ${VERSION} -- personal knowledge brain
+
+USAGE
+  gbrain <command> [options]
+
+SETUP
+  mcp grant <name> --help           Grant hosted access; private credential handoff
+  mcp verify --help                 Verify connection, permissions, and memory
+  init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)
+  init --prefer-postgres [--allow-docker]
+                                     Postgres-first install ladder (env URL >
+                                     Supabase token > local PG > docker > PGLite)
+  engine status [--json] [--probe]   Which engine + URL source, engine-free
+  db-repair [--yes] [--json]         Diagnose/fix Postgres access, engine-free
+                                     (--yes --apply-rewrites for config rewrites)
+  migrate --to <postgres|pglite>     Move the brain between engines (PGLite -> Postgres graduates: plan, then --yes --expect)
+  migrate embeddings --to <p:model>  Re-embed onto another embedding provider
+  embeddings enable --embedding-model <p:model>  Turn on embeddings in place (keeps pages/facts)
+  upgrade                            Self-update
+  check-update [--json]              Check for new versions
+  repair [<kind>] [--apply]          Preview/apply residual repairs (timeline, visibility, safe-chunks)
+  projections drain [--limit n]      Rebuild queued text projections now [--json]
+  doctor [--json] [--fast] [--probe-pglite]  Health check (resolver, skills, pgvector, RLS, embeddings; --probe-pglite runs the scratch-store probe)
+  integrations [subcommand]          Manage integration recipes (senses + reflexes)
+
+PAGES
+  get <slug>                         Read a page
+  put <slug> [< file.md]             Write/update a page
+  delete <slug>                      Delete a page
+  list [--type T] [--tag T] [--limit N]
+                                     List pages
+
+SEARCH
+  search <query>                     Keyword search (tsvector)
+  query <question> [--no-expand]     Hybrid search (RRF + expansion)
+  ask <question> [--no-expand]       Alias for query
+
+IMPORT/EXPORT
+  import <dir> [--no-embed]          Import markdown directory
+  sync [--repo <path>] [flags]       Git-to-brain incremental sync
+  sync --watch [--interval N]        Continuous sync (loops until stopped)
+                                     See also: autopilot --install (continuous daemon).
+  sync --all --missing-path skip     Classify sources whose local_path is absent
+                                     on this machine as skipped, not failed
+  export [--source <id>] [--dir <p>] Coherent Markdown snapshot; fresh output, no overwrite
+  export --restore-only [--repo <p>] Restore missing db_only files; export --help for safe retry
+        [--type T] [--slug-prefix S] With optional filters
+
+FILES
+  files list [slug]                  List stored files
+  files upload <file> --page <slug>  Upload file to storage
+  files upload-raw <file> --page <s> Smart upload (size routing + .redirect.yaml)
+  files signed-url <path>            Generate signed URL (1-hour)
+  files sync <dir>                   Bulk upload directory
+  files verify                       Verify all uploads
+
+EMBEDDINGS
+  embed [<slug>|--all|--stale]       Generate/refresh embeddings
+
+LINKS
+  link <from> <to>                   Create typed link (alias: link-add)
+        [--link-type T] [--link-source S]   provenance defaults to 'manual'
+  unlink <from> <to>                 Remove link (alias: link-rm)
+        [--link-type T] [--link-source S]   filter which edges to remove
+  link-sources                       List provenances in use, with edge counts
+  backlinks <slug>                   Incoming links
+  graph <slug> [--depth N]           Traverse link graph (nodes locally; remote MCP defaults to bidirectional edges)
+  graph-query <slug> [--type T]      Edge-based traversal with type/direction filters
+        [--depth N] [--direction in|out|both]
+
+TAGS
+  tags <slug>                        List tags
+  tag <slug> <tag>                   Add tag
+  untag <slug> <tag>                 Remove tag
+
+TIMELINE
+  timeline [<slug>]                  View timeline
+  timeline-add <slug> <date> <text>  Add timeline entry
+
+TOOLS
+  extract <links|timeline|all>       Extract links/timeline (idempotent)
+        [--source fs|db] [--source-id ID] [--dir <brain>]
+        [--type T] [--since DATE] [--include-frontmatter]
+        [--workers N|--concurrency N] [--dry-run] [--json]
+  extract links --by-mention [--ner] --source db
+  extract timeline --from-meetings [--infer-dates] --source db
+  extract --stale [--source-id ID] [--catch-up] [--dry-run] [--json]
+  extract links --source db --repair-attendance --source-id ID
+        [--limit 250] [--after-slug SLUG] [--json]
+        Apply: --apply-preview FILE --confirm DIGEST --yes --backup-verified --checkpoint FILE
+  extract --explain <kind> [--json] Full details: gbrain extract --help
+  publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)
+  check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
+  lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
+  backfill <kind|list>               v0.30.1: run a registered backfill (effective-date, ...)
+  orphans [--json] [--count]         Find pages with no inbound wikilinks
+  salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience
+  anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)
+  feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate
+  transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)
+  dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).
+                                     See also: autopilot --install (continuous daemon).
+  compile-context --target <t>       Compile a deterministic, scanned, budgeted context
+        [--budget N] [--check]       file (claude-code | codex | openclaw)
+  decide <status|probe|enable|...>   System One decision support (Jev); every slot off by default
+  facts relink [--dry-run]           Link facts saved without an entity to the entity they name
+  check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
+  report --type <name> --content ... Save timestamped report to brain/reports/
+
+OPEN LOOPS (Gmail/Calendar/Contacts connector — v0.47)
+  google setup [--account <email>]   One command: BYO OAuth → source → first sync → first digest
+  google connect|status|disconnect   Connect/inspect/remove a Google account (idempotent; --json)
+  waiting [--top N] [--json]         Who is waiting on you, what you promised, context to respond
+  loops list|show|done|drop|mute     Inspect and manage open loops (mute sender <email>)
+  core list|show|status|add|remove   Always-loaded core memory (also diff|ack|init|suggest)
+  creds list|remove|export|import    Generic credential vault (redacted output; encrypted bundles)
+
+BRAIN (capture / ideate / explore — v0.37/v0.38)
+  capture [content] [--file PATH]    Single entrypoint for getting content into the brain
+        [--stdin] [--slug s] [--type t]   Inline content / file / stdin; writes to inbox/ by default
+        [--source ID] [--quiet|--json]    Multi-source brains: route to a non-default source
+  brainstorm <question> [--json]     Bisociation idea generator (hybrid search + far-set + judge)
+        [--save|--no-save] [--limit N]
+  lsd <question> [--json]            Lateral Synaptic Drift: inverted-judge brainstorm
+        [--save|--no-save] [--limit N]    rewarding far-from-obvious + axiomatic inversions
+  think "<question>" [--anchor <s>]  Multi-hop cited synthesis across pages + takes + graph
+        [--save] [--source <id>]          Full flags: gbrain think --help
+
+SOURCES (multi-repo / multi-brain)
+  sources list                       Show registered sources
+  sources add <id> --path <p>        Register a source (id = short name, e.g. 'wiki')
+  sources remove <id>                Remove a source + its pages (--confirm-destructive)
+  sources archive <id>               Soft-delete: hide from search, recoverable for 72h
+  sources restore <id>               Un-archive a soft-deleted source
+  sources archived                   List soft-deleted sources and their purge expiry
+  sources purge [<id>]               Permanently delete archived sources
+  sources status                     Per-source dashboard (sync lag, embed coverage)
+  sources --help                     Full subcommand list (rename, default, attach,
+                                     current, federate, set-cr-mode, webhook, harden, ...)
+  sync --all                         Sync all sources with a local_path
+  sync --source <id>                 Sync one specific source
+  repos ...                          DEPRECATED alias for 'sources' (v0.19.0)
+
+CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
+  code-def <symbol> [--lang l]       Find the definition of a symbol across code pages
+  code-refs <symbol> [--lang l]      Find all references to a symbol (JSON-first)
+  code-callers <symbol>              Who calls this symbol? (v0.20.0 A1)
+  code-callees <symbol>              What does this symbol call? (v0.20.0 A1)
+  query <q> --lang <l>               Filter hybrid search to one language (v0.20.0)
+  query <q> --symbol-kind <k>        Filter to symbol type (function|class|method|...) (v0.20.0)
+  reconcile-links [--dry-run]        Batch-recompute doc↔impl edges (v0.20.0)
+  reindex-code [--source id] [--yes] [--force] Explicit code-page reindex (v0.20.0; --force re-chunks unchanged pages)
+  reindex-search-vector [--dry-run] [--yes] [--json]
+                                Recreate FTS triggers + backfill under
+                                $GBRAIN_FTS_LANGUAGE (default 'english')
+  sync --strategy code               Sync code files into the brain
+
+JOBS (Minions)
+  jobs submit <name> [--params JSON]  Submit background job [--follow] [--dry-run]
+  jobs list [--status S] [--limit N]  List jobs [--json]
+  jobs get <id> [--json]              Job details + history
+  jobs cancel <id>                    Cancel job
+  jobs retry <id>                     Re-queue failed/dead job
+  jobs prune [--older-than 30d]       Clean old jobs
+  jobs stats [--json]                 Job health dashboard
+  jobs watch [--follow]               Live queue dashboard
+  jobs work [--queue Q]               Start worker daemon (Postgres only)
+  jobs supervisor [start|status|stop] Auto-restarting worker wrapper
+
+ADMIN
+  stats                              Brain statistics
+  health                             Brain health dashboard
+  history <slug> [--json]            Page version history
+  revert <slug> <version-id>         Revert to version
+  features [--json] [--auto-fix]     Scan usage + recommend unused features
+  autopilot [--repo] [--interval N]  Self-maintaining brain daemon
+  config [show|get|set] <key> [val]  Brain config
+  pricing [set|list|unset] <model>   Register model prices for cost caps (host only)
+  protocol [conformance|stats]       MEMORY_VERBS v1: schemas, conformance
+                                     certification, local usage stats + TTHW
+  storage status [--repo <path>]     Storage tier status and health
+        [--json]                     (git-tracked vs supabase-only)
+  serve                              MCP server (stdio)
+    --surface verbs|starter|full     Tool surface: the 7 memory verbs, the ~20-op
+                                     starter set, or every op (default full).
+                                     On --http this is the per-client CEILING.
+    --access read-only|full          stdio: list and dispatch only read operations
+  serve --http [--port N]            HTTP MCP server with OAuth 2.1
+    --token-ttl N                    Access token TTL in seconds, 60-7776000 (default: 3600)
+    --enable-dcr                     Enable Dynamic Client Registration (DCR clients default to authorization_code)
+    --enable-dcr-insecure            Also allow the consent-bypassing client_credentials grant on DCR (implies --enable-dcr)
+    --public-url URL                 Public issuer URL (required behind proxy/tunnel)
+  connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)
+        [--install] [--json]         Print the paste-ready command, or --install to run it
+  auth <create|list|revoke|...>      Manage legacy tokens + OAuth 2.1 clients
+  auth --help                        Full subcommand list (register-client,
+                                     rescope, rescope-client, rescope-token, revoke-client, ...)
+  watch [--json]                     Push-based context: pipe conversation turns in,
+                                     volunteered brain pages stream out (#2095)
+  call <tool> '<json>'               Raw tool invocation
+  version                            Version info
+  --tools-json                       Tool discovery (JSON)
+
+Run gbrain <command> --help for command-specific help.
+`);
+}

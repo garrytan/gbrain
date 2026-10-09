@@ -1319,11 +1319,26 @@ function safeSlugDirSegments(rawSlug: string | null | undefined): string[] | nul
   return segments.slice(0, -1);
 }
 
+/**
+ * The segments of `localPath` below its nearest ancestor holding `.git` (`[]`
+ * when `localPath` is that Git root), or null when no ancestor holds one. A
+ * caller resolving many pages of one source computes it once and passes it to
+ * `resolveSourceLocalFilePath` as `gitScope`.
+ */
+export function sourceGitScope(localPath: string): string[] | null {
+  const absoluteLocalPath = resolve(localPath);
+  for (let cursor = absoluteLocalPath; ; cursor = dirname(cursor)) {
+    if (existsSync(join(cursor, '.git'))) return splitLocalPathSegments(relative(cursor, absoluteLocalPath));
+    if (dirname(cursor) === cursor) return null;
+  }
+}
+
 export function resolveSourceLocalFilePath(
   localPath: string,
   rawSourcePath: string | null | undefined,
   pageSlug?: string | null,
   slugRootMode?: 'git-root' | 'source-root',
+  gitScope?: string[] | null,
 ): string | null {
   if (!rawSourcePath) return null;
   const value = rawSourcePath.trim();
@@ -1335,21 +1350,14 @@ export function resolveSourceLocalFilePath(
   const absoluteLocalPath = resolve(localPath);
   let sourceScopeSegments: string[] = [];
   let resolvedSegments = sourceSegments;
-  let cursor = absoluteLocalPath;
-  while (true) {
-    if (existsSync(join(cursor, '.git'))) {
-      const scope = splitLocalPathSegments(relative(cursor, absoluteLocalPath));
-      sourceScopeSegments = scope;
-      const scoped = scope.length > 0 && scope.every((segment, index) => segment === sourceSegments[index]);
-      if (scoped && (slugRootMode !== 'source-root'
-        || !!pageSlug && resolveSlugForPath(sourceSegments.slice(scope.length).join('/')) === pageSlug)) {
-        resolvedSegments = sourceSegments.slice(scope.length);
-      }
-      break;
+  const scope = gitScope === undefined ? sourceGitScope(localPath) : gitScope;
+  if (scope) {
+    sourceScopeSegments = scope;
+    const scoped = scope.length > 0 && scope.every((segment, index) => segment === sourceSegments[index]);
+    if (scoped && (slugRootMode !== 'source-root'
+      || !!pageSlug && resolveSlugForPath(sourceSegments.slice(scope.length).join('/')) === pageSlug)) {
+      resolvedSegments = sourceSegments.slice(scope.length);
     }
-    const parent = dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
   }
   const directPath = join(absoluteLocalPath, ...resolvedSegments);
   if (existsSync(directPath)) return directPath;
