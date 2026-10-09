@@ -20,7 +20,8 @@ A page written as private by a principal that cannot see private pages (for exam
 
 | Where | What changed |
 |---|---|
-| `gbrain sources writer status <source> --json` | A `facts-backstop` effect on a page its writer can no longer see leaves `blocking_effects` as `skipped` (`reason: page_not_found`) instead of staying `queued` with a climbing `attempts` count. |
+| `gbrain sources writer status <source> --json` | A `facts-backstop` effect on a page its writer cannot see settles and leaves `blocking_effects`, instead of staying `queued` with a climbing `attempts` count. |
+| `gbrain write-request --brain <id> -- <request-id>` (MCP `get_write_request`) | The write's `facts-backstop` effect reports `state: skipped`, `reason: page_not_found`. |
 
 ## [0.60.122.0] - 2026-10-09
 
