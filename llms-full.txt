@@ -1831,6 +1831,17 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   `gbrain sources retry-held <id>` and the sync it prints with the same options
   (`--no-embed` stays). Runbook:
   [catch-up stuck](docs/guides/troubleshooting.md#catch-up-stuck).
+- **Keep a managed catch-up moving without a human** (a live checkout where
+  other agents commit while `gbrain sync` drains thousands of pages): a page
+  that moves under the run is held (`concurrent_write`, `worktree_dirty`), a
+  dropped connection is retried, and a relaunch resumes the frozen manifest.
+  The operator loop is `gbrain sync status --source <id> --json` (cursor,
+  `committed_last_10m`, each hold and the last error with `class` /
+  `safe_actions` / `needs_human`), then, when nothing moved and
+  `needs_human` is false, `gbrain sync unblock --source <id> --apply` and
+  the sync it prints; when `needs_human` is true, relay `next.user_message`
+  with the slug. Decision table:
+  [`docs/guides/sync-unblock-runbook.md`](./docs/guides/sync-unblock-runbook.md).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes --no-autopilot-install` (manual migration orchestration without service installation).
@@ -6664,6 +6675,172 @@ and `--uninstall` act only on that brain's job.
 
 ---
 
+## docs/guides/sync-unblock-runbook.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/sync-unblock-runbook.md
+
+# Sync unblock runbook (for an operator agent)
+
+A managed catch-up on a live checkout (`gbrain sync --source <id> --no-pull`,
+thousands of pages, other agents committing to the brain repo every few
+minutes) finishes unattended. A page that moves under the run is held, not
+fatal; a dropped database connection is retried, not fatal; a relaunch resumes
+the frozen manifest at its stored cursor instead of re-freezing it. What is
+left for an operator is one loop over two commands, and this page is the
+decision table behind them.
+
+**Say to your agent:** *"Keep my brain's catch-up moving and tell me only when
+a page needs my decision."*
+
+## The loop
+
+```bash
+gbrain sync status --source <id> --json          # every N minutes (read-only)
+gbrain sync unblock --source <id> --apply --json # when committed_last_10m is 0 and needs_human is false
+gbrain sync <next.argv...>                       # the sync unblock (or status) names: the cursor's own options
+```
+
+1. Read `status`. `cursor` is where the run stands (`index/total`, the
+   `pinned_target` commit, `last_advance_at`); `committed_last_10m` is the
+   signal that data is moving (a live process with a flat cursor is not
+   progress). `holds` and `last_error` each carry the triple below.
+2. If `needs_human` is false and nothing committed in the last ten minutes,
+   run `unblock --apply`: it performs the safe action for every hold that has
+   one, refuses the rest by name, and prints the sync to run.
+3. Run that sync. It re-screens the scheduled files, imports each one that now
+   passes and holds again what still fails; the rest of the source is never
+   blocked. With `--retry-failed` a cursor an older release left blocked on a
+   page fault converts in place (same run, no rediscovery).
+4. If `needs_human` is true, stop looping and page a person with the slug and
+   `human_reason` from `status` (`next.user_message` is written for relay).
+
+`unblock` is idempotent, writes no page, clears no hold and drops nothing:
+refusing is the only way it leaves a file out, and each refusal names the file,
+why, and its fix.
+
+## The triple
+
+Every hold and error has three fields, from one table
+(`src/core/persistence/sync-fault-class.ts`):
+
+- `class`: `page` (one entry moved under the sync; the rest of the source is
+  fine), `connection` (the database went away for a moment; nothing is recorded
+  against the source), `systemic` (the writer, the binding, an approval or
+  gbrain itself; a retry alone changes nothing).
+- `safe_actions`: what an agent may do on its own, first choice first. `retry`
+  reruns the same sync; `retry_when_clean` re-screens a held file once its edit
+  is committed; `repair` previews and applies a hash-bound file repair;
+  `reconcile` previews two diverged versions; `upgrade` installs a newer gbrain;
+  `none` waits for a person.
+- `needs_human`: a person has to choose or act before it clears;
+  `human_reason` says what. A page held three times with the same code
+  (`attempts`) is `needs_human` whatever its code says: it keeps moving under
+  the sync.
+
+## Decision table
+
+<!-- sync-fault-table:begin (pinned by test/sync-runbook-table.test.ts) -->
+| Code | Class | Safe actions | Needs human | Escalate when |
+|---|---|---|---|---|
+| `worktree_dirty` | page | retry_when_clean | no | held 3 times: the file keeps changing without being committed |
+| `concurrent_write` | page | reconcile | yes | always: the file and the database page diverge |
+| `preparation_stalled` | page | retry, upgrade | no | held 3 times, or writer status names a step that never finishes |
+| `invalid_fence` | page | repair | no | the fence repair preview offers no plan (a manual reason) |
+| `invalid_frontmatter` | page | repair | no | the repair preview needs an interpretation (--include-ambiguous) |
+| `frontmatter_slug_conflict` | page | repair | no | the repair preview needs an interpretation |
+| `rename_held` | page | repair | no | the repair preview needs an interpretation |
+| `file_too_large` | page | none | yes | always |
+| `content_rejected` | page | none | yes | always |
+| `parser_regression` | page | upgrade | yes | always: a gbrain bug |
+| `managed_image_sync_unsupported` | page | none | no | never: images stay held by design |
+| `revision_conflict` | page | retry | no | the same path fails again after a rerun |
+| `page_identity_changed` | page | retry | no | the same path fails again after a rerun |
+| `pinned_git_worktree_conflict` | page | retry | no | the same path fails again after a rerun |
+| `source_changed` | page | retry | no | the same path fails again after a rerun |
+| `sync_incomplete` | page | retry | no | never: an unfinished cursor resumes with the same command |
+| `connection_lost` | connection | retry | no | three reruns in a row end connection_lost (the database is unreachable from this host) |
+| `database_contention` | connection | retry | no | three reruns in a row stop on it |
+| `write_capacity` | connection | retry | no | writer status shows the cap held by requests that never settle |
+| `storage_error` | connection | retry | no | the same error after a rerun (then it is not a dropped connection) |
+| `preparation_systemic` | systemic | upgrade, retry | yes | always |
+| `drain_stalled` | systemic | none | yes | always |
+| `recovery_required` | systemic | none | yes | always |
+| `owner_unavailable` | systemic | none | yes | always |
+| `writer_coordinator_required` | systemic | none | yes | always |
+| `permission_denied` | systemic | none | yes | always |
+| `plan_stale` | systemic | none | yes | always |
+| `invalid_params` | systemic | none | yes | always |
+<!-- sync-fault-table:end -->
+
+An unknown code is systemic and human: `gbrain errors <code>` explains it
+offline, `gbrain doctor --json` says what the brain thinks.
+
+## What each class means on the ground
+
+### Page
+
+One entry of the manifest moved while the run was somewhere else. The run held
+it and kept going; the receipt lists the hold (`held`, `held_count`) and
+`gbrain sources status <id>` names each file with its fix.
+
+- `worktree_dirty`: uncommitted working-tree bytes that match neither the
+  pinned commit nor the page, so sync did not overwrite them. Whoever edits that
+  file (an agent writing to the checkout) commits it; `unblock --apply`
+  re-screens it once `git status` is clean for it. Bytes committed at HEAD past
+  the pinned target are not a conflict: sync imports them as HEAD has them.
+- `concurrent_write`: the Git file and the database page both changed (a
+  `remember`, an edit through MCP, a restore). Neither was overwritten; a
+  person chooses with `gbrain sources reconcile <id> <slug> --preview`, then
+  `gbrain sources retry-held <id>` and the sync.
+- `preparation_stalled`: the write owner, not the file, stalled;
+  `gbrain sources writer status --source <id> --json` names the step.
+  `unblock --apply` schedules the re-screen.
+- The repair codes (`invalid_fence`, `invalid_frontmatter`, …) have their own
+  previews: [held files](write-refusals.md#held-files-and-content-refusals).
+- `revision_conflict`, `page_identity_changed`, `pinned_git_worktree_conflict`
+  as a `last_error` come from a run on an older release; this release holds
+  them. Rerun with `--retry-failed`: the stopped entry converts in place, the
+  manifest is not re-frozen.
+
+### Connection
+
+The database went away under the run. The drain reconnects and retries after
+5, 15 and 45 seconds; a drop that then moves data is a non-event. Three drops
+in a row with no page committed between them stop the drain
+`connection_lost`; nothing is recorded against the source, and the same
+command resumes at the stored cursor. If it keeps happening, the database or
+pooler is the problem (`gbrain doctor --json`), not the sync.
+
+### Systemic
+
+A retry alone changes nothing: the write owner is wedged
+(`preparation_systemic`, `drain_stalled`), the source binding changed, a
+company-brain approval drifted (`plan_stale`), or the principal may not sync.
+Page a person with `human_reason`; the fix is on the brain host.
+
+## Why the manifest is not re-frozen any more
+
+The frozen manifest always lived in the cursor (`op_checkpoints`, op
+`managed-sync`). What threw it away was the failure ledger: every run death
+wrote a row, and `--retry-failed` read the row and rediscovered from index 0
+(eight to twelve minutes of silence on a 14k-entry source). Page faults are
+now holds and connection faults are not recorded, so a relaunch, with or
+without `--retry-failed`, finds the cursor and resumes it. Only a systemic
+failure still writes a ledger row.
+
+When HEAD moved past the pinned target while the run drained, the drain takes
+exactly one more pass (an incremental pin..HEAD discovery) so the invocation
+ends at HEAD; never a second one, so a live checkout cannot loop.
+
+## See also
+
+- [`write-refusals.md`](write-refusals.md#held-files-and-content-refusals): every hold code with its recovery.
+- [`troubleshooting.md#catch-up-stuck`](troubleshooting.md#catch-up-stuck): the stall branches (a wedged owner).
+- [`live-sync.md`](live-sync.md#catching-up-a-large-backlog-on-managed-postgres): running a large catch-up.
+- [`AGENT_OPERATOR_v1.md`](../protocol/AGENT_OPERATOR_v1.md): the `fix.next` / `fix.verify` contract every output here follows.
+
+---
+
 ## docs/guides/cron-schedule.md
 
 Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/cron-schedule.md
@@ -9314,6 +9491,9 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | Low health score | preview `gbrain doctor --remediation-plan --json`; then `gbrain doctor --remediate --yes --target-score 90 --max-usd 5` | agent, after the user agrees | `paid`; `destructive` with `--include-repairs` (approve with `--expect <plan_hash>` from the preview) | `gbrain doctor --json` |
 | [Sync held a file (`Held <path>: invalid_frontmatter …`, `git_held_files`)](#held-files) | `gbrain sources status <id>`, then preview `gbrain repair frontmatter --source <id>` and apply the printed `--apply --expect <hash> --yes` | agent; the apply after the user agrees | `destructive` (rewrites the previewed lines of the files) | `gbrain doctor --only git_held_files --json` |
 | [Sync held a file for its facts or takes fence (`Held <path>: invalid_fence …`)](#held-fence-files) | nothing for most holds: the next maintenance run repairs and commits the fence. To see or do it now, preview `gbrain repair fences --source <id>` and run its printed `--apply --expect <hash>`; to pause automatic repair, `gbrain config set fences.repair.enabled false` (ask the user first). A `manual` reason needs the edit the hold names | agent; the apply needs no extra consent | none (model repair spends within the `fences.repair.*` caps; raising them is `paid`, the user's call) | `gbrain doctor --only fence_integrity --json` |
+| A managed catch-up on a live checkout keeps dying (`revision_conflict`, `pinned_git_worktree_conflict`, `page_identity_changed`, `write ECONNABORTED`), or you want an agent to drive the recovery | `gbrain sync status --source <id> --json` (cursor, `committed_last_10m`, each hold and the last error with `class` / `safe_actions` / `needs_human`); when nothing moved and `needs_human` is false, `gbrain sync unblock --source <id> --apply`, then the sync it prints ([runbook](sync-unblock-runbook.md)) | agent; a person only when `needs_human` names a slug | none | `gbrain sync status --source <id> --json` |
+| [Sync held a file with `worktree_dirty`](#worktree-dirty-hold) | commit (or restore) the file, then `gbrain sync unblock --source <id> --apply` and the sync it prints | agent; whoever edits the file commits it | none | `gbrain sources status <id> --json` |
+| The drain stopped `connection_lost` | check the database and pooler (`gbrain doctor --json`), then rerun the same sync; it resumes at the stored cursor | agent | none | `gbrain sync status --source <id> --json` |
 | [Managed catch-up stuck, or `Held <path>: preparation_stalled`, or the drain stopped `preparation_abandoned` / `preparation_systemic` / `write_capacity`](#catch-up-stuck) | `gbrain sources writer status --source <id> --json` (what the stuck write was doing: step, `waiting_on`, owner, version), fix what it names or upgrade the owner, then `gbrain sources retry-held <id>` and the same sync with its options | agent; a restart or upgrade of the owner after the user agrees | none to inspect; `persistent_install` when the fix restarts a service | `gbrain sources status <id> --json`, then `gbrain doctor --only git_held_files,persistence_write_stall --json` |
 | [The catch-up is parked: `data_moving: false`, doctor `managed_sync_not_moving`, or `gbrain sources writer movement` exited 1](#managed-sync-not-moving) | `gbrain sources status <id> --json` prints the exact writer-status command; run it: `gbrain sources writer status --source <id> --json` ends each running claim in a `claim.next` (`claim_running`: rerun after `retry_after_ms`; `claim_overdue`: `tell_user_to_run`, restart the named owner pid) | agent; the restart after the user agrees | none to inspect; `persistent_install` when the fix restarts a service | `gbrain sources writer movement <id>` (exit 0 when the data moves again), then `gbrain doctor --only managed_sync_not_moving --json` |
 | [The drain stopped `drain_stalled` with `cause: owner_wedged_here`](#managed-sync-not-moving) | before the ceiling: wait `retry_after_ms`, then rerun `next.command` (`safe_to_loop` is true); past it: restart the owner process the stop names (`gbrain serve`, the jobs worker or autopilot), then `gbrain sources retry-held <id>` and the same sync | agent; the restart after the user agrees | none to inspect; `persistent_install` when the fix restarts a service | `gbrain sources writer status --source <id> --json` (the claim is gone or publishing), then `gbrain sources writer movement <id>` |
@@ -9346,6 +9526,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 <a id="held-fence-files"></a>**Sync held a file because of its facts or takes fence (`Held <path>: invalid_fence …`)?** Managed sync succeeded; only that file waits. The hold names the fence, section, row numbers, columns and reason, never a cell, and most holds clear by themselves: the maintenance run's `fence_repair` phase repairs the fence on the owner host and commits the file. To see the plan or do it now, run `gbrain repair fences --source <id>` (a read-only preview with no model call), then the apply command it prints; applying needs no extra consent. Model repair spends only within `fences.repair.max_usd_per_page` and `fences.repair.max_usd_per_day`; raising them, or pausing automatic repair with `gbrain config set fences.repair.enabled false`, is the user's call. A hold whose reason is `manual` needs a person: read the page (`gbrain get --source <id> -- <slug>`), edit only that fence in the file (not the frontmatter; `gbrain repair frontmatter` does not touch fences), commit, and run `gbrain sync --source <id> --no-pull`. A `prepare_time` hold was refused against stored rows (for example a takes row number a stored take already uses): fix it as its `fence.reason` says, and after a database-side fix run `gbrain sources retry-held <id>`. A source a fence blocked before upgrading recovers on its next sync. A fence with one obvious meaning is never held: sync rewrites it losslessly, commits the file and reports `fences_normalized`; a `fence_normalized` notice on a write means re-read the page before editing it. `gbrain doctor --only fence_integrity` counts every malformed fence still waiting (held, stored or unsynced) by tier. See [fence holds](write-refusals.md#invalid_fence), [fence repair](repair.md#fences) and the [fence format](fence-format.md).
 
 <a id="concurrent-write-hold"></a>**Sync held a file with `concurrent_write`?** A Git edit raced a database-only write; nothing was overwritten. Preview `gbrain sources reconcile <id> <slug> --preview`, let the user choose, then `gbrain sources retry-held <id>`. See [concurrent_write](write-refusals.md#concurrent_write).
+
+<a id="worktree-dirty-hold"></a>**Sync held a file with `worktree_dirty`?** The working tree holds uncommitted bytes for the file that match neither the pinned commit nor the page (an agent mid-edit on a live checkout), so sync held it instead of overwriting the edit and kept going; nothing is lost and the run finished. Commit the file (or restore it), then `gbrain sync unblock --source <id> --apply` re-screens every held file that is now committed and prints the sync to run; a later commit that changes the file re-screens it on its own. A file held three times is reported `needs_human` by `gbrain sync status`: find out what keeps editing it. Bytes committed at HEAD past the pinned target are imported as HEAD has them, never held. See [worktree_dirty](write-refusals.md#worktree_dirty) and the [sync unblock runbook](sync-unblock-runbook.md).
 
 <a id="catch-up-stuck"></a>**Managed catch-up stuck (one write `running` for minutes while the rest waits), held N files as `preparation_stalled`, or the drain stopped with `preparation_abandoned`, `preparation_systemic` or `write_capacity`?** Every managed write's *preparation* has a deadline (`persistence.sync_preparation_ms`, default 120 s, for sync members; `persistence.maintenance_preparation_ms`, default 120 s, for maintenance writes; a hard ceiling `persistence.preparation_ceiling_ms`, default 600 s; `persistence.max_preparation_attempts`, default 2; all behind the `preparation_deadlines` write switch), so one stuck write is cut off at its budget, but a cut-off preparation that ignores cancellation keeps its root blocked until the ceiling (600 s from the claim's start), when the owner frees the root and the next claim holds the entry; the rest of the source keeps publishing meanwhile, and a sync beside such an owner prints `stalled <N>s on <step>` with the owner's pid and kind from the allowance to the ceiling instead of stopping. One wedge therefore costs up to ten minutes and one held file, never the run. The runbook branches on what you see; every command below is read-only unless it says otherwise, and the files themselves are never the problem in this branch.
 

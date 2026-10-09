@@ -35,7 +35,7 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
       const route = coverageRoute(source);
       const steps = holdRepairSteps(source.source_id, route, auto);
       return { source_id: source.source_id, held: source.missing + source.stale, stale: source.stale, missing: source.missing, ...(route.fences ? { fences: route.fences } : {}), ...(route.concurrent ? { concurrent: route.concurrent } : {}),
-        ...(route.stalled ? { stalled: route.stalled } : {}),
+        ...(route.stalled ? { stalled: route.stalled } : {}), ...(route.dirty ? { dirty: route.dirty } : {}),
         first: (listing.get(source.source_id) ?? []).map(hold => ({ path: hold.path, code: hold.code, ...(hold.meta.reason ? { reason: hold.meta.reason } : {}), why: gitHoldFix(hold, auto).why })),
         escalated: source.missing + source.stale - (images.get(source.source_id) ?? 0) > policy.escalateCount,
         status: `gbrain sources status ${source.source_id}`, repair: steps.commands.join('; '),

@@ -146,6 +146,17 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   `gbrain sources retry-held <id>` and the sync it prints with the same options
   (`--no-embed` stays). Runbook:
   [catch-up stuck](docs/guides/troubleshooting.md#catch-up-stuck).
+- **Keep a managed catch-up moving without a human** (a live checkout where
+  other agents commit while `gbrain sync` drains thousands of pages): a page
+  that moves under the run is held (`concurrent_write`, `worktree_dirty`), a
+  dropped connection is retried, and a relaunch resumes the frozen manifest.
+  The operator loop is `gbrain sync status --source <id> --json` (cursor,
+  `committed_last_10m`, each hold and the last error with `class` /
+  `safe_actions` / `needs_human`), then, when nothing moved and
+  `needs_human` is false, `gbrain sync unblock --source <id> --apply` and
+  the sync it prints; when `needs_human` is true, relay `next.user_message`
+  with the slug. Decision table:
+  [`docs/guides/sync-unblock-runbook.md`](./docs/guides/sync-unblock-runbook.md).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes --no-autopilot-install` (manual migration orchestration without service installation).

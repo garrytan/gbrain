@@ -1,16 +1,16 @@
-# Unit-lane suites whose PostgreSQL arm is gated on DATABASE_URL and that no
-# other Postgres lane runs. The unit, serial and slow lanes unset
-# DATABASE_URL, so these arms run only where this list is read:
-#   - persistence-validation.yml `unit-postgres-arms` (shards by
-#     scripts/postgres-unit-arms.ts, one Bun process per file);
-#   - the scheduled race hunt (test.yml `race-hunt`, 10 iterations per file,
 #     a fresh database per iteration);
-#   - scripts/check-postgres-lane-coverage.ts, which counts each row as a lane
 #     and fails on a row for a missing file or a file with no gated arm.
-# One repo-relative path per line, sorted; '#' starts a comment. Adding a
-# file is a one-line edit: insert its path in sorted order. Shards balance
-# themselves from scripts/postgres-arm-weights.json.
+#     scripts/postgres-unit-arms.ts, one Bun process per file);
+#   - persistence-validation.yml `unit-postgres-arms` (shards by
+#   - scripts/check-postgres-lane-coverage.ts, which counts each row as a lane
+#   - the scheduled race hunt (test.yml `race-hunt`, 10 iterations per file,
+# DATABASE_URL, so these arms run only where this list is read:
 # Docs: docs/TESTING.md#postgres-arm-lanes
+# One repo-relative path per line, sorted; '#' starts a comment. Adding a
+# Unit-lane suites whose PostgreSQL arm is gated on DATABASE_URL and that no
+# file is a one-line edit: insert its path in sorted order. Shards balance
+# other Postgres lane runs. The unit, serial and slow lanes unset
+# themselves from scripts/postgres-arm-weights.json.
 test/alias-source-cascade-5094.test.ts
 test/attribution-backfill-history.test.ts
 test/behavior-change-notice.test.ts
@@ -60,6 +60,7 @@ test/managed-sync-group-completion.test.ts
 test/managed-sync-group-uncommitted-head.test.ts
 test/managed-sync-images-5493.test.ts
 test/managed-sync-lanes.test.ts
+test/managed-sync-page-fault-holds.test.ts
 test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
