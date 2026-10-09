@@ -7,7 +7,8 @@
  * test can start the process ahead and write at a chosen moment). GBRAIN_HOME is the drain's, so both processes
  * are the same local writer on the same owner host. WORKER_PREPARING_HOLD_MS (optional): when this process claims its
  * own write, its preparation waits that long first (results record `held: [start, end]`), so the write stays claimed
- * by this process, unpublished, while the drain's lanes hold the worktree.
+ * by this process, unpublished, while the drain's lanes hold the worktree. WORKER_READY (optional): a file this process
+ * creates once connected, so a test can wait for it before starting the drain.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
@@ -34,6 +35,7 @@ if (holdMs > 0) installFaultHook(async (point, detail) => {
   held = [start, Date.now()];
 });
 const logger = { info() {}, warn() {}, error() {} };
+if (process.env.WORKER_READY) writeFileSync(process.env.WORKER_READY, String(process.pid));
 const go = process.env.WORKER_GO;
 if (go) while (!existsSync(go) || !readFileSync(go, 'utf8')) await Bun.sleep(5);
 const slugs = (go ? readFileSync(go, 'utf8') : process.env.WORKER_SLUGS!).split(',');
