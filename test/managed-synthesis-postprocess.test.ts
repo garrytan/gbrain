@@ -272,7 +272,7 @@ test('interrupted synthesis postprocessing resumes once without rerunning either
   });
 }, 120_000);
 
-test('unfinished synthesis refuses an intervening user revision rather than adopting it', async () => {
+test('unfinished synthesis leaves an intervening user revision unchanged and reports it', async () => {
   await fixture(async ({ engine, sourceId, root, opts, calls, edit }) => {
     await interruptAfterChild(engine, sourceId, opts);
     const slug = await outputSlug(engine, sourceId);
@@ -282,24 +282,27 @@ test('unfinished synthesis refuses an intervening user revision rather than adop
     const bytes = readFileSync(path, 'utf8');
     const spent = calls();
     const replay = await runPhaseSynthesize(engine, opts);
-    expect(replay.status).toBe('fail');
+    expect(replay.status).toBe('warn');
+    expect(replay.details.pages_written).toBe(0);
+    expect(replay.details.postprocess_conflicts).toEqual([expect.objectContaining({ slug, source_id: sourceId })]);
     expect(calls()).toBe(spent);
     expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(snapshot.revision);
     expect(readFileSync(path, 'utf8')).toBe(bytes);
   });
 }, 120_000);
 
-test('a revision_conflict phase failure keeps the suggestion that names the slug (#6242)', async () => {
+test('an obsolete synthesis output keeps the read-only suggestion that names the slug and source', async () => {
   await fixture(async ({ engine, sourceId, opts, edit }) => {
     await interruptAfterChild(engine, sourceId, opts);
     const slug = await outputSlug(engine, sourceId);
     await edit(slug);
     const replay = await runPhaseSynthesize(engine, opts);
-    expect(replay.status).toBe('fail');
-    expect(replay.error?.code).toBe('SYNTH_PHASE_FAIL');
-    expect(replay.details.error_code).toBe('revision_conflict');
-    expect(replay.error?.hint).toContain(slug);
-    expect(replay.error?.hint).toContain(sourceId);
+    expect(replay.status).toBe('warn');
+    expect(replay.error).toBeUndefined();
+    const conflicts = replay.details.postprocess_conflicts as { message: string; fix: { argv: string[] } }[];
+    expect(conflicts[0].message).toContain(slug);
+    expect(conflicts[0].message).toContain(sourceId);
+    expect(conflicts[0].fix.argv).toEqual(['gbrain', 'get', '--source', sourceId, '--', slug]);
   });
 }, 120_000);
 
@@ -321,7 +324,9 @@ test('synthesis postprocessing refuses a concurrent edit after checking the chil
     try {
       const result = await runPhaseSynthesize(engine, opts);
       expect(changed).toBe(true);
-      expect(result.status).toBe('fail');
+      expect(result.status).toBe('warn');
+      expect(result.details.pages_written).toBe(0);
+      expect(result.details.postprocess_conflicts).toEqual([expect.objectContaining({ slug, source_id: sourceId })]);
     } finally { spy.mockRestore(); }
     expect(calls()).toBe(spent);
     expect((await engine.readPageSnapshot(slug, { sourceId }))!.page.compiled_truth).toContain(`"${laterQuote}"`);
@@ -466,6 +471,113 @@ test('partial multi-output recovery indexes every finalized output without repub
       expect(summaryBytes).toContain(`[[${slug}]]`);
     }
   }, 2);
+}, 120_000);
+
+/** Protects ordinary-cycle recovery with one obsolete output and one healthy sibling.
+ * Reverting per-output conflict handling poisons the whole phase. Existing tests
+ * cover a single explicit-input failure, not cooldown/replay and sibling progress.
+ * Uses the real coordinator and existing phase boundary, no production-only seam.
+ */
+test('#6360: obsolete retained output does not starve siblings or retry a completed transcript', async () => {
+  await fixture(async f => {
+    const { engine, sourceId, root, calls, edit } = f;
+    const { ordinary, spent } = await childCommittedOrdinaryCycle(f);
+    const childJobs = () => engine.executeRaw("SELECT id FROM minion_jobs WHERE name='subagent' AND data->>'source_id'=$1 ORDER BY id", [sourceId]);
+    const jobsBefore = await childJobs();
+    const outputs = await engine.executeRaw<{ slug: string }>(
+      "SELECT slug FROM pages WHERE source_id=$1 AND slug LIKE 'wiki/personal/reflections/session-%' ORDER BY slug", [sourceId]);
+    expect(outputs).toHaveLength(2);
+    const [obsolete, healthy] = outputs.map(row => row.slug);
+    await edit(obsolete);
+    const snapshot = (await engine.readPageSnapshot(obsolete, { sourceId }))!;
+    const path = join(root, `${obsolete}.md`);
+    const bytes = readFileSync(path, 'utf8');
+    const receipts = await engine.executeRaw('SELECT id,state,outcome FROM persistence_requests WHERE source_id=$1 AND slug=$2 ORDER BY sequence', [sourceId, obsolete]);
+    for (let i = 0; i < 2; i++) {
+      await disposePersistenceConsumer(engine);
+      const result = await runPhaseSynthesize(engine, ordinary);
+      expect(result.status).toBe('warn');
+      expect(result.details.postprocess_conflicts).toEqual([expect.objectContaining({ slug: obsolete, source_id: sourceId })]);
+      expect(result.details.written_slugs).toEqual(i ? [] : [healthy]);
+      expect(result.details.publish_pending).toBeUndefined();
+      expect(await engine.getConfig('dream.synthesize.last_completion_ts')).not.toBeNull();
+      expect(calls()).toBe(spent);
+      expect(await childJobs()).toEqual(jobsBefore);
+      expect((await engine.readPageSnapshot(obsolete, { sourceId }))!.revision).toBe(snapshot.revision);
+      expect(readFileSync(path, 'utf8')).toBe(bytes);
+      expect(await engine.executeRaw('SELECT id,state,outcome FROM persistence_requests WHERE source_id=$1 AND slug=$2 ORDER BY sequence', [sourceId, obsolete])).toEqual(receipts);
+      const summary = (await engine.readPageSnapshot(String(result.details.summary_slug), { sourceId }))!;
+      expect(summary.page.compiled_truth).toContain(`[[${healthy}]]`);
+      expect(summary.page.compiled_truth).not.toContain(`[[${obsolete}]]`);
+    }
+  }, 2);
+}, 120_000);
+
+test('#6360: an obsolete output does not hide a healthy sibling publication hold or stamp its cooldown', async () => {
+  await fixture(async f => {
+    const { engine, sourceId, edit, calls } = f;
+    const { ordinary, spent } = await childCommittedOrdinaryCycle(f);
+    const outputs = await engine.executeRaw<{ slug: string }>(
+      "SELECT slug FROM pages WHERE source_id=$1 AND slug LIKE 'wiki/personal/reflections/session-%' ORDER BY slug", [sourceId]);
+    const [obsolete, healthy] = outputs.map(row => row.slug);
+    await edit(obsolete);
+    const contention = contendAdmissions(target => target === healthy);
+    let result: Awaited<ReturnType<typeof runPhaseSynthesize>>;
+    try { result = await runPhaseSynthesize(engine, ordinary); }
+    finally { contention.restore(); }
+    expect(contention.injected()).toBe(1);
+    expect(result.status).toBe('warn');
+    expect(result.details.postprocess_conflicts).toEqual([expect.objectContaining({ slug: obsolete })]);
+    expect(result.details.publish_pending).toBe(1);
+    expect(result.details.pages_written).toBe(0);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBeNull();
+    await disposePersistenceConsumer(engine);
+    const next = await runPhaseSynthesize(engine, ordinary);
+    expect(next.status).toBe('warn');
+    expect(next.details.written_slugs).toEqual([healthy]);
+    expect(next.details.publish_pending).toBeUndefined();
+    expect(calls()).toBe(spent);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).not.toBeNull();
+  }, 2);
+}, 120_000);
+
+test('#6360: a recorded publication revision conflict is terminal on replay, not a phase failure', async () => {
+  await fixture(async f => {
+    const { engine, sourceId, root, edit, calls } = f;
+    const { ordinary, slug, spent } = await childCommittedOrdinaryCycle(f);
+    const admit = journal.admitWrite;
+    let edited = false;
+    const spy = spyOn(journal, 'admitWrite').mockImplementation(async (eng, input, ...rest) => {
+      if (!edited && input.slug === slug && input.intent?.kind === 'managed_maintenance_page') {
+        edited = true;
+        await edit(slug);
+      }
+      return admit(eng, input, ...rest);
+    });
+    let result: Awaited<ReturnType<typeof runPhaseSynthesize>>;
+    try { result = await runPhaseSynthesize(engine, ordinary); }
+    finally { spy.mockRestore(); }
+    expect(edited).toBe(true);
+    expect(result.status).toBe('warn');
+    expect(result.details.pages_written).toBe(0);
+    const requests = () => engine.executeRaw<{ id: string; state: string }>(
+      "SELECT request_id::text AS id,state FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_maintenance_page'", [sourceId, slug]);
+    const receipts = await requests();
+    expect(receipts).toEqual([expect.objectContaining({ state: 'conflict' })]);
+    const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    const path = join(root, `${slug}.md`);
+    const bytes = readFileSync(path, 'utf8');
+    await disposePersistenceConsumer(engine);
+    const replay = await runPhaseSynthesize(engine, ordinary);
+    expect(replay.status).toBe('warn');
+    expect(replay.details.postprocess_conflicts).toEqual(result.details.postprocess_conflicts);
+    expect(replay.details.pages_written).toBe(0);
+    expect(await requests()).toEqual(receipts);
+    expect(calls()).toBe(spent);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(snapshot.revision);
+    expect(readFileSync(path, 'utf8')).toBe(bytes);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).not.toBeNull();
+  });
 }, 120_000);
 
 test('#5854: a postprocess publish still pending after its wait is deferred, then finished by the next ordinary cycle', async () => {

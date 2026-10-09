@@ -2,7 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import type { Action } from '../agent-output.ts';
-import { opError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { publicationHold } from '../persistence/accepted-pending.ts';
 import { authorizeStoredRequest } from '../persistence/authority.ts';
@@ -17,6 +17,7 @@ import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPri
 
 interface OutputRef { slug: string; source_id: string; raw_source?: string; seat?: string; first_write_at?: Date; }
 interface RetainedOutput { job_id: number | bigint; job_key: string; request: WriteRequest; }
+interface PostprocessConflict { slug: string; source_id: string; revision: string; message: string; fix: Action; }
 
 const writerStatusFix = (sourceId: string, why: string): Action => readFix(why, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
 
@@ -32,8 +33,12 @@ export async function postprocessManagedSynthesis(
   const stats = emptyQuoteVerifyStats();
   const writtenRefs: OutputRef[] = [];
   const finalizedRefs: OutputRef[] = [];
+  const conflicts: PostprocessConflict[] = [];
+  const retire = (ref: OutputRef, revision: string) => conflicts.push({ slug: ref.slug, source_id: ref.source_id, revision,
+    message: `Page ${ref.slug} in source ${ref.source_id} changed after the synthesis child committed revision ${revision}; its obsolete output was left alone, not verified or finalized. Review the current page; this retained child revision will not be republished.`,
+    fix: readFix(`Shows page ${ref.slug} as it is now, read-only.`, { argv: ['gbrain', 'get', '--source', ref.source_id, '--', ref.slug] }) });
   let pending = 0;
-  if (!refs.length) return { writtenRefs, finalizedRefs, stats, pending };
+  if (!refs.length) return { writtenRefs, finalizedRefs, stats, pending, conflicts };
   const outputs = await engine.executeRaw<RetainedOutput>(
     `SELECT t.job_id,j.idempotency_key AS job_key,row_to_json(p) AS request
        FROM subagent_tool_executions t JOIN minion_jobs j ON j.id=t.job_id
@@ -69,7 +74,6 @@ export async function postprocessManagedSynthesis(
     if (prior) {
       await authorizeStoredRequest(engine, prior);
       if (prior.state === 'committed') { finalizedRefs.push(finalizedRef); continue; }
-      if (['conflict', 'failed', 'cancelled'].includes(prior.state)) writeResponse(prior);
     }
     await authorizeStoredRequest(engine, output.request);
     let content: string;
@@ -79,13 +83,20 @@ export async function postprocessManagedSynthesis(
           `Postprocess request ${prior.request_id} for ${ref.slug} in source ${ref.source_id} exists, but its retained intent does not match revision ${revision}. Inspect it in writer status; do not resubmit under a new request.`,
           { fix: writerStatusFix(ref.source_id, `Shows request ${prior.request_id} and any recovery it holds, read-only.`) });
       }
+      if (['conflict', 'failed', 'cancelled'].includes(prior.state)) {
+        try { writeResponse(prior); }
+        catch (error) {
+          if (!(error instanceof OperationError) || error.code !== 'revision_conflict') throw error;
+          retire(ref, revision);
+          continue;
+        }
+      }
       content = prior.intent.content;
     } else {
       const snapshot = await engine.readPageSnapshot(ref.slug, { sourceId: ref.source_id });
       if (!snapshot || snapshot.revision !== revision) {
-        throw opError('revision_conflict', 'The synthesis output changed after the child committed.',
-          `Page ${ref.slug} in source ${ref.source_id} changed after the synthesis child committed revision ${revision}, so postprocessing left it alone. Review the page; the next synthesis run processes fresh output.`,
-          { fix: readFix(`Shows page ${ref.slug} as it is now, read-only.`, { argv: ['gbrain', 'get', '--source', ref.source_id, '--', ref.slug] }) });
+        retire(ref, revision);
+        continue;
       }
       const firstDate = snapshot.page.frontmatter.dream_created_cycle_date || snapshot.page.frontmatter.dream_cycle_date || opts.cycleDate;
       const since = ref.first_write_at ?? opts.sinceByTranscript.get(transcript.filePath);
@@ -109,6 +120,10 @@ export async function postprocessManagedSynthesis(
     try {
       await publishMaintenancePage(engine, authority, ref.slug, content, { requestId, expectedRevision: revision });
     } catch (error) {
+      if (error instanceof OperationError && error.code === 'revision_conflict') {
+        retire(ref, revision);
+        continue;
+      }
       deferPublishOrThrow(error, `${ref.slug} (request ${requestId})`);
       pending++;
       continue;
@@ -117,7 +132,15 @@ export async function postprocessManagedSynthesis(
     finalizedRefs.push(finalizedRef);
     await new Promise(resolve => setTimeout(resolve, 0));
   }
-  return { writtenRefs, finalizedRefs, stats, pending };
+  return { writtenRefs, finalizedRefs, stats, pending, conflicts };
+}
+
+/** Obsolete child revisions are terminal, not publication holds. Leave cooldown
+ * eligibility intact while reporting every page excluded from finalization. */
+export function withPostprocessConflicts(conflicts: PostprocessConflict[], result: PhaseResult): PhaseResult {
+  if (!conflicts.length) return result;
+  return { ...result, status: 'warn', summary: `${result.summary}; ${conflicts.length} obsolete output(s) left unchanged (review current pages)`,
+    details: { ...result.details, postprocess_conflicts: conflicts } };
 }
 
 /**
