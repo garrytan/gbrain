@@ -166,6 +166,24 @@ describe('managed purge artifact and receipt boundaries', () => {
     expect((await failure(params, 'conflict')).code).toBe('source_changed');
     expect(readFileSync(file, 'utf8')).toBe('Unknown local edit must survive.'); expect(await rowState()).toBe('tombstone');
   });
+  test('tombstone whose file is under sync.exclude purges the row and never touches the file', async () => {
+    const rel = 'excluded/leaked-key.md';
+    const file = await seedPageWithFile(rel);
+    await engine.softDeletePage(SLUG, { sourceId: 'default' });
+    await engine.setConfig('sync.exclude', 'other/**, excluded/**');
+    writeFileSync(file, 'Edited after the page was indexed; the file is not gbrain-owned.');
+    const result = await purge();
+    expect(result).toMatchObject({ status: 'purged', state: 'committed' });
+    expect(readFileSync(file, 'utf8')).toBe('Edited after the page was indexed; the file is not gbrain-owned.');
+    expect(await rowState()).toBe('absent');
+  });
+  test('a path outside sync.exclude keeps the unknown-edit refusal', async () => {
+    const file = await seedPageWithFile(); await engine.softDeletePage(SLUG, { sourceId: 'default' });
+    await engine.setConfig('sync.exclude', 'excluded/**');
+    writeFileSync(file, 'Unknown local edit must survive.');
+    expect((await failure(await parameters({ purge: true }), 'conflict')).code).toBe('source_changed');
+    expect(readFileSync(file, 'utf8')).toBe('Unknown local edit must survive.'); expect(await rowState()).toBe('tombstone');
+  });
   test('ordinary soft-delete also rolls back when its artifact cannot be removed', async () => {
     const file = await seedPageWithFile(); replaceFileWithDirectory(file);
     const error = await failure(await parameters());

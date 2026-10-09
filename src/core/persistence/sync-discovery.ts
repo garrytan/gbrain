@@ -170,6 +170,11 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
       why: 'The sync command routes a connector source to its own coordinator.' } });
   return { binding, root, gitRoot, sourceId, incarnation: source.incarnation, source };
 }
+/** The persisted `sync.exclude` globs unioned with a caller's own, directory entries widened to `dir/**`. */
+export async function configuredSyncExclude(engine: BrainEngine, extra: readonly string[] = []): Promise<string[]> {
+  return [...extra, ...(await engine.getConfig('sync.exclude') ?? '').split(/[\n,]/).map(v => v.trim()).filter(Boolean)]
+    .map(v => v.endsWith('/') ? `${v}**` : v);
+}
 export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, context?: ManagedSyncContext): Promise<SyncDiscovery> {
   const { binding, root, gitRoot, sourceId, incarnation, source } = context ?? await resolveManagedSyncContext(engine, opts);
   const company = currentCompanyBrainSync(sourceId);
@@ -181,8 +186,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     slugPrefix: probe.slice(0, -2), dryRun: true }) : 'git-root';
   const sourcePath = (path: string) => slugMode === 'source-root' && scope ? path.slice(scope.length + 1) : path;
   const originScope: SyncOriginScope = { sourceId, root, scope, slugMode };
-  const exclude = [...(opts.exclude ?? []), ...(await engine.getConfig('sync.exclude') ?? '').split(/[\n,]/).map(v => v.trim()).filter(Boolean)]
-    .map(v => v.endsWith('/') ? `${v}**` : v);
+  const exclude = await configuredSyncExclude(engine, opts.exclude);
   const includeHidden = [...new Set([...(opts.includeHidden ?? []), ...(await engine.getConfig('sync.include_hidden') ?? '')
     .split(/[\n,]/).map(v => v.trim()).filter(Boolean)].map(v => v.endsWith('/') ? `${v}**` : v))];
   // Reserved skillpack paths belong to the shared skill publisher; the managed importer always refuses them.
