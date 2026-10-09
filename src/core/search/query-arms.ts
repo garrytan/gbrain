@@ -17,7 +17,7 @@ export async function applyQueryArms(engine: BrainEngine, p: Record<string, unkn
   const anchored = await anchorOpResults(engine, p, query, results, scope);
   if (p.offset || scope.filtered || p.since || p.until || p.lang || p.symbol_kind || p.near_symbol) return anchored;
   const tokenBudget = !scope.evidencePlan && typeof p.token_budget === 'number' ? p.token_budget : undefined;
-  const opts = { sourceId: scope.sourceId, sourceIds: scope.sourceIds, remote: scope.remote, queryEmbedding: scope.queryEmbedding, rowCap: scope.rowCap, readScope: scope, tokenBudget };
+  const opts = { sourceId: scope.sourceId, sourceIds: scope.sourceIds, remote: scope.remote, minTrust: scope.minTrust, suppressFlagged: scope.suppressFlagged, queryEmbedding: scope.queryEmbedding, rowCap: scope.rowCap, readScope: scope, tokenBudget };
   const budget = scope.evidencePlan ? scope.evidenceBudget : tokenBudget;
   if (budget && hasTemporalCue(query) && await temporalFactReserveEnabled(engine)) return applyTemporalFactReserve(engine, query, anchored, { ...opts, budget });
   if (!await queryFactsArmEnabled(engine)) return anchored;

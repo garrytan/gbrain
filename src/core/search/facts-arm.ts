@@ -27,6 +27,8 @@ import { namedEntity } from './entity-anchor.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
 import { factDateHeader } from './evidence-date.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
+import type { TrustTier } from '../trust/tier.ts';
 
 export const QUERY_FACTS_ARM_KEY = 'search.query_facts_arm';
 /** Fact rows added per query at most. */
@@ -60,7 +62,11 @@ export function hasTemporalCue(query: string): boolean {
 const STOPWORDS = new Set(['the', 'and', 'for', 'who', 'what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'are', 'was', 'were', 'our', 'your', 'their',
   'now', 'current', 'currently', 'should', 'does', 'did', 'has', 'have', 'how', 'any', 'all', 'about', 'into', 'its', 'next', 'use', 'uses', 'tell']);
 
-export interface FactsArmScope { sourceId?: string; sourceIds?: string[]; remote: boolean }
+export interface FactsArmScope {
+  sourceId?: string; sourceIds?: string[]; remote: boolean;
+  /** #5575 read floor and activation control, applied in the candidate SQL like every retrieval arm. */
+  minTrust?: TrustTier; suppressFlagged?: boolean;
+}
 
 interface FactCandidate {
   id: number; fact: string; kind: string; entity_slug: string | null; source_id: string; source: string;
@@ -88,7 +94,8 @@ async function collectFactCandidates(engine: BrainEngine, query: string, scope: 
   const params: unknown[] = [sources, [...AUDIT_ROW_SOURCES]];
   const base = `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
     AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[]) AND ${quarantinedProvenanceFilterFragment('f')}
-    ${scope.remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : ''}`;
+    ${scope.remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : ''}
+    AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust, suppressFlagged: scope.suppressFlagged })}`;
   const cols = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period';
   const found = new Map<number, ScoredCandidate>();
   const add = (r: FactCandidate & { haystack?: string; similarity?: number }, entity = false) => {

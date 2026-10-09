@@ -6,7 +6,9 @@
  * private fact; page-unit delivery passes the fact row through as written;
  * a page whose typed claim a newer fact covers is stamped superseded_claim;
  * the key is on when unset, and with it off the rows are unchanged; a fact
- * whose source page is quarantined never comes back. PGLite, keyword-only, no network.
+ * whose source page is quarantined never comes back; a fact row carries its
+ * own trust tier, and the read floor and purge's rederive hold apply inside
+ * the arm. PGLite, keyword-only, no network.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -16,6 +18,8 @@ import { QUERY_FACTS_ARM_KEY, matchQueryFacts, queryTerms } from '../src/core/se
 import { resultTokens } from '../src/core/search/token-budget.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts';
+import { withTrustPromotion } from '../src/core/persistence/context.ts';
+import type { TrustTier } from '../src/core/trust/tier.ts';
 
 let engine: PGLiteEngine;
 let sourceId: string;
@@ -154,5 +158,32 @@ describe('facts arm', () => {
       WHERE source_id = $1 AND slug = 'notes/lantern-scrape'`, [sourceId]);
     expect(await ids(false)).not.toContain(Number(scraped.id));
     expect(await ids(true)).not.toContain(Number(scraped.id));
+  });
+
+  test('trust (#5575): a fact row carries its own tier; the floor and the rederive hold apply inside the arm', async () => {
+    const tq = 'Where is the Quarry summit held?';
+    const setTier = (id: number, tier: TrustTier) => engine.transaction(tx => withTrustPromotion(tx, 'user_confirmed',
+      () => tx.executeRaw('UPDATE facts SET trust_tier = $1 WHERE id = $2', [tier, id])));
+    const curated = Number((await engine.insertFact({ fact: 'The Quarry summit is held in Tulsa.', kind: 'fact', entity_slug: 'quarry', source: 'owner note', visibility: 'world', valid_from: new Date('2025-09-01T00:00:00Z') }, { source_id: sourceId })).id);
+    const external = Number((await engine.insertFact({ fact: 'The Quarry summit is held in Reno.', kind: 'fact', entity_slug: 'quarry', source: 'web page', visibility: 'world', valid_from: new Date('2025-09-02T00:00:00Z') }, { source_id: sourceId })).id);
+    await setTier(curated, 'operator_curated');
+    await setTier(external, 'external_untrusted');
+    const ids = async (minTrust?: TrustTier) => (await matchQueryFacts(engine, tq, { sourceId, remote: false, minTrust })).map(f => Number(f.id));
+    expect(await ids()).toEqual([external, curated]);
+    expect(await ids('unknown')).toEqual([curated]);
+
+    await engine.setConfig(QUERY_FACTS_ARM_KEY, 'true');
+    try {
+      const tiers = (rows: SearchResult[]) => Object.fromEntries(rows.filter(r => r.result_type === 'fact').map(r => [Number(r.fact_id), (r as { trust_tier?: string }).trust_tier]));
+      expect(tiers(await query({ query: tq, limit: 10 }))).toEqual({ [curated]: 'operator_curated', [external]: 'external_untrusted' });
+      expect(tiers(await query({ query: tq, limit: 10, min_trust: 'unknown' }))).toEqual({ [curated]: 'operator_curated' });
+
+      await engine.executeRaw(`INSERT INTO needs_rederive (derived_table, derived_id, source_id, reason) VALUES ('facts', $1, $2, 'test')`, [String(curated), sourceId]);
+      expect(await ids()).toEqual([external]);
+      expect(tiers(await query({ query: tq, limit: 10 }))).toEqual({ [external]: 'external_untrusted' });
+    } finally {
+      await engine.setConfig(QUERY_FACTS_ARM_KEY, 'false');
+      await engine.executeRaw(`DELETE FROM needs_rederive WHERE derived_table = 'facts' AND derived_id = $1`, [String(curated)]);
+    }
   });
 });
