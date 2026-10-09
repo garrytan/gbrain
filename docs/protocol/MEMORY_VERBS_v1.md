@@ -371,6 +371,21 @@ backlink_count, active_fact_count }`.
 - `summary` passes the same privacy fences as `get_page` (takes + private
   facts stripped); remote callers never see private facts in the card.
 
+#### entity names: several lookups in one call (additive)
+
+`names` (1 to 50 strings) replaces `name` to resolve a list of names, codes or
+aliases at once; passing both, none or more than 50 is `invalid_params`. Each
+name resolves exactly as `name` does (same precedence, private pages hidden
+from remote callers), duplicates once, in first-seen order.
+
+Response: `{ protocol_version, latency_ms, results[], found, missing }`. Each
+row is `{ name, found: true, slug, title, type, aka[], lead, siblings? }` or
+`{ name, found: false, suggestions? }` (up to 3 `{slug, title}`). `lead` is the
+page's opening prose, up to 200 characters (headings, table rows, private
+fences and secrets removed); `siblings` lists the identity siblings with their
+own `slug`, `title`, `type`, `aka` and `lead`. Rows carry no references, facts
+or open threads: call `entity` with `name` for the full card.
+
 #### entity references and coverage (additive)
 
 The `entity` verb adds three optional card fields (ambient callers,

@@ -196,15 +196,27 @@ const entity: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'MEMORY VERB (v1): person/company/account card, zero LLM. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches and create_safety. Facts: recall.',
+  description: 'MEMORY VERB (v1): person/company/account card, zero LLM. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches (create_safety). Facts: recall.',
   params: {
-    name: { type: 'string', required: true, description: 'Name, alias or slug (e.g. "Alice Example").' },
+    name: { type: 'string', description: 'Name, alias or slug.' },
+    names: { type: 'array', items: { type: 'string' }, description: 'Or up to 50 names/codes at once: compact rows.' },
   },
   scope: 'read',
   verb: true,
   annotations: { title: 'entity (card lookup, zero LLM)', readOnlyHint: true },
   handler: async (ctx, p) => {
     const { verbError } = await import('./operations.ts');
+    if (p.names !== undefined) {
+      const { ENTITY_NAMES_MAX, lookupEntityNames } = await import('./verbs/entity-names.ts');
+      const names = Array.isArray(p.names) ? p.names.filter((n): n is string => typeof n === 'string' && n.trim() !== '') : [];
+      if (p.name !== undefined || !names.length || names.length > ENTITY_NAMES_MAX) {
+        throw verbError('invalid_params', `names must be 1 to ${ENTITY_NAMES_MAX} non-empty strings, without name.`,
+          `Pass either name: "Alice Example" for one full card, or names: ["Alice Example", "WGCO"] (up to ${ENTITY_NAMES_MAX}) for compact rows.`);
+      }
+      const t0 = Date.now();
+      const out = await lookupEntityNames(ctx.engine, ctx.sourceId ?? 'default', names, { remote: ctx.remote !== false, surfaceCeiling: ctx.surfaceCeiling });
+      return { protocol_version: 1, latency_ms: Date.now() - t0, ...out };
+    }
     const name = typeof p.name === 'string' ? p.name.trim() : '';
     if (!name) {
       throw verbError(

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 210022,
-    "stdoutSha256": "6bccdce11b0e616d6edfa773c2f0a382f2b238c783c65fb42407f7f1d7b60784",
+    "stdoutBytes": 210193,
+    "stdoutSha256": "6543b5b532af34a3afd496641a444850b0364e78403a9483170a2a5ef2a4609b",
     "toolNames": [
       "remember",
       "entity",
@@ -265,25 +265,31 @@
         "scope": "write"
       },
       {
-        "description": "MEMORY VERB (v1): person/company/account card, zero LLM. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches and create_safety. Facts: recall.",
+        "description": "MEMORY VERB (v1): person/company/account card, zero LLM. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches (create_safety). Facts: recall.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "entity",
         "parameters": {
-          "name": "string"
+          "name": "string?",
+          "names": "array?"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
             "name": {
-              "description": "Name, alias or slug (e.g. \"Alice Example\").",
+              "description": "Name, alias or slug.",
               "type": "string"
+            },
+            "names": {
+              "description": "Or up to 50 names/codes at once: compact rows.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": [],
           "type": "object"
         },
         "scope": "read"
