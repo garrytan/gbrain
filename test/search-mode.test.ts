@@ -505,7 +505,7 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // Cat 13) — same unshipped epoch; a partial literal hashes as always.
     // 29→30 (#5889): exact-title-first title-arm order + weight-A remote
     // title predicate reorder rows for identical knobs; version-only.
-    expect(KNOBS_HASH_VERSION).toBe(30);
+    expect(KNOBS_HASH_VERSION).toBe(31);
   });
 
   test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -543,7 +543,7 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // Phase E2 / Cat 13) — same unshipped epoch; null hashes as off.
     // v=29 ALSO carries mbg= (metadata boost gate, ranker wave Phase E3 /
     // Cat 13) — same unshipped epoch; a partial literal hashes as always.
-    expect(KNOBS_HASH_VERSION).toBe(30);
+    expect(KNOBS_HASH_VERSION).toBe(31);
   });
 
   test('#4352 follow-up: excludePrivate true vs false produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -759,7 +759,7 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 30 (…; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256; 28→29 evb= expansion variant budget fold)', () => {
+  test('KNOBS_HASH_VERSION is 31 (…; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256; 28→29 evb= expansion variant budget fold)', () => {
     // 28→29: evb= expansion variant budget fold (ranker wave) — budget-weighted
     // variant fusion reorders rows for identical knobs; null hashes as legacy.
     // v=29 ALSO carries rrp= (relational rerank pin, ranker wave R1) — same
@@ -768,7 +768,7 @@ describe('v0.42.3.0 — autocut knobs', () => {
     // Phase E2 / Cat 13) — same unshipped epoch; null hashes as off.
     // v=29 ALSO carries mbg= (metadata boost gate, ranker wave Phase E3 /
     // Cat 13) — same unshipped epoch; a partial literal hashes as always.
-    expect(KNOBS_HASH_VERSION).toBe(30);
+    expect(KNOBS_HASH_VERSION).toBe(31);
   });
 
   test('bundle defaults: autocut off in every bundle (ranker wave rule R2), jump 0.20 kept for operators who re-enable it', () => {
@@ -1102,7 +1102,7 @@ describe('ranker wave (R1) — relational_rerank_pin knob (relational rows bypas
     expect(one).not.toBe(dflt);
     expect(one).not.toBe(off);
     // The pin rides KNOBS_HASH_VERSION 29 together with evb= — no separate bump.
-    expect(KNOBS_HASH_VERSION).toBe(30);
+    expect(KNOBS_HASH_VERSION).toBe(31);
   });
 });
 

@@ -4,7 +4,10 @@ import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 describe('relaxed keyword query planning', () => {
-  test('bounds FTS before page joins without truncating matches or changing scope', async () => {
+  // Protects bounded ranking after eligibility. Reverting the engine dispatch
+  // restores unbounded ranking. Existing tests do not cover this access path.
+  // No production-only testing seam is needed.
+  test('bounds reranking after source, visibility, and chunk eligibility', async () => {
     await withEnv({ GBRAIN_RLS_SCOPE_BINDING: undefined }, async () => {
       const fake = makeFakeSql((statement) => statement.text.startsWith('SHOW enable_seqscan')
         ? [{ enable_seqscan: 'on' }] : []);
@@ -20,10 +23,12 @@ describe('relaxed keyword query planning', () => {
       expect(attempts).toHaveLength(2);
       const [strict, relaxed] = attempts;
       expect(strict!.text).not.toContain('OFFSET 0');
-      expect(relaxed!.text).toMatch(/FROM \(SELECT \* FROM content_chunks[\s\S]+?OFFSET 0\) cc\s+JOIN pages/);
-      // The only candidate LIMIT stays after all page and chunk filters.
-      expect(relaxed!.text.indexOf('OFFSET 0')).toBeLessThan(relaxed!.text.indexOf('JOIN pages'));
-      expect(relaxed!.text.indexOf('JOIN pages')).toBeLessThan(relaxed!.text.indexOf('LIMIT'));
+      expect(relaxed!.text).toContain('term_matches AS MATERIALIZED');
+      expect(relaxed!.text).toContain('LIMIT 4096');
+      expect(relaxed!.text).toContain('ORDER BY coverage DESC, page_position ASC');
+      expect(relaxed!.text.indexOf('p.source_id = $')).toBeLessThan(relaxed!.text.indexOf('LIMIT 4096'));
+      expect(relaxed!.text.indexOf('cc.language = $')).toBeLessThan(relaxed!.text.indexOf('LIMIT 4096'));
+      expect(relaxed!.text.indexOf('LIMIT 4096')).toBeLessThan(relaxed!.text.indexOf('ts_rank(cc.search_vector'));
       for (const attempt of attempts) {
         expect(attempt.text).toContain('p.source_id = $');
         expect(attempt.text).toContain('cc.language = $');
