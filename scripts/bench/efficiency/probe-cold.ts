@@ -33,7 +33,7 @@ async function row(name: string, argv: string[], env: Record<string, string> = {
   await time(argv, env);
   const ms: number[] = [];
   for (let i = 0; i < N; i++) ms.push(await time(argv, env));
-  console.log(`| ${name} | ${N} | ${pct(ms, 50).toFixed(0)} | ${pct(ms, 95).toFixed(0)} |`);
+  console.log(`| ${name} | ${N} | ${pct(ms, 0.5).toFixed(0)} | ${pct(ms, 0.95).toFixed(0)} |`);
 }
 
 const bun = process.execPath;

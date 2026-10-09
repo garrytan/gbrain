@@ -17,6 +17,7 @@ Requires Bun >= 1.4 (the repo's `engines.bun`) and Docker for the Postgres engin
 | `bench-hot.ts` | Hot paths, cold (fresh CLI process per sample) and warm (one long-lived `gbrain serve` stdio MCP process): search, query with/without expansion, get_page, list_pages, recall, doctor, MCP stdio startup + call, HTTP serve startup + call, one-page sync. |
 | `probe-pg.ts` | Warm stdio MCP tool against a Postgres bench brain with `pg_stat_statements` reset around N calls: p50/p95, DB time per call, top statements (placeholders only). `--jit off` A/Bs Postgres JIT for the run. |
 | `probe-cold.ts` | Cold CLI start split: bun start, module graph, `--version`, real reads, each with stdout piped and with `GBRAIN_FLUSH_GRACE_MS=0` (the non-TTY exit-flush grace). |
+| `probe-rerank.ts` | Direct Voyage `/v1/rerank` grid over `top_n_in x max_doc_tokens` and models on candidate sets drawn from a Postgres bench brain: billed tokens/call, $/1k queries, p50/p95, top-5 agreement with the 25x1400 default (a drift signal, not quality). Spends ~$0.1 per 20-query grid. |
 | `remote-rows.ts` | Rows for hosted-brain read latency recorded during a pull. |
 | `report.ts` | JSONL -> markdown tables (`results/report.md`). |
 | `run-all.sh` | Orchestrates data prep, both engines, all datasets, report. |

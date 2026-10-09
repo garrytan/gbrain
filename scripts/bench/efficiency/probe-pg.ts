@@ -80,7 +80,7 @@ try {
     ORDER BY total_exec_time DESC LIMIT 12`)).trim().split('\n').filter(Boolean).map((l) => l.split('\t'));
   const dbTotal = rows.reduce((s, r) => s + Number(r[2]), 0);
   console.log(`machine: ${machine()}\nengine: postgres  brain: ${label}  tool: ${tool}  mode: warm stdio  jit: ${jit}  N=${N}  errors=${errors}`);
-  console.log(`wall p50 ${pct(ms, 50).toFixed(1)} ms  p95 ${pct(ms, 95).toFixed(1)} ms  db time/call ${(dbTotal / N).toFixed(2)} ms`);
+  console.log(`wall p50 ${pct(ms, 0.5).toFixed(1)} ms  p95 ${pct(ms, 0.95).toFixed(1)} ms  db time/call ${(dbTotal / N).toFixed(2)} ms`);
   console.log('calls\tmean_ms\tshare\tstatement');
   for (const r of rows) console.log(`${r[0]}\t${r[1]}\t${((100 * Number(r[2])) / (dbTotal || 1)).toFixed(0)}%\t${r[3]}`);
 } finally {
