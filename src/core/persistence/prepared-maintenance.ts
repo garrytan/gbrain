@@ -402,6 +402,7 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
   if (row.intent?.kind === 'managed_maintenance_takes_reextract') return (await import('../cycle/extract-takes.ts')).prepareTakesReextract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_take_reproject') return (await import('../repair/take-supersession.ts')).prepareTakeReprojection(engine, row);
   if (row.intent?.kind === 'managed_maintenance_timeline_extract') return (await import('../../commands/extract-timeline-db.ts')).prepareTimelineExtract(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_meeting_timeline') return (await import('../extract-timeline-from-meetings.ts')).prepareMeetingTimeline(engine, row);
   if (row.intent?.kind === 'managed_maintenance_page') {
     const prepared = await preparePageMutation(engine, row.intent.expected_revision === null
       ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config, undefined, undefined, { clock });

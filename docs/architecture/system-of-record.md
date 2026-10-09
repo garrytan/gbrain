@@ -293,7 +293,7 @@ routed together with that code's rework:
 <!-- write-attribution-unattributed:start -->
 - `src/commands/extract.ts` (4): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback.
 - `src/core/enrichment-service.ts` (2): enrichment page and auto-timeline entry.
-- `src/core/extract-timeline-from-meetings.ts` (1): meeting timeline batch.
+- `src/core/extract-timeline-from-meetings.ts` (2): meeting timeline batch on an unmanaged brain; a managed brain inserts inside the coordinator's `managed_maintenance_meeting_timeline` publication.
 <!-- write-attribution-unattributed:end -->
 
 ## The privacy boundary

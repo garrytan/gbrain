@@ -41,6 +41,7 @@ const EXEMPT = {
   'src/core/shared-skills/publication.ts': 'skill bundles, not pages',
   'src/core/persistence/prepared-import.ts': 'type definitions shared by import preparers; prepares nothing itself',
   'src/commands/extract-timeline-db.ts': 'writes timeline rows; timeline never enters core',
+  'src/core/extract-timeline-from-meetings.ts': 'writes meeting timeline rows only; page text is unchanged and timeline never enters core',
   'src/core/facts/conversation-publication.ts': 'writes database-only conversation fact rows; page text is unchanged',
   'src/core/cycle/extract-facts.ts': 'fence reconcile and deleted-page expiry write fact rows only; page text is unchanged',
   'src/core/cycle/extract-takes.ts': 'takes reextract writes take rows only; page text is unchanged',

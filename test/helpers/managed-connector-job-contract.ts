@@ -140,7 +140,7 @@ export const HANDLER_COVERAGE: Record<string, { covered: ContractCase } | { exem
   'enrich': { exempt: 'operator-requested entity enrichment; not an automatic connector job' },
   'extract-ner': { exempt: 'opt-in NER over checkout sources; not dispatched for connector sources' },
   'extract-takes-from-pages': { exempt: 'takes extraction; covered by managed-takes tests, not dispatched for connector sources' },
-  'extract-timeline-from-meetings': { exempt: 'operator-requested backfill; the db timeline path is covered by extract_timeline_db' },
+  'extract-timeline-from-meetings': { exempt: 'queued by onboarding remediation over meeting pages, not dispatched per connector source; its managed publication is covered by extract-timeline-from-meetings-managed.test.ts' },
   'import': { exempt: 'filesystem import for checkout sources' },
   'ingest_capture': { exempt: 'capture inbox ingestion into the default source' },
   'integrity': { exempt: 'read-only integrity report' },

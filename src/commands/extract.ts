@@ -1190,12 +1190,12 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
         // printing a clean "N entries" success over failed inserts.
         if (r.batch_errors > 0) {
           console.error(
-            `[extract timeline] ${r.batch_errors} batch(es) failed to insert` +
+            `[extract timeline] ${r.batch_errors} timeline write(s) failed or were refused (a batch, or one page on a managed brain)` +
             (r.first_batch_error ? ` (first error: ${r.first_batch_error})` : '') +
             ` — timeline is incomplete.`,
           );
-          setCliExitVerdict(1);
         }
+        if (r.batch_errors + (r.pages_pending ?? 0) > 0) result.timeline_refused = r.batch_errors + (r.pages_pending ?? 0);
       } else if (byMention || ner) {
         // v0.41.18.0 (T7): combined --by-mention + --ner walk shares one
         // gazetteer; saves an entire pass on big brains. When only one
