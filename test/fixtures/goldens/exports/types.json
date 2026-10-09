@@ -5398,7 +5398,7 @@
         "kind": "function",
         "name": "resolveSourceLocalFilePath",
         "signature": [
-          "(localPath: string, rawSourcePath: string | null | undefined, pageSlug?: string | null, slugRootMode?: \"git-root\" | \"source-root\") => string | null"
+          "(localPath: string, rawSourcePath: string | null | undefined, pageSlug?: string | null, slugRootMode?: \"git-root\" | \"source-root\", gitScope?: string[] | null) => string | null"
         ]
       },
       {
@@ -5413,6 +5413,13 @@
         "name": "serializePageToMarkdown",
         "signature": [
           "(page: Page, tags: string[], opts?: SerializePageOpts) => string"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "sourceGitScope",
+        "signature": [
+          "(localPath: string) => string[] | null"
         ]
       },
       {

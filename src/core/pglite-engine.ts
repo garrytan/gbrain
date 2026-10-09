@@ -71,7 +71,6 @@ import {
   isNovelDimension, isBackdatedObservation,
 } from './chronicle/ontology.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
-import { runMigrations } from './migrate.ts';
 import { supportsHnswIterativeScan } from './vector-index.ts';
 import { searchVectorPool, readVectorPool } from './search/vector-pool.ts';
 import { beforePlannerRead, plannerRead } from './planner-stats.ts';
@@ -1139,7 +1138,7 @@ export class PGLiteEngine implements BrainEngine {
     await this.applyForwardReferenceBootstrap();
     await this.db.exec(getPGLiteSchema(dims, model));
 
-    const { applied } = await runMigrations(this);
+    const { applied } = await (await import('./migrate.ts')).runMigrations(this); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
     if (applied > 0) {
       process.stderr.write(`  ${applied} migration(s) applied\n`);
     }

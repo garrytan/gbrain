@@ -75,6 +75,8 @@ MEMORY VERB (v1): budget-packed session-boundary bundle for a set of standing en
 | `session_id` | string | Opaque session id; keys the hot-memory cache and (on the push path) the session cursor. |
 | `include_private` | boolean | Local trusted callers only: widen ALL arms to include private facts. Ignored (world-only) for remote callers. Default false. |
 
+Each card may carry `newer_mentions` (`since`, `rows` of `date`/`slug`/`title`/`preview`, `more`): the newest pages dated after the entity's own page that mention it, at most 8 rows and 2,000 characters per card, rendered in `text` after hot memory. They follow the `entity` card's read policy and pack last under `budget_tokens`. Off with `mentions.newer_on_cards false`.
+
 ## `delta`
 
 MEMORY VERB (v1): "what changed since T" for heartbeats — pages updated after `since` + hot facts newer than `since` + open-thread events after `since`, zero-LLM. Lets a periodic wake maintain warm state in O(changes) instead of re-deriving. Optionally scope thread deltas to `entities`. WORLD-ONLY by default; include_private honored for local trusted callers only. budget_tokens packs server-side (pages first, then facts; threads are never dropped). protocol_version rides every response.

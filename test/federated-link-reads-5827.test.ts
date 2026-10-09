@@ -21,7 +21,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type AuthInfo, type OperationContext } from '../src/core/operations.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall, type DispatchOpts } from '../src/mcp/dispatch.ts';
-import { makeContext } from '../src/cli.ts';
+import { makeContext } from '../src/cli/main.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { FEDERATED_SET, edgeKeys, seedAliceIdentity, seedFederatedLinkFixture } from './helpers/federated-link-fixture.ts';
 import { ENTITY_IDENTITY_UNION_CONFIG_KEY } from '../src/core/entity-identity.ts';

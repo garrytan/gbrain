@@ -695,6 +695,7 @@
         "resolveSourceLocalFilePath",
         "serializeMarkdown",
         "serializePageToMarkdown",
+        "sourceGitScope",
         "splitBody",
         "yamlAliasesWithinLimit",
         "yamlBlockError"

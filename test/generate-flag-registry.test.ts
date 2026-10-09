@@ -20,7 +20,7 @@
 import { describe, test, expect } from 'bun:test';
 import { segmentDispatchBlocks, buildFlagRegistry, isValueOnlyImport, stripComments } from '../scripts/generate-flag-registry.ts';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
-import { validateCommandFlags } from '../src/cli.ts';
+import { validateCommandFlags } from '../src/cli/main.ts';
 
 /**
  * The flags the plan names for `gbrain eval longmemeval`, plus a sample of

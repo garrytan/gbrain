@@ -28,6 +28,7 @@ import { slugify } from '../entities/resolve.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
 import { stampEvidence, markKeywordHits } from '../search/evidence.ts';
 import type { Link, SearchResult } from '../types.ts';
+import type { NewerMentions } from '../mentions/newer-mentions.ts';
 import { loadLinkableTypes } from '../mentions/policy.ts';
 import { readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
 import { encodeCursor, readReferrerGroups, PAGE_DEFAULT_LIMIT, type ReferenceRow } from '../mentions/referrers.ts';
@@ -91,6 +92,8 @@ export interface EntityCard {
    * a relationship that ended. Absent when there is nothing to say.
    */
   relationship_note?: string;
+  /** Pages dated after this page that mention it, newest first, bounded. `context_pack` cards only (mentions/newer-mentions.ts). */
+  newer_mentions?: NewerMentions;
   /** Distinct pages with any inbound link (every link source, mentions included). `entity` verb only. */
   referenced_by_count?: number;
   /** Those pages grouped by pack-canonical type, newest first; capped per group and per card. `entity` verb only. */

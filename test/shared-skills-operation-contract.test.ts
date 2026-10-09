@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import { brainMembershipOperations } from '../src/core/ops/brain-membership.ts';
-import { parseOpArgs } from '../src/cli.ts';
+import { parseOpArgs } from '../src/cli/main.ts';
 
 test('shared skill synchronization does not replace the existing local administrator sync API', () => {
   const legacy = operationsByName.sync_brain;

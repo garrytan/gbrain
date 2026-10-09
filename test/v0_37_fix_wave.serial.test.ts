@@ -211,7 +211,7 @@ describe('v0.37 Lane C.3 — Voyage key reaches buildGatewayConfig', () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
     try {
-      const { buildGatewayConfig } = await import('../src/cli.ts');
+      const { buildGatewayConfig } = await import('../src/cli/main.ts');
       const cfg = {
         engine: 'pglite' as const,
         voyage_api_key: 'test-voyage-key',
@@ -237,7 +237,7 @@ describe('v0.37 Lane C.3 — Voyage key reaches buildGatewayConfig', () => {
     const saved = process.env.VOYAGE_API_KEY;
     process.env.VOYAGE_API_KEY = 'env-wins-key';
     try {
-      const { buildGatewayConfig } = await import('../src/cli.ts');
+      const { buildGatewayConfig } = await import('../src/cli/main.ts');
       const cfg = { engine: 'pglite' as const, voyage_api_key: 'file-key' };
       const gwCfg = buildGatewayConfig(cfg as any);
       expect(gwCfg.env?.VOYAGE_API_KEY).toBe('env-wins-key');
