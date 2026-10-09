@@ -1042,7 +1042,11 @@ function checkAborted(signal?: AbortSignal): void {
 // going through runCycle's full setup cost.
 export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: BrainEngine | null, signal?: AbortSignal, sourceId?: string): Promise<PhaseResult> {
   try {
-    const [{ runLintCore }, { cycleLintFixEnabled, cycleLintExcludes }] = await Promise.all([import('../commands/lint.ts'), import('./cycle/lint-fix-setting.ts')]);
+    const [{ runLintCore }, { cycleLintFixEnabled, cycleLintExcludes, cycleLintPhaseEnabled }] = await Promise.all([import('../commands/lint.ts'), import('./cycle/lint-fix-setting.ts')]);
+    if (!await cycleLintPhaseEnabled(engine)) {
+      return { phase: 'lint', status: 'skipped', duration_ms: 0, summary: 'lint skipped: cycle.lint.enabled=false',
+        details: { reason: 'disabled', enable_hint: 'gbrain config set cycle.lint.enabled true' } };
+    }
     // issue #1678: pass the cycle's live engine so lint's content-sanity
     // DB-plane lift REUSES it instead of creating + disconnecting a
     // competing module-style engine that nulls the shared db singleton

@@ -11,6 +11,16 @@ export async function cycleLintFixEnabled(engine?: BrainEngine | null): Promise<
   return !/^\s*(false|0|off|no)\s*$/i.test(await engine?.getConfig('cycle.lint_fix').catch(() => null) ?? '');
 }
 
+/**
+ * `cycle.lint.enabled` (default on): only an explicit falsy value skips the
+ * cycle's lint phase; a config read failure keeps it on. For a brain whose page
+ * contract differs from lint's built-in frontmatter rules, where the phase can
+ * only ever report issues it is not meant to fix.
+ */
+export async function cycleLintPhaseEnabled(engine?: BrainEngine | null): Promise<boolean> {
+  return !/^\s*(false|0|off|no)\s*$/i.test(await engine?.getConfig('cycle.lint.enabled').catch(() => null) ?? '');
+}
+
 export const CYCLE_LINT_EXCLUDE_KEY = 'cycle.lint_exclude';
 
 /**
