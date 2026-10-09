@@ -1,16 +1,21 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import postgres from '#postgres'
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { makeGitFixture } from '../helpers/git-fixture.ts';
-import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
+import { setupDB, teardownDB } from './helpers.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 const cli = resolve(import.meta.dir, '../../src/cli.ts');
 
 describe.skipIf(!databaseUrl)('sync lock overlap on Postgres', () => {
+  // The CLI `init` below must meet an existing, classic (unmanaged) brain:
+  // on a fresh database it activates managed persistence, whose sync refuses
+  // a Git pull and publishes through the coordinator instead of this lock.
+  beforeAll(async () => { await setupDB(); });
+  afterAll(async () => { await teardownDB(); });
   test('held owner excludes every contender, releases, and permits a later sync', async () => {
     assertSafeE2eDatabaseUrl(databaseUrl!);
     const count = Number(process.env.NUM_PARALLEL ?? 4);
@@ -20,17 +25,12 @@ describe.skipIf(!databaseUrl)('sync lock overlap on Postgres', () => {
     mkdirSync(repo);
     const source = `lock-test-${crypto.randomUUID().slice(0, 8)}`;
     const lockKey = `gbrain-sync:${source}`;
-    // A database of its own with the schema already applied: the CLI's init
-    // then finds an existing brain and leaves managed persistence off, whatever
-    // earlier files in the shard did to the shared database.
-    const isolated = await isolatedPersistencePostgres(databaseUrl!);
-    const brainUrl = isolated.databaseUrl;
-    const sql = postgres(brainUrl, { max: 2, onnotice: () => {} });
+    const sql = postgres(databaseUrl!, { max: 2, onnotice: () => {} });
     const children: ReturnType<typeof Bun.spawn>[] = [];
     let barrier: Awaited<ReturnType<typeof sql.reserve>> | undefined;
     const env = {
       PATH: process.env.PATH!, HOME: home, GBRAIN_HOME: home,
-      DATABASE_URL: brainUrl, GBRAIN_DATABASE_URL: brainUrl,
+      DATABASE_URL: databaseUrl!, GBRAIN_DATABASE_URL: databaseUrl!,
       GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_NO_GITIGNORE: '1',
     };
     const spawn = (args: string[]) => {
@@ -62,7 +62,7 @@ describe.skipIf(!databaseUrl)('sync lock overlap on Postgres', () => {
         writeFileSync(join(repo, `${name}.md`), `---\ntitle: Lock fixture ${name}\ntype: note\n---\n\nGeneric lock fixture ${name}.\n`);
       }
       fixture.commitAll('seed lock fixtures');
-      await run(['init', '--non-interactive', '--no-embedding', '--url', brainUrl]);
+      await run(['init', '--non-interactive', '--no-embedding', '--url', databaseUrl!]);
       await run(['sources', 'add', source, '--path', repo, '--no-federated']);
 
       barrier = await sql.reserve();
@@ -123,8 +123,15 @@ describe.skipIf(!databaseUrl)('sync lock overlap on Postgres', () => {
         await barrier`ROLLBACK`;
         barrier.release();
       }
+      await sql`DELETE FROM gbrain_cycle_locks WHERE holder_host = ${hostname()} AND holder_pid = ANY(${children.map(c => c.pid)}::int[])`;
+      // On a fresh database the CLI's init activates managed persistence, so
+      // raw fixture cleanup must declare itself to the writer guard.
+      await sql.begin(async tx => {
+        await tx`SELECT set_config('gbrain.topology_change', 'on', true), set_config('gbrain.write_sources', ${JSON.stringify([source])}, true)`;
+        await tx`DELETE FROM facts WHERE source_id = ${source}`;
+        await tx`DELETE FROM sources WHERE id = ${source}`;
+      });
       await sql.end();
-      await isolated.close();
       rmSync(home, { recursive: true, force: true });
     }
   }, 180_000);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readVectorPool, searchVectorPool, type VectorPoolAttempt } from '../../src/core/search/vector-pool.ts';
+import { readVectorPool, searchIndexWalk, searchVectorPool, type VectorPoolAttempt, type VectorPoolBatch } from '../../src/core/search/vector-pool.ts';
 import { supportsHnswIterativeScan } from '../../src/core/vector-index.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
 
@@ -120,5 +120,51 @@ describe('bounded vector candidate safety', () => {
   test('#5824: eligible_pool is read next to the raw candidate_pool', () => {
     expect(readVectorPool([{ page_id: 3, candidate_pool: 100, eligible_pool: 12 }])).toEqual({
       rows: [{ page_id: 3, candidate_pool: 100, eligible_pool: 12 }], candidatePool: 100, eligiblePool: 12 });
+  });
+});
+
+describe('first attempts: index walk, then scope scan', () => {
+  const rows = (n: number) => Array.from({ length: n }, (_, page_id) => ({ page_id }));
+  async function run(stmt: { indexWalkSql?: string; scopeScanSql?: string }, batches: Partial<Record<'walk' | 'scan', VectorPoolBatch | Error>>, limit = 10) {
+    const kinds: Array<'walk' | 'scan'> = [];
+    const attempts: VectorPoolAttempt[] = [];
+    const result = await searchIndexWalk({ innerLimit: 100, indexWalkOverfetch: 50, ...stmt }, limit, async attempt => {
+      const kind = attempt.scopeScan ? 'scan' : 'walk';
+      kinds.push(kind);
+      attempts.push(attempt);
+      const batch = batches[kind]!;
+      if (batch instanceof Error) throw batch;
+      return batch;
+    });
+    return { result, kinds, attempts };
+  }
+  const timeout = () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+
+  test('no walk and no scan leaves the pool to the caller', async () => {
+    expect(await run({}, {})).toEqual({ result: null, kinds: [], attempts: [] });
+  });
+
+  test('a full walk window answers; its tuple budget covers the over-fetched window', async () => {
+    const { result, kinds, attempts } = await run({ indexWalkSql: 'w', scopeScanSql: 's' }, { walk: { rows: rows(10), candidatePool: 100 } });
+    expect(result).toHaveLength(10);
+    expect(kinds).toEqual(['walk']);
+    expect(attempts[0]).toMatchObject({ indexWalk: true, maxScanTuples: 5000, remainingMs: 2000, exact: false });
+  });
+
+  test('a short walk falls through to the scope scan, which answers when it fills the limit or the scope ran out', async () => {
+    const short = { rows: rows(4), candidatePool: 40 };
+    expect((await run({ indexWalkSql: 'w', scopeScanSql: 's' }, { walk: short, scan: { rows: rows(10), candidatePool: 100 } })).kinds).toEqual(['walk', 'scan']);
+    const exhausted = await run({ scopeScanSql: 's' }, { scan: { rows: rows(3), candidatePool: 6 } });
+    expect(exhausted.result).toHaveLength(3);
+    expect(exhausted.kinds).toEqual(['scan']);
+    expect(exhausted.attempts[0]).toMatchObject({ scopeScan: true, exact: false });
+  });
+
+  test('a full scan window that stale rows left short, or a timed-out attempt, falls back to the pool', async () => {
+    expect((await run({ scopeScanSql: 's' }, { scan: { rows: rows(8), candidatePool: 100, eligiblePool: 90 } })).result).toBeNull();
+    expect((await run({ indexWalkSql: 'w' }, { walk: { rows: rows(4), candidatePool: 40 } })).result).toBeNull();
+    const timedOut = await run({ indexWalkSql: 'w', scopeScanSql: 's' }, { walk: timeout(), scan: timeout() });
+    expect(timedOut).toMatchObject({ result: null, kinds: ['walk', 'scan'] });
+    await expect(run({ scopeScanSql: 's' }, { scan: new Error('boom') })).rejects.toThrow('boom');
   });
 });

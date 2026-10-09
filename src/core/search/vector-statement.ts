@@ -26,17 +26,36 @@
  * pages up front. A 25k-chunk brain flips to a full scan, sort and
  * nested-loop join at a 50-row limit or on any remote read. The index walk
  * orders `content_chunks` alone (`ann`, chunk-level filters only, twice the
- * window), then joins pages and sources by key and applies every page filter
- * to those rows, keeping the nearest `innerLimit` eligible ones: the same set
- * the joined statement selects whenever that many survive. Callers run it
- * with sorting disabled so the HNSW scan is the only ordered path, accept it
- * when its window is full, and otherwise run the joined statement as before,
- * whose plans stay with the planner for selective filters. A type or date
- * filter skips the walk: it is an explicit narrowing that usually leaves the
- * window short, so the walk would only add its cost. So does a source scope
- * whose share of pages (`pages.source_id` planner statistics, `scopeShare`)
- * is below INDEX_WALK_MIN_SCOPE_SHARE: the nearest chunks overall rarely
- * fill its window.
+ * window, scaled by 1/share for a source scope), then joins pages and
+ * sources by key and applies every page filter to those rows, keeping the
+ * nearest `innerLimit` eligible ones: the same set the joined statement
+ * selects whenever that many survive. Callers run it with sorting disabled so
+ * the HNSW scan is the only ordered path, accept it when its window is full,
+ * and otherwise run the joined statement as before, whose plans stay with the
+ * planner for selective filters. A type or date filter skips the walk: it is
+ * an explicit narrowing that usually leaves the window short, so the walk
+ * would only add its cost. So does a source scope whose share of pages
+ * (`pages.source_id` planner statistics, `scope.share`) is below
+ * INDEX_WALK_MIN_SCOPE_SHARE: the nearest chunks overall rarely fill its
+ * window.
+ *
+ * `scopeScanSql` serves a source scope under SCOPE_SCAN_MAX_SHARE of pages
+ * whose estimated chunk count (`scope.chunks`, the share times
+ * `content_chunks` reltuples) is at most SCOPE_SCAN_MAX_CHUNKS: an exact
+ * distance scan over the scope's chunks with every filter applied, ordering
+ * only chunk ids (`+ 0` keeps the index out), then the window joins back for
+ * its columns. The eligible page ids come first as `= ANY(ARRAY(...))`, so
+ * chunks are always reached through `idx_chunks_page`: joined inline, the
+ * private-page rule's estimate flipped the scan to a sequential scan of every
+ * chunk with a nested-loop join filter and ran the rule once per chunk
+ * (1.1 s for a 40k-chunk scope at 50k pages, 9-22 s for a 74k-chunk one). It is complete by construction, where a filtered HNSW scan of
+ * a mid-share scope returned a fraction of the true neighbours, and it costs
+ * a few microseconds per scope chunk. Up to SCOPE_SCAN_FIRST_MAX_CHUNKS it
+ * replaces the walk; above that the walk runs first (fast when the scope's
+ * chunks spread through the space) and the scan answers when the walk comes
+ * back short, as it does for a scope clustered away from the query. Callers
+ * accept the scan when it fills the limit or its window is short (the scope
+ * ran out of eligible chunks).
  */
 import type { SearchOpts } from '../types.ts';
 import { hnswIndexExpected } from '../vector-index.ts';
@@ -54,8 +73,12 @@ export interface VectorSearchStatementInput {
   limit: number;
   offset: number;
   opts?: SearchOpts;
-  /** Estimated share of pages the source scope holds (`vectorScopeShareLoader`); below INDEX_WALK_MIN_SCOPE_SHARE the walk is omitted. */
-  scopeShare?: number;
+  /**
+   * Estimated share of pages and chunks the source scope holds
+   * (`vectorScopeLoader`): below INDEX_WALK_MIN_SCOPE_SHARE the walk is
+   * omitted; at most SCOPE_SCAN_MAX_CHUNKS adds the scope scan.
+   */
+  scope?: VectorScope;
 }
 
 export interface VectorSearchStatement {
@@ -73,6 +96,10 @@ export interface VectorSearchStatement {
   relaxed: boolean;
   /** Index-walk statement (relaxed variant without a type or date filter), same parameters as `sql`; trusted when `candidate_pool` reaches the window. */
   indexWalkSql?: string;
+  /** Raw rows the walk orders per window slot: INDEX_WALK_OVERFETCH, scaled by 1/share for a source scope. */
+  indexWalkOverfetch: number;
+  /** Exact scan over a small source scope's chunks (relaxed variant), same parameters as `sql`; runs after the walk when both exist. */
+  scopeScanSql?: string;
 }
 
 /** Raw rows the index walk orders per window slot, so page filters can drop some and still fill the window. */
@@ -85,11 +112,26 @@ export const INDEX_WALK_OVERFETCH = 2;
 export const INDEX_WALK_SETTINGS: Readonly<Record<string, string>> = { enable_sort: 'off' };
 
 /** Source scopes holding a smaller share of pages skip the index walk. */
-export const INDEX_WALK_MIN_SCOPE_SHARE = 0.1;
+export const INDEX_WALK_MIN_SCOPE_SHARE = 0.04;
+
+/**
+ * Source scopes under SCOPE_SCAN_MAX_SHARE of pages get the exact scope scan
+ * up to SCOPE_SCAN_MAX_CHUNKS (estimated): first when at most
+ * SCOPE_SCAN_FIRST_MAX_CHUNKS, otherwise after the walk comes back short.
+ */
+export const SCOPE_SCAN_MAX_SHARE = 0.3;
+export const SCOPE_SCAN_FIRST_MAX_CHUNKS = 25_000;
+export const SCOPE_SCAN_MAX_CHUNKS = 60_000;
+
+/** Walk overfetch for a scope holding `share` of pages: the window keeps about INDEX_WALK_OVERFETCH in-scope rows per slot. */
+export function indexWalkOverfetch(share: number | undefined): number {
+  return share === undefined || share >= 1 ? INDEX_WALK_OVERFETCH : Math.ceil(INDEX_WALK_OVERFETCH / Math.max(share, INDEX_WALK_MIN_SCOPE_SHARE));
+}
 
 /** Planner statistics for `pages.source_id`; PGLite analyzes `pages` itself (planner-stats.ts), Postgres through autovacuum. */
 export const PAGE_SOURCE_STATS_SQL = `SELECT most_common_vals::text::text[] AS sources, most_common_freqs AS freqs, n_distinct, null_frac,
-    (SELECT reltuples FROM pg_class WHERE oid = 'pages'::regclass) AS reltuples
+    (SELECT reltuples FROM pg_class WHERE oid = 'pages'::regclass) AS reltuples,
+    (SELECT reltuples FROM pg_class WHERE oid = 'content_chunks'::regclass) AS chunk_reltuples
   FROM pg_stats WHERE schemaname = current_schema() AND tablename = 'pages' AND attname = 'source_id'`;
 
 export interface PageSourceStats {
@@ -98,6 +140,14 @@ export interface PageSourceStats {
   n_distinct: number;
   null_frac: number;
   reltuples: number;
+  /** `content_chunks` reltuples; -1 or absent when never analyzed. */
+  chunk_reltuples?: number;
+}
+
+export interface VectorScope {
+  share: number;
+  /** Estimated chunks in the scope (share times `content_chunks` reltuples), absent without chunk statistics. */
+  chunks?: number;
 }
 
 /** Share of pages the source scope holds, or undefined without a scope or statistics. */
@@ -111,18 +161,27 @@ export function sourceScopeShare(stats: PageSourceStats | undefined, opts?: Sear
   return [...new Set(scope)].reduce((sum, id) => sum + (sources.includes(id) ? freqs[sources.indexOf(id)]! : unlisted), 0);
 }
 
+/** Share of pages and estimated chunks the source scope holds, or undefined without a scope or statistics. */
+export function sourceScope(stats: PageSourceStats | undefined, opts?: SearchOpts): VectorScope | undefined {
+  const share = sourceScopeShare(stats, opts);
+  if (share === undefined) return undefined;
+  const chunks = Number(stats?.chunk_reltuples ?? -1);
+  return chunks > 0 ? { share, chunks: share * chunks } : { share };
+}
+
 /**
- * The engines' scope-share lookup: PAGE_SOURCE_STATS_SQL through `load`, at
- * most once a minute and only for source-scoped searches. A share only
- * decides whether the walk runs, never which rows return, so stale or
- * missing statistics cost speed at most.
+ * The engines' scope lookup: PAGE_SOURCE_STATS_SQL through `load`, at most
+ * once a minute and only for source-scoped searches. The estimate only picks
+ * the walk, the scope scan or the joined statement, each of which falls back
+ * to the joined statement when it comes back short, so stale or missing
+ * statistics cost speed at most.
  */
-export function vectorScopeShareLoader(load: () => Promise<PageSourceStats[]>): (opts?: SearchOpts) => Promise<number | undefined> {
+export function vectorScopeLoader(load: () => Promise<PageSourceStats[]>): (opts?: SearchOpts) => Promise<VectorScope | undefined> {
   let cached: { at: number; stats: Promise<PageSourceStats | undefined> } | undefined;
   return async opts => {
     if (!opts?.sourceIds?.length && !opts?.sourceId) return undefined;
     if (!cached || performance.now() - cached.at > 60_000) cached = { at: performance.now(), stats: load().then(rows => rows[0], () => undefined) };
-    return sourceScopeShare(await cached.stats, opts);
+    return sourceScope(await cached.stats, opts);
   };
 }
 
@@ -172,8 +231,12 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
   // A type or date filter, or a source scope with a small share of pages, is
   // the caller narrowing the search; the walk would usually come back short,
   // so those keep the joined statement alone.
+  const share = input.scope?.share, chunks = input.scope?.chunks;
   const narrowed = !!(opts?.type || opts?.types?.length || opts?.afterDate || opts?.beforeDate)
-    || (input.scopeShare !== undefined && input.scopeShare < INDEX_WALK_MIN_SCOPE_SHARE);
+    || (share !== undefined && share < INDEX_WALK_MIN_SCOPE_SHARE);
+  const scopeScan = relaxed && share !== undefined && share < SCOPE_SCAN_MAX_SHARE && chunks !== undefined && chunks <= SCOPE_SCAN_MAX_CHUNKS;
+  const walk = relaxed && !narrowed && !(scopeScan && chunks! <= SCOPE_SCAN_FIRST_MAX_CHUNKS);
+  const overfetch = indexWalkOverfetch(share);
   const preMigration = modelParam ? `(${modelParam}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state'))` : '';
   const hashCurrent = `(cc.embedded_text_hash=md5(cc.chunk_text) OR cc.embedded_text_hash IS NULL)`;
   const guardedGeneration = modelParam ? `AND ((cc.model=${modelParam} AND ${hashCurrent})
@@ -233,7 +296,7 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
           ${chunkFilters.join('\n          ')}
           ${relaxedGeneration}
         ORDER BY cc.${col} <=> ${castSql}
-        LIMIT ${innerLimitParam}::int * ${INDEX_WALK_OVERFETCH}
+        LIMIT ${innerLimitParam}::int * ${overfetch}
       ),
       hnsw_candidates AS (
         SELECT
@@ -250,6 +313,35 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
           ${visibilityClause}
         ORDER BY ann.distance, ann.id
         LIMIT ${innerLimitParam}::int
+      ),`;
+
+  const scopeScanCandidates = `
+      WITH scope_scan AS MATERIALIZED (
+        SELECT cc.id
+        FROM content_chunks cc
+        WHERE cc.page_id = ANY(ARRAY(
+            SELECT p.id
+            FROM pages p
+            JOIN sources s ON s.id = p.source_id
+            WHERE true
+              ${pageFilters.join('\n              ')}
+              ${hardExcludeClause}
+              ${visibilityClause}
+          ))
+          AND cc.${col} IS NOT NULL ${modalityFilter}
+          ${chunkFilters.join('\n          ')}
+          ${relaxedGeneration}
+        ORDER BY (cc.${col} <=> ${castSql}) + 0, cc.id
+        LIMIT ${innerLimitParam}
+      ),
+      hnsw_candidates AS (
+        SELECT
+          ${candidateColumns}
+          ${hashCurrent} AS hash_current,
+          1 - (cc.${col} <=> ${castSql}) AS raw_score
+        FROM scope_scan
+        JOIN content_chunks cc ON cc.id = scope_scan.id
+        JOIN pages p ON p.id = cc.page_id
       ),`;
 
   const statement = (candidates: string, relax: boolean) => `${candidates}
@@ -297,6 +389,8 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
     innerLimit,
     indexed,
     relaxed,
-    ...(relaxed && !narrowed ? { indexWalkSql: statement(indexWalkCandidates, true) } : {}),
+    indexWalkOverfetch: overfetch,
+    ...(walk ? { indexWalkSql: statement(indexWalkCandidates, true) } : {}),
+    ...(scopeScan ? { scopeScanSql: statement(scopeScanCandidates, true) } : {}),
   };
 }

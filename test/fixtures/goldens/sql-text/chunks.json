@@ -255,8 +255,8 @@
             "params": [
               "array<number>"
             ],
-            "sql": "SELECT cc.id, cc.\"embedding_voyage\" AS embedding FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id = ANY($1::int[]) AND cc.\"embedding_voyage\" IS NOT NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE",
-            "textSha256": "a5cf189a26e371c02486d3651db29d677640add93650f520cef29c25d6798413"
+            "sql": "SELECT cc.id, vector_send(cc.\"embedding_voyage\"::vector) AS embedding FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id = ANY($1::int[]) AND cc.\"embedding_voyage\" IS NOT NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE",
+            "textSha256": "62f4d3f7d81e398383af2b4529b462393291c395ae0d7f8c640ae3edc75de8f0"
           }
         ],
         "default": [
@@ -265,8 +265,8 @@
             "params": [
               "array<number>"
             ],
-            "sql": "SELECT cc.id, cc.\"embedding\" AS embedding FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id = ANY($1::int[]) AND cc.\"embedding\" IS NOT NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE",
-            "textSha256": "98cb146df06da5bb5f4ec99c19453bc1414aa9deeba2fcb0116674dd5bb4ce57"
+            "sql": "SELECT cc.id, vector_send(cc.\"embedding\"::vector) AS embedding FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE cc.id = ANY($1::int[]) AND cc.\"embedding\" IS NOT NULL AND (p.text_projection_revision = p.knowledge_revision) IS TRUE",
+            "textSha256": "c489f80e76fee469d26c10cf90e5251306d04b3c7fbdd97b33c7d1f658d2cc11"
           }
         ]
       },
