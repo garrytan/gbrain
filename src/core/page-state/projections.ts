@@ -3,6 +3,7 @@ import type { Chunk, ChunkInput, ResolvedColumn, PageKind } from '../types.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { CHUNKER_VERSION } from '../chunkers/code.ts';
 import { prepareMarkdownChunks } from '../markdown-chunks.ts';
+import { loadFenceChunkOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { prepareCodeChunks, installCodeChunkEdges } from '../code-chunks.ts';
 import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
 import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from './types.ts';
@@ -40,6 +41,8 @@ export interface ProjectionSnapshot {
   maxChunkTokens: number;
   maxChunkTokensOverride?: number;
   pageKind: PageKind;
+  /** #5575 ENG-1: held, purged and below-page-tier fence rows, read with the snapshot. */
+  fenceOverlay?: FenceChunkOverlay;
 }
 
 export type ProjectionConflictField = 'text_projection_revision' | 'chunk_digest' | 'indexing_context';
@@ -134,8 +137,10 @@ async function readGuardedProjectionSnapshot(tx: BrainEngine, slug: string, sour
   const snapshot = await tx.readPageSnapshot(slug, { sourceId, ...(opts.requireLiveSource && { requireLiveSource: true }) });
   if (!snapshot || (!opts.allowUnsealed && snapshot.page.text_projection_revision !== snapshot.revision)) return null;
   const context = await indexingContext(tx, snapshot, opts.maxChunkTokens);
+  const fenceOverlay = context.pageKind === 'markdown' ? await loadFenceChunkOverlay(tx, { sourceId, slug, compiled_truth: snapshot.page.compiled_truth, timeline: snapshot.page.timeline }) : undefined;
   return { snapshot, chunks: await tx.getChunks(slug, { sourceId, includeUnsealed: true }), indexingContext: context.key,
-    embeddingModel: context.model, embeddingColumn: context.column, maxChunkTokens: context.maxChunkTokens, maxChunkTokensOverride: opts.maxChunkTokens, pageKind: context.pageKind };
+    embeddingModel: context.model, embeddingColumn: context.column, maxChunkTokens: context.maxChunkTokens, maxChunkTokensOverride: opts.maxChunkTokens, pageKind: context.pageKind,
+    ...(fenceOverlay ? { fenceOverlay } : {}) };
 }
 
 /** No provider work under the guard. Delayed derived results lose to newer content. */
@@ -305,7 +310,7 @@ export async function preparePageProjection(prepared: ProjectionSnapshot) {
     return { chunks: code.chunks, code };
   }
   if (prepared.pageKind !== 'markdown') throw new Error('This page kind requires its source importer.');
-  return { chunks: await prepareMarkdownChunks(page, prepared.maxChunkTokens), code: undefined };
+  return { chunks: await prepareMarkdownChunks(page, prepared.maxChunkTokens, prepared.fenceOverlay), code: undefined };
 }
 
 // The job queue is usually empty or small while pages grows without bound, so

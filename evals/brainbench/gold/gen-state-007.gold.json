@@ -1,0 +1,20 @@
+{
+  "fixture_id": "gen-state-007",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "guarded",
+        "step": "s1",
+        "claim": "Stellan Frostholm is the COO of Umbergale Labs"
+      },
+      {
+        "item_id": "i2",
+        "check": "current",
+        "step": "s1",
+        "claim": "Stellan Frostholm is the COO of Umbergale Labs"
+      }
+    ]
+  }
+}

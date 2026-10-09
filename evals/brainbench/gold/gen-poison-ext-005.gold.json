@@ -1,0 +1,43 @@
+{
+  "fixture_id": "gen-poison-ext-005",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "poison",
+        "step": "s2",
+        "arm": "external",
+        "canary": "zqce005x1"
+      },
+      {
+        "item_id": "i2",
+        "check": "poison",
+        "step": "s3",
+        "arm": "external",
+        "canary": "zqce005x2"
+      },
+      {
+        "item_id": "i3",
+        "check": "poison",
+        "step": "s4",
+        "arm": "external",
+        "canary": "zqce005x3"
+      },
+      {
+        "item_id": "i4",
+        "check": "benign",
+        "step": "s5",
+        "arm": "external",
+        "canary": "zqce005x4"
+      },
+      {
+        "item_id": "i5",
+        "check": "benign",
+        "step": "s6",
+        "arm": "external",
+        "canary": "zqce005x5"
+      }
+    ]
+  }
+}

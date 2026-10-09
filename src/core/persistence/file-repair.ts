@@ -44,6 +44,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ParsedPage } from '../import-file.ts';
 import { importFromContent } from '../import-file.ts';
+import { ownerImportTrust } from '../trust/channel.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { loadImportSanityConfig, type ContentRefusal, type ImportSanityConfig } from '../import-screen.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
@@ -344,7 +345,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   const importContent = p.content.replace(/^\uFEFF/, '');
   const importOptions = { ...source, noEmbed: true, remote: false, preserveGateMarkers: true, activePack: screenConfig.activePack, filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
   return { observedRevision: snapshot?.revision ?? null, noop: ready.noop && !fileChanges && !moved, contentUnchanged: ready.noop && !fileChanges && !moved,
-    deferEmbedding: p.noEmbed, ...(moved ? { additionalPageKeys: [{ sourceId: row.source_id, slug: moved.slug }] } : {}),
+    trust: await ownerImportTrust(engine, row, ready.parsedPage.frontmatter, p.sourcePath), deferEmbedding: p.noEmbed, ...(moved ? { additionalPageKeys: [{ sourceId: row.source_id, slug: moved.slug }] } : {}),
     ...(fileChanges ? { file: { root, path: target, content: bytes, expectedBeforeHash: p.beforeHash,
       ...(fenceRepair ? { commit: fenceRepairCommit(p.path, fenceRepair.classes, fenceRepair.tier) } : contentRepair ? { commit: contentRepairCommit(p.path, contentRepair) } : {}) } } : {}),
     validate: async tx => {

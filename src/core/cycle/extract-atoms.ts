@@ -94,6 +94,8 @@ import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { AtomPageStateError, completeAtomReceipts, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { deriveTrust, lowerDerivedPage } from '../trust/taint.ts';
+import { derivedGateInput } from '../trust/derived-gate.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
@@ -1260,10 +1262,8 @@ export async function runPhaseExtractAtoms(
             { type: 'atom', title: atom.title, tags: [] },
           );
           if (managed) managedAtoms.push({ slug, content: md, links: [] });
-          else await importFromContent(engine, slug, md, {
-              sourceId, preserveGateMarkers: true,
-              noEmbed: !isAvailable('embedding'),
-            });
+          else { const taint = await deriveTrust(engine, item.kind === 'page' ? [{ table: 'pages', sourceId, slug: item.slug }] : [], { channel: 'derive:atoms' }); // #5575 I2/B3: gated and stamped at the origin's taint
+            await importFromContent(engine, slug, md, { sourceId, preserveGateMarkers: true, noEmbed: !isAvailable('embedding'), writeGate: derivedGateInput(taint.trust) }).then(() => lowerDerivedPage(engine, taint, sourceId, slug)); }
           importedSlugs.push(slug);
           if (item.kind === 'page') {
             provenanceLinks.push({

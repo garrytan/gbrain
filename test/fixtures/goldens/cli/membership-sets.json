@@ -71,6 +71,7 @@
         "edge-proposals",
         "feedback",
         "questions",
+        "trust",
         "watch"
       ],
       "selfHelpNotInCliOnly": [],
@@ -203,6 +204,7 @@
         "takes",
         "think",
         "transcripts",
+        "trust",
         "upgrade",
         "waiting",
         "watch",
@@ -248,6 +250,7 @@
         "facts",
         "features",
         "feedback",
+        "forget",
         "founder",
         "friction",
         "frontmatter",
@@ -297,6 +300,7 @@
         "takes",
         "think",
         "transcripts",
+        "trust",
         "upgrade",
         "waiting",
         "watch",
@@ -339,6 +343,7 @@
         "sources",
         "think",
         "transcripts",
+        "trust",
         "waiting",
         "watch",
         "whoknows"
@@ -348,6 +353,7 @@
         "hook",
         "post-upgrade",
         "self-upgrade",
+        "trust",
         "upgrade"
       ],
       "THIN_CLIENT_REFUSED_COMMANDS": [
@@ -390,6 +396,7 @@
         "sync",
         "takes",
         "transcripts",
+        "trust",
         "watch"
       ],
       "THIN_CLIENT_REFUSE_HINTS": [

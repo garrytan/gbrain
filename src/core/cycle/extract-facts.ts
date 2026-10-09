@@ -56,6 +56,10 @@ import type { GBrainConfig } from '../config.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import { isTerminal, type WriteRequest } from '../persistence/model.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { withWriteTrust } from '../persistence/context.ts';
+import { deriveTrust, recordTaintEdges } from '../trust/taint.ts';
+import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally, mergeGateTally, type GateTally } from '../trust/derived-gate.ts';
+import { decideFactWrite, recordFlaggedRow } from '../write-gate-store.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { digest } from '../persistence/digest.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
@@ -262,6 +266,31 @@ async function refuseDestructiveReconcileOnStaleCache(
 }
 
 /**
+ * #5575 I2/B3: new fence rows restate the page (no model), so they take its
+ * tier capped at operator_curated (the caller's write scope) and pass the
+ * write gate at it (an owner page never runs it). Held rows go to
+ * write_gate_holds, rejected rows are skipped; inserted rows get input edges
+ * and flag receipts.
+ */
+type ReconcileRow = Parameters<BrainEngine['insertFacts']>[0][number];
+async function insertReconciledFacts<F extends ReconcileRow>(
+  tx: BrainEngine, sourceId: string, slug: string, inserts: F[], derivation: Awaited<ReturnType<typeof deriveTrust>>, tally: GateTally,
+): Promise<{ inserted: { inserted: number; ids: number[] }; allowed: F[] }> {
+  const cfg = inserts.length ? await derivedGateConfig(tx) : null;
+  const decisions = inserts.map(f => decideFactWrite(f, { sourceId, slug, payload: { ...(f as ReconcileRow), embedding: null }, input: derivedGateInput(derivation.trust), cfg: cfg! }));
+  for (const d of decisions) if (d.action !== 'insert') await applyGateDecision(tx, d, { table: 'facts', sourceId }, async () => null, tally);
+  const allowed = inserts.filter((_, i) => decisions[i].action === 'insert');
+  const flags = decisions.filter(d => d.action === 'insert');
+  const inserted = allowed.length === 0 ? { inserted: 0, ids: [] as number[] }
+    : await tx.insertFacts(allowed.map(f => ({ ...f, superseded_by_row: undefined })), { source_id: sourceId }); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
+  for (const [i, id] of inserted.ids.entries()) {
+    await recordTaintEdges(tx, { table: 'facts', id, sourceId }, derivation.inputs);
+    if (inserted.ids.length === allowed.length && await recordFlaggedRow(tx, flags[i], { table: 'facts', id, sourceId }) !== null) tally.flagged++;
+  }
+  return { inserted, allowed };
+}
+
+/**
  * Run one page's destructive reconcile under its page lock (5s, matching the
  * fence writers in fence-write.ts / forget.ts). A lock still held past the
  * deadline degrades to a FACTS_PAGE_LOCK_TIMEOUT warning for THAT page and a
@@ -422,7 +451,11 @@ function reconcileWrites(plan: FenceReconcilePlan) {
 
 /** One page's reconcile writes, inside a transaction that holds the page key. */
 async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: string, plan: FenceReconcilePlan,
-  writes: ReturnType<typeof reconcileWrites>, signal?: AbortSignal): Promise<{ inserted: number; updated: number; warnings: string[] }> {
+  writes: ReturnType<typeof reconcileWrites>, signal?: AbortSignal): Promise<{ inserted: number; updated: number; warnings: string[]; write_gate?: GateTally }> {
+  const tally = emptyGateTally();
+  // #5575 I2: the fence rows restate the page (no model), so every write here is at the page's tier, capped at operator_curated.
+  const derivation = await deriveTrust(tx, [{ table: 'pages', sourceId, slug }], { channel: 'derive:facts_fence', projection: true });
+  return withWriteTrust(tx, derivation.trust, async () => {
   for (const fact of writes.expireInPlace) {
     await tx.executeRaw('UPDATE facts SET expired_at = COALESCE(expired_at, now()) WHERE id = $1 AND source_id = $2', [fact.id, sourceId]);
   }
@@ -448,17 +481,13 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
         f.claim_metric ?? null, f.claim_value ?? null, f.claim_unit ?? null, f.claim_period ?? null],
     );
   }
-  const inserted = writes.inserts.length === 0
-    ? { inserted: 0 }
-    : await tx.insertFacts( // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
-      writes.inserts.map(f => ({ ...f, superseded_by_row: undefined })),
-      { source_id: sourceId },
-    );
-  const insertedRows = new Set(writes.inserts.map(f => f.row_num));
+  const { inserted, allowed } = await insertReconciledFacts(tx, sourceId, slug, writes.inserts, derivation, tally);
+  const insertedRows = new Set(allowed.map(f => f.row_num));
   const linked = await syncSupersession(tx, sourceId, slug, plan.extracted, plan.chain, insertedRows);
   signal?.throwIfAborted();
   const updated = new Set([...plan.updates.map(f => f.row_num), ...linked.changed.filter(row => !insertedRows.has(row))]);
-  return { inserted: inserted.inserted, updated: updated.size, warnings: linked.warnings };
+  return { inserted: inserted.inserted, updated: updated.size, warnings: linked.warnings, ...(mergeGateTally(tally, undefined) ? { write_gate: tally } : {}) };
+  });
 }
 
 export const FENCE_FACTS_INTENT = 'managed_maintenance_fence_facts';
@@ -477,7 +506,7 @@ function maintenanceRequestIdFor(parts: unknown[]): string {
  * changed or the request is still pending (the next run retries).
  */
 async function publishFenceReconcile(engine: BrainEngine, authority: MaintenanceAuthority, page: { id: number; knowledge_revision?: string | null },
-  slug: string, toInsert: FenceExtractedFact[]): Promise<{ inserted: number; updated: number; deleted: number; deferred: boolean; warnings: string[] } | null> {
+  slug: string, toInsert: FenceExtractedFact[]): Promise<{ inserted: number; updated: number; deleted: number; deferred: boolean; warnings: string[]; write_gate?: GateTally } | null> {
   const sourceId = authority.writer.sourceId;
   const revision = page.knowledge_revision ?? REVISION_BACKFILL_PENDING;
   const embeddings = toInsert.filter(f => f.embedding).map(f => ({ row_num: f.row_num, fact: f.fact, model: f.embedding_model ?? null, vector: Array.from(f.embedding!) }));
@@ -489,7 +518,8 @@ async function publishFenceReconcile(engine: BrainEngine, authority: Maintenance
       const receipt = await submitDatabaseMaintenanceIntent(engine, authority, slug,
         { kind: FENCE_FACTS_INTENT, expected_revision: revision, page_id: page.id, embeddings }, requestId);
       return { inserted: Number(receipt.inserted ?? 0), updated: Number(receipt.updated ?? 0), deleted: Number(receipt.deleted ?? 0),
-        deferred: receipt.deferred === true, warnings: Array.isArray(receipt.warnings) ? receipt.warnings.map(String) : [] };
+        deferred: receipt.deferred === true, warnings: Array.isArray(receipt.warnings) ? receipt.warnings.map(String) : [],
+        ...(receipt.write_gate ? { write_gate: receipt.write_gate as GateTally } : {}) };
     } catch (error) {
       if (error instanceof OperationError && ['revision_conflict', 'page_not_found', 'page_identity_changed', 'write_pending'].includes(error.code)) return null;
       throw error;
@@ -627,6 +657,8 @@ export interface ExtractFactsResult {
   /** Pages whose reconcile threw and rolled back; later pages still ran. */
   pagesFailed: number;
   warnings: string[];
+  /** #5575 B3: new fence rows the write gate flagged, held or rejected; present only when it did any. */
+  writeGate?: GateTally;
   /** v0.35.5: phantom-redirect pre-pass counts. */
   phantomsScanned: number;
   phantomsRedirected: number;
@@ -1003,7 +1035,7 @@ export async function runExtractFacts(
       result.warnings.push(`${slug}: destructive fact reconciliation deferred; existing vectors preserved until embedding succeeds`);
     }
 
-    type Written = { inserted: number; updated: number; warnings: string[]; deleted?: number; deferred?: boolean };
+    type Written = { inserted: number; updated: number; warnings: string[]; deleted?: number; deferred?: boolean; write_gate?: GateTally };
     const apply = async (): Promise<Written | null> => {
       const authority = await managedAuthority();
       if (authority) return publishFenceReconcile(engine, authority, page, slug, toInsert);
@@ -1038,6 +1070,7 @@ export async function runExtractFacts(
     result.factsDeleted += outcome.deleted ?? detach.length + expireInPlace.length;
     // resolveSupersededByRow prefixes each message with the slug + row.
     for (const w of outcome.warnings) result.warnings.push(w);
+    if (outcome.write_gate) result.writeGate = mergeGateTally(result.writeGate, outcome.write_gate);
     return (outcome.deferred ?? deferInserts) ? 'deferred' : 'complete';
   };
 

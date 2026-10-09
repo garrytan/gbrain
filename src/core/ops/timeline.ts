@@ -11,6 +11,8 @@ import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { opError, type Operation } from './contract.ts';
 import { opTransport } from './op-fix.ts';
 import { readPolicyOpts } from './context.ts';
+import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
+import { stampRowTrust } from '../eligibility/stamp.ts';
 import {
   enforceSubagentSlugFence,
   enforceClientSlugFence,
@@ -77,6 +79,7 @@ const get_timeline: Operation = {
     since: { type: 'string', description: 'Alias for after; accepted for agent callers' },
     until: { type: 'string', description: 'Alias for before; accepted for agent callers' },
     limit: { type: 'number', description: 'Maximum number of timeline entries to return' },
+    min_trust: MIN_TRUST_PARAM,
   },
   handler: async (ctx, p) => {
     // #2200: route through sourceScopeOpts so a federated grant reaches the
@@ -88,12 +91,15 @@ const get_timeline: Operation = {
     const after = typeof p.after === 'string' ? p.after : typeof p.since === 'string' ? p.since : undefined;
     const before = typeof p.before === 'string' ? p.before : typeof p.until === 'string' ? p.until : undefined;
     const limit = typeof p.limit === 'number' ? p.limit : undefined;
-    return ctx.engine.getTimeline(p.slug as string, {
+    const eligibility = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
+    const entries = await ctx.engine.getTimeline(p.slug as string, {
       ...scope,
       ...(after ? { after } : {}),
       ...(before ? { before } : {}),
       ...(limit !== undefined ? { limit } : {}),
+      eligibility,
     });
+    return stampRowTrust(ctx.engine, 'timeline_entries', entries, e => (e as { id: number }).id);
   },
   scope: 'read',
   cliHints: { name: 'timeline', positional: ['slug'] },

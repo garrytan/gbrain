@@ -72,6 +72,9 @@ op	questions_refresh	coordinator	Answer and evidence pointers in the pinned_ques
 op	questions_unpin	coordinator	pinned_questions state; the question page is archived through coordinated put_page (trusted local callers only).
 op	loops_unmute	no_canonical_write	Loop suppression rows.
 op	rate_answer	no_canonical_write	Writes only retrieval_* feedback tables (answer ratings and learned weights), never a guarded canonical table or file.
+op	purge_fact	coordinator	submitPurgeFactMutation admits a journaled write and deletes the purged rows under withCoordinatedWrite (trusted local CLI only).
+op	unpurge_page	no_canonical_write	Deletes only purge tombstone rows (page_purges, fact_purges, take_purges); restores no canonical row (trusted local CLI only).
+op	confirm_memory	coordinator	applyOwnerAction raises the row to user_confirmed through the owner action path (journaled owner page mutation or withCoordinatedWrite on a managed brain).
 cli	src/commands/enrich.ts	coordinator	gbrain enrich preflights maintenance authority, then publishMaintenancePage per page.
 cli	src/commands/extract-conversation-facts.ts	coordinator	Bulk conversation facts publish in batches of pages as receipted managed_maintenance_conversation_facts requests after a maintenance preflight.
 cli	src/commands/pages.ts	coordinator	gbrain pages purge-deleted runs purgeDeletedPagesCoordinated.

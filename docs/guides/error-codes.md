@@ -1066,6 +1066,14 @@ More: [docs/guides/repair.md#fix-not-writable](../../docs/guides/repair.md#fix-n
 
 More: [docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately](../../docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately)
 
+### forget_requires_owner
+
+<a id="forget_requires_owner"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller asked to forget a fact more trusted than its own writes, so nothing was forgotten and the owner was asked instead. | Lower-trust writers cannot overwrite, supersede or forget what the owner confirmed or curated (#5575 guarded supersession). The request became a trust proposal the owner can accept on the brain host; forget's frozen expired meaning is unchanged because nothing expired. | Do not retry. Tell the user the fact needs their decision and give them the command in fix (gbrain trust confirm <proposal_ref> on the brain host). | user | `repeat the read that failed` | 3 | no |
+
 ### frontmatter_slug_conflict
 
 <a id="frontmatter_slug_conflict"></a>
@@ -2050,6 +2058,26 @@ More: [docs/guides/repair.md#projection-owner-resident](../../docs/guides/repair
 |---|---|---|---|---|---|---|
 | The catalog adoption is accepted but not fully committed. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### purge_blocked_pending_recovery
+
+<a id="purge_blocked_pending_recovery"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A purge was refused because a pending, running or recovering write still needs the content it would remove; nothing was purged. | Purge redacts stored write intents and rewrites pages; doing that under an unfinished publication or recovery would lose or resurrect content. | Wait for the named write to finish or recover (gbrain write-request <id>), then retry the purge with the same request id. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/memory-boundaries.md#purge](../../docs/guides/memory-boundaries.md#purge)
+
+### purged_content
+
+<a id="purged_content"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The content matches a purged fact, take or page in this source, so it was not saved. | A purge leaves a text-free tombstone (the claim fingerprint or the page content hash) so stale files, re-syncs, reverts and re-extraction cannot bring purged content back. | Do not retry the same content. Write it in new words if it is still true, or ask the user to clear the tombstone on the brain host (gbrain pages purges list, then gbrain pages unpurge <slug> for a page). | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/memory-boundaries.md#purge](../../docs/guides/memory-boundaries.md#purge)
+
 ### question_not_found
 
 <a id="question_not_found"></a>
@@ -2656,6 +2684,14 @@ More: [docs/guides/data-ingestion.md#credential-redaction](../../docs/guides/dat
 |---|---|---|---|---|---|---|
 | Dream triage did not re-judge a transcript because its last judge verdict was truncated, refused or unparseable and its backoff has not ended. | An unreliable verdict is never cached, so without a backoff the same input was paid for every cycle; it waits 24h, doubling per repeat up to 7 days, and a content or triage-model change re-judges at once. | Leave it (it is retried after the backoff), or ask the user before `gbrain dream retriage --force`, which re-judges every transcript now and pays per file. Run: gbrain dream retriage --dry-run --json | agent | `repeat the read that failed` | 1 | yes |
 
+### trust_raise_refused
+
+<a id="trust_raise_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write tried to raise the trust tier of a fact, take, page or timeline entry without the owner's confirmation, so nothing was changed. | Only the owner can make memory more trusted: confirming on an interactive terminal, or through a connection that holds the memory_confirm scope. The database refuses any other raise so a bug or an agent write cannot promote its own content. | Do not retry. Ask the user to confirm the row themselves on the brain host (gbrain trust confirm <ref>), or leave its tier as it is. | user | `repeat the read that failed` | 3 | no |
+
 ### trusted_local_only
 
 <a id="trusted_local_only"></a>
@@ -2839,6 +2875,26 @@ More: [docs/guides/write-refusals.md#worktree_dirty](../../docs/guides/write-ref
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Execution claim changed before publication. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+### write_gate_rejected
+
+<a id="write_gate_rejected"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The write gate refused external instruction-like content because the operator set `write_gate.external_mode` to `reject`. | Text from an untrusted source that reads like an instruction to an agent (an override, a standing rule, an exfiltration or credential request) is refused instead of held under that setting, so nothing was written. The same content refuses on every retry. | Tell the user the content was refused; whether to accept it or switch `write_gate.external_mode` back to `quarantine` is their decision. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `override`, `standing_instruction`, `exfiltration`, `credential`, `detector_error`.
+
+### write_held
+
+<a id="write_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The write gate held this content for the owner's review instead of saving it as memory. | Content from an untrusted source read like an instruction to an agent, so it was quarantined in the write-gate holding table. It is not searchable or recalled until the owner releases it; retrying the same write only re-opens the same hold. | Do not retry. Tell the user what was held and give them the release command from the fix; releasing is their decision. | user | `repeat the read that failed` | 3 | no |
+
+Reasons: `override`, `standing_instruction`, `exfiltration`, `credential`, `detector_error`.
 
 ### write_outcome_unknown
 

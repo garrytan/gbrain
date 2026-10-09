@@ -13,6 +13,7 @@ import { PreadmitBrainChanged } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
 import { writerStamp } from './writer-versions.ts';
+import { intentCarriesContent, intentCarriesPurgedContent, PURGE_PRESENCE_COLUMNS } from './purged-intent.ts';
 import { claimPhaseStamp, startClaimPhase } from './claim-phase.ts';
 import { consumerIdentity } from './consumer-heartbeat.ts';
 import { publicFailureDetail } from './publication-failure.ts';
@@ -754,7 +755,8 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   // #6007: one statement sizes the queued effects, checks the terminal reservation, completes the row and
   // releases its outstanding counters; no row means the encoding exceeds the reservation and nothing changed.
   const resultBytes = jsonBytes(outcome) + jsonBytes(current.authority) + 1024 + Buffer.byteLength(error?.message ?? '') + (error?.detail ? jsonBytes(error.detail) : 0);
-  const [done] = await tx.executeRaw<WriteRequest>(`WITH effects AS (SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0) AS bytes
+  const probePurges = intentCarriesContent(current.intent);
+  const [terminal] = await tx.executeRaw<WriteRequest & { purge_has_facts?: boolean; purge_has_pages?: boolean }>(`WITH effects AS (SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0) AS bytes
       FROM persistence_effects WHERE request_id=$1::uuid),
     done AS (UPDATE persistence_requests SET state=$2,outcome=$3::text::jsonb,
       error_code=$4,error_message=$5,error_detail=COALESCE($8::text::jsonb,error_detail),completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
@@ -765,12 +767,22 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
       WHERE id=$1::uuid AND $9::bigint+(SELECT bytes FROM effects)<=terminal_reservation RETURNING *),
     released AS (UPDATE persistence_counters SET outstanding_count=outstanding_count-1,intent_bytes=intent_bytes-$11
       WHERE key=ANY($10::text[]) AND EXISTS (SELECT 1 FROM done))
-    SELECT * FROM done`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null, stamp.version, stamp.hostId,
+    SELECT done.*${probePurges ? `, ${PURGE_PRESENCE_COLUMNS}` : ''} FROM done`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null, stamp.version, stamp.hostId,
       error?.detail ? JSON.stringify(error.detail) : null, resultBytes, ['brain', principalKey(requestPrincipal(row))], Number(current.intent_bytes)]);
-  if (!done) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+  if (!terminal) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+  const { purge_has_facts: purgeFacts, purge_has_pages: purgePages, ...doneRow } = terminal;
+  const done = doneRow as WriteRequest;
+  // #5575: a terminal write whose stored intent carries purged content (refused by the purge guards, refused for another
+  // reason first, or committed as a no-op after the overlay dropped the purged rows) keeps no copy of it; replay answers
+  // from the stored outcome, and the intent bytes were released above.
+  if (error && PURGED_REFUSAL.test(`${error.code}: ${error.message}`) || probePurges && await intentCarriesPurgedContent(tx as BrainEngine, current, { facts: purgeFacts === true, pages: purgePages === true })) {
+    const [redacted] = await tx.executeRaw<WriteRequest>('UPDATE persistence_requests SET intent=NULL,compacted=true WHERE id=$1::uuid RETURNING *', [row.id]);
+    return redacted ?? done;
+  }
   // Recovery bytes remain reserved until physical cleanup has been verified.
   return done;
 }
+const PURGED_REFUSAL = /^purged_content:|which the owner purged; it was not imported\.$/;
 
 /**
  * `known` is the row a publication just completed, passed while it still

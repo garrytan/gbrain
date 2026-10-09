@@ -176,6 +176,8 @@ export async function buildRelationalList(req: HybridRequest): Promise<SearchRes
       excludePrivate: opts?.excludePrivate,
       requireSafeChunks: opts?.requireSafeChunks,
       takesHoldersAllowList: opts?.takesHoldersAllowList,
+      minTrust: opts?.minTrust,
+      suppressFlagged: opts?.suppressFlagged,
       planner: resolvedMode.relational_planner,
       orientOneHop: resolvedMode.relational_orient_onehop ?? resolvedMode.relational_planner,
       onMeta: (m) => {

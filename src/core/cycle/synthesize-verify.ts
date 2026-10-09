@@ -62,6 +62,8 @@
 import { basename } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { importFromContent } from '../import-file.ts';
+import { transcriptsDerivation } from './dream-taint.ts';
+import { derivedMaintenanceTransaction } from '../trust/taint.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import type { Page } from '../types.ts';
@@ -1364,7 +1366,9 @@ export async function verifyAndRepairDreamPages(
   engine: BrainEngine,
   refs: Array<{ slug: string; source_id: string; raw_source?: string; first_write_at?: Date }>,
   transcriptsByPath: Map<string, TranscriptForVerify>,
-  opts: { since: Date; sinceByTranscript?: Map<string, Date>; checkedAt?: string; signal?: AbortSignal; grounding?: GroundingPass },
+  opts: { since: Date; sinceByTranscript?: Map<string, Date>; checkedAt?: string; signal?: AbortSignal; grounding?: GroundingPass;
+    /** #5575 I2: transcripts under it are third-party speech (dream-taint.ts). */
+    meetingTranscriptsDir?: string | null },
 ): Promise<QuoteVerifyStats> {
   const stats = emptyQuoteVerifyStats();
   const checkedAt = opts.checkedAt ?? await resolveCycleDate(engine).catch(() => utcDate());
@@ -1424,10 +1428,13 @@ export async function verifyAndRepairDreamPages(
         const links = await isAutoLinkEnabled(engine) ? await prepareAutomaticLinks(engine, ref.slug, parsed, ref.source_id) : undefined;
         // noEmbed: the phase-end embed sweep backfills. Provenance fields
         // null → engine COALESCE keeps the first-write record intact.
-        await importFromContent(engine, ref.slug, md, {
+        // #5575 I2: the repaired page and its re-projected rows are written at
+        // the tier of the transcripts it was synthesized from, with its edges.
+        const derivation = await transcriptsDerivation(engine, ref.paths.map(path => ({ filePath: path, content: transcriptsByPath.get(path)!.content })), opts.meetingTranscriptsDir);
+        await derivedMaintenanceTransaction(engine, derivation, async tx => ({ result: await importFromContent(tx, ref.slug, md, {
           noEmbed: true, remote: false, preserveGateMarkers: true, sourceId: ref.source_id,
-          beforeCommit: async tx => { await project(tx); await links?.apply(tx); },
-        });
+          beforeCommit: async inner => { await project(inner); await links?.apply(inner); },
+        }), rows: [{ table: 'pages' as const, id: page.id, sourceId: ref.source_id }] }));
         stats.pages_repaired++;
       }
     } catch (e) {

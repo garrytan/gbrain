@@ -238,6 +238,10 @@ export async function resolveHybridRequest(
     // hybrid hot path.
     excludePrivate: opts?.excludePrivate,
     requireSafeChunks: opts?.requireSafeChunks,
+    // #5575 — the read floor and proactive activation control, same leak
+    // class: dropping them would return rows below a connection's floor.
+    minTrust: opts?.minTrust,
+    suppressFlagged: opts?.suppressFlagged,
     // v0.36 (D11): pass the pre-validated descriptor into the engine so
     // it never has to read config. Engines normalize string-or-descriptor
     // via normalizeEngineColumn; the descriptor path is the strict one.

@@ -72,6 +72,7 @@ import { PageRegexBudget } from '../core/schema-pack/redos-guard.ts';
 export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { extractTimelineFromContent, pruneTimelineOrphans, retractRemovedTimelineEntries, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
+import { addProjectedTimelineBatch, addProjectedTimelineEntry } from '../core/trust/timeline-projection.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { pathToSlug, slugifyPath, slugifySegment, pruneDir, isSyncable } from '../core/sync.ts';
@@ -247,7 +248,6 @@ export interface ExtractedLink {
   origin_slug?: string;
   origin_field?: string;
 }
-
 
 interface ExtractResult {
   links_created: number;
@@ -1379,7 +1379,7 @@ async function extractForSlugs(
     const snapshot = timelineBatch.slice();
     timelineBatch.length = 0;
     try {
-      timelineCreated += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_inc' });
+      timelineCreated += await addProjectedTimelineBatch(engine, snapshot, { auditSite: 'extract.timeline_inc' });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
@@ -1585,7 +1585,7 @@ async function extractTimelineFromDir(
     const snapshot = batch.slice();
     batch.length = 0;
     try {
-      created += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_fs' });
+      created += await addProjectedTimelineBatch(engine, snapshot, { auditSite: 'extract.timeline_fs' });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
@@ -1765,7 +1765,7 @@ export async function extractTimelineForSlugs(
       await retractRemovedTimelineEntries(engine, slug, opts?.sourceId ?? 'default', content);
       processed.push(slug);
       for (const entry of entries) {
-        try { await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback for timeline entries
+        try { await addProjectedTimelineEntry(engine, entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ }
       }
     } catch (e) { errors.push({ slug, error: e instanceof Error ? e.message : String(e) }); }
   }
@@ -2187,7 +2187,7 @@ export async function extractStaleFromDB(
     const attendanceBlocked: Array<{ slug: string; source_id: string; revision: string }> = [];
     const flushBatch = async () => {
       for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
-        timelineCreated += await engine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
+        timelineCreated += await addProjectedTimelineBatch(engine, timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
       }
       // Stamp LAST, directly (not the swallowing stampExtracted) so a stamp
       // failure surfaces instead of looping forever.

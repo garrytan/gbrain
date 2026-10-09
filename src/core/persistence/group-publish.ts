@@ -45,7 +45,7 @@ import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, startClaimLease, 
 import { claimPhaseStamp, enterClaimPhase, startClaimPhase, type ClaimPhaseClock } from './claim-phase.ts';
 import { DEFAULT_PREPARATION_POLICY, preparationBudgetMs, startPreparation, type PreparationPolicy, type PreparationRun } from './preparation-budget.ts';
 import { setMemberAttribution, withCoordinatedWrite } from './context.ts';
-import { requestAttribution } from './attribution.ts';
+import { publicationAttribution } from './attribution.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects, queuesMentionLinks, reconcileFinishedBatch } from './effect-journal.ts';
 import { assertUnboundPublication, classifyUnboundPage } from './unbound-source.ts';
@@ -283,7 +283,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
         let effects: (() => Promise<void>) | null = null;
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i]!, member = prepared[i]!, file = recorded.get(i), sync = syncMember(row), previous = effects;
-          // A group of one is already attributed to its only member by the coordinated write.
+          // A group of one is already attributed to its only member (and its declared trust) by the coordinated write.
           const attribute = rows.length > 1;
           // #5984: a member's checks and reads are pipelined and run in their usual order, so the first failing one is reported.
           // A sync member validates alongside (read-only checks); a member that publishes a file sets its attribution after the file.
@@ -298,7 +298,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
               return snapshot;
             },
             async () => { if (sync) await member.validate?.(tx); },
-            async () => { if (!file && attribute) await setMemberAttribution(tx, requestAttribution(row)); },
+            async () => { if (!file && attribute) await setMemberAttribution(tx, publicationAttribution(row, member.trust)); },
           ]) as [unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>];
           if (!sync) await member.validate?.(tx);
           if (file) {
@@ -306,7 +306,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
             await seam('before_publication', row);
             await withFilesystemPublication([file.record.root], async () => publishPersistenceFile(member.file!, file.record.staging?.publication?.path));
             await seam('after_publication', row);
-            if (attribute) await setMemberAttribution(tx, requestAttribution(row));
+            if (attribute) await setMemberAttribution(tx, publicationAttribution(row, member.trust));
           }
           member.postimage = undefined;
           const outcome = await member.apply(tx, snapshot);
@@ -321,7 +321,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
           outcomes.push(outcome);
         }
         await effects?.();
-      }, requestAttribution(head));
+      }, publicationAttribution(head, prepared[0]!.trust));
       // #5984 lanes: applied concurrently, committed in manifest order.
       if (lane) { timed.apply?.turn(); await faultPoint('lane:applied', { requestId: head.request_id, sourceId: head.source_id, operation: head.operation }); await awaitLaneTurn(tx, lane, rows); timed.apply?.turned(); }
       const done = await completeGroup(tx, rows, outcomes);

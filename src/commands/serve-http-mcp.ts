@@ -306,7 +306,10 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
   const requiredScope = op.scope || 'read';
   // FOV-4: agentCallable carve-out mirrors the tools/list filter above —
   // an op listed for an agent-only token must not scope-deny at call time.
-  const scopeSatisfied = operationScopesAllowed(authInfo.scopes, op);
+  // #5575: an owner-only (cliOnly) op is refused for every remote caller by the
+  // shared dispatcher with `trusted_local_only` and the host command; a scope
+  // denial first would tell the operator to widen the grant for nothing.
+  const scopeSatisfied = op.cliOnly !== undefined || operationScopesAllowed(authInfo.scopes, op);
   if (!scopeSatisfied) {
     return rejectInsufficientMcpScope(ctx, state, name, requiredScope);
   }

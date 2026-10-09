@@ -25,6 +25,9 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { TrustTier } from '../trust/tier.ts';
+import type { ReadEligibility } from '../eligibility/policy.ts';
+import { proactiveEligibility } from '../eligibility/registry.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import {
   extractCandidatesFromWindow,
@@ -53,6 +56,9 @@ export interface VolunteeredPage {
   /** Deterministic template string — never raw conversation text. */
   rationale: string;
   synopsis: string;
+  /** #5575 A6: the page's trust tier and short write origin. */
+  trust_tier?: TrustTier;
+  origin?: string;
 }
 
 export interface VolunteerOpts {
@@ -73,6 +79,10 @@ export interface VolunteerOpts {
   lexicalArms?: boolean;
   /** Private-page filter — see ResolvePointersOpts.excludePrivate (default true). */
   excludePrivate?: boolean;
+  /** #5575: the enclosing surface's proactive eligibility; absent, the `volunteer` surface policy applies. */
+  eligibility?: ReadEligibility;
+  /** #5575 DX-10: receives the page keys (`source_id:slug`) activation control withheld. */
+  onWithheld?: (keys: string[]) => void;
 }
 
 /** Shared wire protocol for window turns — watch.ts imports this so the two
@@ -190,6 +200,7 @@ export function gateVolunteeredPointers(
       arm: p.arm,
       rationale: rationaleFor(p.arm, display, cand, opts.windowSize),
       synopsis: p.synopsis,
+      ...(p.trust_tier ? { trust_tier: p.trust_tier, origin: p.origin } : {}),
     });
     if (out.length >= maxPages) break;
   }
@@ -281,6 +292,7 @@ export async function volunteerContext(
 ): Promise<VolunteeredPage[]> {
   if (!turns.length || !opts.sourceIds?.length) return [];
   const candidates = extractCandidatesFromWindow(turns);
+  const eligibility = opts.eligibility ?? await proactiveEligibility({ engine }, 'volunteer');
   return volunteerStage(
     (cands, ropts) =>
       resolveEntitiesToPointers(engine, opts.sourceIds[0], cands, {
@@ -290,6 +302,8 @@ export async function volunteerContext(
         maxPointers: ropts.maxPointers,
         lexicalArms: ropts.lexicalArms,
         excludePrivate: opts.excludePrivate,
+        eligibility,
+        onWithheld: opts.onWithheld,
       }),
     candidates,
     turns.length,

@@ -294,6 +294,17 @@ doc-only diff still runs llms freshness, the KEY_FILES byte caps, documented
 paths, skill references and the privacy guards (`scripts/ci-doc-checks.sh`).
 See [E2E selection](docs/TESTING.md#e2e-selection).
 
+### Memory-trust smoke (trust tiers, write gate, purge)
+
+Touching trust tiers, the write gate, owner confirmation or `forget --purge`?
+Run `bun run trust:smoke` first (Bun >= 1.4.0, zero keys, in-memory PGLite,
+about ten seconds). It drives the four seams through real write paths: the tier
+stamp, the gate verdict, the owner confirm (and an agent's refusal) and purge
+with no residual or resurrection, and prints one line per check. The script
+header (`scripts/trust-smoke.ts`) names the focused test file for each seam.
+Then the end-to-end layer: `gbrain eval brainbench --suite trust,state-resolution,poisoning,deletion`
+(see `docs/eval/BRAINBENCH.md`), and the full gate.
+
 ### Local graduation smoke (PGLite → Postgres)
 
 A five-minute end-to-end check of `gbrain migrate --to postgres` on the E2E

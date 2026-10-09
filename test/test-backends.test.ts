@@ -11,6 +11,9 @@ test('direct invocation keeps local-only and opt-in dual-engine execution', () =
 
 test('explicit PostgreSQL selection cannot silently fall back, skip, or use an unsafe database', () => {
   expect(testBackends({ GBRAIN_TEST_BACKEND: 'postgres', DATABASE_URL: databaseUrl })).toEqual(['postgres']);
+  // The E2E backend matrix passes (scripts/run-e2e.sh) select the Postgres arm only.
+  expect(testBackends({ GBRAIN_TEST_BACKEND: 'postgres-direct', DATABASE_URL: databaseUrl })).toEqual(['postgres']);
+  expect(testBackends({ GBRAIN_TEST_BACKEND: 'pgbouncer', DATABASE_URL: databaseUrl })).toEqual(['postgres']);
   expect(() => testBackends({ GBRAIN_TEST_BACKEND: 'postgres' })).toThrow('requires DATABASE_URL');
   expect(() => testBackends({ GBRAIN_TEST_BACKEND: 'postgres', DATABASE_URL: 'postgresql://localhost/operator' })).toThrow('does not look like a test database');
   expect(() => testBackends({ GBRAIN_TEST_BACKEND: 'unknown' })).toThrow('Unknown GBRAIN_TEST_BACKEND');

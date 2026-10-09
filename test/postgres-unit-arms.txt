@@ -95,6 +95,7 @@ test/persistence-sync-fence-holds.test.ts
 test/persistence-sync-holds.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
+test/purge-fact.test.ts
 test/remediation-manual-only.test.ts
 test/repair-embedding-effects.test.ts
 test/repair-failed-writes-drift-w411.test.ts
@@ -116,6 +117,9 @@ test/sync-group-member-order.test.ts
 test/sync-legacy-holds.test.ts
 test/sync-waiver-budget.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
+test/trust-channel-writes.test.ts
+test/trust-guarded-supersession.test.ts
+test/trust-owner-actions.test.ts
 test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts
 test/writer-status-owner-backends.test.ts

@@ -100,6 +100,8 @@ export interface SweepOpts {
   batchLimit?: number;
   /** Wall-clock budget; the sweep stops between items when exceeded. Default 5000. */
   budgetMs?: number;
+  /** The clock the budget reads (test seam, so a test's timing does not depend on machine load). Default Date.now. */
+  now?: () => number;
   /** Recency window (days) for "recently-modified pages". Default 7. */
   recentDays?: number;
   /** Diagnostic sink (stderr in serve contexts). Default: silent. */
@@ -149,7 +151,8 @@ export async function runMaintenanceSweep(
   engine: BrainEngine,
   opts: SweepOpts = {},
 ): Promise<SweepReport> {
-  const started = Date.now();
+  const now = opts.now ?? Date.now;
+  const started = now();
   const sourceId = opts.sourceId ?? 'default';
   const batchLimit = Math.max(1, opts.batchLimit ?? 20);
   const budgetMs = Math.max(0, opts.budgetMs ?? 5_000);
@@ -174,7 +177,7 @@ export async function runMaintenanceSweep(
     if (existing) existing.count += count;
     else report.skipped.push({ reason, count });
   };
-  const overBudget = () => Date.now() >= deadline;
+  const overBudget = () => now() >= deadline;
 
   // Budget abort signal: threads into the fence pass's per-page loop so a
   // long item can be interrupted at its own checkpoints. unref'd — the sweep must never hold the
@@ -182,7 +185,7 @@ export async function runMaintenanceSweep(
   const budgetController = new AbortController();
   const budgetTimer = setTimeout(
     () => budgetController.abort(),
-    Math.max(0, deadline - Date.now()),
+    Math.max(0, deadline - now()),
   );
   budgetTimer.unref?.();
 
@@ -284,7 +287,7 @@ export async function runMaintenanceSweep(
     clearTimeout(budgetTimer);
   }
 
-  report.durationMs = Date.now() - started;
+  report.durationMs = now() - started;
   return report;
 }
 

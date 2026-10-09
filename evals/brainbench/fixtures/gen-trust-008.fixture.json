@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-trust-008",
+  "suites": [
+    "trust"
+  ],
+  "category": "trust",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/emrys-galewright",
+      "content": "---\ntitle: Emrys Galewright\ntype: person\naliases: [emrys]\n---\n\n# Emrys Galewright\n\nEmrys Galewright is the founder of Glintworks Co.\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n| 1 | Emrys Galewright chairs the Glintworks Co board | fact | 1.0 | world | medium | 2026-01-01 |  | owner |  |\n<!--- gbrain:facts:end -->\n"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Leander Crestfallow moved to Tallinn",
+      "entity": "people/leander-crestfallow"
+    },
+    {
+      "step_id": "s3",
+      "actor": "owner",
+      "op": "confirm",
+      "target": "s2"
+    },
+    {
+      "step_id": "s4",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/leander-intro-008",
+      "content": "---\ntitle: Leander intro 008\ntype: note\n---\n\nLeander Crestfallow wants an intro to Emrys Galewright.\n"
+    },
+    {
+      "step_id": "s5",
+      "actor": "owner",
+      "op": "confirm",
+      "target": "s4"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I know about Emrys Galewright?"
+    }
+  ]
+}

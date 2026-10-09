@@ -3,6 +3,7 @@ import { verbError } from '../ops/contract.ts';
 import { isAvailable, embedOne, getEmbeddingModel } from '../ai/gateway.ts';
 import { cosineSimilarity } from './classify.ts';
 import { isFactWithdrawn } from './withdrawal.ts';
+import { assertFactNotPurged } from './withdrawal.ts';
 import { cosineVerdict } from './capture-dedup.ts';
 import { interleaveFusion } from '../search/fusion-lists.ts';
 import { readSupersessionThreshold } from './supersession-threshold.ts';
@@ -26,6 +27,7 @@ export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, d
   return { embedding: null, embedding_model: null, degraded: true };
 }
 export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent): Promise<void> {
+  await assertFactNotPurged(engine, sourceId, input);
   if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug)) {
     throw verbError('invalid_params', 'fact_withdrawn: this exact claim was explicitly forgotten in this source and visibility.',
       'Remember a corrected claim. Repeating the old claim does not restore withdrawn memory.');
@@ -72,8 +74,8 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
   if (exact) return { status: 'duplicate', candidate: { ...exact, id: Number(exact.id) } };
   if (embedding && input.entity_slug) {
     const candidates = await listSupersessionCandidates(engine, sourceId, input.entity_slug, input.fact, embedding, embeddingModel, undefined, input.attributed_to ?? null);
-    const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null }>(
-      'SELECT id,source_markdown_slug,row_num FROM facts WHERE source_id=$1 AND id=ANY($2::int[])',
+    const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'] }>(
+      'SELECT id,source_markdown_slug,row_num,trust_tier FROM facts WHERE source_id=$1 AND id=ANY($2::int[])',
       [sourceId, candidates.map(c => c.id)]);
     let candidate: FactCandidate | null = null;
     let score = -1;

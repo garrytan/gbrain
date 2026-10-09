@@ -153,7 +153,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   // D3: post-connect records whose handler answers --help before the engine; run through the table.
   advisor: true, anomalies: true, feedback: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
   founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
-  brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true,
+  brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true,
 };
 
 /** Returns true when the command's own help was printed. */
@@ -1914,11 +1914,11 @@ function refuseThinClient(command: string, mcpUrl: string): never {
     }), command);
 }
 
-/** The refused invocation's subcommand word (id-shaped only, per A1 argv safety), for the host-side fix. */
+/** The refused invocation's subcommand word and, for `trust`, its typed ref (id-shaped only, per A1 argv safety), for the host-side fix. */
 function thinRefusalSubcommand(command: string): string[] {
   const argv = process.argv.slice(2);
-  const next = argv[argv.indexOf(command) + 1] ?? '';
-  return argv.includes(command) && /^[a-z][a-z0-9-]*$/.test(next) ? [next] : [];
+  const [next = '', ref = ''] = argv.slice(argv.indexOf(command) + 1); // #5575: `trust <verb> <ref>` keeps its typed ref (f12, tp7, p:source/slug)
+  return argv.includes(command) && /^[a-z][a-z0-9-]*$/.test(next) ? [next, ...(command === 'trust' && /^(?:(?:f|t|h|e|a|tp)\d{1,18}|p:[a-z0-9_-]{1,64}\/[a-z0-9][a-z0-9/_.-]{0,200})$/.test(ref) ? [ref] : [])] : [];
 }
 
 const THIN_CLIENT_BRAIN_FLAG_MESSAGE = '--brain is not supported on a thin-client install: the remote server is a single brain.';
@@ -2468,6 +2468,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   if (command === 'reindex-code') {
     if (await (await import('../commands/reindex-code-delegate.ts')).maybeDelegateReindexCode(loadConfig(), args)) return null;
   }
+  if (command === 'trust' && await (await import('../commands/trust.ts')).maybeDelegateTrust(loadConfig(), args)) return null;
   if (command === 'extract' && args.includes('--stale') && !hasHelpFlag(args) && await (await import('../commands/extract-stale-delegate.ts')).maybeDelegateExtractStale(loadConfig(), args)) return null;
 
   if (command === 'embed' && args.includes('--facts')) {

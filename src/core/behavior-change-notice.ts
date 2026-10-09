@@ -364,6 +364,7 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText }
   { since: '0.60.135.0', text: 'On Postgres, import, sync, reindex and every embed drain that embedded something now finish with a bounded ANALYZE (30 s statement, 2 s lock timeout) of `content_chunks(model, modality, page_id)` and the page columns search filters read. Without those statistics, vector search on a freshly loaded brain of 1M chunks or more sorted every candidate: scoped searches took 0.5 to 8 s, and many hit the 8 s budget and fell back to keyword-only results (`vector_candidates_incomplete`) until autovacuum ran.' },
   { since: '0.60.138.0', text: 'On a brain without a multimodal embedding model (the default voyage-4 install), a query that reads like an image request ("a photo of ...", "show me photos") now runs as a text query, keyword arm and expansion included, instead of falling back after a failed image embed; `cross_modal: image` still routes to image search when asked.' },
   { since: '0.60.138.0', text: 'A search query holding a markdown rule of 32 or more dashes no longer fails the keyword and title arms (`tsquery stack too small`); the run collapses to its parity, and `query` results now report `retrieval.crag.top_rerank_score` whenever the reranker ran.' },
+  { since: '0.60.139.0', text: 'Memory trust: everything an agent reads back from memory now carries a trust label ("your notes", "written by an agent", "external, untrusted" and the rest), and a write that reads like instructions to an agent is flagged. By default a flagged item is still saved, searchable and used in proactive context, shown with its flag; `gbrain trust review` lists flagged items. The stricter protections are opt-in: `gbrain config set write_gate.external_mode quarantine` holds instruction-like external content until you release it, and `gbrain config set trust.agent_activation suppress` keeps flagged agent-written items out of proactive context until you confirm them. Content saved before this release is flagged only after you claim your own sources (`gbrain trust claim-sources`, in a terminal) and run `gbrain trust scan` yourself; no agent starts either.' },
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */
@@ -397,6 +398,23 @@ export function behaviorChangesNotice(chain: ChainDisclosure | null, opts: { rem
     : { argv: DOCTOR_ARGV, consent: [], actor: opts.remote ? 'host_admin' : 'agent', requires_exclusive: false,
       why: 'Shows this disclosure again; read-only.', docs: 'docs/guides/chat-fallback.md' };
   return { code: BEHAVIOR_NOTICE_CODE, kind: 'safety', why, fix };
+}
+
+/**
+ * #5575 legacy content: while unclaimed sources hold rows from before trust
+ * tiers, the notice's fix becomes the claim (`fix.next: tell_user_to_run`, the
+ * user_message explains claiming), unless it already carries the chat
+ * fallback removal. Best-effort: any fault keeps the notice as built.
+ */
+export async function withTrustClaimAsk(engine: BrainEngine, notice: Notice | null): Promise<Notice | null> {
+  if (!notice || (notice.fix?.argv && notice.fix.argv.join(' ') !== DOCTOR_ARGV.join(' '))) return notice;
+  try {
+    const { claimSourcesFix, readUnclaimedLegacySources, CLAIM_USER_MESSAGE } = await import('./trust/claim.ts');
+    if ((await readUnclaimedLegacySources(engine)).unclaimed.length === 0) return notice;
+    return { ...notice, fix: claimSourcesFix(), user_message: CLAIM_USER_MESSAGE };
+  } catch {
+    return notice;
+  }
 }
 
 // ── delivery ────────────────────────────────────────────────────────────────
@@ -469,7 +487,7 @@ export async function takeLocalBehaviorNotice(
     const after = laterRelease(await brainBaseline(engine, brainKey, { persist: true, now: opts.now }), localShownThrough(brainKey, channel));
     if (compareReleases(BEHAVIOR_NOTICE_SINCE, after) <= 0) return null;
     if (claimMarker(brainKey, channel) === 'shown') return null;
-    return behaviorChangesNotice(await chainDisclosure(engine, opts.cfg), { after });
+    return withTrustClaimAsk(engine, behaviorChangesNotice(await chainDisclosure(engine, opts.cfg), { after }));
   } catch {
     if (key) handled.delete(key);
     return null;
@@ -523,7 +541,7 @@ export async function takeHttpBehaviorNotice(
     const after = laterRelease(baseline, readHttpShown(raw)[client]?.since ?? PREDATES);
     if (compareReleases(BEHAVIOR_NOTICE_SINCE, after) <= 0) return null;
     try { await engine.setConfig(HTTP_SHOWN_KEY, recordHttpShown(raw, client, new Date(opts.now ?? Date.now()).toISOString())); } catch { /* deliver anyway */ }
-    return behaviorChangesNotice(await chainDisclosure(engine, opts.cfg), { remote: true, after });
+    return withTrustClaimAsk(engine, behaviorChangesNotice(await chainDisclosure(engine, opts.cfg), { remote: true, after }));
   } catch {
     if (key) handled.delete(key);
     return null;

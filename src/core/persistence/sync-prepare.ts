@@ -8,6 +8,7 @@ import type { Page } from '../types.ts';
 import { OperationError, opError, type OpErrorOpts } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
+import { ownerGateInput, ownerImportTrust } from '../trust/channel.ts';
 import { importFromContent, importCodeFile, verifyPageReadable } from '../import-file.ts';
 import { screenImportContent, screenNormalized, type ContentRefusal, type ImportScreenResult, type ImportSanityConfig } from '../import-screen.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
@@ -39,6 +40,7 @@ import { checkpointRetryCommand, findIncompleteSyncReceipt } from './checkpoint-
 import { frontmatterSlugConflictMessage } from './verb-errors.ts';
 import { chunkerStamp } from '../chunkers/code.ts';
 import { clearGitHold, countGitHolds, recordSyncImportProvenance } from './sync-holds.ts';
+import { readPagePurgeTombstones } from './page-purge.ts';
 import { fenceWhere } from '../fence-repair/refusal.ts';
 import { fencesNormalizeEnabled } from '../fence-repair/config.ts';
 import { describeFixes } from '../fence-repair/report.ts';
@@ -162,9 +164,11 @@ function syncContentRefusal(refusal: ContentRefusal, row: WriteRequest, p: SyncI
     : refusal.code === 'frontmatter_slug_conflict' ? 'Correct the frontmatter `slug:` in the file and commit the change.'
     : refusal.code === 'file_too_large' ? `${p.sourcePath} is over the import size limit; split it into smaller files or add it to sync.exclude, then commit.`
     : refusal.code === 'content_rejected' ? `The content-sanity gate rejects ${p.sourcePath} under junk_disposition=reject; remove the matched junk and commit.`
+    : refusal.code === 'purged_content' ? `${p.sourcePath} still carries purged content; delete or edit the file and commit, or the owner clears the tombstone with gbrain pages unpurge.`
+    : refusal.code === 'write_gate_rejected' ? `The write gate refuses ${p.sourcePath}: external instruction-like content under write_gate.external_mode=reject. Tell the user; changing that setting or the file is their decision.`
     : `Fix ${where} (one line per key, the whole value quoted) and commit the change; gbrain repair frontmatter --source ${row.source_id} previews the exact line fix and writes it only after the preview hash is approved.`;
   const error = syncPublicationRefusal(refusal.code, refusal.message, row, p, cause, false, {
-    ...(refusal.code === 'content_rejected' ? {} : { legacy_error: 'invalid_params' }),
+    ...(refusal.code === 'content_rejected' || refusal.code === 'write_gate_rejected' ? {} : { legacy_error: 'invalid_params' }),
     ...(refusal.reason ? { reason: refusal.reason } : {}),
     ...(refusal.key || refusal.line !== undefined ? { detail: [refusal.key ? `key ${refusal.key}` : '', refusal.line !== undefined ? `line ${refusal.line}` : ''].filter(Boolean).join(', ') } : {}),
   });
@@ -181,6 +185,8 @@ export interface SyncImportScreenInput {
   activePack?: ParseOpts['activePack']; companyApproval?: boolean; sanity?: ImportSanityConfig;
   /** #6188: `fences.normalize`; false holds a fixable fence like any other. Default true. */
   normalize?: boolean;
+  /** #5575: page purge tombstones of the source; a matching file is held as `purged_content`. */
+  purgedPages?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -208,6 +214,7 @@ export function screenSyncImport(input: SyncImportScreenInput): { screen: Import
     slugExempt: declared => snapshot?.page.source_path != null && syncOriginPath(snapshot.page.source_path) === syncOriginPath(sourcePath) && declared === snapshot.page.slug,
     slugConflictMessage: (found, expected) => frontmatterSlugConflictMessage(sourcePath, found, expected),
     ...(input.sanity ? { sanity: input.sanity } : {}),
+    ...(input.purgedPages ? { purgedPages: input.purgedPages } : {}),
     ...(newerWorkingTree ? { published: () => {
       const working = input.renamed ? null : readSyncFile(input.root, input.path);
       return !!working && sha256(working) === input.rawHash && sameCanonicalImport(base!, parseMarkdown(working.toString('utf8'), `${slug}.md`, { activePack }));
@@ -420,7 +427,7 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
       `A canonical file now occupies the path of page ${row.slug}, written while ${row.source_id} was unbound; neither copy was overwritten. Rename or remove the file and commit, or copy what you need into the page first.`);
   }
   if (p.kind === 'managed_sync_delete') return { observedRevision: snapshot?.revision ?? null, noop: !snapshot || snapshot.page.deleted_at != null,
-    validate, apply: async (tx, preimage) => {
+    trust: await ownerImportTrust(engine, row, snapshot?.page.frontmatter, p.sourcePath), validate, apply: async (tx, preimage) => {
       if (snapshot && snapshot.page.deleted_at == null) { await tx.createVersion(row.slug, preimage ? { ...source, preimage } : source); await tx.softDeletePage(row.slug, source); }
       await releaseHold(tx);
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop: !snapshot || snapshot.page.deleted_at != null };
@@ -445,7 +452,7 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
     const ready = prepared;
     if (ready.observedRevision !== (snapshot?.revision ?? null)) throw syncPublicationRefusal('revision_conflict', 'The code page changed during preparation.', row, p,
       `Page ${row.slug} changed while this sync was being prepared.`);
-    return { observedRevision: ready.observedRevision,
+    return { observedRevision: ready.observedRevision, trust: await ownerImportTrust(engine, row, null, p.sourcePath),
       validate: async tx => { await validate(tx); await ready.validate(tx); },
       noop: ready.noop, deferEmbedding: true, apply: async tx => {
       await ready.apply(tx);
@@ -472,7 +479,8 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
   // The screen hashes the frozen bytes and, for a newer working tree, reads the file (raw hash).
   enterClaimStep(clock, 'import_screen', undefined, 'fs');
   const { screen, parsedInput, newerWorkingTree } = await settledSyncScreen(engine, { content: p.content, rawHash: p.rawHash, lineEndingOnly: p.lineEndingOnly === true,
-    slug: row.slug, sourcePath: p.sourcePath, path: p.path, root, snapshot, base, renamed: !!renamed, activePack, companyApproval: !!p.companyApproval });
+    slug: row.slug, sourcePath: p.sourcePath, path: p.path, root, snapshot, base, renamed: !!renamed, activePack, companyApproval: !!p.companyApproval,
+    purgedPages: await readPagePurgeTombstones(engine, row.source_id) });
   if (screen.status === 'published') return { observedRevision: snapshot?.revision ?? null, noop: true, contentUnchanged: true, validate,
     apply: async tx => { await releaseHold(tx); return { status: 'skipped', slug: row.slug, source_id: row.source_id, chunks: 0, noop: true, imported_file: true }; } };
   if (screen.status === 'refused') throw syncContentRefusal(screen.refusal, row, p);
@@ -494,7 +502,7 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
   let prepared: PreparedContentImport | undefined;
   enterClaimStep(clock, 'import_content', undefined, 'db');
   // #6188: the import reuses this screen's fence verdict for the same bytes (one fence scan per file at prepare).
-  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, preserveGateMarkers: true, activePack, coordinated: true, fences: 'coordinated' as const,
+  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, preserveGateMarkers: true, activePack, coordinated: true, fences: 'coordinated' as const, writeGate: await ownerGateInput(engine, row, parsedInput.frontmatter, p.sourcePath),
     ...(importContent === p.content && screen.status === 'importable' ? { fenceScreen: screen.fences ?? null } : {}),
     filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
   const result = await importFromContent(engine, renamed?.slug ?? row.slug, importContent, { ...importOptions,
@@ -534,7 +542,7 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
   // A rename projects against the moved page (same id), so its pinned timeline rows carry over.
   enterClaimStep(clock, 'canonical_projections', undefined, 'db');
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, p.companyApproval ? 'immutable' : 'file');
-  const preparedImport: PreparedMutation = { observedRevision: snapshot?.revision ?? null,
+  const preparedImport: PreparedMutation = { observedRevision: snapshot?.revision ?? null, trust: await ownerImportTrust(engine, row, ready.parsedPage.frontmatter, p.sourcePath),
     // Tells the #5470 screen the content is unchanged; publication still queues its effects.
     contentUnchanged: ready.noop && !moved && !writeback,
     ...(renamed ? { additionalPageKeys: [{ sourceId: row.source_id, slug: renamed.slug }] } : {}),

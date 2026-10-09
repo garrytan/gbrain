@@ -1,0 +1,14 @@
+{
+  "fixture_id": "gen-del-004",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "purged",
+        "step": "s2",
+        "probe": "Beatrix's door code is 1188-004"
+      }
+    ]
+  }
+}

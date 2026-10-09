@@ -293,6 +293,18 @@ text equal to the target is `status: duplicate` and changes nothing. On success
 `superseded_by` and its `## Facts` row is struck with `superseded by #N` in
 the same publication. Every `superseded` response carries `superseded_fact_id`.
 
+#### remember content_origin (additive)
+
+`content_origin` (string: `user_said`, `tool_output` or `inferred`): where the
+fact's text came from. `tool_output` (a web page, email, file or other tool's
+text) stores the fact as `external_untrusted`; `user_said` and `inferred` store
+it at the agent tier (`agent_written`), so `user_said` never confers owner
+authority. Any other value is `invalid_params` listing the accepted values.
+Optional, and safety never depends on it. Like `replaces`, it is advertised on
+the verbs and full surfaces but left out of the starter surface's schema (to
+keep that tool list inside its size budget); a starter client that passes it
+is still honored. `put_page` and `capture` take the same parameter.
+
 #### remember entity attribution fields (additive)
 
 Optional response fields; clients must ignore any they do not know.
@@ -486,6 +498,14 @@ already-expired fact returns `expired: false` (success); unknown id ⇒
 `not_found`. Facts are expired with an audit trail, never deleted.
 
 Response: `{ id, expired, reason, protocol_version }`.
+
+#### forget and purge (additive note)
+
+`forget` keeps this contract: it expires, never deletes. Removing a claim's
+text from live stores is a separate owner-only operation, `purge_fact` (CLI:
+`gbrain forget <id> --purge` on the brain host), which is not a memory verb and
+is never callable over MCP; a remote call gets `trusted_local_only` with the
+command for the user. See [expire versus purge](../guides/memory-boundaries.md#purge).
 
 #### forget similar_active and semantic_review (additive)
 

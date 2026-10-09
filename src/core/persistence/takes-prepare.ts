@@ -16,6 +16,12 @@ import { normalizeTargetFences, storedFenceRows } from '../fence-repair/import-s
 import { nextFreeRowNum } from '../fence-repair/normalize.ts';
 import { scanCanonicalFences, targetFenceRefusal } from '../fence-repair/refusal.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
+import { requestChannelTrust } from '../trust/channel.ts';
+import { gateField, gateInput, heldOutcome, loadWriteGateConfig } from '../trust/gate-outcomes.ts';
+import { finishOwnerAcceptedTake, ownerAcceptedTake, recordContestedTake, supersessionGuarded } from '../trust/supersede-handlers.ts';
+import { storedTrustTier } from '../trust/tier.ts';
+import { decideTakeWrite, recordFlaggedRow, recordWriteGateHold } from '../write-gate-store.ts';
+import { writeGateRejectedError } from '../write-gate.ts';
 
 /** Server-derived values are frozen after replay lookup, before admission. */
 export async function normalizeTakesIntent(ctx: OperationContext, params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -81,6 +87,10 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   let result: Record<string, unknown>;
   let oldRow: number | undefined;
   let removedRow: number | undefined;
+  // #5575: the takes write's declared tier (ENG-18) for the guarded supersession and the write gate.
+  const trust = requestChannelTrust(row) ?? { tier: 'unknown' as const, origin: null };
+  let contestedOld: { id: number; tier: string } | undefined;
+  let acceptedProposal: { id: number; newId: number; newRow: number } | null = null;
   // W9F item 4: a new row number never seen on this page, fence rows (reservations included) and stored rows alike.
   let allocated: number | undefined;
   const nextRow = async () => nextFreeRowNum({ compiled_truth: body, timeline: '' },
@@ -116,11 +126,28 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
         'takes_supersede needs the replacement claim as non-empty text.');
       const holder=typeof p.holder==='string'?p.holder:target.holder;
       edit.assertHolderAllowed(holder,holders); requiredHolders.add(holder);
+      const [stored]=await engine.executeRaw<{id:number;trust_tier:string}>('SELECT id,trust_tier FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,number]);
+      const accepted=p.trust_accept!==undefined && stored ? await ownerAcceptedTake(engine,row,Number(stored.id),snapshot.page.id) : null;
+      if (accepted) {
+        // The owner accepted a supersede_take proposal (CEO-9): strike the old row toward the contested row already in the fence.
+        next=edit.replaceFence(body,parsed.takes.map(t=>t.rowNum===number?{...t,active:false,source:t.source?.trim()&&!/^superseded by #\d+$/i.test(t.source.trim())?`${t.source.trim()}; superseded by #${accepted.newRow}`:`superseded by #${accepted.newRow}`}:t));
+        oldRow=number; acceptedProposal=accepted;
+        changed=parseTakesFence(next).takes.filter(t=>t.rowNum===number);
+        result={slug:row.slug,old_row:number,new_row:accepted.newRow};
+      } else if (stored && supersessionGuarded(trust.tier,stored.trust_tier)) {
+        // A lower-tier writer never supersedes a more trusted take: the new claim is added contested and the owner decides (A5).
+        const added=upsertTakeRow(body,{claim:p.claim,kind:p.kind as string ?? target.kind,holder,weight:p.weight as number ?? Math.max(0,target.weight-0.1),
+          source:p.source as string | undefined,sinceDate:p.since as string,active:true,rowNum:await nextRow()});
+        next=added.body; allocated=added.rowNum; contestedOld={id:Number(stored.id),tier:stored.trust_tier};
+        changed=parseTakesFence(next).takes.filter(t=>t.rowNum===added.rowNum);
+        result={slug:row.slug,old_row:number,new_row:added.rowNum};
+      } else {
       const superseded=supersedeRow(body,number,{claim:p.claim,kind:p.kind as string ?? target.kind,holder,
         weight:p.weight as number ?? Math.max(0,target.weight-0.1),source:p.source as string | undefined,sinceDate:p.since as string},await nextRow());
       next=superseded.body; oldRow=number; allocated=superseded.newRowNum;
       changed=parseTakesFence(next).takes.filter(t=>t.rowNum===number || t.rowNum===superseded.newRowNum);
       result={slug:row.slug,old_row:number,new_row:superseded.newRowNum};
+      }
     } else {
       let updated: ParsedTake;
       if (row.operation==='takes_update') {
@@ -142,6 +169,11 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
       result={slug:row.slug,row_num:number,...(row.operation==='takes_resolve'?{quality:p.quality,resolved_by:p.resolved_by}:{})};
     }
   }
+  const gate = allocated !== undefined ? decideTakeWrite({ claim: String(p.claim), source: (p.source as string | undefined) ?? null }, { sourceId: row.source_id, slug: row.slug,
+    payload: { page_id: snapshot.page.id, claim: p.claim, kind: p.kind ?? null, holder: p.holder ?? null, weight: p.weight ?? null, source: p.source ?? null, since: p.since ?? null },
+    input: gateInput(trust, row.id), cfg: await loadWriteGateConfig(engine) }) : null;
+  if (gate?.action === 'reject') throw writeGateRejectedError(gate.assessment);
+  if (gate?.action === 'hold') return { observedRevision: snapshot.revision, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
   // Rows Tier 1 rewrote are re-indexed with the row this write changes.
   const normalizedRows=new Set((target?.fixes ?? []).filter(f=>f.fence==='takes' && f.row!==null).map(f=>f.row!));
   if (normalizedRows.size) changed=[...changed,...parseTakesFence(next).takes.filter(t=>normalizedRows.has(t.rowNum) && !changed.some(c=>c.rowNum===t.rowNum))];
@@ -170,6 +202,12 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
           value:t.resolvedValue,unit:t.resolvedUnit,source:t.resolvedEvidence,resolvedBy:t.resolvedBy!});
         await tx.executeRaw('UPDATE takes SET resolved_at=$3::timestamptz WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,t.rowNum,t.resolvedAt]);
       }
+      const [written]=allocated!==undefined?await tx.executeRaw<{id:number;trust_tier:string}>('SELECT id,trust_tier FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,allocated]):[];
+      if (written && contestedOld) result.contested=await recordContestedTake(tx,{sourceId:row.source_id,oldId:contestedOld.id,oldTier:storedTrustTier(contestedOld.tier),
+        newId:Number(written.id),newTier:storedTrustTier(written.trust_tier),guard:'takes_supersede'});
+      if (acceptedProposal) await finishOwnerAcceptedTake(tx,acceptedProposal);
+      const flagged=written && gate ? gateField(gate.assessment,`t${written.id}`,await recordFlaggedRow(tx,gate,{table:'takes',id:Number(written.id),sourceId:row.source_id})) : undefined;
+      if (flagged) result.gate=flagged;
     }
     return {...outcome,...result,mirror_written:!!prepared.file,...(target?.fixes.length?{fences_normalized:pageFencesNormalized({sourceId:row.source_id,slug:row.slug,
       // A remote caller may not see every holder's rows, so its report names classes and columns, never row numbers.

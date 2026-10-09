@@ -42,6 +42,8 @@ import { DECIDE_SCHEMA_SQL } from '../src/core/ai/decide/schema.ts';
 import { FACT_RELINK_SCHEMA_SQL } from '../src/core/facts/relink-schema.ts';
 import { PINNED_QUESTIONS_SCHEMA_SQL } from '../src/core/questions/schema.ts';
 import { CORE_EDIT_NOTICES_SCHEMA_SQL } from '../src/core/core-memory-schema.ts';
+import { MEMORY_PURGE_SCHEMA_SQL } from '../src/core/facts/purge-schema.ts';
+import { WRITE_GATE_SCHEMA_SQL } from '../src/core/write-gate-schema.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 export const SCHEMA_SQL_PATH = 'src/schema.sql';
@@ -100,6 +102,8 @@ export const FRAGMENTS: readonly Fragment[] = [
   { source: 'src/core/facts/relink-schema.ts', expr: 'FACT_RELINK_SCHEMA_SQL', postgres: FACT_RELINK_SCHEMA_SQL, pglite: FACT_RELINK_SCHEMA_SQL },
   { source: 'src/core/link-temporal-schema.ts', expr: 'LINK_TEMPORAL_SCHEMA_SQL', postgres: LINK_TEMPORAL_SCHEMA_SQL, pglite: LINK_TEMPORAL_SCHEMA_SQL },
   { source: 'src/core/core-memory-schema.ts', expr: 'CORE_EDIT_NOTICES_SCHEMA_SQL', postgres: CORE_EDIT_NOTICES_SCHEMA_SQL, pglite: CORE_EDIT_NOTICES_SCHEMA_SQL },
+  { source: 'src/core/facts/purge-schema.ts', expr: 'MEMORY_PURGE_SCHEMA_SQL', postgres: MEMORY_PURGE_SCHEMA_SQL, pglite: MEMORY_PURGE_SCHEMA_SQL },
+  { source: 'src/core/write-gate-schema.ts', expr: 'WRITE_GATE_SCHEMA_SQL', postgres: WRITE_GATE_SCHEMA_SQL, pglite: WRITE_GATE_SCHEMA_SQL },
   { source: 'src/core/questions/schema.ts', expr: 'PINNED_QUESTIONS_SCHEMA_SQL', postgres: PINNED_QUESTIONS_SCHEMA_SQL, pglite: PINNED_QUESTIONS_SCHEMA_SQL },
 ];
 

@@ -113,21 +113,26 @@ export function hasAmbiguousWithdrawalFence(body: string): boolean {
 /** Apply hashes from DB-normalized companion text to the original Markdown. */
 export function overlayWithdrawalBody(body: string, normalizedBody: string, withdrawals: PageWithdrawal[]): string {
   if (!withdrawals.length || !body.includes('gbrain:facts:begin')) return body;
-  const ledger = new Map(withdrawals.map(w => [`${w.visibility}:${w.fact_hash}`, w.withdrawn_at]));
+  const ledger = new Map<string, PageWithdrawal>();
+  for (const w of withdrawals) {
+    const key = `${w.visibility}:${w.fact_hash}`;
+    if (!ledger.get(key)?.purged) ledger.set(key, w);
+  }
   const blocks = withdrawalFenceBlocks(body), normalized = withdrawalFenceBlocks(normalizedBody);
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i], norm = normalized[i];
     if (!norm || block.parsed.warnings.length || norm.parsed.warnings.length) continue;
     const claims = new Map(norm.parsed.facts.map(f => [f.rowNum, f.claim]));
     let changed = false;
-    const facts = block.parsed.facts.map(f => {
+    // A purge tombstone drops the row (the claim leaves the canonical text); a withdrawal strikes it.
+    const facts = block.parsed.facts.flatMap(f => {
       const claim = claims.get(f.rowNum);
-      if (claim === undefined) return f;
-      const at = ledger.get(`${f.visibility}:${createHash('sha256').update(normalizeLoweredClaim(claim)).digest('hex')}`)
+      if (claim === undefined) return [f];
+      const entry = ledger.get(`${f.visibility}:${createHash('sha256').update(normalizeLoweredClaim(claim)).digest('hex')}`)
         ?? ledger.get(`${f.visibility}:${createHash('sha256').update(claim).digest('hex')}`);
-      if (!at) return f;
+      if (!entry) return [f];
       changed = true;
-      return withdrawnFact(f, new Date(at).toISOString().slice(0, 10));
+      return entry.purged ? [] : [withdrawnFact(f, new Date(entry.withdrawn_at).toISOString().slice(0, 10))];
     });
     if (changed) body = body.slice(0, block.start) + renderFactsTable(facts) + body.slice(block.end);
   }

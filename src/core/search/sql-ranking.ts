@@ -21,6 +21,8 @@ import { quarantineFilterFragment } from '../quarantine.ts';
 import { unverifiedExtractionFragment } from '../extraction-review.ts';
 import { privatePagesFilterFragment } from './private-visibility.ts';
 import { currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
+import { pageEligibleSql } from '../eligibility/sql.ts';
+import type { TrustTier } from '../trust/tier.ts';
 
 /**
  * Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal.
@@ -186,6 +188,9 @@ export function buildVisibilityClause(
      */
     excludePrivate?: boolean;
     requireSafeChunks?: boolean;
+    /** #5575: the read floor and proactive activation control (eligibility/sql.ts), applied before LIMIT. */
+    minTrust?: TrustTier;
+    suppressFlagged?: boolean;
   },
 ): string {
   // Single source of truth for the quarantine SQL lives in quarantine.ts so
@@ -200,7 +205,9 @@ export function buildVisibilityClause(
   // C4: a pinned question's page holds only the question and owner notes; it is
   // read through questions_* and never ranks in retrieval (questions/pages.ts).
   const pinnedQuestion = ` AND NOT (COALESCE(${pageAlias}.frontmatter, '{}'::jsonb) ? 'pinned_question')`;
-  return `AND ${pageAlias}.deleted_at IS NULL AND ${currentTextProjectionFilter(pageAlias)} AND NOT ${sourceAlias}.archived AND ${quarantine}${pinnedQuestion}${privateClause}${chunksClause}`;
+  const trustClause = opts?.minTrust || opts?.suppressFlagged
+    ? ` AND ${pageEligibleSql(pageAlias, { floor: opts.minTrust, suppressFlagged: opts.suppressFlagged })}` : '';
+  return `AND ${pageAlias}.deleted_at IS NULL AND ${currentTextProjectionFilter(pageAlias)} AND NOT ${sourceAlias}.archived AND ${quarantine}${pinnedQuestion}${privateClause}${chunksClause}${trustClause}`;
 }
 
 // ============================================================

@@ -20,7 +20,8 @@ import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type FileRec
 import type { NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { lockCoreSources } from './core-guard.ts';
-import { requestAttribution } from './attribution.ts';
+import { publicationAttribution } from './attribution.ts';
+import type { WriteTrust } from '../trust/tier.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { mayReprepare } from './semantic.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
@@ -64,6 +65,8 @@ interface PreparedMutationBase {
    */
   postimage?: PageSnapshot | null;
   validate?(tx: BrainEngine): Promise<void>;
+  /** #5575: the tier and origin of the rows apply writes; absent: the request's channel tier (trust/channel.ts). */
+  trust?: WriteTrust;
 }
 /**
  * A page file target; `publishMode` (Google pages) is the exact mode it publishes with, and its created directories get 0700.
@@ -390,7 +393,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await hooks.boundary?.('after_publication', row);
       }
       prepared.postimage = undefined;
-      const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx, snapshot), requestAttribution(row));
+      const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx, snapshot), publicationAttribution(row, prepared.trust));
       if (!skill) await classifyUnboundPage(tx, row);
       if (prepared.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
       const final = skill ? null : await publicationPostimage(tx, row, prepared);

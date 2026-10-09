@@ -515,10 +515,19 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
       return { argv: ['gbrain', 'config', 'get', 'sync.exclude'], consent: [], actor: 'agent', requires_exclusive: false,
         why: `The size limit is fixed. Split ${record.path} into smaller files and commit, or leave it out of the source: read the current sync.exclude list, then run gbrain config set sync.exclude '<current list>,${record.path}'. The next gbrain sync --source ${source} --no-pull clears the hold.`,
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'purged_content':
+      return { argv: ['gbrain', 'pages', 'purges', 'list', '--source', source], consent: [], actor: 'user', requires_exclusive: false,
+        user_message: `${record.path} carries the content of a page the owner purged, so sync holds it. Delete or edit the file and commit; or, only if the purge was a mistake, clear it with gbrain pages unpurge <slug> --source ${source} on the brain host.`,
+        why: 'Purged content stays out of the brain until the owner clears its tombstone; editing the file (a new content hash) imports normally.',
+        verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'content_rejected':
       return { argv: ['gbrain', 'config', 'get', 'content_sanity'], consent: [], actor: 'user', requires_exclusive: false,
         user_message: `${record.path} was rejected by the content-sanity gate because junk_disposition is reject. Remove the matched junk from the file, or decide whether to switch junk_disposition back to quarantine.`,
         why: 'The operator chose to reject junk; changing that setting is a user decision. Editing the file and committing clears the hold on the next sync.' };
+    case 'write_gate_rejected':
+      return { argv: ['gbrain', 'config', 'get', 'write_gate.external_mode'], consent: [], actor: 'user', requires_exclusive: false,
+        user_message: `${record.path} was refused by the write gate: its source is untrusted and it reads like an instruction to an agent, and write_gate.external_mode is reject. Decide whether to edit the file or switch the setting back to quarantine.`,
+        why: 'The operator chose to reject external instruction-like content; changing that setting is a user decision. Editing the file and committing clears the hold on the next sync.' };
     case 'managed_image_sync_unsupported':
       return { argv: ['gbrain', 'config', 'get', 'sync.exclude'], consent: [], actor: 'user', requires_exclusive: false,
         user_message: `Managed sync does not import images yet, so ${record.path} is held and the rest of source ${source} keeps syncing. Keeping images held is fine; to stop holding them, leave images out of the source with sync.exclude or turn off multimodal embedding.`,
