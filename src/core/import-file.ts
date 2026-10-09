@@ -18,7 +18,7 @@ import type { FenceFix } from './fence-repair/types.ts';
 import { classifyStoredType } from './schema-pack/type-usage.ts';
 import { prepareMarkdownChunks } from './markdown-chunks.ts';
 import { prepareCodeChunks, installCodeChunkEdges } from './code-chunks.ts';
-import { detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
+import { detectCodeLanguage, CHUNKER_VERSION, GRAMMAR_REVISIONS, type SupportedCodeLanguage } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { installPageEmbeddings, installPageProjection, preparePageProjection, projectionBelowSafeFence, queuePageProjection, readProjectionSnapshot, resealSafeChunks,
   sealPageTextProjection, stampEmbeddingInputs, embeddingWriteTarget, embeddingInputContext, type ProjectionSnapshot } from './page-state/projections.ts';
@@ -1348,9 +1348,12 @@ export async function importCodeFile(
   });
 
   // Hash for idempotency. CHUNKER_VERSION is folded in so chunker shape
-  // changes across releases force clean re-chunks without a forced re-import.
+  // changes across releases force clean re-chunks without a forced re-import;
+  // a language's grammar revision is folded in for that language only, so a
+  // grammar swap re-chunks its own files and leaves every other hash alone.
+  const grammarRevision = GRAMMAR_REVISIONS[lang as SupportedCodeLanguage];
   const hash = createHash('sha256')
-    .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
+    .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION, ...(grammarRevision ? { grammar_revision: grammarRevision } : {}) }))
     .digest('hex');
 
   // Scoped to the exact (source_id, slug) row the writes below target —

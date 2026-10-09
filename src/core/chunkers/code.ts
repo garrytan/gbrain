@@ -142,6 +142,16 @@ import G_ZIG from '../../assets/wasm/grammars/tree-sitter-zig.wasm' with { type:
 // erased symbols.
 // v8 (N13-1): `const f = () => …` definitions keep their own named chunk.
 export const CHUNKER_VERSION = 8;
+/**
+ * Per-language grammar revisions, folded into that language's code-file hash
+ * and into `chunkerStamp()`. A grammar swap re-chunks only its own language's
+ * files instead of every code page in the brain (a CHUNKER_VERSION bump).
+ * lua 1: tree-sitter-grammars v0.3.0 replaced a build whose scanner ran every
+ * parse after the first on uninitialized state; Lua defs now become chunks.
+ */
+export const GRAMMAR_REVISIONS: Partial<Record<SupportedCodeLanguage, number>> = { lua: 1 };
+/** The `sources.chunker_version` gate value: a change forces the next sync to walk every file (hash compare, no re-import of unchanged hashes). */
+export const chunkerStamp = (): string => [String(CHUNKER_VERSION), ...Object.entries(GRAMMAR_REVISIONS).map(([lang, rev]) => `${lang}=${rev}`)].join(';');
 
 // Lazy-loaded tree-sitter module (v0.22.x API: Parser is default export)
 let Parser: typeof import('web-tree-sitter') | null = null;

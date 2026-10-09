@@ -8,7 +8,7 @@
  */
 import { existsSync, realpathSync } from 'fs';
 import { resolve as pathResolve, join } from 'path';
-import { CHUNKER_VERSION } from '../../core/chunkers/code.ts';
+import { chunkerStamp } from '../../core/chunkers/code.ts';
 import { currentCompanyBrainSync } from '../../core/company-brain/profile.ts';
 import { serr, slog } from '../../core/console-prefix.ts';
 import type { BrainEngine } from '../../core/engine.ts';
@@ -837,7 +837,7 @@ async function resolveWorkingTreeScope(
   // population, etc.). Without this, upgraded brains silently stay on
   // the old chunks — the whole reason we bumped the version.
   const storedVersion = await readChunkerVersion(engine, opts.sourceId);
-  const currentVersion = String(CHUNKER_VERSION);
+  const currentVersion = chunkerStamp();
   const versionMismatch = storedVersion !== null && storedVersion !== currentVersion;
   const versionNeverSet = storedVersion === null && opts.sourceId !== undefined;
   // Untracked-gap fix: the working-tree manifest is now built for attached

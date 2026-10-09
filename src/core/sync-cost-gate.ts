@@ -22,7 +22,7 @@ import {
   formatUsdLimit,
   resolveSpendPosture,
 } from './spend-posture.ts';
-import { estimateTokens, CHUNKER_VERSION } from './chunkers/code.ts';
+import { estimateTokens, chunkerStamp, detectCodeLanguage } from './chunkers/code.ts';
 import {
   estimateEmbeddingCostUsd,
   getEmbeddingModelName,
@@ -74,6 +74,39 @@ export function estimateSourceTreeTokens(
   } catch {
     // Best-effort: a source whose local_path is gone/unreadable contributes 0.
   }
+  return { tokens, files };
+}
+
+/**
+ * The languages whose grammar revision differs between a stored chunker stamp and
+ * the current one, when CHUNKER_VERSION itself is unchanged; null when the drift
+ * is the version (every code page re-chunks) or the stamp is unreadable.
+ */
+export function grammarOnlyDrift(stored: string | null, current: string): Set<string> | null {
+  if (stored === null) return null;
+  const parse = (stamp: string) => { const [version, ...revs] = stamp.split(';'); return { version, revs: new Map(revs.map(r => r.split('=') as [string, string])) }; };
+  const a = parse(stored), b = parse(current);
+  if (a.version !== b.version) return null;
+  const langs = new Set<string>();
+  for (const [lang, rev] of b.revs) if (a.revs.get(lang) !== rev) langs.add(lang);
+  for (const lang of a.revs.keys()) if (!b.revs.has(lang)) langs.add(lang);
+  return langs;
+}
+
+/** Tokens of the source's files in the given languages only (a grammar-revision drift re-chunks nothing else). */
+function estimateLanguageTokens(localPath: string, strategy: 'markdown' | 'code' | 'auto', languages: Set<string>): { tokens: number; files: number } {
+  let tokens = 0, files = 0;
+  try {
+    for (const fullPath of collectSyncableFiles(localPath, { strategy })) {
+      const lang = detectCodeLanguage(fullPath);
+      if (!lang || !languages.has(lang)) continue;
+      try {
+        if (statSync(fullPath).size > 5_000_000) continue;
+        tokens += estimateTokens(readFileSync(fullPath, 'utf-8'));
+        files++;
+      } catch { /* best-effort per file, as the tree walk */ }
+    }
+  } catch { /* best-effort: an unreadable source contributes 0 */ }
   return { tokens, files };
 }
 
@@ -156,7 +189,7 @@ export interface InlineEstimate {
   changedSources: number;
   unchangedSources: number;
   estimateKind: EstimateKind;
-  /** Per-source ceiling reasons (chunker_drift / first_sync / git_unavailable) for honest labeling. */
+  /** Per-source ceiling reasons (chunker_drift / grammar_drift / first_sync / git_unavailable) for honest labeling. */
   ceilingReasons: string[];
 }
 
@@ -169,6 +202,9 @@ export interface InlineEstimate {
  *   2. chunker drift (stored !== current)     → full-tree CEILING (a drift forces
  *        performFullSync → full re-chunk → full re-embed; a delta would
  *        underestimate by the whole corpus). kind: ceiling_chunker_drift
+ *        A drift in a language's grammar revision alone (`GRAMMAR_REVISIONS`,
+ *        CHUNKER_VERSION unchanged) prices only that language's files: the
+ *        walk re-imports nothing else. kind: ceiling_grammar_drift
  *   3. last_commit === fetch target           → 0 (mirrors `up_to_date` at
  *        sync.ts:1402 — NO clean-working-tree requirement; a dirty tree whose
  *        commits are caught up imports nothing). kind: unchanged
@@ -224,7 +260,17 @@ export function estimateInlineNewTokens(
     }
 
     // Rung 2: chunker drift forces a full re-chunk → full re-embed. CEILING.
+    // A drift in grammar revisions alone re-chunks only those languages' files:
+    // the walk compares hashes and every other file's hash is unchanged.
     if (src.chunker_version !== currentChunkerVersion) {
+      const languages = grammarOnlyDrift(src.chunker_version, currentChunkerVersion);
+      if (languages) {
+        tokens += estimateLanguageTokens(localPath, strategy, languages).tokens;
+        changedSources++;
+        hadCeiling = true;
+        ceilingReasons.push('grammar_drift');
+        continue;
+      }
       ceiling(localPath, strategy, 'chunker_drift');
       continue;
     }
@@ -498,7 +544,7 @@ export async function runInlineCostGate(
   }
 
   // ── Inline path ───────────────────────────────────────────────
-  const inline = estimateInlineNewTokens(sources, String(CHUNKER_VERSION), {
+  const inline = estimateInlineNewTokens(sources, chunkerStamp(), {
     forceFullTree: ctx.includeGitignored === true,
   });
   // D7A: `--full` runs `performFullSync` → `runEmbedCore({stale:true})`, which

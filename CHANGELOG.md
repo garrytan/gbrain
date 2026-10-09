@@ -10,6 +10,26 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.133.0] - 2026-10-09
+
+**A page with ` ```lua ` fences no longer stalls the writer: the Lua grammar is replaced, Lua definitions become semantic chunks for the first time, and only Lua files re-chunk on upgrade.**
+
+GBRA-49's LongMemEval scoreboard found `gbrain serve --surface starter` on PGLite at 99.5% CPU for 9.5 hours after a `put_page` had been admitted, never reading stdin again, with `[persistence] phase=preparation reason=deadline_exceeded` repeating (376 times) and 47 later writes queued behind it. The page was an exported chat whose assistant turns wrapped shell commands in ChatGPT-style ` ```lua ` fences (`sudo aa-status`, `sudo aa-status | grep snap.discord.discord`). The vendored Lua grammar (the `tree-sitter-wasms` build of the unmaintained Azganoth/tree-sitter-lua 2.1.3) allocated its external scanner state with `malloc` and reset it only when `deserialize` was handed two bytes, so every parse after the first in a process started from whatever the recycled heap held: `x = 1` misparsed as an error, and the fence texts spun inside the parser until the chunker's 30 s timeout. Five fences made each preparation attempt about 150 s of blocked event loop (a CPU profile puts about 80% in the runtime's parse loop driven by the scanner), past its 30 s deadline, so the consumer abandoned and retried it. On 0.60.106.0 that loop never ended; since #6278 (`persistence.max_preparation_attempts`, default 2) the request fails `preparation_stalled` after two attempts, which still costs five minutes of unresponsive serve and loses the write. Reproduced on current master before the fix. Independently, no Lua definition had ever become a semantic chunk, because the old grammar's node types never matched `TOP_LEVEL_TYPES.lua`.
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A page or file with Lua fences or `.lua` code | Chunks in milliseconds, on every parse, with `function`, `local function` and `function M.f()` definitions as named semantic chunks (`code-def` / `code-callers` work for Lua). |
+| `gbrain serve` writing such a page | The write commits as any other; no preparation deadline, no retry loop, stdin keeps being read. |
+| Existing indexes, on the next sync | Each source is walked once (hash compare) and only its `.lua` files re-import, re-chunk and re-embed; every other code page keeps its hash and its chunks. `CHUNKER_VERSION` stays 8. The sync cost gate prices the walk by the Lua files alone (`grammar_drift`), not the whole tree. Lua fences inside Markdown pages already indexed stay text chunks until the page changes or `gbrain sync --source <id> --full`. |
+
+### Itemized changes
+
+- `src/assets/wasm/grammars/tree-sitter-lua.wasm`: the official tree-sitter-grammars/tree-sitter-lua v0.3.0 release asset (ABI 14, the newest the pinned `web-tree-sitter@0.22.6` accepts; v0.4.0+ are ABI 15), SHA-256 `8fe0afe3…ee0d`; `scripts/vendor-lua-wasm.sh` downloads it and checks the checksum before writing; provenance in `src/assets/wasm/README.md`.
+- `src/core/chunkers/code.ts`: `GRAMMAR_REVISIONS` (`{ lua: 1 }`) and `chunkerStamp()` (`8;lua=1`). `import-file.ts` folds a language's grammar revision into that language's code-file hash only. The `sources.chunker_version` gate (`sync/preflight.ts`, `sync/full.ts`, `sync/finalize.ts`, `persistence/sync-prepare.ts`, the doctor's extraction check) reads and writes the stamp. `sync-cost-gate.ts`: `grammarOnlyDrift` and a per-language estimate for a stamp whose version is unchanged.
+- Tests: `test/chunkers/code-lua.test.ts` (ABI and import check; forced probes: the same text parses identically on every parser instance, the stuck page's five fences chunk in under a second with a 1.5 s per-fence timeout pinned, a conversation page with them prepares in one pass, Lua definitions become named chunks; all five fail on the previous grammar; the stamp, `grammarOnlyDrift`, and the cost gate pricing a grammar drift by Lua files alone). End to end on a fresh keyless PGLite brain, `gbrain put` of the stuck page: 1.8 s committed (previous grammar on current master: the CLI's wait ran out after 92 s with the request still `queued` and `deadline_exceeded` on stderr).
+
 ## [0.60.132.0] - 2026-10-09
 
 **Sync holds clear themselves. gbrain merges repeated fact tables, closes tables that were never ended, and removes stray `slug:` lines on its own; a repair model decides the cases that need judgment; a person is asked only when gbrain says so, in plain words, with the one command that applies what it proposes.**

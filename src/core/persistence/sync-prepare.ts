@@ -37,7 +37,7 @@ import { companyBrainPolicyFingerprint } from '../company-brain/policy.ts';
 import { isUnboundSourcePage, UNBOUND_COLLISION_MESSAGE } from './unbound-source.ts';
 import { checkpointRetryCommand, findIncompleteSyncReceipt } from './checkpoint-validation.ts';
 import { frontmatterSlugConflictMessage } from './verb-errors.ts';
-import { CHUNKER_VERSION } from '../chunkers/code.ts';
+import { chunkerStamp } from '../chunkers/code.ts';
 import { clearGitHold, countGitHolds, recordSyncImportProvenance } from './sync-holds.ts';
 import { fenceWhere } from '../fence-repair/refusal.ts';
 import { fencesNormalizeEnabled } from '../fence-repair/config.ts';
@@ -397,7 +397,7 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
     if (!changed.length) throw syncPublicationRefusal('revision_conflict', 'The source checkpoint changed during this sync.', row, p,
       `Another sync moved the commit checkpoint of ${row.source_id} while this run published.`);
     // #5566: a full walk re-chunked every stale page, so acknowledge the chunker version as the legacy gate does.
-    if (p.from === null || p.syncOptions?.full === true) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, String(CHUNKER_VERSION)]);
+    if (p.from === null || p.syncOptions?.full === true) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
     await tx.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,done}','true'::jsonb),updated_at=now() WHERE op='managed-sync' AND fingerprint=$1", [p.cursorKey]);
     for (const path of p.releasedHolds ?? []) await releaseHold(tx, path);
     return { status: 'synced', source_id: row.source_id, committed_pages: p.total };
