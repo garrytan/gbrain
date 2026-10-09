@@ -146,6 +146,20 @@ async function factObservationDates(
   return out;
 }
 
+/**
+ * The date header line (with its newline) for each delivered block, read for
+ * every hit page in one query. A failed read renders `unknown` for every page
+ * and calls `onUnavailable` once. A facts-arm row gets its fact header unless
+ * its text already starts with one.
+ */
+export async function blockDateHeaders(engine: Parameters<typeof loadPageDateHeaders>[0],
+  hits: Array<{ page_id: number; chunk_text?: string | null; fact_row?: { valid_from: string; valid_until: string | null } }>,
+  onUnavailable: () => void): Promise<(hit: { page_id: number; chunk_text?: string | null; fact_row?: { valid_from: string; valid_until: string | null } }) => string> {
+  let headers: Map<number, string>;
+  try { headers = await loadPageDateHeaders(engine, hits.map(h => h.page_id)); } catch { headers = new Map(); onUnavailable(); }
+  return hit => hit.fact_row ? (hit.chunk_text?.startsWith('[observed ') ? '' : `${factDateHeader(hit.fact_row)}\n`) : `${headers.get(hit.page_id) ?? pageDateHeader(null)}\n`;
+}
+
 /** `search.evidence_date_header` is on ('true' | 'on' | '1' | 'yes'); off by default and on any read error. */
 export async function evidenceDateHeaderEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
   try {

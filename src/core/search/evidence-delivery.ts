@@ -34,7 +34,8 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { credentialSafeProjection } from '../credential-projection.ts';
 import { stripChunkHeader } from '../chunkers/code.ts';
 import { OperationError } from '../ops/contract.ts';
-import { evidenceDateHeaderEnabled, factDateHeader, loadPageDateHeaders, pageDateHeader } from './evidence-date.ts';
+import { blockDateHeaders, evidenceDateHeaderEnabled } from './evidence-date.ts';
+export { pagePlanHits } from './page-plan-hits.ts';
 import { applyEffectiveDate } from '../utils.ts';
 import { configPacking, MIN_EXPLICIT_AUTO_BUDGET, parseAutoPacking, type AutoPacking } from './evidence-packing.ts';
 
@@ -307,19 +308,6 @@ export function conversationSignal(hit: { type?: string | null; slug: string }):
  * an explicit budget the cap enforces, always runs and reports its
  * per-result decision.
  */
-/**
- * A page-unit plan fills a token budget, so its hits are not cut for
- * precision first: autocut stays off unless the caller asks for it, and a
- * budget larger than the default row count can fill raises the row count (one
- * row per ~250 tokens, at most 100). Otherwise the page lane stopped at the
- * default rows (often ~10 after autocut) with half its budget unused.
- */
-export function pagePlanHits(plan: EvidencePlan | null): { limit?: number; autocut?: false } {
-  if (!plan || plan.unit !== 'page' || !(plan.budgetTokens > 0)) return {};
-  const rows = Math.min(100, Math.ceil(plan.budgetTokens / 250));
-  return { autocut: false, ...(rows > 25 ? { limit: rows } : {}) };
-}
-
 export function effectivePlan(plan: EvidencePlan | null, hits: SearchResult[]): EvidencePlan | null {
   if (!plan || plan.unit !== 'auto' || plan.explicitUnit || capEngaged(plan)) return plan;
   return hits.some(h => conversationSignal(h) !== null) ? plan : null;
@@ -1096,19 +1084,8 @@ export async function deliverEvidence(
     }
   }
 
-  // C1 date headers: one line per block, read for every hit page (passthrough
-  // rows included) and paid for inside the budget like the title.
-  let dateHeaders: Map<number, string> | null = null;
-  if (plan.dateHeader) {
-    try {
-      dateHeaders = await loadPageDateHeaders(engine, hits.map(h => h.page_id));
-    } catch {
-      dateHeaders = new Map();
-      fallbacks.add('date_header_unavailable');
-    }
-  }
-  const headerFor = (hit: SearchResult): string => !dateHeaders ? ''
-    : hit.fact_row ? (hit.chunk_text?.startsWith('[observed ') ? '' : `${factDateHeader(hit.fact_row)}\n`) : `${dateHeaders.get(hit.page_id) ?? pageDateHeader(null)}\n`;
+  // C1 date headers: one line per block (passthrough rows included), paid for inside the budget like the title.
+  const headerFor = plan.dateHeader ? await blockDateHeaders(engine, hits, () => fallbacks.add('date_header_unavailable')) : () => '';
 
   const planned: Block[] = [];
   for (const g of groups) {
