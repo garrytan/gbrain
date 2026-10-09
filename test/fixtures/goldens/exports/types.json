@@ -6653,8 +6653,23 @@
     ],
     "./search/evidence-delivery": [
       {
+        "kind": "variable",
+        "name": "AUTO_PACKINGS",
+        "signature": [
+          "readonly [\"off\", \"cap_only\", \"breadth_capped\", \"depth_first\"]"
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "AUTO_PACKING_CONFIG_KEY",
+        "signature": [
+          "\"search.auto_packing\""
+        ]
+      },
+      {
         "kind": "interface",
         "members": [
+          "auto_packing?: \"off\" | \"cap_only\" | \"breadth_capped\" | \"depth_first\" | undefined",
           "budget_tokens?: number | undefined",
           "caller?: { remote?: boolean; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; } | undefined",
           "detail?: \"low\" | \"medium\" | \"high\" | undefined",
@@ -6675,9 +6690,23 @@
       },
       {
         "kind": "type",
+        "name": "AutoPacking",
+        "signature": [
+          "\"off\" | \"cap_only\" | \"breadth_capped\" | \"depth_first\""
+        ]
+      },
+      {
+        "kind": "type",
         "name": "AutoReason",
         "signature": [
           "\"conversation_type\" | \"conversation_slug\" | \"not_conversation\" | \"conversation_over_budget\" | \"saved_fact\""
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "DEFAULT_AUTO_PACKING",
+        "signature": [
+          "\"off\" | \"cap_only\" | \"breadth_capped\" | \"depth_first\""
         ]
       },
       {
@@ -6742,6 +6771,7 @@
         "kind": "interface",
         "members": [
           "applied_unit: \"auto\" | \"window\" | \"chunk\" | \"section\" | \"page\"",
+          "auto_packing?: \"off\" | \"cap_only\" | \"breadth_capped\" | \"depth_first\" | undefined",
           "blocks: number",
           "budget_clamped?: { requested: number; max: number; } | undefined",
           "budget_tokens: number",
@@ -6778,6 +6808,13 @@
       },
       {
         "kind": "variable",
+        "name": "EVIDENCE_CUT_MARKER",
+        "signature": [
+          "string"
+        ]
+      },
+      {
+        "kind": "variable",
         "name": "EVIDENCE_DELIVERY_MIN_SERVER_VERSION",
         "signature": [
           "\"0.60.13.0\""
@@ -6801,9 +6838,11 @@
         "kind": "interface",
         "members": [
           "budgetClamped?: { requested: number; max: number; } | undefined",
+          "budgetExplicit: boolean",
           "budgetTokens: number",
           "dateHeader?: true | undefined",
           "explicitUnit: boolean",
+          "packing: \"off\" | \"cap_only\" | \"breadth_capped\" | \"depth_first\"",
           "requestedUnit: \"auto\" | \"window\" | \"chunk\" | \"section\" | \"page\"",
           "unit: \"auto\" | \"window\" | \"section\" | \"page\"",
           "window: number"
@@ -6824,6 +6863,13 @@
         "name": "MAX_ASSEMBLE_HITS",
         "signature": [
           "50"
+        ]
+      },
+      {
+        "kind": "variable",
+        "name": "MIN_EXPLICIT_AUTO_BUDGET",
+        "signature": [
+          "32"
         ]
       },
       {
@@ -6880,6 +6926,7 @@
       {
         "kind": "interface",
         "members": [
+          "autoPacking?: unknown",
           "budget: unknown",
           "configKey?: string | undefined",
           "legacyBudget?: boolean | undefined",
@@ -6923,9 +6970,30 @@
       },
       {
         "kind": "function",
+        "name": "autoPackingValueProblem",
+        "signature": [
+          "(value: string) => string | null"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "capDeliveredSnippets",
         "signature": [
           "<T extends SearchResult & { delivered?: DeliveredEvidence; }>(results: T[], cap: number, delivery: DeliveryMeta) => T[]"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "capEngaged",
+        "signature": [
+          "(plan: EvidencePlan) => boolean"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "capEvidenceToBudget",
+        "signature": [
+          "<T extends SearchResult & { delivered?: DeliveredEvidence; }>(results: T[], delivery: DeliveryMeta) => T[]"
         ]
       },
       {
@@ -7003,6 +7071,13 @@
         "name": "pagePlanHits",
         "signature": [
           "(plan: EvidencePlan | null) => { limit?: number; autocut?: false; }"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "parseAutoPacking",
+        "signature": [
+          "(raw: unknown) => AutoPacking | undefined"
         ]
       },
       {

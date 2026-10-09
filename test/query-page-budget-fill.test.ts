@@ -30,7 +30,7 @@ afterAll(async () => { await disposePersistenceConsumer(engine); await engine.di
 
 describe('page-unit budget fill', () => {
   test('pagePlanHits: autocut off and rows sized to large budgets, for page plans only', () => {
-    const plan = (unit: EvidencePlan['unit'], budgetTokens: number) => ({ requestedUnit: unit, unit, window: 1, budgetTokens, explicitUnit: true }) as EvidencePlan;
+    const plan = (unit: EvidencePlan['unit'], budgetTokens: number) => ({ requestedUnit: unit, unit, window: 1, budgetTokens, explicitUnit: true, budgetExplicit: true, packing: 'cap_only' }) as EvidencePlan;
     expect(pagePlanHits(null)).toEqual({});
     expect(pagePlanHits(plan('window', 8000))).toEqual({});
     expect(pagePlanHits(plan('page', 4000))).toEqual({ autocut: false });

@@ -11,7 +11,7 @@ import { operations, type OperationContext } from '../src/core/operations.ts';
 import { prepareMarkdownChunks } from '../src/core/markdown-chunks.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import type { SearchResult } from '../src/core/types.ts';
-import { countEvidenceTokens, deliverEvidence, type EvidencePlan } from '../src/core/search/evidence-delivery.ts';
+import { countEvidenceTokens, DEFAULT_AUTO_PACKING, deliverEvidence, type EvidencePlan } from '../src/core/search/evidence-delivery.ts';
 import {
   EVIDENCE_DATE_HEADER_KEY, factDateHeader, pageDateHeader, pageObservationDate,
 } from '../src/core/search/evidence-date.ts';
@@ -65,7 +65,8 @@ describe('deliverEvidence with the header on', () => {
     } as never;
   }
   const hit: SearchResult = { slug: 'chat/s', page_id: 1, title: 'S', type: 'note', chunk_text: chunks[1], chunk_source: 'compiled_truth', chunk_id: 1001, chunk_index: 1, score: 1, stale: false, source_id: 'default' };
-  const plan = (budget: number, dateHeader: boolean): EvidencePlan => ({ requestedUnit: 'page', unit: 'page', window: 1, budgetTokens: budget, explicitUnit: true, ...(dateHeader ? { dateHeader: true as const } : {}) });
+  const plan = (budget: number, dateHeader: boolean): EvidencePlan => ({ requestedUnit: 'page', unit: 'page', window: 1, budgetTokens: budget, explicitUnit: true,
+    budgetExplicit: false, packing: DEFAULT_AUTO_PACKING, ...(dateHeader ? { dateHeader: true as const } : {}) });
 
   test('every block starts with its header; tokens and spans account for it', async () => {
     const off = await deliverEvidence(stub({ date: '2026-03-05' }), [hit], plan(32000, false), {});
@@ -86,6 +87,21 @@ describe('deliverEvidence with the header on', () => {
       const on = await deliverEvidence(stub({}), [hit], plan(budget, true), {});
       expect(on.results[0].chunk_text).toMatch(HEADER_LINE);
       expect(on.results[0].chunk_text.startsWith('[observed unknown]\n')).toBe(true);
+      expect(on.delivery.budget_used).toBeLessThanOrEqual(budget);
+    }
+  });
+
+  test('under the explicit-budget cap the header is paid first and kept whole, and the budget holds', async () => {
+    const note: SearchResult = { ...hit, slug: 'notes/s', type: 'note', chunk_text: 'A plain note chunk about the walrus pricing plan. '.repeat(12) };
+    const capped = (budget: number): EvidencePlan => ({ requestedUnit: 'auto', unit: 'auto', window: 1, budgetTokens: budget, explicitUnit: true,
+      budgetExplicit: true, packing: DEFAULT_AUTO_PACKING, dateHeader: true });
+    for (const budget of [40, 120, 4000]) {
+      const on = await deliverEvidence(stub({}), [note], capped(budget), {});
+      const row = on.results[0];
+      expect(on.delivery.auto_packing).toBe(DEFAULT_AUTO_PACKING);
+      expect(on.delivery.date_header).toBe(true);
+      expect(row.chunk_text.startsWith('[observed unknown]\n')).toBe(true);
+      expect(row.delivered.match_spans.every(s => s.start >= '[observed unknown]\n'.length)).toBe(true);
       expect(on.delivery.budget_used).toBeLessThanOrEqual(budget);
     }
   });
