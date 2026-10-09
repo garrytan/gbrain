@@ -7,7 +7,7 @@
  * timeline `stale` column.
  */
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, sourceScopeShare, vectorScopeShareLoader, type PageSourceStats, type VectorSearchStatementInput } from '../../src/core/search/vector-statement.ts';
+import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, indexWalkOverfetch, SCOPE_SCAN_FIRST_MAX_CHUNKS, SCOPE_SCAN_MAX_CHUNKS, SCOPE_SCAN_MAX_SHARE, sourceScope, sourceScopeShare, vectorScopeLoader, type PageSourceStats, type VectorSearchStatementInput } from '../../src/core/search/vector-statement.ts';
 import { _resetVectorLegacyGuardForTests, readVectorLegacyGuard, resolveVectorLegacyGuard } from '../../src/core/search/vector-legacy-guard.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
@@ -15,8 +15,8 @@ const MD5 = 'md5(cc.chunk_text)';
 const indexedColumn = { name: 'embedding', type: 'vector' as const, dimensions: 1536, embeddingModel: 'openai:text-embedding-3-large' };
 const wideColumn = { name: 'embedding', type: 'vector' as const, dimensions: 3072, embeddingModel: 'openai:text-embedding-3-large' };
 
-function build(overrides: Partial<VectorSearchStatementInput['opts']> = {}, dialect: 'postgres' | 'pglite' = 'postgres', scopeShare?: number) {
-  return buildVectorSearchStatement({ dialect, embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, ...overrides }, scopeShare });
+function build(overrides: Partial<VectorSearchStatementInput['opts']> = {}, dialect: 'postgres' | 'pglite' = 'postgres', scopeShare?: number, scopeChunks?: number) {
+  return buildVectorSearchStatement({ dialect, embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, ...overrides }, scope: scopeShare === undefined ? undefined : { share: scopeShare, chunks: scopeChunks } });
 }
 
 /** The WHERE of the `hnsw_candidates` CTE, between its FROM and its ORDER BY. */
@@ -139,21 +139,90 @@ describe('vector index walk statement', () => {
   });
 });
 
-describe('index walk skip for small source scopes', () => {
-  const stats: PageSourceStats = { sources: ['notes', 'sessions', 'small'], freqs: [0.7, 0.25, 0.01], n_distinct: 5, null_frac: 0, reltuples: 1000 };
+describe('source scope strategy: walk overfetch, walk skip and scope scan', () => {
+  const stats: PageSourceStats = { sources: ['notes', 'sessions', 'small'], freqs: [0.7, 0.25, 0.01], n_distinct: 5, null_frac: 0, reltuples: 1000, chunk_reltuples: 200_000 };
+  const unchanged = (stmt: ReturnType<typeof build>, base: ReturnType<typeof build>) =>
+    expect([stmt.sql, stmt.exactSql, stmt.hasMoreSql, stmt.params, stmt.innerLimit, stmt.innerLimitIdx])
+      .toEqual([base.sql, base.exactSql, base.hasMoreSql, base.params, base.innerLimit, base.innerLimitIdx]);
 
-  test('a scope share below the threshold omits the walk and leaves every other statement byte-identical', () => {
+  test('the walk over-fetches about INDEX_WALK_OVERFETCH in-scope rows per window slot', () => {
+    expect(indexWalkOverfetch(undefined)).toBe(2);
+    expect(indexWalkOverfetch(1)).toBe(2);
+    expect(indexWalkOverfetch(0.5)).toBe(4);
+    expect(indexWalkOverfetch(0.16)).toBe(13);
+    expect(indexWalkOverfetch(INDEX_WALK_MIN_SCOPE_SHARE)).toBe(50);
+    expect(indexWalkOverfetch(INDEX_WALK_MIN_SCOPE_SHARE / 10)).toBe(50);
+  });
+
+  test('an unscoped or whole-brain scope keeps the walk byte-identical; a partial share only changes its LIMIT factor', () => {
+    for (const dialect of ['postgres', 'pglite'] as const) {
+      const unscoped = build({ sourceId: 'notes', excludePrivate: true }, dialect);
+      const whole = build({ sourceId: 'notes', excludePrivate: true }, dialect, 1, 1_000_000);
+      const half = build({ sourceId: 'notes', excludePrivate: true }, dialect, 0.5, 1_000_000);
+      expect(unscoped.indexWalkOverfetch).toBe(2);
+      expect(whole.indexWalkSql).toBe(unscoped.indexWalkSql!);
+      expect(half.indexWalkOverfetch).toBe(4);
+      expect(half.indexWalkSql).toBe(unscoped.indexWalkSql!.replace(`::int * 2\n`, `::int * 4\n`));
+      for (const stmt of [whole, half]) {
+        unchanged(stmt, unscoped);
+        expect(stmt.scopeScanSql).toBeUndefined();
+      }
+    }
+  });
+
+  test('a scope share below the walk threshold omits the walk; without chunk statistics it keeps only the joined statement', () => {
     for (const dialect of ['postgres', 'pglite'] as const) {
       const unscoped = build({ sourceId: 'small', excludePrivate: true }, dialect);
       const sparse = build({ sourceId: 'small', excludePrivate: true }, dialect, INDEX_WALK_MIN_SCOPE_SHARE / 2);
-      const wide = build({ sourceId: 'small', excludePrivate: true }, dialect, INDEX_WALK_MIN_SCOPE_SHARE);
       expect(sparse.indexWalkSql).toBeUndefined();
-      expect(wide.indexWalkSql).toBe(unscoped.indexWalkSql!);
-      for (const stmt of [sparse, wide]) {
-        expect([stmt.sql, stmt.exactSql, stmt.hasMoreSql, stmt.params, stmt.innerLimit, stmt.innerLimitIdx])
-          .toEqual([unscoped.sql, unscoped.exactSql, unscoped.hasMoreSql, unscoped.params, unscoped.innerLimit, unscoped.innerLimitIdx]);
-      }
+      expect(sparse.scopeScanSql).toBeUndefined();
+      unchanged(sparse, unscoped);
     }
+  });
+
+  test('a scope of at most SCOPE_SCAN_FIRST_MAX_CHUNKS runs the scope scan instead of the walk', () => {
+    const small = build({ sourceId: 'small' }, 'postgres', 0.2, SCOPE_SCAN_FIRST_MAX_CHUNKS);
+    expect(small.scopeScanSql).toBeDefined();
+    expect(small.indexWalkSql).toBeUndefined();
+    const narrowed = build({ sourceId: 'small', type: 'note' }, 'postgres', 0.01, 500);
+    expect(narrowed.scopeScanSql).toBeDefined();
+    unchanged(small, build({ sourceId: 'small' }));
+  });
+
+  test('a mid-size scope runs the walk first and keeps the scope scan as its fallback; larger, wider or unindexed scopes get no scan', () => {
+    const mid = build({ sourceId: 'sessions' }, 'postgres', 0.25, SCOPE_SCAN_MAX_CHUNKS);
+    expect(mid.indexWalkSql).toBeDefined();
+    expect(mid.scopeScanSql).toBeDefined();
+    expect(build({ sourceId: 'sessions' }, 'postgres', 0.25, SCOPE_SCAN_MAX_CHUNKS + 1).scopeScanSql).toBeUndefined();
+    expect(build({ sourceId: 'notes' }, 'postgres', SCOPE_SCAN_MAX_SHARE, 1_000).scopeScanSql).toBeUndefined();
+    expect(build({ sourceId: 'small' }, 'postgres', 0.01).scopeScanSql).toBeUndefined();
+    expect(build({ sourceId: 'small', vectorLegacyGuard: true }, 'postgres', 0.01, 500).scopeScanSql).toBeUndefined();
+    expect(build({ sourceId: 'small', embeddingColumn: wideColumn }, 'postgres', 0.01, 500).scopeScanSql).toBeUndefined();
+  });
+
+  test('the scope scan orders only chunk ids over the eligible pages, with the index kept out, then joins the window back', () => {
+    const stmt = build({ sourceIds: ['a'], exclude_slugs: ['x'], language: 'typescript', detail: 'low', excludePrivate: true, type: 'note' }, 'postgres', 0.01, 500);
+    const scan = stmt.scopeScanSql!;
+    const cte = scan.slice(scan.indexOf('WITH scope_scan AS MATERIALIZED ('), scan.indexOf('hnsw_candidates AS ('));
+    const pagesSubquery = cte.slice(cte.indexOf('ANY(ARRAY('), cte.indexOf('))'));
+    expect(cte).toContain('SELECT cc.id\n        FROM content_chunks cc\n        WHERE cc.page_id = ANY(ARRAY(');
+    for (const filter of ['AND p.type = $2', 'AND p.slug != ALL($3::text[])', 'AND p.source_id = ANY($5::text[])', `COALESCE(p.frontmatter->>'visibility'`, "AND NOT (p.slug LIKE 'test/%'"]) {
+      expect(pagesSubquery).toContain(filter);
+    }
+    expect(pagesSubquery).not.toContain('cc.');
+    expect(cte).toContain(`AND cc.chunk_source = 'compiled_truth'`);
+    expect(cte).toContain('AND cc.language = $4');
+    expect(cte).toContain('AND (cc.model=$6 OR');
+    expect(cte).not.toContain(MD5);
+    expect(cte).toContain('ORDER BY (cc."embedding" <=> $1::vector) + 0, cc.id');
+    expect(cte).toContain(`LIMIT $${stmt.innerLimitIdx + 1}\n`);
+    expect(scan).toContain('JOIN content_chunks cc ON cc.id = scope_scan.id');
+    expect(scoredCte(scan)).toContain('WHERE $6::text IS NULL OR hash_current');
+    const placeholders = (sql: string) => [...new Set(sql.match(/\$\d+/g))].sort();
+    expect(placeholders(scan)).toEqual(placeholders(stmt.sql));
+    const lite = build({ sourceIds: ['a'], excludePrivate: true }, 'pglite', 0.01, 500).scopeScanSql!;
+    expect(lite.replace(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale'))
+      .toBe(build({ sourceIds: ['a'], excludePrivate: true }, 'postgres', 0.01, 500).scopeScanSql!);
   });
 
   test('scope share sums the planner frequencies of the scoped sources', () => {
@@ -167,6 +236,13 @@ describe('index walk skip for small source scopes', () => {
     expect(sourceScopeShare({ sources: null, freqs: null, n_distinct: 4, null_frac: 0, reltuples: 100 }, { sourceId: 'x' })).toBe(0.25);
   });
 
+  test('scope chunks are the share of content_chunks reltuples, absent when chunks were never analyzed', () => {
+    expect(sourceScope(stats, { sourceId: 'sessions' })).toEqual({ share: 0.25, chunks: 50_000 });
+    expect(sourceScope({ ...stats, chunk_reltuples: -1 }, { sourceId: 'sessions' })).toEqual({ share: 0.25 });
+    expect(sourceScope({ ...stats, chunk_reltuples: undefined }, { sourceId: 'sessions' })).toEqual({ share: 0.25 });
+    expect(sourceScope(stats, {})).toBeUndefined();
+  });
+
   test('no scope or no statistics leaves the walk on', () => {
     expect(sourceScopeShare(stats, {})).toBeUndefined();
     expect(sourceScopeShare(stats, { sourceIds: [] })).toBeUndefined();
@@ -176,24 +252,24 @@ describe('index walk skip for small source scopes', () => {
 
   test('the loader reads statistics only for scoped searches, once a minute, and treats a failed read as unknown', async () => {
     let reads = 0;
-    const share = vectorScopeShareLoader(async () => { reads++; return [stats]; });
-    expect(await share({})).toBeUndefined();
-    expect(await share(undefined)).toBeUndefined();
+    const scope = vectorScopeLoader(async () => { reads++; return [stats]; });
+    expect(await scope({})).toBeUndefined();
+    expect(await scope(undefined)).toBeUndefined();
     expect(reads).toBe(0);
-    expect(await share({ sourceId: 'small' })).toBe(0.01);
-    expect(await share({ sourceIds: ['notes'] })).toBe(0.7);
+    expect(await scope({ sourceId: 'small' })).toEqual({ share: 0.01, chunks: 2_000 });
+    expect((await scope({ sourceIds: ['notes'] }))?.share).toBe(0.7);
     expect(reads).toBe(1);
     const now = performance.now();
     const clock = spyOn(performance, 'now').mockReturnValue(now + 61_000);
     try {
-      expect(await share({ sourceId: 'small' })).toBe(0.01);
+      expect((await scope({ sourceId: 'small' }))?.share).toBe(0.01);
       expect(reads).toBe(2);
     } finally {
       clock.mockRestore();
     }
-    const failing = vectorScopeShareLoader(async () => { throw new Error('permission denied for pg_stats'); });
+    const failing = vectorScopeLoader(async () => { throw new Error('permission denied for pg_stats'); });
     expect(await failing({ sourceId: 'small' })).toBeUndefined();
-    const empty = vectorScopeShareLoader(async () => []);
+    const empty = vectorScopeLoader(async () => []);
     expect(await empty({ sourceId: 'small' })).toBeUndefined();
   });
 });

@@ -14,8 +14,8 @@
  *      across a filter matrix incl. remote readers, wide windows and RLS;
  *   3. stale-heavy pools escalate or fall back exactly instead of underfilling;
  *   4. doctor `vector_plan` reports each outcome;
- *   5. a source scope holding a small share of pages skips the walk and runs
- *      the joined statement first.
+ *   5. a source scope holding few chunks skips the walk and runs the exact
+ *      scope scan first, reaching chunks through idx_chunks_page.
  *
  * Runs in a dedicated 64-dim database created on the E2E server and dropped in
  * afterAll, so the shared 1536-dim schema is untouched.
@@ -26,7 +26,7 @@ import postgres from '#postgres';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { refreshProjectionStatistics } from '../../src/core/search/projection-statistics.ts';
-import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, PAGE_SOURCE_STATS_SQL, sourceScopeShare, type PageSourceStats } from '../../src/core/search/vector-statement.ts';
+import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, PAGE_SOURCE_STATS_SQL, SCOPE_SCAN_FIRST_MAX_CHUNKS, sourceScope, type PageSourceStats } from '../../src/core/search/vector-statement.ts';
 import * as vectorPool from '../../src/core/search/vector-pool.ts';
 import type { VectorPoolAttempt, VectorPoolBatch } from '../../src/core/search/vector-pool.ts';
 import { vectorPlanCheck } from '../../src/commands/doctor/checks/vector-plan.ts';
@@ -142,7 +142,7 @@ function axis(d: number): Float32Array {
         get(target, key) {
           if (key !== 'unsafe') return Reflect.get(target, key);
           return (sql: string, params: unknown[]) => {
-            if (sql.includes('WITH hnsw_candidates') || sql.includes('WITH ann AS MATERIALIZED')) statements.push({ sql, params: [...params] });
+            if (sql.includes('WITH hnsw_candidates') || sql.includes('WITH ann AS MATERIALIZED') || sql.includes('WITH scope_scan AS MATERIALIZED')) statements.push({ sql, params: [...params] });
             return target.unsafe(sql, params);
           };
         },
@@ -375,7 +375,7 @@ function axis(d: number): Float32Array {
     }
   }, 60_000);
 
-  test('a source scope holding a small share of pages skips the walk: EXPLAIN and the first attempt run the joined statement', async () => {
+  test('a source scope holding few chunks skips the walk: EXPLAIN and the first attempt run the scope scan through idx_chunks_page', async () => {
     await seedEngine.executeRaw(`INSERT INTO sources (id, name) VALUES ('tiny', 'tiny') ON CONFLICT (id) DO NOTHING`);
     await seedEngine.executeRaw(`INSERT INTO pages (slug, source_id, type, title, compiled_truth, knowledge_revision, text_projection_revision, chunker_version)
       SELECT 'tiny/n-' || i, 'tiny', 'note', 'Tiny ' || i, 'body', '00000000-0000-4000-8000-000000000001'::uuid, '00000000-0000-4000-8000-000000000001'::uuid, 4
@@ -387,17 +387,22 @@ function axis(d: number): Float32Array {
     await seedEngine.executeRaw('ANALYZE pages');
     const opts: SearchOpts = { limit: 10, embeddingColumn: column, sourceId: 'tiny', excludePrivate: true };
     const [stats] = await engine.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL);
-    expect(sourceScopeShare(stats, opts)!).toBeLessThan(INDEX_WALK_MIN_SCOPE_SHARE);
-    const unscoped = buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 10, offset: 0, opts });
-    expect(unscoped.indexWalkSql).toBeDefined();
+    const scope = sourceScope(stats, opts)!;
+    expect(scope.share).toBeLessThan(INDEX_WALK_MIN_SCOPE_SHARE);
+    expect(scope.chunks!).toBeLessThanOrEqual(SCOPE_SCAN_FIRST_MAX_CHUNKS);
+    const stmt = buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 10, offset: 0, opts, scope });
+    expect(stmt.indexWalkSql).toBeUndefined();
+    expect(stmt.scopeScanSql).toBeDefined();
 
     const start = statements.length;
-    await engine.explainVectorSearch(query, opts);
+    const plan = await engine.explainVectorSearch(query, opts);
     const hits = await engine.searchVector(query, opts);
     const [explained, searched] = statements.slice(start);
-    expect(explained.sql).toBe(`EXPLAIN (FORMAT JSON) ${unscoped.sql}`);
-    expect(searched.sql).toBe(unscoped.sql);
+    expect(explained.sql).toBe(`EXPLAIN (FORMAT JSON) ${stmt.scopeScanSql}`);
+    expect(searched.sql).toBe(stmt.scopeScanSql!);
     expect(statements.slice(start).some(entry => entry.sql.includes('WITH ann AS MATERIALIZED'))).toBe(false);
+    expect(JSON.stringify(plan)).toContain('"Index Name":"idx_chunks_page"');
+    expect(scans(plan)).not.toMatch(/Seq Scan[^>]*content_chunks/);
     expect(hits).toHaveLength(10);
     expect(hits.every(hit => hit.source_id === 'tiny')).toBe(true);
   }, 60_000);

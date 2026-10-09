@@ -295,9 +295,12 @@ spawn_check() {
       # The watchdog owns no caller pipes (an orphaned sleep holding stdout
       # stalled spawnSync callers for the whole $TIMEOUT) and its TERM trap
       # takes its sleep down with it, closing the window where pkill -P runs
-      # before the sleep is forked.
-      ( trap 'kill "$nap" 2>/dev/null; exit 0' TERM
+      # before the sleep is forked. A TERM that lands between the fork and
+      # `nap=$!` only records itself; the sleep is killed once its pid is known.
+      ( trap 'term=1' TERM
         sleep "$TIMEOUT" & nap=$!
+        trap 'kill "$nap" 2>/dev/null; exit 0' TERM
+        [ -z "${term:-}" ] || { kill "$nap" 2>/dev/null; exit 0; }
         wait "$nap" && kill -TERM "$pid" 2>/dev/null && \
           sleep 5 && kill -KILL "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 &
       cap_pid=$!

@@ -65,7 +65,7 @@ import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, supportsHnswIterativeScan } from './vector-index.ts';
 import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt } from './search/vector-pool.ts';
-import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SET_STATEMENT_TIMEOUT_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeShareLoader, type PageSourceStats, type VectorSearchStatement } from './search/vector-statement.ts';
+import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SET_STATEMENT_TIMEOUT_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, type PageSourceStats, type VectorSearchStatement } from './search/vector-statement.ts';
 import { withVectorSettings } from './search/vector-settings.ts';
 import {
   vectorCastSuffix,
@@ -179,7 +179,7 @@ export function getPostgresSchema(
 
 export class PostgresEngine implements BrainEngine {
   private vectorIterativeScan?: Promise<boolean>;
-  private readonly vectorScopeShare = vectorScopeShareLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL));
+  private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   readonly kind = 'postgres' as const;
@@ -1322,7 +1322,7 @@ export class PostgresEngine implements BrainEngine {
     // so the HNSW index stays usable; the outer stages re-rank by source
     // factor. Statement shape, freshness placement (#5824) and pool counts
     // live in search/vector-statement.ts, shared with PGLite and doctor.
-    const stmt = buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scopeShare: await this.vectorScopeShare(opts) });
+    const stmt = buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope: await this.vectorScope(opts) });
     const iterative = await this.vectorIterativeScanSupported();
     const walked = await searchIndexWalk(stmt, limit, async walk => readVectorPool(await this.runVectorAttempt(stmt, walk, iterative, opts, (tx, sql, bound) => tx.unsafe(sql, bound))));
     if (walked) return walked.map(rowToSearchResult);
@@ -1354,9 +1354,9 @@ export class PostgresEngine implements BrainEngine {
    */
   async explainVectorSearch(embedding: Float32Array, opts?: SearchOpts): Promise<Record<string, unknown>> {
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
-    const stmt = buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scopeShare: await this.vectorScopeShare(opts) });
+    const stmt = buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope: await this.vectorScope(opts) });
     const iterative = await this.vectorIterativeScanSupported();
-    const attempt = { innerLimit: stmt.innerLimit, maxScanTuples: 2_000, remainingMs: 8_000, exact: false, indexWalk: !!stmt.indexWalkSql };
+    const attempt = { innerLimit: stmt.innerLimit, maxScanTuples: Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch), remainingMs: 8_000, exact: false, indexWalk: !!stmt.indexWalkSql, scopeScan: !stmt.indexWalkSql && !!stmt.scopeScanSql };
     const [row] = await this.runVectorAttempt(stmt, attempt, iterative, opts, (tx, sql, bound) => tx.unsafe(`EXPLAIN (FORMAT JSON) ${sql}`, bound));
     const plan = row?.['QUERY PLAN'];
     return (Array.isArray(plan) ? plan[0] : plan) as Record<string, unknown>;
@@ -1375,7 +1375,7 @@ export class PostgresEngine implements BrainEngine {
 
   private runVectorAttempt(
     stmt: VectorSearchStatement,
-    { innerLimit, maxScanTuples, remainingMs, exact, indexWalk }: VectorPoolAttempt,
+    { innerLimit, maxScanTuples, remainingMs, exact, indexWalk, scopeScan }: VectorPoolAttempt,
     iterative: boolean,
     opts: SearchOpts | undefined,
     run: (tx: ReturnType<typeof postgres>, sql: string, bound: Parameters<ReturnType<typeof postgres>['unsafe']>[1]) => Promise<Record<string, unknown>[]>,
@@ -1387,8 +1387,8 @@ export class PostgresEngine implements BrainEngine {
         const bound = [...stmt.params];
         bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
         await tx.unsafe(SET_STATEMENT_TIMEOUT_SQL, [String(remainingVectorBudget(deadline))]);
-        return run(tx, walk || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
-      }, deadline, opts?.hnswIterativeScan, !!walk);
+        return run(tx, (scopeScan && stmt.scopeScanSql) || walk || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
+      }, deadline, opts?.hnswIterativeScan, walk ? stmt.indexWalkOverfetch : undefined);
     }, { alwaysTransaction: true, jitOff: true });
   }
 

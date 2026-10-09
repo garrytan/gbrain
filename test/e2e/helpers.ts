@@ -62,6 +62,10 @@ const ALL_TABLES = [
   'minion_attachments',
   'minion_inbox',
   'minion_jobs',
+  // A fresh-database `gbrain init` commits a protocol-2 shared-skill request;
+  // the request guard refuses to delete it (cascading from a source delete)
+  // in any later protocol-1 session. TRUNCATE fires no row guard.
+  'persistence_requests',
 ];
 
 /**
@@ -132,9 +136,15 @@ export async function setupDB(options: { replayMigrations?: boolean } = {}): Pro
   try {
     // A file that activated managed persistence and exited without
     // deactivating leaves the writer guard armed, and its sources trigger
-    // rejects the reset below (writer_coordinator_required). Restore the
-    // schema default (disabled) first.
-    await conn.unsafe(`UPDATE persistence_brain SET enabled = false, activated_at = NULL WHERE singleton = 1`);
+    // rejects the reset below (writer_coordinator_required). A fresh-database
+    // `gbrain init` also raises the writer protocol floor to 2 with shared
+    // skill bundles on, after which every protocol-1 request is refused
+    // (writer_upgrade_required). Restore the schema defaults (disabled, floor
+    // 1, bundles off) first. The floor trigger forbids lowering it by UPDATE,
+    // so the singleton row is replaced with its other columns kept.
+    await conn.unsafe(`WITH old AS (DELETE FROM persistence_brain WHERE singleton = 1 RETURNING *)
+      INSERT INTO persistence_brain SELECT (jsonb_populate_record(NULL::persistence_brain, to_jsonb(old)
+        || '{"enabled": false, "activated_at": null, "writer_protocol_floor": 1, "skill_bundles_enabled": false}'::jsonb)).* FROM old`);
     await conn.unsafe(`DELETE FROM sources WHERE id <> 'default'`);
     // Only the sync-identity columns: local_path feeds writeSyncAnchor's
     // ownership guard (#3735) and last_commit/last_sync_at feed first_sync

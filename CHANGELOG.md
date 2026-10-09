@@ -10,6 +10,41 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.131.0] - 2026-10-09
+
+**Vector search scoped to one source now finds that source's true nearest chunks, and a remote reader's scoped search no longer runs for seconds. Unscoped search runs the same statement as before. Rescoring fetches embeddings about twice as fast.**
+
+A source-scoped vector search walked the HNSW index over the whole brain and kept the rows in scope. For a source holding a few percent of a large brain, the nearest chunks overall were rarely in it: the walk came back with a fraction of the true neighbours, and with the private-page rule the fallback statement ran for 4-8 s. Now a source with up to about 25,000 chunks is scanned exactly over its own chunks, reached page by page through the chunk index. A larger source under 30% of pages walks the index deep enough to keep about two in-scope rows per result slot, then falls back to the exact scan when the walk still comes back short. Hybrid rescoring now reads each chunk's embedding in pgvector's binary format instead of its text literal, with the same values.
+
+### What you'd see
+
+4 vCPU box, Postgres 16 + pgvector 0.8.7, synthetic brain of 50,010 pages / 248,802 chunks (1024-dim vectors), warm, N=25 queries, `limit` 20. Recall is result pages against the exact statement (no index) for the same scope. Sources hold the given share of pages, spread over the whole brain:
+
+| source share | before p50/p95 ms | recall | after p50/p95 ms | recall |
+|---|---|---|---|---|
+| 0.1% | 13/18 | 1.00 | 11/17 | 1.00 |
+| 1% | 73/124 | 1.00 | 22/134 | 1.00 |
+| 4% | 38/67 | 0.38 | 62/84 | 0.98 |
+| 8% | 15/184 | 0.47 | 105/132 | 0.98 |
+| 16% | 46/57 | 0.45 | 57/99 | 0.82 |
+| 50% | 24/46 | 0.56 | 31/46 | 0.81 |
+| unscoped | 37/42 | 0.64 | 25/28 | 0.64 |
+
+The same 4% source for a remote reader (private-page rule) went from 187/234 to 58/85 ms. A 1% source whose content sits away from most queries went from 4,390/6,475 ms to 42/68 ms for a remote reader. A 16% clustered source went from 40/8,135 ms (recall 0.42) to 381/474 ms (recall 0.95). PGLite at 5,001 pages: a 16% source went from 133/199 to 32/33 ms, recall 1.00 both. Fetching 100 embeddings for rescoring went from 11.0 to 4.9 ms.
+
+### What to watch for
+
+- Scoped results can differ from earlier releases wherever the index had missed closer matches. Unscoped search and scopes holding 30% or more of pages keep the approximate index walk.
+- A scope of 25,000-60,000 chunks whose content sits away from the query pays for the exact scan after the walk: about 0.4 s at 75,000 chunks on the box above, in exchange for complete results.
+
+### Itemized changes
+
+- **Scope scan (`src/core/search/vector-statement.ts`).** `scopeScanSql` orders chunk ids by exact distance over `cc.page_id = ANY(ARRAY(eligible pages))`, every page filter, visibility and the private-page rule applied once per page, then joins the window back for its columns. It returns the joined statement's rows. Each engine's `vectorScopeLoader` estimates the scope's share of pages and chunks from planner statistics, at most once a minute.
+- **Share-scaled walk.** The walk over-fetches `ceil(2 / share)` rows per window slot, sizes `hnsw.ef_search` and `hnsw.max_scan_tuples` for that window, and runs for scopes holding at least 4% of pages (was 10%). Unscoped, it is the same statement.
+- **First attempts (`src/core/search/vector-pool.ts`).** `searchIndexWalk` runs the walk, then the scope scan, before the bounded pool; a scan whose window is short (the scope ran out of chunks) answers on its own.
+- **Binary embedding fetch (`src/core/engine-sql/chunks.ts`).** `getEmbeddingsByChunkIds` reads `vector_send(col::vector)` and decodes it with `decodeVectorSend`, bit for bit the text literal's values.
+- **Bench.** `scripts/bench/vector-scope-share.ts` reports latency and recall per scope on any Postgres or PGLite brain.
+
 ## [0.60.130.0] - 2026-10-09
 
 **`gbrain import` is twice as fast, `gbrain extract all --source db` four times, and a managed `gbrain sync` stops running Git once per page. Every page, chunk, link and timeline row comes out the same.**

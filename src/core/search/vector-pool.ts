@@ -17,26 +17,40 @@ export interface VectorPoolAttempt {
   exact: boolean;
   /** Run the statement's `indexWalkSql` with INDEX_WALK_SETTINGS instead of `sql`. */
   indexWalk?: boolean;
+  /** Run the statement's `scopeScanSql` instead of `sql`. */
+  scopeScan?: boolean;
 }
 
 /**
- * Runs the statement's index walk (when it has one) before the pool. Its rows
- * answer the search when its window is full and they fill the limit; otherwise,
- * or past its 2 s budget, this returns null and the caller runs the pool.
+ * Runs the statement's index walk, then its scope scan (each when present),
+ * before the pool. Walk rows answer the search when its window is full and
+ * they fill the limit; scope-scan rows when they fill the limit or the scope
+ * ran out of eligible chunks (a short window). Otherwise, or past an
+ * attempt's 2 s budget, this returns null and the caller runs the pool. The
+ * walk may visit its whole over-fetched window, so its tuple budget covers it.
  */
 export async function searchIndexWalk(
-  stmt: Pick<VectorSearchStatement, 'indexWalkSql' | 'innerLimit'>,
+  stmt: Pick<VectorSearchStatement, 'indexWalkSql' | 'scopeScanSql' | 'innerLimit' | 'indexWalkOverfetch'>,
   limit: number,
   run: (attempt: VectorPoolAttempt) => Promise<VectorPoolBatch>,
 ): Promise<Record<string, unknown>[] | null> {
-  if (!stmt.indexWalkSql) return null;
-  try {
-    const batch = await run({ innerLimit: stmt.innerLimit, maxScanTuples: 2_000, remainingMs: 2_000, exact: false, indexWalk: true });
-    return batch.candidatePool >= stmt.innerLimit && batch.rows.length >= limit ? batch.rows : null;
-  } catch (error) {
-    if ((error as { code?: string }).code === '57014') return null;
-    throw error;
+  const attempt = async (kind: { indexWalk: true } | { scopeScan: true }) => {
+    try {
+      return await run({ innerLimit: stmt.innerLimit, maxScanTuples: Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch), remainingMs: 2_000, exact: false, ...kind });
+    } catch (error) {
+      if ((error as { code?: string }).code === '57014') return null;
+      throw error;
+    }
+  };
+  if (stmt.indexWalkSql) {
+    const batch = await attempt({ indexWalk: true });
+    if (batch && batch.candidatePool >= stmt.innerLimit && batch.rows.length >= limit) return batch.rows;
   }
+  if (stmt.scopeScanSql) {
+    const batch = await attempt({ scopeScan: true });
+    if (batch && (batch.rows.length >= limit || batch.candidatePool < stmt.innerLimit)) return batch.rows;
+  }
+  return null;
 }
 
 export function remainingVectorBudget(deadline: number): number {
