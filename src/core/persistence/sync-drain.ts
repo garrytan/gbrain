@@ -34,7 +34,9 @@ export type DrainStopReason = 'deadline' | 'drain_stalled' | 'database_contentio
   /** #6278: the run's breaker tripped on `preparation_stalled` receipts (one systemic diagnostic instead of a pile of holds). */
   | 'preparation_systemic'
   /** #6278 (B7): the sync's next admission was refused for the whole no-progress window because other requests held the writer's outstanding-request cap. */
-  | 'write_capacity';
+  | 'write_capacity'
+  /** #6340: the database connection dropped `CONNECTION_STRIKES` times in a row with no page committed between the drops; the cursor stands, the same command resumes it. */
+  | 'connection_lost';
 /** #6278 (B7): what the drain waited on when `write_capacity` stopped it: the counts the last refusal carried and how long it waited. */
 export interface DrainCapacityWait { outstanding: number | null; limit: number | null; scope: 'principal' | 'brain' | null; waited_seconds: number }
 /** #6278: what a stalled head's live claim says it is doing (`claim_phase`, stamped by its owner on every renewal). */
@@ -114,6 +116,10 @@ export interface DrainReport {
   retry_after_ms?: number;
   stall?: DrainStall;
   capacity?: DrainCapacityWait;
+  /** #6340 `connection_lost`: how many drops in a row ended the drain and the last error's text (message only, never a URL). */
+  connection?: { drops: number; last_error: string };
+  /** #6340: HEAD moved past the pinned target while the run drained, so the drain took exactly one more pass for the commits since (never a second). */
+  extra_pass?: { from: string; to: string };
   /** DX-A5: whether pages were published in bulk groups, and why not when they were not. */
   bulk?: { enabled: boolean; reason: string | null; groups: number; grouped_pages: number; largest_group: number;
     /** #5984 admit-ahead: groups admitted while the previous group was still publishing. */
@@ -139,6 +145,10 @@ const STALL_PASSES = 3;
 export const STALL_GRACE_MS = 30_000;
 const SYNC_PREPARATION_DEFAULT_MS = 120_000, MAINTENANCE_PREPARATION_DEFAULT_MS = 120_000, PREPARATION_CEILING_DEFAULT_MS = 600_000;
 const TRANSIENT_ATTEMPTS = 3;
+/** #6340: a dropped database connection (a pooler drop mid-statement) is retried on this schedule after a reconnect; pooler recovery is seconds, not milliseconds. */
+export const CONNECTION_RETRY_MS = [5_000, 15_000, 45_000] as const;
+/** #6340: consecutive connection drops with no page committed between them that end the drain `connection_lost`. */
+export const CONNECTION_STRIKES = CONNECTION_RETRY_MS.length;
 /** #6278 (B7): the longest pause between admission retries while other requests hold the writer's outstanding cap. */
 const CAPACITY_RETRY_MAX_MS = 5_000;
 /** #6278 (B7): the page counts of a run a drain finished before yielding for the next one. */
@@ -183,6 +193,18 @@ export function formatDuration(seconds: number): string {
   return h ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m${String(seconds % 60).padStart(2, '0')}s`;
 }
 
+/**
+ * #6340: whether `error` is the database connection going away under the pass (a pooler drop, a reset socket, a
+ * timed-out write). `CONNECTION_DESTROYED` / `CONNECTION_CLOSED` are left out on purpose: #6329 classifies those as
+ * this process's own settle of a cancelled statement after the owner's deadline, which becomes a
+ * `preparation_stalled` receipt on the stall path, never a transport retry.
+ */
+export function isConnectionDrop(error: unknown): boolean {
+  const code = getCode(error);
+  if (code === 'CONNECTION_DESTROYED' || code === 'CONNECTION_CLOSED') return false;
+  return isRetryableConnError(error);
+}
+
 /** Named transient failures the drain retries; anything else ends the drain (CEO-A31). */
 function transientDelay(error: unknown, attempt: number, refreshWaitedMs: number, baseMs: number): number | null {
   if (error instanceof OperationError && error.code === 'worktree_refreshing') {
@@ -196,6 +218,12 @@ function transientDelay(error: unknown, attempt: number, refreshWaitedMs: number
   const contention = error instanceof OperationError && error.code === 'database_contention';
   if (!contention && !isRetryableConnError(error) && !isStatementTimeoutError(error) && getCode(error) !== '57014') return null;
   return baseMs * 4 ** (attempt - 1);
+}
+
+/** The error's message (or code), with anything that looks like a connection URL removed. */
+function errorText(error: unknown): string {
+  const text = error instanceof Error ? error.message : typeof error === 'object' && error && 'code' in error ? String((error as { code: unknown }).code) : String(error);
+  return text.replace(/\b\w+:\/\/\S+/g, '<url>').slice(0, 200);
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -237,6 +265,8 @@ export interface StallProbe {
 
 export interface DrainInput {
   pass(signal: AbortSignal | undefined, onProgress: NonNullable<SyncOpts['onProgress']>): Promise<SyncResult>;
+  /** #6340: recovers the engine's pool before a connection-class retry (`engine.reconnect`); absent for callers without one. */
+  reconnect?(error: unknown): Promise<void>;
   signal?: AbortSignal;
   onProgress?: SyncOpts['onProgress'];
   probe?: StallProbe;
@@ -281,6 +311,8 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
   let last: SyncResult | undefined, capacity: { since: number; attempts: number } | null = null;
   // #6278 (B7): a pass may finish one run and yield for the next (re-screens scheduled while it ran); the counts of finished runs carry into the report.
   let carried: RunCounts | null = null;
+  // #6340: consecutive connection drops since the last committed page; a commit between drops resets the count.
+  let drops = 0;
   const remaining = () => total === null ? null : Math.max(0, total - index);
   const every = input.progressMs ?? PROGRESS_EVERY_MS;
   // #6278: the progress line prints on commits; while nothing commits, a timer names the stall instead of an ETA that assumes none.
@@ -318,7 +350,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     if (event.phase === 'managed_sync.lanes' && event.lanes) lanes = { effective: event.lanes.effective, stepDown: event.lanes.stepDown, overlapped: event.lanes.overlapped, fallbacks: event.lanes.fallbacks };
     if (event.phase !== 'managed_sync.page_committed') return;
     if (event.waived) waived++; else written++;
-    lastCommitAt = Date.now();
+    lastCommitAt = Date.now(); drops = 0;
     noteForwardProgress();
     if (input.announce && Date.now() - lastLine >= PROGRESS_EVERY_MS) {
       lastLine = Date.now();
@@ -365,6 +397,18 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
             serr(`[sync] ${index}/${total ?? '?'} processed · waiting for write capacity (${counts.outstanding ?? '?'} outstanding${counts.limit === null ? '' : ` of ${counts.limit}`})`);
           }
           await sleep(Math.min(CAPACITY_RETRY_MAX_MS, (input.backoffMs ?? 250) * 2 ** capacity.attempts++), signal);
+          continue;
+        }
+        // #6340: a dropped connection is a transport fault, not a page fault: reconnect, wait 5/15/45 s, and re-enter the pass
+        // at the stored cursor (nothing was recorded against the source). Three drops with no page committed between them
+        // end the drain `connection_lost` with the same resume command; a drop that then moves data is a non-event.
+        if (isConnectionDrop(error) && !signal?.aborted) {
+          if (++drops >= CONNECTION_STRIKES) return finish(last ?? NO_PASS_RESULT, 'blocked', 'connection_lost', { connection: { drops, last_error: errorText(error) } });
+          const delay = input.backoffMs !== undefined ? input.backoffMs * 4 ** (drops - 1) : CONNECTION_RETRY_MS[drops - 1]!;
+          if (input.announce) serr(`[sync] ${index}/${total ?? '?'} processed · database connection dropped (${errorText(error)}); reconnecting and retrying in ${formatDuration(Math.round(delay / 1000))} (${drops} of ${CONNECTION_STRIKES})`);
+          await sleep(delay, signal);
+          if (signal?.aborted) throw error;
+          await input.reconnect?.(error).catch(() => undefined);
           continue;
         }
         const delay = transientDelay(error, ++attempt, refreshWaitedMs, input.backoffMs ?? 250);
@@ -572,6 +616,7 @@ export async function drainManagedSync(engine: BrainEngine, opts: SyncOpts, anno
   let result: SyncResult | undefined;
   try {
     result = await runDrain({ signal: opts.signal, onProgress: opts.onProgress, probe: engineStallProbe(engine, opts.sourceId), announce,
+      reconnect: error => engine.reconnect({ error }),
       bulk: { enabled: bulk.enabled, reason: bulk.reason, lanes: bulk.lanes ?? 1, lanesMax: bulk.lanesMax, lanesReason: bulk.lanesReason ?? null, lanesCap: bulk.lanesCap },
       pass: (signal, onProgress) => performManagedSync(engine, { ...opts, signal, onProgress, drainStartedAt, ...(bulk.enabled ? { bulk: { ...bulk, laneRun } } : {}) }) });
   } finally {
@@ -583,12 +628,49 @@ export async function drainManagedSync(engine: BrainEngine, opts: SyncOpts, anno
       if (lanes && stats) Object.assign(lanes, { busy: stats.busy, apply_ms_per_page: stats.applyMsPerPage, turn_wait_share: stats.turnWaitShare });
     }
   }
+  // #6340: on a live checkout HEAD moves while the run drains its pinned manifest. One bounded extra pass imports the commits
+  // since the pin (an incremental pin..HEAD discovery, which also re-screens holds whose file a later commit changed), so the
+  // invocation ends at HEAD instead of leaving the gap to the next launch. Never a second extra pass: a checkout that keeps
+  // committing would otherwise loop forever.
+  if (result.drain?.outcome === 'synced' && result.toCommit && !opts.dryRun && !opts.signal?.aborted && result.status !== 'up_to_date') {
+    const head = await headOfSource(engine, opts);
+    if (head && head !== result.toCommit) {
+      if (announce) serr(`[sync] HEAD moved past the pinned target ${result.toCommit.slice(0, 8)} while the run drained; one more pass imports the commits since (to ${head.slice(0, 8)}).`);
+      const pin = result.toCommit;
+      const again = await runDrain({ signal: opts.signal, onProgress: opts.onProgress, probe: engineStallProbe(engine, opts.sourceId), announce: false,
+        reconnect: error => engine.reconnect({ error }),
+        bulk: { enabled: bulk.enabled, reason: bulk.reason, lanes: bulk.lanes ?? 1, lanesMax: bulk.lanesMax, lanesReason: bulk.lanesReason ?? null, lanesCap: bulk.lanesCap },
+        pass: (signal, onProgress) => performManagedSync(engine, { ...opts, signal, onProgress, drainStartedAt, ...(bulk.enabled ? { bulk: { ...bulk, laneRun } } : {}) }) });
+      result = mergeExtraPass(result, again, { from: pin, to: head });
+    }
+  }
   const lanes = result.drain?.bulk?.enabled ? result.drain.bulk.lanes : undefined;
   if (lanes && (result.drain!.written > 0 || lanes.configured === 1)) {
     lanes.limited_by = lanesLimit(lanes, bulk.lanesCap);
     if (announce) serr(`[sync] lanes: ${lanes.effective} of ${lanes.maximum}${lanes.busy != null ? `, ${lanes.busy} busy on average` : ''}; ${lanes.limited_by.message}${lanes.limited_by.raise ? ` ${lanes.limited_by.raise}` : ''}`);
   }
   return result;
+}
+
+/** The source's current HEAD (the commit a fresh discovery would pin), or null when the checkout cannot be read. */
+async function headOfSource(engine: BrainEngine, opts: SyncOpts): Promise<string | null> {
+  try {
+    const { resolveManagedSyncContext, syncGit } = await import('./sync-discovery.ts');
+    const context = await resolveManagedSyncContext(engine, opts);
+    return syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim() || null;
+  } catch { return null; }
+}
+
+/** #6340: the first drain's report plus the extra pass's: page counts and holds add up, the outcome and `next` are the extra pass's. */
+function mergeExtraPass(first: SyncResult, extra: SyncResult, span: { from: string; to: string }): SyncResult {
+  const f = first.drain!, e = extra.drain;
+  const held = [...(first.held ?? []), ...(extra.held ?? [])];
+  return { ...extra, added: first.added + extra.added, modified: first.modified + extra.modified, deleted: first.deleted + extra.deleted, renamed: first.renamed + extra.renamed,
+    chunksCreated: first.chunksCreated + extra.chunksCreated, fromCommit: first.fromCommit,
+    waived: { imports: (first.waived?.imports ?? 0) + (extra.waived?.imports ?? 0), deletes: (first.waived?.deletes ?? 0) + (extra.waived?.deletes ?? 0) },
+    ...(held.length ? { held, held_count: held.length } : {}),
+    drain: { ...(e ?? f), outcome: e?.outcome ?? 'synced', passes: f.passes + (e?.passes ?? 1), processed: f.processed + (e?.processed ?? 0), written: f.written + (e?.written ?? 0),
+      waived: f.waived + (e?.waived ?? 0), extra_pass: span } };
 }
 
 /**
@@ -632,6 +714,7 @@ const STOP_DOCS: Record<DrainStopReason, CatalogueName> = {
   recovery_required: 'sync_drain_writer_blocked', owner_unavailable: 'sync_drain_writer_blocked', unexpected_file_bytes: 'sync_drain_writer_blocked',
   unexpected_staging_bytes: 'sync_drain_writer_blocked', blocked_by_failures: 'sync_drain_blocked_by_failures',
   preparation_abandoned: 'sync_drain_preparation_abandoned', preparation_systemic: 'sync_drain_preparation_systemic', write_capacity: 'sync_drain_write_capacity',
+  connection_lost: 'sync_drain_connection_lost',
 };
 
 /** What the agent runs next, or null when the sync is done (DX-A2). */
@@ -664,6 +747,14 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
       why: `The sync could not admit its next write for ${c?.waited_seconds ?? 30}s: ${c?.outstanding ?? 'other'} of the ${scope === 'brain' ? "brain's" : "write principal's"} ${c?.limit ?? ''} outstanding-request slots `
         + 'were in use, most of them by another writer on this host (a maintenance run shares the CLI principal), so there was no room for a sync write. Nothing failed and the cursor is intact. '
         + `Inspect them (read-only) and let them finish, or raise ${key}, then rerun: ${resumeCommand}`,
+      ...(docs ? { docs } : {}) };
+  }
+  // #6340: the connection dropped three times with no page committed between the drops; the cursor stands and the same command resumes it.
+  if (d?.stop_reason === 'connection_lost') {
+    return { command: resumeCommand, safe_to_loop: true, retry_after_ms: 60_000, ...estimate, code: 'connection_lost',
+      why: `The database connection dropped ${d.connection?.drops ?? CONNECTION_STRIKES} times in a row (${d.connection?.last_error ?? 'connection error'}) with no page committed between the drops; `
+        + 'the drain reconnected and retried at 5, 15 and 45 s each time. Nothing is recorded against the source: the cursor and its frozen manifest stand. '
+        + `Check the database and pooler (gbrain doctor --json), then rerun: ${resumeCommand} (safe in a loop after retry_after_ms; it resumes without re-freezing).`,
       ...(docs ? { docs } : {}) };
   }
   if (d?.stop_reason === 'database_contention') {
@@ -724,6 +815,7 @@ export function formatDrainSummary(result: SyncResult, resumeCommand: string, so
     + (d.remaining ? `, ${d.remaining} remaining` : '') + (d.rate_pages_per_min !== null ? `, ${d.rate_pages_per_min} pages/min` : '')
     + (d.remaining && d.eta_seconds !== null ? `, indexing ETA ${formatDuration(d.eta_seconds)}` : '') + '.'];
   if (d.capacity) lines.push(`  Waited ${d.capacity.waited_seconds}s for write capacity: ${d.capacity.outstanding ?? '?'} of ${d.capacity.limit ?? '?'} ${d.capacity.scope ?? 'principal'} outstanding-request slots in use.`);
+  if (d.connection) lines.push(`  Database connection dropped ${d.connection.drops} times in a row (${d.connection.last_error}); the cursor and its frozen manifest are intact.`);
   // #6317 (C3): the summary line carries the same step / waiting_on / last_sql triple as the log lines, and the owner process.
   if (d.stall) lines.push(`  Oldest unfinished request ${d.stall.head_request_id ?? d.stall.request_id} (${d.stall.head_state ?? d.stall.state})`
     + `${d.stall.blocked_reason ? `, blocked_reason=${d.stall.blocked_reason}` : ''}${d.stall.step ? `, step=${d.stall.step}` : ''}${d.stall.waiting_on ? `, waiting_on=${d.stall.waiting_on}` : ''}`

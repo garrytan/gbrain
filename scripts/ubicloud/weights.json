@@ -289,7 +289,7 @@
   "e2e:test/e2e/persistence-chaos.test.ts": 34657,
   "e2e:test/e2e/persistence-deactivate-race.test.ts": 3180,
   "e2e:test/e2e/persistence-embedding-effects.test.ts": 30078,
-  "e2e:test/e2e/persistence-git-coalescing-5530-postgres.test.ts": 77948,
+  "e2e:test/e2e/persistence-git-coalescing-5530-postgres.test.ts": 48803,
   "e2e:test/e2e/persistence-http-liveness.test.ts": 44328,
   "e2e:test/e2e/persistence-idle-pool.test.ts": 116932,
   "e2e:test/e2e/persistence-large-manifest-50k.test.ts": 40242,

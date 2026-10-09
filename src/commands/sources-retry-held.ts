@@ -89,8 +89,9 @@ function gitNextStep(sourceId: string, dryRun: boolean, scheduled: Scheduled): {
   const fences = scheduled.items.filter(item => item.code === 'invalid_fence').length;
   const concurrent = scheduled.items.filter(item => item.code === 'concurrent_write').length;
   const stalled = scheduled.items.filter(item => item.code === 'preparation_stalled').length;
+  const dirty = scheduled.items.filter(item => item.code === 'worktree_dirty').length;
   return { text: `${count} held file(s) scheduled for a re-screen; none has run yet. ${automatic} Run it now with: ${sync}, then verify with: gbrain sources status ${sourceId}. `
-      + `A file that still refuses stays held; ${holdRepairSteps(sourceId, { fences, others: count - fences - concurrent - stalled, concurrent, stalled }, scheduled.fenceAuto).text}.`,
+      + `A file that still refuses stays held; ${holdRepairSteps(sourceId, { fences, others: count - fences - concurrent - stalled - dirty, concurrent, stalled, dirty }, scheduled.fenceAuto).text}.`,
     fix: { argv: scheduled.sync, consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `The sync re-screens the ${count} scheduled file(s): each one that now passes imports and its hold clears; the rest stay held without blocking the sync.` } };
 }

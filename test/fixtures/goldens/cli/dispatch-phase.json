@@ -1818,26 +1818,22 @@
             "unconditionalFor": []
           },
           {
-            "condition": "command === 'sync'",
+            "condition": "command === 'sync' && !syncOperator",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,
             "terminates": false,
             "thinClientCheck": false,
-            "unconditionalFor": [
-              "sync"
-            ]
+            "unconditionalFor": []
           },
           {
-            "condition": "command === 'sync'",
+            "condition": "command === 'sync' && !syncOperator",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,
             "terminates": false,
             "thinClientCheck": false,
-            "unconditionalFor": [
-              "sync"
-            ]
+            "unconditionalFor": []
           }
         ],
         "thinClient": "refuse",

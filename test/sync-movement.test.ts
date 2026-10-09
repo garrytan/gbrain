@@ -238,7 +238,10 @@ describe('gbrain sources writer movement (I2, T4)', () => {
   }), 60_000);
 
   test('every state\'s envelope follows the v1 contract: a fix with argv, consent, actor, a derived next and a read-only verify', () => {
-    const base = (over: Record<string, unknown>) => ({ source_id: 's', sampled_at: ago(0), movement_state: 'moving', data_moving: true, not_moving_since: null, last_commit_at: ago(1_000), last_progress_at: ago(1_000),
+    // One sample clock for every `base`: `before` and `after` are built in one expression, and two `ago(1_000)` calls that
+    // straddle a millisecond boundary made the not_moving pair read as `moved` (#6340 gate flake, root cause in the test).
+    const sampledAt = ago(0), committedAt = ago(1_000);
+    const base = (over: Record<string, unknown>) => ({ source_id: 's', sampled_at: sampledAt, movement_state: 'moving', data_moving: true, not_moving_since: null, last_commit_at: committedAt, last_progress_at: committedAt,
       cursor: { index: 1, total: 4, remaining: 3, held: 0, last_progress_at: null, resume_command: 'gbrain sync --source s --no-pull' }, head: null, holds: { count: 0, stalled: 0, fences: 0, concurrent: 0, last_hold_at: null },
       admitted: 1, live: { drain: true, drain_pid: 1, consumer: null }, ceiling_ms: 600_000, owner_is_this_host: true, writer_status_command: 'gbrain sources writer status --source s --json', ...over }) as Parameters<typeof movementReport>[1];
     const states: Array<[ReturnType<typeof judgeMovement>, Parameters<typeof movementReport>[0], Parameters<typeof movementReport>[1]]> = [

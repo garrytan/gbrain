@@ -48,6 +48,12 @@ const CONN_PATTERNS = [
   // retry, the checkpoint write (and every other pool-contending write) is
   // dropped during the exact spike #1794's resumable sync must survive.
   /EMAXCONNSESSION/i,
+  // #6340: the socket errnos postgres.js surfaces as "write <ERRNO> host:port" when a
+  // session-mode pooler drops the connection mid-statement (ECONNABORTED was the one
+  // that ended four managed catch-up runs in one afternoon). Same class as ECONNRESET.
+  /ECONNABORTED/i,
+  /ETIMEDOUT/i,
+  /EPIPE/i,
   /too many clients already/i,
   /max.*clients?.*in session mode/i,
   /remaining connection slots are reserved/i,

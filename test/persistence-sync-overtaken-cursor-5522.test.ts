@@ -74,23 +74,29 @@ test('#5522 a resume mixing files another cursor imported and files it did not c
   expect(await lastCommit(engine, f.id)).toBe(git(f.root, 'rev-parse', 'HEAD'));
 }), 180_000);
 
-test('#5522 a foreign write to the page at that origin still refuses the resume', async () => each(async engine => {
+// #6340: the refusals below are holds now (`concurrent_write`); the invariant they protect, that the foreign write is never overwritten, is unchanged.
+test('#5522 a foreign write to the page at that origin holds the entry on resume and is never overwritten', async () => each(async engine => {
   const f = await fixture(engine, ['a', 'b', 'c']);
   await performManagedSync(engine, f.base, { maxPages: 1, maxMs: 60_000 });
   await performManagedSync(engine, f.working);
   await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw(
     "UPDATE pages SET compiled_truth='A foreign edit after the working-tree import.',content_hash='foreign' WHERE source_id=$1 AND slug='b'", [f.id]), TEST_WRITE_ATTRIBUTION));
-  await expect(performManagedSync(engine, f.base)).rejects.toMatchObject({ code: 'page_identity_changed' });
+  const resumed = await performManagedSync(engine, f.base);
+  expect(resumed.status).not.toBe('blocked_by_failures');
+  expect(resumed.held?.map(hold => [hold.path, hold.code])).toEqual([['b.md', 'concurrent_write']]);
   expect(await imports(engine, f.id)).toEqual(['a', 'b', 'c']);
   expect((await engine.getPage('b', { sourceId: f.id }))?.compiled_truth).toBe('A foreign edit after the working-tree import.');
 }), 180_000);
 
-test('#5522 a page soft-deleted at that origin, or a pinned page deleted and recreated with the same text, is refused', async () => each(async engine => {
+test('#5522 a page soft-deleted at that origin, or a pinned page deleted and recreated with the same text, is held', async () => each(async engine => {
   const deleted = await fixture(engine, ['a', 'b']);
   await performManagedSync(engine, deleted.base, { maxPages: 1, maxMs: 60_000 });
   await performManagedSync(engine, deleted.working);
   await engine.transaction(tx => withCoordinatedWrite(tx, [deleted.id], () => tx.softDeletePage('b', { sourceId: deleted.id }), TEST_WRITE_ATTRIBUTION));
-  await expect(performManagedSync(engine, deleted.base)).rejects.toMatchObject({ code: 'page_identity_changed' });
+  const held = await performManagedSync(engine, deleted.base);
+  expect(held.status).not.toBe('blocked_by_failures');
+  expect(held.held?.map(hold => [hold.path, hold.code])).toEqual([['b.md', 'concurrent_write']]);
+  expect(await engine.getPage('b', { sourceId: deleted.id })).toBeNull();
 
   // An entry enumerated against an existing page keeps its pinned identity.
   const pinned = await fixture(engine, ['a', 'b']);
@@ -104,5 +110,10 @@ test('#5522 a page soft-deleted at that origin, or a pinned page deleted and rec
   const after = await engine.getPage('b', { sourceId: pinned.id });
   expect(after?.compiled_truth).toContain('Revised observation b');
   expect(after?.id !== before?.id || after?.updated_at !== before?.updated_at).toBe(true);
-  await expect(performManagedSync(engine, pinned.base)).rejects.toMatchObject({ code: expect.stringMatching(/^(page_identity_changed|revision_conflict)$/) });
+  // The recreated page holds exactly what the pinned entry would import: it is re-bound and passed, nothing is rewritten,
+  // and the checkpoint accepts the target the working-tree run already reached.
+  const resumed = await performManagedSync(engine, pinned.base);
+  expect(resumed).toMatchObject({ status: 'synced', waived: { imports: 1, deletes: 0 } });
+  expect(resumed.held ?? []).toEqual([]);
+  expect((await engine.getPage('b', { sourceId: pinned.id }))?.updated_at).toEqual(after?.updated_at);
 }), 180_000);

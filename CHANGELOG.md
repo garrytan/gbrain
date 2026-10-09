@@ -10,6 +10,60 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.121.0] - 2026-10-09
+
+**A managed catch-up on a live checkout finishes unattended: a page that moves under the run is held, a dropped database connection is retried, a relaunch resumes the frozen manifest, and `gbrain sync status` / `gbrain sync unblock` let an operator agent run the recovery loop without a human.**
+
+One brain's catch-up (`gbrain sync --source default`, about 14,000 pages, six to eight agents committing to the checkout every few minutes) died seven times in three hours across four fault classes, every one of them recoverable with a plain retry: a page edited in the database after the manifest froze (`revision_conflict`), a file an agent was mid-edit on (`source_changed [pinned_git_worktree_conflict]`), a page another run imported first (`page_identity_changed`), and the session-mode pooler dropping the socket (`write ECONNABORTED`). Each death wrote a failure-ledger row, and the relaunch with `--retry-failed` read the row and re-froze all 14,000 entries (eight to twelve minutes of silence) before writing a page, so about half the wall clock went to re-planning. The hold machinery that should have caught the page faults already existed (#5988, #6188, #6194, #6278); these codes were never routed into it, and the retry classifier did not know `ECONNABORTED`.
+
+### How to use it
+
+```bash
+gbrain sync --source <id> --no-pull                 # a page that moved is held (concurrent_write / worktree_dirty) and the run goes on; a pooler drop reconnects and retries 5/15/45 s
+gbrain sync status --source <id> --json             # cursor, committed_last_10m, each hold and the last error with class / safe_actions / needs_human, and next
+gbrain sync unblock --source <id> --apply --json    # re-screens every held file whose condition holds (a committed edit, a stalled preparation); refuses the rest by name
+gbrain sync --source <id> --no-pull --retry-failed  # a cursor an older release left blocked converts in place: same run, no re-freeze
+gbrain errors worktree_dirty                        # the new hold code, offline
+```
+
+The operator loop (`docs/guides/sync-unblock-runbook.md`): `status` every N minutes; when `committed_last_10m` is 0 and `needs_human` is false, `unblock --apply` and the sync it prints; when `needs_human` is true, relay `next.user_message` with the slug.
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A page edited, deleted or re-bound in the database after the manifest froze | Held as `concurrent_write` at freeze time (the hold records `page_revision` and `expected_revision`, and the competing request when #6194's proof finds one); the run finishes `synced` with the hold listed. A page that still holds exactly what the file would import is re-bound to its new revision and passed. A `revision_conflict` receipt whose page really moved converts the same way; a run-level conflict (the page is where it was) still blocks. |
+| A file committed between admission and publication (`source_changed` / `raw_file_changed`) | Re-frozen once under a fresh request: committed bytes import as HEAD has them, uncommitted ones reach the dirty hold; a file that changes again under the re-frozen request is held `worktree_dirty`, never a third request. |
+| A file an agent is mid-edit on | Held with the new code `worktree_dirty` (the pinned blob and a hash of the working bytes; the local edit is never touched). A later commit that changes the file re-screens it on its own; `sync unblock --apply` re-screens it as soon as its bytes are committed at HEAD. Held three times, it is reported `needs_human`. |
+| A file committed past the pinned target | Imported as HEAD has it (a commit is not an uncoordinated local edit); the pin..HEAD diff later re-imports the same bytes as a no-op. From PR #6323 by @garrytan-agents, moved to freeze time so no receipt is minted. |
+| `write ECONNABORTED` / `ETIMEDOUT` / `EPIPE` mid-run | The drain reconnects and retries after 5, 15 and 45 s instead of exiting; a drop that then moves data is not even a warning. Three drops with no page committed between them stop the drain `connection_lost` with the resume command as a loopable `next`. Nothing is recorded against the source. |
+| The relaunch | With or without `--retry-failed`, it resumes the stored run at its index against the frozen manifest: no rediscovery, no re-waiving. A cursor an older release left blocked on a page fault converts in place under `--retry-failed`. |
+| HEAD moved during the run | The drain takes exactly one more pass (an incremental pin..HEAD discovery) so the invocation ends at HEAD; never a second one. `drain.extra_pass` names the span. |
+| `gbrain sync status --source <id> --json` | New: `run_id`, `cursor {index, total, pinned_target, last_advance_at, done}`, `committed_last_10m`, `rate_pages_per_min`, `holds[]` and `last_error` each with `class` (`page` / `connection` / `systemic`), `safe_actions`, `needs_human`, `human_reason`, `attempts`, and one `next` action. |
+| `gbrain sync unblock --source <id> [--apply] --json` | New: performs the safe action for every hold and refuses the rest by name (`applied`, `refused` with each fix, `next`). Idempotent; it never writes a page, clears a hold or drops content. |
+| `sources status`, doctor `git_held_files`, `sources retry-held` | Count and route `worktree_dirty` holds (`dirty`) with `sync unblock --apply` as the step. |
+| `sync.holds=fail`, company-brain sources | Keep the blocking refusals, as before. |
+
+### Things to watch
+
+- **`concurrent_write` needs a person by design**: the file and the page both changed, and `sync status` says so (`needs_human`, the reconcile preview). The loop pages a human with the slug instead of guessing.
+- **A dirty file is held, not imported, until it is committed.** The run no longer stops on it, so a source can finish `synced` with holds; `held_count` and `holds_outstanding` on the receipt say how many. The agent that edits the file should commit it.
+- **Old tests that asserted the run stops** on these faults now assert the hold and that nothing was overwritten; the data invariant is unchanged.
+- **`CONNECTION_DESTROYED` / `CONNECTION_CLOSED` are not retried as drops**: #6329 classifies them as this process's own settle of a cancelled statement, which stays on the stall path.
+- **Migration-speed fix folded in (Subagent 65):** the consumer remembers the request ids it settled most recently (1,024), so a waiter that registers after its write already settled reads at once instead of sleeping the 200 ms first poll; grandfather migrations went from about 200 ms to about 18 ms per page.
+
+### Itemized changes
+
+- `src/core/persistence/sync-page-fault.ts` (new): `headCommittedBytes`, `pageChangeProof`, `pageChangedHold`, `worktreeDirtyHold`, `originFaultHold`, `receiptPageFaultHold`, `pinnedWorktreeConflict`, `fileChangedAfterAdmission`, `pageMovedSinceAdmission`. `sync-write-diagnostic.ts` (new): `managedSyncWriteDiagnostic`, moved out of `sync-run.ts` unchanged. `sync-run.ts`: `freezeEntry` resolves the three freeze-time throws into holds (or a re-bind) when holds are on; `holdFailedFenceRequest` converts the pinned-worktree and moved-page receipts (imports and deletes); `convertBlockedCursor` converts an older release's blocked cursor and re-freezes a dirty file that is committed now; the `--retry-failed` start converts before it rediscovers; the catch skips the failure ledger for connection errors and statement timeouts.
+- `sync-holds.ts`: `worktree_dirty` code, `meta.attempts` (counted by `writeGitHold` per re-hold with the same code), `expected_revision`, `working_hash`, the `dirty` summary counter and repair route; `held-reads.ts`, doctor `git_held_files`, `sources retry-held` and the run's hold report route it.
+- `retry-matcher.ts`: `ECONNABORTED`, `ETIMEDOUT`, `EPIPE`. `sync-drain.ts`: `isConnectionDrop`, `CONNECTION_RETRY_MS` (5/15/45 s), `CONNECTION_STRIKES`, `DrainInput.reconnect` (`engine.reconnect`), the `connection_lost` stop reason with `drain.connection` and a loopable `next`, `drainManagedSync`'s one extra pass with `drain.extra_pass`.
+- `sync-fault-class.ts` (new): `SYNC_FAULT_TABLE` / `classifySyncFault`. `sync-status.ts` (new): `readSyncStatus`, `unblockSync`. `src/commands/sync/operator.ts` (new): `gbrain sync status`, `gbrain sync unblock` (routed in `sync/run.ts`; `cli.ts` skips the sync watchdog and serve delegations for them).
+- Registry: `worktree_dirty`, `connection_lost`; catalogue `sync_drain_connection_lost`; three `BEHAVIOR_CHANGES` rows. Docs: `docs/guides/sync-unblock-runbook.md` (new, table pinned by `test/sync-runbook-table.test.ts`), `write-refusals.md` (`worktree_dirty`, `connection_lost`, the `concurrent_write` row), `troubleshooting.md`, `error-codes.md`, `AGENTS.md` common tasks, `llms.txt`, KEY_FILES.
+- `service.ts`: `recentlySettled` (1,024 ids) makes `awaitWrite`'s first poll immediate for a request this process already settled; `test/persistence-git-coalescing-5530.slow.test.ts` fixtures clone a template database and copy the Git repos (96 s → 49 s); E2E weights updated.
+- Tests: `test/managed-sync-page-fault-holds.test.ts`, `test/sync-drain-connection.test.ts`, `test/sync-status-unblock.test.ts`, `test/sync-runbook-table.test.ts`; `test/persistence-managed-sync.test.ts` and `test/managed-sync-concurrent-write-hold.test.ts` assert the holds where they asserted the stop; `test/persistence-consumer-scheduling.test.ts` gains the settled-first-read probe.
+
+Fixes #6340. Fixes #6320. Supersedes #6323 (contributed by @garrytan-agents). Follows #6278 and #6317.
+
 ## [0.60.120.0] - 2026-10-08
 
 **Advisers, board members and investors stop showing up as employees, typed relation lines refuse template and dictionary junk and explain every refusal, and turning the line grammar on or off now changes the graph instead of only new writes.**
