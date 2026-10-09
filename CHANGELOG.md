@@ -16,11 +16,21 @@ identifiers and attribution are available in the pre-removal Git revision
 
 A preview-bound repair kind (for example `gbrain repair stale-atoms`) saves its approved set only when the preview lists something, but `--json` still returned `apply_command` with `--apply --expect <hash>` for an empty preview, so running the printed command could only end in `preview_changed`. An empty preview of a preview-bound kind now returns `apply_command: null`, matching `gbrain jobs authorize-legacy --select` and `gbrain jobs cancel --select` and the text output, which already omits the apply line when nothing is affected. Contributed by @harjothkhara.
 
+**Say to your agent:** *"Preview the stale-atoms repair and tell me whether there is anything to apply."*
+
 ### What you see
 
 | Where | What changed |
 |---|---|
 | `gbrain repair <preview-bound kind> --json` with nothing to repair | `apply_command` is `null` instead of an `--expect` command that no saved set backs. Previews that list items are unchanged. |
+
+## To take advantage of v0.60.125.0
+
+Nothing to migrate. A script that runs the `apply_command` from `gbrain repair <kind> --json` should treat `null` as "nothing to apply" rather than run a command. Check it with:
+
+```bash
+gbrain repair stale-atoms --json   # apply_command is null when nothing qualifies
+```
 
 ## [0.60.124.0] - 2026-10-09
 
