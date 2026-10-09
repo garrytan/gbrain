@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.121.0] - 2026-10-09
+
+**A facts-extraction effect on a page its writer cannot see now settles as skipped instead of retrying forever (#6322).**
+
+A page written as private by a principal that cannot see private pages (for example a local stdio writer) queued a `facts-backstop` effect, and every attempt failed with `page_not_found`, which the effect did not treat as a skip. The outbox recorded a failure and rescheduled it indefinitely, and a newer revision of the page did not settle it because authorization runs before the revision check. `dispatchFactsBackstopEffect` and `readFactsBackstopJobPage` now settle that case as `skipped` with reason `page_not_found`, the way `permission_denied` and `source_changed` already are and the way the links effect already treats it. Contributed by @harjothkhara.
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `gbrain sources writer status <source> --json` | A `facts-backstop` effect on a page its writer can no longer see leaves `blocking_effects` as `skipped` (`reason: page_not_found`) instead of staying `queued` with a climbing `attempts` count. |
+
 ## [0.60.120.0] - 2026-10-08
 
 **Advisers, board members and investors stop showing up as employees, typed relation lines refuse template and dictionary junk and explain every refusal, and turning the line grammar on or off now changes the graph instead of only new writes.**
