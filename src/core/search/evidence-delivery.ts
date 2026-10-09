@@ -34,6 +34,10 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { credentialSafeProjection } from '../credential-projection.ts';
 import { stripChunkHeader } from '../chunkers/code.ts';
 import { OperationError } from '../ops/contract.ts';
+import { applyEffectiveDate } from '../utils.ts';
+import { configPacking, MIN_EXPLICIT_AUTO_BUDGET, parseAutoPacking, type AutoPacking } from './evidence-packing.ts';
+
+export { AUTO_PACKINGS, AUTO_PACKING_CONFIG_KEY, DEFAULT_AUTO_PACKING, MIN_EXPLICIT_AUTO_BUDGET, autoPackingValueProblem, parseAutoPacking, type AutoPacking } from './evidence-packing.ts';
 
 export const RETURN_UNITS = ['chunk', 'window', 'section', 'page', 'auto'] as const;
 export type ReturnUnit = typeof RETURN_UNITS[number];
@@ -54,6 +58,11 @@ export const EVIDENCE_OMISSION = '\n\n[…]\n\n';
 export const EVIDENCE_FETCH_TIMEOUT_MS = 5000;
 /** First server release that understands `return_unit` (thin-client skew warning). */
 export const EVIDENCE_DELIVERY_MIN_SERVER_VERSION = '0.60.13.0';
+
+/** Ends a block or chunk the cap cut short (the omission line, as emitted at a block's end). */
+export const EVIDENCE_CUT_MARKER = EVIDENCE_OMISSION.trimEnd();
+/** Body tokens a cut always keeps: a cut title never takes them. */
+const CUT_BODY_MIN = 8;
 
 const PIECE_MAX_CHARS = 400;
 const MAX_ROWS = 1024;
@@ -96,6 +105,8 @@ export interface DeliveryMeta {
   dropped_reasons: Record<string, number>;
   fallbacks: string[];
   budget_clamped?: { requested: number; max: number };
+  /** Present only when an explicit budget engaged the cap: the packing that ran. */
+  auto_packing?: AutoPacking;
 }
 
 export type DeliveredSearchResult = SearchResult & { delivered: DeliveredEvidence };
@@ -107,7 +118,16 @@ export interface EvidencePlan {
   budgetTokens: number;
   /** return_unit came from the call, not config (snippet precedence). */
   explicitUnit: boolean;
+  /** The caller passed the budget; a config or default budget never engages the cap. */
+  budgetExplicit: boolean;
+  /** search.auto_packing (or the library override), resolved once; allocation never rereads config. */
+  packing: AutoPacking;
   budgetClamped?: { requested: number; max: number };
+}
+
+/** The cap runs only under `auto`, with a budget the caller passed and a packing other than `off`. */
+export function capEngaged(plan: EvidencePlan): boolean {
+  return plan.unit === 'auto' && plan.budgetExplicit && plan.packing !== 'off';
 }
 
 export interface DeliveryScope extends PageReadScope {
@@ -175,6 +195,8 @@ export interface ResolvePlanInput {
    * keeps its meaning.
    */
   legacyBudget?: boolean;
+  /** Library-only per-call packing (gbrain-evals); wins over search.auto_packing. Never an MCP param. */
+  autoPacking?: unknown;
 }
 
 /**
@@ -200,6 +222,21 @@ export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePla
     if (input.legacyBudget === true) unit = 'chunk';
   }
   if (unit === 'chunk') return null;
+  // A budget that is not a positive number keeps its old meaning (no budget)
+  // unless the call also named its unit; then it is validated below.
+  const budgetExplicit = typeof input.budget === 'number' && (explicit !== undefined || (Number.isFinite(input.budget) && input.budget > 0));
+  const packing = parseAutoPacking(input.autoPacking) ?? await configPacking(engine);
+  if (unit === 'auto' && budgetExplicit && packing !== 'off') {
+    const raw = input.budget as number;
+    if (!Number.isFinite(raw) || Math.floor(raw) < MIN_EXPLICIT_AUTO_BUDGET) {
+      const name = input.op === 'recall' ? 'budget_tokens' : 'token_budget';
+      throw new OperationError(
+        'invalid_params',
+        `${name} must be at least ${MIN_EXPLICIT_AUTO_BUDGET} tokens under return_unit auto (got ${String(raw)}): an explicit budget is a hard cap, and a smaller one cannot hold a title, a cut marker and any evidence.`,
+        `${exampleCall(input.op, 'auto', `, "${name}": ${MIN_EXPLICIT_AUTO_BUDGET * 50}`)}. Omit ${name} for the default budget.`,
+      );
+    }
+  }
   let window = explicitWindow ?? 1;
   if (explicitWindow === undefined) {
     const w = await configNumber(engine, RETURN_WINDOW_CONFIG_KEY);
@@ -225,6 +262,8 @@ export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePla
     window,
     budgetTokens: budget,
     explicitUnit: explicit !== undefined,
+    budgetExplicit,
+    packing,
     ...(budgetClamped ? { budgetClamped } : {}),
   };
 }
@@ -258,11 +297,12 @@ export function conversationSignal(hit: { type?: string | null; slug: string }):
 /**
  * The plan to run for these hits: an implied or config-level `auto` with no
  * conversation hit is the chunk path (null), so responses without
- * conversations stay byte-identical. An explicit `auto` always runs and
- * reports its per-result decision.
+ * conversations stay byte-identical. An explicit `auto`, or an `auto` under
+ * an explicit budget the cap enforces, always runs and reports its
+ * per-result decision.
  */
 export function effectivePlan(plan: EvidencePlan | null, hits: SearchResult[]): EvidencePlan | null {
-  if (!plan || plan.unit !== 'auto' || plan.explicitUnit) return plan;
+  if (!plan || plan.unit !== 'auto' || plan.explicitUnit || capEngaged(plan)) return plan;
   return hits.some(h => conversationSignal(h) !== null) ? plan : null;
 }
 
@@ -485,9 +525,11 @@ interface Block {
   /** Index of the block's best hit in the ranked input. */
   rank: number;
   reason?: AutoReason;
+  /** The cap cut this block: its text ends with EVIDENCE_CUT_MARKER. */
+  capMarker?: boolean;
 }
 
-type PlannedBlock = Omit<Block, 'titleTok' | 'title' | 'rank' | 'reason'>;
+type PlannedBlock = Omit<Block, 'titleTok' | 'title' | 'rank' | 'reason' | 'capMarker'>;
 
 /**
  * The hit's text as it appears in the page: a fenced_code chunk carries the
@@ -673,6 +715,62 @@ function enrichmentOrder(b: Block): number[] {
     });
 }
 
+/** Rank one alone exceeds the budget: cut its title to `titleMax`, then keep core pieces (slicing the first) to fit. */
+function cutToFit(b: Block, remaining: number, titleMax: number, tokenizer: 'cl100k' | 'heuristic'): number {
+  const core = b.anchors[0]?.pieces ?? [];
+  if (b.titleTok > titleMax) {
+    b.title = sliceToTokenCount(b.title, titleMax, tokenizer);
+    b.titleTok = countEvidenceTokens(b.title, tokenizer);
+  }
+  remaining -= b.titleTok;
+  let chars = 0;
+  for (const i of core) {
+    const t = tok(b, i, tokenizer);
+    const len = b.doc.pieces[i].text.length;
+    if (t <= remaining && chars + len <= EVIDENCE_BLOCK_CHAR_CAP) {
+      b.selected.add(i);
+      remaining -= t;
+      chars += len;
+      continue;
+    }
+    if (b.selected.size === 0) {
+      const p = b.doc.pieces[i];
+      p.text = sliceToTokenCount(p.text.slice(0, EVIDENCE_BLOCK_CHAR_CAP), remaining, tokenizer);
+      p.end = p.start + p.text.length;
+      p.tok = pieceTokens(p.text, tokenizer);
+      b.selected.add(i);
+      remaining -= p.tok;
+    }
+    break;
+  }
+  b.cut = true;
+  return remaining;
+}
+
+/** Grow a kept block in enrichment order until the next piece does not fit; returns what is left. */
+function enrichBlock(b: Block, remaining: number, tokenizer: 'cl100k' | 'heuristic', omitTok: number): number {
+  let chars = [...b.selected].reduce((n, i) => n + b.doc.pieces[i].text.length, 0);
+  for (const i of enrichmentOrder(b)) {
+    if (b.selected.has(i)) continue;
+    const adj = adjacent(b, i);
+    const cost = tok(b, i, tokenizer) + (adj ? 0 : omitTok);
+    const len = b.doc.pieces[i].text.length + (adj ? 0 : EVIDENCE_OMISSION.length);
+    if (cost > remaining || chars + len > EVIDENCE_BLOCK_CHAR_CAP) break;
+    b.selected.add(i);
+    remaining -= cost;
+    chars += len;
+  }
+  return remaining;
+}
+
+function floorOf(b: Block, tokenizer: 'cl100k' | 'heuristic'): { tokens: number; chars: number } {
+  const core = b.anchors[0]?.pieces ?? [];
+  return {
+    tokens: b.titleTok + core.reduce((n, i) => n + tok(b, i, tokenizer), 0),
+    chars: core.reduce((n, i) => n + b.doc.pieces[i].text.length, 0),
+  };
+}
+
 /**
  * Reserve each block's floor in rank order, then enrich. `spill` (auto) takes
  * a block whose floor does not fit instead of dropping or cutting it.
@@ -684,43 +782,17 @@ function allocate(blocks: Block[], budget: number, tokenizer: 'cl100k' | 'heuris
   let droppedAny = false;
   for (const b of blocks) {
     const core = b.anchors[0]?.pieces ?? [];
-    const floor = b.titleTok + core.reduce((n, i) => n + tok(b, i, tokenizer), 0);
-    const floorChars = core.reduce((n, i) => n + b.doc.pieces[i].text.length, 0);
-    if (floor <= remaining && floorChars <= EVIDENCE_BLOCK_CHAR_CAP) {
+    const floor = floorOf(b, tokenizer);
+    if (floor.tokens <= remaining && floor.chars <= EVIDENCE_BLOCK_CHAR_CAP) {
       for (const i of core) b.selected.add(i);
-      remaining -= floor;
+      remaining -= floor.tokens;
       kept.push(b);
       continue;
     }
     if (spill) { spill(b); continue; }
     if (kept.length === 0 && !droppedAny) {
       // Rank one alone exceeds the budget: cut it to fit (minKeep).
-      if (b.titleTok > remaining) {
-        b.title = sliceToTokenCount(b.title, remaining, tokenizer);
-        b.titleTok = countEvidenceTokens(b.title, tokenizer);
-      }
-      remaining -= b.titleTok;
-      let chars = 0;
-      for (const i of core) {
-        const t = tok(b, i, tokenizer);
-        const len = b.doc.pieces[i].text.length;
-        if (t <= remaining && chars + len <= EVIDENCE_BLOCK_CHAR_CAP) {
-          b.selected.add(i);
-          remaining -= t;
-          chars += len;
-          continue;
-        }
-        if (b.selected.size === 0) {
-          const p = b.doc.pieces[i];
-          p.text = sliceToTokenCount(p.text.slice(0, EVIDENCE_BLOCK_CHAR_CAP), remaining, tokenizer);
-          p.end = p.start + p.text.length;
-          p.tok = pieceTokens(p.text, tokenizer);
-          b.selected.add(i);
-          remaining -= p.tok;
-        }
-        break;
-      }
-      b.cut = true;
+      remaining = cutToFit(b, remaining, remaining, tokenizer);
       kept.push(b);
       continue;
     }
@@ -729,18 +801,141 @@ function allocate(blocks: Block[], budget: number, tokenizer: 'cl100k' | 'heuris
   }
   for (const b of kept) {
     if (b.cut) continue;
-    let chars = [...b.selected].reduce((n, i) => n + b.doc.pieces[i].text.length, 0);
-    for (const i of enrichmentOrder(b)) {
-      const adj = adjacent(b, i);
-      const cost = tok(b, i, tokenizer) + (adj ? 0 : omitTok);
-      const len = b.doc.pieces[i].text.length + (adj ? 0 : EVIDENCE_OMISSION.length);
-      if (cost > remaining || chars + len > EVIDENCE_BLOCK_CHAR_CAP) break;
-      b.selected.add(i);
-      remaining -= cost;
-      chars += len;
-    }
+    remaining = enrichBlock(b, remaining, tokenizer, omitTok);
   }
   return kept;
+}
+
+/** A non-conversation hit under `auto`: its ranked chunk, or a cut prefix of it under the cap. */
+interface ChunkItem { rank: number; hit: SearchResult; reason: AutoReason; title: string; text: string; cut: boolean }
+
+/** A selection as emit writes it: the pieces plus one omission line per gap. */
+function selectionCost(b: Block, sel: Set<number>, tokenizer: 'cl100k' | 'heuristic', omitTok: number): { tokens: number; chars: number } {
+  const order = [...sel].sort((x, y) => x - y);
+  let tokens = 0;
+  let chars = 0;
+  order.forEach((i, k) => {
+    const gap = k > 0 && order[k - 1] !== i - 1;
+    tokens += tok(b, i, tokenizer) + (gap ? omitTok : 0);
+    chars += b.doc.pieces[i].text.length + (gap ? EVIDENCE_OMISSION.length : 0);
+  });
+  return { tokens, chars };
+}
+
+/**
+ * The cap (explicit budget under `auto`, docs/evidence-delivery.md
+ * "Explicit budgets"): global rank one first, cut to fit if it alone exceeds
+ * the budget; then the rank-order prefix of the other non-conversation chunks
+ * that fits; then conversations by the plan's packing. Nothing is spilled
+ * outside the budget; what does not fit is counted in `dropped`.
+ */
+function allocateCapped(blocks: Block[], chunks: ChunkItem[], plan: EvidencePlan, tokenizer: 'cl100k' | 'heuristic', dropped: Record<string, number>): { kept: Block[]; chunks: ChunkItem[] } {
+  const omitTok = pieceTokens(EVIDENCE_OMISSION, tokenizer);
+  const cutTok = countEvidenceTokens(EVIDENCE_CUT_MARKER, tokenizer);
+  const drop = (reason: string) => { dropped[reason] = (dropped[reason] ?? 0) + 1; };
+  const chunkCost = (c: ChunkItem) => countEvidenceTokens(c.title, tokenizer) + countEvidenceTokens(c.text, tokenizer);
+  let remaining = plan.budgetTokens;
+  const keptChunks: ChunkItem[] = [];
+  const kept: Block[] = [];
+  let lead: Block | null = null;
+
+  const firstChunk = chunks[0];
+  const firstBlock = blocks[0];
+  let rest = chunks;
+  let others = blocks;
+  if (firstChunk && (!firstBlock || firstChunk.rank < firstBlock.rank)) {
+    rest = chunks.slice(1);
+    const cost = chunkCost(firstChunk);
+    if (cost <= remaining) remaining -= cost;
+    else {
+      const room = remaining - cutTok;
+      let title = firstChunk.title;
+      if (countEvidenceTokens(title, tokenizer) > room - CUT_BODY_MIN) title = sliceToTokenCount(title, Math.max(0, room - CUT_BODY_MIN), tokenizer);
+      const bodyRoom = room - countEvidenceTokens(title, tokenizer);
+      const source = firstChunk.text.slice(0, EVIDENCE_BLOCK_CHAR_CAP);
+      let end = 0;
+      let used = 0;
+      for (const piece of splitPieces(source)) {
+        const t = pieceTokens(source.slice(piece.start, piece.end), tokenizer);
+        if (used + t > bodyRoom) break;
+        used += t;
+        end = piece.end;
+      }
+      const body = end > 0 ? source.slice(0, end).replace(/\s+$/, '') : sliceToTokenCount(source, Math.max(0, bodyRoom), tokenizer);
+      Object.assign(firstChunk, { title, text: body + EVIDENCE_CUT_MARKER, cut: true });
+      remaining -= chunkCost(firstChunk);
+    }
+    keptChunks.push(firstChunk);
+  } else if (firstBlock) {
+    others = blocks.slice(1);
+    const floor = floorOf(firstBlock, tokenizer);
+    if (floor.tokens <= remaining && floor.chars <= EVIDENCE_BLOCK_CHAR_CAP) {
+      for (const i of firstBlock.anchors[0]?.pieces ?? []) firstBlock.selected.add(i);
+      remaining -= floor.tokens;
+      lead = firstBlock;
+    } else {
+      remaining = cutToFit(firstBlock, remaining - cutTok, Math.max(0, remaining - cutTok - CUT_BODY_MIN), tokenizer);
+      firstBlock.capMarker = true;
+    }
+    kept.push(firstBlock);
+  }
+
+  let stopped = false;
+  for (const c of rest) {
+    const cost = chunkCost(c);
+    if (!stopped && cost <= remaining) { remaining -= cost; keptChunks.push(c); continue; }
+    stopped = true;
+    drop('budget_note');
+  }
+
+  const reserveFloor = (b: Block): boolean => {
+    const floor = floorOf(b, tokenizer);
+    if (floor.tokens > remaining || floor.chars > EVIDENCE_BLOCK_CHAR_CAP) return false;
+    for (const i of b.anchors[0]?.pieces ?? []) b.selected.add(i);
+    remaining -= floor.tokens;
+    return true;
+  };
+
+  if (plan.packing === 'depth_first') {
+    if (lead) remaining = enrichBlock(lead, remaining, tokenizer, omitTok);
+    for (const b of others) {
+      if (!reserveFloor(b)) { drop('budget_floor'); continue; }
+      kept.push(b);
+      remaining = enrichBlock(b, remaining, tokenizer, omitTok);
+    }
+  } else if (plan.packing === 'breadth_capped') {
+    // k: the longest rank-order prefix of conversations whose title, floor
+    // and target window (the window unit's candidates at return_window) fit.
+    let capped = false;
+    for (const b of lead ? [lead, ...others] : others) {
+      if (capped) { drop('breadth_cap'); continue; }
+      const window = new Set(windowCandidates(b.doc, b.anchors, plan.window));
+      const target = new Set(b.anchors[0]?.pieces ?? []);
+      for (const i of enrichmentOrder(b)) {
+        if (!window.has(i)) continue;
+        target.add(i);
+        if (selectionCost(b, target, tokenizer, omitTok).chars > EVIDENCE_BLOCK_CHAR_CAP) { target.delete(i); break; }
+      }
+      const sel = selectionCost(b, target, tokenizer, omitTok);
+      const cost = b.titleTok + sel.tokens - (b === lead ? floorOf(b, tokenizer).tokens : 0);
+      if (cost <= remaining && sel.chars <= EVIDENCE_BLOCK_CHAR_CAP) {
+        for (const i of target) b.selected.add(i);
+        remaining -= cost;
+        if (b !== lead) kept.push(b);
+        continue;
+      }
+      capped = true;
+      if (b !== lead) drop('breadth_cap');
+    }
+    for (const b of kept) if (!b.cut) remaining = enrichBlock(b, remaining, tokenizer, omitTok);
+  } else {
+    for (const b of others) {
+      if (reserveFloor(b)) kept.push(b);
+      else drop('budget_floor');
+    }
+    for (const b of kept) if (!b.cut) remaining = enrichBlock(b, remaining, tokenizer, omitTok);
+  }
+  return { kept, chunks: keptChunks };
 }
 
 function emit(b: Block, tokenizer: 'cl100k' | 'heuristic'): { text: string; spans: MatchSpan[]; unmapped: number[]; tokens: number } {
@@ -891,35 +1086,98 @@ export async function deliverEvidence(
     planned.push({ ...b, title, titleTok: countEvidenceTokens(title, tokenizer), rank: g.rank, ...(g.reason ? { reason: g.reason } : {}) });
   }
 
-  // Unchanged chunks are paid for first; conversations share the rest, and one
-  // whose matching span no longer fits keeps its ranked chunks instead.
-  const reserved = passthrough.reduce((n, p) => n + countEvidenceTokens(p.hit.chunk_text ?? '', tokenizer) + countEvidenceTokens(p.hit.title ?? '', tokenizer), 0);
-  const kept = allocate(planned, Math.max(0, plan.budgetTokens - reserved), tokenizer, dropped, auto
-    ? b => { for (const h of b.hits) passthrough.push({ rank: hits.indexOf(h), hit: h, reason: 'conversation_over_budget' }); }
-    : undefined);
+  const capped = capEngaged(plan);
+  let kept: Block[];
+  let chunkItems: ChunkItem[] = [];
+  if (capped) {
+    ({ kept, chunks: chunkItems } = allocateCapped(planned,
+      passthrough.map(p => ({ ...p, title: p.hit.title ?? '', text: p.hit.chunk_text ?? '', cut: false })), plan, tokenizer, dropped));
+  } else {
+    // Unchanged chunks are paid for first; conversations share the rest, and one
+    // whose matching span no longer fits keeps its ranked chunks instead.
+    const reserved = passthrough.reduce((n, p) => n + countEvidenceTokens(p.hit.chunk_text ?? '', tokenizer) + countEvidenceTokens(p.hit.title ?? '', tokenizer), 0);
+    kept = allocate(planned, Math.max(0, plan.budgetTokens - reserved), tokenizer, dropped, auto
+      ? b => { for (const h of b.hits) passthrough.push({ rank: hits.indexOf(h), hit: h, reason: 'conversation_over_budget' }); }
+      : undefined);
+  }
   let results: DeliveredSearchResult[] = kept.map(b => {
     const out = emit(b, tokenizer);
+    const text = b.capMarker ? out.text + EVIDENCE_CUT_MARKER : out.text;
     const truncated = b.cut || b.selected.size < b.candidates.length;
     const delivered: DeliveredEvidence = {
       unit: b.unit,
       chunk_ids: b.hits.map(h => h.chunk_id),
       match_spans: out.spans,
-      tokens: out.tokens,
+      tokens: b.capMarker ? countEvidenceTokens(text, tokenizer) : out.tokens,
       truncated,
       ...(b.revision ? { revision: b.revision } : {}),
       ...(out.unmapped.length > 0 ? { unmapped_chunk_ids: out.unmapped } : {}),
       ...(b.fallbackReason && b.unit === 'chunk' ? { fallback_reason: b.fallbackReason } : {}),
       ...(b.reason ? { reason: b.reason } : {}),
     };
-    return { ...b.hit, title: b.title, chunk_text: out.text, delivered };
+    return { ...b.hit, title: b.title, chunk_text: text, delivered };
   });
 
-  // Budget after redaction: blocks pass through the same secret redaction as
-  // every search response before spans and tokens are final. A block the
-  // redactor changed loses its spans (explicit unmapped state) and is
-  // re-counted, never allowed to grow past its allocation.
+  // Under the cap the kept chunks join before redaction, so every evidence
+  // field is redacted and recounted inside the budget.
+  if (capped) {
+    const ranked = results.map((r, i) => ({ rank: kept[i].rank, r }));
+    for (const c of chunkItems) ranked.push({ rank: c.rank, r: chunkResult(c, tokenizer) });
+    results = ranked.sort((a, b) => a.rank - b.rank).map(x => x.r);
+  }
+  results = redactDelivered(results, tokenizer, fallbacks);
+
+  if (!capped && passthrough.length > 0) {
+    const ranked = results.map((r, i) => ({ rank: kept[i].rank, r }));
+    for (const p of passthrough) ranked.push({ rank: p.rank, r: chunkResult({ ...p, title: p.hit.title ?? '', text: p.hit.chunk_text ?? '', cut: false }, tokenizer) });
+    results = ranked.sort((a, b) => a.rank - b.rank).map(x => x.r);
+  }
+
+  const tokensDelivered = results.reduce((n, r) => n + r.delivered.tokens, 0);
+  const budgetUsed = tokensDelivered + results.reduce((n, r) => n + countEvidenceTokens(r.title ?? '', tokenizer), 0);
+  const droppedTotal = Object.values(dropped).reduce((n, v) => n + v, 0);
+  const delivery: DeliveryMeta = {
+    requested_unit: plan.requestedUnit,
+    applied_unit: fetchFailure ? 'chunk' : plan.unit,
+    return_window: plan.window,
+    budget_tokens: plan.budgetTokens,
+    budget_used: budgetUsed,
+    tokens_delivered: tokensDelivered,
+    tokenizer,
+    coordinates: 'utf16',
+    blocks: results.length,
+    dropped: droppedTotal,
+    dropped_reasons: dropped,
+    fallbacks: [...fallbacks].sort(),
+    ...(plan.budgetClamped ? { budget_clamped: plan.budgetClamped } : {}),
+    ...(capped ? { auto_packing: plan.packing } : {}),
+  };
+  return { results: capped ? capEvidenceToBudget(results, delivery) : results, delivery };
+}
+
+/** A non-conversation hit's delivered row: the ranked chunk unchanged, or the cap's cut prefix of it. */
+function chunkResult(c: ChunkItem, tokenizer: 'cl100k' | 'heuristic'): DeliveredSearchResult {
+  const text = c.cut ? c.text : c.hit.chunk_text ?? '';
+  const matched = c.cut ? text.length - EVIDENCE_CUT_MARKER.length : text.length;
+  return { ...c.hit, ...(c.cut ? { title: c.title, chunk_text: text } : {}), delivered: {
+    unit: 'chunk',
+    chunk_ids: [c.hit.chunk_id],
+    match_spans: matched > 0 ? [{ chunk_id: c.hit.chunk_id, start: 0, end: matched }] : [],
+    tokens: countEvidenceTokens(text, tokenizer),
+    truncated: c.cut,
+    reason: c.reason,
+  } };
+}
+
+/**
+ * Budget after redaction: blocks pass through the same secret redaction as
+ * every search response before spans and tokens are final. A block the
+ * redactor changed loses its spans (explicit unmapped state) and is
+ * re-counted, never allowed to grow past its allocation.
+ */
+function redactDelivered(results: DeliveredSearchResult[], tokenizer: 'cl100k' | 'heuristic', fallbacks: Set<string>): DeliveredSearchResult[] {
   const redacted = redactRetrievalOutput(results, {}).results;
-  results = results.map((r, i) => {
+  return results.map((r, i) => {
     const rr = redacted[i];
     if (rr.chunk_text === r.chunk_text && rr.title === r.title) return r;
     fallbacks.add('redaction_unmapped');
@@ -940,44 +1198,55 @@ export async function deliverEvidence(
       },
     };
   });
+}
 
-  if (passthrough.length > 0) {
-    const ranked = results.map((r, i) => ({ rank: kept[i].rank, r }));
-    for (const p of passthrough) {
-      const text = p.hit.chunk_text ?? '';
-      ranked.push({ rank: p.rank, r: { ...p.hit, delivered: {
-        unit: 'chunk',
-        chunk_ids: [p.hit.chunk_id],
-        match_spans: text.length > 0 ? [{ chunk_id: p.hit.chunk_id, start: 0, end: text.length }] : [],
-        tokens: countEvidenceTokens(text, tokenizer),
-        truncated: false,
-        reason: p.reason,
-      } } });
+/**
+ * The cap's final evidence boundary: recount every row's evidence fields
+ * (title and chunk_text, with every marker in it) and keep the rank-order
+ * rows that fit `budget_tokens`. A row that would cross it is cut with
+ * EVIDENCE_CUT_MARKER when a body still fits (rank one always is), otherwise
+ * dropped as `budget_recount`. `budget_used`, `tokens_delivered`, `blocks`
+ * and `dropped` are rewritten from the recount. Runs only when the delivery
+ * carries `auto_packing`; everything else is returned as is.
+ */
+export function capEvidenceToBudget<T extends SearchResult & { delivered?: DeliveredEvidence }>(results: T[], delivery: DeliveryMeta): T[] {
+  if (!delivery.auto_packing) return results;
+  const tokenizer = delivery.tokenizer;
+  const count = (text: string | undefined) => countEvidenceTokens(text ?? '', tokenizer);
+  const cutTok = count(EVIDENCE_CUT_MARKER);
+  let remaining = delivery.budget_tokens;
+  let lost = 0;
+  const out: T[] = [];
+  for (const r of results) {
+    const titleTok = count(r.title);
+    const textTok = count(r.chunk_text);
+    if (titleTok + textTok <= remaining) {
+      remaining -= titleTok + textTok;
+      out.push(!r.delivered || r.delivered.tokens === textTok ? r : { ...r, delivered: { ...r.delivered, tokens: textTok } });
+      continue;
     }
-    results = ranked.sort((a, b) => a.rank - b.rank).map(x => x.r);
+    if (out.length > 0 && remaining - titleTok - cutTok < CUT_BODY_MIN) { lost++; continue; }
+    const title = titleTok > Math.max(0, remaining - cutTok - CUT_BODY_MIN) ? sliceToTokenCount(r.title ?? '', Math.max(0, remaining - cutTok - CUT_BODY_MIN), tokenizer) : r.title ?? '';
+    const source = (r.chunk_text ?? '').endsWith(EVIDENCE_CUT_MARKER) ? (r.chunk_text ?? '').slice(0, -EVIDENCE_CUT_MARKER.length) : r.chunk_text ?? '';
+    const body = sliceToTokenCount(source, Math.max(0, remaining - count(title) - cutTok), tokenizer).replace(/\s+$/, '');
+    const text = body + EVIDENCE_CUT_MARKER;
+    remaining -= count(title) + count(text);
+    const row = { ...r, title, chunk_text: text } as T;
+    if (r.delivered) {
+      const spans = r.delivered.match_spans.filter(s => s.start < body.length).map(s => ({ ...s, end: Math.min(s.end, body.length) }));
+      const unmapped = [...new Set([...(r.delivered.unmapped_chunk_ids ?? []), ...r.delivered.match_spans.map(s => s.chunk_id).filter(id => !spans.some(s => s.chunk_id === id))])];
+      row.delivered = { ...r.delivered, match_spans: spans, tokens: count(text), truncated: true, ...(unmapped.length > 0 ? { unmapped_chunk_ids: unmapped } : {}) };
+    }
+    out.push(row);
   }
-
-  const tokensDelivered = results.reduce((n, r) => n + r.delivered.tokens, 0);
-  const budgetUsed = tokensDelivered + results.reduce((n, r) => n + countEvidenceTokens(r.title ?? '', tokenizer), 0);
-  const droppedTotal = Object.values(dropped).reduce((n, v) => n + v, 0);
-  return {
-    results,
-    delivery: {
-      requested_unit: plan.requestedUnit,
-      applied_unit: fetchFailure ? 'chunk' : plan.unit,
-      return_window: plan.window,
-      budget_tokens: plan.budgetTokens,
-      budget_used: budgetUsed,
-      tokens_delivered: tokensDelivered,
-      tokenizer,
-      coordinates: 'utf16',
-      blocks: results.length,
-      dropped: droppedTotal,
-      dropped_reasons: dropped,
-      fallbacks: [...fallbacks].sort(),
-      ...(plan.budgetClamped ? { budget_clamped: plan.budgetClamped } : {}),
-    },
-  };
+  if (lost > 0) {
+    delivery.dropped_reasons = { ...delivery.dropped_reasons, budget_recount: (delivery.dropped_reasons.budget_recount ?? 0) + lost };
+    delivery.dropped += lost;
+  }
+  delivery.blocks = out.length;
+  delivery.tokens_delivered = out.reduce((n, r) => n + (r.delivered?.tokens ?? count(r.chunk_text)), 0);
+  delivery.budget_used = delivery.tokens_delivered + out.reduce((n, r) => n + count(r.title), 0);
+  return out;
 }
 
 /**
@@ -993,13 +1262,28 @@ export function capDeliveredSnippets<T extends SearchResult & { delivered?: Deli
   if (!Number.isFinite(cap) || cap <= 0) return results;
   let any = false;
   const tokenizer = delivery.tokenizer;
+  let markerOmitted = false;
   const out = results.map(r => {
     if (typeof r.chunk_text !== 'string' || r.chunk_text.length <= cap) return r;
     any = true;
-    const text = r.chunk_text.slice(0, cap) + buildSnippetMarker(r.slug, r.chunk_text.length - cap);
+    let keep = cap;
+    let text = r.chunk_text.slice(0, cap) + buildSnippetMarker(r.slug, r.chunk_text.length - cap);
+    if (delivery.auto_packing) {
+      // Under the cap the marker is paid from the row's own allocation: a
+      // capped row never grows past what it held before the snippet cap.
+      const allowed = countEvidenceTokens(r.chunk_text, tokenizer);
+      if (countEvidenceTokens(text, tokenizer) > allowed) {
+        const markerTok = countEvidenceTokens(buildSnippetMarker(r.slug, r.chunk_text.length), tokenizer);
+        const withMarker = allowed - markerTok >= 1;
+        const body = sliceToTokenCount(r.chunk_text.slice(0, cap), withMarker ? allowed - markerTok : allowed, tokenizer);
+        keep = body.length;
+        text = withMarker ? body + buildSnippetMarker(r.slug, r.chunk_text.length - keep) : body;
+        if (!withMarker) markerOmitted = true;
+      }
+    }
     if (!r.delivered) return { ...r, chunk_text: text };
-    const spans = r.delivered.match_spans.filter(s => s.start < cap).map(s => ({ ...s, end: Math.min(s.end, cap) }));
-    const lost = r.delivered.match_spans.filter(s => s.start >= cap).map(s => s.chunk_id);
+    const spans = r.delivered.match_spans.filter(s => s.start < keep).map(s => ({ ...s, end: Math.min(s.end, keep) }));
+    const lost = r.delivered.match_spans.filter(s => s.start >= keep).map(s => s.chunk_id);
     const unmapped = [...new Set([...(r.delivered.unmapped_chunk_ids ?? []), ...lost.filter(id => !spans.some(s => s.chunk_id === id))])];
     return {
       ...r,
@@ -1015,8 +1299,9 @@ export function capDeliveredSnippets<T extends SearchResult & { delivered?: Deli
   });
   if (!any) return results;
   if (!delivery.fallbacks.includes('snippet_cap')) delivery.fallbacks = [...delivery.fallbacks, 'snippet_cap'].sort();
+  if (markerOmitted && !delivery.fallbacks.includes('snippet_marker_omitted')) delivery.fallbacks = [...delivery.fallbacks, 'snippet_marker_omitted'].sort();
   delivery.tokens_delivered = out.reduce((n, r) => n + (r.delivered?.tokens ?? 0), 0);
-  return out;
+  return capEvidenceToBudget(out, delivery);
 }
 
 /** Image-query branches never expand; the meta says so instead of staying silent. */
@@ -1051,6 +1336,12 @@ export interface AssembleEvidenceInput {
   budget_tokens?: number;
   detail?: 'low' | 'medium' | 'high';
   caller?: { remote?: boolean; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean };
+  /**
+   * Library only (trusted local, never an MCP param): the packing for this
+   * call's explicit `auto` budget, winning over search.auto_packing, so an
+   * evaluation can compare packings on one frozen hit list.
+   */
+  auto_packing?: AutoPacking;
 }
 
 export interface AssembleEvidenceOutput {
@@ -1083,6 +1374,7 @@ export async function resolveFrozenHits(
   const safe = requiresSafeChunks(scope) ? `AND ${safeChunksFilter('p')}` : '';
   const rows = await engine.executeRaw<Record<string, unknown>>(
     `SELECT h.ord, p.id AS page_id, p.slug, p.source_id, p.title, p.type,
+            p.effective_date, p.effective_date_source,
             cc.id AS chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
        FROM unnest($1::text[], $2::text[], $3::int[], $4::int[]) AS h(source_id, slug, chunk_id, ord)
        JOIN pages p ON p.source_id = h.source_id AND p.slug = h.slug
@@ -1098,7 +1390,7 @@ export async function resolveFrozenHits(
   hits.forEach((h, i) => {
     const r = byOrd.get(i);
     if (!r || (h.chunk_id > 0 && r.chunk_id == null) || h.chunk_id < 0) { unresolved.push(i); return; }
-    out.push({
+    const row: SearchResult = {
       slug: String(r.slug),
       page_id: Number(r.page_id),
       source_id: String(r.source_id),
@@ -1110,7 +1402,11 @@ export async function resolveFrozenHits(
       chunk_index: r.chunk_index == null ? 0 : Number(r.chunk_index),
       score: 0,
       stale: false,
-    });
+    };
+    // The page date, normalized exactly as live search rows are, so frozen
+    // and live delivery hand a reader the same date fields.
+    applyEffectiveDate(row, r);
+    out.push(row);
   });
   return { rows: out, unresolved };
 }
@@ -1143,6 +1439,7 @@ export async function assembleEvidenceForHits(engine: BrainEngine, input: Assemb
     snippetChars: undefined,
     snippetCap: 0,
     op: 'assemble_evidence',
+    autoPacking: input.auto_packing,
   });
   const { rows, unresolved } = await resolveFrozenHits(engine, input.hits, scope);
   if (!plan) {
@@ -1151,7 +1448,7 @@ export async function assembleEvidenceForHits(engine: BrainEngine, input: Assemb
   }
   const d = await deliverEvidence(engine, rows, plan, scope, { liveHits: true });
   const out = redactRetrievalOutput(d.results, d.delivery);
-  return { results: out.results, delivery: out.meta, unresolved };
+  return { results: capEvidenceToBudget(out.results, out.meta), delivery: out.meta, unresolved };
 }
 
 /** SHA-256 over the delivered evidence (see docs/evidence-delivery.md). */

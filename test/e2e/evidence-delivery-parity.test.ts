@@ -9,7 +9,11 @@
  *     produce the same evidence fingerprint, and both engines deliver the
  *     same text for every unit;
  *   - the implied `auto` default (return_unit omitted) delivers exactly what
- *     `assemble_evidence` with `auto` delivers for the same hits.
+ *     `assemble_evidence` with `auto` delivers for the same hits;
+ *   - under an explicit budget (the cap, every search.auto_packing value)
+ *     live `query`/`search` and frozen-hit assembly deliver the same fields a
+ *     reader consumes, effective_date included, within the budget, on both
+ *     engines.
  *
  * Postgres arm runs when DATABASE_URL is set.
  *
@@ -29,7 +33,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { SearchResult } from '../../src/core/types.ts';
 import { operations, type OperationContext } from '../../src/core/operations.ts';
-import { evidenceFingerprint, pageEvidenceText } from '../../src/core/search/evidence-delivery.ts';
+import { AUTO_PACKINGS, assembleEvidenceForHits, countEvidenceTokens, evidenceFingerprint, pageEvidenceText } from '../../src/core/search/evidence-delivery.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { captureOffPath, seedOffPath, withCostWave } from '../helpers/evidence-delivery-fixture.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
@@ -140,6 +144,43 @@ describe('evidence delivery parity', () => {
       expect(expanded).toBeGreaterThan(0);
     }, 120_000);
 
+    test(`an explicit budget delivers the same capped, dated evidence live and from frozen hits, every packing (${backend})`, async () => {
+      const engine = engines[backend]!;
+      const recount = (rows: SearchResult[]) => rows.reduce((n, r) => n + countEvidenceTokens(r.title ?? '') + countEvidenceTokens(r.chunk_text), 0);
+      const consumed = (rows: SearchResult[]) => rows.map(r => ({
+        slug: r.slug, title: r.title, chunk_text: r.chunk_text, effective_date: r.effective_date ?? null, effective_date_source: r.effective_date_source ?? null,
+        unit: r.delivered?.unit, spans: r.delivered?.match_spans, tokens: r.delivered?.tokens, truncated: r.delivered?.truncated, reason: r.delivered?.reason,
+      }));
+      await engine.executeRaw(`UPDATE pages SET effective_date = '2026-02-03', effective_date_source = 'frontmatter' WHERE slug = 'chat/session-a'`);
+      try {
+        let dated = 0;
+        for (const packing of AUTO_PACKINGS) {
+          await engine.setConfig('search.auto_packing', packing);
+          for (const remote of [false, true]) {
+            const hits = await op('query').handler(ctxOf(engine, remote), { fields: 'full', query: 'ocelot', expand: false, return_unit: 'chunk' }) as SearchResult[];
+            for (const budget of [400, 2500]) {
+              const live = await op('query').handler(ctxOf(engine, remote), { fields: 'full', query: 'ocelot', expand: false, return_unit: 'auto', token_budget: budget }) as SearchResult[];
+              const viaOp = await op('assemble_evidence').handler(ctxOf(engine, remote), {
+                hits: hits.map(h => ({ source_id: h.source_id, slug: h.slug, chunk_id: h.chunk_id })), return_unit: 'auto', token_budget: budget,
+              }) as { results: SearchResult[] };
+              const viaLib = await assembleEvidenceForHits(engine, {
+                hits: hits.map(h => ({ source_id: h.source_id!, slug: h.slug, chunk_id: h.chunk_id })), return_unit: 'auto', budget_tokens: budget, auto_packing: packing, caller: { remote },
+              });
+              const label = `${packing} remote=${remote} @${budget}`;
+              expect(consumed(viaOp.results), label).toEqual(consumed(live));
+              expect(consumed(viaLib.results as SearchResult[]), label).toEqual(consumed(live));
+              if (packing !== 'off') expect(recount(live), label).toBeLessThanOrEqual(budget);
+              dated += live.filter(r => r.slug === 'chat/session-a' && r.effective_date === '2026-02-03').length;
+            }
+          }
+        }
+        expect(dated).toBeGreaterThan(0);
+      } finally {
+        await engine.executeRaw(`UPDATE pages SET effective_date = NULL, effective_date_source = NULL WHERE slug = 'chat/session-a'`);
+        await engine.executeRaw(`DELETE FROM config WHERE key = 'search.auto_packing'`);
+      }
+    }, 120_000);
+
     test(`page evidence is byte-identical to the stored body minus frontmatter and protected content (${backend})`, async () => {
       const engine = engines[backend]!;
       for (const remote of [false, true]) {
@@ -182,6 +223,18 @@ describe('evidence delivery parity', () => {
         const ra = await op('search').handler(ctxOf(a), { fields: 'full', query: 'ocelot', return_unit: unit, token_budget: 2500 }) as SearchResult[];
         const rb = await op('search').handler(ctxOf(b), { fields: 'full', query: 'ocelot', return_unit: unit, token_budget: 2500 }) as SearchResult[];
         expect(textOf(rb)).toEqual(textOf(ra));
+      }
+      for (const packing of AUTO_PACKINGS) {
+        for (const engine of [a, b]) await engine.setConfig('search.auto_packing', packing);
+        try {
+          for (const budget of [300, 2500]) {
+            const ra = await op('query').handler(ctxOf(a), { fields: 'full', query: 'ocelot', expand: false, return_unit: 'auto', token_budget: budget }) as SearchResult[];
+            const rb = await op('query').handler(ctxOf(b), { fields: 'full', query: 'ocelot', expand: false, return_unit: 'auto', token_budget: budget }) as SearchResult[];
+            expect(textOf(rb), `${packing} @${budget}`).toEqual(textOf(ra));
+          }
+        } finally {
+          for (const engine of [a, b]) await engine.executeRaw(`DELETE FROM config WHERE key = 'search.auto_packing'`);
+        }
       }
       const windows = async (engine: BrainEngine) => {
         const ids = await engine.executeRaw<{ id: number; slug: string }>(`SELECT id, slug FROM pages ORDER BY slug`);

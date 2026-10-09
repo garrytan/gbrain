@@ -1405,6 +1405,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.return_budget_default',
   'search.return_budget_conversation',
   'search.return_budget_max_remote',
+  'search.auto_packing',
   'think.return_unit',
   // Models tier system (v0.31.12)
   'models.default',
