@@ -41,6 +41,7 @@ test/grandfather-managed.test.ts
 test/harness-skills-epoch.test.ts
 test/held-read-signals.test.ts
 test/import-frontmatter-key-order-5158.test.ts
+test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
 test/lane-apply-pipelining.test.ts
 test/link-preparation-shared-index.test.ts

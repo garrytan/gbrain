@@ -8,7 +8,7 @@ import { opError, OperationError, type OperationContext } from '../ops/contract.
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
-import { batchSharedReads, emitFenceNotice, initializeLocalPersistence, pendingAwareResponse, preparePageAdmission, requestPrincipalForContext, withBatchAdmission } from './page-mutations.ts';
+import { SCREENING_SHARED_READS, batchSharedReads, emitFenceNotice, initializeLocalPersistence, pendingAwareResponse, preparePageAdmission, requestPrincipalForContext, withBatchAdmission } from './page-mutations.ts';
 import { admitBatch } from './page-batch.ts';
 import { writeOutcomeUnknown } from './admission-retry.ts';
 import { assertPersistenceAccepting, waitForWrites } from './service.ts';
@@ -144,6 +144,9 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
   const settle = (member: (typeof members)[number], value: ImportResult) => { open.delete(member); done(member.i, value); };
   const refuse = (member: (typeof members)[number], reason: unknown) => { open.delete(member); fail(member.i, reason); };
   const batch = randomUUID();
+  // The no-op screen only decides whether a file is skipped; a file it does not
+  // skip is admitted and rechecked under lock, so the batch answers its shared reads once.
+  const screening: OperationContext = { ...ctx, engine: batchSharedReads(engine, SCREENING_SHARED_READS) };
   try {
     const pending = await readPending(members.map(member => member.key));
     const fresh: typeof members = [];
@@ -157,7 +160,7 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
           ownerEpoch: String(binding.owner_epoch), ...(snapshot ? { expected_revision: snapshot.revision } : {}),
           noEmbed: !!opts.noEmbed, ...(opts.activePack ? { activePack: opts.activePack } : {}) };
         // #5470: an import whose publication would change nothing takes no admission.
-        if (await unchangedManagedImport(ctx, binding, intent, snapshot)) { settle(member, { slug: member.slug, status: 'skipped', chunks: 0 }); continue; }
+        if (await unchangedManagedImport(screening, binding, intent, snapshot)) { settle(member, { slug: member.slug, status: 'skipped', chunks: 0 }); continue; }
         member.params = { ...intent, ...(members.length > 1 ? { import_batch: batch } : {}), request_id: randomUUID(), source_id: sourceId };
         fresh.push(member);
       } catch (error) { refuse(member, error); }

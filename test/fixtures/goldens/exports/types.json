@@ -1137,6 +1137,7 @@
           "private engineSql",
           "private engineSqlOn",
           "private getBulkRetryOpts",
+          "private jitOffRead",
           "private onPoisoned",
           "private poisonedDiscards",
           "private resolveFactsEmbeddingCast",

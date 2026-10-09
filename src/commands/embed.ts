@@ -5,6 +5,7 @@ import { embedTakesForStaleDrain, type EmbedTakesResult } from '../core/embed-ta
 import { parseFactEmbedArgs } from './embed-facts-delegate.ts';
 import { readProjectionSnapshot, installPageProjection, installPageEmbeddings, PageProjectionConflictError, retryProjectionConflict } from '../core/page-state/projections.ts';
 import { projectionConflictLine } from '../core/agent-output.ts';
+import { withChunkStatisticsRefresh } from '../core/search/projection-statistics.ts';
 import { PageRevisionConflictError } from '../core/page-state/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { currentEmbeddingSignature } from '../core/embedding.ts';
@@ -715,7 +716,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     let drainError: { err: unknown } | undefined;
     const drain = (async () => {
       try {
-        await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, {
+        await withChunkStatisticsRefresh(engine, () => !opts.dryRun && result.embedded > 0 && !isAborted(drainSignal), () => embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, {
           batchSize: opts.batchSize,
           priority: opts.priority,
           catchUp: opts.catchUp,
@@ -724,7 +725,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
           quiet: opts.quiet,
           includeNullSignature: opts.includeNullSignature,
           assertOwned: opts.assertOwned,
-        }, drainSignal);
+        }, drainSignal));
         if (opts.stale && !isAborted(drainSignal)) await embedTakesForStaleDrain(engine, {
           dryRun: !!opts.dryRun, signal: drainSignal, sourceId: opts.sourceId, assertOwned: opts.assertOwned, quiet: opts.quiet,
           takes: opts.takes, onProgress: (_done, _total, embedded) => { takesEmbedded = embedded; },

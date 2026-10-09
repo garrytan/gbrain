@@ -64,7 +64,7 @@ import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from
 import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, supportsHnswIterativeScan } from './vector-index.ts';
-import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt } from './search/vector-pool.ts';
+import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt, POOL_MAX_SCAN_TUPLES } from './search/vector-pool.ts';
 import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, SET_STATEMENT_TIMEOUT_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement } from './search/vector-statement.ts';
 import { withVectorSettings } from './search/vector-settings.ts';
 import {
@@ -351,6 +351,11 @@ export class PostgresEngine implements BrainEngine {
       if (this.rlsScopeBindingEnabled) await tx`SELECT set_config('app.scopes', ${previous[0]?.scopes ?? ''}, true)`;
       return result;
     });
+  }
+
+  /** An unscoped read in its own transaction with JIT off (search-settings.ts); a savepoint inside a caller's transaction. */
+  private jitOffRead<T>(callback: (tx: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
+    return this.transaction(engine => withSearchJitOff((engine as PostgresEngine).sql, this._pageTransaction, () => callback((engine as PostgresEngine).sql)));
   }
 
   // Lifecycle
@@ -1356,7 +1361,7 @@ export class PostgresEngine implements BrainEngine {
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const stmt = buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope: await this.vectorScope(opts) });
     const iterative = await this.vectorIterativeScanSupported();
-    const attempt = { innerLimit: stmt.innerLimit, maxScanTuples: Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch), remainingMs: 8_000, exact: false, indexWalk: !!stmt.indexWalkSql, scopeScan: !stmt.indexWalkSql && !!stmt.scopeScanSql };
+    const attempt = { innerLimit: stmt.innerLimit, maxScanTuples: stmt.indexWalkSql || stmt.scopeScanSql ? Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch) : POOL_MAX_SCAN_TUPLES, remainingMs: 8_000, exact: false, indexWalk: !!stmt.indexWalkSql, scopeScan: !stmt.indexWalkSql && !!stmt.scopeScanSql };
     const [row] = await this.runVectorAttempt(stmt, attempt, iterative, opts, (tx, sql, bound) => tx.unsafe(`EXPLAIN (FORMAT JSON) ${sql}`, bound));
     const plan = row?.['QUERY PLAN'];
     return (Array.isArray(plan) ? plan[0] : plan) as Record<string, unknown>;
@@ -1690,7 +1695,9 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getBacklinkCounts(pageIds: number[], opts?: PageReadScope): Promise<Map<number, number>> {
-    return readBacklinkCounts(this.executeRaw.bind(this), pageIds, opts);
+    // JIT off (search-settings.ts): ~370 expanded-query ids cross jit_above_cost; at 50k compiling was ~140 of ~170 ms.
+    return !pageIds.length ? new Map() : this.jitOffRead(tx => readBacklinkCounts(async (query, params) =>
+      Array.from(await tx.unsafe(query, params as never, { prepare: true })) as never, pageIds, opts));
   }
 
   async getAdjacencyBoosts(pageIds: number[], opts?: PageReadScope): Promise<Map<number, import('./types.ts').AdjacencyRow>> {
@@ -2443,7 +2450,9 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getHealth(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainHealth> {
-    return healthImpl.getHealth(unscopedExecutor(this.engineSql, 'health: unscoped on master (EO4 inventory)'), opts, {
+    // Each statement in its own JIT-off transaction (at 50k two spent ~0.5 of ~0.56 s compiling); the deps stay on the pool.
+    const exec: SqlExecutor = { ...this.engineSql, run: (fragment, runOpts) => this.jitOffRead(tx => this.engineSqlOn(tx).run(fragment, runOpts)) };
+    return healthImpl.getHealth(unscopedExecutor(exec, 'health: unscoped on master (EO4 inventory)'), opts, {
       embeddingColumn: async () => (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name,
       countStalePagesForExtraction: (o) => this.countStalePagesForExtraction(o),
       getConfig: (key) => this.getConfig(key),

@@ -21,7 +21,7 @@
  */
 
 import { countCJKAwareWords, isCJKDominant, wordStats, concatWordStats, wordCountOf, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
-import { estimateEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
+import { estimateEmbedTokens, fitsEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { credentialSafeProjection } from '../credential-projection.ts';
@@ -166,6 +166,7 @@ function capByChars(
   knownEst?: number,
 ): string[] {
   if (text.length === 0) return [];
+  if (knownEst === undefined && text.length <= maxChars && fitsEmbedTokens(text, maxTokens)) return [text];
   const est = knownEst ?? probeEmbedTokens(text);
   const window = est <= maxTokens
     ? maxChars
@@ -193,7 +194,7 @@ function capByChars(
     const end = safeSplitIndex(text, Math.min(text.length, i + window));
     const slice = text.slice(i, end).trim();
     if (slice.length > 0) {
-      const sliceEst = estimateEmbedTokens(slice);
+      const sliceEst = fitsEmbedTokens(slice, maxTokens) ? 0 : estimateEmbedTokens(slice);
       if (sliceEst > maxTokens) {
         // Denser than the text average — re-derive locally, reusing the exact
         // figure just measured (it also guarantees window < slice.length, so

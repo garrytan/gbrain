@@ -998,9 +998,10 @@
       },
       "getHealth#default": {
         "flagOffLanes": [
-          "pool"
+          "pool",
+          "tx"
         ],
-        "flagOffOpensTransaction": false,
+        "flagOffOpensTransaction": true,
         "flagOn": "scoped",
         "flagOnLanes": [
           "pool",
@@ -3461,6 +3462,7 @@
         "insertFacts": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
+        "jitOffRead": "none",
         "listActiveTakesForPages": "none",
         "listAllPageRefs": "none",
         "listAllSources": "none",

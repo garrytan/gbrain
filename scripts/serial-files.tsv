@@ -10,7 +10,8 @@ test/agent-injection-http-view.serial.test.ts	global-state	global-state: binds l
 test/agent-install-backup.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; spyOn fs.renameSync, PGLiteEngine.prototype.connect, console.log
 test/agent-install-follow-setup.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/agent-journey-recovery.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
-test/agent-journey-tier2.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
+test/agent-journey-tier2-json.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll (seedTimelineFinding in test/helpers/agent-journey-tier2.ts); ~60 real CLI subprocesses on one PGLite brain
+test/agent-journey-tier2.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll (seedTimelineFinding in test/helpers/agent-journey-tier2.ts); live gbrain serve over MCP stdio
 test/agent-journey-upgrade.serial.test.ts	global-state	global-state: binds local servers/ports
 test/agent-journey.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/agent-operator-gate-fixes.serial.test.ts	global-state	global-state: binds local servers/ports

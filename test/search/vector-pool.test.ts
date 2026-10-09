@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readVectorPool, searchIndexWalk, searchVectorPool, type VectorPoolAttempt, type VectorPoolBatch } from '../../src/core/search/vector-pool.ts';
+import { POOL_MAX_SCAN_TUPLES, readVectorPool, searchIndexWalk, searchVectorPool, type VectorPoolAttempt, type VectorPoolBatch } from '../../src/core/search/vector-pool.ts';
 import { supportsHnswIterativeScan } from '../../src/core/vector-index.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
 
@@ -115,6 +115,23 @@ describe('bounded vector candidate safety', () => {
     expect(attempts.map(a => a.innerLimit)).toEqual([100, 400]);
     expect(rows).toHaveLength(10);
     expect(events).toEqual([]);
+  });
+
+  test('a 10% filter fills its first pooled window instead of accepting a short one (E5.4)', async () => {
+    // A fake HNSW scan under a 10% filter: it visits at most maxScanTuples
+    // tuples, so it finds a tenth of that many eligible chunks, and four of
+    // them share a page. At 2,000 tuples the window comes back at 200 of 250
+    // chunks, which already covers 50 pages, so the pool used to accept it.
+    const attempts: VectorPoolAttempt[] = [];
+    const rows = await searchVectorPool(50, 250, true, true, 'postgres', async attempt => {
+      attempts.push(attempt);
+      const eligible = Math.min(attempt.innerLimit, Math.floor(attempt.maxScanTuples * 0.1));
+      return { rows: Array.from({ length: Math.min(50, Math.floor(eligible / 4)) }, (_, page_id) => ({ page_id })), candidatePool: eligible };
+    }, async () => true, () => {});
+    expect(rows).toHaveLength(50);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]!.maxScanTuples).toBe(POOL_MAX_SCAN_TUPLES);
+    expect(attempts[0]!.maxScanTuples * 0.1).toBeGreaterThanOrEqual(attempts[0]!.innerLimit);
   });
 
   test('#5824: eligible_pool is read next to the raw candidate_pool', () => {

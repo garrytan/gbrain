@@ -1109,7 +1109,8 @@ async function cursorMovedAdmission(engine: BrainEngine, key: string, admitting:
  */
 async function finishCheckpoint(engine: BrainEngine, key: string, cursor: Cursor, company: boolean, assertActive: () => void): Promise<SyncResult> {
   await clearManagedSyncFailureAfterSuccess(engine, key);
-  if (cursor.counts.added + cursor.counts.modified + cursor.counts.deleted > 0) await refreshProjectionStatistics(engine);
+  const changed = cursor.counts.added + cursor.counts.modified + cursor.counts.deleted;
+  if (changed > 0) await refreshProjectionStatistics(engine, changed);
   assertActive();
   const scheduled = company ? [] : await readGitHoldRetryPaths(engine, cursor.sourceId, cursor.incarnation);
   assertActive();

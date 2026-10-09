@@ -867,7 +867,6 @@
       "idx_chat_usage_log_created": "CREATE INDEX idx_chat_usage_log_created ON public.chat_usage_log USING btree (created_at)",
       "idx_chat_usage_log_model": "CREATE INDEX idx_chat_usage_log_model ON public.chat_usage_log USING btree (model, created_at)",
       "idx_chunks_embedding_image": "CREATE INDEX idx_chunks_embedding_image ON public.content_chunks USING hnsw (embedding_image vector_cosine_ops) WHERE (embedding_image IS NOT NULL)",
-      "idx_chunks_embedding_null": "CREATE INDEX idx_chunks_embedding_null ON public.content_chunks USING btree (page_id, chunk_index) WHERE (embedding IS NULL)",
       "idx_chunks_language": "CREATE INDEX idx_chunks_language ON public.content_chunks USING btree (language) WHERE (language IS NOT NULL)",
       "idx_chunks_page": "CREATE INDEX idx_chunks_page ON public.content_chunks USING btree (page_id)",
       "idx_chunks_page_index": "CREATE UNIQUE INDEX idx_chunks_page_index ON public.content_chunks USING btree (page_id, chunk_index)",

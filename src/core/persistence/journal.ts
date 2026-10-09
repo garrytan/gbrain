@@ -811,14 +811,24 @@ export async function markRecovering(engine: SqlEngine, row: WriteRequest, reaso
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
   [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null, failure?.detail ? JSON.stringify(failure.detail) : null]);
 }
+const PERSISTENCE_QUEUE_TABLES = ['persistence_requests', 'persistence_effects', 'persistence_counters', 'page_projection_jobs', 'page_write_guards'];
 /**
  * PGLite has no autovacuum. The resident owner reclaims queue churn and keeps
  * planner statistics current, so receipt lookups keep using the request-id
- * index and claims do not walk dead queue entries.
+ * index and claims do not walk dead queue entries. A queue table is vacuumed
+ * once its heap has grown more than 10% (and 8 pages) past the size its last
+ * VACUUM or ANALYZE recorded: PGLite keeps no dead-tuple counters across
+ * processes, and unreclaimed churn lands on new pages. Every short-lived CLI
+ * process otherwise vacuumed every queue on its first tick (0.6 s per one-page
+ * sync at 5k pages).
  */
 export async function vacuumPersistenceQueues(engine: BrainEngine): Promise<number> {
   if (engine.kind !== 'pglite') return 0;
-  await engine.executeRaw('VACUUM (ANALYZE) persistence_requests, persistence_effects, persistence_counters, page_projection_jobs, page_write_guards');
+  const grown = await engine.executeRaw<{ relname: string }>(
+    `SELECT c.relname FROM pg_class c WHERE c.relname = ANY($1::text[]) AND c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace
+       AND pg_relation_size(c.oid) / current_setting('block_size')::int > c.relpages * 1.1 + 8`, [PERSISTENCE_QUEUE_TABLES]);
+  const tables = PERSISTENCE_QUEUE_TABLES.filter(table => grown.some(row => row.relname === table));
+  if (tables.length) await engine.executeRaw(`VACUUM (ANALYZE) ${tables.join(', ')}`);
   const [requests] = await engine.executeRaw<{ rows: number }>("SELECT GREATEST(reltuples,0)::float8 AS rows FROM pg_class WHERE oid='persistence_requests'::regclass");
   return Number(requests?.rows ?? 0);
 }

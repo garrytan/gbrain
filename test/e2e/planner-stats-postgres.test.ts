@@ -39,35 +39,44 @@ d('planner stats on Postgres', () => {
 
   test('9. doctor reads pg_stat_user_tables; repair planner-stats analyzes the stale table', async () => {
     const engine = getEngine();
-    await engine.executeRaw(`INSERT INTO facts (fact, source) SELECT 'pg claim ' || g, 'test' FROM generate_series(1, 2000) g`);
-    // pg_stat counters are reported asynchronously by the backend; wait until the inserts are visible.
-    for (let i = 0; i < 50; i++) {
-      await engine.executeRaw('SELECT pg_stat_clear_snapshot()');
-      const facts = (await readPostgresPlannerStats(engine)).find(t => t.table === 'facts');
-      if (facts && facts.pending >= 2000) break;
-      await new Promise(resolve => setTimeout(resolve, 200));
-    }
-    const states = await readPostgresPlannerStats(engine);
-    const facts = states.find(t => t.table === 'facts')!;
-    expect(facts.pending).toBeGreaterThanOrEqual(2000);
-    expect(states.map(t => t.table)).toContain('pages');
+    // Autoanalyze would race the wait below: 2,000 inserts cross its threshold, and an
+    // ANALYZE that lands first resets n_mod_since_analyze to 0, so the counter never
+    // reaches 2,000. Hold autovacuum off facts for this test; the test's own repair
+    // step is the ANALYZE that clears the counter.
+    await engine.executeRaw('ALTER TABLE facts SET (autovacuum_enabled = false)');
+    try {
+      await engine.executeRaw(`INSERT INTO facts (fact, source) SELECT 'pg claim ' || g, 'test' FROM generate_series(1, 2000) g`);
+      // pg_stat counters are reported asynchronously by the backend; wait until the inserts are visible.
+      for (let i = 0; i < 50; i++) {
+        await engine.executeRaw('SELECT pg_stat_clear_snapshot()');
+        const facts = (await readPostgresPlannerStats(engine)).find(t => t.table === 'facts');
+        if (facts && facts.pending >= 2000) break;
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      const states = await readPostgresPlannerStats(engine);
+      const facts = states.find(t => t.table === 'facts')!;
+      expect(facts.pending).toBeGreaterThanOrEqual(2000);
+      expect(states.map(t => t.table)).toContain('pages');
 
-    const check = await doctor();
-    expect(check.details?.engine).toBe('postgres');
-    expect(check.details?.fix).toBe('gbrain repair planner-stats --apply');
-    if (facts.stale) {
-      expect(check.status).toBe('warn');
-      expect(check.message).toContain('facts (');
-      const plan = await plannerStatsRepair.plan(engine, { brain_id: 'host', source_ids: [] }, null);
-      expect(plan.items.map(i => i.slug)).toContain('facts');
-      const ctx = { engine, logger: { info() {}, warn() {}, error() {} } } as never;
-      expect(await plannerStatsRepair.apply(ctx, plan.items.find(i => i.slug === 'facts')!)).toBe(true);
-    } else {
-      // Autovacuum (or a prior ANALYZE) touched facts within the last hour: Postgres does not warn then.
-      expect(facts.analyzed_at).not.toBeNull();
+      const check = await doctor();
+      expect(check.details?.engine).toBe('postgres');
+      expect(check.details?.fix).toBe('gbrain repair planner-stats --apply');
+      if (facts.stale) {
+        expect(check.status).toBe('warn');
+        expect(check.message).toContain('facts (');
+        const plan = await plannerStatsRepair.plan(engine, { brain_id: 'host', source_ids: [] }, null);
+        expect(plan.items.map(i => i.slug)).toContain('facts');
+        const ctx = { engine, logger: { info() {}, warn() {}, error() {} } } as never;
+        expect(await plannerStatsRepair.apply(ctx, plan.items.find(i => i.slug === 'facts')!)).toBe(true);
+      } else {
+        // Autovacuum (or a prior ANALYZE) touched facts within the last hour: Postgres does not warn then.
+        expect(facts.analyzed_at).not.toBeNull();
+      }
+      await engine.executeRaw('SELECT pg_stat_clear_snapshot()');
+      const after = (await readPostgresPlannerStats(engine)).find(t => t.table === 'facts')!;
+      expect(after.stale).toBe(false);
+    } finally {
+      await engine.executeRaw('ALTER TABLE facts RESET (autovacuum_enabled)');
     }
-    await engine.executeRaw('SELECT pg_stat_clear_snapshot()');
-    const after = (await readPostgresPlannerStats(engine)).find(t => t.table === 'facts')!;
-    expect(after.stale).toBe(false);
   });
 });

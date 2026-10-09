@@ -225,7 +225,8 @@ import { v221 } from './v221-chunk-embedding-pending-since.ts';
 import { v222 } from './v222-persistence-consumers.ts';
 import { v223 } from './v223-persistence-serve-loop-indexes.ts';
 import { v224 } from './v224-page-retrievals.ts';
-import { v225 } from './v225-pinned-questions.ts';
+import { v225 } from './v225-drop-duplicate-embedding-null-index.ts';
+import { v226 } from './v226-pinned-questions.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -450,4 +451,5 @@ export const MIGRATIONS: Migration[] = [
   v223,
   v224,
   v225,
+  v226,
 ];

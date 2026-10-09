@@ -165,15 +165,17 @@ jobs:
   # unit lane). The list is test/postgres-unit-arms.txt;
   # scripts/check-postgres-lane-coverage.ts fails a new DATABASE_URL-gated arm
   # until it is listed there or wrapped in a test/e2e registerPostgresTests
-  # file. The two shards are balanced by measured runtime.
+  # file. The three shards are balanced by measured runtime
+  # (scripts/postgres-arm-weights.json), sized so each shard's p95 test time
+  # stays inside the step's 20 minutes on a runner up to 2x slower.
   unit-postgres-arms:
-    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/2 / Bun ${{ matrix.bun }}
+    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/3 / Bun ${{ matrix.bun }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
         bun: ['1.4.0', '1.4.2']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
@@ -212,11 +214,11 @@ jobs:
           receipts_init pg-arms || exit 2
           # The list lives in test/postgres-unit-arms.txt (one path per line);
           # shards balance by measured runtime (scripts/postgres-arm-weights.json).
-          selected=$(bun scripts/postgres-unit-arms.ts shard "$SHARD" 2)
+          selected=$(bun scripts/postgres-unit-arms.ts shard "$SHARD" 3)
           files=()
           while IFS= read -r file; do [ -n "$file" ] && files+=("$file"); done <<< "$selected"
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "::error::shard $SHARD/2 selected no files from test/postgres-unit-arms.txt. Why: an empty shard would pass without running any PostgreSQL arm. Fix: run 'bun scripts/postgres-unit-arms.ts shard $SHARD 2' locally and correct the list. Docs: docs/TESTING.md#postgres-arm-lanes" >&2
+            echo "::error::shard $SHARD/3 selected no files from test/postgres-unit-arms.txt. Why: an empty shard would pass without running any PostgreSQL arm. Fix: run 'bun scripts/postgres-unit-arms.ts shard $SHARD 3' locally and correct the list. Docs: docs/TESTING.md#postgres-arm-lanes" >&2
             exit 1
           fi
           # One bun process per file: *.serial.test.ts files require their own
@@ -227,7 +229,7 @@ jobs:
           failed=()
           for file in "${files[@]}"; do
             echo "::group::$file"
-            receipt_begin primary "s$SHARD-$(basename "$file" .ts)" "$SHARD" 2 postgres "$file"
+            receipt_begin primary "s$SHARD-$(basename "$file" .ts)" "$SHARD" 3 postgres "$file"
             rc=0
             bun --no-env-file test --timeout=120000 ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} "$file" || rc=$?
             receipt_end "$rc"
