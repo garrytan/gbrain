@@ -11,7 +11,10 @@
  * preview-bound kinds accept `--expect <hash>` (their preview-bound apply);
  * only explicit-only kinds accept `--include-ambiguous`. `--max-usd <n>` is
  * accepted only for kinds that may call a paid chat model, and only lowers
- * their cap for this run.
+ * their cap for this run. `gbrain repair content` is the content-repair
+ * lane (#6377, repair-content.ts): not a kind, but it takes the same
+ * `--only`/`--skip`, `--no-llm`, `--max-usd`, `--expect` and `--apply` flags,
+ * so it is parsed here and dispatched before the kind check.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
@@ -23,6 +26,20 @@ import { REPAIR_KINDS, resolveRepairScope, type RepairKind, type RepairResult } 
 import { consentGate, engineConsentEnv } from '../core/consent-cli.ts';
 import { AUTO_REPAIR_REGISTRY, EXPLICIT_REPAIR_REGISTRY, LLM_REPAIR_REGISTRY, PREVIEW_BOUND_REPAIR_REGISTRY, REPAIR_REGISTRY, explicitRepairNotices, repairMayEmbed, repairMaySpend,
   repairPreviewCommand, repairRunner, repairSpec } from '../core/repair/registry.ts';
+import { CONTENT_REPAIR_KINDS } from '../core/repair/content-lane.ts';
+
+/** The content-repair lane's command word (#6377): parsed like a kind, dispatched to repair-content.ts, never a RepairKind. */
+export const CONTENT_LANE = 'content';
+const REPAIR_CONTENT_HELP = `       gbrain repair content [--source <id>] [--only <path>]... [--skip <path>]... [--no-llm] [--max-usd <n>] [--diff]
+                             [--apply [--expect <hash>[,<hash>]]] [--json]`;
+const REPAIR_CONTENT_SUMMARY = `  content      The content-repair lane (#6377), not a kind: runs ${CONTENT_REPAIR_KINDS.join(', then ')} over the same
+               --source/--only selection, so the holds managed sync records for a file's content (invalid_fence,
+               frontmatter_slug_conflict) clear in one pass. The preview plans every kind before anything is written and
+               prints each kind's own hash; --apply --expect <h1>[,<h2>] applies exactly those sets (one hash per kind,
+               in that order); --apply alone applies each kind's current plan as gbrain repair <kind> --apply does.
+               --max-usd is the lane's allowance for the run: what the first kind spends is gone for the next. The
+               maintenance run's content_repair phase runs the same lane by itself; sync unblock --apply runs it for
+               the paths it holds.`;
 
 function wrap(text: string, indent: number, width = 80): string {
   const lines: string[] = [];
@@ -46,12 +63,16 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
                                  [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair fences [--source <id>] [--only <path>]... [--skip <path>]... [--slug <slug>]... [--diff]
                             [--no-llm] [--max-usd <n>] [--apply [--expect <preview-hash>]] [--limit <n>] [--json]
+${REPAIR_CONTENT_HELP}
 
 Repair residual damage that \`gbrain doctor\` reports. Dry run unless --apply.
 
 Kinds:
 ${REPAIR_REGISTRY.map(spec => `  ${spec.kind.length < 13 ? spec.kind.padEnd(12) : `${spec.kind}\n${' '.repeat(14)}`} ${wrap(`${spec.explicit_only
     ? `[explicit-only; preview: ${repairPreviewCommand(spec.kind)}] ` : ''}${spec.summary}`, 15)}`).join('\n')}
+
+Lanes:
+${REPAIR_CONTENT_SUMMARY}
 
 Options:
   --apply        Write the repair (no prompt). Without it, only preview.
@@ -62,17 +83,17 @@ Options:
                  Explicit-only kinds (${explicitKinds}) never run here; name each one.
   --expect <hash>
                  Explicit-only and preview-bound kinds (${previewBoundKinds}): apply exactly the set the
-                 preview printed under this hash.
+                 preview printed under this hash. content: one hash per lane kind, comma-separated, in lane order.
   --include-ambiguous
                  Explicit-only kinds: widen the preview to ambiguous items (its hash covers them).
   --only <path>, --skip <path>
-                 frontmatter, fences: select source-relative files (repeatable); the hash covers the selection.
+                 frontmatter, fences, slug-conflicts, content: select source-relative files (repeatable); the hash covers the selection.
   --slug <slug>  fences: select a database page by slug (repeatable); the hash covers the selection.
-  --diff         frontmatter, fences: print every per-file diff, not one sample per class or tier.
-  --no-llm       Kinds that may call a paid model (${llmKinds}): use only the free tiers; model-tier
-                 items stay held with llm_disabled.
-  --max-usd <n>  Kinds that may call a paid model (${llmKinds}): spend at most n USD on the model in this
-                 run. It only lowers the cap (the daily fences.repair cap still applies); never raises it.
+  --diff         frontmatter, fences, slug-conflicts, content: print every per-file diff, not one sample per class or tier.
+  --no-llm       Kinds that may call a paid model (${llmKinds}) and the content lane: use only the free tiers;
+                 model-tier items stay held with llm_disabled.
+  --max-usd <n>  Kinds that may call a paid model (${llmKinds}) and the content lane: spend at most n USD on the
+                 model in this run. It only lowers the cap (the daily fences.repair cap still applies); never raises it.
   --yes          frontmatter, conversation-labels --apply: the user agreed to the previewed changes (destructive
                  consent; without it a terminal asks, and a non-interactive run exits 3 with the consent payload).
   --json         Machine-readable output with a stable shape (frontmatter: every per-file diff).
@@ -81,14 +102,14 @@ Any other option is refused. --max-usd caps only a paid-model kind's model spend
 paid embedding work, preview gbrain doctor --remediation-plan --json and, after the user agrees,
 run gbrain doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash>.
 With no kind, previews every kind. Run it on the brain host.
-Held files (two-pass frontmatter repair with real output): docs/guides/repair.md#held-files.
+Held files (the content lane, then the two-pass frontmatter repair): docs/guides/repair.md#held-files.
 Malformed facts/takes fences (preview, apply, undo): docs/guides/repair.md#fences.`;
 
 const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--diff', '--yes', '--no-llm']);
 const VALUE_FLAGS = new Set(['--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
-  '--only': ['frontmatter', 'fences'], '--skip': ['frontmatter', 'fences'], '--diff': ['frontmatter', 'fences'], '--yes': ['frontmatter', 'conversation-labels'],
+  '--only': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels'],
   '--slug': ['fences'],
 };
 const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit': '50', '--expect': 'PLAN_HASH', '--only': 'notes/a.md', '--skip': 'notes/a.md',
@@ -161,7 +182,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     throw new OperationError('invalid_params', `${kindOnly} applies only to gbrain repair ${kinds.join(' or ')}.`,
       `Preview it by name: gbrain repair ${kinds[kinds.length - 1]}${parsed.source ? ` --source ${parsed.source}` : ''}`);
   }
-  const llmKind = LLM_REPAIR_REGISTRY.some(spec => spec.kind === parsed.kind);
+  const llmKind = LLM_REPAIR_REGISTRY.some(spec => spec.kind === parsed.kind) || parsed.kind === CONTENT_LANE;
   if (maxUsdFlag) {
     if (!llmKind) throw maxUsdRefusal(maxUsdFlag, maxUsdText, parsed.kind);
     const cap = Number(maxUsdText);
@@ -173,7 +194,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
   }
   if (parsed.noLlm && !llmKind) throw new OperationError('invalid_params', `--no-llm applies only to a kind that may call a paid model (${llmKinds}).`,
     `Preview it by name: gbrain repair ${LLM_REPAIR_REGISTRY[0]?.kind ?? 'fences'}${parsed.source ? ` --source ${parsed.source}` : ''}`);
-  if (parsed.expect !== undefined && !PREVIEW_BOUND_REPAIR_REGISTRY.some(spec => spec.kind === parsed.kind)) {
+  if (parsed.expect !== undefined && parsed.kind !== CONTENT_LANE && !PREVIEW_BOUND_REPAIR_REGISTRY.some(spec => spec.kind === parsed.kind)) {
     throw new OperationError('invalid_params', `--expect applies only to an explicit-only or preview-bound kind named on the command line (${previewBoundKinds}).`,
       `Preview one by name: ${repairPreviewCommand(PREVIEW_BOUND_REPAIR_REGISTRY[0]!.kind)}`);
   }
@@ -184,7 +205,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
   return parsed;
 }
 
-function human(result: RepairResult, opts: { diff: boolean } = { diff: false }): string {
+export function renderRepairResult(result: RepairResult, opts: { diff: boolean } = { diff: false }): string {
   const lines = [`${result.kind}: ${result.affected} item(s) ${result.mode === 'apply' ? 'pending before this run' : 'to repair'}`];
   for (const warning of result.warnings ?? []) lines.push(`  WARNING: ${warning}`);
   if (result.sample.length) lines.push(`  e.g. ${result.sample.join(', ')}`);
@@ -223,8 +244,13 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   const { kind, apply, all, json, noEmbed, includeAmbiguous, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText } = parseRepairArgs(args);
   const limit = limitText === undefined ? undefined : Number(limitText);
   if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw invalid('--limit must be a positive integer.', 'Pass --limit as a positive whole number, e.g. --limit 50, or omit it to repair every item.');
+  if (kind === CONTENT_LANE) {
+    if (all) throw invalid('Pass either content or --all, not both.', 'Drop --all to run the content lane, or drop content to run every automatic kind.', ['gbrain', 'repair', CONTENT_LANE, ...(source ? ['--source', source] : []), '--json']);
+    const { runRepairContentCommand } = await import('./repair-content.ts');
+    return runRepairContentCommand(engine, { apply, json, diff, noLlm, noEmbed, source, expect, maxUsd, only, skip, limit });
+  }
   if (kind && !REPAIR_KINDS.includes(kind as RepairKind)) {
-    throw new OperationError('invalid_params', `Unknown repair kind '${kind}'.`, `Kinds: ${REPAIR_KINDS.join(', ')}.`);
+    throw new OperationError('invalid_params', `Unknown repair kind '${kind}'.`, `Kinds: ${REPAIR_KINDS.join(', ')}; lanes: ${CONTENT_LANE}.`);
   }
   if (kind && all) throw invalid('Pass either a kind or --all, not both.', `Drop --all to repair only ${kind}, or drop ${kind} to run every automatic kind.`,
     ['gbrain', 'repair', kind, ...(source ? ['--source', source] : []), '--json']);
@@ -263,7 +289,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
       ...(explicitKindsNotRun.length ? { explicit_kinds: explicitKindsNotRun } : {}) }, null, 2));
   } else {
     console.log(`Scope: brain ${scope.brain_id}; sources ${scope.source_ids.join(', ') || '(none)'}`);
-    for (const result of results) console.log(human(result, { diff }));
+    for (const result of results) console.log(renderRepairResult(result, { diff }));
     const embedKinds = results.filter(r => repairMayEmbed(repairSpec(r.kind), noEmbed)).map(r => r.kind);
     if (!apply && embedKinds.length) console.log(`Kinds that may queue paid embeddings: ${embedKinds.join(', ')} (pass --no-embed to skip; `
       + 'page-write kinds are re-embedded by their publication either way; cap spend with gbrain doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash> from gbrain doctor --remediation-plan --json).');

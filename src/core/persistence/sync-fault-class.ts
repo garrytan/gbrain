@@ -17,6 +17,13 @@
  * `gbrain sync status --json`, `gbrain sync unblock` and the drain summary all
  * read this table; `docs/guides/sync-unblock-runbook.md` renders it, and
  * `test/sync-runbook-table.test.ts` pins the two together.
+ *
+ * #6377: a `frontmatter_slug_conflict` hold the content-repair lane judged
+ * (`meta.content_repair`) is classified from that verdict: a recommended
+ * merge (`merge_recommended`) or an undecidable pair
+ * (`content_repair_needs_human`) is `needs_human` with a paragraph rendered
+ * from the hold's codes and slugs (`contentRepairHumanReason`), never from
+ * model prose; the table row stays the lane's default for every other state.
  */
 export type SyncFaultClass = 'page' | 'connection' | 'systemic';
 export type SyncSafeAction = 'retry' | 'retry_when_clean' | 'repair' | 'reconcile' | 'upgrade' | 'none';
@@ -75,15 +82,52 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
 
 const BY_CODE = new Map(SYNC_FAULT_TABLE.map(rule => [rule.code, rule]));
 
+/** #6377: a slug-conflict hold's recorded verdict plus where it is (codes and slugs only). */
+export interface ContentRepairHoldInput {
+  action: 'remove_slug' | 'merge_into' | 'needs_human' | 'pending';
+  reason: string;
+  canonical?: string;
+  named?: string;
+  type?: string;
+  path: string;
+  slug: string | null;
+}
+
+/**
+ * The paragraph a person reads for a judged slug-conflict hold, or undefined when the verdict needs no person
+ * (`remove_slug` is applied by the lane; `pending` waits on the model tier). Names the path and the slugs; never
+ * the model's own words.
+ */
+export function contentRepairHumanReason(input: ContentRepairHoldInput): string | undefined {
+  const other = input.named ?? input.canonical;
+  const kind = input.type ? `the same ${input.type}` : 'the same thing';
+  if (input.action === 'merge_into' && input.canonical) {
+    if (input.slug && input.canonical === input.slug && other && other !== input.slug) {
+      return `This file and page \`${other}\` describe ${kind}; gbrain recommends keeping \`${input.path}\` (slug \`${input.canonical}\`), merging the unique sections of page \`${other}\` into it and deleting that page's file, then committing; `
+        + 'the hold clears on the next maintenance run after that file is gone. gbrain does not merge pages by itself yet.';
+    }
+    return `This file and page \`${input.canonical}\` describe ${kind}; gbrain recommends merging the unique sections of \`${input.path}\` into \`${input.canonical}\` and deleting \`${input.path}\`, then committing; `
+      + 'the hold clears on the next sync after the file is removed. gbrain does not merge pages by itself yet.';
+  }
+  if (input.action === 'needs_human') {
+    return `gbrain could not decide whether \`${input.path}\`${other ? ` and page \`${other}\`` : ' and the page its slug: line names'} are the same page; decide which keeps the slug: `
+      + `remove the slug: line of \`${input.path}\` if they differ, or merge them by hand and delete the duplicate, then commit; the hold clears on the next sync.`;
+  }
+  return undefined;
+}
+
 export interface SyncFaultVerdict { class: SyncFaultClass; safe_actions: SyncSafeAction[]; needs_human: boolean; human_reason?: string }
 
 /**
  * The verdict for one fault. `attempts` is a hold's re-hold count: a page held `HOLD_ATTEMPTS_NEEDS_HUMAN` times with the
  * same code keeps moving under the sync, so its own safe action is exhausted and a person is named. `detail` is a receipt's
  * `reason` (for example `pinned_git_worktree_conflict` under `source_changed`) or a drain stop's `cause`; it refines the code
- * when the table knows it. An unknown code is systemic and human: an agent must not guess at it.
+ * when the table knows it. `content_repair` is a slug-conflict hold's recorded verdict: a recommended merge or an
+ * undecidable pair names a person. An unknown code is systemic and human: an agent must not guess at it.
  */
-export function classifySyncFault(input: { code: string; detail?: string | null; attempts?: number | null; message?: string | null }): SyncFaultVerdict {
+export function classifySyncFault(input: { code: string; detail?: string | null; attempts?: number | null; message?: string | null; content_repair?: ContentRepairHoldInput | null }): SyncFaultVerdict {
+  const judged = input.content_repair && input.code === 'frontmatter_slug_conflict' ? contentRepairHumanReason(input.content_repair) : undefined;
+  if (judged) return { class: 'page', safe_actions: ['none'], needs_human: true, human_reason: judged };
   const rule = (input.detail ? BY_CODE.get(input.detail) : undefined) ?? BY_CODE.get(input.code)
     ?? (/ECONN|ETIMEDOUT|EPIPE|connection.*closed|CONNECTION_ENDED/i.test(input.message ?? '') ? BY_CODE.get('connection_lost') : undefined);
   if (!rule) return { class: 'systemic', safe_actions: ['none'], needs_human: true, human_reason: `Unknown code ${input.code}; run gbrain doctor --json and read gbrain errors ${input.code}.` };

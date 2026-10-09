@@ -487,8 +487,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // GBRA-40 Lane D: 25 (added `facts_drain` after chronicle).
     // Temporal typed edges: 26 (added `edge_contradictions` after calibration_profile).
     // C4 pinned questions: 27 (added `standing_questions` after drift).
-    // #6188: 28 (added `fence_repair` after sync).
-    expect(hookCalls).toBe(28);
+    // #6188: 28 (added `fence_repair` after sync). #6377: 29 (added `content_repair` after fence_repair).
+    expect(hookCalls).toBe(29);
   });
 
   test('hook exceptions do not abort the cycle', async () => {
@@ -504,8 +504,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.41.11.0: 20 phases (+extract_atoms, +synthesize_concepts, +conversation_facts_backfill).
     // v0.41.39 (#1700) + v0.42.0.0: 22 phases (+enrich_thin, +skillopt).
     // #2653: 23 phases (+drift). #5876: 24 (+chronicle). GBRA-40 Lane D: 25 (+facts_drain). Temporal typed edges: 26 (+edge_contradictions). C4: 27 (+standing_questions).
-    // #6188: 28 (+fence_repair).
-    expect(report.phases.length).toBe(28);
+    // #6188: 28 (+fence_repair). #6377: 29 (+content_repair).
+    expect(report.phases.length).toBe(29);
   });
 });
 

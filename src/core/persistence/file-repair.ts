@@ -23,8 +23,14 @@
  * the intent (`fenceRepair`): the preparer refuses a malformed receipt or one
  * whose before/after sha256 are not the previewed and the written bytes, the
  * receipt rides the publication outcome as `fence_repair`, the file's Git
- * commit takes `fenceRepairCommitSubject`, and every refusal routes to
- * `gbrain repair fences` instead of `gbrain repair frontmatter`.
+ * commit takes `fenceRepairCommitSubject` with the `gbrain-repair:` trailer,
+ * and every refusal routes to `gbrain repair fences` instead of
+ * `gbrain repair frontmatter`. #6377: a slug-conflict repair (`gbrain repair
+ * content`, the `slug-conflicts` kind) rides the same way with its
+ * `ContentRepairReceipt` (`contentRepair`), outcome field `content_repair`,
+ * subject `gbrain: repair frontmatter slug in <path>` and trailer
+ * `gbrain-repair: frontmatter_slug_conflict <tier> <confidence>`; its
+ * refusals route to `gbrain repair content`.
  *
  * Trusted local CLI only: admission refuses remote and delegated callers, the
  * `put_page` reserved-field gate refuses the kind from MCP, and the preparer
@@ -51,6 +57,7 @@ import { sealPageTextProjection } from '../page-state/projections.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { VERSION } from '../../version.ts';
 import { parseFenceRepairReceipt, type FenceRepairReceipt } from '../fence-repair/receipt.ts';
+import { parseContentRepairReceipt, type ContentRepairReceipt } from '../content-repair/receipt.ts';
 import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
@@ -63,7 +70,7 @@ import { screenSyncImport } from './sync-prepare.ts';
 import type { SyncRename } from './sync-discovery.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
-import { fenceRepairCommit } from './effect-model.ts';
+import { contentRepairCommit, fenceRepairCommit } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
 
 export interface ManagedFileRepairIntent extends Record<string, unknown> {
@@ -86,15 +93,18 @@ export interface ManagedFileRepairIntent extends Record<string, unknown> {
   noEmbed: boolean;
   /** A fence repair's receipt (location and hashes only). */
   fenceRepair?: FenceRepairReceipt;
+  /** #6377 a slug-conflict repair's receipt (codes and hashes only). */
+  contentRepair?: ContentRepairReceipt;
 }
 
-/** The repair command a refusal names (D6 router): a fence repair's, or the frontmatter repair's. */
-export type FileRepairKind = 'frontmatter' | 'fences';
+/** The repair command a refusal names (D6 router): a fence repair's, the content repair's, or the frontmatter repair's. */
+export type FileRepairKind = 'frontmatter' | 'fences' | 'content';
+const WORK: Record<FileRepairKind, string> = { frontmatter: 'frontmatter', fences: 'fence', content: 'slug-conflict' };
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner and its state, read-only.`,
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
 const previewFix = (sourceId: string, kind: FileRepairKind): Action => ({ argv: ['gbrain', 'repair', kind, '--source', sourceId], consent: [], actor: 'agent',
-  requires_exclusive: false, why: `Previews the ${kind === 'fences' ? 'fence' : 'frontmatter'} repair of source ${sourceId} again from the files as they are now; nothing is written.` });
+  requires_exclusive: false, why: `Previews the ${WORK[kind]} repair of source ${sourceId} again from the files as they are now; nothing is written.` });
 
 function changedSincePreview(sourceId: string, path: string, why: string, kind: FileRepairKind) {
   return opError('changed_since_preview', `${path} changed since its repair was previewed: ${why}.`,
@@ -118,6 +128,24 @@ function checkedFenceRepair(input: { fenceRepair?: unknown; beforeHash: string; 
   if (receipt.before_sha256 !== input.beforeHash) return refuse('does not name the previewed file bytes');
   if (receipt.after_sha256 !== sha256(Buffer.from(input.content, 'utf8'))) return refuse('does not name the repaired file bytes');
   return receipt;
+}
+
+/** #6377: the slug-conflict receipt of a repair request, checked the same way; undefined when the request carries none. */
+function checkedContentRepair(input: { contentRepair?: unknown; beforeHash: string; content: string; path: string }, sourceId: string): ContentRepairReceipt | undefined {
+  if (input.contentRepair === undefined) return undefined;
+  const refuse = (why: string): never => { throw opError('invalid_params', `The content repair receipt for ${input.path} ${why}, so nothing was written.`,
+    `gbrain repair content builds this receipt from the bytes it previewed and writes; this one does not describe them. Preview again with gbrain repair content --source ${sourceId} and apply its new plan; if the apply refuses the same way, tell the user and include gbrain doctor --json.`,
+    { fix: previewFix(sourceId, 'content') }); };
+  const receipt = parseContentRepairReceipt(input.contentRepair);
+  if (!receipt) return refuse('is malformed');
+  if (receipt.before_sha256 !== input.beforeHash) return refuse('does not name the previewed file bytes');
+  if (receipt.after_sha256 !== sha256(Buffer.from(input.content, 'utf8'))) return refuse('does not name the repaired file bytes');
+  return receipt;
+}
+
+/** Which repair command a request belongs to, from the receipt it carries. */
+function repairKindOf(input: { fenceRepair?: unknown; contentRepair?: unknown }): FileRepairKind {
+  return input.fenceRepair !== undefined ? 'fences' : input.contentRepair !== undefined ? 'content' : 'frontmatter';
 }
 
 /**
@@ -223,7 +251,7 @@ export async function managedRepairRoot(engine: BrainEngine, sourceId: string, k
   const binding = await getWorktreeBinding(engine, sourceId);
   const hostId = localHostId();
   const owner = checkOwner(binding, source?.incarnation ?? '', hostId);
-  if (owner.reason) throw ownerUnavailableError({ sourceId, reason: owner.reason, binding, incarnation: source?.incarnation ?? '', hostId, remote: opts.remote !== false, work: `the ${kind} repair` });
+  if (owner.reason) throw ownerUnavailableError({ sourceId, reason: owner.reason, binding, incarnation: source?.incarnation ?? '', hostId, remote: opts.remote !== false, work: `the ${WORK[kind]} repair` });
   return { root: join(owner.binding.local_path, owner.binding.relative_path), ownerEpoch: String(owner.binding.owner_epoch), incarnation: owner.binding.source_incarnation };
 }
 
@@ -240,12 +268,15 @@ export interface ManagedFileRepairInput {
   beforeHash: string; resultDigest: string; expected_revision?: string; renameFrom?: SyncRename; noEmbed: boolean;
   /** Set by `gbrain repair fences`: the write's receipt, and its refusals route there. */
   fenceRepair?: FenceRepairReceipt;
+  /** #6377 set by the `slug-conflicts` kind: the write's receipt, and its refusals route to `gbrain repair content`. */
+  contentRepair?: ContentRepairReceipt;
 }
 
 export async function submitManagedFileRepair(ctx: OperationContext, input: ManagedFileRepairInput): Promise<Record<string, unknown>> {
   assertTrustedRepairCaller(ctx);
-  const kind: FileRepairKind = input.fenceRepair !== undefined ? 'fences' : 'frontmatter';
+  const kind = repairKindOf(input);
   checkedFenceRepair(input, input.sourceId);
+  checkedContentRepair(input, input.sourceId);
   const { root, ownerEpoch, incarnation } = await managedRepairRoot(ctx.engine, input.sourceId, kind, { remote: false });
   const target = confinedRepairTarget(root, input.path, input.sourceId, kind);
   if (fileSha256(target) !== input.beforeHash) throw changedSincePreview(input.sourceId, input.path, 'the file bytes differ from the previewed hash', kind);
@@ -261,7 +292,7 @@ export async function submitManagedFileRepair(ctx: OperationContext, input: Mana
 
 export async function prepareManagedFileRepairMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
   const p = row.intent as ManagedFileRepairIntent | null;
-  const kind: FileRepairKind = p?.fenceRepair !== undefined ? 'fences' : 'frontmatter';
+  const kind = repairKindOf(p ?? {});
   if (row.authority.remote || row.principal_kind !== 'local_cli') throw trustedCliRequired('A managed file repair requires a trusted local CLI writer.');
   if (!p || p.kind !== 'managed_file_repair' || typeof p.content !== 'string' || typeof p.path !== 'string' || typeof p.sourcePath !== 'string'
     || typeof p.beforeHash !== 'string' || typeof p.resultDigest !== 'string') {
@@ -270,6 +301,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
       { fix: previewFix(row.source_id, kind) });
   }
   const fenceRepair = checkedFenceRepair(p, row.source_id);
+  const contentRepair = checkedContentRepair(p, row.source_id);
   const binding = await getWorktreeBinding(engine, row.source_id);
   if (!row.worktree_id || !binding?.local_path || String(binding.owner_epoch) !== p.ownerEpoch) throw opError('owner_unavailable', 'A managed file repair requires its accepted canonical owner.',
     `Source ${row.source_id}'s canonical owner changed or went away after repair request ${row.request_id} was accepted, so it published nothing. Check the owner, then preview the repair again on the host that owns the source.`,
@@ -313,7 +345,8 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   const importOptions = { ...source, noEmbed: true, remote: false, preserveGateMarkers: true, activePack: screenConfig.activePack, filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
   return { observedRevision: snapshot?.revision ?? null, noop: ready.noop && !fileChanges && !moved, contentUnchanged: ready.noop && !fileChanges && !moved,
     deferEmbedding: p.noEmbed, ...(moved ? { additionalPageKeys: [{ sourceId: row.source_id, slug: moved.slug }] } : {}),
-    ...(fileChanges ? { file: { root, path: target, content: bytes, expectedBeforeHash: p.beforeHash, ...(fenceRepair ? { commit: fenceRepairCommit(p.path, fenceRepair.classes) } : {}) } } : {}),
+    ...(fileChanges ? { file: { root, path: target, content: bytes, expectedBeforeHash: p.beforeHash,
+      ...(fenceRepair ? { commit: fenceRepairCommit(p.path, fenceRepair.classes, fenceRepair.tier) } : contentRepair ? { commit: contentRepairCommit(p.path, contentRepair) } : {}) } } : {}),
     validate: async tx => {
       const current = await getWorktreeBinding(tx, row.source_id);
       if (!current || current.worktree_id !== row.worktree_id || String(current.owner_epoch) !== p.ownerEpoch) throw opError('owner_unavailable', 'The repair owner changed.',
@@ -343,6 +376,6 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
         raw_sha256: sha256(importContent), gbrain_version: VERSION });
       return { status: moved ? 'renamed' : applied.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
         chunks: applied.result.chunks, imported_file: true, file_repaired: fileChanges, hold_cleared: holdCleared, ...(moved ? { renamed_from: moved.slug } : {}),
-        ...(fenceRepair ? { fence_repair: fenceRepair } : {}) };
+        ...(fenceRepair ? { fence_repair: fenceRepair } : {}), ...(contentRepair ? { content_repair: contentRepair } : {}) };
     } };
 }

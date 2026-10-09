@@ -19,13 +19,25 @@ gbrain sync unblock --source <id> --apply --json # when committed_last_10m is 0 
 gbrain sync <next.argv...>                       # the sync unblock (or status) names: the cursor's own options
 ```
 
+**Say to your agent:** *"Repair the files sync held and get the catch-up
+moving again; ask me only about the ones gbrain will not decide by itself."*
+
 1. Read `status`. `cursor` is where the run stands (`index/total`, the
    `pinned_target` commit, `last_advance_at`); `committed_last_10m` is the
    signal that data is moving (a live process with a flat cursor is not
    progress). `holds` and `last_error` each carry the triple below.
 2. If `needs_human` is false and nothing committed in the last ten minutes,
    run `unblock --apply`: it performs the safe action for every hold that has
-   one, refuses the rest by name, and prints the sync to run.
+   one, refuses the rest by name, and prints the sync to run. For a content
+   hold (`invalid_fence`; `frontmatter_slug_conflict` once its lane kind
+   ships) the safe action is `repair`: unblock runs the content-repair lane
+   (`gbrain repair content`, the same kinds the maintenance run uses) on
+   exactly those paths as one bounded apply under the `fences.repair` caps,
+   each file bound to the bytes the plan read, and reports every path as
+   `repaired`, `held`, `needs_human` or `skipped` with the reason code, the
+   location-only receipt (mode, tier, classes, commit state) and the next
+   step. `--no-llm` keeps the repairs to their free tiers; `--no-repair`
+   refuses every repair-class hold instead, as releases before #6377 did.
 3. Run that sync. It re-screens the scheduled files, imports each one that now
    passes and holds again what still fails; the rest of the source is never
    blocked. With `--retry-failed` a cursor an older release left blocked on a
@@ -33,9 +45,13 @@ gbrain sync <next.argv...>                       # the sync unblock (or status) 
 4. If `needs_human` is true, stop looping and page a person with the slug and
    `human_reason` from `status` (`next.user_message` is written for relay).
 
-`unblock` is idempotent, writes no page, clears no hold and drops nothing:
-refusing is the only way it leaves a file out, and each refusal names the file,
-why, and its fix.
+`unblock` is idempotent and drops nothing: the only pages it writes are the
+hash-bound repairs it prints a receipt for, the only holds it clears are the
+ones those repairs import, and refusing is the only way it leaves a file out.
+Each refusal names the file, why, and its fix. A hold whose stored repair
+state says a person decides (a manual fence reason, a gate rejection, a paid
+wait on a setting only the user changes, a recommended page merge) is listed
+`needs_human` and never retried until the file changes.
 
 ## The triple
 
@@ -54,7 +70,12 @@ Every hold and error has three fields, from one table
 - `needs_human`: a person has to choose or act before it clears;
   `human_reason` says what. A page held three times with the same code
   (`attempts`) is `needs_human` whatever its code says: it keeps moving under
-  the sync.
+  the sync. A repair-class hold is `needs_human` when its stored repair state
+  says so: a fence hold the lane marked `manual` (a manual-only reason, a gate
+  rejection, a model answer the run does not retry) or `paid` (spend only the
+  user raises), and a slug-conflict hold the lane decided a person must settle
+  ([`merge_recommended`](write-refusals.md#merge_recommended),
+  [`content_repair_needs_human`](write-refusals.md#content_repair_needs_human)).
 
 ## Decision table
 
@@ -114,8 +135,15 @@ it and kept going; the receipt lists the hold (`held`, `held_count`) and
 - `preparation_stalled`: the write owner, not the file, stalled;
   `gbrain sources writer status --source <id> --json` names the step.
   `unblock --apply` schedules the re-screen.
-- The repair codes (`invalid_fence`, `invalid_frontmatter`, …) have their own
-  previews: [held files](write-refusals.md#held-files-and-content-refusals).
+- `invalid_fence` and `frontmatter_slug_conflict`: the content-repair lane
+  clears them. `unblock --apply` runs it on the held paths now; the maintenance
+  run's `fence_repair` and `content_repair` phases run it by themselves;
+  `gbrain repair content --source <id>` previews it. A hold the lane will not
+  decide is `needs_human` with the paragraph in `human_reason`
+  ([held files](repair.md#held-files)).
+- The other repair codes (`invalid_frontmatter`, `rename_held`) stay
+  consent-gated: unblock refuses them with the frontmatter repair preview to
+  run ([held files](write-refusals.md#held-files-and-content-refusals)).
 - `revision_conflict`, `page_identity_changed`, `pinned_git_worktree_conflict`
   as a `last_error` come from a run on an older release; this release holds
   them. Rerun with `--retry-failed`: the stopped entry converts in place, the

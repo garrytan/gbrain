@@ -210,8 +210,8 @@ async function singleFileGitTarget(engine: BrainEngine, effect: PersistenceEffec
 
 /** The commit metadata a single-file Git effect's preparer recorded, if any. */
 function gitCommitNote(effect: PersistenceEffect): GitCommitNote | undefined {
-  const { commit_subject: subject, commit_line: line } = effect.data;
-  return typeof subject === 'string' && typeof line === 'string' ? { subject, line } : undefined;
+  const { commit_subject: subject, commit_line: line, commit_trailer: trailer } = effect.data;
+  return typeof subject === 'string' && typeof line === 'string' ? { subject, line, ...(typeof trailer === 'string' ? { trailer } : {}) } : undefined;
 }
 
 async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: WorktreeBinding | null, opts: EffectWorkerOptions,

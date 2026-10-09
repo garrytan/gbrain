@@ -13,7 +13,10 @@
  * or a model failure the run does not retry: the preview names the exact
  * edit), `paid` (waits on spend the user controls: the exact config or
  * pricing command with consent `paid`, so it renders `ask_user`), `owner`
- * (repairs run on the canonical owner host). Remote callers get the
+ * (repairs run on the canonical owner host), `approval` (#6377: closing the
+ * fence would show its trailing lines to readers of a world-visible page, so
+ * the user approves the exact lines through the hash-bound apply the preview
+ * prints). Remote callers get the
  * owner-host command as a relay (`tell_user_to_run`) and a `user_message`
  * saying whether the hold clears by itself; never a path.
  *
@@ -63,7 +66,7 @@ export async function readFenceAutoRepair(engine: Exec, now: Date = new Date()):
     active: enabled && last !== null && now.getTime() - last <= FENCE_MAINTENANCE_ACTIVE_MS };
 }
 
-export type FenceHoldState = 'auto' | 'apply' | 'manual' | 'paid' | 'owner';
+export type FenceHoldState = 'auto' | 'apply' | 'manual' | 'paid' | 'owner' | 'approval';
 
 export interface FenceHoldStatus {
   state: FenceHoldState;
@@ -101,7 +104,7 @@ export function fenceHoldStatus(meta: HoldMeta, auto?: FenceAutoRepair): FenceHo
   const spec = FENCE_REASONS[reason];
   const retries = !llmOff && (last ? last.next_attempt_after !== null : spec.autoRetry && !spec.manualOnly);
   const needsEdit = spec.manualOnly || spec.tier === 'manual' || !!spec.gate || reason.startsWith('llm_');
-  const state: FenceHoldState = PAID.includes(reason) ? 'paid' : OWNER.includes(reason) ? 'owner' : !retries && needsEdit ? 'manual' : retries && auto?.active ? 'auto' : 'apply';
+  const state: FenceHoldState = reason === 'tail_exposure_approval' ? 'approval' : PAID.includes(reason) ? 'paid' : OWNER.includes(reason) ? 'owner' : !retries && needsEdit ? 'manual' : retries && auto?.active ? 'auto' : 'apply';
   return { state, reason, tier, auto_retry: retries && auto?.active === true, next_attempt_after: last?.next_attempt_after ?? null };
 }
 
@@ -208,6 +211,14 @@ export function fenceHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 
       return { ...base, actor: 'host_admin', argv: preview, why: `${held} Fence repairs write files only on the source's canonical owner host, and this host is not it (${status.reason}). `
         + `On the owner host run ${command} to preview the repair, then the apply command it prints. ${rest}`,
       user_message: `Please run '${command}' on the brain's owner host to preview the repair of a malformed facts or takes table, then run the apply command it prints.` };
+    case 'approval':
+      return { ...base, actor: 'user', argv: preview, docs: 'docs/guides/write-refusals.md#fence-tail_exposure_approval',
+        why: `${held} gbrain can close the fence directly after its last table row, but the lines after the table would then be visible to readers of this world-visible page, `
+          + `so no unattended run closes it. The preview (read-only, no model call) prints those exact lines and the apply command with --expect <hash>; show them to the user and run that command only if they agree. ${rest}`,
+        user_message: `A facts or takes table in ${path} has no end marker, and some text follows it. gbrain can close the table after its last row, which would make that text visible to readers of the page. `
+          + `May I show you the lines ('${command}' prints them) and, if they look right, apply the close?`,
+        then: { ...step, argv: [...preview, '--apply', '--expect', '<hash>'], inputs: [{ name: 'hash', how: 'The hash the preview printed; it binds the exact file bytes and the lines that become visible.' }],
+          why: `Closes the fence in ${path} exactly as previewed and clears the hold; the lines the preview listed become visible.` } };
   }
 }
 
@@ -219,6 +230,7 @@ function relayText(status: FenceHoldStatus, auto: FenceAutoRepair | undefined, r
     case 'manual': return `It does not clear by itself: it needs an edit gbrain will not guess. Please run ${run} on the brain host; it names the exact edit to make in the file, then commit and sync.`;
     case 'paid': return `It does not clear by itself: its repair needs the paid repair model, and ${paidWait(status.reason)}. Raising spend or enabling the model is your call: if you agree, run '${paid}' on the brain host; otherwise ${run} there names the rows to fix by hand.`;
     case 'owner': return `Fence repairs run on the brain's owner host: please run ${run} there, then the apply command it prints.`;
+    case 'approval': return `It does not clear by itself: closing the table would make the text after it visible to readers of the page, so it waits for your approval. On the brain host, ${run} prints those lines and the apply command; run that command if they look right.`;
   }
 }
 

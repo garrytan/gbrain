@@ -136,7 +136,9 @@ const commitText = (text: string) => text.replace(/[\u0000-\u001f\u007f]/g, '');
  * `notes` (keyed by requested path) carry a preparer's commit metadata: a
  * path that commits alone with a note uses its subject; a group keeps the
  * generic subject and lists the noted paths' lines in the body, in path
- * order. Control characters are stripped from both.
+ * order. A note's `gbrain-repair:` trailer goes in the message's last
+ * paragraph (one line per noted path), where Git reads trailers. Control
+ * characters are stripped from all three.
  */
 export async function commitGitTargets(root: string, relativePaths: string[], signal?: AbortSignal,
   notes?: ReadonlyMap<string, GitCommitNote>): Promise<Map<string, GitOutcome | OperationError>> {
@@ -192,7 +194,8 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     const subject = commitPaths.length > 1 ? `gbrain: persist ${commitPaths.length} canonical memory updates`
       : commitText(noted.get(commitPaths[0]!)?.subject ?? '') || 'gbrain: persist canonical memory update';
     const body = commitPaths.length > 1 ? [...new Set([...noted.keys()].sort().map(path => commitText(noted.get(path)!.line)).filter(Boolean))] : [];
-    const result = await git(root, hooks, ['commit', '--only', '-m', subject, ...(body.length ? ['-m', body.join('\n')] : []), '--', ...commitPaths], signal);
+    const trailers = [...new Set([...noted.keys()].sort().map(path => commitText(noted.get(path)!.trailer ?? '')).filter(Boolean))];
+    const result = await git(root, hooks, ['commit', '--only', '-m', subject, ...(body.length ? ['-m', body.join('\n')] : []), ...(trailers.length ? ['-m', trailers.join('\n')] : []), '--', ...commitPaths], signal);
     const outcome = result.code === 0 ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
     for (const c of changed) results.set(c.requested, outcome);

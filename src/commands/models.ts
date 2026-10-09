@@ -44,6 +44,7 @@ import {
 } from '../core/model-config.ts';
 import { resolveExtractAtomsModelWithSource } from '../core/cycle/extract-atoms.ts';
 import { resolveFenceRepairModelWithSource } from '../core/fence-repair/model.ts';
+import { resolveContentRepairModelWithSource } from '../core/content-repair/llm.ts';
 import { resolveFactsExtractionModel } from '../core/facts/extract.ts';
 import {
   NIGHTLY_PROBE_EXTRACTOR_ROUTE,
@@ -109,6 +110,12 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
     tier: 'deep',
     description: 'Model repair (Tier 3) of malformed facts/takes fence rows; unset: the first measured model with a key, else none (off)',
     narrowResolver: async engine => { const r = await resolveFenceRepairModelWithSource(engine); return { model: r.model ?? 'none', source: r.source }; },
+  },
+  {
+    key: 'models.content_repair',
+    tier: 'deep',
+    description: 'Slug-conflict judgment of the content-repair lane (#6377); unset: models.fence_repair, else the first measured model with a key, else none (off)',
+    narrowResolver: async engine => { const r = await resolveContentRepairModelWithSource(engine); return { model: r.model ?? 'none', source: r.source === 'measured' ? 'measured' : 'config' }; },
   },
   { key: 'models.subagent',                 tier: 'subagent',  description: '`gbrain agent run` subagent loop' },
   {
