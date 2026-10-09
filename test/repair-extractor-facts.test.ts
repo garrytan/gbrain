@@ -51,7 +51,7 @@ import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-f
 const EXTRACTOR = 'cli:extract-conversation-facts:sess';
 const ENTITY = 'people/alice-example';
 
-interface RepairJson { results: Array<{ affected: number; residuals: Record<string, number>; apply_command: string; applied: number; skipped: number;
+interface RepairJson { results: Array<{ affected: number; residuals: Record<string, number>; apply_command: string | null; applied: number; skipped: number;
   warnings?: string[]; listing?: Array<{ item: string; class: string; detail?: string }>; outcomes?: Record<string, number>;
   outcome_items?: Array<{ item: string; outcome: string; reason?: string }> }> }
 
@@ -69,7 +69,7 @@ async function repair(engine: BrainEngine, home: string | null, args: string[]):
   try { await (home ? withEnv({ GBRAIN_HOME: home }, run) : run()); } finally { console.log = original; }
   return JSON.parse(lines.join('\n')) as RepairJson;
 }
-const hashOf = (json: RepairJson) => json.results[0].apply_command.match(/--expect ([0-9a-f]+)/)![1];
+const hashOf = (json: RepairJson) => json.results[0].apply_command!.match(/--expect ([0-9a-f]+)/)![1];
 
 /** A conversation page with extractor facts at row numbers 1..n, as `extract-conversation-facts` leaves it. */
 async function conversation(engine: BrainEngine, slug: string, facts: string[], root?: string, sourceId = 'default'): Promise<number[]> {
@@ -364,7 +364,7 @@ for (const backend of testBackends()) {
         expect(before).toMatchObject({ name: 'extractor_facts_expired', status: 'warn', details: { evidenced: 3, ambiguous: 0 } });
         const printed = before.message.match(/gbrain repair extractor-facts(?= )/)![0];
         const preview = await repair(engine, null, printed.split(' ').slice(3));
-        const applied = await repair(engine, null, preview.results[0].apply_command.split(' ').slice(3));
+        const applied = await repair(engine, null, preview.results[0].apply_command!.split(' ').slice(3));
         expect(applied.results[0].outcomes).toEqual({ restored: 1 });
         expect(await extractorFactsCheck(engine)).toMatchObject({ status: 'ok', details: { evidenced: 0, ambiguous: 0 } });
       }, { databaseUrl, setup: async ({ engine, root }) => {
@@ -396,7 +396,7 @@ for (const backend of testBackends()) {
 
         expect((await extractorFactsCheck(engine)).details).toMatchObject({ evidenced: 2, ambiguous: 0 });
         const preview = await repair(engine, null, []);
-        const applied = await repair(engine, null, preview.results[0].apply_command.split(' ').slice(3));
+        const applied = await repair(engine, null, preview.results[0].apply_command!.split(' ').slice(3));
         expect(applied.results[0].outcomes).toEqual({ restored: 1 });
         const restored = await rows();
         expect(restored.map(row => [row.id, row.active])).toEqual(original.map(row => [row.id, true]));
@@ -490,7 +490,8 @@ for (const backend of testBackends()) {
       expect(preview.results[0].residuals).toEqual({ evidenced: 0, ambiguous: 3, excluded: 1 });
       expect(preview.results[0].affected).toBe(0);
       expect(preview.results[0].listing!.map(entry => entry.detail)).toContain('unmanaged brain: no write receipt can prove the expiry');
-      expect((await refusal(() => repair(engine, home, ['--source', sourceId, '--apply', '--expect', hashOf(preview)]))).code).toBe('preview_changed');
+      // #6351: the default preview restores nothing, so it offers no apply command at all.
+      expect(preview.results[0].apply_command).toBeNull();
       const wide = await repair(engine, home, ['--source', sourceId, '--include-ambiguous']);
       expect(wide.results[0].affected).toBe(1);
       // The hash is bound to the preview's source scope: applying it brain-wide refuses (Codex review).
