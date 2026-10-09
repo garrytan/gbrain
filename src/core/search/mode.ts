@@ -908,7 +908,8 @@ export function attributeKnob<K extends keyof ModeBundle>(
  * reorder or add a knob without bumping a constant — a hash collision would
  * mean stale cache rows silently reading the wrong shape.
  */
-export const KNOBS_HASH_VERSION = 30;
+// Bounded PostgreSQL OR candidates change recall for identical search knobs.
+export const KNOBS_HASH_VERSION = 31;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The

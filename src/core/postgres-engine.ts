@@ -17,6 +17,7 @@ import { reservedTransactions, type ReservedTransactions } from './postgres-engi
 import { traceSqlOptions } from './sql-trace.ts';
 import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './postgres-engine/cancellation.ts';
 import { runBoundedStatement } from './postgres-engine/bounded-statement.ts';
+import { buildRelaxedKeywordSql } from './postgres-engine/relaxed-keyword.ts';
 export { hasPostgresCancellationCapability } from './postgres-engine/cancellation.ts';
 import type {
   BrainEngine,
@@ -1046,7 +1047,14 @@ export class PostgresEngine implements BrainEngine {
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
 
-    const rawQuery = `
+    const relaxedQuery = () => buildRelaxedKeywordSql({
+      ftsLanguage: ftsLang,
+      pageWhere: `${typeClause} ${typesClause} ${excludeSlugsClause}
+        ${afterDateClause} ${beforeDateClause} ${sourceClause} ${hardExcludeClause} ${visibilityClause}`,
+      chunkWhere: `${detailLow ? "AND cc.chunk_source = 'compiled_truth'" : ''} ${languageClause} ${symbolKindClause}`,
+      sourceFactorCase, innerLimitParam, limitParam, offsetParam,
+    });
+    const rawQuery = () => `
       WITH ranked_chunks AS (
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
@@ -1104,7 +1112,7 @@ export class PostgresEngine implements BrainEngine {
         if (relaxed) await tx`SET LOCAL enable_seqscan = off`;
         const boundParams = [...params];
         boundParams[0] = queryText;
-        const rows = await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
+        const rows = await tx.unsafe(relaxed ? relaxedQuery() : rawQuery(), boundParams as Parameters<typeof tx.unsafe>[1]);
         if (relaxed) await tx`SELECT set_config('enable_seqscan', ${previous[0].enable_seqscan}, true)`;
         return rows;
       }, { alwaysTransaction: true, jitOff: true });
