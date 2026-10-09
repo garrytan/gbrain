@@ -293,13 +293,22 @@ spawn_check() {
       bun run "$c" > "$LOG_FILE" 2>&1 &
       pid=$!
       # The watchdog owns no caller pipes (an orphaned sleep holding stdout
-      # stalled spawnSync callers for the whole $TIMEOUT) and its TERM trap
-      # takes its sleep down with it, closing the window where pkill -P runs
-      # before the sleep is forked.
-      ( trap 'kill "$nap" 2>/dev/null; exit 0' TERM
-        sleep "$TIMEOUT" & nap=$!
-        wait "$nap" && kill -TERM "$pid" 2>/dev/null && \
-          sleep 5 && kill -KILL "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 &
+      # stalled spawnSync callers for the whole $TIMEOUT). Each of its sleeps
+      # runs through `nap`: on TERM the watchdog kills that sleep and waits for
+      # it, so the sleep is gone before the watchdog exits and before the
+      # `wait "$cap_pid"` below returns. A TERM that lands between forking a
+      # sleep and recording its pid only sets `stop`, acted on once the pid is
+      # known (bash 3.2 has no signal masking).
+      ( nap() {
+          stop=
+          trap 'stop=1' TERM
+          sleep "$1" & n=$!
+          trap 'kill "$n" 2>/dev/null; wait "$n" 2>/dev/null; exit 0' TERM
+          if [ -n "$stop" ]; then kill "$n" 2>/dev/null; wait "$n" 2>/dev/null; exit 0; fi
+          wait "$n"
+        }
+        nap "$TIMEOUT" && kill -TERM "$pid" 2>/dev/null && \
+          nap 5 && kill -KILL "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 &
       cap_pid=$!
       wait "$pid" 2>/dev/null
       # Capture the check's exit code from ITS `wait`, before any watchdog
