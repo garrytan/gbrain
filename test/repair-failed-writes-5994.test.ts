@@ -97,7 +97,7 @@ async function replay(b: Brain) {
   const scope = await resolveRepairScope(b.engine, b.sourceId);
   const preview = await (await repairRunner(b.engine, { apply: false, logger })).run('failed-writes', scope, { explicit: true, sourceFlag: b.sourceId });
   return (await repairRunner(b.engine, { apply: true, logger })).run('failed-writes', scope,
-    { explicit: true, sourceFlag: b.sourceId, expect: preview.apply_command.split('--expect ')[1] });
+    { explicit: true, sourceFlag: b.sourceId, expect: preview.apply_command!.split('--expect ')[1] });
 }
 
 const committedReplay = async (b: Brain, slug: string) => (await b.engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests

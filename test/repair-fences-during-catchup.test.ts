@@ -104,7 +104,7 @@ function gate() {
   const hit = new Promise<void>(resolve => { reached = resolve; });
   return { release, reached, hit, released };
 }
-const hashOf = (result: RepairResult) => result.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+const hashOf = (result: RepairResult) => result.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
 const classes = (result: RepairResult, prefix: string) => Object.fromEntries((result.listing ?? []).map(entry => [entry.item.slice(prefix.length + 1), entry.class]));
 
 async function each(run: (engine: BrainEngine) => Promise<void>) {

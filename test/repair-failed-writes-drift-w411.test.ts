@@ -78,7 +78,7 @@ async function driftCase(engine: BrainEngine): Promise<void> {
       const preview = await (await repairRunner(engine, { apply: false, logger })).run('failed-writes', scope, { explicit: true, sourceFlag: sourceId });
       expect((preview.listing ?? []).map(entry => entry.class)).toEqual(['replay']);
       const applied = await (await repairRunner(engine, { apply: true, logger })).run('failed-writes', scope,
-        { explicit: true, sourceFlag: sourceId, expect: preview.apply_command.split('--expect ')[1] });
+        { explicit: true, sourceFlag: sourceId, expect: preview.apply_command!.split('--expect ')[1] });
       expect(applied.outcomes).toEqual({ file_database_drift: 1 });
 
       const again = await (await repairRunner(engine, { apply: false, logger })).run('failed-writes', scope, { explicit: true, sourceFlag: sourceId });

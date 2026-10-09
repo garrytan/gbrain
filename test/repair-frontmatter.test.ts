@@ -129,7 +129,7 @@ test('safe preview quotes only, hashes its set, and the apply writes exactly the
   expect(preview).toMatchObject({ mode: 'dry_run', affected: 1 });
   expect(details(preview).counts).toMatchObject({ safe: 1, interpretive: 0, needs_review: 0 });
   expect(details(preview).samples.safe!.diff).toContain('+author: "alice-example (citing acme-example) (original: https://example.invalid/a)"');
-  const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const hash = preview.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   expect(preview.apply_command).toBe(`gbrain repair frontmatter --source ${s.id} --apply --expect ${hash} --yes`);
   expect((await s.run()).apply_command).toBe(preview.apply_command);
   expect(s.read('notes/roundup.md')).toBe(QUOTABLE);
@@ -154,7 +154,7 @@ test('interpretations wait for --include-ambiguous (two-pass next_action), which
   expect((await s.sync()).held_count).toBe(2);
   const safe = await s.run();
   expect(details(safe).counts).toMatchObject({ safe: 1, interpretive: 0, interpretive_pending: 2 });
-  const safeHash = safe.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const safeHash = safe.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   expect(details(safe).next_actions.map(action => action.argv)).toEqual([
     ['gbrain', 'repair', 'frontmatter', '--source', s.id, '--apply', '--expect', safeHash, '--yes'],
     ['gbrain', 'repair', 'frontmatter', '--source', s.id, '--include-ambiguous'],
@@ -169,7 +169,7 @@ test('interpretations wait for --include-ambiguous (two-pass next_action), which
   expect(s.read('notes/a.md')).toBe(folded(1));
   const one = await s.run({ includeAmbiguous: true, only: ['notes/a.md'] });
   expect(details(one).counts).toMatchObject({ interpretive: 1 });
-  const oneHash = one.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const oneHash = one.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   expect(one.apply_command).toBe(`gbrain repair frontmatter --source ${s.id} --only notes/a.md --include-ambiguous --apply --expect ${oneHash} --yes`);
   expect((await refusal(() => s.run({ apply: true, expect: oneHash, includeAmbiguous: true }))).code).toBe('preview_changed');
   const applied = await s.run({ apply: true, expect: oneHash, includeAmbiguous: true, only: ['notes/a.md'] });
@@ -189,7 +189,7 @@ test('a file edited after the preview is changed_since_preview and keeps its new
   expect(preview.affected).toBe(1);
   const edited = QUOTABLE.replace('A synthetic roundup.', 'An edited roundup.');
   s.write('notes/roundup.md', edited);
-  const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const hash = preview.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   const applied = await s.run({ apply: true, expect: hash, includeAmbiguous: true });
   expect(applied).toMatchObject({ applied: 0, outcomes: { changed_since_preview: 1 } });
   expect(s.read('notes/roundup.md')).toBe(edited);
@@ -210,7 +210,7 @@ test('a held modified file: put_page stays refused for drift, the repair writes 
     params: { slug: 'notes/post', content: note('Agent write'), source_id: s.id, expected_revision: revision } }));
   expect(drift.detail).toBe('file_database_drift');
   const preview = await s.run({ includeAmbiguous: true });
-  const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const hash = preview.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   const proposed = details(preview).diffs[0]!;
   expect(proposed).toMatchObject({ path: 'notes/post.md', class: 'interpretive', selected: true });
   const applied = await s.run({ apply: true, expect: hash, includeAmbiguous: true });
@@ -258,7 +258,7 @@ test('apply refuses while an unfinished managed sync cursor still names a select
   const s = await managed(engine, { 'notes/roundup.md': QUOTABLE });
   await s.sync();
   const preview = await s.run();
-  const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const hash = preview.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   const runId = randomUUID();
   await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync',$1,$2::text::jsonb)`,
     [`fixture-${runId}`, JSON.stringify([{ sourceId: s.id, runId, index: 0, total: 1 }])]);
@@ -313,7 +313,7 @@ test('a held renamed file: the repair moves the old page with its id instead of 
   await s.sync();
   expect((await s.holds())[0]).toMatchObject({ path: 'notes/new.md', meta: { rename_from: { slug: 'notes/old', pageId: page.id } } });
   const preview = await s.run({ includeAmbiguous: true });
-  const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const hash = preview.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   const applied = await s.run({ apply: true, expect: hash, includeAmbiguous: true });
   expect(applied.outcome_items?.[0]?.detail).toMatchObject({ imported: 'renamed', hold_cleared: true });
   expect((await engine.getPage('notes/new', { sourceId: s.id }))?.id).toBe(page.id);
@@ -338,7 +338,7 @@ test('a rename held because the old page changed is re-bound to its current revi
   expect(details(safe).counts).toMatchObject({ safe: 0, interpretive_pending: 1 });
   const preview = await s.run({ includeAmbiguous: true });
   expect(details(preview).diffs[0]!.fixes.join(' ')).toContain('Re-bind the rename of notes/y.md to page notes/x');
-  const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const hash = preview.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   const applied = await s.run({ apply: true, expect: hash, includeAmbiguous: true });
   expect(applied.outcome_items?.[0]?.detail).toMatchObject({ imported: 'renamed', hold_cleared: true, written: false });
   expect((await engine.getPage('notes/y', { sourceId: s.id }))).toMatchObject({ id: x.id, title: 'Y' });
@@ -357,7 +357,7 @@ test('database side: a page whose body begins with its own frontmatter block is 
   const preview = await s.run({ includeAmbiguous: true });
   expect(details(preview).diffs).toEqual([expect.objectContaining({ path: 'notes/fact.md', class: 'interpretive' })]);
   expect(details(preview).needs_review).toEqual([expect.objectContaining({ path: 'notes/twice.md', code: 'embedded_frontmatter' })]);
-  const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const hash = preview.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   const applied = await s.run({ apply: true, expect: hash, includeAmbiguous: true });
   expect(applied.outcome_items?.[0]?.detail).toMatchObject({ imported: 'updated', written: false });
   const fixed = (await engine.getPage('notes/fact', { sourceId: s.id }))!;
@@ -383,7 +383,7 @@ test('legacy brain: the apply backs the file up, writes it, imports it, clears i
     const s = fixture(engine, id, root, (path, content) => writeFileSync(join(root, path), content));
     const preview = await s.run({ includeAmbiguous: true });
     expect(details(preview).counts).toMatchObject({ safe: 1, interpretive: 1 });
-    const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+    const hash = preview.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
     const applied = await s.run({ apply: true, expect: hash, includeAmbiguous: true });
     expect(applied.outcome_items!.find(o => o.detail?.path === 'notes/post.md')!.detail).toMatchObject({ written: true, hold_cleared: true });
     expect(await s.holds()).toEqual([]);
@@ -400,7 +400,7 @@ test('legacy brain: the apply backs the file up, writes it, imports it, clears i
 test('the CLI apply asks for destructive consent: without --yes a non-interactive run exits 3 and writes nothing', () => each(async engine => {
   const s = await managed(engine, { 'notes/roundup.md': QUOTABLE });
   await s.sync();
-  const hash = (await s.run()).apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const hash = (await s.run()).apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   _resetCliExitVerdictForTests();
   let printed = '';
   const original = console.log, write = process.stdout.write;
@@ -430,7 +430,7 @@ test('database side: a slug-derived title under a file that names one is re-impo
   expect(details(preview).diffs).toEqual([expect.objectContaining({ path: 'notes/launch-plan.md', class: 'interpretive' })]);
   expect(details(preview).diffs[0]!.fixes[0]).toContain('title was derived from the slug');
   expect(details(preview).needs_review).toEqual([expect.objectContaining({ path: 'notes/private.md', reason: 'ambiguous_protected_key', key: 'visibility', flag: 'imported_before_hold' })]);
-  const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+  const hash = preview.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
   await s.run({ apply: true, expect: hash, includeAmbiguous: true });
   expect((await engine.getPage('notes/launch-plan', { sourceId: s.id }))?.title).toBe('The real launch plan');
 }), 180_000);

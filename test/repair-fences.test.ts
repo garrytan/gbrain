@@ -166,7 +166,7 @@ async function gitEffectsSettled(engine: BrainEngine, sourceId: string) {
 
 const incarnationOf = async (engine: BrainEngine, id: string) => (await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [id]))[0]!.incarnation;
 const details = (result: RepairResult) => result.details as unknown as FencesPreviewDetails;
-const hashOf = (result: RepairResult) => result.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+const hashOf = (result: RepairResult) => result.apply_command!.split('--expect ')[1]!.split(' ')[0]!;
 const expectNoSecrets = (value: unknown) => { const text = typeof value === 'string' ? value : JSON.stringify(value); for (const secret of [CLAIM, MCLAIM, 'Sentinelclaimzr4', 'Sentinelmanualzr4']) expect(text).not.toContain(secret); };
 /** Result fields that carry no diff: the preview's diffs show file lines to the operator by design (D14). */
 const surfaceOf = (result: RepairResult) => ({ ...result, details: undefined });
@@ -200,7 +200,7 @@ test('preview lists every tier with its cost and calls no model; the printed app
   expect(result.apply_command).toBe(`gbrain repair fences --source ${s.id} --apply --expect ${hashOf(result)}`);
   expect(s.read('people/model.md')).toBe(md('Model', noHeader()));
   // The printed command runs exactly as printed.
-  const applied = (JSON.parse(await cli(engine, [...result.apply_command.split(' ').slice(2), '--json'])) as { results: RepairResult[] }).results[0]!;
+  const applied = (JSON.parse(await cli(engine, [...result.apply_command!.split(' ').slice(2), '--json'])) as { results: RepairResult[] }).results[0]!;
   expect(applied).toMatchObject({ mode: 'apply', applied: 3, repaired: 3, remaining: { enum_unmapped: 1 }, outcomes: { repaired: 3 } });
   expect(calls).toHaveLength(1);
   const prompt = `${calls[0]!.system}\n${JSON.stringify(calls[0]!.messages)}`;

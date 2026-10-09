@@ -30,7 +30,7 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-interface RepairJson { results: Array<{ affected: number; residuals: Record<string, number>; apply_command: string; applied: number; skipped: number;
+interface RepairJson { results: Array<{ affected: number; residuals: Record<string, number>; apply_command: string | null; applied: number; skipped: number;
   listing?: Array<{ item: string; class: string; detail?: string }>; outcomes?: Record<string, number>; outcome_items?: Array<{ item: string; outcome: string }> }> }
 
 async function refusal(run: () => Promise<unknown>): Promise<OperationError> {
@@ -66,7 +66,7 @@ for (const kind of testBackends()) {
       try { await withEnv({ GBRAIN_HOME: home }, () => runRepairCommand(engine, ['stale-atoms', ...args, '--json'])); } finally { console.log = original; }
       return JSON.parse(lines.join('\n')) as RepairJson;
     };
-    const hashOf = (json: RepairJson) => json.results[0].apply_command.match(/--expect ([0-9a-f]+)/)![1];
+    const hashOf = (json: RepairJson) => json.results[0].apply_command!.match(/--expect ([0-9a-f]+)/)![1];
     const atom = async (sourceId: string, slug: string) => (await engine.executeRaw<{ deleted: boolean; frontmatter: Record<string, unknown> }>(
       'SELECT deleted_at IS NOT NULL AS deleted, frontmatter FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]))[0];
     const putAtom = (sourceId: string, slug: string, frontmatter: Record<string, unknown>) =>
@@ -122,6 +122,16 @@ for (const kind of testBackends()) {
       expect((await repair(['--source', sourceId])).results[0].affected).toBe(0);
     }, 60_000);
 
+    // #6351: an empty preview saves no approved set, so an apply command naming its hash could only fail with preview_changed.
+    test('an empty preview offers no apply command, matching the text output', async () => {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      const sourceId = `stale-empty-${randomUUID().slice(0, 8)}`;
+      await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+      const preview = await repair(['--source', sourceId]);
+      expect(preview.results[0]).toMatchObject({ affected: 0, apply_command: null });
+      expect(await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='repair-approval' AND fingerprint LIKE 'stale-atoms:%'")).toEqual([]);
+    });
+
     test('unmanaged: an atom edited between preview and apply reports changed_since_preview and is kept', async () => {
       const sourceId = await unmanagedFixture();
       const hash = hashOf(await repair(['--source', sourceId]));
@@ -150,7 +160,7 @@ for (const kind of testBackends()) {
         return JSON.parse(lines.join('\n')) as RepairJson;
       });
       expect(preview.results[0].residuals).toEqual({ origin_gone: 30, origin_changed: 0 });
-      const applied = await repair(preview.results[0].apply_command.split(' ').slice(3));
+      const applied = await repair(preview.results[0].apply_command!.split(' ').slice(3));
       expect(applied.results[0].outcomes).toEqual({ retired: 30 });
       const after = await computeAtomProvenanceDriftCheck(engine);
       expect(Number((before.details as Record<string, number>).source_gone) - Number((after.details as Record<string, number>).source_gone)).toBe(30);

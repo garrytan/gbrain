@@ -126,7 +126,7 @@ describe('gbrain repair cost surfaces for a spends:llm kind', () => {
       expect(stopped).toMatchObject({ applied: 2, complete: false, stopped: { reason: 'budget_exhausted' },
         cost: { llm_usd: 0.5, llm_cap_remaining_usd: 0 } });
       expect(stopped.stopped!.message).toContain('$0.5000 spent of $0.5000');
-      expect(stopped.stopped!.message).toContain(stopped.apply_command);
+      expect(stopped.stopped!.message).toContain(stopped.apply_command!);
 
       const resumed = await runner.run(stub.spec.kind, scope, { maxLlmUsd: 0.5 });
       expect(resumed).toMatchObject({ applied: 1, complete: true, resumed_from: { phase: 0, id: 2 }, cost: { llm_usd: 0.25, llm_cap_remaining_usd: 0.25 } });

@@ -133,7 +133,8 @@ export interface RepairResult {
   skipped: number;
   complete: boolean;
   stopped?: { reason: string; message: string; fix?: Action };
-  apply_command: string;
+  /** Null for an empty preview of a preview-bound kind: no approved set was saved, so no `--expect` apply could succeed (#6351). */
+  apply_command: string | null;
   /** Kinds with a report hook: items repaired by this run (dry run: 0). `complete` keeps its meaning (every pending item was attempted). */
   repaired?: number;
   /** Kinds with a report hook: what still needs repair after this run, counted by reason. */
@@ -273,7 +274,7 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
       llm_cap_remaining_usd: llmLeft(0) } : {}) },
     capacity: counters.map(({ scope: key, resource, used, limit, stop_at }) => ({ scope: key, resource, used, limit, stop_at })),
     resumed_from: resumed, applied: 0, skipped: 0, complete: false, ...(plan.warnings?.length ? { warnings: plan.warnings } : {}),
-    apply_command: `gbrain repair ${handler.kind}${opts.sourceFlag ? ` --source ${opts.sourceFlag}` : ''}${(opts.applyArgs ?? []).map(arg => ` ${arg}`).join('')}`
+    apply_command: !opts.apply && plan.preview_hash && plan.items.length === 0 ? null : `gbrain repair ${handler.kind}${opts.sourceFlag ? ` --source ${opts.sourceFlag}` : ''}${(opts.applyArgs ?? []).map(arg => ` ${arg}`).join('')}`
       + `${[...(opts.only ?? []).flatMap(path => ['--only', path]), ...(opts.skip ?? []).flatMap(path => ['--skip', path]),
         ...(opts.slugs ?? []).flatMap(slug => ['--slug', slug])].map(arg => ` ${shellQuote([arg])}`).join('')}`
       + `${opts.includeAmbiguous ? ' --include-ambiguous' : ''}${llm && opts.noLlm ? ' --no-llm' : ''}${llm && opts.maxLlmUsd !== undefined ? ` --max-usd ${opts.maxLlmUsd}` : ''}`

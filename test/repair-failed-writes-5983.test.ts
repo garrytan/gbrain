@@ -112,7 +112,7 @@ test('refused caller writes replay once from their failed receipts; later writes
         await expect((await repairRunner(engine, { apply: true, logger })).run('failed-writes', scope, { explicit: true, sourceFlag: sourceId }))
           .rejects.toThrow(/replays only the set a preview printed/);
         const applied = await (await repairRunner(engine, { apply: true, logger })).run('failed-writes', scope,
-          { explicit: true, sourceFlag: sourceId, expect: preview.apply_command.split('--expect ')[1] });
+          { explicit: true, sourceFlag: sourceId, expect: preview.apply_command!.split('--expect ')[1] });
         expect(applied.outcomes).toEqual({ replayed: 4 });
 
         expect((await engine.getTags('people/alice-example', { sourceId }))).toEqual(['founder']);

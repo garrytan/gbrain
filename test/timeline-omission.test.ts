@@ -242,7 +242,7 @@ describe('#5969 (D3) concurrency and replay', () => {
       const scope = await resolveRepairScope(f.engine, f.sourceId);
       const preview = await (await repairRunner(f.engine, { apply: false, logger })).run('failed-writes', scope, { explicit: true, sourceFlag: f.sourceId });
       const applied = await (await repairRunner(f.engine, { apply: true, logger })).run('failed-writes', scope,
-        { explicit: true, sourceFlag: f.sourceId, expect: preview.apply_command.split('--expect ')[1] });
+        { explicit: true, sourceFlag: f.sourceId, expect: preview.apply_command!.split('--expect ')[1] });
       expect(applied.outcomes).toEqual({ replayed: 1 });
       expect(await f.rows()).toEqual([]);
       expect(await f.engine.getTags(slug, { sourceId: f.sourceId })).toEqual(['launched']);

@@ -36,7 +36,7 @@ import { withEnv } from './helpers/with-env.ts';
 const ALICE = 'people/alice-example';
 const ACME = 'companies/acme-example';
 
-interface RepairJson { results: Array<{ affected: number; residuals: Record<string, number>; apply_command: string; applied: number; skipped: number;
+interface RepairJson { results: Array<{ affected: number; residuals: Record<string, number>; apply_command: string | null; applied: number; skipped: number;
   listing?: Array<{ item: string; class: string; detail?: string }>; outcomes?: Record<string, number> }> }
 
 /** Harness transcripts (one gbrain scratch project, one normal project) and a session corpus with a paste. */
@@ -63,7 +63,7 @@ async function repair(engine: BrainEngine, args: string[]): Promise<RepairJson> 
   try { await runRepairCommand(engine, ['captured-facts', ...args, '--json']); } finally { console.log = original; }
   return JSON.parse(lines.join('\n')) as RepairJson;
 }
-const applyArgs = (json: RepairJson) => json.results[0].apply_command.split(' ').slice(3);
+const applyArgs = (json: RepairJson) => json.results[0].apply_command!.split(' ').slice(3);
 
 async function refusal(run: () => Promise<unknown>): Promise<OperationError> {
   try { await run(); } catch (error) { if (error instanceof OperationError) return error; throw error; }
@@ -91,6 +91,8 @@ for (const backend of testBackends()) {
     test('doctor finding, preview, hash-bound apply, paste kept until --include-ambiguous, remember still works', async () => {
       await withEnv({ CLAUDE_CONFIG_DIR: claude }, () => managedBrain(async ({ engine, ctx }) => {
         await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
+        // #6351: the shared repair core offers no apply command for an empty preview of a preview-bound kind.
+        expect((await repair(engine, [])).results[0]).toMatchObject({ affected: 0, apply_command: null });
         const write = (fact: string, entity: string | null, provenance: string, sessionId: string) =>
           writeSingleFact(engine, 'default', { fact, entity, provenance, sessionId }).then(r => r.id);
         const self = await write('Alice Example prefers Rust for systems work', ALICE, 'hook:writeback', 'sess-self');
