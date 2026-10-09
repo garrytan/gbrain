@@ -53,7 +53,7 @@ op	request_tools	no_canonical_write	Persists the calling client's MCP tool surfa
 op	connector_sync	coordinator	Managed connector sync admits pages and checkpoints through the coordinator.
 op	ontology_propose	engine_guard	mergeOntologyFact inserts into facts; the managed writer trigger refuses it on a managed brain.
 op	chronicle_backfill	no_canonical_write	Queues chronicle jobs; the chronicle extractor publishes through publishMaintenancePage.
-op	extract_entities	early_refusal	enrichment-service writes through direct importFromContent, which refuses on managed brains.
+op	extract_entities	coordinator	Public extraction threads its OperationContext into enrichment: stub pages and timeline rows use the page journal, and managed backlinks use the coordinated database writer; legacy/internal enrichment keeps its existing direct lane.
 op	extraction_review	no_canonical_write	Review queue state only.
 op	entity_identity_link	no_canonical_write	entity_identity side table.
 op	entity_identity_unlink	no_canonical_write	entity_identity side table.

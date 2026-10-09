@@ -14,6 +14,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import type { OperationContext } from './ops/contract.ts';
 import { waitForCapacity } from './backoff.ts';
 import { quarantineMarkers } from './extraction-review.ts';
 import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
@@ -27,6 +28,8 @@ import { isAvailable } from './ai/gateway.ts';
 // #4222: shared generic-token reject list — same list gates the by-mention
 // gazetteer and drives the junk_entity_hubs doctor check.
 import { isJunkEntityName } from './entity-name-quality.ts';
+import { submitPageMutation } from './persistence/page-mutations.ts';
+import { coordinatedDatabaseWrite } from './persistence/database-write.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,6 +62,8 @@ export interface EnrichmentTrustOptions {
   trusted?: boolean;
   /** Source to read/write in (multi-source brains). Omitted → engine default. */
   sourceId?: string;
+  /** Public operation context: routes MCP writes through the managed persistence coordinator. */
+  writeContext?: OperationContext;
 }
 
 export interface EnrichmentResult {
@@ -209,31 +214,42 @@ export async function enrichEntity(
       // carry provenance + unverified markers until the owner reviews them.
       ...(trusted ? {} : quarantineMarkers()),
     };
-    try {
-      // #3994: canonical import pipeline so the stub is chunked (+ embedded
-      // when a provider is configured) and reachable by the recall arms.
-      const md = serializeMarkdown(frontmatter, content, '', { type, title, tags: [] });
-      await importFromContent(engine, slug, md, {
-        noEmbed: !isAvailable('embedding'),
-        ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+    const md = serializeMarkdown(frontmatter, content, '', { type, title, tags: [] });
+    if (opts?.writeContext) {
+      // Remote/public writes must enter through the durable page journal. A
+      // managed-brain refusal is therefore terminal here; never fall back to
+      // a direct engine write after the coordinator rejected the mutation.
+      await submitPageMutation(opts.writeContext, {
+        operation: 'put_page',
+        params: {
+          slug,
+          content: md,
+          ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
+        },
       });
-    } catch (e) {
-      // Fail-open fallback: a pipeline error (parse edge case, size guard)
-      // must never regress the batch — the pre-#3994 direct write still
-      // produces a page (unchunked, but present + reviewable). Warn loudly:
-      // silence here would hide that the stub is invisible to vector recall
-      // until the next `gbrain embed --stale` / re-import sweep.
-      process.stderr.write(
-        `[enrich] import pipeline failed for stub ${slug} (${e instanceof Error ? e.message : String(e)}); ` +
-        'falling back to a direct unchunked write — the page exists but is not chunked/embedded until re-imported.\n',
-      );
-      await engine.putPage(slug, {
-        title,
-        type,
-        compiled_truth: content,
-        timeline: '',
-        frontmatter,
-      }, scope);
+    } else {
+      try {
+        // #3994: canonical import pipeline so the stub is chunked (+ embedded
+        // when a provider is configured) and reachable by the recall arms.
+        await importFromContent(engine, slug, md, {
+          noEmbed: !isAvailable('embedding'),
+          ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+        });
+      } catch (e) {
+        // Legacy/internal lane keeps its historical best-effort fallback. The
+        // MCP lane above is intentionally fail-closed on coordinator errors.
+        process.stderr.write(
+          `[enrich] import pipeline failed for stub ${slug} (${e instanceof Error ? e.message : String(e)}); ` +
+          'falling back to a direct unchunked write — the page exists but is not chunked/embedded until re-imported.\n',
+        );
+        await engine.putPage(slug, {
+          title,
+          type,
+          compiled_truth: content,
+          timeline: '',
+          frontmatter,
+        }, scope);
+      }
     }
     action = 'created';
   }
@@ -241,23 +257,52 @@ export async function enrichEntity(
   // 4. Add timeline entry
   let timelineAdded = false;
   try {
-    await engine.addTimelineEntry(slug, { // gbrain-allow-direct-insert: auto-timeline reconciliation triggered by entity reference in source markdown
+    const timeline = {
       date: new Date().toISOString().split('T')[0] ?? '',
       summary: `Referenced in [${request.sourceSlug}](${request.sourceSlug}) — ${request.context}`,
       source: request.sourceSlug,
-    }, scope);
+    };
+    if (opts?.writeContext) {
+      await submitPageMutation(opts.writeContext, {
+        operation: 'add_timeline_entry',
+        params: { slug, ...timeline, ...(opts.sourceId ? { source_id: opts.sourceId } : {}) },
+      });
+    } else {
+      await engine.addTimelineEntry(slug, timeline, scope); // gbrain-allow-direct-insert: auto-timeline reconciliation triggered by entity reference in source markdown
+    }
     timelineAdded = true;
   } catch {
-    // Timeline add failed (page might not support it)
+    // Timeline add remains best-effort after the entity page committed.
   }
 
   // 5. Add backlink from entity to source
   let backlinkCreated = false;
   try {
-    await engine.addLink(slug, request.sourceSlug, `Entity mention from ${request.sourceSlug}`, undefined, undefined, undefined, undefined, opts?.sourceId ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId } : undefined); // gbrain-allow-direct-insert: auto-link reconciliation triggered by entity reference in source markdown
+    const addBacklink = (target: BrainEngine, targetSourceId: string) => target.addLink(
+      slug,
+      request.sourceSlug,
+      `Entity mention from ${request.sourceSlug}`,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { fromSourceId: targetSourceId, toSourceId: targetSourceId },
+    );
+    if (opts?.writeContext) {
+      const managed = await coordinatedDatabaseWrite(
+        opts.writeContext,
+        'extract_entities',
+        slug,
+        [slug, request.sourceSlug],
+        addBacklink,
+      );
+      if (!managed) await addBacklink(engine, sourceId);
+    } else {
+      await engine.addLink(slug, request.sourceSlug, `Entity mention from ${request.sourceSlug}`, undefined, undefined, undefined, undefined, opts?.sourceId ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId } : undefined); // gbrain-allow-direct-insert: auto-link reconciliation triggered by entity reference in source markdown
+    }
     backlinkCreated = true;
   } catch {
-    // Link might already exist
+    // Link remains best-effort after the entity page committed.
   }
 
   return {
@@ -289,7 +334,11 @@ export async function enrichEntities(
     if (config?.throttle !== false) {
       await waitForCapacity({ maxAttempts: 5 }); // shorter timeout for batch items
     }
-    const result = await enrichEntity(engine, req, { trusted: config?.trusted, sourceId: config?.sourceId });
+    const result = await enrichEntity(engine, req, {
+      trusted: config?.trusted,
+      sourceId: config?.sourceId,
+      writeContext: config?.writeContext,
+    });
     results.push(result);
     config?.onProgress?.(results.length, requests.length, req.entityName);
   }
@@ -319,7 +368,12 @@ export async function extractAndEnrich(
     sourceSlug,
   }));
 
-  return enrichEntities(engine, requests, { trusted: opts?.trusted, sourceId: opts?.sourceId, throttle: opts?.throttle });
+  return enrichEntities(engine, requests, {
+    trusted: opts?.trusted,
+    sourceId: opts?.sourceId,
+    writeContext: opts?.writeContext,
+    throttle: opts?.throttle,
+  });
 }
 
 // ---------------------------------------------------------------------------

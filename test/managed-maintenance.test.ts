@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { enrichEntity } from '../src/core/enrichment-service.ts';
 import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
 import { runPhaseSynthesize } from '../src/core/cycle/synthesize.ts';
 import { runPhasePatterns } from '../src/core/cycle/patterns.ts';
@@ -140,6 +142,57 @@ test('runCycle consolidates only its explicitly selected source across two eligi
     expect((await engine.readPageSnapshot('people/example', { sourceId: otherSourceId }))!.revision).toBe(otherBefore.revision);
     expect(readFileSync(otherFile, 'utf8')).toBe(otherBytes);
     expect(statSync(otherFile).mtimeMs).toBe(otherModified);
+  });
+}, 30_000);
+
+test('extract_entities uses the managed writer and never falls back to a partial direct stub', async () => {
+  await fixture(async (engine, sourceId) => {
+    const sourceSlug = 'notes/extract-entities-fixture';
+    const entitySlug = 'people/synthetic-cedar-person';
+    const blockedSlug = 'people/synthetic-amber-person';
+    const clientId = `extract-entities-${randomUUID().slice(0, 8)}`;
+    await engine.putPage(sourceSlug, {
+      title: 'Synthetic extraction fixture', type: 'note', compiled_truth: 'Synthetic source page.', timeline: '', frontmatter: {},
+    }, { sourceId });
+    await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_secret_hash,client_name,scope,source_id,bound_slug_prefixes)
+      VALUES($1,'fixture-hash','Synthetic extract_entities fixture','read write',$2,NULL)`, [clientId, sourceId]);
+    const remote: OperationContext = {
+      engine, config: { engine: engine.kind, embedding_disabled: true }, remote: true, transport: 'http', sourceId,
+      dryRun: false, logger: { info() {}, warn() {}, error() {}, debug() {} },
+      auth: { token: 'fixture', clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['read', 'write'], sourceId },
+    } as OperationContext;
+
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    await expect(enrichEntity(engine, {
+      entityName: 'Synthetic Cedar Person', entityType: 'person', context: 'legacy managed-path reproduction', sourceSlug,
+    }, { sourceId })).rejects.toHaveProperty('code', 'P0001');
+    expect(await engine.getPage(entitySlug, { sourceId })).toBeNull();
+
+    startPersistenceConsumer(engine, { engine: engine.kind, embedding_disabled: true });
+    const result = await operationsByName.extract_entities!.handler(remote, {
+      text: 'Synthetic Cedar Person appears in this technical fixture.', source_slug: sourceSlug,
+    }) as { status: string; count: number; quarantined: number; entities: Array<{ slug: string; action: string; timelineAdded: boolean; backlinkCreated: boolean }> };
+    expect(result).toMatchObject({ status: 'ok', count: 1, quarantined: 1 });
+    expect(result.entities).toEqual([expect.objectContaining({ slug: entitySlug, action: 'created', timelineAdded: true, backlinkCreated: true })]);
+    const page = await engine.getPage(entitySlug, { sourceId });
+    expect(page?.frontmatter.provenance).toBe('auto-extracted');
+    expect(page?.frontmatter.status).toBe('unverified');
+    expect(await engine.getTimeline(entitySlug, { sourceId })).toHaveLength(1);
+    expect((await engine.getLinks(entitySlug, { sourceId })).filter(link => link.to_slug === sourceSlug)).toHaveLength(1);
+    const requests = await engine.executeRaw<{ operation: string; state: string }>(
+      'SELECT operation,state FROM persistence_requests WHERE source_id=$1 AND slug=$2 ORDER BY operation', [sourceId, entitySlug]);
+    expect(requests).toEqual([
+      { operation: 'add_timeline_entry', state: 'committed' },
+      { operation: 'put_page', state: 'committed' },
+    ]);
+
+    const binding = await getWorktreeBinding(engine, sourceId);
+    expect(binding).not.toBeNull();
+    await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [binding!.worktree_id]);
+    await expect(operationsByName.extract_entities!.handler(remote, {
+      text: 'Synthetic Amber Person appears in this blocked fixture.', source_slug: sourceSlug,
+    })).rejects.toMatchObject({ code: 'write_pending' });
+    expect(await engine.getPage(blockedSlug, { sourceId })).toBeNull();
   });
 }, 30_000);
 
