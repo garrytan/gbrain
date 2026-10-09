@@ -144,6 +144,7 @@ export const STAMPS: Stamp[] = [
   jsonVersionStamp('openclaw.plugin.json'),
   jsonVersionStamp('.codex-plugin/plugin.json'),
   jsonVersionStamp('.claude-plugin/plugin.json'),
+  jsonVersionStamp('.cursor-plugin/plugin.json'),
   {
     file: 'BOOTSTRAP_FOR_AGENTS.md',
     read: (text) => RUNBOOK_STAMP.exec(text)?.[1] ?? null,

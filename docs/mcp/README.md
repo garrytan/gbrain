@@ -37,7 +37,7 @@ characters by `test/mcp-schema-budget.test.ts`); the longer guidance for each
 starter tool is in the [MCP tool reference](TOOL_REFERENCE.md).
 
 Client-specific details: [ChatGPT](CHATGPT.md), [Claude Code](CLAUDE_CODE.md),
-[Claude Desktop](CLAUDE_DESKTOP.md), [Codex](CODEX.md),
+[Claude Desktop](CLAUDE_DESKTOP.md), [Codex](CODEX.md), [Cursor](CURSOR.md),
 [opencode](OPENCODE.md), [Perplexity](PERPLEXITY.md),
 [OpenClaw](OPENCLAW.md), and the [adapter reference](../guides/harness-adapters.md).
 

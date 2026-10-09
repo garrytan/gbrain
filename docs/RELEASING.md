@@ -805,3 +805,5 @@ When personas change in `skills/plugin-lanes.json#personas`, also hand-edit
 `.claude-plugin/marketplace.json`: the variant entries must match the
 personas block exactly (`test/codex-plugin-manifest.test.ts` pins the
 mapping, so a persona added without a marketplace entry fails the suite).
+
+The release `publish-codex-plugin` job copies `.agents/`, `.codex-plugin/`, `.claude-plugin/`, `.cursor-plugin/`, `plugin/` and `plugin-variants/` into the slim `codex-plugin` branch. Cursor users install by cloning that branch into `~/.cursor/plugins/local/gbrain` ([docs/mcp/CURSOR.md](mcp/CURSOR.md)), so renaming the branch or dropping a folder from that copy breaks their installs.

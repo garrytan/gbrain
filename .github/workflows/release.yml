@@ -340,7 +340,7 @@ jobs:
   # the PLUGIN, not the 90+MiB dev repo. Each release force-publishes a
   # single history-less commit to the `codex-plugin` branch carrying exactly
   # the plugin artifacts: the manifests (.agents/, .codex-plugin/,
-  # .claude-plugin/), the shared launcher, and the curated plugin/ tree. All
+  # .claude-plugin/, .cursor-plugin/), the shared launcher, and the curated plugin/ tree. All
   # plugin paths are repo-root-relative, so the slim branch is self-consistent
   # by construction. The repo-root source form keeps working for from-source
   # installs. Same trust model as the force-advanced latest-stable tag.
@@ -368,8 +368,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/plugin-dist
-          cp -R .agents .codex-plugin .claude-plugin plugin plugin-variants /tmp/plugin-dist/
-          # Both plugin manifests declare "license": "MIT"; the slim branch is
+          cp -R .agents .codex-plugin .claude-plugin .cursor-plugin plugin plugin-variants /tmp/plugin-dist/
+          # The plugin manifests declare "license": "MIT"; the slim branch is
           # exactly the artifact whose consumers never see the repo root, so
           # it must carry the license text.
           cp LICENSE /tmp/plugin-dist/ 2>/dev/null || cp LICENSE.md /tmp/plugin-dist/LICENSE
@@ -392,7 +392,7 @@ jobs:
           git config user.name "gbrain-release-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -q -m "gbrain v${RELEASE_VERSION} codex/claude plugin dist (history-less; source: the release commit)"
+          git commit -q -m "gbrain v${RELEASE_VERSION} codex/claude/cursor plugin dist (history-less; source: the release commit)"
           # Out-of-band credential (mirrors the publish-template job): the PAT
           # rides GIT_ASKPASS at prompt time, never the push URL / argv (where
           # a same-user process could read it from the process table).
