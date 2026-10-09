@@ -179,7 +179,7 @@ describe('D2 — knobsHash differs across cross-modal knob values', () => {
     return resolveSearchMode({ mode: 'balanced' });
   }
 
-  test('KNOBS_HASH_VERSION is 30 (cross-modal still appended; …; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256; 28→29 evb= expansion variant budget fold; 29→30 exact-title order #5889)', () => {
+  test('KNOBS_HASH_VERSION is 31 (cross-modal still appended; …; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256; 28→29 evb= expansion variant budget fold; 29→30 exact-title order #5889)', () => {
     // v0.35 ladder: 1→2 reranker, 2→3 floor_ratio. v0.36 piggybacks on v=3
     // with 7 cross-modal knobs + column/provider context. v0.40.4 (salem) +
     // v0.39 T21 (master) bump to v=4 for graph_signals + schema-pack fields.
@@ -217,7 +217,7 @@ describe('D2 — knobsHash differs across cross-modal knob values', () => {
     // confidence floor, Phase E2 / Cat 13) — same unshipped epoch, no extra bump.
     // 29→30 (#5889): exact-title-first title-arm order + weight-A remote
     // title predicate reorder rows for identical knobs; version-only.
-    expect(KNOBS_HASH_VERSION).toBe(30);
+    expect(KNOBS_HASH_VERSION).toBe(31);
   });
 
   test('flipping unified_multimodal changes the hash', () => {
