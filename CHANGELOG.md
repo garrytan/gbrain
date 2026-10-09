@@ -10,6 +10,25 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.122.0] - 2026-10-09
+
+**An eval-only evidence brief for the LongMemEval harness: a cheap model's claims, each with a verbatim quote, a pointer and a date, checked against the sessions before a reader sees them.**
+
+Wave 1 of the 10x memory advantage plan asked whether a short, model-written brief can stand in for the five whole conversations gbrain hands a reader (about 14,000 tokens a question). `src/eval/longmemeval/evidence-brief.ts` is the builder the gbrain-evals pilot used. It makes no model call and changes no product default; nothing outside the eval harness imports it.
+
+- **Grounded claims.** Every claim's quote is located in its session with the dream-cycle verifier (`groundSource`, `groundQuote`, `unsupportedNumericClaims`) and carries a pointer (session id, UTF-16 span, SHA-256 of the span and of the body) plus the session's date. Claims whose quote is not found, that cross or misattribute a speaker turn, that state a number the session does not, or that sit in instruction-like context are dropped and counted.
+- **Provenance, not truth.** A paraphrase whose negation disagrees with its quote is withheld (the reader sees the quote), a later correction the brief did not cite is appended verbatim, and a count is never presented as complete. Unit fixtures cover an omitted correction, a reversed negation, a wrong attribution, a literally quoted malicious instruction, a false "complete" claim and an injection that tries to add a claim.
+- **Scope wording.** An empty brief says "No supporting evidence was returned from the searched scope" and lists the sessions searched; it never says something is not in the brain. Claims render inside the reader's sanitized `<chat_session>` framing within a token budget, and the brief falls back to the full text when the builder's output cannot be parsed or most claims fail grounding.
+
+### Measured
+
+The gbrain-evals pilot (garrytan/gbrain-evals#107, 100 LongMemEval-S development questions) found the Haiku-built 2,000-token brief kept Sonnet 5.5 at 92 of 100 against 93 for whole sessions, at $0.0079 against $0.0473 a question, with a p95 of 8.6 s against 2.5 s. A cheap model reading the whole sessions directly matched the brief at lower cost and latency, so the plan's preregistered off-ramp fired and the brief stays eval-only.
+
+### For contributors
+
+- `test/e2e/client-grants.test.ts` reads `whoami`'s result block instead of joining the notice blocks prefixed to it. A brain whose sources row predates the fresh-brain grace gets the one-time `behavior_changes` disclosure on a client's first admitted call, which broke the JSON the D4 tests parsed whenever the shared CI database was old enough (forced probe: backdating `sources.created_at` by two hours fails both tests before the fix and passes after).
+- `scripts/check-orphan-modules.mjs` permits the new eval-only module as test-only.
+
 ## [0.60.121.0] - 2026-10-09
 
 **A managed catch-up on a live checkout finishes unattended: a page that moves under the run is held, a dropped database connection is retried, a relaunch resumes the frozen manifest, and `gbrain sync status` / `gbrain sync unblock` let an operator agent run the recovery loop without a human.**
