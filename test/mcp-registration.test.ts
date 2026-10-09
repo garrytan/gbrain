@@ -10,12 +10,13 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { REGISTRATION_SURFACE, registeredSurface, stdioServeArgv } from '../src/core/mcp-registration.ts';
 import { harnessWiringEntry } from '../src/core/readiness.ts';
 import { registerClaudeMcp, registerCodexMcp } from '../src/core/bootstrap/hooks.ts';
+import { resolveSurfaceWithSource } from '../src/mcp/surface.ts';
 
 const BIN = '/opt/example/bin/gbrain';
 const ROOT = resolve(import.meta.dir, '..');
@@ -23,9 +24,10 @@ const wiring = (h: 'claude-code' | 'codex' | 'opencode', surface?: 'verbs' | 'st
   harnessWiringEntry({ transport: 'cli', harnesses: [h], lockOwner: null, gbrainBin: BIN, ...(surface ? { surface } : {}) }).fix;
 
 describe('REGISTRATION_SURFACE and stdioServeArgv', () => {
-  test('new registrations pin starter; null renders a bare serve', () => {
-    expect(REGISTRATION_SURFACE).toBe('starter');
-    expect(stdioServeArgv(BIN)).toEqual([BIN, 'serve', '--surface', 'starter']);
+  test('S0: new registrations pin full (callable and advertised); null renders a bare serve', () => {
+    expect(REGISTRATION_SURFACE).toBe('full');
+    expect(stdioServeArgv(BIN)).toEqual([BIN, 'serve', '--surface', 'full']);
+    expect(stdioServeArgv(BIN, 'starter')).toEqual([BIN, 'serve', '--surface', 'starter']);
     expect(stdioServeArgv(BIN, 'full')).toEqual([BIN, 'serve', '--surface', 'full']);
     expect(stdioServeArgv(BIN, null)).toEqual([BIN, 'serve']);
   });
@@ -43,14 +45,14 @@ describe('every stdio registration path builds from REGISTRATION_SURFACE', () =>
     expect(wiring('claude-code')?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', ...stdioServeArgv(BIN)]);
     expect(wiring('codex')?.argv).toEqual(['codex', 'mcp', 'add', 'gbrain', '--', ...stdioServeArgv(BIN)]);
     expect(wiring('opencode')?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks']);
-    expect(wiring('claude-code')?.why).toContain(`${BIN} serve --surface starter`);
+    expect(wiring('claude-code')?.why).toContain(`${BIN} serve --surface full`);
   });
 
   test('init --surface reaches the readiness fix (the quickstart line and the first-run harness decision read it)', () => {
-    expect(wiring('claude-code', 'full')?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', BIN, 'serve', '--surface', 'full']);
+    expect(wiring('claude-code', 'starter')?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', BIN, 'serve', '--surface', 'starter']);
     expect(wiring('opencode', 'verbs')?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', '--surface', 'verbs']);
     const missing = harnessWiringEntry({ transport: 'cli', harnesses: [], lockOwner: null, gbrainBin: BIN }).fix;
-    expect(missing?.why).toContain('serve --surface starter');
+    expect(missing?.why).toContain('serve --surface full');
   });
 
   test('bootstrap hooks: registerClaudeMcp and registerCodexMcp default to the surface and carry an existing form', () => {
@@ -58,7 +60,7 @@ describe('every stdio registration path builds from REGISTRATION_SURFACE', () =>
     const codex = registerCodexMcp({ gbrainBin: BIN, sourceId: 'workspace' })[0];
     expect(claude.slice(claude.indexOf('--') + 1)).toEqual(stdioServeArgv(BIN));
     expect(codex.slice(codex.indexOf('--') + 1)).toEqual(stdioServeArgv(BIN));
-    expect(registerClaudeMcp({ gbrainBin: BIN, scope: 'user', sourceId: 'w', surface: 'full' })[0].slice(-3)).toEqual(['serve', '--surface', 'full']);
+    expect(registerClaudeMcp({ gbrainBin: BIN, scope: 'user', sourceId: 'w', surface: 'starter' })[0].slice(-3)).toEqual(['serve', '--surface', 'starter']);
     expect(registerCodexMcp({ gbrainBin: BIN, sourceId: 'w', surface: null })[0].slice(-2)).toEqual([BIN, 'serve']);
   });
 
@@ -82,14 +84,49 @@ describe('every stdio registration path builds from REGISTRATION_SURFACE', () =>
       writeFileSync(join(root, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: fixture skill\n---\n# alpha\n');
       writeFileSync(join(root, 'skills', 'manifest.json'), JSON.stringify({ skills: [{ name: 'alpha' }] }));
       writeFileSync(join(root, 'skills', 'plugin-lanes.json'), JSON.stringify({ starter_policy: 'x', additions: {}, base_exclusions: {}, not_added: {}, starter_gaps: {} }));
-      writeFileSync(join(root, '.codex-plugin', 'mcp.json'), JSON.stringify({ mcpServers: { gbrain: { command: 'x', args: ['serve', '--surface', 'full'] } } }));
+      writeFileSync(join(root, '.codex-plugin', 'mcp.json'), JSON.stringify({ mcpServers: { gbrain: { command: 'x', args: ['serve', '--surface', 'starter'] } } }));
       const bad = spawnSync('bun', ['run', join(ROOT, 'scripts/generate-plugin-tree.ts'), '--out', join(root, 'out')], {
         encoding: 'utf8', timeout: 60_000, env: { ...process.env, GBRAIN_PLUGIN_TREE_ROOT: root },
       });
       expect(bad.status).toBe(1);
-      expect(bad.stderr).toContain(`.codex-plugin/mcp.json pins --surface full; plugin lanes serve the registration surface '${REGISTRATION_SURFACE}'`);
+      expect(bad.stderr).toContain(`.codex-plugin/mcp.json pins --surface starter; plugin lanes serve the registration surface '${REGISTRATION_SURFACE}'`);
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+// S0 (wave 0): one surface constant across every install path. Every
+// registration command these files show pins REGISTRATION_SURFACE; a bare
+// `serve` resolves to the same value. Narrower surfaces stay documented as
+// opt-ins in prose, never as a registration command. The dated *-CLI-PIN.md
+// files are verification records of what was observed, not install paths.
+describe('S0: README, docs/mcp, INSTALL, BOOTSTRAP, push-context and the manifests name one surface', () => {
+  const DOCS = [
+    'README.md', 'INSTALL_FOR_AGENTS.md', 'BOOTSTRAP_FOR_AGENTS.md', 'docs/guides/push-context.md',
+    'docs/INSTALL.md', 'docs/protocol/MEMORY_VERBS_v1.md', 'docs/tutorials/connect-coding-agent.md',
+    ...readdirSync(join(ROOT, 'docs/mcp')).filter(f => f.endsWith('.md') && !f.endsWith('-CLI-PIN.md')).map(f => `docs/mcp/${f}`),
+  ];
+
+  test('every `serve --surface <x>` in the install docs is the registration surface', () => {
+    const offenders: string[] = [];
+    for (const file of DOCS) {
+      readFileSync(join(ROOT, file), 'utf8').split('\n').forEach((line, i) => {
+        for (const m of line.matchAll(/\bserve\b[^`\n|]*?--surface[\s=]+["']?(verbs|starter|full)\b/g)) {
+          if (m[1] !== REGISTRATION_SURFACE) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test('the plugin manifests pin the registration surface; the OpenClaw bundle runs a bare serve, whose default is the same value', () => {
+    for (const file of ['.codex-plugin/mcp.json', '.claude-plugin/plugin.json']) {
+      const args = (JSON.parse(readFileSync(join(ROOT, file), 'utf8')) as { mcpServers: { gbrain: { args: string[] } } }).mcpServers.gbrain.args;
+      expect({ file, surface: args[args.indexOf('--surface') + 1] }).toEqual({ file, surface: REGISTRATION_SURFACE });
+    }
+    const openclaw = JSON.parse(readFileSync(join(ROOT, 'openclaw.plugin.json'), 'utf8')) as { mcpServers: { gbrain: { args: string[] } } };
+    expect(openclaw.mcpServers.gbrain.args).toEqual(['serve']);
+    expect(resolveSurfaceWithSource(null, {})).toEqual({ surface: REGISTRATION_SURFACE, source: 'default' });
+  });
 });

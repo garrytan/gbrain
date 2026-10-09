@@ -22,13 +22,13 @@ import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-async function build(databaseUrl: string | undefined, seed: number): Promise<{ fixture: HistoryFixture; rows: Record<string, unknown> }> {
+async function build(databaseUrl: string | undefined, seed: number, writeWaitMs?: number): Promise<{ fixture: HistoryFixture; rows: Record<string, unknown> }> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-history-fixture-test-'));
   try {
     return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
       const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
       try {
-        const fixture = await buildHistoryFixture(engine, { pages: 30, seed, sources: 3, worktrees: 2, root: join(home, 'checkouts') });
+        const fixture = await buildHistoryFixture(engine, { pages: 30, seed, sources: 3, worktrees: 2, root: join(home, 'checkouts'), writeWaitMs });
         const [queued] = await engine.executeRaw('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [fixture.queuedRequestId]);
         const [delayed] = await engine.executeRaw<{ state: string; future: boolean }>(
           'SELECT state,next_attempt_at>now() AS future FROM persistence_effects WHERE id=$1', [fixture.delayedEffectId]);
@@ -57,6 +57,15 @@ for (const backend of testBackends()) {
       expect(rows.superseded).toBeGreaterThan(0);
       expect(rows.terminal).toBeGreaterThan(30);
       expect(rows.principals).toEqual(expect.arrayContaining(['legacy_token', 'local_cli', 'oauth_client']));
+    }, 240_000);
+
+    // A loaded host can take longer than a write's reply wait (graduation-cli-history
+    // saw 2 of 1,000 put_page writes answer write_pending under the CI gate). A 0 ms
+    // reply wait forces that on every write: the fixture replays the same request_id
+    // until each write commits, and still requires every op to commit.
+    test('writes that outlive their reply wait (write_pending) still all commit', async () => {
+      const { fixture } = await build(databaseUrl, 11, 0);
+      expect(fixture.observations.filter(o => o.status !== 'committed').map(o => `${o.id} ${o.kind} ${o.code}`)).toEqual([]);
     }, 240_000);
   });
 }

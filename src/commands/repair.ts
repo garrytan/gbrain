@@ -73,8 +73,8 @@ Options:
                  items stay held with llm_disabled.
   --max-usd <n>  Kinds that may call a paid model (${llmKinds}): spend at most n USD on the model in this
                  run. It only lowers the cap (the daily fences.repair cap still applies); never raises it.
-  --yes          frontmatter --apply: the user agreed to the previewed file changes (destructive consent;
-                 without it a terminal asks, and a non-interactive run exits 3 with the consent payload).
+  --yes          frontmatter, conversation-labels --apply: the user agreed to the previewed changes (destructive
+                 consent; without it a terminal asks, and a non-interactive run exits 3 with the consent payload).
   --json         Machine-readable output with a stable shape (frontmatter: every per-file diff).
 
 Any other option is refused. --max-usd caps only a paid-model kind's model spend; to cap
@@ -88,7 +88,7 @@ const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--in
 const VALUE_FLAGS = new Set(['--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
-  '--only': ['frontmatter', 'fences'], '--skip': ['frontmatter', 'fences'], '--diff': ['frontmatter', 'fences'], '--yes': ['frontmatter'],
+  '--only': ['frontmatter', 'fences'], '--skip': ['frontmatter', 'fences'], '--diff': ['frontmatter', 'fences'], '--yes': ['frontmatter', 'conversation-labels'],
   '--slug': ['fences'],
 };
 const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit': '50', '--expect': 'PLAN_HASH', '--only': 'notes/a.md', '--skip': 'notes/a.md',
@@ -152,7 +152,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
   if (positional.length > 1) throw new OperationError('invalid_params', `Unexpected argument '${positional[1]}'; gbrain repair takes at most one kind.`,
     `Kinds: ${REPAIR_KINDS.join(', ')}.`);
   parsed.kind = positional[0];
-  if (used.has('--yes') && parsed.kind !== 'frontmatter') throw invalid('`--yes` is not accepted by gbrain repair; pass --apply to write.',
+  if (used.has('--yes') && REPAIR_REGISTRY.find(spec => spec.kind === parsed.kind)?.consent !== 'destructive') throw invalid('`--yes` is not accepted by gbrain repair; pass --apply to write.',
     `Preview first with gbrain repair${parsed.kind ? ` ${parsed.kind}` : ''}, then run the same command with --apply instead of --yes.`,
     ['gbrain', 'repair', ...(parsed.kind ? [parsed.kind] : []), ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
   const kindOnly = [...used].find(flag => flag !== '--yes' && !KIND_FLAGS[flag]!.includes(parsed.kind ?? ''));
@@ -237,11 +237,13 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   if (apply && kind && expect && repairSpec(kind as RepairKind).consent === 'destructive') {
     const preview = ['gbrain', 'repair', kind, ...(source ? ['--source', source] : []), ...only.flatMap(path => ['--only', path]), ...skip.flatMap(path => ['--skip', path]),
       ...(includeAmbiguous ? ['--include-ambiguous'] : [])];
-    const auth = await consentGate({ command: `repair ${kind}`, effects: ['destructive'], actor: 'agent',
+    const custom = repairSpec(kind as RepairKind).consentText;
+    const text = custom ? { ...custom, why: `Preview ${expect}: ${custom.why}`, user_message: `${custom.user_message} (preview ${expect.slice(0, 12)})` } : {
       what: `Rewrite the previewed ${kind} changes on disk and import them`,
       why: `The preview ${expect} listed each file change; applying it rewrites those files in place and publishes them.`,
       risk: 'Only the previewed lines change; a file that changed since the preview is skipped. Managed sources commit through the Git effect (undo with git revert); legacy sources keep a backup under ~/.gbrain/backups/frontmatter/.',
-      user_message: `Apply the previewed ${kind} repair (preview ${expect.slice(0, 12)})? Each listed file is rewritten on disk exactly as the preview showed and imported again.`,
+      user_message: `Apply the previewed ${kind} repair (preview ${expect.slice(0, 12)})? Each listed file is rewritten on disk exactly as the preview showed and imported again.` };
+    const auth = await consentGate({ command: `repair ${kind}`, effects: ['destructive'], actor: 'agent', ...text,
       argv: [...preview, '--apply', '--expect', expect, ...(json ? ['--json'] : [])], preview_argv: [...preview, '--json'], plan_hash: expect, args }, { json, env: engineConsentEnv(engine) });
     if (!auth) return;
   }

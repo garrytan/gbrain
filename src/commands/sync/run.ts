@@ -63,6 +63,11 @@ export async function runSyncInner(engine: BrainEngine, args: string[]) {
   if (args[0] === 'trigger') {
     return runSyncTrigger(engine, args.slice(1));
   }
+  // #6340: the operator contract (status / unblock) reads and schedules; it never runs a sync.
+  if (args[0] === 'status' || args[0] === 'unblock') {
+    const { runSyncStatus, runSyncUnblock } = await import('./operator.ts');
+    return args[0] === 'status' ? runSyncStatus(engine, args.slice(1)) : runSyncUnblock(engine, args.slice(1));
+  }
 
   // v0.37 fix wave (Lane D.4 + CDX2-12): print usage when `--help`/`-h` is
   // passed. Pre-fix this was unreachable because the dispatcher's generic
@@ -128,7 +133,7 @@ export async function runSyncInner(engine: BrainEngine, args: string[]) {
   const resumeCommand = syncResumeCommand(args, getCliOptions().brain);
   if (syncAll) return await runSyncAll(engine, { ...flags, ...fanout }, { noEmbed, embeddingCredentialError, resumeCommand });
 
-  return await runSingleSourceSync(engine, { ...flags, ...fanout }, { sourceId, companyPolicy, noEmbed, resumeCommand });
+  return await runSingleSourceSync(engine, { ...flags, ...fanout }, { sourceId, companyPolicy, noEmbed, resumeCommand, args });
 }
 
 async function runSyncBreakLock(
@@ -713,14 +718,14 @@ function emitSyncAllEnvelope(input: {
 async function runSingleSourceSync(
   engine: BrainEngine,
   flags: SyncFlags & SyncFanoutFlags,
-  input: { sourceId: string; companyPolicy: Awaited<ReturnType<typeof getCompanyBrainProfile>> | null; noEmbed: boolean; resumeCommand: string },
+  input: { sourceId: string; companyPolicy: Awaited<ReturnType<typeof getCompanyBrainProfile>> | null; noEmbed: boolean; resumeCommand: string; args: string[] },
 ): Promise<void> {
   const {
     repoPath, watch, interval, dryRun, full, noPull, noBulk, lanes, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack,
     explicitProcessing, includeGitignored, workingTree, jsonOut, yesFlag, noAutoEmbed, strategyArg, srcSubpath,
     excludePatterns, includeHiddenPatterns, concurrency, timeoutSeconds,
   } = flags;
-  const { sourceId, companyPolicy, noEmbed, resumeCommand } = input;
+  const { sourceId, companyPolicy, noEmbed, resumeCommand, args } = input;
   // v0.41.13.0 (T6) — single-source --timeout: same per-source AbortController
   // shape as the --all runOne closure. Timer scoped to this CLI invocation;
   // try/finally clears it after performSync resolves (or throws).
@@ -813,7 +818,10 @@ async function runSingleSourceSync(
     let result: SyncResult;
     process.on('SIGINT', onSingleSourceSigint);
     try {
-      result = await performSync(engine, opts);
+      // #6317 (D1 a′): on a managed Postgres brain whose host a live serve owns, the drain runs inside that serve as this
+      // CLI's writer and returns the same SyncResult; every other case keeps this process's own consumer.
+      const delegated = companyPolicy ? null : await (await import('../sync-delegate.ts')).maybeDelegateManagedSyncToServe(engine, args, opts);
+      result = delegated?.kind === 'delegated' ? delegated.result : await performSync(engine, opts);
     } finally {
       if (singleSourceTimer !== undefined) clearTimeout(singleSourceTimer);
       process.off('SIGINT', onSingleSourceSigint);

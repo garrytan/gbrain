@@ -56,7 +56,7 @@ import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
-import { assertEmbedNotStalled } from './embed-stall.ts';
+import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
 import { anyAbortSignal } from './abort-signals.ts';
 import { maybeRefreshPlannerStats } from './planner-stats.ts';
 
@@ -1471,23 +1471,6 @@ async function runPhaseExtractFacts(
       signal,
     });
 
-    // Empty-fence guard: unfenced rows the phase's own fence step could not
-    // fence this run. Surface as 'warn' so doctor + the cycle report can see
-    // it; the warnings name each page and why.
-    if (result.guardTriggered) {
-      return {
-        phase: 'extract_facts',
-        status: 'warn',
-        duration_ms: 0,
-        summary: `extract_facts skipped: ${result.legacyRowsPending} unfenced fact row(s) could not be fenced`,
-        details: {
-          legacyRowsPending: result.legacyRowsPending,
-          unfencedRowsFenced: result.unfencedRowsFenced,
-          warnings: result.warnings,
-        },
-      };
-    }
-
     // v0.35.5: phantom-redirect counters bubble up alongside the existing
     // fact-reconcile counts. We summarize the phantom counters in the
     // human-readable summary line when any non-zero phantom work happened
@@ -1512,12 +1495,20 @@ async function runPhaseExtractFacts(
         `destructive full walk may have wiped non-fence facts (#1928).`,
       );
     }
+    // Empty-fence guard (per page, #6278): unfenced rows the phase's own fence
+    // step could not fence this run keep their pages out of reconciliation
+    // while the other pages reconcile. The summary names those pages and keeps
+    // the reconcile counts; the warnings name each page and why.
+    const listed = result.legacyPages.slice(0, 3).join(', ') + (result.legacyPages.length > 3 ? `, +${result.legacyPages.length - 3} more` : '');
+    const guardSummary = result.guardTriggered
+      ? `; skipped ${result.legacyPages.length} page(s) holding ${result.legacyRowsPending} unfenced fact row(s) that could not be fenced: ${listed}`
+      : '';
     const decideConflict = dryRun ? undefined : await (await import('./ai/decide/sweep.ts')).conflictSweepTail(engine, sourceId, signal);
     return {
       phase: 'extract_facts',
       status: result.warnings.length > 0 ? 'warn' : 'ok',
       duration_ms: 0,
-      summary: `${result.factsInserted} fact(s) reconciled across ${result.pagesScanned} page(s)${phantomSummary}` +
+      summary: `${result.factsInserted} fact(s) reconciled across ${result.pagesScanned} page(s)${phantomSummary}` + guardSummary +
         (result.warnings.length > 0 ? ` (${result.warnings.length} warning(s))` : ''),
       details: {
         pagesScanned: result.pagesScanned,
@@ -1525,8 +1516,10 @@ async function runPhaseExtractFacts(
         factsInserted: result.factsInserted,
         factsDeleted: result.factsDeleted,
         unfencedRowsFenced: result.unfencedRowsFenced,
+        legacyRowsPending: result.legacyRowsPending,
+        legacyPages: result.legacyPages,
         pagesFailed: result.pagesFailed,
-        warnings: result.warnings.slice(0, 5),
+        warnings: result.guardTriggered ? result.warnings : result.warnings.slice(0, 5),
         // v0.35.5: phantom counters surfaced so extractTotals() can lift
         // them to CycleReport.totals and the daily report makes the
         // cleanup visible.
@@ -1633,13 +1626,11 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
     const result = await runEmbedCore(engine, { stale: true, dryRun, signal, quiet: true });
     assertEmbedNotStalled(result); // #4599: a watchdog-aborted drain is a failed phase, not 'ok'
     const embeddedCount = dryRun ? result.would_embed : result.embedded;
+    const failed = result.failures > 0 && !result.lock_skipped; // E-A: blocked pages are a warn; another backfill's lock is not
+    const counts = dryRun ? `${result.would_embed} chunk(s) would be embedded (dry-run)` : `${result.embedded} chunk(s) newly embedded (${result.skipped} already had embeddings)`;
     return {
-      phase: 'embed',
-      status: 'ok',
-      duration_ms: 0,
-      summary: dryRun
-        ? `${result.would_embed} chunk(s) would be embedded (dry-run)`
-        : `${result.embedded} chunk(s) newly embedded (${result.skipped} already had embeddings)`,
+      phase: 'embed', status: failed ? 'warn' : 'ok', duration_ms: 0,
+      summary: failed ? `${counts}; ${result.failures} chunk(s) could not be embedded this run` : counts,
       details: {
         embedded: result.embedded,
         skipped: result.skipped,
@@ -1651,6 +1642,8 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
         // In dry-run, this counts pages with stale chunks that would
         // have been processed (same semantic as a real run).
         pages_embedded_count: dryRun ? result.pages_processed : embeddedCount > 0 ? result.pages_processed : 0,
+        failures: result.failures,
+        ...(failed ? { failure_samples: result.failure_samples, fix: embedBackfillFix({ backlog: result.failures, verifyCheck: 'embeddings' }) } : {}),
       },
     };
   } catch (e) {

@@ -11,11 +11,11 @@
  * the override and the gate decides again. Size gates (oversize `embed_skip`)
  * are not overridden.
  *
- * Trust: only trusted local callers set it. Every untrusted ingress strips it
- * (`settleGateOwnedMarkers`, called by `importFromContent`, which remote put_page,
- * put_pages, HTTP and ingest-capture all reach through `remote: true`); a
- * remote edit that leaves title, type and body unchanged carries the stored
- * override forward, so an unrelated tag edit does not re-hide the page.
+ * Trust: only owner-tier paths (`preserveGateMarkers`) keep it; every other
+ * writer, local or remote, has it stripped (`stripGateOwnedMarkers` in
+ * import-screen.ts). An edit that leaves title, type and body unchanged
+ * carries the stored override forward, so an unrelated tag edit does not
+ * re-hide the page.
  * Company-brain inspection refuses files that carry it.
  */
 import type { BrainEngine } from './engine.ts';
@@ -24,8 +24,6 @@ import { parseMarkdown, type ParsedMarkdown } from './markdown.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { sha256 } from './persistence/digest.ts';
 import { CONTENT_FLAG_KEY, QUARANTINE_KEY } from './quarantine.ts';
-import { EMBED_SKIP_KEY } from './embed-skip.ts';
-import { ATOMS_SCAN_HASH_KEY } from './utils.ts';
 
 export const QUARANTINE_OVERRIDE_KEY = 'quarantine_override';
 
@@ -57,53 +55,25 @@ export function hasCurrentQuarantineOverride(page: Bound & { frontmatter?: Recor
   return !!override && override.binding === quarantineOverrideBinding(page);
 }
 
-/**
- * Called by `importFromContent` before the gate assesses `parsed` (already canonicalized).
- *
- * v0.42 (#1699 trust boundary): gate-owned markers are stripped from
- * UNTRUSTED input. parseMarkdown preserves every frontmatter key except
- * type/title/tags/slug, so a remote MCP put_page (ctx.remote !== false,
- * threaded as opts.remote) could otherwise plant `quarantine` (hide a page
- * from search + suppress chunks), `content_flag.detail` (inject text into the
- * agent's trusted "this looks odd" channel) or `embed_skip` on clean content.
- * #1699 part 2: the extract_atoms completion marker is phase-owned; a remote
- * writer planting a matching one would suppress atom mining for the page.
- * Trusted local sync/export round-trips keep them. Fail-closed: strip
- * whenever `remote` is true.
- *
- * #6259: remote input also loses any `quarantine_override` (the gate may
- * carry the stored one forward, `carryStoredQuarantineOverride`); trusted
- * input keeps its own override only while it binds. A stale or malformed
- * override is dropped, and a current one drops classifier markers the content
- * still carries.
- */
-export function settleGateOwnedMarkers(parsed: ParsedMarkdown, remote: boolean): void {
-  if (remote) {
-    for (const key of [QUARANTINE_KEY, CONTENT_FLAG_KEY, EMBED_SKIP_KEY, ATOMS_SCAN_HASH_KEY, QUARANTINE_OVERRIDE_KEY]) delete parsed.frontmatter[key];
-    return;
-  }
-  if (Object.hasOwn(parsed.frontmatter, QUARANTINE_OVERRIDE_KEY) && !hasCurrentQuarantineOverride(parsed)) delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
-  dropClassifierMarkers(parsed);
-}
-
 /** A classifier marker the content still carries (a file written before the clear) goes with a current override. */
-function dropClassifierMarkers(parsed: ParsedMarkdown): void {
+export function dropClassifierMarkers(parsed: ParsedMarkdown): void {
   if (!hasCurrentQuarantineOverride(parsed)) return;
   delete parsed.frontmatter[QUARANTINE_KEY];
   if ((parsed.frontmatter[CONTENT_FLAG_KEY] as { reason?: unknown } | undefined)?.reason !== 'oversized') delete parsed.frontmatter[CONTENT_FLAG_KEY];
 }
 
 /**
- * The gate verdict for a remote write: when the classifier would hide or
+ * The gate verdict for a write whose gate-owned markers were stripped (every
+ * caller except an owner-tier path): when the classifier would hide or
  * markup-flag the page, the stored override is carried forward if it still
- * binds this exact title, type and body, so a remote edit that leaves them
+ * binds this exact title, type and body, so an edit that leaves them
  * unchanged (a tag edit) does not re-hide a cleared page. The stored row is
- * read only on that path, so a clean remote write costs no extra statement
- * (#6007 statement budget).
+ * read only on that path, so a clean write costs no extra statement (#6007
+ * statement budget).
  */
 export async function carryStoredQuarantineOverride(engine: Pick<BrainEngine, 'executeRaw'>, parsed: ParsedMarkdown, result: ContentSanityResult,
-  page: { slug: string; sourceId: string | undefined; remote: boolean }): Promise<ContentSanityResult> {
-  if (!page.remote || !(result.shouldQuarantine || result.flag_reason === 'markup_heavy')) return result;
+  page: { slug: string; sourceId: string | undefined; stripped: boolean }): Promise<ContentSanityResult> {
+  if (!page.stripped || !(result.shouldQuarantine || result.flag_reason === 'markup_heavy')) return result;
   const [stored] = await engine.executeRaw<{ override: unknown }>(
     `SELECT frontmatter->'${QUARANTINE_OVERRIDE_KEY}' AS override FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [page.sourceId ?? 'default', page.slug]);
   const carried = overrideOf(stored?.override);

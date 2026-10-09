@@ -36,6 +36,7 @@ import { applyTimeScope, type TimeScopeMode } from '../../core/search/hybrid/tim
 import { extractEventDates } from '../../core/event-dates.ts';
 import type { DayRange } from '../../core/temporal-grammar.ts';
 import { resolveModel } from '../../core/model-config.ts';
+import { getFactsExtractionModel } from '../../core/facts/extract.ts';
 import { rawSessionId, scoreRecall, type SlugToRawMap } from './metrics.ts';
 
 export type FactExtractor = 'paper' | 'production';
@@ -290,7 +291,7 @@ export function armPins(o: RetrievalArmOptions): { retrieval_arms?: Record<strin
 export async function resolveFactKeyArm(o: RetrievalArmOptions, client: ThinkLLMClient): Promise<{ arm: FactKeyArm; spend: FactKeySpend } | null> {
   if (!o.factKeys) return null;
   const model = o.factExtractor === 'production' && !o.factKeysModel
-    ? await resolveModel(null, { configKey: 'facts.extraction_model', tier: 'reasoning', fallback: 'anthropic:claude-sonnet-4-6' })
+    ? await getFactsExtractionModel()
     : await resolveModel(null, { cliFlag: o.factKeysModel, tier: 'utility', fallback: 'haiku' });
   return { arm: { assignment: o.factKeys, extractor: o.factExtractor, model, client, maxUsd: o.factKeysMaxUsd }, spend: new FactKeySpend(o.factKeysMaxUsd) };
 }

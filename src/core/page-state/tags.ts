@@ -20,3 +20,18 @@ export async function mutatePageTag(engine: BrainEngine, key: PageKey, tag: stri
     }
   });
 }
+
+/**
+ * #5984: addTag for many tags of one page the caller wrote in this transaction
+ * (its id from that write, its page guard held): one statement with the same
+ * claim rules (an explicit add claims the tag; a frontmatter claim only adopts
+ * an unclaimed legacy row).
+ */
+export async function addPageTags(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, tags: readonly string[], tagSource?: 'frontmatter'): Promise<void> {
+  if (!tags.length) return;
+  await engine.executeRaw(tagSource === 'frontmatter'
+    ? `INSERT INTO tags(page_id,tag,tag_source) SELECT $1,t,'frontmatter' FROM (SELECT DISTINCT unnest($2::text[]) AS t) u
+        ON CONFLICT (page_id,tag) DO UPDATE SET tag_source = 'frontmatter' WHERE tags.tag_source IS NULL`
+    : `INSERT INTO tags(page_id,tag,tag_source) SELECT $1,t,'added' FROM (SELECT DISTINCT unnest($2::text[]) AS t) u
+        ON CONFLICT (page_id,tag) DO UPDATE SET tag_source = 'added'`, [pageId, [...tags]]);
+}

@@ -78,7 +78,8 @@ export interface FenceHoldStatus {
 }
 
 const PAID: readonly FenceReason[] = ['budget_exhausted', 'llm_disabled', 'no_pricing', 'no_measured_model'];
-const OWNER: readonly FenceReason[] = ['owner_unavailable', 'owner_cli_required'];
+const OWNER: readonly FenceReason[] = ['owner_unavailable', 'owner_cli_required', 'host_mismatch', 'transfer_in_progress', 'clone_in_progress', 'incarnation_changed',
+  'local_path_missing', 'coordination_path_missing'];
 
 type HoldMeta = Pick<GitHoldRecord['meta'], 'reason' | 'line' | 'fence' | 'fence_repair'>;
 

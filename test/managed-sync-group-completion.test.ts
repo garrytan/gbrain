@@ -140,7 +140,8 @@ test('the counters are held for the lock and one completion statement, pipelined
       await completeGroup(recording, rows, outcomes(rows));
     });
     const lock = issued.findIndex(s => s.sql === LOCK_COUNTERS_SQL);
-    expect(lock).toBe(2);
+    // Missing counter rows are created first; the effect sizes are read inside the completing UPDATE.
+    expect(lock).toBe(1);
     // Under the counter lock: the lock itself and one UPDATE, whatever the group size; COMMIT follows.
     expect(issued.slice(lock)).toHaveLength(2);
     expect(issued[lock + 1]!.sql).toContain('UPDATE persistence_requests r SET');

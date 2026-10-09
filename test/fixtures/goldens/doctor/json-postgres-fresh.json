@@ -379,7 +379,7 @@
             "next": "report",
             "requires_exclusive": false,
             "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "Register `<absolute path to gbrain> serve --surface starter` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "why": "Register `<absolute path to gbrain> serve --surface full` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
           "message": "No agent harness was detected. Wire one when the user picks an agent app.",
           "name": "harness_wiring",
@@ -502,7 +502,7 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 120/120 public tables",
+          "message": "RLS enabled on 122/122 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -514,7 +514,7 @@
         },
         {
           "category": "meta",
-          "message": "992 column(s) verified against live schema",
+          "message": "1009 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -820,10 +820,27 @@
             "count": 0,
             "docs": "docs/guides/troubleshooting.md#persistence-write-stall",
             "max_claim_ms": "<volatile>",
+            "preparation_policy": {
+              "maintenance_preparation_ms": "<volatile>",
+              "max_preparation_attempts": 2,
+              "preparation_ceiling_ms": "<volatile>",
+              "sync_preparation_ms": "<volatile>"
+            },
             "stalls": []
           },
           "message": "No write request has held its claim longer than persistence.max_claim_ms (600000 ms).",
           "name": "persistence_write_stall",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "applied": "5min",
+            "configured": "5min",
+            "docs": "docs/guides/troubleshooting.md#session-timeouts-not-applied"
+          },
+          "message": "The session statement_timeout (5min) reaches the server.",
+          "name": "persistence_session_timeouts",
           "status": "ok"
         },
         {
@@ -980,6 +997,33 @@
           },
           "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
           "name": "extractor_facts_expired",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "capped": false,
+            "docs": "docs/guides/repair.md#conversation-labels",
+            "evidenced": 0,
+            "repair": "conversation-labels"
+          },
+          "message": "No conversation fact carries the pre-fix meeting-label signature (a 1970-01-01 segment on a label page).",
+          "name": "conversation_label_facts",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "capped": false,
+            "docs": "docs/guides/repair.md#conversation-labels",
+            "extractor_version": 1,
+            "sample": [],
+            "scanned": 0,
+            "stale": 0,
+            "unstamped": 0
+          },
+          "message": "No conversation extraction outcome predates extractor version 1.",
+          "name": "conversation_outcomes_stale",
           "status": "ok"
         },
         {
@@ -1261,6 +1305,17 @@
           },
           "message": "Every active legacy token has explicit scopes.",
           "name": "legacy_token_null_scope",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#grants-that-cannot-reach-new-operations",
+            "grants": [],
+            "server_surface": "full"
+          },
+          "message": "Every active client and token can call the operations its scopes allow.",
+          "name": "grant_new_ops_available",
           "status": "ok"
         },
         {
@@ -1741,6 +1796,54 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#managed-sync-not-moving",
+            "parked": 0,
+            "sources": []
+          },
+          "message": "No managed sync is pending.",
+          "name": "managed_sync_not_moving",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "consumers": [],
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#two-consumers-on-host",
+            "min_age_ms": "<volatile>"
+          },
+          "message": "No persistence consumer is running on this host.",
+          "name": "two_consumers_on_host",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#two-consumers-on-host",
+            "owners": []
+          },
+          "message": "Every owner of a live running claim on this host has a consumer heartbeat row.",
+          "name": "consumers_without_heartbeat",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#host-identity-mismatch",
+            "host_id": "<uuid>",
+            "host_json_path": "<home>/.gbrain/persistence/host.json",
+            "mismatches": []
+          },
+          "message": "This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
+          "name": "host_identity_mismatch",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "details": {
             "docs": "docs/guides/write-refusals.md#invalid_fence",
@@ -1806,6 +1909,11 @@
               }
             ],
             "uncommitted_repairs": 0,
+            "unrenderable_legacy_facts": {
+              "complete": true,
+              "pages": [],
+              "total": 0
+            },
             "warn_at_normalized_7d": 20
           },
           "message": "No malformed facts or takes fence is held, stored or waiting in a checkout (1 source(s) scanned).",

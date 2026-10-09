@@ -300,9 +300,9 @@ if (RUN_CLI_REFS) {
     failures.push('[cli-refs] --tools-json parsed to an EMPTY command set, so no gbrain command in a skill was checked. Fix: make `bun src/cli.ts --tools-json` print the tool list, or pass --no-cli-refs to skip this lane deliberately');
   }
   if (known && known.size > 0) {
-    // top-level commands defined directly in src/cli.ts (not ops): derive from source
+    // top-level commands defined directly in the dispatcher (src/cli/main.ts, not ops): derive from source
     try {
-      const cliSrc = readFileSync('src/cli.ts', 'utf8');
+      const cliSrc = readFileSync('src/cli/main.ts', 'utf8');
       for (const m of cliSrc.matchAll(/(?:command === |case )'([a-z][a-z0-9-]*)'/g)) known.add(m[1]);
       // Refactor wave 1: CLI-only commands are records in the command table.
       const tableSrc = readFileSync('src/cli/command-table.ts', 'utf8');

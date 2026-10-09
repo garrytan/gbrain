@@ -18,13 +18,15 @@ tunnel, no token needed. Works with both PGLite and Supabase engines.
 ## Register (recommended)
 
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface verbs
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface full
 ```
 
-`--surface verbs` exposes the seven-verb memory protocol (`recall`,
-`remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` —
-[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) instead of the full
-100+-op catalog — the recommended starting surface for coding agents.
+`--surface full` serves the whole operation catalog, the seven-verb memory
+protocol (`recall`, `remember`, `entity`, `synthesize`, `forget`,
+`context_pack`, `delta` — [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md))
+included; it is the surface every registration gbrain writes pins. A harness
+that caps its tool count can register `--surface starter` or `--surface verbs`
+(only the seven verbs) instead.
 Three facts about `grok mcp add`, all observed:
 
 - **The env flag is repeatable, one `KEY=value` per flag** (`-e A=1 -e B=2`).
@@ -78,8 +80,8 @@ grok mcp doctor gbrain      # THE real probe: spawns the server
 ```
 
 `grok mcp doctor gbrain` performs the actual handshake — expect the checks
-`command found`, `server started`, `handshake OK`, and `7 tools discovered`
-(the seven verbs), exit 0. A broken registration exits 1 with a failing
+`command found`, `server started`, `handshake OK`, and `N tools discovered`
+(the full surface; 7 on `--surface verbs`), exit 0. A broken registration exits 1 with a failing
 check and a hint. Then one real round-trip:
 
 ```bash

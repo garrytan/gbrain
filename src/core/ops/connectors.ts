@@ -24,7 +24,6 @@ import {
   sourceIdKey,
 } from '../connectors/config-keys.ts';
 import { isConnectorProviderName } from '../connectors/registry.ts';
-import { runConnectorSync } from '../connectors/sync.ts';
 
 const connectors_status: Operation = {
   name: 'connectors_status',
@@ -102,6 +101,8 @@ const connector_sync: Operation = {
     if (!isConnectorProviderName(provider)) {
       throw invalidParam(ctx, 'connector_sync', 'provider', 'unknown connector provider (expected chatgpt|claude)', { choices: ['chatgpt', 'claude'] });
     }
+    // The sync engine (transcript ingest and its persistence graph) loads only when a sync runs.
+    const { runConnectorSync } = await import('../connectors/sync.ts');
     return runConnectorSync(ctx.engine, {
       provider,
       sourceId: ctx.sourceId,

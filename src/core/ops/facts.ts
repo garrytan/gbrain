@@ -642,8 +642,9 @@ const context_pack: Operation = {
   cliHints: { name: 'context-pack' },
   annotations: { title: 'context_pack (boundary bundle)', readOnlyHint: true },
   handler: async (ctx, p) => {
-    const { assembleContextPack, renderPack, isAfter, PACK_DEFAULT_MAX_ENTITIES, renderCardLine, renderThreadLine, renderFactLine, packHeaderCost } =
-      await import('../context/turn-context.ts');
+    const { assembleContextPack, renderPack, isAfter, PACK_DEFAULT_MAX_ENTITIES, renderCardLine, renderThreadLine, renderFactLine, packHeaderCost,
+      renderNewerMentionLines } = await import('../context/turn-context.ts');
+    const { NEWER_MENTIONS_HEADER } = await import('../mentions/newer-mentions.ts');
     const sourceId = ctx.sourceId ?? 'default';
     const rawSince = typeof p.since === 'string' && p.since.trim() ? p.since : undefined;
     if (rawSince !== undefined && !Number.isFinite(Date.parse(rawSince))) {
@@ -709,6 +710,14 @@ const context_pack: Operation = {
       const remaining = itemBudget - cardPack.meta.used;
       const factPack = remaining > 0 ? packToBudget(facts, (f) => lineCost(renderFactLine(f)), remaining) : dropAll(facts);
       facts = factPack.items;
+      // Newer mentions pack last, into what cards and facts left; a card whose block does not fit keeps its card line.
+      const mentionBudget = remaining - factPack.meta.used - lineCost('') - lineCost(NEWER_MENTIONS_HEADER);
+      const withMentions = cards.filter((c) => c.newer_mentions);
+      const mentionPack = mentionBudget > 0
+        ? packToBudget(withMentions, (c) => renderNewerMentionLines(c).reduce((n, l) => n + lineCost(l), 0), mentionBudget)
+        : dropAll(withMentions);
+      const keptMentions = new Set(mentionPack.items);
+      cards = cards.map((c) => (c.newer_mentions && !keptMentions.has(c) ? { ...c, newer_mentions: undefined } : c));
       droppedCount = cardPack.meta.dropped + factPack.meta.dropped;
     }
     const open_threads = cards.flatMap(threadsOf);
@@ -732,6 +741,7 @@ const context_pack: Operation = {
         edges: c.edges,
         backlink_count: c.backlink_count,
         ...(c.relationship_note ? { relationship_note: c.relationship_note } : {}),
+        ...(c.newer_mentions ? { newer_mentions: c.newer_mentions } : {}),
       })),
       open_threads,
       facts: (ctx.remote === false ? rawFacts.slice(0, facts.length) : facts).map((f) => ({

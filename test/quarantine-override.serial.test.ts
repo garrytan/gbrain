@@ -25,6 +25,8 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { runQuarantine, QUARANTINE_HELP } from '../src/commands/quarantine.ts';
 import { getContentFlag, isQuarantined } from '../src/core/quarantine.ts';
 import { QUARANTINE_OVERRIDE_KEY } from '../src/core/quarantine-override.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../src/core/facts-fence.ts';
+import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
@@ -124,6 +126,32 @@ describe('quarantine clear on a managed brain (#6259)', () => {
     fm = await frontmatter();
     expect(isQuarantined(fm)).toBe(true);
     expect(fm[QUARANTINE_OVERRIDE_KEY]).toBeUndefined();
+  }), 120_000);
+
+  test('a managed write the gate quarantines records facts_backstop.skipped quarantined in its receipt', () => run(async () => {
+    const body = `${JUNK_BODY} ${'The rest of the note is ordinary prose that would otherwise be long enough to extract. '.repeat(2)}`;
+    const response = await submitPageMutation(ctx(), { operation: 'put_page', params: { slug: 'notes/junk-facts', content: junkPage('Junk facts', body), request_id: randomUUID() } }) as Record<string, unknown>;
+    expect(response.facts_backstop).toEqual({ skipped: 'quarantined' });
+  }), 120_000);
+
+  test('a managed write the gate quarantines projects no facts or takes from its fences', () => run(async () => {
+    const FH = '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|';
+    const TH = '| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|';
+    const fences = `${FACTS_FENCE_BEGIN}\n${FH}\n| 1 | Example claim from the page | fact | 1.0 | world | medium | 2026-01-01 |  | chat |  |\n${FACTS_FENCE_END}\n\n${TAKES_FENCE_BEGIN}\n${TH}\n| 1 | Example take from the page | take | brain | 0.7 | 2026-01 | chat |\n${TAKES_FENCE_END}`;
+    const slug = 'notes/junk-fences';
+    await submitPageMutation(ctx(), { operation: 'put_page', params: { slug, content: junkPage('Junk fences', `${JUNK_BODY}\n\n${fences}`), request_id: randomUUID() } });
+    expect(isQuarantined((await engine.getPage(slug, { sourceId: 'default' }))!.frontmatter as Record<string, unknown>)).toBe(true);
+    expect(await engine.executeRaw("SELECT id FROM facts WHERE source_markdown_slug=$1", [slug])).toEqual([]);
+    expect(await engine.executeRaw('SELECT k.id FROM takes k JOIN pages p ON p.id=k.page_id WHERE p.slug=$1', [slug])).toEqual([]);
+  }), 120_000);
+
+  test('a local managed put_page cannot plant gate-owned markers (only the clear\'s owner kind keeps its override)', () => run(async () => {
+    const clean = '---\ntitle: Clean notes\ntype: note\nquarantine:\n  reason: junk_pattern\n  detail: planted\natoms_scan_hash: deadbeefdeadbeef\n---\n\nOrdinary prose with nothing junk-like in it.\n';
+    const slug = 'notes/planted-managed';
+    await submitPageMutation(ctx(), { operation: 'put_page', params: { slug, content: clean, request_id: randomUUID() } });
+    const fm = (await engine.getPage(slug, { sourceId: 'default' }))!.frontmatter as Record<string, unknown>;
+    expect(fm.quarantine).toBeUndefined();
+    expect(fm.atoms_scan_hash).toBeUndefined();
   }), 120_000);
 
   test('an edit landing after the clear read the page is a revision conflict, not an overwrite', () => run(async () => {

@@ -26,7 +26,7 @@
  * Why new: the fences kind is new in PR4.
  * Seams: __setChatTransportForTests (no provider call); test/postgres-unit-arms.txt runs the Postgres arm.
  */
-import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -52,6 +52,7 @@ import { runFenceRepairPhase } from '../src/core/cycle/fence-repair.ts';
 import { fenceIntegrityResult } from '../src/commands/doctor/checks/fence-integrity.ts';
 import { fencesRepair, type FencesPreviewDetails } from '../src/core/repair/fences.ts';
 import { readUncommittedFenceRepairs } from '../src/core/fence-repair/uncommitted.ts';
+import { fenceHoldStatus } from '../src/core/fence-repair/hold-fix.ts';
 import { parseRepairArgs, runRepairCommand } from '../src/commands/repair.ts';
 import { runModels } from '../src/commands/models.ts';
 import { resolveFenceRepairModel } from '../src/core/fence-repair/model.ts';
@@ -104,6 +105,7 @@ beforeAll(async () => {
   legacyEngine = new PGLiteEngine(); await legacyEngine.connect({}); await legacyEngine.initSchema();
 }, 120_000);
 
+beforeEach(() => { _resetCliExitVerdictForTests(); });
 afterEach(() => { __setChatTransportForTests(null); _resetCliExitVerdictForTests(); });
 
 afterAll(async () => {
@@ -162,6 +164,7 @@ async function gitEffectsSettled(engine: BrainEngine, sourceId: string) {
   throw new Error('git effects did not settle');
 }
 
+const incarnationOf = async (engine: BrainEngine, id: string) => (await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [id]))[0]!.incarnation;
 const details = (result: RepairResult) => result.details as unknown as FencesPreviewDetails;
 const hashOf = (result: RepairResult) => result.apply_command.split('--expect ')[1]!.split(' ')[0]!;
 const expectNoSecrets = (value: unknown) => { const text = typeof value === 'string' ? value : JSON.stringify(value); for (const secret of [CLAIM, MCLAIM, 'Sentinelclaimzr4', 'Sentinelmanualzr4']) expect(text).not.toContain(secret); };
@@ -307,7 +310,7 @@ test('the daily ledger refusing the next call stops the run with the reset time,
   await engine.executeRaw("DELETE FROM config WHERE key='fences.repair.max_usd_per_day'");
 }), 240_000);
 
-test('a file changed since the preview, an unfinished sync and a non-owner host write nothing', () => each(async engine => {
+test('a file changed since the preview, an unfinished sync whose manifest cannot be read, and a non-owner host write nothing', () => each(async engine => {
   const s = await managed(engine, { 'people/model.md': md('Model', noHeader()) });
   await s.sync();
   transport(() => answer(CLAIM));
@@ -318,20 +321,108 @@ test('a file changed since the preview, an unfinished sync and a non-owner host 
   expect(s.read('people/model.md')).toBe(edited);
   expect(calls).toHaveLength(0);
   s.write('people/model.md', md('Model', noHeader()));
+  // An unfinished cursor of this incarnation whose manifest is missing: the busy set fails closed, so every candidate waits.
   await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync',$1,$2::text::jsonb)`,
-    [`probe-${s.id}`, JSON.stringify([{ sourceId: s.id, runId: 'probe', index: 0, done: false }])]);
+    [`probe-${s.id}`, JSON.stringify([{ sourceId: s.id, incarnation: await incarnationOf(engine, s.id), runId: 'probe', index: 0, done: false }])]);
+  expect((await s.run()).listing!.find(entry => entry.class === 'sync_in_progress')!.detail).toContain('the manifest of sync run probe is missing');
   const busy = await s.run({ apply: true });
   expect(busy).toMatchObject({ applied: 0, remaining: { sync_in_progress: 1 } });
   expect((await s.holds())[0]!.meta.fence_repair).toMatchObject({ reason: 'sync_in_progress' });
   await engine.executeRaw("DELETE FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1", [`probe-${s.id}`]);
-  await engine.transaction(async tx => {
+  const approved = await s.run();
+  expect(approved.affected).toBe(1);
+  const stranger = randomUUID();
+  const worktree = async (sql: string, params: unknown[]) => engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
-    await tx.executeRaw('UPDATE persistence_worktrees SET owner_host_id=$1::uuid WHERE id=(SELECT worktree_id FROM persistence_source_bindings WHERE source_id=$2 LIMIT 1)', [randomUUID(), s.id]);
+    await tx.executeRaw(sql, [...params, s.id]);
   });
+  await worktree('UPDATE persistence_worktrees SET owner_host_id=$1::uuid WHERE id=(SELECT worktree_id FROM persistence_source_bindings WHERE source_id=$2 LIMIT 1)', [stranger]);
+  // An approved set applied after the owner changed: the item is skipped with the reason, the read-only fix and retryable false.
+  const skip = (await s.run({ apply: true, expect: hashOf(approved) })).outcome_items![0]!;
+  expect(skip).toMatchObject({ outcome: 'skipped', reason: 'host_mismatch', detail: { retryable: false, fix: ['gbrain', 'sources', 'writer', 'status', '--source', s.id, '--json'] } });
+  expect(skip.detail!.message).toContain(stranger.slice(0, 8));
+  expect(skip.detail!.message).toContain(localHostId().slice(0, 8));
+  expect(skip.detail!.why).toContain(join(home, '.gbrain', 'persistence', 'host.json'));
   const elsewhere = await s.run({ apply: true });
-  expect(elsewhere).toMatchObject({ applied: 0, remaining: { owner_unavailable: 1 } });
+  expect(elsewhere).toMatchObject({ applied: 0, remaining: { host_mismatch: 1 } });
+  expect((await s.holds())[0]!.meta.fence_repair).toMatchObject({ reason: 'host_mismatch' });
+  expect(fenceHoldStatus((await s.holds())[0]!.meta).state).toBe('owner');
+  const local = (await s.run()).listing!.find(entry => entry.class === 'host_mismatch')!;
+  expect(local.detail).toContain(stranger.slice(0, 8));
+  expect(local.detail).toContain(join(home, '.gbrain', 'persistence', 'host.json'));
+  // A plan for a remote caller gets both ids but never the identity path.
+  const remote = (await fencesRepair.plan(engine, await resolveRepairScope(engine, s.id), null, { apply: false, remote: true })).listing!.find(entry => entry.class === 'host_mismatch')!;
+  expect(remote.detail).toContain(stranger.slice(0, 8));
+  expect(remote.detail).toContain(localHostId().slice(0, 8));
+  expect(remote.detail).not.toContain('host.json');
+  await worktree('UPDATE persistence_worktrees SET owner_host_id=$1::uuid, state=$2 WHERE id=(SELECT worktree_id FROM persistence_source_bindings WHERE source_id=$3 LIMIT 1)', [localHostId(), 'draining']);
+  expect(await s.run({ apply: true })).toMatchObject({ applied: 0, remaining: { transfer_in_progress: 1 } });
+  await worktree('UPDATE persistence_worktrees SET state=$1 WHERE id=(SELECT worktree_id FROM persistence_source_bindings WHERE source_id=$2 LIMIT 1)', ['recovering']);
+  expect(await s.run({ apply: true })).toMatchObject({ applied: 0, remaining: { clone_in_progress: 1 } });
+  expect((await s.holds())[0]!.meta.fence_repair).toMatchObject({ reason: 'clone_in_progress' });
+  await worktree('UPDATE persistence_worktrees SET state=$1 WHERE id=(SELECT worktree_id FROM persistence_source_bindings WHERE source_id=$2 LIMIT 1)', ['active']);
   expect(calls).toHaveLength(0);
   expect(s.read('people/model.md')).toBe(md('Model', noHeader()));
+}), 240_000);
+
+test('a running sync no longer skips the source: only candidates in flight or ahead in its frozen manifest wait, and a held path is not busy', () => each(async engine => {
+  const s = await managed(engine, { 'people/held.md': md('Held', noHeader()), 'notes/plain.md': md('Plain', 'Nothing here.\n') });
+  expect((await s.sync()).held_count).toBe(1);
+  s.write('people/ahead.md', md('Ahead', fixable('Synthetic ahead partnership')));
+  s.write('people/later.md', md('Later', fixable('Synthetic later partnership')));
+  s.write('people/moved.md', md('Moved', fixable('Synthetic moved partnership')));
+  commit(s.root, 'more fences');
+  const incarnation = await incarnationOf(engine, s.id);
+  const entry = (path: string, extra: Record<string, unknown> = {}) => ({ path, sourcePath: path, action: 'import', working: false, slug: path.replace(/\.md$/, ''), ...extra });
+  // A frozen catch-up that has passed entry 0 and still has three entries ahead, one of them the held path (its bytes changed since the hold).
+  const manifest = [entry('notes/plain.md'), entry('people/ahead.md'), entry('people/held.md'), entry('people/moved.md', { renameFrom: { sourcePath: 'people/later.md', slug: 'people/later', pageId: 1, revision: 'r' } })];
+  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync-manifest','run-ahead',$1::text::jsonb)`, [JSON.stringify(manifest)]);
+  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync',$1,$2::text::jsonb)`,
+    [`ahead-${s.id}`, JSON.stringify([{ sourceId: s.id, incarnation, runId: 'run-ahead', index: 1, done: false }])]);
+  transport(() => answer(CLAIM));
+  const preview = await s.run();
+  const byItem = Object.fromEntries(preview.listing!.map(entry => [entry.item.slice(s.id.length + 1), entry.class]));
+  expect(byItem).toEqual({ 'people/held.md': 'llm', 'people/ahead.md': 'sync_in_progress', 'people/later.md': 'sync_in_progress', 'people/moved.md': 'sync_in_progress' });
+  expect(preview.listing!.find(entry => entry.class === 'sync_in_progress')!.detail).toContain('A running sync of');
+  const applied = await s.run({ apply: true });
+  expect(applied).toMatchObject({ repaired: 1, remaining: { sync_in_progress: 3 } });
+  expect(calls).toHaveLength(1);
+  expect((await s.holds()).map(h => h.path)).toEqual([]);
+  expect(s.read('people/held.md')).toContain(FBE);
+  expect(s.read('people/ahead.md')).toBe(md('Ahead', fixable('Synthetic ahead partnership')));
+  // The cursor passes the three entries: the next run repairs them with no model call (Tier 1).
+  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=$2::text::jsonb WHERE op='managed-sync' AND fingerprint=$1`,
+    [`ahead-${s.id}`, JSON.stringify([{ sourceId: s.id, incarnation, runId: 'run-ahead', index: 4, done: false }])]);
+  expect(await s.run({ apply: true })).toMatchObject({ repaired: 3 });
+  expect(calls).toHaveLength(1);
+  await engine.executeRaw("DELETE FROM op_checkpoints WHERE (op='managed-sync' AND fingerprint=$1) OR (op='managed-sync-manifest' AND fingerprint='run-ahead')", [`ahead-${s.id}`]);
+}), 240_000);
+
+test('a sync that freezes the candidate while the model answers is caught at the write\'s admission: nothing is written, and the attempt is not spent', () => each(async engine => {
+  const s = await managed(engine, { 'notes/plain.md': md('Plain', 'Nothing here.\n') });
+  await s.sync();
+  s.write('people/model.md', md('Model', noHeader()));
+  commit(s.root, 'a model fence');
+  const incarnation = await incarnationOf(engine, s.id);
+  const freeze = async () => {
+    await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync-manifest','run-wait',$1::text::jsonb)`,
+      [JSON.stringify([{ path: 'people/model.md', sourcePath: 'people/model.md', action: 'import', working: false, slug: 'people/model' }])]);
+    await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync',$1,$2::text::jsonb)`,
+      [`wait-${s.id}`, JSON.stringify([{ sourceId: s.id, incarnation, runId: 'run-wait', index: 0, done: false }])]);
+  };
+  let n = 0;
+  __setChatTransportForTests(async () => { n++; if (n === 1) await freeze(); return answer(CLAIM); });
+  const raced = await s.run({ apply: true });
+  expect(raced).toMatchObject({ applied: 0, remaining: { sync_in_progress: 1 } });
+  expect(raced.outcome_items![0]).toMatchObject({ outcome: 'skipped', reason: 'sync_in_progress' });
+  expect(raced.outcome_items![0]!.detail!.message).toContain('started after this repair was planned');
+  expect(n).toBe(1);
+  expect(s.read('people/model.md')).toBe(md('Model', noHeader()));
+  await engine.executeRaw("DELETE FROM op_checkpoints WHERE (op='managed-sync' AND fingerprint=$1) OR (op='managed-sync-manifest' AND fingerprint='run-wait')", [`wait-${s.id}`]);
+  // The attempt memo recorded a transient outcome, so the same bytes are sent again once the sync is gone.
+  expect(await s.run({ apply: true })).toMatchObject({ repaired: 1 });
+  expect(n).toBe(2);
+  expect(s.read('people/model.md')).toContain(NARROW);
 }), 240_000);
 
 test('a read-only mirror is repaired in the database only and its hold cleared; the file is never written', () => each(async engine => {

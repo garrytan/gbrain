@@ -49,5 +49,15 @@ export async function buildAttributionHistory(ctx: OperationContext, pages: numb
       }
     }
   }
+  // A forget rewrites its page through an asynchronous withdrawal-mirror effect; the history is complete (and its
+  // content stable for the callers' before/after reads) only once those effects have run.
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    const [pending] = await ctx.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM persistence_effects
+      WHERE source_id=$1 AND kind='withdrawal-mirror' AND state IN ('queued','running')`, [sourceId]);
+    if (!pending?.n) break;
+    if (Date.now() > deadline) throw new Error(`${pending.n} withdrawal-mirror effects still pending after 60 s`);
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   return history;
 }

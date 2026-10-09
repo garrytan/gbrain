@@ -2551,6 +2551,19 @@
           "src-a"
         ]
       },
+      "replaceDerivedLinksBatch#default": {
+        "flagOffLanes": [
+          "tx",
+          "tx>sp"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx",
+          "tx>sp"
+        ],
+        "flagOnScopes": []
+      },
       "resolveSlugWithAlias#default": {
         "flagOffLanes": [
           "pool"
@@ -2902,6 +2915,7 @@
           "tx"
         ],
         "flagOnScopes": [
+          "src-a",
           "src-a",
           "src-a"
         ]
@@ -3494,6 +3508,7 @@
         "removeLinksByPagesAndSource": "none",
         "removeTag": "none",
         "replaceDerivedLinks": "none",
+        "replaceDerivedLinksBatch": "none",
         "resolveAliases": "none",
         "resolveFactsEmbeddingCast": "none",
         "resolveSlugWithAlias": "none",

@@ -20,6 +20,7 @@ import { deriveTemporalEvidence, rowKey, type TemporalEvidence } from './link-te
 import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
 import { temporalLinkTypes } from './link-validity.ts';
 import { inlineTransitions } from './link-effective.ts';
+import { pipelined } from './page-state/transactions.ts';
 
 type Tx = Pick<BrainEngine, 'executeRaw'>;
 
@@ -67,8 +68,8 @@ export async function applyTemporalEvidence(
     from_source_id: r.from_source_id ?? sourceId, to_source_id: r.to_source_id ?? sourceId,
     tense: evidence.tense.get(rowKey(r)) === 'past' ? 'past' : null,
   }));
-  if (tenseRows.length) {
-    await executeRawJsonb(tx,
+  // The tense update, the transition replacement, the target check and the after-read are sent together, in this order.
+  const tense = tenseRows.length ? () => executeRawJsonb(tx,
       `UPDATE links l SET assertion_tense = v.tense
          FROM jsonb_to_recordset(($2::jsonb)->'rows') AS v(from_slug text, to_slug text, link_type text, link_source text,
            from_source_id text, to_source_id text, tense text)
@@ -77,13 +78,8 @@ export async function applyTemporalEvidence(
         WHERE l.from_page_id = f.id AND l.to_page_id = t.id AND l.link_type = v.link_type AND l.link_source = v.link_source
           AND (l.origin_page_id = $1 OR (l.origin_page_id IS NULL AND l.from_page_id = $1))
           AND l.assertion_tense IS DISTINCT FROM v.tense`,
-      [pageId], [{ rows: tenseRows }]);
-  }
-
-  await tx.executeRaw(`DELETE FROM link_transitions WHERE origin_page_id = $1 AND producer = ANY($2::text[])`, [pageId, DERIVED_PRODUCERS]);
-  let inserted: RelationshipKey[] = [];
-  if (transitions.length) {
-    inserted = await executeRawJsonb<RelationshipKey>(tx,
+      [pageId], [{ rows: tenseRows }]) : async () => undefined;
+  const insert = transitions.length ? () => executeRawJsonb<RelationshipKey>(tx,
       `INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, date_precision, producer, origin_page_id, line_hash)
        SELECT $2, f.id, t.id, v.link_type, v.kind, v.occurred_on::date, v.date_precision, v.producer, $1, v.line_hash
          FROM jsonb_to_recordset(($3::jsonb)->'rows') AS v(from_slug text, to_slug text, link_type text, kind text,
@@ -92,20 +88,25 @@ export async function applyTemporalEvidence(
          JOIN pages t ON t.slug = v.to_slug AND t.source_id = $2 AND t.deleted_at IS NULL
        ON CONFLICT DO NOTHING
        RETURNING from_page_id, to_page_id, link_type`,
-      [pageId, sourceId], [{ rows: transitions }]);
-  }
+      [pageId, sourceId], [{ rows: transitions }]) : async () => [] as RelationshipKey[];
   const unmatched = [...evidence.unmatched, ...inline.unmatched];
   const explicitTargets = [...new Set(evidence.transitions.filter(t => t.producer === 'explicit' || t.producer === 'dream').map(t => t.to_slug))];
+  const [, , inserted, liveTargets, keysAfter] = await pipelined(tx, [
+    tense,
+    () => tx.executeRaw(`DELETE FROM link_transitions WHERE origin_page_id = $1 AND producer = ANY($2::text[])`, [pageId, DERIVED_PRODUCERS]),
+    insert,
+    () => explicitTargets.length ? tx.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL`, [sourceId, explicitTargets]) : Promise.resolve([]),
+    () => relationshipKeysForOrigin(tx, pageId),
+  ]) as [unknown, unknown, RelationshipKey[], Array<{ slug: string }>, RelationshipKey[]];
   if (explicitTargets.length) {
-    const live = new Set((await tx.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL`, [sourceId, explicitTargets])).map(r => r.slug));
+    const live = new Set(liveTargets.map(r => r.slug));
     for (const t of evidence.transitions) {
       if ((t.producer === 'explicit' || t.producer === 'dream') && !live.has(t.to_slug)) {
         unmatched.push({ line: `${t.kind === 'start' ? 'Started' : 'Ended'} ${t.link_type} [[${t.to_slug}]]`, reason: 'no_target' });
       }
     }
   }
-  const keysAfter = await relationshipKeysForOrigin(tx, pageId);
   const refreshed = await refreshRelationships(tx, [...keysBefore, ...keysAfter]);
   return { transitions: inserted.length, refreshed, unmatched };
 }

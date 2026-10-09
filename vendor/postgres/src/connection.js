@@ -241,10 +241,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     q.onlyDescribe && (delete statements[q.signature])
     q.parameters = q.parameters || parameters
     q.prepared = q.prepare && q.signature in statements
-    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared)
+    // GBrain: a statement this pool already described on another connection reuses its parameter
+    // types, so it is parsed, described and executed in one pipelined message group (no describe first).
+    q.typesKey = options.shared_types && parameters.length && !q.onlyDescribe ? types + string : null
+    const shared = !q.prepared && q.typesKey && options.shared_types.get(q.typesKey)
+    q.sharedTypes = !!shared
+    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !shared)
     q.statement = q.prepared
       ? statements[q.signature]
-      : { string, types, name: q.prepare ? statementId + statementCount++ : '' }
+      : { string, types: shared ? shared.slice() : types, name: q.prepare ? statementId + statementCount++ : '' }
 
     typeof options.debug === 'function' && options.debug(id, string, parameters, types)
   }
@@ -448,6 +453,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     remaining = 0
     incomings = null
     clearImmediate(nextWriteTimer)
+    // GBrain (#6355): bytes still waiting for the cleared immediate belonged to this socket. Left in place, the next
+    // connection's StartupMessage is appended to them and never scheduled for writing (the timer handle is not
+    // null), so the connection sits open until CONNECT_TIMEOUT and every statement bound to it fails.
+    chunk = nextWriteTimer = null
     socket.removeListener('data', data)
     socket.removeListener('connect', connected)
     idleTimer.cancel()
@@ -462,10 +471,18 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
         ? cancelReject(cancelError || Errors.connection('CONNECTION_CLOSED', options))
         : cancelResolve()
 
-    if (initial)
+    if (initial) {
+      // GBrain (#6355): a connection that died during startup (its backend terminated under the array-types fetch)
+      // leaves that internal query and the error it saw behind. The fresh connection must not deliver the stale
+      // error to the caller's query at its first ReadyForQuery, and the internal query settles here instead of
+      // rejecting with nobody to hear it.
+      query && query !== initial && queryError(query, Errors.connection('CONNECTION_CLOSED', options, socket))
+      query = results = errorResponse = null
       return reconnect()
+    }
 
     !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
+    query = null
     closedTime = performance.now()
     hadError && options.shared.retries++
     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
@@ -551,6 +568,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     connection.status = x[5]
     if (query) {
       if (errorResponse) {
+        // GBrain: a failed statement describes again next time instead of trusting shared parameter types.
+        query.sharedTypes && options.shared_types.delete(query.typesKey)
         query.retried
           ? errored(query.retried)
           : query.prepared && retryRoutines.has(errorResponse.routine)
@@ -648,6 +667,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
       !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
 
     query.prepare && (statements[query.signature] = query.statement)
+    // GBrain: only built-in parameter types are shared; a database's own types may be recreated under a new oid.
+    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
+      && options.shared_types.set(query.typesKey, query.statement.types.slice())
     query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
   }
 
@@ -785,14 +807,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
 
   async function fetchArrayTypes() {
     needsTypes = false
-    const types = await new Query([`
-      select b.oid, b.typarray
-      from pg_catalog.pg_type a
-      left join pg_catalog.pg_type b on b.oid = a.typelem
-      where a.typcategory = 'A'
-      group by b.oid, b.typarray
-      order by b.oid
-    `], [], execute)
+    let types
+    try {
+      types = await new Query([`
+        select b.oid, b.typarray
+        from pg_catalog.pg_type a
+        left join pg_catalog.pg_type b on b.oid = a.typelem
+        where a.typcategory = 'A'
+        group by b.oid, b.typarray
+        order by b.oid
+      `], [], execute)
+    } catch (error) {
+      // GBrain (#6355): the fetch failed or its connection closed; errored() has already told the caller's query, and
+      // connected() re-arms the fetch for the next connection. Nothing awaits this promise, so it must not reject.
+      return
+    }
     types.forEach(({ oid, typarray }) => addArrayType(oid, typarray))
   }
 

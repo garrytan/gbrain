@@ -55,6 +55,12 @@ import { runExtract } from '../../src/commands/extract.ts';
 import { runEmbed } from '../../src/commands/embed.ts';
 import { countExtractAtomsBacklog } from '../../src/core/cycle/extract-atoms.ts';
 import { operationsByName } from '../../src/core/operations.ts';
+import { runExtractFacts, FENCE_FACTS_INTENT, DELETED_PAGE_FACTS_INTENT } from '../../src/core/cycle/extract-facts.ts';
+import { extractTakes, TAKES_REEXTRACT_INTENT } from '../../src/core/cycle/extract-takes.ts';
+import { takeSupersessionRepair, TAKE_REPROJECT_INTENT } from '../../src/core/repair/take-supersession.ts';
+import { CONVERSATION_FACTS_INTENT } from '../../src/core/facts/conversation-publication.ts';
+import { renderFactsTable } from '../../src/core/facts-fence.ts';
+import { renderTakesFence } from '../../src/core/takes-fence.ts';
 import { json, googleConfig, withGoogleAccount } from './connector-fixture.ts';
 import { withEnv } from './with-env.ts';
 
@@ -70,6 +76,13 @@ export const contractCases = [
   'cycle_extract_facts',
   'extract_conversation_facts',
   'extract_conversation_facts_thread',
+  'extract_conversation_facts_transcript',
+  'extract_conversation_facts_prose',
+  'extract_conversation_facts_race',
+  'cycle_extract_facts_fenced',
+  'cycle_extract_facts_deleted_page',
+  'takes_rebuild_db',
+  'take_supersession_reproject',
   'facts_absorb',
   'atom_drain_opted_out',
   'atom_drain_default_on',
@@ -284,6 +297,15 @@ BEGIN
     IF (row_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at'])
       = (old_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at']) THEN RETURN NULL; END IF;
   END IF;
+  -- Decision 10 (wave 9 follow-ups): on a managed brain a facts or takes
+  -- change must commit inside the publication of an admitted request. The
+  -- harness refuses one that runs without gbrain.write_request (counted with
+  -- the guard's refusals); production enforcement is a TODO.
+  IF TG_TABLE_NAME IN ('facts','takes') AND COALESCE(current_setting('gbrain.write_request',true),'')=''
+    AND EXISTS (SELECT 1 FROM persistence_brain WHERE singleton=1 AND enabled) THEN
+    PERFORM nextval(('gbrain_contract_refusal_' || TG_TABLE_NAME)::regclass);
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='receipt_required: a managed '||TG_TABLE_NAME||' change ran without a persistence request';
+  END IF;
   IF TG_TABLE_NAME='sources' THEN src := row_data->>'id';
   ELSIF row_data ? 'source_id' THEN src := row_data->>'source_id';
   ELSE SELECT source_id INTO src FROM pages WHERE id=(row_data->>'page_id')::integer; END IF;
@@ -408,13 +430,24 @@ async function runJobs(engine: BrainEngine, jobs: Array<{ name: string; data: Re
  * claimable (`waiting`/`delayed`) job is cancelled first: a follow-up queued
  * earlier in the case (the sweep's loops_extract) would otherwise be claimed
  * by this worker once `ids` finish, and its writes and embedding effects land
- * after the case's check. Active and claimed jobs are left alone. The brain is
- * this file's own, and runCase cancels each case's leftovers.
+ * after the case's check. A follow-up queued while `ids` run (a page write's
+ * facts-absorb, dispatched from the persistence outbox by the consumer a
+ * drained job starts) is never claimed either: the worker registers only the
+ * drained jobs' names, and a worker claims only names it has registered.
+ * Active and claimed jobs are left alone. The brain is this file's own, and
+ * runCase cancels each case's leftovers.
  */
 async function drainQueue(engine: BrainEngine, ids: number[], timeoutMs = 60_000) {
   await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE status IN ('waiting','delayed') AND NOT (id = ANY($1::int[]))", [ids]);
+  const builtins = new MinionWorker(engine, { healthCheckInterval: 0 });
+  await registerBuiltinHandlers(builtins, engine, { quiet: true });
   const worker = new MinionWorker(engine, { pollInterval: 20, healthCheckInterval: 0, stalledInterval: 600_000 });
-  await registerBuiltinHandlers(worker, engine, { quiet: true });
+  const names = await engine.executeRaw<{ name: string }>('SELECT DISTINCT name FROM minion_jobs WHERE id = ANY($1::int[])', [ids]);
+  for (const { name } of names) {
+    const handler = builtins.getHandler(name);
+    if (!handler) throw new Error(`no builtin handler registered for drained job ${name}`);
+    worker.register(name, handler);
+  }
   const running = worker.start();
   const deadline = Date.now() + timeoutMs;
   let rows: Array<{ id: number; name: string; status: string; attempts_started: number; attempts_made: number; max_attempts: number; result: unknown; error_text: string | null }> = [];
@@ -502,6 +535,47 @@ async function activeFacts(state: CaseState) {
   return state.brain.engine.executeRaw<{ id: number; fact: string; expired_at: string | null }>(
     'SELECT id,fact,expired_at::text FROM facts WHERE source_id=$1 ORDER BY id', [state.sourceId]);
 }
+
+async function outcomeRows(state: CaseState) {
+  return state.brain.engine.executeRaw<{ fact: string }>(
+    "SELECT fact FROM facts WHERE source_id=$1 AND source LIKE 'cli:extract-conversation-facts:%' AND expired_at IS NULL ORDER BY id", [state.sourceId]);
+}
+
+async function requestCount(state: CaseState): Promise<number> {
+  return (await state.brain.engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM persistence_requests WHERE source_id=$1', [state.sourceId]))[0]!.n;
+}
+
+/** A page in the case's connector source, published through the coordinator like any managed write. */
+async function putConversationPage(state: CaseState, slug: string, content: string): Promise<void> {
+  const current = await state.brain.engine.readPageSnapshot(slug, { sourceId: state.sourceId });
+  await submitPageMutation(state.ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), content,
+    ...(current ? { expected_revision: current.revision } : {}) } });
+  await disposePersistenceConsumer(state.brain.engine);
+}
+
+const TRANSCRIPT_SLUG = 'meetings/2026-09-28-plan-sync';
+const TRANSCRIPT = [
+  '---', 'title: Plan sync', 'type: meeting', 'date: 2026-09-28', '---',
+  '**Alice Example:** Can you send me the quarterly plan before the review?',
+  '**Owner Example:** Yes, I will send it on Thursday with the finance appendix.',
+  '**Alice Example:** Good. I review plans on Mondays, so that works.',
+  '**Owner Example:** I will flag any launch date changes in the summary.', '',
+].join('\n');
+const PROSE_MEETING = [
+  '---', 'title: Planning notes', 'type: meeting', 'date: 2026-09-28', '---',
+  '**Date:** 2026-09-28', '**Attendees:** Alice Example, Owner Example', '',
+  '## Notes', 'We went through hiring, the support backlog and the two launch dates.', '',
+  '## Action items', '- Owner Example sends the quarterly plan with the finance appendix.', '',
+].join('\n');
+const FENCED_SLUG = 'projects/plan-review';
+const FENCED_PAGE = `---\ntitle: Plan review\ntype: project\n---\n# Plan review\n\n## Facts\n\n${renderFactsTable([
+  { rowNum: 1, claim: 'Quarterly plans are reviewed on Mondays', kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium', active: true },
+] as never)}\n`;
+const TAKES_SLUG = 'projects/launch-bets';
+const TAKES_PAGE = `---\ntitle: Launch bets\ntype: project\n---\n# Launch bets\n\n## Takes\n\n${renderTakesFence([
+  { rowNum: 1, claim: 'The launch ships in Q3', kind: 'bet', holder: 'world', weight: 0.6, sinceDate: '2026-02', source: 'call notes; superseded by #2', active: false },
+  { rowNum: 2, claim: 'The launch ships in Q4', kind: 'bet', holder: 'world', weight: 0.7, sinceDate: '2026-03', source: 'call notes', active: true },
+] as never)}\n`;
 
 async function staleCount(state: CaseState): Promise<number> {
   return state.brain.engine.countStalePagesForExtraction({ sourceId: state.sourceId });
@@ -608,17 +682,23 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     expect(phase!.status).not.toBe('fail');
   },
 
+  /** A single Gmail message is an email, not a conversation: its durable outcome publishes with a receipt and the rerun skips it. */
   async extract_conversation_facts(state) {
     await gmailSweep(state);
     const [job] = await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId } }]);
     requireCompleted([job]);
+    expect(job.result).toMatchObject({ pages_marked_non_extractable: 1, facts_inserted: 0 });
+    const facts = (await changesSince(state)).filter(c => c.tbl === 'facts');
+    expect(facts.length).toBe(1);
+    expect(facts.every(c => c.request_kind === CONVERSATION_FACTS_INTENT)).toBe(true);
+    expect((await outcomeRows(state)).map(r => r.fact)).toEqual(['EXTRACTION_NOT_APPLICABLE']);
+    const [again] = await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId } }]);
+    requireCompleted([again]);
+    expect(again.result).toMatchObject({ pages_skipped_non_extractable: 1, pages_marked_non_extractable: 0 });
+    expect((await changesSince(state)).filter(c => c.tbl === 'facts').length).toBe(1);
   },
 
-  /**
-   * #5025: a multi-message Gmail thread parses into turns. Replacing a page's
-   * conversation facts has no persistence request, so on a managed brain the
-   * page is skipped without writing and stays retryable.
-   */
+  /** #5025 / wave 9 follow-ups item 1: a multi-message Gmail thread extracts on a managed brain, every row receipted. */
   async extract_conversation_facts_thread(state) {
     await gmailSweep(state, { reply: true });
     // The sweep queued loops_extract (priority 5). Left waiting, this case's worker can
@@ -626,7 +706,68 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     await state.brain.engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
     const [job] = await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId } }]);
     requireCompleted([job]);
-    expect((await changesSince(state)).filter(c => c.tbl === 'facts')).toEqual([]);
+    expect(job.result).toMatchObject({ pages_processed: 1, facts_inserted: 1 });
+    const facts = (await changesSince(state)).filter(c => c.tbl === 'facts');
+    expect(facts.length).toBeGreaterThan(0);
+    expect(facts.every(c => c.request_kind === CONVERSATION_FACTS_INTENT)).toBe(true);
+    expect((await outcomeRows(state)).map(r => r.fact)).toEqual(['EXTRACTION_COMPLETE']);
+  },
+
+  /** A dated two-speaker meeting transcript: its facts and EXTRACTION_COMPLETE commit with one receipt. */
+  async extract_conversation_facts_transcript(state) {
+    await putConversationPage(state, TRANSCRIPT_SLUG, TRANSCRIPT);
+    const [job] = await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId } }]);
+    requireCompleted([job]);
+    expect(job.result).toMatchObject({ pages_processed: 1, facts_inserted: 1, pages_failed: 0 });
+    const facts = (await changesSince(state)).filter(c => c.tbl === 'facts');
+    expect(facts.length).toBe(2);
+    expect(facts.every(c => c.request_kind === CONVERSATION_FACTS_INTENT)).toBe(true);
+    const [{ n }] = await state.brain.engine.executeRaw<{ n: number }>(
+      "SELECT count(DISTINCT c.txid)::int AS n FROM gbrain_contract_changes c WHERE c.id > $1 AND c.tbl='facts' AND c.source_id=$2", [state.detector.auditFrom, state.sourceId]);
+    expect(n).toBe(1);
+  },
+
+  /** A prose meeting page: a receipted EXTRACTION_NOT_APPLICABLE, counted as skipped (no model call) on the next run. */
+  async extract_conversation_facts_prose(state) {
+    await putConversationPage(state, 'meetings/2026-09-28-planning-notes', PROSE_MEETING);
+    let calls = 0;
+    __setChatTransportForTests(async opts => { calls++; return fakeChat(opts); });
+    const [job] = await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId } }]);
+    requireCompleted([job]);
+    expect(job.result).toMatchObject({ pages_marked_non_extractable: 1 });
+    expect(calls).toBe(0);
+    const facts = (await changesSince(state)).filter(c => c.tbl === 'facts');
+    expect(facts.length).toBe(1);
+    expect(facts[0]!.request_kind).toBe(CONVERSATION_FACTS_INTENT);
+    const [again] = await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId } }]);
+    requireCompleted([again]);
+    expect(again.result).toMatchObject({ pages_skipped_non_extractable: 1 });
+    expect(calls).toBe(0);
+  },
+
+  /** An edit while the model runs: nothing publishes, the prior batch stays, and the next run extracts the edit. */
+  async extract_conversation_facts_race(state) {
+    await putConversationPage(state, TRANSCRIPT_SLUG, TRANSCRIPT);
+    requireCompleted(await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId } }]));
+    const prior = await activeFacts(state);
+    expect(prior.length).toBe(2);
+    let edited = false;
+    __setChatTransportForTests(async opts => {
+      if (!edited) {
+        edited = true;
+        await putConversationPage(state, TRANSCRIPT_SLUG, TRANSCRIPT.replace('Thursday', 'Friday'));
+      }
+      return fakeChat(opts);
+    });
+    const [job] = await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId, force: true } }]);
+    expect(edited).toBe(true);
+    expect((job.result as { pages_failed?: number } | null)?.pages_failed ?? 1).toBeGreaterThan(0);
+    expect(await activeFacts(state)).toEqual(prior);
+    __setChatTransportForTests(async opts => fakeChat(opts));
+    requireCompleted(await runJobs(state.brain.engine, [{ name: 'extract-conversation-facts', data: { sourceId: state.sourceId } }]));
+    const after = await activeFacts(state);
+    expect(after.length).toBe(2);
+    expect(after.map(f => f.id)).not.toEqual(prior.map(f => f.id));
   },
 
   async facts_absorb(state) {
@@ -814,6 +955,95 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     expect(rows.length).toBe(1);
   },
 
+  /** extract_facts fence reconcile on a fenced page: the reinserted rows commit with a managed_maintenance_fence_facts receipt. */
+  async cycle_extract_facts_fenced(state) {
+    const { engine } = state.brain;
+    await putConversationPage(state, FENCED_SLUG, FENCED_PAGE);
+    const count = async () => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL',
+      [state.sourceId, FENCED_SLUG]))[0]!.n;
+    expect(await count()).toBe(1);
+    // Model a page whose fence was never projected (the work the reconcile exists for), outside the protocol as the fixture does.
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw('DELETE FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [state.sourceId, FENCED_SLUG]);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    state.detector = { ...await startDetector(engine), output: state.detector.output };
+    const result = await runExtractFacts(engine, { sourceId: state.sourceId, slugs: [FENCED_SLUG] });
+    expect(result).toMatchObject({ factsInserted: 1, pagesFailed: 0 });
+    expect(await count()).toBe(1);
+    const changes = (await changesSince(state)).filter(c => c.tbl === 'facts');
+    expect(changes.length).toBe(1);
+    expect(changes[0]!.request_kind).toBe(FENCE_FACTS_INTENT);
+    // In sync now: the next run admits nothing.
+    const requests = await requestCount(state);
+    expect((await runExtractFacts(engine, { sourceId: state.sourceId, slugs: [FENCED_SLUG] })).factsInserted).toBe(0);
+    expect(await requestCount(state)).toBe(requests);
+  },
+
+  /** A soft-deleted page whose fence rows are still active: expired under a receipt, never restored; a no-op admits nothing. */
+  async cycle_extract_facts_deleted_page(state) {
+    const { engine } = state.brain;
+    await putConversationPage(state, FENCED_SLUG, FENCED_PAGE);
+    const live = (await engine.readPageSnapshot(FENCED_SLUG, { sourceId: state.sourceId }))!;
+    await submitPageMutation(state.ctx, { operation: 'delete_page', params: { slug: FENCED_SLUG, expected_revision: live.revision, request_id: randomUUID() } });
+    // Model rows left active by a deletion that predates the expiry pass, outside the protocol.
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw('UPDATE facts SET expired_at=NULL WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL', [state.sourceId, FENCED_SLUG]);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    state.detector = { ...await startDetector(engine), output: state.detector.output };
+    const result = await runExtractFacts(engine, { sourceId: state.sourceId, slugs: [] });
+    expect(result.factsExpiredForDeletedPages).toBe(1);
+    const changes = (await changesSince(state)).filter(c => c.tbl === 'facts');
+    expect(changes.length).toBe(1);
+    expect(changes[0]!.request_kind).toBe(DELETED_PAGE_FACTS_INTENT);
+    const page = await engine.readPageSnapshot(FENCED_SLUG, { sourceId: state.sourceId, includeDeleted: true });
+    expect(page?.page.deleted_at).toBeTruthy();
+    const requests = await requestCount(state);
+    expect((await runExtractFacts(engine, { sourceId: state.sourceId, slugs: [] })).factsExpiredForDeletedPages).toBe(0);
+    expect(await requestCount(state)).toBe(requests);
+  },
+
+  /** `extract takes --source db --rebuild` (takes rebuild): a page whose takes left the index republishes them with a receipt; in sync admits nothing. */
+  async takes_rebuild_db(state) {
+    const { engine } = state.brain;
+    await putConversationPage(state, TAKES_SLUG, TAKES_PAGE);
+    const takes = async () => engine.executeRaw<{ row_num: number }>('SELECT t.row_num FROM takes t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1 AND p.slug=$2 ORDER BY t.row_num', [state.sourceId, TAKES_SLUG]);
+    expect((await takes()).length).toBe(2);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw('DELETE FROM takes WHERE page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2) AND row_num=2', [state.sourceId, TAKES_SLUG]);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    state.detector = { ...await startDetector(engine), output: state.detector.output };
+    const result = await extractTakes(engine, { source: 'db', rebuild: true, sourceId: state.sourceId });
+    expect(result.takesUpserted).toBe(2);
+    expect((await takes()).map(t => t.row_num)).toEqual([1, 2]);
+    const changes = (await changesSince(state)).filter(c => c.tbl === 'takes');
+    expect(changes.length).toBeGreaterThan(0);
+    expect(changes.every(c => c.request_kind === TAKES_REEXTRACT_INTENT)).toBe(true);
+    const requests = await requestCount(state);
+    expect((await extractTakes(engine, { source: 'db', rebuild: true, sourceId: state.sourceId })).takesUpserted).toBe(0);
+    expect(await requestCount(state)).toBe(requests);
+  },
+
+  /** `gbrain repair take-supersession` database branch: the stored pointer is reprojected under a receipt. */
+  async take_supersession_reproject(state) {
+    const { engine } = state.brain;
+    await putConversationPage(state, TAKES_SLUG, TAKES_PAGE);
+    const pointer = async () => (await engine.executeRaw<{ superseded_by: number | null }>(
+      'SELECT t.superseded_by FROM takes t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1 AND p.slug=$2 AND t.row_num=1', [state.sourceId, TAKES_SLUG]))[0]!.superseded_by;
+    expect(await pointer()).toBe(2);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await engine.executeRaw('UPDATE takes SET superseded_by=NULL WHERE page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2) AND row_num=1', [state.sourceId, TAKES_SLUG]);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    state.detector = { ...await startDetector(engine), output: state.detector.output };
+    const plan = await takeSupersessionRepair.plan(engine, { source_ids: [state.sourceId] } as never, null);
+    expect(plan.items.length).toBe(1);
+    const outcome = await takeSupersessionRepair.apply(state.ctx, plan.items[0]!);
+    expect(outcome).toMatchObject({ applied: true, outcome: 'reprojected' });
+    expect(await pointer()).toBe(2);
+    const changes = (await changesSince(state)).filter(c => c.tbl === 'takes');
+    expect(changes.length).toBe(1);
+    expect(changes[0]!.request_kind).toBe(TAKE_REPROJECT_INTENT);
+  },
+
   async handler_enumeration(state) {
     const names: string[] = [];
     const worker = { register: (name: string) => { names.push(name); } } as unknown as MinionWorker;
@@ -830,7 +1060,8 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
 };
 
 const ATOM_CASES: ReadonlySet<ContractCase> = new Set(['atom_drain_opted_out', 'atom_drain_default_on', 'atom_dispatch']);
-const FACTS_CASES: ReadonlySet<ContractCase> = new Set(['cycle_extract_facts', 'extract_conversation_facts', 'extract_conversation_facts_thread', 'facts_absorb']);
+const FACTS_CASES: ReadonlySet<ContractCase> = new Set(['cycle_extract_facts', 'extract_conversation_facts', 'extract_conversation_facts_thread',
+  'extract_conversation_facts_transcript', 'extract_conversation_facts_prose', 'extract_conversation_facts_race', 'facts_absorb']);
 
 async function runCase(brain: ContractBrain, id: ContractCase): Promise<void> {
   const { model, dimensions } = brain.embedding;

@@ -61,6 +61,7 @@ import {
 import { ALLOWED_TYPES, type AllowedType } from '../facts/conversation-types.ts';
 import { conversationFactsCostCap } from '../facts/conversation-budget.ts';
 import { noPricingMessage } from '../budget/no-pricing.ts';
+import { OperationError } from '../ops/contract.ts';
 
 /** Per-phase wrapper opts. */
 export interface ConversationFactsBackfillPhaseOpts {
@@ -219,6 +220,7 @@ export async function runPhaseConversationFactsBackfill(
   let skippedByBrainWideWalltime = 0;
   let sourcesBudgetExhausted = 0;
   let sourcesWalltimeExhausted = 0;
+  const sourcesNotOwned: string[] = [];
   let totalSpent = 0;
 
   const zeroResult = (): ExtractConversationFactsResult => ({
@@ -347,6 +349,9 @@ export async function runPhaseConversationFactsBackfill(
           // is still cycle-runner control flow — propagate it rather than
           // downgrading it to a per-source failure record.
           throw err;
+        } else if (err instanceof OperationError && err.code === 'owner_unavailable') {
+          sourcesNotOwned.push(src.id); // its owner host extracts it (as fence_repair skips); reported, not a failure
+          perSourceResults[src.id] = zeroResult();
         } else {
           // Per-source failure: record + continue with next source.
           perSourceResults[src.id] = {
@@ -396,8 +401,8 @@ export async function runPhaseConversationFactsBackfill(
     resolution_errors: 0,
     sources_processed: 0,
   };
-  for (const r of Object.values(perSourceResults)) {
-    if (!r.error) totals.sources_processed++;
+  for (const [id, r] of Object.entries(perSourceResults)) {
+    if (!r.error && !sourcesNotOwned.includes(id)) totals.sources_processed++;
     totals.pages_processed += r.pages_processed;
     totals.pages_skipped += r.pages_skipped;
     totals.pages_skipped_unparsed += r.pages_skipped_unparsed;
@@ -421,7 +426,7 @@ export async function runPhaseConversationFactsBackfill(
   const noPricing = [...new Map(Object.values(perSourceResults)
     .flatMap((r) => r.budget_pricing ? [[r.budget_pricing.model, r.budget_pricing] as const] : [])).values()];
   const summary = `${totals.facts_inserted} facts inserted across ${totals.sources_processed}/${sources.length} sources, ~$${totalSpent.toFixed(4)} spent` +
-    noPricing.map((g) => `. ${noPricingMessage(g)}`).join('');
+    noPricing.map((g) => `. ${noPricingMessage(g)}`).join('') + notOwnedNote(sourcesNotOwned);
 
   return {
     phase: 'conversation_facts_backfill',
@@ -451,6 +456,7 @@ export async function runPhaseConversationFactsBackfill(
       // #3627: per-source cap enforcement observability.
       sources_budget_exhausted: sourcesBudgetExhausted,
       sources_walltime_exhausted: sourcesWalltimeExhausted,
+      sources_skipped_not_owner: sourcesNotOwned,
       no_pricing: noPricing,
       types: cfg.types,
       max_cost_usd: cfg.maxCostUsd,
@@ -461,4 +467,8 @@ export async function runPhaseConversationFactsBackfill(
       per_source: perSourceResults,
     },
   };
+}
+
+function notOwnedNote(ids: string[]): string {
+  return ids.length ? `. Skipped ${ids.length} managed source(s) this host does not own (${ids.join(', ')}); run the phase on their owner host` : '';
 }

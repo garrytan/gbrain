@@ -167,6 +167,11 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/live-sync.md",
       },
       {
+        title: "docs/guides/sync-unblock-runbook.md",
+        description: "Operator-agent loop for a managed catch-up on a live checkout: gbrain sync status --json (cursor, committed_last_10m, each hold and the last error with class / safe_actions / needs_human), gbrain sync unblock --apply, and the decision table (page / connection / systemic) behind them.",
+        path: "docs/guides/sync-unblock-runbook.md",
+      },
+      {
         title: "docs/guides/cron-schedule.md",
         description: "Recurring job scheduling.",
         path: "docs/guides/cron-schedule.md",
@@ -316,6 +321,7 @@ export const SECTIONS: DocSection[] = [
         description:
           "`gbrain repair <kind>`: dry run vs --apply, --source/--limit/--json, resume, capacity stop, thin-client refusal, what each kind fixes and costs; held files walkthrough (sync holds a broken file, `gbrain repair frontmatter` two-pass preview and apply).",
         path: "docs/guides/repair.md",
+        includeInFull: false,
       },
       {
         title: "docs/guides/write-refusals.md",

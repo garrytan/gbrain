@@ -394,6 +394,10 @@
         "name": "persistence_write_stall"
       },
       {
+        "category": "ops",
+        "name": "persistence_session_timeouts"
+      },
+      {
         "category": "brain",
         "name": "connector_held_items"
       },
@@ -436,6 +440,14 @@
       {
         "category": "brain",
         "name": "extractor_facts_expired"
+      },
+      {
+        "category": "brain",
+        "name": "conversation_label_facts"
+      },
+      {
+        "category": "brain",
+        "name": "conversation_outcomes_stale"
       },
       {
         "category": "brain",
@@ -579,6 +591,10 @@
       },
       {
         "category": "ops",
+        "name": "grant_new_ops_available"
+      },
+      {
+        "category": "ops",
         "name": "index_audit"
       },
       {
@@ -688,6 +704,22 @@
       {
         "category": "brain",
         "name": "core_memory"
+      },
+      {
+        "category": "ops",
+        "name": "managed_sync_not_moving"
+      },
+      {
+        "category": "ops",
+        "name": "two_consumers_on_host"
+      },
+      {
+        "category": "ops",
+        "name": "consumers_without_heartbeat"
+      },
+      {
+        "category": "ops",
+        "name": "host_identity_mismatch"
       },
       {
         "category": "brain",

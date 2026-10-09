@@ -2804,6 +2804,8 @@ export function isThinkingModel(modelStr: string | undefined): boolean {
 export function defaultMaxOutputTokens(modelStr: string | undefined): number {
   return isThinkingModel(modelStr) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS;
 }
+/** The cap `chat({ thinking: 'off', maxTokens: requested })` sends (thinking-off.ts table); judge preflight estimates price with it. */
+export const thinkingOffOutputCap = (modelStr: string, requested: number): number => thinkingOffMaxOutputTokens(modelStr, requested, isThinkingModel(modelStr), THINKING_MODEL_MAX_OUTPUT_TOKENS);
 
 /**
  * Deep-serialize a tool output into a plain JSON value for the AI SDK v6
@@ -2991,6 +2993,8 @@ export interface ChatResult {
     output_tokens: number;
     cache_read_tokens: number;
     cache_creation_tokens: number;
+    /** A1: the reasoning subset of output_tokens, when the provider reported one. */
+    reasoning_tokens?: number;
   };
   /** "provider:modelId" string of the model that actually answered. */
   model: string;
@@ -3457,7 +3461,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
-  const maxOutputTokens = thinkingOffMaxOutputTokens(modelStrEarly, opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly), opts.thinking === 'off' && isThinkingModel(modelStrEarly), THINKING_MODEL_MAX_OUTPUT_TOKENS);
+  const maxOutputTokens = opts.thinking === 'off' ? thinkingOffOutputCap(modelStrEarly, opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly)) : (opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly));
 
   // TX5: reserve BEFORE the provider call (BudgetExhausted on cost, runtime,
   // or no_pricing under a user cap) with the pre-resolution model id. record()
@@ -3721,6 +3725,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     const { inputTokens: inTok, outputTokens: outTok } = normalizeSdkUsage(usage);
     _recordBudget({ inputTokens: inTok, outputTokens: outTok });
 
+    const reasoningTokens = usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens;
     const usageOut = {
       input_tokens: inTok,
       output_tokens: outTok,
@@ -3729,6 +3734,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
       // prompt_tokens_details.cached_tokens) surface cache hits.
       cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? usage.cachedInputTokens ?? 0),
       cache_creation_tokens: Number(anthropicCache.cacheCreationInputTokens ?? anthropicCache.cache_creation_input_tokens ?? 0),
+      ...(typeof reasoningTokens === 'number' && Number.isFinite(reasoningTokens) ? { reasoning_tokens: reasoningTokens } : {}),
     };
     // #4218 success boundary: durable usage ledger (fire-and-forget, fail-open).
     recordChatUsage({

@@ -21,6 +21,7 @@ import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { disposePersistenceConsumer, registerMutationPreparer } from '../src/core/persistence/service.ts';
 import { UNFINISHED_PAGE_REQUEST_SQL, noopWaiversEnabled } from '../src/core/persistence/sync-waivers.ts';
 import { waitFor } from './helpers/wait-for.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -102,13 +103,17 @@ test('a pinned import that trails the current page and its working-tree bytes is
     expect(readFileSync(path, 'utf8')).toBe(current);
     expect((await engine.executeRaw<{ last_commit: string }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBe(head);
     expect(loadSyncFailures().filter(row => row.source_id === f.id)).toHaveLength(0);
-    // Working-tree bytes that are neither the pinned commit nor the page are still protected.
+    // Working-tree bytes that are neither the pinned commit nor the page are still protected: #6340 holds the file
+    // (`worktree_dirty`) and the run finishes instead of blocking; nothing overwrites the local edit.
     const foreign = '---\ntitle: Example note\n---\nA local edit that nothing imported.\n';
-    writeFileSync(path, pinned.replace('older', 'still older')); commit(f.root, 'another trailing commit'); writeFileSync(path, foreign);
-    const blocked = await performManagedSync(engine, { sourceId: f.id, noPull: true });
-    expect(blocked).toMatchObject({ status: 'blocked_by_failures', managedWrite: { write_error: 'source_changed', reason: 'pinned_git_worktree_conflict' } });
+    writeFileSync(path, pinned.replace('older', 'still older')); const trailing = commit(f.root, 'another trailing commit'); writeFileSync(path, foreign);
+    const held = await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    expect(held).toMatchObject({ status: 'synced', toCommit: trailing, held_count: 1, held: [{ path: 'notes/example.md', code: 'worktree_dirty' }] });
+    expect(held.managedWrite).toBeUndefined();
+    expect(JSON.stringify(held)).not.toContain('local edit that nothing imported');
     expect(readFileSync(path, 'utf8')).toBe(foreign);
     expect((await engine.getPage('notes/example', { sourceId: f.id }))?.compiled_truth).toContain('current observation');
+    expect(loadSyncFailures().filter(row => row.source_id === f.id)).toHaveLength(0);
     rmSync(syncFailuresPath(), { force: true });
   }
 }),120_000);
@@ -214,9 +219,12 @@ test('interrupted cursor resumes its pinned target before a newer HEAD and never
     expect(first).toMatchObject({status:'partial',filesImported:1});
     expect((await engine.executeRaw<{last_commit:string|null}>('SELECT last_commit FROM sources WHERE id=$1',[f.id]))[0].last_commit).toBeNull();
     writeFileSync(join(f.root,'b.md'),'Newer second observation about engineering.\n'); const secondHead=commit(f.root,'new content after interruption');
+    // The checkpoint stays at the pin; #6340 imports b.md as HEAD commits it (a commit past the pin is not a local edit), and
+    // the pin..HEAD diff then re-imports the same bytes as a no-op.
     const second = await performManagedSync(engine,{sourceId:f.id,noPull:true}); expect(second.toCommit).toBe(f.head); expect(second.status).toBe('first_sync');
-    expect((await engine.getPage('b',{sourceId:f.id}))?.compiled_truth).toContain('Original second');
-    expect((await performManagedSync(engine,{sourceId:f.id,noPull:true})).toCommit).toBe(secondHead);
+    expect((await engine.getPage('b',{sourceId:f.id}))?.compiled_truth).toContain('Newer second');
+    const third = await performManagedSync(engine,{sourceId:f.id,noPull:true});
+    expect(third.toCommit).toBe(secondHead); expect(third).toMatchObject({ status: 'synced', modified: 0, waived: { imports: 1, deletes: 0 } });
     expect((await engine.getPage('b',{sourceId:f.id}))?.compiled_truth).toContain('Newer second');
   }
 }),120_000);
@@ -236,7 +244,7 @@ test('attached working-tree changes require opt-in and delete retains exact phys
   }
 }),120_000);
 
-test('repeated slices reuse one manifest and still reject an intervening page identity change', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+test('repeated slices reuse one manifest and hold an intervening page identity change instead of rejecting the run', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   for (const engine of engines) {
     const f = await fixture(engine, {
       'a.md': 'First source observation for a durable sliced import.\n',
@@ -263,7 +271,9 @@ test('repeated slices reuse one manifest and still reject an intervening page id
       await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.putPage('c', {
         type: 'note', title: 'c', compiled_truth: 'A newer accepted page between sync slices.', timeline: '', frontmatter: {}, content_hash: 'newer',
       }, { sourceId: f.id }), TEST_WRITE_ATTRIBUTION));
-      await expect(performManagedSync(engine, options, slice)).rejects.toMatchObject({ code: 'revision_conflict' });
+      // #6340: the page that moved under the manifest is held (`concurrent_write`), the run finishes, and the database version stays.
+      const held = await performManagedSync(engine, options, slice);
+      expect(held).toMatchObject({ status: 'partial', reason: 'writer_yield', held_count: 1, held: [{ path: 'c.md', code: 'concurrent_write' }] });
       expect(manifestReads).toBe(1);
       expect(await engine.executeRaw('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
         ['managed-sync-manifest', manifest.fingerprint])).toEqual([{ completed_keys: manifest.completed_keys }]);
@@ -271,6 +281,9 @@ test('repeated slices reuse one manifest and still reject an intervening page id
       expect(await engine.executeRaw('SELECT slug,state FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [f.id]))
         .toEqual([{ slug: 'a', state: 'committed' }, { slug: 'b', state: 'committed' }]);
       expect((await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBeNull();
+      expect(await performManagedSync(engine, options, slice)).toMatchObject({ status: 'first_sync', filesImported: 3, held_count: 1 });
+      expect((await engine.getPage('c', { sourceId: f.id }))?.compiled_truth).toBe('A newer accepted page between sync slices.');
+      expect(loadSyncFailures().filter(row => row.source_id === f.id)).toHaveLength(0);
     } finally { await disposePersistenceConsumer(engine); engine.executeRaw = executeRaw; }
   }
 }),120_000);
@@ -324,9 +337,12 @@ test('a write between batches cannot be overwritten by an older enumerated Git p
       }, TEST_WRITE_ATTRIBUTION)); }
     }});
     expect(first.status).toBe('partial'); await changed;
-    await expect(performManagedSync(engine,{sourceId:f.id,noPull:true})).rejects.toMatchObject({code:'revision_conflict'});
+    // #6340: the overtaken page is held, never overwritten, and the run finishes with the hold listed.
+    const resumed = await performManagedSync(engine,{sourceId:f.id,noPull:true});
+    expect(resumed).toMatchObject({ status: 'first_sync', held_count: 1, held: [{ path: 'b.md', code: 'concurrent_write' }] });
     expect((await engine.getPage('b',{sourceId:f.id}))?.compiled_truth).toBe('A concurrently accepted newer observation.');
-    expect((await engine.executeRaw<{last_commit:string|null}>('SELECT last_commit FROM sources WHERE id=$1',[f.id]))[0].last_commit).toBeNull();
+    expect((await engine.executeRaw<{last_commit:string|null}>('SELECT last_commit FROM sources WHERE id=$1',[f.id]))[0].last_commit).toBe(f.head);
+    expect(loadSyncFailures().filter(row => row.source_id === f.id)).toHaveLength(0);
   }
 }),120_000);
 
@@ -378,6 +394,9 @@ test.each([false, true])('raw bytes changing after preparation conflict without 
 test.each([false, true])('managed terminal receipts survive a missing ledger and corrected retry uses a new ID (CRLF=%s)', async crlf =>
   withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
     for (const engine of engines) {
+      // #6340 holds a pinned-worktree conflict by default; `sync.holds=fail` keeps the blocking receipt this test is about.
+      await engine.setConfig('sync.holds', 'fail');
+      try {
       const f = await fixture(engine, { 'notes/example.md': 'An original observation about the example system.\n' });
       await performManagedSync(engine, { sourceId: f.id, noPull: true });
       const pinned = 'A newly committed observation about the example system.\n';
@@ -446,6 +465,7 @@ test.each([false, true])('managed terminal receipts survive a missing ledger and
       expect(requests.at(-1)?.state).toBe('committed');
       expect(requests.at(-1)?.request_id).not.toBe(id);
       expect((await engine.executeRaw<{ last_commit: string }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBe(target);
+      } finally { await engine.executeRaw("DELETE FROM config WHERE key='sync.holds'"); }
     }
   }), 120_000);
 
@@ -669,12 +689,15 @@ const runRequests = (engine: BrainEngine, sourceId: string, runId: string) => en
   "SELECT intent->>'kind' AS kind,slug,state FROM persistence_requests WHERE source_id=$1 AND intent->>'runId'=$2 ORDER BY sequence", [sourceId, runId]);
 const deleteRequests = (engine: BrainEngine, sourceId: string) => engine.executeRaw<{ slug: string; state: string }>(
   "SELECT slug,state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_delete' ORDER BY sequence", [sourceId]);
-/** Runs `hook` when the screen re-reads `slug` (the second snapshot read: the first is the freeze). */
-function onScreen(engine: BrainEngine, slug: string, hook: () => Promise<void>): BrainEngine {
+/**
+ * Runs `hook` on the `nth` snapshot read of `slug`. The default (2) is a head entry's screen, which re-reads the
+ * page after its freeze; an entry frozen for a waiver run is read once (#5984 G3: its screen reuses the freeze's read).
+ */
+function onScreen(engine: BrainEngine, slug: string, hook: () => Promise<void>, nth = 2): BrainEngine {
   let reads = 0;
   return new Proxy(engine, { get(target, key) {
     if (key === 'readPageSnapshot') return async (read: string, opts: Parameters<BrainEngine['readPageSnapshot']>[1]) => {
-      if (read === slug && ++reads === 2) await hook();
+      if (read === slug && ++reads === nth) await hook();
       return target.readPageSnapshot(read, opts);
     };
     const value = Reflect.get(target, key);
@@ -735,7 +758,7 @@ test.each(['restore', 'rename', 'database-only'] as const)('an unfinished %s req
         slug: kind === 'rename' ? 'a-renamed' : 'a', pageId: kind === 'rename' ? null : page.id,
         worktreeId: kind === 'database-only' ? null : binding.worktree_id, topologyGeneration: kind === 'database-only' ? null : binding.topology_generation,
         principal: authority.writer.principal, authority: authority.writer, callerIntent: intent, intent });
-      expect(await engine.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, [binding.worktree_id, binding.source_incarnation, f.id, 'a', page.id, String(page.id)])).toHaveLength(1);
+      expect(await engine.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, [binding.worktree_id, binding.source_incarnation, f.id, 'a', page.id, String(page.id), 'a.md', 'a.md'])).toHaveLength(1);
       const abort = new AbortController();
       const admitted = waitFor(async () => (await deleteRequests(engine, f.id)).length > 0, { timeoutMs: 30_000 }).then(() => abort.abort());
       const result = await performManagedSync(engine, { sourceId: f.id, ...WAIVER_OPTS, signal: abort.signal });
@@ -768,7 +791,8 @@ test('revoked sync authority refuses before any waiver or cursor advance', async
       expect(await deleteRequests(engine, f.id)).toHaveLength(0);
       const [cursor] = await engine.executeRaw<{ completed_keys: [{ index: number; pending?: { slug: string }; counts: { waived?: unknown } }] }>(
         "SELECT completed_keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->'authority'->'writer'->>'remote'='true'", [f.id]);
-      expect(cursor.completed_keys[0]).toMatchObject({ index: 0, pending: { slug: 'a' } });
+      expect(cursor.completed_keys[0]).toMatchObject({ index: 0 });
+      expect(cursor.completed_keys[0].pending).toBeUndefined();
       expect(cursor.completed_keys[0].counts.waived).toBeUndefined();
       expect((await engine.readPageSnapshot('a', { sourceId: f.id, includeDeleted: true }))!.revision).toBe(before);
     } finally { await disposePersistenceConsumer(proxy); }
@@ -789,12 +813,104 @@ test('a waiver that loses the cursor to another drain adopts the winner without 
   }
 }), 120_000);
 
+/** Counts top-level transactions: a waived entry costs two (a pending save and its waiver) on the per-entry path. */
+function countTransactions(engine: BrainEngine): { engine: BrainEngine; count: () => number } {
+  let count = 0;
+  return { count: () => count, engine: new Proxy(engine, { get(target, key) {
+    if (key === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>) => { count++; return target.transaction(fn); };
+    const value = Reflect.get(target, key);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } }) };
+}
+const manyNotes = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`n${String(i).padStart(2, '0')}.md`, note(`Note ${i}`)]));
+const manySlugs = (n: number) => Array.from({ length: n }, (_, i) => `n${String(i).padStart(2, '0')}`);
+
+test('a run of no-op deletes is waived in one transaction, and GBRAIN_SYNC_WAIVE_BATCH=0 waives them one at a time', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const engine of engines) {
+    for (const batch of ['1', '0']) await withEnv({ GBRAIN_SYNC_WAIVE_BATCH: batch }, async () => {
+      const f = await deletedFixture(engine, manyNotes(10), manySlugs(10));
+      const counted = countTransactions(engine);
+      const waived: number[] = [];
+      try {
+        const result = await performManagedSync(counted.engine, { sourceId: f.id, ...WAIVER_OPTS,
+          onProgress: event => { if (event.phase === 'managed_sync.page_committed' && event.waived) waived.push(event.bankedFiles!); } });
+        expect(result).toMatchObject({ status: 'synced', deleted: 0, waived: { imports: 0, deletes: 10 } });
+        expect(waived).toEqual(Array.from({ length: 10 }, (_, i) => i + 1));
+        expect((await runRequests(engine, f.id, result.runId!)).map(row => row.kind)).toEqual(['managed_sync_checkpoint']);
+        if (batch === '1') expect(counted.count()).toBeLessThan(8);
+        else expect(counted.count()).toBeGreaterThanOrEqual(20);
+      } finally { await disposePersistenceConsumer(counted.engine); }
+    });
+  }
+}), 120_000);
+
+test('a page restored in the middle of a waiver run ends the run there: earlier entries are waived, it is admitted and held, and the rest is passed in a new run', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+  for (const engine of engines) {
+    const f = await deletedFixture(engine, manyNotes(8), manySlugs(8));
+    // n06 is frozen (and screened) after n02 was screened and before the run's waiver transaction.
+    const proxy = onScreen(engine, 'n06', () => engine.transaction(tx => withCoordinatedWrite(tx, [f.id], async () => { await tx.restorePage('n02', { sourceId: f.id }); }, TEST_WRITE_ATTRIBUTION)), 1);
+    try {
+      const result = await performManagedSync(proxy, { sourceId: f.id, ...WAIVER_OPTS });
+      // #6340: the restored page's delete conflicts and is held (`concurrent_write`, the page stays); the run no longer stops there.
+      expect(result).toMatchObject({ status: 'synced', waived: { imports: 0, deletes: 7 }, held_count: 1, held: [{ path: 'n02.md', code: 'concurrent_write' }] });
+      expect((await deleteRequests(engine, f.id)).map(row => row.slug)).toEqual(['n02']);
+      expect(await engine.getPage('n02', { sourceId: f.id })).not.toBeNull();
+      const [cursor] = await engine.executeRaw<{ index: number; done: boolean }>("SELECT (completed_keys->0->>'index')::int AS index,(completed_keys->0->>'done')::boolean AS done FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]);
+      expect(cursor).toMatchObject({ index: 8, done: true });
+    } finally { await disposePersistenceConsumer(proxy); rmSync(syncFailuresPath(), { force: true }); }
+  }
+}), 120_000);
+
+test('an entry frozen for a waiver run is read once: its screen reuses the freeze\'s page read and authority check (#5984 G3)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const engine of engines) {
+    const f = await deletedFixture(engine, manyNotes(8), manySlugs(8));
+    const reads = new Map<string, number>();
+    const counted = new Proxy(engine, { get(target, key) {
+      if (key === 'readPageSnapshot') return (read: string, opts: Parameters<BrainEngine['readPageSnapshot']>[1]) => {
+        reads.set(read, (reads.get(read) ?? 0) + 1);
+        return target.readPageSnapshot(read, opts);
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    try {
+      const result = await performManagedSync(counted, { sourceId: f.id, ...WAIVER_OPTS });
+      expect(result).toMatchObject({ status: 'synced', waived: { imports: 0, deletes: 8 } });
+      const slugs = manySlugs(8);
+      expect(reads.get(slugs[0]!)).toBe(2);
+      expect(slugs.slice(1).map(slug => reads.get(slug))).toEqual(slugs.slice(1).map(() => 1));
+    } finally { await disposePersistenceConsumer(counted); }
+  }
+}), 120_000);
+
+test('a crash inside a waiver run skips nothing and waives nothing twice; a lock timeout falls back to one entry at a time', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const engine of engines) {
+    for (const fault of ['crash', 'lock_timeout'] as const) {
+      const f = await deletedFixture(engine, manyNotes(6), manySlugs(6));
+      let fired = 0;
+      installFaultHook(point => {
+        if (point !== 'sync:mid_waiver_run') return;
+        fired++;
+        if (fault === 'crash' && fired === 1) throw new Error('injected crash inside the waiver run');
+        if (fault === 'lock_timeout') throw Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' });
+      });
+      try {
+        if (fault === 'crash') await expect(performManagedSync(engine, { sourceId: f.id, ...WAIVER_OPTS })).rejects.toThrow('injected crash');
+        const result = await performManagedSync(engine, { sourceId: f.id, ...WAIVER_OPTS });
+        expect(result).toMatchObject({ status: 'synced', deleted: 0, waived: { imports: 0, deletes: 6 } });
+        expect(await deleteRequests(engine, f.id)).toHaveLength(0);
+        expect(fired).toBeGreaterThan(0);
+      } finally { installFaultHook(undefined); await disposePersistenceConsumer(engine); }
+    }
+  }
+}), 120_000);
+
 test('the waiver lookup for unfinished page requests is served by the request indexes', async () => {
   for (const engine of engines) {
     const plan = await engine.transaction(async tx => {
       await tx.executeRaw('SET LOCAL enable_seqscan=off');
       return tx.executeRaw<Record<string, string>>(`EXPLAIN ${UNFINISHED_PAGE_REQUEST_SQL}`,
-        [randomUUID(), randomUUID(), 'example-source', 'notes/example', 1, '1']);
+        [randomUUID(), randomUUID(), 'example-source', 'notes/example', 1, '1', 'notes/example.md', 'notes/example.md']);
     });
     const text = plan.map(row => Object.values(row)[0]).join('\n');
     // Every branch (worktree pending, worktree recovery, database-only pending) is an index scan; the planner may

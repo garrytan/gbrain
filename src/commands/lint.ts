@@ -176,9 +176,13 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   }
 
   // Rule: line-grammar near-misses (a relation or fact line that will not be
-  // read as written). Read-only; the fix is in each message.
+  // read as written). Read-only; the fix is in each message. Syntax-only: a
+  // file check reads no brain settings or schema pack, so it never implies an
+  // edge will be stored; `gbrain get <slug> --grammar-diagnostics` is the
+  // effective check against the brain.
   for (const d of parseLineGrammar(content).diagnostics) {
-    issues.push({ file: filePath, line: d.line, rule: 'line-grammar', message: `${d.message} (${d.reason})`, fixable: false });
+    issues.push({ file: filePath, line: d.line, rule: 'line-grammar',
+      message: `${d.message} (${d.reason}; syntax-only check: run \`gbrain get <slug> --grammar-diagnostics\` for what the brain reads)`, fixable: false });
   }
 
   // Rule: LLM preamble artifacts (only a leading run; see findLeadingPreamble)

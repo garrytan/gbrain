@@ -24,6 +24,7 @@ and `e2e-status` aggregators, never on per-cell matrix names.
 | `test.yml` | `export-scale` pages, 10,001 vs 100,001 | Named exception | Every push to master and the nightly Test schedule |
 | `test.yml`, `stress.yml` | `stress-changed-tests` file set | Named exception: PR-only gate; succeeds with "not a PR event" elsewhere | Push and nightly runs run every file; the nightly race hunt repeats the Postgres arms |
 | `test.yml` | `race-hunt` | Named exception: schedule and dispatch only, outside `test-status` | Itself (nightly Test schedule) |
+| `e2e.yml` | `order-hunt` | Named exception: schedule and `order_hunt` dispatch only, outside `e2e-status` | Itself (nightly E2E schedule) |
 | `test.yml` | `native_only`, `race_hunt`, `stress_*` dispatch inputs; concurrency suffixes | Parity: manual modes and run grouping, never applied to PR, push or schedule events | — |
 | `persistence-validation.yml` | Bun matrix of read latency, deployment matrix, unit-lane PostgreSQL arms, soak, crash robot, reconciliation | Parity: both Bun versions on every event | — |
 | `persistence-validation.yml` | `SOAK_OPERATIONS` 2,500 vs 10,000 | Named exception | Every push to master and the nightly Test schedule |

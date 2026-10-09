@@ -30,17 +30,20 @@
  * `superseded by #N` after its own provenance, and self-pointers are
  * dropped, exactly as `supersedeRow` writes a new supersession. A page whose
  * fence is already right but whose database pointers differ is reprojected
- * under the page key (coordinator capability on a managed brain, a
- * maintenance transaction otherwise). A second apply finds nothing to do.
+ * under the page key (a receipted database-only request on a managed brain,
+ * a maintenance transaction otherwise). A second apply finds nothing to do.
  */
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import type { OperationContext } from '../ops/contract.ts';
-import { opError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { maintenanceAttribution, maintenanceTransaction } from '../persistence/attribution.ts';
-import { withCoordinatedWrite } from '../persistence/context.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { authorizeWrite } from '../persistence/authority.ts';
+import type { PreparedMutation } from '../persistence/coordinator.ts';
+import type { WriteRequest } from '../persistence/model.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { TAKES_FENCE_BEGIN, parseTakesFence, type ParsedTake } from '../takes-fence.ts';
 import { takesPreparation } from '../takes-write.ts';
@@ -206,27 +209,60 @@ async function candidatePages(engine: BrainEngine, sourceIds: string[], after: R
   return pages.filter(page => afterCursor({ phase: 0, id: page.id }, after));
 }
 
-/** Reproject a page whose fence is already right: under the page key, against the planned revision. */
-async function reprojectPage(engine: BrainEngine, plan: PagePlan): Promise<void> {
+export const TAKE_REPROJECT_INTENT = 'managed_maintenance_take_reproject';
+
+const revisionConflict = (page: TakePage) => opError('revision_conflict', 'The page changed after the supersession repair read it; nothing was written.',
+  `Page ${page.slug} in source ${page.source_id} changed during the repair, so its take pointers were left as they are. Preview again with the command in fix; it plans against the current page.`,
+  { fix: readFix('Previews the take supersession repair against the current pages without changing anything.', { argv: ['gbrain', 'repair', 'take-supersession', '--source', page.source_id] }) });
+
+async function writeReprojection(tx: BrainEngine, plan: PagePlan): Promise<void> {
+  for (const row of plan.reproject) {
+    await tx.executeRaw('UPDATE takes SET superseded_by = $3 WHERE page_id = $1 AND row_num = $2', [plan.page.id, row.row_num, row.to]);
+  }
+}
+
+/**
+ * Reproject a page whose fence is already right, against the planned
+ * revision: a receipted database-only request on a managed brain (its
+ * preparer replans under the page key), a maintenance transaction otherwise.
+ */
+async function reprojectPage(ctx: OperationContext, entry: RepairItem, plan: PagePlan): Promise<void> {
   const { page } = plan;
-  const write = async (tx: BrainEngine) => {
+  if (await managedPersistenceEnabled(ctx.engine)) {
+    const authority = (await maintenancePreflight(ctx.engine, page.source_id))!;
+    try {
+      await submitDatabaseMaintenanceIntent(ctx.engine, authority, page.slug, { kind: TAKE_REPROJECT_INTENT, expected_revision: plan.revision,
+        page_id: page.id, reproject: plan.reproject }, await repairRequestId(ctx, 'take-supersession', entry, plan.revision));
+    } catch (error) {
+      if (error instanceof OperationError && error.code === 'revision_conflict') throw revisionConflict(page);
+      throw error;
+    }
+    return;
+  }
+  await maintenanceTransaction(ctx.engine, async tx => {
     await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
     const current = await tx.readPageSnapshot(page.slug, { sourceId: page.source_id });
-    if (!current || current.revision !== plan.revision) {
-      throw opError('revision_conflict', 'The page changed after the supersession repair read it; nothing was written.',
-        `Page ${page.slug} in source ${page.source_id} changed during the repair, so its take pointers were left as they are. Preview again with the command in fix; it plans against the current page.`,
-        { fix: readFix('Previews the take supersession repair against the current pages without changing anything.', { argv: ['gbrain', 'repair', 'take-supersession', '--source', page.source_id] }) });
-    }
-    for (const row of plan.reproject) {
-      await tx.executeRaw('UPDATE takes SET superseded_by = $3 WHERE page_id = $1 AND row_num = $2', [page.id, row.row_num, row.to]);
-    }
-  };
-  if (await managedPersistenceEnabled(engine)) {
-    const attribution = await maintenanceAttribution(engine);
-    await engine.transaction(tx => withCoordinatedWrite(tx, [page.source_id], () => write(tx), attribution));
-  } else {
-    await maintenanceTransaction(engine, write);
-  }
+    if (!current || current.revision !== plan.revision) throw revisionConflict(page);
+    await writeReprojection(tx, plan);
+  });
+}
+
+/** Preparer for `managed_maintenance_take_reproject`: replans the page under its key and writes the pointers it still needs. */
+export async function prepareTakeReprojection(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
+  const page = { id: Number(row.page_id), source_id: row.source_id, slug: row.slug };
+  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
+  if (!snapshot || snapshot.page.id !== page.id) throw revisionConflict(page);
+  await authorizeWrite(engine, row.authority, 'submit_job', row.slug);
+  return { observedRevision: snapshot.revision, noop: true,
+    validate: async tx => { await authorizeWrite(tx, row.authority, 'submit_job', row.slug); },
+    apply: async tx => {
+      const state = await readPage(tx, page);
+      if (!state || 'skipped' in state || state.analysis.ambiguous.length || state.analysis.fence_changed) {
+        return { status: 'completed', reprojected: [] };
+      }
+      await writeReprojection(tx, state);
+      return { status: 'completed', reprojected: state.reproject };
+    } };
 }
 
 interface SupersessionItem extends RepairItem { page: TakePage }
@@ -275,7 +311,7 @@ export const takeSupersessionRepair: RepairHandler = {
       return { applied: true, outcome: 'repaired', detail: { links: state.analysis.links, self_pointers: state.analysis.self_pointers } };
     }
     if (!state.reproject.length) return { applied: false, outcome: 'unchanged' };
-    await reprojectPage(ctx.engine, state);
+    await reprojectPage(ctx, entry, state);
     return { applied: true, outcome: 'reprojected', detail: { rows: state.reproject } };
   },
   render(details) {

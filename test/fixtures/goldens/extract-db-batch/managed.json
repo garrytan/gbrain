@@ -1,0 +1,101 @@
+{
+  "golden": {
+    "afterFirst": {
+      "extract_requests": {
+        "rows": 150,
+        "sha256": "e5f71a914d25580d3fc36e596da534fe40c0d0a8372db70492cf3fff505de00e"
+      },
+      "facts": {
+        "rows": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "link_relationships": {
+        "rows": 136,
+        "sha256": "393f60423b8b08070af353b1009cf6f196549188e88d46b9da71bd9eb6ec38dc"
+      },
+      "link_transitions": {
+        "rows": 8,
+        "sha256": "feac8f234bd36003f0982af6fd41ada4b59f6eb8d0e4385289d4fa06ce899255"
+      },
+      "links": {
+        "rows": 613,
+        "sha256": "e5574e1644d5688ac084ff5a11511d4e3f9d0d4cd7790addfa408942fba118ca"
+      },
+      "pages": {
+        "rows": 225,
+        "sha256": "0da3bcbfe226af0c98403618f91cd341fc1e53de8001b2a3ce7d4a96751dc70c"
+      },
+      "tags": {
+        "rows": 1,
+        "sha256": "a434b780ac89394fc00ef3eda220e530225f65b3be98c0c8efcdf930c1be8fd5"
+      },
+      "timeline_entries": {
+        "rows": 198,
+        "sha256": "6ff1b450d65f319d5edb69764ea9e77a5a96e47d4dc85ab209dc035fa148844f"
+      },
+      "wanted_links": {
+        "rows": 24,
+        "sha256": "eb7a473a72827b9be947cfad0b4d028f695f08285a59f7628475e92b0d917f76"
+      }
+    },
+    "afterSecond": {
+      "extract_requests": {
+        "rows": 150,
+        "sha256": "e5f71a914d25580d3fc36e596da534fe40c0d0a8372db70492cf3fff505de00e"
+      },
+      "facts": {
+        "rows": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "link_relationships": {
+        "rows": 136,
+        "sha256": "393f60423b8b08070af353b1009cf6f196549188e88d46b9da71bd9eb6ec38dc"
+      },
+      "link_transitions": {
+        "rows": 8,
+        "sha256": "feac8f234bd36003f0982af6fd41ada4b59f6eb8d0e4385289d4fa06ce899255"
+      },
+      "links": {
+        "rows": 613,
+        "sha256": "e5574e1644d5688ac084ff5a11511d4e3f9d0d4cd7790addfa408942fba118ca"
+      },
+      "pages": {
+        "rows": 225,
+        "sha256": "0da3bcbfe226af0c98403618f91cd341fc1e53de8001b2a3ce7d4a96751dc70c"
+      },
+      "tags": {
+        "rows": 1,
+        "sha256": "a434b780ac89394fc00ef3eda220e530225f65b3be98c0c8efcdf930c1be8fd5"
+      },
+      "timeline_entries": {
+        "rows": 198,
+        "sha256": "6ff1b450d65f319d5edb69764ea9e77a5a96e47d4dc85ab209dc035fa148844f"
+      },
+      "wanted_links": {
+        "rows": 24,
+        "sha256": "eb7a473a72827b9be947cfad0b4d028f695f08285a59f7628475e92b0d917f76"
+      }
+    },
+    "first": {
+      "exitCode": 0,
+      "result": {
+        "links_created": 612,
+        "pages_processed": 224,
+        "skipped_cross_source": 0,
+        "skipped_missing_target": 24,
+        "timeline_entries_created": 198
+      }
+    },
+    "second": {
+      "exitCode": 0,
+      "result": {
+        "links_created": 612,
+        "pages_processed": 224,
+        "skipped_cross_source": 0,
+        "skipped_missing_target": 24,
+        "timeline_entries_created": 0
+      }
+    }
+  },
+  "normalizer": "extract-db-batch-rows-v1"
+}

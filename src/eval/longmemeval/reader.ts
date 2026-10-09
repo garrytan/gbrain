@@ -24,7 +24,9 @@
  *     official: 500). The budget and mode are explicit receipt pins.
  */
 
+import type Anthropic from '@anthropic-ai/sdk';
 import type { ThinkLLMClient } from '../../core/think/index.ts';
+import type { ChatResult } from '../../core/ai/gateway.ts';
 import type { SearchResult } from '../../core/types.ts';
 import { renderChatBlock, type ChatSessionForPrompt } from './sanitize.ts';
 import { rawSessionId, sessionIdFromSlug, type SlugToRawMap } from './metrics.ts';
@@ -129,9 +131,61 @@ export function buildReaderRequest(input: ReaderUserTextInput, model: string, co
   };
 }
 
+/**
+ * A1: provider-normalized reader usage, one record per attempted reader call.
+ * `total_input_tokens` is every input token the provider billed in any bucket;
+ * the cache subsets are inside it, so `uncached + cache_read + cache_write ===
+ * total` and nothing adds them to the total again. `reasoning_tokens` is the
+ * reasoning subset of `output_tokens`, null when the provider reported none.
+ */
+export interface ReaderUsage {
+  total_input_tokens: number;
+  uncached_input_tokens: number;
+  cache_read_input_tokens: number;
+  cache_write_input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number | null;
+}
+
+/** The gateway's usage (AI SDK v6 convention: input_tokens is the total, cache counts are subsets of it). */
+export function readerUsageFromGateway(u: ChatResult['usage']): ReaderUsage {
+  const total = u.input_tokens;
+  return {
+    total_input_tokens: total,
+    uncached_input_tokens: Math.max(0, total - u.cache_read_tokens - u.cache_creation_tokens),
+    cache_read_input_tokens: u.cache_read_tokens,
+    cache_write_input_tokens: u.cache_creation_tokens,
+    output_tokens: u.output_tokens,
+    reasoning_tokens: u.reasoning_tokens ?? null,
+  };
+}
+
+/**
+ * The reader message's usage: the gateway adapter's normalized record when
+ * present, else the Anthropic Messages convention (input_tokens excludes the
+ * separate cache buckets). Null when the client reported no usage.
+ */
+export function readerUsageFromMessage(message: Anthropic.Message & { gbrain_usage?: ReaderUsage }): ReaderUsage | null {
+  if (message.gbrain_usage) return message.gbrain_usage;
+  const u = message.usage as (Anthropic.Usage & { cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }) | undefined;
+  if (!u) return null;
+  const read = u.cache_read_input_tokens ?? 0;
+  const write = u.cache_creation_input_tokens ?? 0;
+  return {
+    total_input_tokens: u.input_tokens + read + write,
+    uncached_input_tokens: u.input_tokens,
+    cache_read_input_tokens: read,
+    cache_write_input_tokens: write,
+    output_tokens: u.output_tokens,
+    reasoning_tokens: null,
+  };
+}
+
 export interface ReaderAnswer {
   text: string;
   finish_reason: string | null;
+  /** A1: provider usage for this reader call; null when no call was made or none was reported. */
+  usage: ReaderUsage | null;
   /**
    * The model id the provider REPORTED for the answer when it differs from
    * the requested id (an API snapshot such as `gpt-4o-2024-08-06`); null when
@@ -180,6 +234,6 @@ export async function generateAnswer(
   const reported = typeof response.model === 'string' && response.model.length > 0 && response.model !== model
     ? response.model
     : null;
-  const receipt = { finish_reason: response.stop_reason ?? null, context_chars: rendered.length, context_sessions: sessions.length, sessions_truncated: truncatedCount };
+  const receipt = { finish_reason: response.stop_reason ?? null, usage: readerUsageFromMessage(response), context_chars: rendered.length, context_sessions: sessions.length, sessions_truncated: truncatedCount };
   return { text: response.content.filter(block => block.type === 'text').map(block => block.text).join('').trim(), response_model: reported, ...receipt };
 }

@@ -4,7 +4,8 @@
 // out in-flight creates when `up` gets SIGTERM or SIGKILL mid-provision.
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { startMockUbicloud, waitForEvent, type MockUbicloud, type MockUbicloudOptions } from "../helpers/mock-ubicloud-api.ts";
@@ -203,5 +204,40 @@ describe("stale sweep and ownership", () => {
     expect(usage).toMatch(/^\(untagged\)\s+1\s+4$/m);
     expect(usage).toMatch(/^\(other\)\s+1\s+2$/m);
     expect(usage).toMatch(/^total\s+5\s+46$/m);
+  });
+});
+
+// `pack` from a checkout on a branch named like `git init`'s default branch
+// (master on this repo). slim_git fetches HEAD into that branch inside a fresh
+// repository whose unborn HEAD names the same branch; without --update-head-ok
+// git refuses ("refusing to fetch into branch ... checked out"), pack falls
+// back to the full .git and prints that error on stderr, which the gate wrote
+// into the tarball it streamed to every VM.
+describe("pack", () => {
+  it("packs a checkout on init's default branch with a slim .git and nothing on stderr", async () => {
+    const repo = join(dir, "repo");
+    const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
+    execFileSync("git", ["init", "-q", repo]);
+    git("config", "user.email", "t@t.co");
+    git("config", "user.name", "t");
+    writeFileSync(join(repo, "tracked.txt"), "tracked\n");
+    git("add", "tracked.txt");
+    git("commit", "-q", "-m", "one");
+    writeFileSync(join(repo, "untracked.txt"), "untracked\n");
+    // An unreachable object: the full .git carries it, the slim copy (a fetch of HEAD) does not.
+    writeFileSync(join(dir, "dangling.txt"), "dangling blob\n");
+    const dangling = git("hash-object", "-w", join(dir, "dangling.txt"));
+    const branch = git("symbolic-ref", "HEAD");
+    expect(branch).toMatch(/^refs\/heads\//);
+    const proc = Bun.spawn(["bash", RUNNER, "pack", repo], { env: env(), stdout: "pipe", stderr: "pipe" });
+    const [archive, stderr, code] = await Promise.all([new Response(proc.stdout).arrayBuffer(), new Response(proc.stderr).text(), proc.exited]);
+    expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+    const out = join(dir, "out");
+    execFileSync("mkdir", ["-p", out]);
+    execFileSync("tar", ["-xzf", "-", "-C", out], { input: Buffer.from(archive) });
+    expect(readFileSync(join(out, "untracked.txt"), "utf8")).toBe("untracked\n");
+    expect(execFileSync("git", ["-C", out, "symbolic-ref", "HEAD"], { encoding: "utf8" }).trim()).toBe(branch);
+    expect(execFileSync("git", ["-C", out, "log", "--format=%s"], { encoding: "utf8" }).trim()).toBe("one");
+    expect(() => execFileSync("git", ["-C", out, "cat-file", "-e", dangling], { stdio: "ignore" })).toThrow();
   });
 });

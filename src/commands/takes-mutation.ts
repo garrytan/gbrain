@@ -1,4 +1,4 @@
-/** One parser and one operation path for local, resident, and remote takes mutations. */
+/** One parser and one operation path for local, resident, and remote takes mutations (and `takes rebuild`). */
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -151,5 +151,55 @@ export async function runTakesMutation(engine: BrainEngine | (() => Promise<Brai
       console.error(error instanceof Error ? error.message : String(error)); setCliExitVerdict(1);
     }
     if (requestId) console.error(`Retry the same takes ${args[0]} arguments with --request-id ${requestId}.`);
+  }
+}
+
+/**
+ * W9F item 8: `gbrain takes rebuild <slug> [--source-id <id>] [--json]`. A
+ * resident owner (`gbrain serve` holding PGLite) runs the `takes_rebuild`
+ * operation; otherwise it runs here on the local engine. Both render the same
+ * operation result, so JSON, warnings and exit codes match: exit 1 when the
+ * page is missing or the rebuild warned.
+ */
+export async function runTakesRebuild(engine: BrainEngine | (() => Promise<BrainEngine>), args: string[], configOverride?: GBrainConfig): Promise<void> {
+  const [slug, ...rest] = args;
+  const json = rest.includes('--json');
+  if (!slug || slug.startsWith('-')) {
+    console.error('Usage: gbrain takes rebuild <slug> [--source-id <id>] [--json]');
+    setCliExitVerdict(1);
+    return;
+  }
+  const sourceFlag = rest.indexOf('--source-id');
+  const sourceId = sourceFlag >= 0 ? rest[sourceFlag + 1] : undefined;
+  try {
+    const config = configOverride ?? loadConfig(), cli = getCliOptions();
+    if (isThinClient(config)) throw invalid('takes rebuild runs only on the brain host.',
+      'Run gbrain takes rebuild on the brain host; a remote connection cannot rebuild the takes index.');
+    const params: Record<string, unknown> = { slug, request_id: randomUUID() };
+    const delegated = await maybeDelegateLocalOperation('takes_rebuild', params, config, {
+      brain: cli.brain, source: sourceId ?? null, timeoutMs: cli.timeoutMs ?? undefined,
+    });
+    let result: { source_id: string; pagesScanned: number; takesUpserted: number; warnings: string[] };
+    if (delegated.handled) result = delegated.result as typeof result;
+    else {
+      const connected = typeof engine === 'function' ? await engine() : engine;
+      const { operations } = await import('../core/operations.ts');
+      const op = operations.find(candidate => candidate.name === 'takes_rebuild')!;
+      result = await op.handler({ engine: connected, config: config ?? { engine: 'pglite' }, remote: false,
+        sourceId: await resolveSourceId(connected, sourceId ?? null), dryRun: false,
+        logger: { info: message => console.error(message), warn: message => console.error(message), error: message => console.error(message) },
+      }, params) as typeof result;
+    }
+    if (json) await writeStdoutFinal(`${JSON.stringify(result, null, 2)}\n`);
+    else if (result.pagesScanned === 0) console.error(`No page ${slug} in source ${result.source_id}.`);
+    else {
+      for (const warning of result.warnings) console.error(`[takes rebuild] ${warning}`);
+      console.log(`Rebuilt ${result.takesUpserted} take row(s) on ${slug} from its takes fence.`);
+    }
+    if (result.pagesScanned === 0 || result.warnings.length) setCliExitVerdict(1);
+  } catch (error) {
+    if (!await reportPersistenceCliError(error, json)) {
+      console.error(error instanceof Error ? error.message : String(error)); setCliExitVerdict(1);
+    }
   }
 }

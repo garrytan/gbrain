@@ -356,10 +356,11 @@ export async function volunteerUsageStats(
     rows = await engine.executeRaw(
       `SELECT e.match_arm, e.channel,
               count(*)::text AS volunteered,
-              count(*) FILTER (WHERE p.last_retrieved_at > e.volunteered_at)::text AS used
+              count(*) FILTER (WHERE GREATEST(p.last_retrieved_at, r.last_retrieved_at) > e.volunteered_at)::text AS used
          FROM context_volunteer_events e
          LEFT JOIN pages p
            ON p.source_id = e.source_id AND p.slug = e.slug AND p.deleted_at IS NULL
+         LEFT JOIN page_retrievals r ON r.page_id = p.id
         WHERE e.source_id = ANY($1::text[])
           AND e.volunteered_at > now() - ($2 || ' days')::interval
         GROUP BY e.match_arm, e.channel

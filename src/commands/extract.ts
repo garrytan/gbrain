@@ -48,14 +48,17 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import { resolveCandidateSources, resolveLinkFallbackDefault, loadLinkPageMetadata, capturedLinkEndpoints, fileLinkOwnership, replaceFileLinks, replacePageFileLinks, type LinkPageMetadata } from '../core/link-reconciliation.ts';
 import { collectWantedLinks, isWantedPagesEnabled } from '../core/wanted-links.ts';
-import { DerivedLinkEndpointChangedError } from '../core/derived-links.ts';
-import { lineGrammarOptions, statedRelationTypes } from '../core/line-grammar.ts';
+import { readLineGrammarSettings, statedRelationTypes } from '../core/line-grammar.ts';
+import { effectiveLinkExtractorWatermark, linkExtractorWatermarkFor } from '../core/link-extraction-watermark.ts';
+import { DerivedLinkEndpointChangedError, replaceDerivedLinksBatchOrReplay, replaceDerivedLinksUnlessSettingsChanged, settingsChangedSkipLine, type DerivedLinkBatchItem } from '../core/derived-links.ts';
+import { pageSnapshotKey, readPageSnapshotsBatch } from '../core/page-snapshot-batch.ts';
+import type { PageSnapshot } from '../core/page-state/types.ts';
 export { reconcileSourceLinks, type SourceLinkReconciliationResult } from '../core/link-reconciliation.ts';
 export { extractMarkdownLinks } from '../core/link-extraction.ts';
 import {
   extractPageLinks, parseTimelineEntries, deriveTimelineAnchor, inferLinkType, makeResolver,
   attendanceEvidenceRanges, hasAttendanceEvidence, resolvedLinkCandidate, orientCanonicalAttendance, extractMarkdownLinks,
-  extractFrontmatterLinks, isGlobalBasenameEnabled, isCrossSourceLinksEnabled, LINK_EXTRACTOR_VERSION_TS,
+  extractFrontmatterLinks, isGlobalBasenameEnabled, isCrossSourceLinksEnabled,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks, normalizeBasename,
   parseInlineCitationTimelineEntries,
@@ -176,7 +179,7 @@ async function snapshotStampTimes(
   refs: Array<{ slug: string; source_id: string }>,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  const versionTs = LINK_EXTRACTOR_VERSION_TS;
+  const versionTs = await effectiveLinkExtractorWatermark(engine);
   const versionMs = Date.parse(versionTs);
   for (let i = 0; i < refs.length; i += BATCH_SIZE) {
     const batch = refs.slice(i, i + BATCH_SIZE);
@@ -1886,13 +1889,42 @@ async function extractLinksFromDB(
   const processedRefs: Array<{ slug: string; source_id: string }> = [];
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  const grammar = await readLineGrammarSettings(engine), lineGrammar = { enabled: grammar.enabled, allowUndeclaredTypes: grammar.allowUndeclaredTypes };
+  let skippedSettingsChanged = 0;
   progress.start('extract.links_db', walkRefs.length);
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
 
-  for (const { slug, source_id } of walkRefs) {
-    const snapshot = await engine.readPageSnapshot(slug, { sourceId: source_id });
+  // Pages are read and their links published BATCH_SIZE at a time (one
+  // snapshot statement, one write transaction); a failed batch is replayed
+  // page by page, so each page's outcome is the unbatched one.
+  const pendingWrites: Array<{ slug: string; source_id: string; item: DerivedLinkBatchItem }> = [];
+  async function flushLinkWrites() {
+    const writes = pendingWrites.splice(0);
+    const deferred = new Set<DerivedLinkBatchItem>();
+    const results = await replaceDerivedLinksBatchOrReplay(engine, writes.map(write => write.item), item => {
+      if (jsonMode) process.stderr.write(JSON.stringify({ event: 'batch_error', size: item.links.length, code: 'graph_write_failed' }) + '\n');
+    }, item => { deferred.add(item); });
+    writes.forEach(({ slug, source_id, item }, i) => {
+      const written = results[i];
+      if (written) { created += written.created; processed++; processedRefs.push({ slug, source_id }); }
+      else if (deferred.has(item)) skippedEndpointChanged++;
+      else skippedSettingsChanged++;
+      progress.tick(1);
+    });
+  }
+  let snapshotBatch = { start: 0, covered: 0, snapshots: new Map<string, PageSnapshot>() };
+  let wantedPages = false;
+
+  for (const [index, { slug, source_id }] of walkRefs.entries()) {
+    if (index >= snapshotBatch.start + snapshotBatch.covered) {
+      await flushLinkWrites();
+      snapshotBatch = { start: index, ...await readPageSnapshotsBatch(engine, walkRefs.slice(index, index + BATCH_SIZE)
+        .map(ref => ({ slug: ref.slug, sourceId: ref.source_id }))) };
+      wantedPages = !dryRun && await isWantedPagesEnabled(engine);
+    }
+    const snapshot = snapshotBatch.snapshots.get(pageSnapshotKey(source_id, slug)) ?? null;
     if (!snapshot || isQuarantined(snapshot.page.frontmatter)) continue;
     const page = snapshot.page;
     if (typeFilter && page.type !== typeFilter) continue;
@@ -1911,7 +1943,7 @@ async function extractLinksFromDB(
     // basename lookup; off by default for back-compat.
     const extracted = await extractPageLinks(
       slug, fullContent, page.frontmatter, page.type, resolver,
-      { skipFrontmatter: !includeFrontmatter, globalBasename, pack, lineGrammar: await lineGrammarOptions(engine), targetType: (targetSlug, targetSourceId) => {
+      { skipFrontmatter: !includeFrontmatter, globalBasename, pack, lineGrammar, targetType: (targetSlug, targetSourceId) => {
         const resolved = resolveCandidateSources({ targetSlug, targetSourceId, linkType: '', context: '' }, slug,
           source_id, allSlugs, slugToSources, federatedSourceIds.has(source_id), { crossSource, defaultSourceId: linkDefaultSourceId });
         return resolved.ok ? targetMetadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type : undefined;
@@ -1959,31 +1991,24 @@ async function extractLinksFromDB(
     }
     if (!dryRun) {
       try {
-        const wanted = await isWantedPagesEnabled(engine) ? collectWantedLinks({ candidates: extracted.candidates,
+        const wanted = wantedPages ? collectWantedLinks({ candidates: extracted.candidates,
           frontmatterUnresolved: includeFrontmatter ? extracted.unresolved : [], originSourceId: source_id,
           crossSourceAllowed: federatedSourceIds.has(source_id) || crossSource, resolve: c => resolveCandidateSources(c, slug, source_id,
             allSlugs, slugToSources, federatedSourceIds.has(source_id), { crossSource, defaultSourceId: linkDefaultSourceId }) }) : [];
-        const written = await engine.replaceDerivedLinks({ slug, sourceId: source_id, expectedRevision: snapshot.revision,
-          sourceIncarnation: snapshot.sourceIncarnation }, batch, { includeFrontmatter,
+        pendingWrites.push({ slug, source_id, item: { origin: { slug, sourceId: source_id, expectedRevision: snapshot.revision,
+          sourceIncarnation: snapshot.sourceIncarnation }, links: batch, opts: { includeFrontmatter, lineGrammar: grammar,
           wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] : ['body'], rows: wanted },
-          expectedEndpoints: capturedLinkEndpoints(batch, targetMetadata) });
-        created += written.created;
+          expectedEndpoints: capturedLinkEndpoints(batch, targetMetadata) } } });
       } catch (error) {
-        // The transaction preserved the prior graph. Leave this origin
-        // unstamped for a later run without blocking unrelated pages.
-        if (error instanceof DerivedLinkEndpointChangedError) {
-          skippedEndpointChanged++;
-          progress.tick(1);
-          continue;
-        }
         if (jsonMode) process.stderr.write(JSON.stringify({ event: 'batch_error', size: batch.length, code: 'graph_write_failed' }) + '\n');
         throw error;
       }
+      continue;
     }
     processed++;
-    if (!dryRun) processedRefs.push({ slug, source_id });
     progress.tick(1);
   }
+  await flushLinkWrites();
   // v0.42.7 (#1696): stamp the extraction watermark for every page we
   // processed (incl. zero-link pages — they WERE extracted). Chunked so the
   // unnest UPDATE stays bounded on big brains. Best-effort (stampExtracted
@@ -2002,6 +2027,7 @@ async function extractLinksFromDB(
     console.log(`Links: ${label} ${created} from ${processed} pages (db source)`);
     if (skippedEndpointChanged) console.log(`Skipped ${skippedEndpointChanged} page(s) whose link endpoints changed mid-run; left stale for the next run.`);
     if (skippedAttendanceIncomplete) console.log(`Skipped ${skippedAttendanceIncomplete} page(s) with unresolved attendance; prior links and extraction watermarks were preserved.`);
+    if (skippedSettingsChanged) console.log(settingsChangedSkipLine(skippedSettingsChanged));
     if (skippedMissingTarget > 0) {
       console.log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
@@ -2026,7 +2052,7 @@ async function extractLinksFromDB(
   // #2589: the counters ride the return value so machine consumers (and the
   // --json path, which has no summary event on this path) can see the drops —
   // "counted, never silent" must hold beyond human-mode console lines.
-  return { created, pages: processed, unresolved, skippedMissingTarget, skippedCrossSource, skippedAttendanceIncomplete, skippedEndpointChanged };
+  return { created, pages: processed, unresolved, skippedMissingTarget, skippedCrossSource, skippedAttendanceIncomplete, skippedEndpointChanged, ...(skippedSettingsChanged ? { skippedSettingsChanged } : {}) };
 }
 
 /**
@@ -2069,7 +2095,8 @@ export async function extractStaleFromDB(
   const includeFrontmatter = opts.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
   const log = opts.quiet ? (..._args: unknown[]) => {} : console.log;
   const timeBudgetMs = opts.timeBudgetMs ?? STALE_TIME_BUDGET_MS;
-  const versionTs = LINK_EXTRACTOR_VERSION_TS;
+  const grammar = await readLineGrammarSettings(engine), lineGrammar = { enabled: grammar.enabled, allowUndeclaredTypes: grammar.allowUndeclaredTypes };
+  const versionTs = linkExtractorWatermarkFor(grammar.generation);
 
   // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
   const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
@@ -2151,7 +2178,7 @@ export async function extractStaleFromDB(
   // in a source other than the origin's or 'default' — default-deny by
   // design (source isolation) unless the #3908 flag is on, but distinct
   // from a genuinely missing target.
-  let skippedCrossSource = 0;
+  let skippedCrossSource = 0, skippedChanged = 0;
 
   const wantedEnabled = await isWantedPagesEnabled(engine);
   const plannerTick = await plannerStatsForLinkDrain(engine, async () => totalStale);
@@ -2192,7 +2219,7 @@ export async function extractStaleFromDB(
         const resolver = resolvers.get(page.source_id)!;
         const extracted = await extractPageLinks(
           page.slug, fullContent, snapshot.page.frontmatter, snapshot.page.type, resolver,
-          { skipFrontmatter: !includeFrontmatter, globalBasename, pack, lineGrammar: await lineGrammarOptions(engine), targetType: (targetSlug, targetSourceId) => {
+          { skipFrontmatter: !includeFrontmatter, globalBasename, pack, lineGrammar, targetType: (targetSlug, targetSourceId) => {
             const resolved = resolveCandidateSources({ targetSlug, targetSourceId, linkType: '', context: '' }, page.slug,
               page.source_id, allSlugs, slugToSources, federatedSourceIds.has(page.source_id), { crossSource, defaultSourceId: linkDefaultSourceId });
             return resolved.ok ? targetMetadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type : undefined;
@@ -2221,11 +2248,12 @@ export async function extractStaleFromDB(
           frontmatterUnresolved: includeFrontmatter ? extracted.unresolved : [], originSourceId: page.source_id,
           crossSourceAllowed: federatedSourceIds.has(page.source_id) || crossSource, resolve: c => resolveCandidateSources(c, page.slug,
             page.source_id, allSlugs, slugToSources, federatedSourceIds.has(page.source_id), { crossSource, defaultSourceId: linkDefaultSourceId }) }) : [];
-        const linkOpts = { includeFrontmatter, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata),
+        const linkOpts = { includeFrontmatter, lineGrammar: grammar, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata),
           wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] as const : ['body'] as const, rows: wanted } };
         const stampIso = page.updated_at.getTime() >= Date.parse(versionTs) ? page.updated_at_iso : versionTs;
         try {
-          const written = await engine.replaceDerivedLinks(origin, linkRows, linkOpts);
+          const written = await replaceDerivedLinksUnlessSettingsChanged(engine, origin, linkRows, linkOpts);
+          if (!written) { skippedChanged++; continue; } // settings moved mid-run: not stamped, re-extracts next run
           linksCreated += written.created;
         } catch (error) {
           if (!(error instanceof DerivedLinkEndpointChangedError)) throw error;
@@ -2290,6 +2318,7 @@ export async function extractStaleFromDB(
     if (mentionLine) log(mentionLine);
     if (skippedEndpointChanged) log(`Skipped ${skippedEndpointChanged} page(s) whose link endpoints changed mid-run; left stale for the next run.`);
     if (skippedAttendanceIncomplete) log(`Skipped ${skippedAttendanceIncomplete} page(s) with unresolved attendance; prior links and extraction watermarks were preserved.`);
+    if (skippedChanged) log(settingsChangedSkipLine(skippedChanged));
     if (skippedMissingTarget > 0) {
       log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
@@ -2305,11 +2334,11 @@ export async function extractStaleFromDB(
       pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
       skipped_missing_target: skippedMissingTarget, skipped_cross_source: skippedCrossSource,
       skipped_endpoint_changed: skippedEndpointChanged,
-      ...(skippedAttendanceIncomplete ? { skipped_attendance_incomplete: skippedAttendanceIncomplete } : {}), ...mentionJsonFields(mentions),
+      ...(skippedAttendanceIncomplete ? { skipped_attendance_incomplete: skippedAttendanceIncomplete } : {}), ...(skippedChanged ? { skipped_changed: skippedChanged } : {}), ...mentionJsonFields(mentions),
     }) + '\n');
   }
   return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget, skippedCrossSource, skippedEndpointChanged,
-    ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}), mentions };
+    ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}), ...(skippedChanged ? { skippedChanged } : {}), mentions };
 }
 
 /**

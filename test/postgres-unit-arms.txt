@@ -1,16 +1,16 @@
-# Unit-lane suites whose PostgreSQL arm is gated on DATABASE_URL and that no
-# other Postgres lane runs. The unit, serial and slow lanes unset
-# DATABASE_URL, so these arms run only where this list is read:
-#   - persistence-validation.yml `unit-postgres-arms` (shards by
-#     scripts/postgres-unit-arms.ts, one Bun process per file);
-#   - the scheduled race hunt (test.yml `race-hunt`, 10 iterations per file,
 #     a fresh database per iteration);
-#   - scripts/check-postgres-lane-coverage.ts, which counts each row as a lane
 #     and fails on a row for a missing file or a file with no gated arm.
-# One repo-relative path per line, sorted; '#' starts a comment. Adding a
-# file is a one-line edit: insert its path in sorted order. Shards balance
-# themselves from scripts/postgres-arm-weights.json.
+#     scripts/postgres-unit-arms.ts, one Bun process per file);
+#   - persistence-validation.yml `unit-postgres-arms` (shards by
+#   - scripts/check-postgres-lane-coverage.ts, which counts each row as a lane
+#   - the scheduled race hunt (test.yml `race-hunt`, 10 iterations per file,
+# DATABASE_URL, so these arms run only where this list is read:
 # Docs: docs/TESTING.md#postgres-arm-lanes
+# One repo-relative path per line, sorted; '#' starts a comment. Adding a
+# Unit-lane suites whose PostgreSQL arm is gated on DATABASE_URL and that no
+# file is a one-line edit: insert its path in sorted order. Shards balance
+# other Postgres lane runs. The unit, serial and slow lanes unset
+# themselves from scripts/postgres-arm-weights.json.
 test/alias-source-cascade-5094.test.ts
 test/attribution-backfill-history.test.ts
 test/behavior-change-notice.test.ts
@@ -42,6 +42,8 @@ test/harness-skills-epoch.test.ts
 test/held-read-signals.test.ts
 test/import-frontmatter-key-order-5158.test.ts
 test/import-revision-concurrency.test.ts
+test/lane-apply-pipelining.test.ts
+test/link-preparation-shared-index.test.ts
 test/links-attendance-blocked.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-lint.test.ts
@@ -53,10 +55,17 @@ test/managed-sync-bulk.test.ts
 test/managed-sync-chunker-version.test.ts
 test/managed-sync-concurrent-write-hold.test.ts
 test/managed-sync-drain.test.ts
+test/managed-sync-foreground-priority.test.ts
 test/managed-sync-group-completion.test.ts
+test/managed-sync-group-uncommitted-head.test.ts
 test/managed-sync-images-5493.test.ts
 test/managed-sync-lanes.test.ts
+test/managed-sync-page-fault-holds.test.ts
+test/managed-sync-pinned-reads.test.ts
+test/managed-sync-preparation-stalled-holds.test.ts
+test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
+test/owner-refusal.test.ts
 test/pack-relation-direction-engine.test.ts
 test/page-embedding-install-batch.test.ts
 test/page-state-engine.test.ts
@@ -68,6 +77,7 @@ test/persistence-git-subdir-origin.test.ts
 test/persistence-graph-publication.test.ts
 test/persistence-history-fixture.test.ts
 test/persistence-image-import.serial.test.ts
+test/persistence-import-batch.test.ts
 test/persistence-managed-lifecycle.test.ts
 test/persistence-managed-sync.test.ts
 test/persistence-manifest-git-scope.test.ts
@@ -96,10 +106,14 @@ test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
 test/source-retire-missing-checkout.test.ts
 test/stats-health-source-scope.test.ts
+test/sync-drain-claims.test.ts
+test/sync-drain-write-capacity.test.ts
 test/sync-frontmatter-recovery.test.ts
 test/sync-frontmatter-slug-conflict.test.ts
 test/sync-group-member-order.test.ts
 test/sync-legacy-holds.test.ts
+test/sync-waiver-budget.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts
+test/writer-status-owner-backends.test.ts

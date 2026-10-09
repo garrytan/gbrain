@@ -134,8 +134,10 @@ export async function bindResolveIpcForServe(
           sync_start: (req) =>
             runner.startDelegatedSync(engine, req.options, req.clientToken, {
               boundSourceId: defaultSource,
+              // #6317: the CLI's writer registration for a managed drain (verified by the runner, never here).
+              registration: req.registration,
             }),
-          sync_status: (req) => runner.getDelegatedSyncStatus(req.jobId),
+          sync_status: (req) => runner.getDelegatedSyncStatus(req.jobId, typeof req.afterLine === 'number' ? req.afterLine : 0),
           sync_abort: (req) => runner.abortDelegatedSync(req.jobId),
         };
       } catch (e) {

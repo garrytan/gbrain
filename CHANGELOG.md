@@ -10,6 +10,920 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.130.0] - 2026-10-09
+
+**`gbrain import` is twice as fast, `gbrain extract all --source db` four times, and a managed `gbrain sync` stops running Git once per page. Every page, chunk, link and timeline row comes out the same.**
+
+A managed import wrote each file through its own admission and its own publication, about 167 database round trips per page. Now up to 32 files are admitted in one transaction and published in groups of 8, the path `put_pages` already used. Each file keeps its own request id, receipt, revision check and result. `extract all --source db` read every page twice and replaced each page's links in its own transaction. Now it reads 100 pages with one statement and writes their links in one transaction, and replays page by page if that transaction fails. A managed sync ran three `git` processes per page. Now it reads pinned blobs with one `ls-tree` and one `cat-file --batch` per window of up to 256 entries, and finds the checkout's Git top level once per run.
+
+### What you'd see
+
+4 vCPU box, Postgres 16 + pgvector 0.8.7 and PGLite, a synthetic brain of 5,003 pages / 26,344 chunks, cold CLI process, N=1:
+
+| | Postgres before | Postgres after | PGLite before | PGLite after |
+|---|---|---|---|---|
+| `gbrain import --no-embed`, all sources | 371 s (74.2 ms/page) | 182 s (36.4 ms/page) | 334 s (66.8 ms/page) | 186 s (37.3 ms/page) |
+| `gbrain extract all --source db` | 60.2 s | 14.7 s | 34.2 s | 11.2 s |
+
+On a managed first sync of a 3,700-page source, Git processes go from 11,113 to 76 on Postgres and 44 on PGLite. With the real `git` binary, sync takes 37% less time on Postgres (91.5 → 58.1 s) and 33% less on PGLite (199.6 → 133.7 s), N=3.
+
+### What to watch for
+
+- A managed import's per-file results, failures and checkpoint are reported exactly as before. A refused file (bad frontmatter, a path outside the source) settles only that file.
+- If the database connection keeps dropping while a batch is being admitted, each file reports `write_outcome_unknown` with its own request id. Rerunning the import replays those same request ids, so no file is written twice.
+- Two files that map to the same slug keep the old order: the second one imports after the first, never in the same batch.
+
+### Itemized changes
+
+- **Batched managed import (`src/core/persistence/import-mutations.ts`).** `importManagedFiles` takes up to `IMPORT_BATCH_MAX_PAGES` (32) files or 8 MiB. One statement writes each file's durable intent (`op_checkpoints` `managed-file-import`) and one clears it. New requests are admitted together through `admitBatch` and carry one `intent.import_batch`, which `publicationGroupKey` maps to an independent `import:` group. Those groups publish 8 pages per transaction on Postgres and PGLite alike. `runImport` accounts each file of a batch in order through its usual bookkeeping.
+- **Import preparation (`import-prepare.ts`).** The import prepares `coordinated`: publication proves the base revision under its page guard. The apply then reads the page once after its write and uses that read for the read-back check, the projection target, the text seal and the receipt's postimage.
+- **Batched `extract all --source db` (`src/commands/extract.ts`, `extract-timeline-db.ts`).** `readPageSnapshotsBatch` (`src/core/page-snapshot-batch.ts`) returns exactly what `readPageSnapshot` returns, for up to 100 pages or 32 MiB of bodies in one statement. `replaceDerivedLinksBatch` (`src/core/derived-links.ts`, engine member on both engines) runs many origins in one transaction: one sorted guard lock, one extraction-generation check, then each origin's own revision check and writes. A failed batch replays page by page, so the settings-changed skip and the first error stay per page.
+- **Pinned Git reads in managed sync (`src/core/persistence/sync-blobs.ts`, `sync-screen.ts`, `sync-run.ts`, `sync-prepare.ts`).** `readPinnedBlob` and `readPinnedContent` answer from a window keyed by the full commit id. Anything the window can't answer falls back to the per-entry read. `syncGitTopLevel` runs `rev-parse --show-toplevel` once per root and run, and runs it again when the top level's `.git` changes. `readBlobContents` now skips a `missing` reply instead of misreading every blob after it.
+
+### For contributors
+
+- `test/persistence-import-batch.test.ts` imports the same files one by one and batched on two brains, then compares pages, chunks, links, timeline, facts, takes, tags, aliases, versions and the canonical files row by row, along with every per-file result. It runs on PGLite and Postgres. It also covers resume after an interrupted batch, a lost COMMIT acknowledgment (same request ids and digests, one row per file) and the `import:` group claim.
+- `test/extract-db-batch-equivalence.test.ts` and its Postgres twin compare every row extract writes against goldens captured on the previous release. They cover managed and unmanaged brains, each batched and with every batch forced to replay. `test/page-snapshot-batch.test.ts` checks that the batched read equals the per-page read.
+- `test/managed-sync-pinned-reads.test.ts` compares every table across per-entry reads, the default window and a window of 3, over two rounds of commits, and pins the Git spawn counts.
+
+## [0.60.129.0] - 2026-10-09
+
+**Postgres reads stop writing: retrieval tracking moves off `pages`, and the two persistence reads `gbrain serve` repeats in the background stop scanning every write receipt ever stored.**
+
+Every `search`, `query` and `get_page` recorded which pages it surfaced by updating `pages.last_retrieved_at`. Because that column was indexed, each update wrote a new copy of the whole page row plus an entry in every one of its 22 indexes, and fired seven triggers. One of those triggers advanced the page generation clock even when the five-minute throttle matched no row, so every read also threw away the query cache, the `get_health` memo and the search-readiness memo. In a mixed read/write serve workload on a 50,000-page brain, that update wrote 96% of all write-ahead log. The timestamp now lives in a small `page_retrievals` table, and every reader takes the newer of it and the old column, so the stale-page bias, volunteer usage stats and entity cards see the same values.
+
+`gbrain serve` checks every minute whether each managed source's sync is moving. That check read the newest committed sync receipt through an index holding every committed receipt, so on a source whose receipts are imports it walked and decompressed all of them. Write receipts are kept forever on purpose (after 30 days compaction drops their payload, not the row), so the check slowed down with every write. The idle receipt compaction pass had the same problem as a sequential scan. Both now read small partial indexes.
+
+A vector search scoped to a small source now skips the index walk that v0.60.127.0 added, because that walk came back short and fell back anyway.
+
+### What you'd see
+
+Warm, Postgres 16 + pgvector 0.8.7 on a 4 vCPU box, synthetic brains of 5,001 pages / 25,331 chunks and 50,010 pages / 248,802 chunks, p50 ms:
+
+| | 5k before | 5k after | 50k before | 50k after |
+|---|---|---|---|---|
+| Sync movement check, per source (25 runs) | 97 | 0.5 | 971 | 0.5 |
+| Receipt compaction scan (25 runs) | 2.6 | 0.7 | 30 | 0.3 |
+| Retrieval bump, 20 new pages (300 runs) | 5.8 | 0.8 | 15.4 | 0.7 |
+| WAL from those 300 bumps | 65 MB | 0.8 MB | 159 MB | 1.2 MB |
+| Vector search, remote reader, 0.1% source | 24–31 | 10–17 | 33–41 | 10–19 |
+| Vector search, remote reader, 1.7% source | 42–49 | 19–29 | 87–88 | 67–76 |
+
+Over 150 s of a mixed serve workload (`get_page`, `search`, `query`, `list_pages`, `put_page`), database time went from 22.8 to 21.7 s at 5k and from 42.1 to 36.1 s at 50k, and write-ahead log from 11 to 6.4 MB and from 153 to 15 MB. Tool latencies stayed the same, since the bump never blocked a response.
+
+### What to watch for
+
+- Retrieval tracking still writes at most once per page per five minutes. An older gbrain binary on the same database keeps updating `pages.last_retrieved_at`, and readers still see those values.
+- Two things were measured and left out. Storing chunk vectors inline (`SET STORAGE MAIN`) made keyword search 45% slower and chunk scans 12x slower at 50k, and moving existing rows would rewrite every chunk. Sizing the vector walk's `ef_search` to the window either lost recall or made remote readers fall back more often.
+
+## To take advantage of v0.60.129.0
+
+`gbrain upgrade` applies migrations v223 and v224. On Postgres, v223 builds two partial indexes on `persistence_requests` without blocking writers (2.3 s for 50,000 receipts) and drops v222's watermark index. v224 creates `page_retrievals`, copies existing timestamps (0.2 s for 50,000 pages) and drops the unused `pages_last_retrieved_at_idx`.
+
+### Itemized changes
+
+- **Retrieval tracking (`src/core/last-retrieved.ts`).** `bumpLastRetrievedAt` upserts `page_retrievals(page_id, last_retrieved_at)`. The SELECT skips rows still inside the five-minute window, so a repeat bump locks nothing; the ON CONFLICT test stops a concurrent bump from moving a row twice. Ids of pages that don't exist are skipped, as before. The table has no foreign key, because its lock would dirty the page row on every bump. A `pages_forget_retrievals` statement trigger deletes rows for hard-deleted pages instead. The domain-bank samplers, `volunteerUsageStats` and the entity card read `GREATEST(pages.last_retrieved_at, page_retrievals.last_retrieved_at)`.
+- **Movement watermark.** `persistence_requests_sync_watermark` on `(worktree_id, source_incarnation, completed_at DESC) WHERE state='committed' AND COALESCE(intent->>'kind','') LIKE 'managed_sync_%'` replaces `persistence_requests_committed_watermark`. The read (`MOVEMENT_WATERMARK_SQL`) repeats the predicate text, so the planner proves the index applies. Compaction drops a receipt's intent and so removes it from the index, the same rows the read already skipped.
+- **Compaction candidates.** `persistence_requests_compactable` on `(completed_at) WHERE recovery IS NULL AND NOT compacted AND state IN (terminal states)`.
+- **Small-source vector scope.** Both engines read `pages.source_id` planner statistics, at most once a minute and only for source-scoped searches. Below a 10% share of pages, `buildVectorSearchStatement` leaves out the index walk, like a type filter does. The joined, exact and has-more statements are unchanged, and missing statistics keep the walk.
+
+### For contributors
+
+- `test/page-retrievals.test.ts` runs the legacy UPDATE and the upsert on the same pages and ages. It checks they bump the same pages and leave the same effective timestamps, that a bump never advances the generation clock (the legacy UPDATE did, even matching nothing), that hard deletes clean up, and that every reader takes the newer value.
+- `test/sync-movement.test.ts` checks the watermark read returns the same row with and without index scans, across non-sync receipts, another incarnation, queued requests and compaction. `test/serve-loop-migrations.test.ts` and its Postgres twin `test/e2e/serve-loop-migrations-postgres.test.ts` cover fresh installs and upgrades: every timestamp is copied, the column keeps its values, and a re-run changes nothing. `test/e2e/persistence-consumers-postgres.test.ts` checks the watermark plan uses the new index.
+- `test/search/vector-statement.test.ts` checks that a below-threshold scope leaves every other statement byte-identical. It also covers the share math (most-common values, unlisted sources, negative `n_distinct`) and the loader cache. `test/search/vector-index-walk.test.ts` uses real PGLite statistics: a tiny source skips the walk and returns the joined statement's rows, and a large one still walks. With the threshold forced to 0, the three skip tests fail.
+
+## [0.60.128.0] - 2026-10-09
+
+**The nightly Heavy Tests run is green again.**
+
+v0.60.113.0 made `full` the one MCP registration surface for every plugin manifest, but the real-binary codex plugin install test, which only runs in the nightly Heavy Tests workflow, still expected `starter` in the installed manifest's arguments and in its tools/list oracle. Both now read `REGISTRATION_SURFACE`, so the test follows the manifest instead of a copy of it. This is a test-only change; gbrain itself behaves the same.
+
+## To take advantage of v0.60.128.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
+## [0.60.127.0] - 2026-10-09
+
+**Postgres search, list, page and backlink reads stop taking the slow plan: vector search walks the vector index first, remote reads stop compiling every statement before running it, and `get_page` looks up the exact page before trying aliases.**
+
+Three plan problems showed up while profiling synthetic brains shaped like a real 5,000-page brain. First, vector search often skipped the vector index. On a 25,000-chunk brain it read and sorted every chunk instead, at a 50-result limit and on some remote reads. Second, the rule that hides private pages looked so expensive to Postgres that it compiled any statement using it to machine code first, at 40 to 570 ms a call, then ran it in about one. That rule covers listing pages, backlink counts and the search legs. Third, the hold lookup that `get_page` and every search run could only join pages by text-casting every page id. Fourth, `get_page` matched the page or any alias in one statement, which scans the source's pages. Results don't change: the same rows come back in the same order.
+
+### What you'd see
+
+Warm reads on a 4 vCPU box, Postgres 16 + pgvector 0.8.7, synthetic brains (5,001 pages / 25,331 chunks and 50,010 pages / 248,802 chunks), p50 ms over 25 calls. Recall is measured against an exact scan:
+
+| Read | 5k before | 5k after | 50k before | 50k after |
+|---|---|---|---|---|
+| Vector search, 20 results | 177 (recall 0.90) | 24 (0.97) | 23 (0.53) | 31 (0.67) |
+| Vector search, 50 results | 193 (1.00) | 37 (0.995) | 42 (0.63) | 57 (0.79) |
+| Vector search, remote reader, 50 results | 93 (1.00) | 33 (0.995) | 52 (0.63) | 58 (0.79) |
+| Vector search, remote reader, type filter | 239 | 256 | 8,091 (2.8 of 20 results) | 1,064 (20 of 20) |
+| `list_pages` over MCP | 70 | 11 | 52 | 12 |
+| `get_page` over MCP | 18 | 12 | 15 | 9 |
+| Backlink count statement (search and query) | 265 | 4 | 571 | 8 |
+| `search` over MCP (includes the embedding call) | 880 | 668 | 866 | 715 |
+
+### What to watch for
+
+- On the 50k brain the planner already picked the vector index, and the walk reads twice the window to keep recall, so vector-only searches cost 6 to 15 ms more there while recall rises 14 to 16 points.
+- A vector search scoped to a small source (a tenth of a percent of the brain) costs about 25 ms more: the walk comes back short and the search falls back to the previous statement, with the same results. Type and date filters skip the walk.
+
+### Itemized changes
+
+- **Vector index walk.** `buildVectorSearchStatement` adds `indexWalkSql`. Its `ann` CTE orders `content_chunks` alone with only the chunk-level filters (modality, model, `detail`, language, symbol kind) over twice the candidate window. It then joins pages and sources by key and applies every page filter, visibility and the private-page rule to those rows, keeping the nearest `innerLimit`. Both engines run it first with `enable_sort = off` (the HNSW scan is then the only ordered path) and `hnsw.ef_search` sized for the doubled window. They accept it when the window is full and fills the limit; otherwise they run the joined statement and its escalation exactly as before. Type and date filters, the legacy guard and non-indexed columns skip it. Doctor `vector_plan` and `explainVectorSearch` explain the walk.
+- **Private-page rule.** `privatePagesFilterFragment` matches `derived_from` slugs with `= ANY(ARRAY(...))` instead of `IN (SELECT ... jsonb_array_elements_text(...))`. The rows are the same, but the planner stopped pricing a 100-row semi-join per page, which kept `list_pages`, backlink counts and remote search legs past `jit_above_cost`. No read needs a JIT-off wrapper.
+- **Held-page read.** `readHeldPages` joins `pages` on `p.id = (page_id)::int`, so the page lookup is a primary-key probe whatever the small-table statistics say.
+- **Page snapshot.** An alias-resolving `readPageSnapshot` (`get_page`, `fetch`) runs the exact-slug statement first and the `slug = $1 OR EXISTS (alias)` statement only on a miss: an exact match outranks every alias match there, so the row is the same. An ambiguity check (`requireUnambiguous`) still runs the alias statement alone. The statement drops from 3.8 to 0.7 ms at 5k and 1.8 to 0.8 ms at 50k.
+
+### For contributors
+
+- `test/search/vector-index-walk.test.ts` (PGLite) checks that a full walk window returns the joined statement's rows in the same order across a filter matrix (private-page rules, archived and quarantined pages, deleted pages, stale hashes). It also checks that a short window falls back to the joined result. `test/search/vector-statement.test.ts` pins the walk's shape.
+- `test/e2e/private-visibility-plan-postgres.test.ts` proves both spellings of the private-page rule hide exactly the same pages, and that the planner's cost per page now stays under `jit_above_cost / 500`. A precondition fails if the old spelling would also pass.
+- `test/e2e/vector-plan-real-column-postgres.test.ts` checks the walk uses `idx_chunks_embedding` for remote readers and 50- and 200-result windows. `test/held-read-signals.test.ts` checks the held-page read probes `pages_pkey` (it fails on the text-cast join). `test/page-snapshot-exact-first.test.ts` covers exact hits, alias fallback, an exact page in another source, deleted and private exact pages, the ambiguity check and a miss.
+- `test/bounded-child-exec.test.ts`: the SIGTERM test installs the child's trap before it writes the lockfile and waits for the lockfile instead of sleeping 200 ms; on a loaded runner the child had not started yet (forced probe: delaying the child 0.5 s fails the old test and passes the new one).
+- `test/no-allow-protected-flag.test.ts` skips a file or directory that another test deletes while the guard walks `test/` (ENOENT), instead of failing the run (forced probe: a dangling `test/.probe-vanished.md` fails the old guard and passes the new one).
+
+## [0.60.126.0] - 2026-10-09
+
+**When you ask your agent about a person or a company, the brain now shows it the newest mails and notes that mention them, so a later correction reaches the agent before it answers.**
+
+A person page says who handles procurement and when the next meeting is. Weeks later a mail says someone else took over, and another moves the meeting. Until now the agent's first look at that person showed only what the page said; the mails that corrected it surfaced only if the agent thought to ask a second, more specific question. Many agents never did, so they greeted the wrong person and quoted the old date.
+
+Each card in `context_pack` now ends with the newest pages that mention the entity and are dated after its own page, newest first, each with its date, title and a short preview. The agent reads them on its first call and opens the ones that matter.
+
+### How to use it
+
+Nothing to do: it is on by default. To turn it off:
+
+```bash
+gbrain config set mentions.newer_on_cards false
+```
+
+### What you see
+
+On the T0b program-primary workload (gbrain-evals, development seeds, 144 paired runs against master, three reader models), failed runs fell from 67 to 27 (2.45x fewer; 95% interval for the failure-risk ratio 0.25 to 0.64). On eight freshly drawn seeds the same comparison went from 33 to 9 of 72 (3.53x fewer). Greeting a contact who had handed off, or giving a meeting date that had moved, fell from 74 failed items to 1. Token use and latency stayed within 10% of master for every reader.
+
+| Reader | Master | With newer mentions |
+|---|---:|---:|
+| Opus 5.5 | 40 of 48 failed | 6 of 48 |
+| Sonnet 5.5 | 24 of 48 | 20 of 48 |
+| gpt-6.1-sol | 3 of 48 | 1 of 48 |
+
+### Things to watch
+
+- A remote caller never sees a private page, a derived page or a page from another source in the list; it follows the same read policy as the `entity` card.
+- The section is bounded: at most 8 pages and 2,000 characters per card and 6,000 per pack. It is the first thing dropped when `budget_tokens` is tight, and it never delays a card or a fact.
+- A page that names an entity only by a short code it has not declared (a note titled "Call with JOF") does not link to the entity, so it does not appear here.
+
+### Itemized changes
+
+- `src/core/mentions/newer-mentions.ts` (new): `readNewerMentions` reads the entity page's `COALESCE(effective_date, updated_at)` and the `referenced_by` referrer query (`readReferrerPage`, the card's private-page and private-origin filters and preview), keeps rows dated after the page, newest first, within `NEWER_MENTIONS_CAP` (8) rows and `NEWER_MENTIONS_CARD_CHARS` (2,000); `more` when further newer pages exist; `isNewerMentionsEnabled` reads `mentions.newer_on_cards` (unset means on).
+- `src/core/context/turn-context.ts`: `assemblePack` reads newer mentions after cards and hot facts, under the pack deadline and `NEWER_MENTIONS_PACK_CHARS` (6,000); `renderPack` renders them in a section after hot memory inside the "data, not instructions" envelope.
+- `src/core/ops/facts.ts`: `context_pack` packs them last under `budget_tokens` and returns `cards[].newer_mentions`.
+- `src/core/verbs/entity-card.ts`: optional `EntityCard.newer_mentions`.
+- `mentions.newer_on_cards` registered in `KNOWN_CONFIG_KEYS`; `docs/guides/entity-recall.md`, `docs/mcp/TOOL_REFERENCE.md` and the key-files index describe it. MCP tool descriptions and the advertised schema are unchanged.
+- Tests: `test/context-pack-newer-mentions.test.ts` (ordering, dates, the row and character caps, `budget_tokens`, the off switch, an entity with no newer mentions, and stdio and HTTP remote callers never seeing private, derived or other-source referrers).
+
+## [0.60.125.0] - 2026-10-09
+
+**Every one-shot `gbrain` command starts and exits faster: `--version` and help answer in about 70 ms instead of 590, reads like `list`, `get` and `search` save about 300 ms per call, `gbrain doctor` uses a third less CPU, and import spends less than a third as long chunking.**
+
+An agent that shells out to `gbrain` pays process start-up and exit on every call. Each call paid two avoidable costs. It waited a fixed 250 ms before exiting whenever stdout was a pipe, and it loaded every operation and command module (about 1,200 modules) before reading argv, `--version` included. The same profiling found three CPU hot spots on large brains: the code stripper behind link and citation extraction copied text one character at a time, the chunker ran a full tiktoken encode for every chunk, and `doctor` re-listed the same git checkout several times per run.
+
+| Cold CLI call, stdout piped (5,003-page Postgres brain, 4 vCPU, N=25) | before p50 / p95 | after p50 / p95 |
+|---|---|---|
+| `gbrain --version` | 591 / 628 ms | 73 / 77 ms |
+| `gbrain --help` | 585 / 632 ms | 73 / 84 ms |
+| `gbrain list --limit 5` | 684 / 730 ms | 381 / 431 ms |
+| `gbrain get <slug>` | 729 / 766 ms | 417 / 439 ms |
+| `gbrain search <q>` | 869 / 974 ms | 580 / 651 ms |
+| `gbrain doctor --json` | 5,975 / 6,519 ms | 4,223 / 4,623 ms |
+
+### Itemized changes
+
+- **No fixed exit delay.** A one-shot command now exits as soon as its piped output is delivered. It still waits for a slow reader: stdout goes through the delivery-exact write chain, and a backlog on stderr holds the exit until Bun reports the pipe drained. The 250 ms grace (`GBRAIN_FLUSH_GRACE_MS`) is now only an upper bound for that wait.
+- **Lazy start-up.** `gbrain --version`, bare `gbrain` and `gbrain --help` answer without loading the dispatcher. Real commands skip the schema-migration modules unless the brain is behind, skip the version-upgrade registry, and load the MCP HTTP client only for thin-client calls. Output, exit codes, the CLI surface and the MCP tool list are unchanged.
+- **Faster code stripping.** Link extraction, citation parsing and the doctor checks that read page bodies strip code 23-33x faster, with byte-identical output.
+- **Faster chunk token counts.** Import counts are still exact cl100k counts, memoized per pre-token, so chunk boundaries are identical. The chunk pass is about 3.5x faster, and `extract all` uses about 2.5x less CPU.
+- **Cheaper `gbrain doctor`.** One `git ls-files` per checkout per run (34 git spawns instead of 50), no citation parsing on pages without `[Source:`, and one `.git` lookup per source instead of one per page. Output and exit codes are unchanged. At 50,030 pages `doctor --json` takes 15.8 s instead of 19.4 s (p50).
+
+### To take advantage of v0.60.125.0
+
+`gbrain upgrade`. Nothing to configure. If you raised `GBRAIN_FLUSH_GRACE_MS` for a slow consumer, it still caps how long the exit waits for a pipe to drain.
+
+### For contributors
+
+- The dispatcher moved from `src/cli.ts` to `src/cli/main.ts`. `src/cli.ts` is now the light entry point, and tests import the dispatcher's helpers from `src/cli/main.ts`. The top-level help text lives in `src/cli/top-help.ts`.
+- `bun run build:schema-migrations` also writes `src/core/schema-migrations/latest.generated.ts`, which the connect-time pending check reads.
+- New equivalence pins: `test/cli-exit-drain.test.ts` (real pipes), `test/cli-fast-path.test.ts` (fast path and import-graph bounds), `test/markdown-code-equivalence.test.ts` and `test/chunkers/token-estimate-pieces.test.ts` (fuzzed against the previous implementations), and `test/doctor-content-golden.test.ts` (doctor output on a brain with content, captured on the previous release).
+
+## [0.60.124.0] - 2026-10-09
+
+**When you give `query`, `search`, `recall` or `assemble_evidence` a token budget for whole-conversation evidence, gbrain now stays inside it. Calls without a budget return exactly what they did before.**
+
+Ask gbrain for "the evidence, within 8,000 tokens" and the default `auto` delivery used to treat that number as a target, not a limit: it reserved a matching snippet for every hit, grew conversations in rank order, and appended every conversation that no longer fit as extra chunks outside the budget. On the LongMemEval-S development slice, a 6,200-token budget over 25 hits came back at about 10,500 tokens on every question, mostly cut conversations and spilled chunks. A budget you pass is a cost promise, so it is now a hard cap: titles, evidence and every marker fit inside it, the best hit always comes first, and anything that does not fit is counted instead of appended. Evidence handed over for a frozen list of hits also keeps each page's date now, the same date a live `query` returns.
+
+### How to use it
+
+```bash
+gbrain query "when did the acme-example renewal move?" --return-unit auto --token-budget 8000   # capped at 8,000
+gbrain config set search.auto_packing breadth_capped     # how conversations share the budget (default cap_only)
+gbrain config set search.auto_packing off                # the old uncapped behavior, even with a budget
+```
+
+**Say to your agent:** *"What did we decide about the widget-co launch? Keep the evidence under 8,000 tokens."*
+
+### What you'd see
+
+| Call | Before | Now |
+|---|---|---|
+| `query`, `return_unit: "auto"`, `token_budget: 6200`, 25 hits on chat sessions | about 10,500 tokens delivered; conversations that did not fit appended as chunks | at most 6,200 tokens; conversations that do not fit listed in `dropped_reasons` |
+| Same call, no `token_budget` | 24,000-token default, uncapped spill | byte-identical to before |
+| `query` with a bare `token_budget` and no `return_unit` | legacy chunk budgeting | unchanged (legacy chunk budgeting) |
+| `token_budget: 10` with `return_unit: "auto"` | accepted, over budget | `invalid_params`: the minimum is 32 tokens |
+| `assemble_evidence` on a frozen hit list | no `effective_date` | each row's `effective_date` and `effective_date_source`, as live `query` returns them |
+
+### Itemized changes
+
+- **The cap** (`src/core/search/evidence-delivery.ts`). An explicit budget under `auto` (on `query`, `search`, `recall`'s results arm and `assemble_evidence`; `think` passes none) is a hard cap on the recount of every result's title plus `chunk_text`. Rank one, note or conversation, is reserved first and cut at a piece boundary with the marker `\n\n[…]` if it alone exceeds the budget; the other non-conversation chunks keep the rank-order prefix that fits (the rest are `budget_note`); a conversation that does not fit is dropped (`budget_floor`), never spilled. Redaction and an explicit `snippet_chars` run before the final recount, a snippet's recovery marker is paid from the row's own allocation (`snippet_marker_omitted` when it cannot fit), and `budget_used` is that recount (`budget_recount` drops anything still over). `delivery.auto_packing` names the packing when the cap ran.
+- **Three packings** (`search.auto_packing`, registered and validated at `config set`): `cap_only` (default: every matching span first, then growth in rank order), `breadth_capped` (the longest rank-order prefix of conversations whose title, matching span and `return_window` target window fit; the rest `breadth_cap`), `depth_first` (each conversation whole if it fits, else as much around its match as fits, else skipped). `off` keeps the uncapped behavior. `assembleEvidenceForHits` takes a library-only `auto_packing` that wins over config per call, for evaluations on one frozen hit list.
+- **The minimum.** An explicit `auto` budget below 32 tokens fails with `invalid_params` naming the minimum and the parameter (`token_budget`, or `budget_tokens` on `recall`), and so does a zero, negative or non-finite one passed with `return_unit: "auto"`; with the unit omitted such a budget still means no budget. Above it, a non-empty readable hit list always returns non-empty evidence.
+- **No budget, no change.** The evidence plan now records whether the caller passed the budget (`budgetExplicit`) and the resolved packing; without an explicit budget the allocator runs the previous code. A structural property test over random corpora pins every packing to the previous bytes, and the off-path golden is unchanged.
+- **Frozen-hit dates.** `resolveFrozenHits` projects `effective_date` and `effective_date_source` through the same normalizer live search rows use (`applyEffectiveDate` in `src/core/utils.ts`), so frozen and live delivery hand a reader the same dates.
+- Docs: `docs/evidence-delivery.md` ("Explicit budgets (the cap)", drop and fallback codes, errors, the frozen-candidate interface); KEY_FILES entries for `evidence-delivery.ts` and the new `src/core/search/evidence-packing.ts`.
+- Tests: explicit-budget twins of the auto property and spill tests (the originals keep pinning the no-budget path), fixed cases for mixed notes and chats, notes only, tiny budgets, rank one over budget, the `breadth_capped` prefix, the `depth_first` order and skip rule, a source-swamp fixture, redaction growth, the snippet marker, CJK spans, fetch failure and cached hits; op-level checks through all four operations; live-against-frozen parity on every consumed field including dates; and the leak suite and engine parity under every packing on PGLite and Postgres.
+
+## To take advantage of v0.60.124.0
+
+Nothing to migrate. Callers that pass no budget see no change. A caller that passes `token_budget` under `auto` now gets at most that many tokens; to keep the old behavior for a while, run `gbrain config set search.auto_packing off`, and check a call with:
+
+```bash
+gbrain query "renewal terms" --return-unit auto --token-budget 4000 --json   # delivery.budget_used <= 4000, delivery.auto_packing
+```
+
+## [0.60.123.0] - 2026-10-09
+
+**A write whose database session drops during admission no longer hands the caller a false refusal: the admission is re-run against the retained request id, and a session that keeps dropping returns the typed `write_outcome_unknown`. Two reconnect defects in the vendored Postgres driver that the same fault reached are fixed with it.**
+
+The crash robot (`pooler_disconnect`, seed 5105, master run 37872222822) caught an `edit_page` caller receiving the raw `write CONNECTION_CLOSED` from a dropped session while its admitted request went on to commit: the receipt the caller held said refused, the page held the write (`untrue_receipt`, `lost_write`). `retryWriteAdmission` was right not to retry an admission on a lost socket, since a second INSERT could double-apply, but the safe step was missing: every admission attempt begins by reading the retained `request_id` and replays an admitted row, so re-running the attempt is a read, never a second admission. Pre-existing (the same shape replays on the commit before #6347); found by the robot's seed, fixed here.
+
+### How to use it
+
+Nothing to configure. A single drop resolves by itself (re-runs after 100, 300 and 900 ms). When the session keeps dropping the caller sees:
+
+```bash
+gbrain errors write_outcome_unknown      # the new code, offline
+gbrain write-request -- <request_id>     # the fix it names: a committed or pending row means accepted (replay the same id); no row means not (submit again with the same id)
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A write whose session drops under admission | Re-run after 100, 300 and 900 ms; the re-run replays the admitted row when the lost acknowledgment had committed, admits when it had not. |
+| A session that keeps dropping | `write_outcome_unknown` (`reason: connection_lost`, `detail` the socket error without URLs, `fix` the read of the request by id, `write_error` on the receipt) instead of the raw `CONNECTION_CLOSED` / `57P01`. |
+| A write admitted on this process's warm lane (the consumer's reserved backend) whose session dropped | The re-run takes a transaction from the engine's pool instead of the dead reservation, and the consumer gives the lane up at once (retaken after a minute) whatever the admission makes of the loss. Before, every re-run and the next write hit "Connection is no longer owned" on the same reservation. |
+| A backend terminated while the driver is still starting its connection (during the driver's own array-types fetch) | The fresh connection serves the caller's first statement. Before, the driver reconnected but kept the dead startup's internal query and its FATAL `57P01`: the caller's first statement on the live connection failed with that stale `57P01` (the robot's `put_page refused/57P01`), and the orphaned internal query rejected with nobody awaiting it, which Bun treats as fatal (the robot worker's exit 1). |
+| A connection closed while a statement's bytes still wait for its write immediate | The next connection on that pool slot starts normally. Before, the cleared immediate left its handle and bytes behind, the reconnect's StartupMessage was appended and never scheduled, and the slot sat open until `CONNECT_TIMEOUT` (10 s) on every statement bound to it, for as long as it kept being chosen (the robot's effects worker, for minutes, leaving a running effect unreclaimed). |
+| A managed sync's stall line in the unit lane (`test/sync-drain-claims.test.ts`) | Attributed to the head read that produced it instead of counted by position, so a read in flight across a park no longer reads as the park's first line (the master flake on #6271). |
+| Confirmed aborts (`40001`, `40P01`, `55P03`, `57014`) | Unchanged. |
+
+### Itemized changes
+
+- `src/core/retry-matcher.ts`: `isConnectionLoss` (connection-class SQLSTATEs, postgres.js connection codes, `57P01`/`57P02`/`57P03`, socket errnos; not auth or timeouts). `src/core/persistence/admission-retry.ts`: `CONNECTION_LOSS_RETRY_MS`, `writeOutcomeUnknown`, the re-run branch. `types.ts`: `write_outcome_unknown` in `WRITE_ERROR_CODES`. Registry, `write-refusals.md`, `error-codes.md`, KEY_FILES, one `BEHAVIOR_CHANGES` row.
+- `vendor/postgres` (`src`, `cjs/src`, `cf/src` `connection.js`; `patches/postgres@3.4.9.patch` regenerated, `bash vendor/update-postgres.sh --check` clean): `closed()` settles a startup's internal query and clears its saved error before reconnecting for `initial`, clears the pending write buffer and its immediate handle, and drops the errored `query`; `fetchArrayTypes` swallows its own failure (`errored()` has already told the caller's query; `connected()` re-arms the fetch). `scripts/persistence/ops.ts`: the harness read retry also covers `CONNECTION_DESTROYED` and `CONNECT_TIMEOUT` (a backend killed mid-handshake surfaces as a connect timeout), still only after a drop the robot injected.
+- `src/core/persistence/journal.ts` `admitWrite`: after a connection loss the re-run runs on `engine.transaction` (the pool), never again on a lent transaction, once `engine.reconnect` rebuilt the pool. `src/core/persistence/consumer.ts` `onLane`: a lent transaction that reports a connection loss (`isConnectionLoss`) releases the lane and sets the one-minute retake delay in `finally`, independent of how `run` ends.
+- Tests: `test/persistence-admission-connection-loss.test.ts` (classifier; re-run / typed outcome / budget / other errors untouched; forced probes: `admitWrite` with a lost COMMIT acknowledgment returns the admitted row and exactly one request exists, and a dead lent transaction is used once with the pool finishing the write; on the previous code the raw `write CONNECTION_CLOSED` escapes). `test/persistence-consumer-lane-loss.test.ts` (forced probe: the lane is given up after a lost lent transaction whether the run ends typed or succeeds; kept on success; fails on the previous `onLane`). `test/sync-drain-claims.test.ts`: stall lines are attributed to their head read's start (`parkedStallLines`), with a forced probe replaying the by-position misattribution. `test/postgres-driver-startup-death.test.ts` (scripted wire-protocol server, no database: a connection killed with FATAL 57P01 at its first statement, and a close delivered while a statement's bytes wait for the write immediate; both fail on the previous driver with 57P01 / CONNECT_TIMEOUT). The seed-5105 crash-robot manifest replays clean (20 of 20 sequential after the driver fixes; before them 1 run in about 7 wedged or crashed).
+
+Fixes #6355. Follows #6347.
+
+## [0.60.122.0] - 2026-10-09
+
+**An eval-only evidence brief for the LongMemEval harness: a cheap model's claims, each with a verbatim quote, a pointer and a date, checked against the sessions before a reader sees them.**
+
+Wave 1 of the 10x memory advantage plan asked whether a short, model-written brief can stand in for the five whole conversations gbrain hands a reader (about 14,000 tokens a question). `src/eval/longmemeval/evidence-brief.ts` is the builder the gbrain-evals pilot used. It makes no model call and changes no product default; nothing outside the eval harness imports it.
+
+- **Grounded claims.** Every claim's quote is located in its session with the dream-cycle verifier (`groundSource`, `groundQuote`, `unsupportedNumericClaims`) and carries a pointer (session id, UTF-16 span, SHA-256 of the span and of the body) plus the session's date. Claims whose quote is not found, that cross or misattribute a speaker turn, that state a number the session does not, or that sit in instruction-like context are dropped and counted.
+- **Provenance, not truth.** A paraphrase whose negation disagrees with its quote is withheld (the reader sees the quote), a later correction the brief did not cite is appended verbatim, and a count is never presented as complete. Unit fixtures cover an omitted correction, a reversed negation, a wrong attribution, a literally quoted malicious instruction, a false "complete" claim and an injection that tries to add a claim.
+- **Scope wording.** An empty brief says "No supporting evidence was returned from the searched scope" and lists the sessions searched; it never says something is not in the brain. Claims render inside the reader's sanitized `<chat_session>` framing within a token budget, and the brief falls back to the full text when the builder's output cannot be parsed or most claims fail grounding.
+
+### Measured
+
+The gbrain-evals pilot (garrytan/gbrain-evals#107, 100 LongMemEval-S development questions) found the Haiku-built 2,000-token brief kept Sonnet 5.5 at 92 of 100 against 93 for whole sessions, at $0.0079 against $0.0473 a question, with a p95 of 8.6 s against 2.5 s. A cheap model reading the whole sessions directly matched the brief at lower cost and latency, so the plan's preregistered off-ramp fired and the brief stays eval-only.
+
+### For contributors
+
+- `test/e2e/client-grants.test.ts` reads `whoami`'s result block instead of joining the notice blocks prefixed to it. A brain whose sources row predates the fresh-brain grace gets the one-time `behavior_changes` disclosure on a client's first admitted call, which broke the JSON the D4 tests parsed whenever the shared CI database was old enough (forced probe: backdating `sources.created_at` by two hours fails both tests before the fix and passes after).
+- `scripts/check-orphan-modules.mjs` permits the new eval-only module as test-only.
+
+## [0.60.121.0] - 2026-10-09
+
+**A managed catch-up on a live checkout finishes unattended: a page that moves under the run is held, a dropped database connection is retried, a relaunch resumes the frozen manifest, and `gbrain sync status` / `gbrain sync unblock` let an operator agent run the recovery loop without a human.**
+
+One brain's catch-up (`gbrain sync --source default`, about 14,000 pages, six to eight agents committing to the checkout every few minutes) died seven times in three hours across four fault classes, every one of them recoverable with a plain retry: a page edited in the database after the manifest froze (`revision_conflict`), a file an agent was mid-edit on (`source_changed [pinned_git_worktree_conflict]`), a page another run imported first (`page_identity_changed`), and the session-mode pooler dropping the socket (`write ECONNABORTED`). Each death wrote a failure-ledger row, and the relaunch with `--retry-failed` read the row and re-froze all 14,000 entries (eight to twelve minutes of silence) before writing a page, so about half the wall clock went to re-planning. The hold machinery that should have caught the page faults already existed (#5988, #6188, #6194, #6278); these codes were never routed into it, and the retry classifier did not know `ECONNABORTED`.
+
+### How to use it
+
+```bash
+gbrain sync --source <id> --no-pull                 # a page that moved is held (concurrent_write / worktree_dirty) and the run goes on; a pooler drop reconnects and retries 5/15/45 s
+gbrain sync status --source <id> --json             # cursor, committed_last_10m, each hold and the last error with class / safe_actions / needs_human, and next
+gbrain sync unblock --source <id> --apply --json    # re-screens every held file whose condition holds (a committed edit, a stalled preparation); refuses the rest by name
+gbrain sync --source <id> --no-pull --retry-failed  # a cursor an older release left blocked converts in place: same run, no re-freeze
+gbrain errors worktree_dirty                        # the new hold code, offline
+```
+
+The operator loop (`docs/guides/sync-unblock-runbook.md`): `status` every N minutes; when `committed_last_10m` is 0 and `needs_human` is false, `unblock --apply` and the sync it prints; when `needs_human` is true, relay `next.user_message` with the slug.
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A page edited, deleted or re-bound in the database after the manifest froze | Held as `concurrent_write` at freeze time (the hold records `page_revision` and `expected_revision`, and the competing request when #6194's proof finds one); the run finishes `synced` with the hold listed. A page that still holds exactly what the file would import is re-bound to its new revision and passed. A `revision_conflict` receipt whose page really moved converts the same way; a run-level conflict (the page is where it was) still blocks. |
+| A file committed between admission and publication (`source_changed` / `raw_file_changed`) | Re-frozen once under a fresh request: committed bytes import as HEAD has them, uncommitted ones reach the dirty hold; a file that changes again under the re-frozen request is held `worktree_dirty`, never a third request. |
+| A file an agent is mid-edit on | Held with the new code `worktree_dirty` (the pinned blob and a hash of the working bytes; the local edit is never touched). A later commit that changes the file re-screens it on its own; `sync unblock --apply` re-screens it as soon as its bytes are committed at HEAD. Held three times, it is reported `needs_human`. |
+| A file committed past the pinned target | Imported as HEAD has it (a commit is not an uncoordinated local edit); the pin..HEAD diff later re-imports the same bytes as a no-op. From PR #6323 by @garrytan-agents, moved to freeze time so no receipt is minted. |
+| `write ECONNABORTED` / `ETIMEDOUT` / `EPIPE` mid-run | The drain reconnects and retries after 5, 15 and 45 s instead of exiting; a drop that then moves data is not even a warning. Three drops with no page committed between them stop the drain `connection_lost` with the resume command as a loopable `next`. Nothing is recorded against the source. |
+| The relaunch | With or without `--retry-failed`, it resumes the stored run at its index against the frozen manifest: no rediscovery, no re-waiving. A cursor an older release left blocked on a page fault converts in place under `--retry-failed`. |
+| HEAD moved during the run | The drain takes exactly one more pass (an incremental pin..HEAD discovery) so the invocation ends at HEAD; never a second one. `drain.extra_pass` names the span. |
+| `gbrain sync status --source <id> --json` | New: `run_id`, `cursor {index, total, pinned_target, last_advance_at, done}`, `committed_last_10m`, `rate_pages_per_min`, `holds[]` and `last_error` each with `class` (`page` / `connection` / `systemic`), `safe_actions`, `needs_human`, `human_reason`, `attempts`, and one `next` action. |
+| `gbrain sync unblock --source <id> [--apply] --json` | New: performs the safe action for every hold and refuses the rest by name (`applied`, `refused` with each fix, `next`). Idempotent; it never writes a page, clears a hold or drops content. |
+| `sources status`, doctor `git_held_files`, `sources retry-held` | Count and route `worktree_dirty` holds (`dirty`) with `sync unblock --apply` as the step. |
+| `sync.holds=fail`, company-brain sources | Keep the blocking refusals, as before. |
+
+### Things to watch
+
+- **`concurrent_write` needs a person by design**: the file and the page both changed, and `sync status` says so (`needs_human`, the reconcile preview). The loop pages a human with the slug instead of guessing.
+- **A dirty file is held, not imported, until it is committed.** The run no longer stops on it, so a source can finish `synced` with holds; `held_count` and `holds_outstanding` on the receipt say how many. The agent that edits the file should commit it.
+- **Old tests that asserted the run stops** on these faults now assert the hold and that nothing was overwritten; the data invariant is unchanged.
+- **`CONNECTION_DESTROYED` / `CONNECTION_CLOSED` are not retried as drops**: #6329 classifies them as this process's own settle of a cancelled statement, which stays on the stall path.
+- **Migration-speed fix folded in (Subagent 65):** the consumer remembers the request ids it settled most recently (1,024), so a waiter that registers after its write already settled reads at once instead of sleeping the 200 ms first poll; grandfather migrations went from about 200 ms to about 18 ms per page.
+
+### Itemized changes
+
+- `src/core/persistence/sync-page-fault.ts` (new): `headCommittedBytes`, `pageChangeProof`, `pageChangedHold`, `worktreeDirtyHold`, `originFaultHold`, `receiptPageFaultHold`, `pinnedWorktreeConflict`, `fileChangedAfterAdmission`, `pageMovedSinceAdmission`. `sync-write-diagnostic.ts` (new): `managedSyncWriteDiagnostic`, moved out of `sync-run.ts` unchanged. `sync-run.ts`: `freezeEntry` resolves the three freeze-time throws into holds (or a re-bind) when holds are on; `holdFailedFenceRequest` converts the pinned-worktree and moved-page receipts (imports and deletes); `convertBlockedCursor` converts an older release's blocked cursor and re-freezes a dirty file that is committed now; the `--retry-failed` start converts before it rediscovers; the catch skips the failure ledger for connection errors and statement timeouts.
+- `sync-holds.ts`: `worktree_dirty` code, `meta.attempts` (counted by `writeGitHold` per re-hold with the same code), `expected_revision`, `working_hash`, the `dirty` summary counter and repair route; `held-reads.ts`, doctor `git_held_files`, `sources retry-held` and the run's hold report route it.
+- `retry-matcher.ts`: `ECONNABORTED`, `ETIMEDOUT`, `EPIPE`. `sync-drain.ts`: `isConnectionDrop`, `CONNECTION_RETRY_MS` (5/15/45 s), `CONNECTION_STRIKES`, `DrainInput.reconnect` (`engine.reconnect`), the `connection_lost` stop reason with `drain.connection` and a loopable `next`, `drainManagedSync`'s one extra pass with `drain.extra_pass`.
+- `sync-fault-class.ts` (new): `SYNC_FAULT_TABLE` / `classifySyncFault`. `sync-status.ts` (new): `readSyncStatus`, `unblockSync`. `src/commands/sync/operator.ts` (new): `gbrain sync status`, `gbrain sync unblock` (routed in `sync/run.ts`; `cli.ts` skips the sync watchdog and serve delegations for them).
+- Registry: `worktree_dirty`, `connection_lost`; catalogue `sync_drain_connection_lost`; three `BEHAVIOR_CHANGES` rows. Docs: `docs/guides/sync-unblock-runbook.md` (new, table pinned by `test/sync-runbook-table.test.ts`), `write-refusals.md` (`worktree_dirty`, `connection_lost`, the `concurrent_write` row), `troubleshooting.md`, `error-codes.md`, `AGENTS.md` common tasks, `llms.txt`, KEY_FILES.
+- `service.ts`: `recentlySettled` (1,024 ids) makes `awaitWrite`'s first poll immediate for a request this process already settled; `test/persistence-git-coalescing-5530.slow.test.ts` fixtures clone a template database and copy the Git repos (96 s → 49 s); E2E weights updated.
+- Tests: `test/managed-sync-page-fault-holds.test.ts`, `test/sync-drain-connection.test.ts`, `test/sync-status-unblock.test.ts`, `test/sync-runbook-table.test.ts`; `test/persistence-managed-sync.test.ts` and `test/managed-sync-concurrent-write-hold.test.ts` assert the holds where they asserted the stop; `test/persistence-consumer-scheduling.test.ts` gains the settled-first-read probe.
+
+Fixes #6340. Fixes #6320. Supersedes #6323 (contributed by @garrytan-agents). Follows #6278 and #6317.
+
+## [0.60.120.0] - 2026-10-08
+
+**Advisers, board members and investors stop showing up as employees, typed relation lines refuse template and dictionary junk and explain every refusal, and turning the line grammar on or off now changes the graph instead of only new writes.**
+
+Link inference typed "is an adviser to [X]" as nothing, "not an advisor to [X]" as `advises`, "board director at [X]" as `works_at`, and read "Became an advisor at [X]" as the start of a job, so a person's board seats and advisory roles read as jobs and opened employment stints that never existed. Three typing changes fix that; each was preregistered and confirmed on held-out data that nobody on the change saw (decision `q2-parser-gaps-2026-10`). The opt-in typed relation lines (`line_grammar.enabled`) got guards against the shapes the first held-out audit caught (unfilled template slots, separator rows, placeholders, dictionary usage labels) and a finding for every line they refuse. They stay off by default: the second held-out audit, run on fresh natural pages with the guards, still read 583 list lines as grammar lines, 459 of them wrong, and minted 17 of 52 decoy lines; typed lines written on purpose were read 511 of 511.
+
+### How to use it
+
+```bash
+gbrain extract --stale                                   # finish the one-time re-extraction now (zero model calls); managed extraction does it in the background
+gbrain doctor --json                                     # links_extraction_lag 0 when every page is re-extracted
+gbrain config set line_grammar.enabled true              # opt in to typed relation lines; prints how many pages re-extract
+gbrain get people/alice-example --grammar-diagnostics    # every line-grammar finding for a page (MCP: get_page grammar_diagnostics: true)
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Link types (U1) | "is an adviser to [X]", "serves as an adviser to", "now advising [X]" type `advises`. "not an advisor to [X]", "no longer advises [X]" and "stopped advising [X]" no longer type `advises` for that occurrence (a dated "no longer advises" still ends an `advises` the page states elsewhere). A job title such as "financial adviser at [Bank]" and a third party's role stay as they were. |
+| Link types (U3) | "board director at [X]", "independent director of [X]", "joined as an observer at [X]" never type `works_at`; "holds a board seat at [X]" types `invested_in` only with investor wording or an investor role prior. Board membership is not a type of its own, so these links read `mentions` unless a role prior applies. |
+| Employment starts (U4) | "Became an advisor at [X]", "Took an advisory role with [X]", "Took a board role at [X]" no longer start a `works_at` stint; advisory, board, investor, angel and observer roles are skipped by the employment start cue. |
+| Existing pages | `LINK_EXTRACTOR_VERSION_TS` moves to 2026-10-08, so every page re-extracts its links once in the background with zero model calls. |
+| `gbrain config set/unset line_grammar.*` | The setting and the time it changed commit together, every page extracted before that time re-extracts once, and the command prints how many pages are queued. Turning the grammar off restores inferred types on every page; setting the same value again changes nothing. |
+| Typed relation and fact lines (opt-in) | `- [Time] - [Event]`, `- [Date] — Kickoff`, `- [Item] TBD` and `- [noun] a thing` are no longer read as fact lines. `- **works_at** [[x]]`, `` - `works_at` [[x]] `` and `- works_at: [[x]]` are refused with the bare form as the fix. |
+| `put_page` and `get_page` | `put_page`'s `line_grammar` findings follow the agent operator contract (`code`, `why`, `canonical`, `verify`), at most five per write with `more` naming the call that lists all of them: `get_page` with `grammar_diagnostics: true`, which reads the brain's settings and the source's schema pack. A brain whose settings cannot be read returns `diagnostics_failed` with a `gbrain doctor` step, never an ungated reading. |
+
+### Numbers
+
+Measured on the three units together (dev set, temporal-edges phrasings A, A2, A3, seeds 3 and 5): false employment starts 48/48/37 → 0, wrong closures from them 24/24/8 → 0, wrong transitions by identity 89/89/59 → 17/17/14, live recall and traps unchanged. Two more candidate units were not shipped: ordinary role wording with leave idioms (U25) added nothing on the held-out confirmation set (difference 0.000 on all 200 pairs), and start framings such as "first day at" (U6) failed the held-out safety conditions.
+
+Re-extraction cost after a version bump or a line-grammar toggle (`scripts/bench-link-extraction-drain.ts`): Postgres 10k pages drains at 21.4 ms/page (218 s), and 100k pages on a 16-vCPU VM at 15.9 ms/page (26.6 min), with `get_links` at 13.6 ms while 71,550 pages wait; `put_page` p50/p95/p99 is 121/180/238 ms with the grammar off and 126/151/174 ms with it on at 100k. PGLite on the same VM drains 10k pages at 7.9 ms/page (80 s) and 100k pages at 5.9 ms/page (9.9 min), with `get_links` at 7.6 ms while 63,150 pages wait and `put_page` p50/p95/p99 116/145/202 ms (grammar off) and 110/127/195 ms (on) at 100k. Those PGLite numbers include the stale-statistics fix that shipped separately (`ANALYZE` after bulk writes); without it, the same 10k drain took 119 ms/page.
+
+### For contributors
+
+- `src/core/link-typing-units.ts` holds the units and `ENABLED_TYPING_UNITS` (U3, U4, U1); `explainLinkType` / `traceLinkType` report the rule, unit, attachment and suppressed matches behind each link type, and `scripts/q2-typing-dev.ts` / `scripts/q2-typing-package.ts` rebuild the dev digests and unit packages.
+- `test/link-typing-units-subsets.test.ts` pins world-v1 typing: with no unit it is byte-identical to master, and with the shipped units it is the confirmed held-out package plus master's later target-role rule (#6191).
+- The grammar's settings-bound extraction lives in `src/core/line-grammar-config.ts` and `src/core/link-extraction-watermark.ts`; `src/core/line-grammar-report.ts` builds the findings.
+- The preregistration, harness and held-out verdicts are in gbrain-evals (`docs/benchmarks/2026-10-06-q2-parser-gaps-preregistration.md`, `docs/benchmarks/2026-10-05-heldout-program/q2.md`).
+
+## [0.60.119.0] - 2026-10-08
+
+**A managed catch-up starts committing about 4 seconds sooner, and a page you save during it no longer waits on locks the sync never needed.**
+
+On a managed Postgres brain 57 ms from the database, the first page of a catch-up used to land about 19 seconds after `gbrain sync` started; now it lands after about 15.5. A page save during the catch-up stays within a second of its idle time at the slow end, where one run in three on the previous release went over two seconds and lost a write to its wait.
+
+### How to use it
+
+```bash
+gbrain sync --source <id>                    # nothing to change
+GBRAIN_PG_TYPE_CACHE_PERSIST=0 gbrain sync   # keep described parameter types in this process only
+GBRAIN_PG_TYPE_CACHE=0 gbrain sync           # no sharing of described parameter types at all
+```
+
+### The numbers that matter
+
+Ubicloud 16-core VMs, Postgres behind a 57 ms proxy, 1,500 files with 34 already-deleted files first, default settings, three runs each.
+
+| What you do | v0.60.117.0 | Now |
+|---|---|---|
+| Time until the first page is committed | 19.0 to 19.6 s | 15.5 to 15.6 s |
+| Slowest saves during a catch-up (p95), over the same save with nothing running | +0.5 to +2.3 s, one save failed | +0.5 to +0.8 s, none failed |
+| Catch-up speed while your agent saves a page every 5 s | 61 to 65% of idle | 55 to 64% of idle |
+| Catch-up pages per minute with nothing else running | 370 to 379 | 370 to 393 |
+
+### Things to watch
+
+- **gbrain now keeps a small cache file per database** under `~/.gbrain/cache/pg-types/`: the parameter types Postgres described for gbrain's statements, so the next command skips asking again. It holds hashes and type numbers only (no SQL text, no credentials), is ignored when the Postgres version or the brain's schema version differs, and is deleted when a migration runs.
+- **The first catch-up after an upgrade is slower than the next one.** A statement only the catch-up runs still asks Postgres for its types the first time.
+- **The first page still takes 15.5 s, not the 15 s target.** What remains is serial startup reads, screening already-deleted files four at a time, and the first group's own round trips.
+
+### Itemized changes
+
+- Postgres: a pool's `shared_types` takes the Map to share described parameter types in; every pool in a process that reaches one database shares one, and it is saved for the next process, scoped to the server version, the schema version and the database as the server names it.
+- Sync: a waiver run screens each entry it froze against that freeze's page read and authority check instead of repeating both, and each freeze reads the page beside its origin check.
+- Lanes: claiming a lane group's followers locks only the group's rows, not the write queued after it.
+- Lanes: a foreground write another process claimed but has not started publishing holds back new lane groups, as a queued one does; before, groups kept starting ahead of it until that process handed it back.
+- Benchmarks: `docs/eval/managed-sync-catchup.md` corrects v0.60.111.0's catch-up-while-saving figure (45%, one low run) to the 57 to 71% every later run of that code measured.
+- Driver: `patches/postgres@3.4.9.patch` matches the vendored driver again (`bash vendor/update-postgres.sh --check` passes).
+
+## [0.60.118.0] - 2026-10-08
+
+**Background fact extraction now uses Claude Haiku 5.5 when nothing else chooses a model, cutting the cost of a gbrain write from $15.94 to $1.38 per 1,000 pages.**
+
+Every page an agent writes queues a background job that asks a chat model which facts the page states. With an Anthropic key and no model set, that model was Claude Sonnet 4.6, an older generation and most of the cost of a write: on 1,000 LongMemEval-S sessions at v0.60.110.0 the job cost $15.60 of the $15.94 total. A preregistered facts-absorb quality gate in gbrain-evals ran the real job with three models on the same pages (`docs/benchmarks/2026-10-08-facts-extraction-model.md`). Claude Haiku 5.5 passed every check against Sonnet 4.6: recall and precision non-inferior, attribution and correction handling no worse, no parse failures, every fact readable after a restart. A switched-off extractor and an extractor whose output is dropped both failed the gate. GPT-6 Luna failed the attribution check, so OpenAI-only installs keep their current default.
+
+The cost is a small loss on long natural conversations: on 20 natural transcripts, Haiku 5.5's facts covered 4.6 points fewer planted items than Sonnet 4.6's (95% interval −9.0 to −0.6), inside the gate's 10-point harm margin. To keep Sonnet 4.6:
+
+```bash
+gbrain config set facts.extraction_model anthropic:claude-sonnet-4-6
+gbrain models          # the facts.extraction_model row shows the model and "measured default" when the new default applies
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Fact extraction (`facts-absorb`, `extract_facts`, the drain) | Uses `anthropic:claude-haiku-5-5` when `facts.extraction_model`, `models.tier.reasoning`, `models.default` and `GBRAIN_MODEL` are all unset and the reasoning tier resolves through Anthropic. Any of those settings still wins. |
+| `gbrain models` | The `facts.extraction_model` row reports the model extraction actually uses and the setting that chose it (`measured default`, `config: facts.extraction_model`, `config: models.tier.reasoning`, ...). |
+| Budget caps | `anthropic:claude-haiku-5-5` is priced ($0.10 / $0.50 per 1M tokens, prompts up to 100,000 tokens), so `--max-usd` and the drain's caps meter it. |
+| Takes extraction | Unchanged: it uses the gateway's chat model, not `facts.extraction_model`. |
+
+The `behavior_changes` notice lists this change once.
+
+## [0.60.117.0] - 2026-10-08
+
+**A managed brain no longer calls itself healthy while its sync moves nothing: one consumer per host, a stall the drain can see from the same host, and `gbrain sources writer movement` as the deploy gate.**
+
+One production brain on Postgres had not committed a sync page for eighteen days while every health signal stayed green: `/health` ok, the pid alive, `sync_running: true`, seven upgrades passed. The head write of a bulk group sat `preparing` for 25 minutes with nothing in flight at the database, its lease renewing every 10 seconds; the same 16 rows prepared in 3 seconds each from a scratch process. Every such wedge had two gbrain processes holding a persistence consumer on the host (`gbrain serve` plus the `gbrain sync` CLI, sometimes the jobs worker too), and the one run with a single consumer published. The drain's stall detector could not fire on its own host, the progress meter printed an ETA from the last good window, and the job workers had been minting a new host identity after every container restart, so their maintenance writes went to "another host" for weeks. This release makes the second consumer the exception, lets the drain and the doctor say "not moving", and gives an upgrade a last step that fails when the data does not move.
+
+### How to use it
+
+```bash
+gbrain sync --source <id> --no-pull --no-embed             # beside a live gbrain serve on Postgres the serve publishes; the CLI drives and prints progress
+gbrain sources status <id> --json                          # data_moving, not_moving_since, movement_state; prints the writer-status command beside data_moving: false
+gbrain sources writer status --source <id> --json          # each running claim ends in claim.next: rerun after retry_after_ms, or restart the named owner pid; host.consumers lists the consumers alive here
+gbrain sources writer movement                             # after a restart: waits one window, exit 0 only when pending work moved (--warn-only prints and exits 0)
+gbrain doctor --json                                       # managed_sync_not_moving, two_consumers_on_host, consumers_without_heartbeat, host_identity_mismatch
+gbrain sync --source <id> --no-pull --no-delegate          # this run keeps its own consumer (either engine)
+gbrain config set persistence.single_consumer false        # brain-wide: every process keeps its own consumer, as before
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A second gbrain process on the host | A `gbrain sync`, jobs worker, autopilot or MCP process that finds a live, full, not-wedged consumer of this host in the new `persistence_consumers` heartbeat table runs waiter-only: it submits writes and waits, claims nothing, and promotes itself when that owner lapses, reads wedged or stops. `gbrain serve` always runs a full consumer. Short-lived commands (`put`, `import`, `dream`, `cycle`) keep their own. PGLite is unchanged. |
+| The managed catch-up beside a live serve | The serve runs the drain through the serve-delegated sync family with the CLI's own verified writer registration (grants and revocations still apply); the CLI polls `sync_status` and prints the same progress and summary. An older serve that cannot take the hand-off makes the CLI print one line (`owner row missing: older serve or no serve; running own consumer`) and run as before. |
+| `gbrain sync` stalling beside a live owner on this host | No more `drain_stalled` with "nothing here can claim it" at 150 s: the drain prints `stalled <N>s on <step>` with the owner's pid and kind every 10 s and keeps going until the 600 s ceiling frees the root, then stops with `cause: owner_wedged_here`, the owner `{kind, pid, nonce}`, `retry_after_ms` and `next.safe_to_loop: true` before the ceiling, or the pid to restart after it. A lapsed claim stops at once (`owner_missing`). |
+| `gbrain sources status` and `writer status --json` | `data_moving`, `not_moving_since` and `movement_state` per managed source (`parked` for a cursor left between cron runs with no live consumer), `sync_running` beside them, and the exact writer-status command printed beside `data_moving: false`. `writer status` ends each running claim in one `claim.next` (`claim_running`, `claim_overdue`, `claim_lapsed`) and lists `host.consumers` (pid, kind, mode, age, pool `{checked_out, max, waiters}`); a stalled claim carries `last_sql {label, age_ms}` (first keyword plus table, never text). |
+| `gbrain doctor` | `managed_sync_not_moving` (warn, counted against the score; `parked` is not), `two_consumers_on_host` (two resident kinds both alive over 30 s), `consumers_without_heartbeat` (a claim owner from an older release), `host_identity_mismatch` (this process's `host.json` differs from the binding owner's on the same machine; names both files, the `HOME`/`GBRAIN_HOME` each was minted under, and the `GBRAIN_HOME` to set). Each has a structured fix, `gbrain errors <code>` and a troubleshooting row. |
+| `gbrain upgrade` and `post-upgrade` | End by printing the supervisor's step: restart `serve` and the workers, then `gbrain sources writer movement`. The new command waits `max(300 s, preparation budget + 60 s)` and judges each source `moved`, `current`, `held` (exit 0 with the hold's route), `within_allowance` (exit 0, `retry_after_ms`), `not_moving` (exit 1, `managed_sync_not_moving`) or `unknown`. `/health` stays liveness-only. |
+| The consumer's own round-trips | With `GBRAIN_DIRECT_DATABASE_URL` (or the Supabase-derived direct URL) set, the consumer's tick statements run on the direct/session-mode route beside the claims, renewals and heartbeat, so a transaction-mode pooler never sits between the owner and its bookkeeping; `writer status --json` shows `connection.lane` and `pooler_mode`, one loud `[persistence] phase=start reason=transaction_pooler` line prints when only a `prepare=false` URL exists, and `GBRAIN_CONSUMER_DIRECT_LANE=0` keeps the scans on the ordinary pool. |
+| `[persistence]` log lines | The `preparation` deadline, ceiling and hold lines, the `owner_lapsed promoted_to_consumer` line and the drain's `drain_stalled` summary print the same step / waiting_on / last_sql triple, so a log tail names a stall without a command. |
+| `host.json` | Stays `version: 1`; a file minted from now on carries `minted_under: {home, gbrain_home, hostname, machine_id}`. Existing files are never rewritten. |
+
+### Things to watch
+
+- **One consumer per host is a preference.** Two processes that start within one heartbeat of each other both run full, a CLI that took its consumer before the serve started keeps it for that run, and nothing demotes a consumer that started full; doctor names the overlap until one exits. A fenced role is on the TODO list.
+- **Restart every resident process on this version**, not only `serve`: an older jobs worker or autopilot writes no heartbeat row, never defers, and shows up as `consumers_without_heartbeat`.
+- **`persistence.single_consumer` ships off.** The Phase 0 record (`docs/eval/managed-sync-two-consumer-repro.md`) reproduced the wedge with one process and `--no-lanes`: the mechanism is a transaction-mode pooler round-trip that never completes (fixed in v0.60.114.0's bounded settle), and two consumers were a multiplier. Turn the preference on with `gbrain config set persistence.single_consumer true` when a host runs a `serve` beside recurring CLI catch-ups.
+- **The drain waits longer before it stops.** With a live same-host owner, `drain_stalled` fires at the 600 s ceiling, not at the 150 s allowance; the stall line and `writer status` tell you what is held meanwhile. One wedge costs up to ten minutes and one held file, never the run.
+- **`writer movement` refuses by default** (exit 1 on `not_moving`); pipelines that cannot fail pass `--warn-only`.
+- **The mechanism itself landed in v0.60.114.0** (#6329): the await that wedged the reporter's owner is postgres.js's query promise in `runUnsafe`, parked behind a backend in `ClientRead`; the Phase 0 record names it with the captures. This release routes the consumer's own round-trips over the direct/session-mode URL when `GBRAIN_DIRECT_DATABASE_URL` is set and makes a parked backend visible in `writer status` (`owner.backend[]`). `gbrain sources writer dump` is deferred (TODOS.md).
+
+### Itemized changes
+
+- `src/core/persistence/consumer-heartbeat.ts` + migration v222: the `persistence_consumers` table (primary key `(host_id, pid, nonce)`, with `pid_ns`, kind, mode, `started_at`, `renewed_at`, `restart_required`, the oldest root-barrier age, the pool gauge, `host_json_path`, `persistence_home`, `minted_under`, version), renewed every 10 s by every full consumer through the direct lane, live within 30 s, lapsed at 60 s, lapsed rows deleted in the renewal CTE; plus the partial index `(worktree_id, completed_at DESC) WHERE state='committed'` the movement watermark reads. Process identity everywhere is `{kind, pid, nonce, pid_ns}`, and same-process checks compare the nonce.
+- Consumer: an explicit mode machine (`probing` → `full` | `waiter_only` → `promoted`), the database-only probe (`probeLiveFullConsumer`: resident kind, mode `full`, renewed within 30 s, not `restart_required`, not wedged, binding active) run on every tick, `WaiterOnlyConsumer` behind `PersistenceConsumerLike` with the consumer's whole external surface, promotion on a lapsed, wedged or gone owner, drain-back after three healthy owner ticks, single-flight probe and heartbeat cancelled by `stop()`. `startPersistenceConsumer` stays synchronous. New switch `persistence.single_consumer` (`GBRAIN_SINGLE_CONSUMER`) on the write-switch snapshot.
+- Drain: the stall line from the allowance with the owner's pid, kind and the step / waiting_on / last_sql triple; `drain_stalled` regardless of `claimable_here` past the ceiling or on a wedged owner, with `cause: owner_wedged_here`, `retry_after_ms`, `safe_to_loop` and the owner identity; the lapsed-owner wait keyed on `head_lapsed`, the owner host and a live full row, never `claimable_here`. `preparation_abandoned` for this process's own pid is unchanged.
+- Delegation (D1 a′): `sync-delegate.ts` gains a Postgres branch keyed on the heartbeat row; `sync_start` carries the CLI's verified writer registration and the serve runs `drainManagedSync` as that writer under `withVerifiedLocalRegistration`; `sync_status` carries `DrainReport` and `next`; the argv classifier admits `--json`, `--lanes`, `--no-bulk`, `--no-pull`, `--no-embed`; `--no-delegate` / `GBRAIN_SYNC_NO_DELEGATE=1` extend to Postgres and mean "keep this run's own consumer" on both engines. Skew: `unknown_kind`, `stale_serve`, `IPC_UNAVAILABLE`, a missing socket or `GBRAIN_SERVE_SYNC_IPC=0` each fall back with one warning naming the pid and the restart.
+- Movement: `readManagedSyncMovement` (watermark = newest committed `managed_sync_*` `completed_at` in the current incarnation; progress = a committed receipt or a head step advance), `data_moving` / `not_moving_since` / `movement_state` on `sources status` and `writer status`, doctor `managed_sync_not_moving` with the structured writer-status fix, one `[gbrain notice]` from `serve` on the flip, and `gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]` with its six states and per-state exits; `upgrade` and `post-upgrade` print the bare command.
+- Writer status: `claim.next` per running claim (`claim_running` with `retry_after_ms` inside the allowance, `tell_user_to_run` past the ceiling or on `restart_required`, `run` the resume command for a lapsed claim), `owner {host_id, pid, kind, build}`, `phase_age_ms`, `step_age_ms`, `last_sql` from the `boundedReads` wrapper, `pool {checked_out, max, waiters}` from a small accessor on the vendored driver (the `pool-gauge.ts` subset reported beside it as `tracked_subset`), `host.consumers`.
+- Identity: doctor `host_identity_mismatch` on both predicates (different `host.json` whose owner checkout resolves on this filesystem; a re-minted file under a different `HOME`/`GBRAIN_HOME` with the worktree present at the binding's path), `minted_under` written at mint time on a version-1 `host.json`, the printed fix using the `GBRAIN_HOME` parent value.
+- Doctor: `two_consumers_on_host` and `consumers_without_heartbeat` (`doctor/checks/persistence-consumers.ts`), `managed_sync_not_moving` (`doctor/checks/managed-sync-movement.ts`), all `ops`, all with structured fixes.
+- Registry and docs: `drain_stalled` (with the cause vocabulary, `owner_wedged_here` included), `two_consumers_on_host`, `consumers_without_heartbeat`, `host_identity_mismatch` and `managed_sync_not_moving` registered in `src/core/error-registry.ts` with full agent-operator envelopes (`gbrain errors <code>`), one contract test per code; `sources writer status` and `sources writer movement` declared read-only for `fix.verify`; `docs/guides/write-refusals.md` (the `drain_stalled` row), `troubleshooting.md` (symptom rows, the four sections, the corrected catch-up prose and a step-by-step transcript), `live-sync.md` (outcome table, "One consumer per host", `--no-delegate` and `persistence.single_consumer`), `upgrades-auto-update.md` (restart and verify), KEY_FILES, behavior notices for the preference, its fallback and the movement gate, and TODOS.md for the deferred pieces (thin-client parity, DB-resident lane state, a fenced consumer role, `pg_notify` wake, external alerting on `data_moving`, `writer dump`).
+- Eval: `docs/eval/managed-sync-two-consumer-repro.md` records the two-process reproduction (arms, instruments, which wedged, the named await where found), mirrored into gbrain-evals.
+
+Fixes #6317. Follows #6278.
+
+## To take advantage of v0.60.117.0
+
+`gbrain upgrade` applies migration v222 (one new table and one partial index). Then restart every resident gbrain process on the host, not only `serve`, and let the data prove it moves:
+
+```bash
+gbrain upgrade
+# restart gbrain serve, the jobs worker and autopilot through your supervisor
+gbrain sources writer movement        # exit 0 when pending work moved or nothing is pending
+gbrain doctor --only managed_sync_not_moving,two_consumers_on_host,consumers_without_heartbeat,host_identity_mismatch --json
+```
+
+If `writer movement` exits 1 or a source reads `data_moving: false`, follow [the catch-up is parked](docs/guides/troubleshooting.md#managed-sync-not-moving): two read-only calls name the owner process, its step and the next action. If a step fails or the numbers look wrong, file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`.
+
+## [0.60.116.0] - 2026-10-08
+
+**A Windows backup no longer fails on a cold machine's first PowerShell start, and a hung PowerShell still fails after one bounded launch.**
+
+On Windows, gbrain runs PowerShell to make a new backup path owner-only, with a 15-second limit. On a freshly started machine PowerShell's first launch sometimes takes longer than that (3.3 to 27.7 seconds measured on fresh CI runners; later launches take 0.2 to 1.5 seconds), so the first backup failed. The v0.60.109.0 retry fixed that, but it also launched a hung PowerShell twice, which the Windows ARM controls refuse, so v0.60.110.0 reverted it.
+
+gbrain now warms PowerShell once per process before the protection step: a trivial `exit 0` launch with its own 30-second limit, whose result is ignored. The protection step itself is unchanged: one launch, a 15-second limit, no retry, and any failure refuses with `private_backup_path_unavailable`. The warm-up costs about half a second on the first Windows backup of a process and nothing on other platforms.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| First backup on a cold Windows machine (PowerShell start over 15 s) | Fails with `private_backup_path_unavailable` | Succeeds |
+| PowerShell that hangs during protection | Fails after one 15 s launch | Fails after one 15 s launch (unchanged) |
+
+The `core-memory-locks-postgres` E2E test also stops failing intermittently: its source-topology step could wait out its 1-second lock limit behind 18 concurrent core writes and report the retryable `write_pending`, which the test did not retry. It now retries with the same `request_id`, as that error's fix text says. The deadlock and commit-count assertions are unchanged.
+
+## To take advantage of v0.60.117.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
+## [0.60.115.0] - 2026-10-08
+
+**Every install path now registers the full tool surface, new memory grants can write in bulk, an empty tool lookup returns the catalog, and the embed backlog warns when it is old.**
+
+New registrations used to land on three different defaults: the README and `docs/mcp/*` taught `--surface verbs`, the coding-agent plugins and every registration gbrain writes pinned `starter`, and OpenClaw, Hermes and the thin CLI ran `full`. In a held-out agent benchmark, listing fewer tools lowered task success and saved no tokens, so there is now one value everywhere: `full`. `gbrain bootstrap hooks`, the readiness and `gbrain init` registration lines, the Codex and Claude Code plugins, `gbrain agent register` presets and every install doc pin `--surface full`. New memory-reader, memory-writer and coding-agent grants get the full surface too, so a writer can call `put_pages`; a grant's operation snapshot and scopes still bound what it can do, and a reader still cannot write. Existing registrations and clients keep the surface they have.
+
+An agent that asks `request_tools` for an empty list or only names it cannot call now gets the grouped catalog and the closest names it can call, instead of an empty answer. The sentence telling an agent that more tools are callable now opens the server instructions, inside the 2,048 characters capped harnesses read.
+
+Doctor's `embeddings` check used to call a brain healthy at 90% coverage with 136,000 chunks waiting. It now warns when the backlog is large (over 1,000 chunks or 1%) and its oldest pending chunk has waited more than 24 hours, read from a new column that records when each chunk's vector went missing, so a fresh brain mid-drain, an edited page or a model swap does not warn while it drains. The cycle's embed phase now reports `warn` when chunks could not be embedded, instead of `ok`.
+
+### How to use it
+
+```bash
+gbrain doctor --only embeddings --json            # details.backlog, oldest_pending_age_s and age_threshold_s, whatever the status
+gbrain doctor --only grant_new_ops_available      # grants whose snapshot or stored surface keeps allowed operations out of reach, with the rescope commands
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface full   # what every install path now registers
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| New stdio registrations, plugins, `agent register` presets | `--surface full` instead of `starter` or `verbs`. A harness that caps its tool count can register `--surface starter` or set `GBRAIN_SURFACE=starter`. On a fresh keyless brain the full stdio `tools/list` is 143 tools, about 118 KB. |
+| New memory grants | memory-reader, memory-writer and coding-agent profiles get callable and listed `full`; delegating-agent stays on `starter`. New grants record the operation catalog they were written against. |
+| `whoami` and `gbrain://capabilities` | A `grant_diagnosis` field: which blocker applies (scope, operation snapshot, client pin, server ceiling), with counts and no operation names; older grants say "original intent unknown". |
+| `request_tools {tools: []}` or only unknown names | The grouped catalog plus `did_you_mean`, drawn only from tools this connection can call; an existing-but-hidden name and a nonexistent one answer byte-identically. |
+| Doctor `embeddings` | Warns on a large backlog older than 24 hours; ok while a backlog drains inside that window, even below 90%. |
+| Cycle embed phase | `warn` with failure samples and the paid backfill fix when chunks failed; the cycle reports `partial`, which autopilot treats as non-fatal. |
+| `gbrain eval longmemeval` rows | `reader_usage`: total, uncached, cache-read and cache-write input, output and reasoning tokens. |
+
+### Things to watch
+
+- **Harnesses with a tool-count cap.** Full is about 140 tools. If a harness truncates or refuses the list, register it with `--surface starter`.
+- **The first upgrade adds one column.** Migration `chunk_embedding_pending_since` adds a nullable column to `content_chunks`; chunks already waiting for a vector take their creation time as their pending time, and doctor labels that age as a backfill.
+- **Existing grants are not widened.** A client that predates this release keeps its surface and snapshot; doctor's `grant_new_ops_available` names the commands the owner can run, and `--operations all` is shown only as a disclosed choice.
+- **The once-per-session stale-grant notice is not in this release.** It waits for the notice ledger.
+
+### Itemized changes
+
+- Surface: `REGISTRATION_SURFACE` is `full` (`src/core/mcp-registration.ts`); the plugin manifests, `gbrain agent register` presets, README, `INSTALL_FOR_AGENTS.md`, `BOOTSTRAP_FOR_AGENTS.md`, `docs/INSTALL.md`, `docs/mcp/*`, the MEMORY_VERBS quickstart and the coding-agent tutorial name the same value, and a test keeps them so. The stale "Postgres brains lack the hook lane" text is corrected (the IPC listener is engine-uniform), and the plugin-lane row names the OpenClaw context engine as the plugin that pushes. Plugin trees regenerated.
+- Grants: `resolveGrantProfile` gives the memory profiles `full`; catalog provenance rides the grant audit record; the shared diagnosis lives in `src/core/harness/capabilities.ts`; new doctor check `src/commands/doctor/checks/grant-new-ops.ts`.
+- Discovery: `request_tools` returns the catalog for empty and unknown-only lists (`src/core/ops/request-tools.ts`); the hidden-tool sentence leads the instructions (`src/mcp/instructions.ts`).
+- Embeddings: migration `chunk_embedding_pending_since`; every site that clears or omits a vector stamps the column and every vector write clears it; doctor's age rule in `checks/schema-health.ts`; the embed phase `warn` in `src/core/cycle.ts`.
+- Usage: the LongMemEval reader keeps provider-normalized usage on every row; chat usage pricing treats cache tokens as part of the input total instead of adding them twice, and the claude-cli adapter reports the input total.
+- CI: `ci:ubicloud` works from a checkout on `master` (the slim `.git` fetch), never writes a git warning into the checkout tarball, and survives a VM whose upload fails; the history fixture replays a `write_pending` write until it commits.
+
+## [0.60.114.0] - 2026-10-08
+
+**A write owner no longer parks forever on a database round-trip that a transaction-mode pooler never completes.**
+
+On the managed brain behind the #6278 report, one `gbrain sync` with no lanes and no `serve` still stopped after 45 pages: the consumer's `expired_claims` statement sat with its Postgres backend in `ClientRead` through Supavisor's transaction pooler (port 6543), the owner's 5 s phase deadline fired, but the cancel request never reached the backend and the awaited promise never settled, so the owner was parked until the watchdog. The same command on the session-mode URL (port 5432) drained cleanly. Now a cancelled statement that is still unsettled `GBRAIN_CANCEL_SETTLE_MS` (default 2000 ms) after its cancel request has its reserved connection discarded, which settles the promise client-side; the phase ends `deadline_exceeded`, the consumer keeps ticking and the catch-up continues.
+
+### How to use it
+
+```bash
+gbrain sync --source <id> --no-pull --no-embed                 # nothing to change
+gbrain doctor --only persistence_session_timeouts --json       # names a transaction-mode pooler URL and the session-mode alternative
+GBRAIN_CANCEL_SETTLE_MS=5000 gbrain serve                      # a longer settle window if a slow pooler honours cancels late
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A consumer phase whose statement never completes | Ends as `deadline_exceeded` once (the connection is discarded after the settle window), never as `storage_error` / `CONNECTION_DESTROYED`; the next tick runs and the drain proceeds. |
+| A preparation read ended that way | Classified as the preparation deadline (released `preparation_deadline`, counted toward `preparation_stalled`), with the step and `waiting_on: db` on the claim. |
+| doctor `persistence_session_timeouts` | Warns `transaction_mode_pooler` when the configured URL is a transaction-mode pooler even if the session timeout reaches the server, and names the port 5432 session-mode URL as the alternative for the persistence owner. |
+
+### Things to watch
+
+- **Interim mitigation that works today:** point the persistence owner (`gbrain sync`, `gbrain serve`) at the session-mode URL of the same pooler (Supabase: port 5432). That is the configuration the reporter measured as the longest clean drain in weeks.
+- **A discarded connection is a reconnect**, not a lost write: the statement's request stays claimed or queued and is retried on the next tick; the pooler's backend is released when the client socket closes.
+
+### Itemized changes
+
+- `src/core/postgres-engine.ts`: `runUnsafe` arms a settle timer after `cancel()`; a statement still pending at `cancelSettleMs()` has its reserved connection discarded (`CONNECTION_DESTROYED`), once. `GBRAIN_CANCEL_SETTLE_MS` (>= 100) overrides the 2 s default.
+- `src/core/persistence/consumer.ts`: a phase past its deadline that ends with `CONNECTION_DESTROYED` or `CONNECTION_CLOSED` (the discarded connection) throws `PhaseDeadlineError` (`code: deadline_exceeded`); `report()` records it under the phase without a second log line.
+- `src/core/persistence/bounded-reads.ts` and `coordinator.ts`: a discarded connection after the budget is the preparation deadline, never `storage_error` or `database_contention`.
+- Doctor `persistence_session_timeouts` gains the `transaction_mode_pooler` warning (`resolvePrepare(url) === false`).
+- Tests: `test/postgres-engine-cancel-settle.test.ts` (never-settling statement is discarded at the window; a honoured cancel is not), `test/persistence-consumer-log.test.ts` (the consumer logs one `deadline_exceeded`, no `storage_error`, and ticks again), `test/e2e/persistence-pooler-wedge-postgres.test.ts` (a wedged `expired_claims` statement inside a real 60-page managed catch-up: cancel swallowed, discarded at the window, the run drains `synced`; hangs on the previous release).
+
+Refs #6278 (the mechanism behind the never-settling `preparing` wedge); the two-consumer and direct-URL work continues in #6317.
+
+## [0.60.113.0] - 2026-10-08
+
+**Fence repair and chronicle now run while a sync is in progress, and a refused owner check says exactly which host or state is in the way.**
+
+On a managed brain, `gbrain repair fences` used to skip a whole source as soon as one managed sync of it was unfinished, and a long catch-up is unfinished for most of an hour. The held fences it should have cleared stayed held until the sync ended. Now the repair looks at each file on its own: only a file that a write in flight or the running sync's frozen list still names waits, and every other candidate, held files included, is repaired and committed during the catch-up. A file the sync held earlier is never considered busy, because the sync retries a held file only once its bytes change, and the repair is what changes them.
+
+The other refusal from the same report, `fence_repair` and chronicle saying `owner_unavailable` with no further word, now names the condition. The common one on a single machine is `host_mismatch`: a maintenance worker started with a different `GBRAIN_HOME` or user than the shell that ran the sync reads a different identity file and is, to the brain, another host. The message prints both host ids and, for a local caller, the identity file this process read, and tells the agent not to retry. A worktree draining for a transfer or recovering from a clone is a short wait and says so.
+
+### How to use it
+
+```bash
+gbrain repair fences --source <id>                         # preview: files a running sync still names are listed as sync_in_progress, the rest are planned
+gbrain repair fences --source <id> --apply --expect <hash> # applies the previewed set while the sync runs; a file the sync froze since the preview is skipped, not written
+gbrain errors owner_unavailable                            # the reasons and what each one asks of you
+gbrain sources writer status --source <id> --json          # read-only: the owner host id, the worktree state and this host's registration
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `gbrain repair fences` during a sync | Per-file `sync_in_progress` instead of a source-wide skip. Busy: a file a queued, running or recovering write names (both ends of a rename, and a finished write whose recovery is still open), and a file still ahead in the running sync's frozen manifest. Not busy: a held file. When the busy set cannot be read at all, every candidate waits and the hold's text says why. |
+| The busy check | Runs when the plan is made, again when each item is applied, and once more when the file write is admitted, because a sync can start while the repair waits on its model call. A write caught there is skipped, nothing is written, and the model attempt is not counted against the file. |
+| `owner_unavailable` | Carries `reason`: `host_mismatch` (both ids' first 8 characters; local callers also see the `host.json` path; `retryable: false`), `transfer_in_progress` and `clone_in_progress` (`fix.next: wait`, 30 s), `binding_missing`, `incarnation_changed`, `local_path_missing`, `coordination_path_missing`. The fix is always the read-only writer status; nothing claims or transfers ownership to run maintenance. Remote callers get the ids, never a local path. |
+| Fence holds | A hold the owner check refused records the reason (`host_mismatch`, `transfer_in_progress`, ...) instead of a bare `owner_unavailable`; `gbrain sources status` and doctor route all of them as owner-host holds with the exact command. |
+| The maintenance `fence_repair` phase, chronicle, fact-fence adoption | The phase repairs under the same per-file rule while a sync runs; every maintenance writer's owner check refuses with the same reasons when this is not the owner host. |
+
+### Things to watch
+
+- **A file still ahead in the sync waits on purpose.** Repairing it would change the bytes the sync is about to admit, and the sync would then refuse that entry. The next repair run, or the maintenance phase, picks it up once the sync has passed it.
+- **`host_mismatch` is not a retry.** If the sync shell and the maintenance worker report different host ids, point both at one `GBRAIN_HOME`. Do not copy or regenerate `host.json`; a new identity orphans the ownership recorded for the old one.
+- **A doctor check for a split host identity is not in this release.** It waits on evidence from the field; the refusal text already carries both ids.
+
+### Itemized changes
+
+- `src/core/persistence/owner-refusal.ts`: the `owner_unavailable` reasons matrix. `checkOwner` names the first failing condition in a fixed order or returns the usable binding; `ownerRefusal` / `ownerUnavailableError` give each reason its message, `why`, actor (`provider` for the two in-progress reasons, so `fix.next` renders `wait`; `host_admin` otherwise), the read-only `gbrain sources writer status --source <id> --json` as fix and verify, and `retryable` (`host_mismatch` false). `maintenancePreflight` (`prepared-maintenance.ts`), `loadFenceSource` (`fence-repair/repair-io.ts`) and `managedRepairRoot` (`file-repair.ts`) refuse through it. `OperationError` and `opError` gain a site-level `retryable` the envelope carries.
+- `src/core/persistence/repair-busy.ts`: `loadRepairBusySet` (in-flight requests with rename endpoints and open recoveries, plus the not-yet-admitted entries of every unfinished `managed-sync` cursor of the incarnation from its frozen manifest, held paths excluded; fails closed), `repairBusy`, `repairBusyMessage`, `repairBusyError` (`sync_in_progress`, reasons `candidate_in_flight` / `busy_set_unreadable`). `repair/fences.ts` drops the source-wide `syncUnfinished` skip and checks the set at plan and apply; `submitManagedFileRepair` checks it again at admission and `writeFenceRepair` reports that refusal as `sync_in_progress` (the Tier 3 attempt memo records it as transient).
+- Registry: `owner_unavailable` gains `reasons`, `why`, a docs anchor (`troubleshooting.md#owner-unavailable`) and a suggestion; `sync_in_progress` gains `reasons` and `why`. `FENCE_REASONS` and the hold-fix OWNER list gain `host_mismatch`, `transfer_in_progress`, `clone_in_progress`, `incarnation_changed`, `local_path_missing`, `coordination_path_missing` (`owner_unavailable` stays the fallback for a source with no binding).
+- Docs: `docs/guides/repair.md` (fence repair during a sync, owner reasons), `docs/guides/troubleshooting.md` (the `owner_unavailable` table and symptom rows), `docs/guides/write-refusals.md` rows, regenerated `docs/guides/error-codes.md`, KEY_FILES entries, two behavior-change rows.
+- Tests: `test/owner-refusal.test.ts` (the matrix, every preflight condition on a claimed worktree, the HTTP envelope without a local path), `test/repair-busy.test.ts`, `test/repair-fences.test.ts` (far-ahead manifest, held path not busy, admission race during the model wait, host mismatch and worktree states), `test/repair-fences-during-catchup.test.ts` with its Postgres arm `test/e2e/repair-fences-during-catchup-postgres.test.ts` (a real catch-up paused at a sync member's preparation and between two entries).
+
+Fixes the third problem of #6278 (`fence_repair` and chronicle refusing with `owner_unavailable` while a sync runs); the first two, the stalled preparation and the fact-fence adoption failures, shipped in the previous release.
+
+## [0.60.112.0] - 2026-10-08
+
+**A managed catch-up no longer stalls on one stuck write: the write is cut off, its file is held, and the rest of the source keeps syncing.**
+
+On a managed Postgres brain, `gbrain sync` prepares each write before it publishes it, and that step had no time limit. One write that never finished preparing kept its owner renewing the claim, so nothing behind it on that checkout ran until the one-hour watchdog killed the sync, and the next pass walked into the same write. One reporter's 13,600-entry catch-up made four passes this way and landed 153 entries. Now every write's preparation has a budget (two minutes for a file in a sync) and a hard ceiling. A write cut off twice is finished as `preparation_stalled`, the sync holds that file the way it holds a broken frontmatter file, and the pass goes on to the next one. `gbrain sources writer status` says which step a stuck write is on and what it waited for. The same report showed fact-fence adoption failing nine times a pass on facts with a trailing space or Windows line endings; those now adopt, and the ones that can't be written into a fence are left alone and counted instead of failing again.
+
+### How to use it
+
+```bash
+gbrain sync --source <id> --no-pull --no-embed             # nothing to change: the deadlines are on by default
+gbrain sources status <id> --json                          # held files, each with the step that stalled
+gbrain sources writer status --source <id> --json          # read-only: the step a stuck write is on, what it waits for, which process owns it
+gbrain sources retry-held <id>                             # after the cause is fixed: prints the sync to run, with --no-embed kept
+gbrain config set persistence.sync_preparation_ms 240000   # a longer budget per sync file (1000 to 3600000)
+gbrain config set persistence.preparation_deadlines false  # the kill switch: back to the old behavior
+gbrain doctor --only fence_integrity --json                # legacy fact rows the fence can't hold (unrenderable_legacy_facts)
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A write that can't finish preparing | It is released at its budget (120 s for a sync file or a maintenance write, 30 s for `remember`, `put_page` and `edit_page`) and tried once more. A second cut-off finishes it `failed` with `preparation_stalled`. A process killed mid-preparation counts as a cut-off, so a sync restarted in a loop reaches the limit instead of re-entering the same write. |
+| `gbrain sync` | The file is held as `preparation_stalled` (a held deletion keeps its page), the rest of the source imports and the checkpoint advances. Nothing repairs it: `gbrain sources status`, `retry-held` and doctor `git_held_files` point at writer status, then `retry-held` and the same sync. A stalled hold re-screens by itself when gbrain is upgraded. |
+| A run that stalls many files | More than `sync.hold_escalate_count` / `sync.hold_escalate_pct` of the screened imports, or five in a row with no page committed between them, stops the run `blocked` / `preparation_systemic` (exit 1) with the last step, not a pile of holds. The next run re-freezes the stopped file and re-screens the files that run held. |
+| `writer status` and doctor `persistence_write_stall` | A running write shows its `step`, how long it has been there, what it waits on (`git`, `fs`, `db`, `pool`, or `unknown` when nothing observed it) and the owner process (kind, pid, gbrain version). Past its budget, `claim.stall` reads `preparation_overdue`. |
+| The sync's progress line | `stalled <N>s on <step>` instead of an ETA that assumes nothing is stuck. `drain_stalled` now fires on a claim that is only being renewed (it never could before), allowing a live preparation its budget plus 30 s. While another writer's requests fill the write cap it prints `waiting for write capacity (N outstanding of M)`, and after 30 s the run stops `blocked` / `write_capacity` with `next` instead of dying with `queue_capacity`. |
+| `gbrain sources retry-held` with a backlog | The printed sync finishes the backlog and re-screens the scheduled files in the same run, so one command clears a `preparation_stalled` hold. |
+| A preparation that ignores cancellation | The owner frees the root at `persistence.preparation_ceiling_ms` (600 s), and the request's next claim finishes it `preparation_stalled`. An owner that holds one such stuck preparation stops claiming and logs `restart_required`. A sync whose own process still holds a preparation past its budget plus 30 s exits `resumable` / `preparation_abandoned` (exit 0, safe to rerun), which also ends the stuck work. |
+| A preparation read blocked on a table lock | Through a transaction-mode pooler (Supavisor, PgBouncer), gbrain's `statement_timeout` never reached the server, so a read waiting on an exclusive lock on `pages` (an index build, a migration, `VACUUM FULL`) waited forever while the claim kept renewing. Preparation reads now run with a transaction-local `statement_timeout` equal to the remaining budget, so the server ends the wait at the budget and the member is released `preparation_deadline` with nothing left running. Doctor's new `persistence_session_timeouts` check reports a pooler that drops the session timeout. |
+| Fact-fence adoption | A legacy fact with surrounding whitespace or CRLF line endings adopts under its own id, and `facts.fact` takes the trimmed, LF text the fence holds. A fact the fence would change further (whitespace-only, `~~x~~`, a literal `<br>`), or one the page already carries, stays as it is, active and searchable, and shows as `FACTS_FENCE_FAILED: <slug> (fence_unrenderable: ...)` and in doctor `fence_integrity`. |
+| Maintenance writes on a page with a fence defect | A second facts fence in a page's timeline is refused before the write is submitted, with its fence reason, so the cycle skips that page instead of failing a request on every pass. |
+| The `extract_facts` cycle summary | Names the pages it skipped and keeps the counts of the pages that did reconcile. Only a page that still holds unadopted rows skips destructive reconciliation; the rest of the source reconciles. |
+
+### Things to watch
+
+- **Restart your owners.** A `gbrain serve`, jobs worker or autopilot on an older version never gives up on a stuck write, so the guarantee needs every process that owns a checkout on this version. `gbrain sources writer status --json` shows the owner's version on each running write.
+- **A held file stays out of the index** until `gbrain sources retry-held <id>` and the same sync import it. That's deliberate: the file is fine, the owner stalled.
+- **This bounds and names a stuck write; it doesn't claim to remove what hung it.** If it recurs, writer status and the hold carry the step and the wait cause.
+- **Adoption writes normalized text back into `facts.fact`.** It's a data change: ids, vectors and provenance stay, trailing whitespace and CR characters go.
+- **Reads that bypass `executeRaw`** (`readPageSnapshot`, the import pipeline's own statements, the group-memoized origin read) are not bounded yet; under a `pages` lock they keep their connections until the lock drops or the ceiling, so the head member reaches its hold at two budgets while the rest of the group waits for the lock (#6318).
+- **Not fixed here:** `fence_repair` and chronicle refusing with `owner_unavailable` while a sync runs (the third problem in #6278) is a separate change. `persistence.max_claim_ms` keeps its meaning as doctor's warning threshold, and a stuck publication still has detection only (TODOS.md).
+
+### Itemized changes
+
+- `src/core/persistence/preparation-budget.ts`: the budget table by kind (`persistence.sync_preparation_ms` 120000, `persistence.maintenance_preparation_ms` 120000, 30 s for `remember` and intent-less `put_page` / `edit_page`), `persistence.preparation_ceiling_ms` (default 600000, 60000 to 3600000, at least the larger budget plus 30 s) and `persistence.max_preparation_attempts` (default 2, 1 to 10); `gbrain config set` refuses an out-of-range value with the value in effect as the fix. The keys ride the write-switch snapshot with the new `preparation_deadlines` switch (`persistence.preparation_deadlines` / `GBRAIN_PREPARATION_DEADLINES`, on by default; off restores the old 30 s-for-three-kinds behavior and never counts).
+- Consumer and grouped route: the budget wins the race even against a preparer that ignores its signal, a late result never publishes, and each group member's clock starts when its wave dispatches it. When member k expires, the in-flight suffix is aborted, k is released `preparation_deadline` and the later members `group_member_waiting` (not charged), and the prepared prefix before k publishes. A `preparation_deadline` release and the reclaim of an expired claim stamped `preparing` count one attempt; a commit resets the count. A request at the limit is finished `failed` / `preparation_stalled` at claim, foreground writes included. The root barrier for an abandoned preparation ends at the ceiling, a per-process cap of one such zombie stops claiming (`restart_required`), and `stop()` waits five seconds on abandoned preparations instead of forever.
+- Migration v220 adds `persistence_requests.preparation_attempts` (`integer NOT NULL DEFAULT 0`). Claim stamps now carry `step`, `step_since`, `waiting_on` and `owner`, and preparers name their step at each await boundary (`sync-prepare.ts`, `page-prepare.ts`, `prepared-maintenance.ts`). `WRITE_HEALTH_REASONS` is unchanged, so older thin clients keep reading new receipts.
+- Writer status and doctor: blockers carry `operation`, `intent_kind`, `preparation_attempts`, the claim's step, `waiting_on`, `budget_ms`, owner and `claim.stall`; the result carries `preparation_policy`. `preparation_deadline` and `preparation_stalled` have next actions. `preparation_stalled` and `fence_unrenderable` are registered codes (`gbrain errors <code>`), and `docs/guides/write-refusals.md` is one reference for both.
+- Sync holds: a `managed_sync_import` or `managed_sync_delete` member finished `preparation_stalled` is held (import by its bytes, delete as a delete hold, rename with its endpoints) in the run and at the next run's start. Both hold paths now write behind a narrowed gate: the failed entry's admitted suffix is cancelled first, then the hold waits only for requests naming that entry's page (slug, page id, path, origin, rename endpoints), where it used to wait for every unfinished request on the source, so a stuck write or a stream of maintenance writes no longer keeps every fence hold pending. The waiver and origin-equivalence preparations that run on the feeder race the same sync budget and fail open.
+- Drain: the no-progress detector keys on state, blocked reason and the head claim's phase and step, not on lease columns every renewal bumps; `preparation_abandoned` and `preparation_systemic` join the stop reasons with their `next` commands and docs. `gbrain sources retry-held` and every hold fix print the sync with the run's own options (`managedSyncResumeArgs`).
+- `sources retry-held` against a backlog: the printed sync used to finish the unfinished cursor and report `synced` with the scheduled re-screens untouched (only a fresh discovery reads the schedule), so a `preparation_stalled` hold survived the documented route. A pass that finishes its cursor while re-screens are scheduled now yields (`writer_yield`) and the drain's next pass discovers and takes them, so one run of the printed command clears the hold; the drain report sums the runs it finished. Discovery consumes the schedule in the same transaction as the fresh cursor save (a kill between them can neither lose it nor leave a stale copy) and consumes every scheduled path, including ones already in the manifest or no longer eligible.
+- A sync admission refused for write capacity (`queue_capacity`: other writers' requests, such as a fact-adoption queue on the same `local_cli` principal, hold `persistence.limits.principal_outstanding`) no longer escapes the drain as an uncaught exit with no summary and a failure-ledger row naming `--retry-failed`. The drain retries with backoff, prints `waiting for write capacity (N outstanding of M)`, and past its 30 s no-progress window ends `blocked` / `write_capacity` (new stop reason; `drain.capacity` carries the counts) with `next` pointing at writer status. The refusal's `detail` carries `outstanding=N limit=M`; cumulative caps are unchanged.
+- Facts: `planUnfencedFacts` uses the fence codec as its oracle (`adoptableClaim`), writes the parsed text back with the row number on the managed and unmanaged paths, and records rows it leaves alone as typed `UnadoptableFactRecord`s (never the claim text). `prepareFactFenceAdoption` refuses a planning mismatch with the registered `fence_unrenderable`. `submitMaintenance` scans every content-carrying intent with the canonical projection's fence check. `extract_facts` skips only the pages that still hold unadopted rows; doctor `fence_integrity` counts `unrenderable_legacy_facts` with `next: report`.
+- Bounded reads: `executeRaw(sql, params, { timeoutMs })` on Postgres pipelines `BEGIN; SET LOCAL statement_timeout; <statement>; COMMIT` as one round trip (`postgres-engine/bounded-statement.ts`); `boundedReads(engine, clock)` (`persistence/bounded-reads.ts`) gives every preparer's unmemoized raw read the remaining budget and the claim's signal, and a `57014`/`55P03` from such a read is the deadline (charged release, `preparation_stalled` at the limit), never `storage_error`. New doctor wave check `persistence_session_timeouts` (`session_timeouts_not_applied`).
+- Docs: write-refusals (`preparation_stalled`, `fence_unrenderable`, drain stops), live-sync timing knobs, the troubleshooting runbook "catch-up stuck / held N files" and symptom row, the repair guide's preparation route, `docs/ENGINES.md` log reasons, `AGENTS.md`, and KEY_FILES entries.
+
+Fixes #6278.
+
+## To take advantage of v0.60.112.0
+
+`gbrain upgrade` applies migration v220 (one added column). Restart every long-running owner on the new version, then check:
+
+```bash
+gbrain upgrade
+gbrain sources writer status --json   # preparation_policy shows the budgets in effect
+gbrain doctor --only persistence_write_stall,persistence_session_timeouts,git_held_files,fence_integrity --json
+```
+
+If a catch-up stops or files are held, follow [catch-up stuck](docs/guides/troubleshooting.md#catch-up-stuck). If a step fails or the numbers look wrong, file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`.
+
+## [0.60.111.0] - 2026-10-08
+
+**Managed Postgres sync catches up more than twice as fast, starts committing in about 18 seconds instead of 80, and a page you save during a catch-up no longer waits behind it.**
+
+When a git source falls behind on a managed brain whose database is far away (57 ms round trips in our test), `gbrain sync` used to spend most of its time with idle connections: one process prepared the next batch of pages one statement at a time while up to six publishers waited. A 10,000-page backlog took about 75 minutes, the first page landed after about 80 seconds, and a `put_page` from your agent took 9 to 12 seconds even when nothing else was running. Now batches are prepared in bulk, publishers stay busy, a single page write takes about 2.5 seconds, and a foreground write publishes beside the running sync batches when it doesn't touch the same page.
+
+### How to use it
+
+```bash
+gbrain sync --source <id>                          # nothing to change: the defaults pick up the new path
+gbrain config set sync.lanes 12                    # up to 16 publishers, clamped by the connection pool
+gbrain config set sync.foreground_priority false   # back to strict arrival order for page writes during a sync
+GBRAIN_PG_TYPE_CACHE=0 gbrain serve                # turn off the shared parameter-type cache if a driver issue appears
+```
+
+### The numbers that matter
+
+Same 16-core machine and same Postgres, 57 ms round trips, default settings, master before vs this release.
+
+| What you do | Before | Now |
+|---|---|---|
+| Catch up a 10,000-page backlog | 74.5 min | 33.6 min |
+| Pages per minute once the catch-up is running | 175 | 368 |
+| Time until the first page is committed | 79 s | 18 s |
+| Save one page with nothing else running (typical / slow) | 8.6 s / 11.6 s | 2.5 s / 2.7 s |
+| Save one page during a catch-up (typical / slow) | 11.3 s / 17.1 s | 3.1 s / 4.1 s |
+| Catch-up speed while your agent saves a page every 5 s | 0.4 pages/min, 115 of 120 saves failed | 174 pages/min, no saves failed |
+| Catch-up next to the database (about 0 ms) | 2,404 pages/min | 3,332 pages/min |
+
+### Things to watch
+
+- **More publishers help up to a point.** With a 20-connection pool, 8 to 16 publishers all run at about 400 to 410 pages/min against 378 at the default 6. The drain prints a `[sync] lanes:` line saying what limited it (the pool, the server's free connections or your setting).
+- **Writes during a catch-up still cost something.** A page save takes about 1.5 s longer at the slow end than with nothing running, and a save every 5 s slows the catch-up to about 45% of its idle speed. With a save every 5 s the slowest saves (p95) take about 22 s.
+- **Every new path has a switch** that accepts `0` or `false`: `persistence.single_write_group`, `persistence.preadmit_cache`, `sync.waive_batch`, `sync.foreground_priority` (environment: `GBRAIN_SINGLE_WRITE_GROUP`, `GBRAIN_PREADMIT_CACHE`, `GBRAIN_SYNC_WAIVE_BATCH`, `GBRAIN_SYNC_FOREGROUND_PRIORITY`). A running `serve` picks up a config change within 5 seconds.
+
+### Itemized changes
+
+- Sync feeder: a group's admission and the cursor save that records it are one transaction; window groups are admitted in batches with the request inserts and counter updates pipelined; admit-ahead never asks for more requests than the writer's outstanding limit leaves room for (it used to refuse at 8+ lanes and on a local database, serializing the lanes).
+- Lanes: up to 16 (`sync.lanes`, `--lanes`), clamped by the pool and the server's free connections; groups are sized by measured apply time inside a 5 s budget (2 s while foreground writes are recent), and the first group is one or two pages. Group publication pipelines the page apply.
+- Startup: runs of entries that need no write (already-deleted files, unchanged imports) are waived in one transaction instead of one each.
+- Single page writes publish as a group of one on a warm reserved connection, with a per-process cache of pre-admission reads that admission rechecks under lock, and the writer's own admission claims the request directly.
+- Foreground priority: a page write that names no queued or running sync group's page (slug, page id or rename source) publishes beside the running lane groups in the sync process; new lane groups wait only while such a write waits to be claimed, and background effects defer to lanes instead of interrupting them. A sync group naming the page keeps its place. Every reader of request sequence order was audited for writes committed out of order; receipt health now judges a claimed write only against earlier started writes.
+- Postgres: described parameter types are shared across a pool's connections (patched `postgres@3.4.9`, `GBRAIN_PG_TYPE_CACHE=0` turns it off); managed link extraction derives four pages at once with one config read per run.
+- A sync group member after an uncommitted member is cancelled, never published ahead of it (#6252).
+- Write receipts no longer call an ordinary publication in progress `blocked` / `recovery_required`: a request needs recovery only when it is recovering or holds a recovery record without a live claim, and the requests behind a live publication show as waiting (#6275).
+- Remote `put_page` skips the similar-pages advisory while `put_page.similar_pages` is off (the default) and runs it with JIT off when on; remote `get_page` / `fetch` read the page with JIT off, so brains past about 1,000 pages stop paying JIT compile time on every call (#6276).
+- `gbrain sources refresh` refuses `git_unavailable` when a git read of the checkout's branch or remote (`symbolic-ref`, `remote`, `config --get`) fails or times out, instead of reading it as a detached HEAD or no remote and skipping the fetch; a checkout that is not Git refuses `refresh_no_upstream` with its own message.
+- Bench: `scripts/bench/managed-sync-catchup.ts` reports feeder and lane timing, steady state, per-write foreground spans, an open-loop foreground row and `--pool-size`; results in `docs/eval/managed-sync-catchup.md`.
+
+## [0.60.110.0] - 2026-10-08
+
+**Reverts the Windows backup cold-start retry from v0.60.109.0, which turned master red.**
+
+The retry launched PowerShell a second time after any 15-second timeout. The Windows ARM backup controls deliberately run a PowerShell program that hangs, and they require every failing launch to be bounded to one attempt; with the retry each took two launches (30 s). A first Windows backup on a cold machine whose PowerShell start passes 15 s fails again, as before v0.60.109.0. The order hunt, the contract drain fix and the shard weights from v0.60.109.0 stay.
+
+## To take advantage of v0.60.110.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
+## [0.60.109.0] - 2026-10-08
+
+**A Windows backup no longer fails on a cold machine's first PowerShell start, and a new nightly job catches tests that leak state into the next one.**
+
+On Windows, gbrain runs PowerShell to make a new backup folder owner-only, with a 15-second limit. On a freshly started machine PowerShell's first launch alone sometimes takes longer (measured 3.3 to 27.7 seconds on fresh CI runners; later launches take 0.2 to 1.5 seconds), so the first backup failed. A launch killed by that limit is now retried once. Any other failure, or a second timeout, still refuses with `private_backup_path_unavailable`. This is a single bounded retry on a classified timeout, not a longer limit: the script only sets and verifies the access rules of the same new empty path, so running it again is safe.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| First Windows backup on a cold machine whose PowerShell start passes 15 s | fails with `private_backup_path_unavailable` | retried once and protected |
+
+For contributors and agents working on gbrain:
+
+- **Order hunt.** The nightly E2E workflow's new `order-hunt` job runs every E2E file in a seeded random order on one shared database per shard. A file that fails after the files before it but passes alone is reported as order-dependent, with the exact command to replay that order. It is keyless and outside `e2e-status`. Run it on demand with `gh workflow run e2e.yml -f order_hunt=true`. Runbook: `docs/ci-red-runbook.md#order-hunt`.
+- **Contract harness.** The managed connector job contract's queue drain registers only the drained jobs' handlers, so a page write's `facts-absorb` follow-up queued mid-drain is no longer claimed and counted as an extraction model call (the E2E nightly's `extract_conversation_facts_prose` failure).
+- **Shard weights.** Unit weights are re-mined from master push run 37737296716, so the scheduled `check:weight-coverage` passes.
+
+## To take advantage of v0.60.109.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
+## [0.60.108.0] - 2026-10-08
+
+**Wave 9 follow-ups: managed brains get receipts for every fact and take they write, old "Date:" facts can be cleaned up for free, and a handful of quiet overwrites and false "done" reports stop.**
+
+Every fresh `gbrain init` brain is managed: each write is supposed to carry a receipt saying who wrote it and when. Facts pulled from meeting notes and transcripts, facts absorbed from a fence during sync, and several takes paths skipped that receipt, and on managed brains email-thread facts were simply switched off. They all write through receipts now, batched so a big brain doesn't burn through its writer's limits. Facts an older parser credited to a "Date" or "Attendees" speaker can be previewed and retired without any model call. A removed take's number is never handed to a new take, a concept you edit by hand mid-cycle is no longer overwritten, `takes rebuild` works while `gbrain serve` is running, and eval judges on Gemini and GPT finally turn thinking off where the model allows it.
+
+### How to use it
+
+```bash
+gbrain extract-conversation-facts --source-id <id> --dry-run   # preview what a managed run would extract
+gbrain repair conversation-labels --source <id>                # preview label-misattributed facts (no model calls)
+gbrain repair conversation-labels --source <id> --apply --expect <hash> --yes
+gbrain extract-conversation-facts --slugs <a,b> --dry-run      # exactly the named pages
+gbrain takes rebuild <slug>                                    # now also while gbrain serve owns a PGLite brain
+gbrain doctor --only conversation_label_facts,conversation_outcomes_stale
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Conversation facts on managed brains | Meetings, transcripts and email threads are extracted and published in receipted batches: up to 25 pages per request, at most 10 of them with facts, at most 8 MiB. A crash after the batch was accepted replays it on the next run with no model call; a page that changed meanwhile is skipped and retried; a page that keeps failing is blocked until it changes. Single emails, prose notes and undated pages are recorded as not extractable for good instead of rescanned every run. |
+| Writer capacity | A managed extraction stops with `maintenance_backpressure` (exit 12) before the writer passes 80% of its outstanding requests, reserved receipt bytes or permanent request ids, and names a `--limit` that fits. On a 50,000-page brain a full backfill uses about 1.5% of the writer's lifetime request ids. |
+| Fence facts, takes and supersession on managed brains | The cycle's `## Facts` reconcile and its deleted-page expiry, `gbrain extract takes --source db`, `gbrain takes rebuild` and `gbrain repair take-supersession` publish receipted requests. A page already in sync writes nothing. |
+| `gbrain repair conversation-labels` | New, explicit-only. Lists facts the parser before v0.60.74 took from `**Date:**`, `**Attendees:**` and similar labels, by class with a hash; `--apply` expires them (kept in history), records prose pages as not extractable and prints the capped re-extract commands for the rest. Facts dated 1970-01-01 are the default set; the rest sit behind `--include-ambiguous`. It never runs from `repair --all`, doctor remediation or an upgrade. |
+| Doctor | `conversation_label_facts` counts what the repair would retire; `conversation_outcomes_stale` counts pages last processed by an older extractor version (nothing reruns on its own). |
+| Take numbers | `gbrain takes remove` leaves a struck `(removed)` placeholder row, and every new take number comes from one page-wide allocator, so `slug#N` links never start pointing at a different claim. |
+| Concepts (unmanaged brains) | A dream-cycle concept whose file holds an edit the database hasn't imported yet is deferred (`revision_conflict`) and published after sync imports it; a failed file write holds the concept instead of reporting success. |
+| Worker shutdown | An `UnrecoverableError` thrown while a worker shuts down dead-letters with its own message instead of being re-queued for another (possibly paid) run; other errors are still handed back, now keeping the handler's message. |
+| `gbrain jobs supervisor stop` | A recycled worker pid no longer reads as still running, a run that crossed the weekly audit boundary no longer reports a false `drained`, a run with no `started` record reports `unverified`, and a stale PID file whose pid now belongs to another process is never signaled (`stale_pid_file`). |
+| `gbrain takes rebuild` | Works while `gbrain serve` owns a PGLite brain (it used to hang on the lock); same JSON and exit codes as a local rebuild. |
+| Eval judges | With `thinking: off`, Gemini 2.5 Flash sends `thinkingBudget: 0` and GPT-5.1+ sends `reasoningEffort: none`. Models that can't turn reasoning off (Gemini 2.5 Pro and 3.x, gpt-5/-mini/-nano, o-series) run at their lowest setting with a 32,000-token reply cap, and the takes-quality and cross-modal preflights price that cap instead of underestimating it 8-16x. |
+
+### Things to watch
+
+- **Managed brains now extract email threads.** Nothing runs on its own: the backfill stays opt-in (`cycle.conversation_facts_backfill`) and spend stays under `--max-cost-usd` (default $5) and the backfill's $1 per run / $5 total caps. A two-message thread is one segment, about $0.006 on Haiku 4.5.
+- **Managed extraction needs the source's owner on this host** once a page actually needs work; the backfill phase skips a managed source another host owns and says so in its summary.
+- **Take numbering is page-wide:** the first take on a page whose facts fence holds rows 1-5 is #6. Existing rows are never renumbered.
+- **Scripts:** a shutdown hand-back's `error_text` is `worker_shutdown: <message>` (match the prefix); the supervisor PID file has a second line on Linux (read the first); judge budgets that passed before can refuse earlier.
+- **Not fixed here:** stall detection for subagent turns, receipts for the pages/timeline/alias derived writers, production fail-closed receipt enforcement, and the judge-panel refresh. See TODOS.md.
+
+### Itemized changes
+
+- `src/core/facts/conversation-publication.ts`: `managed_maintenance_conversation_facts` batch requests with per-page generation identity, replay of accepted batches, resubmission of failed ones from their stored entries, blocking after a deterministic failure or three failed batches; outcome rows stay private under `facts.default_visibility=world`; the run's preflight, embedding signature, capacity check and batch index resolve at its first page with managed work. The `replaceDerivedFactsForPage` managed path is gone.
+- `maintenance_backpressure` (exit 12) also guards reserved receipt bytes and permanent request ids; the up-front check counts the run's planned batches.
+- `src/core/cycle/extract-facts.ts`: `managed_maintenance_fence_facts` and `managed_maintenance_deleted_page_facts_expire`; `src/core/cycle/extract-takes.ts`: `managed_maintenance_takes_reextract`; `src/core/repair/take-supersession.ts`: `managed_maintenance_take_reproject`.
+- `test/receipt-coverage.test.ts` lists every coordinated write site with its receipt status; the managed-connector contract harness refuses an unreceipted facts or takes write.
+- Conversation outcome rows record `extractor_version=<n>`. A conversation page whose completion marker was expired is extracted again; re-extraction keeps facts an open loop or a superseding fact references, as expired history.
+- `src/core/repair/conversation-labels.ts` (`managed_maintenance_conversation_label_retire`, batches of 25 pages), with the CLI write wait on a replayed batch.
+- `conversation_facts_backfill` reports a managed source this host doesn't own as skipped (`sources_skipped_not_owner`), not failed.
+- `nextFreeRowNum` for every new take row; `takes remove` writes the reservation row.
+- `publishClassicConcept` rechecks the file under the lock and writes with `expectedFileBytes`; `concept_write_through_failed`.
+- Worker shutdown error matrix; supervisor stop pairs exits with spawns by pid and kernel start time.
+- `takes_rebuild` is a local-only operation delegated to the resident owner.
+- `src/core/ai/thinking-off.ts`: a per-model thinking capability table that `chat()`, the judge estimates and the fence-repair model tier all read.
+- The brain filing rules skill (and its plugin copies), the takes-fence doc comment and the takes holder test fixtures use placeholder people and companies (`people/alice-example`, `companies/acme-example`) instead of real names.
+- `check-test-isolation` rule R6: a unit test that reads the CLI exit verdict sets its own baseline, so a verdict another file left in the same test process can't fail it.
+
+## [0.60.107.0] - 2026-10-08
+
+**A page the quarantine gate hid stays hidden: no more planted markers, no facts mined from it, and no body handed to remote agents.**
+
+The content-quality gate quarantines junk and unsafe pages so search skips them. Four paths still leaked them. Any non-remote writer could plant or fake the gate's own markers; a quarantined page still fed automatic fact extraction and its facts and takes fences; `get_page` and `fetch` returned its body verbatim; and `put_page` never told the agent its page had been hidden.
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Gate-owned frontmatter | `quarantine`, `embed_skip`, `content_flag`, `atoms_scan_hash` and `quarantine_override` are stripped from a local `put_page`, a connector, an ingest event or any other non-owner write. Sync and import of your own files, reindex, repair, reconcile, the cycle and `quarantine clear` keep them. |
+| Facts and takes | A quarantined page is not mined for facts (`facts_backstop.skipped: quarantined`) and its fences are not projected. Rows projected before it was quarantined stay. |
+| `get_page` / `fetch` | Carry `quarantined` (fetch: `metadata.quarantined`) and a `page_quarantined` notice. Remote callers get no body or text unless an admin-scoped caller passes `include_quarantined: true`; local reads keep the body. |
+| `put_page` / `put_pages` | A write the gate hid reports `quarantined: { reason, detail }` with a notice. |
+
+### Things to watch
+
+- **Scripts that planted markers through `put_page`** (for example to force `embed_skip`) now have them stripped; use the owner paths above or `gbrain quarantine clear --force`.
+- **Remote agents reading a quarantined page** get the notice instead of its text; an admin can still ask for it.
+
+### Itemized changes
+
+- `stripGateOwnedMarkers` (`src/core/import-screen.ts`) runs once per write; only callers passing `preserveGateMarkers: true` keep the markers. Managed `quarantine clear` submits the owner-internal `managed_quarantine_clear` intent so `quarantine_override` stays writable. `opts.remote` keeps only its fence-merge and hidden-row meaning.
+- `isFactsBackstopEligible` refuses a quarantined page; the canonical projection and the unmanaged `extract_facts` / `extract_takes` reconcilers skip it.
+- `readQuarantined` shapes `get_page` and `fetch`; `include_quarantined` is honored only for admin scope.
+- New key-files cluster `docs/architecture/key-files/quarantine.md`.
+
 ## [0.60.106.0] - 2026-10-07
 
 **Fix wave 12: one bad link no longer stops extraction, cut-off model answers stop counting as real ones, and paid loops stop paying.**

@@ -15,7 +15,7 @@
  *
  * Plain helper: no env mutation, no engine, no network.
  */
-import { CLI_ONLY, cliAliases, validateCommandFlags } from '../../src/cli.ts';
+import { CLI_ONLY, cliAliases, validateCommandFlags } from '../../src/cli/main.ts';
 import { parseGlobalFlags } from '../../src/core/cli-options.ts';
 import { migrationCliArgumentError } from '../../src/core/embedding-migration-cli.ts';
 import { operations } from '../../src/core/operations.ts';

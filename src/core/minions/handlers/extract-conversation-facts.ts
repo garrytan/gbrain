@@ -36,6 +36,7 @@ export function makeExtractConversationFactsHandler(engine: BrainEngine): Minion
       sourceId,
       types,
       slug: typeof job.data.slug === 'string' ? job.data.slug : undefined,
+      slugs: Array.isArray(job.data.slugs) ? (job.data.slugs as unknown[]).filter((v): v is string => typeof v === 'string') : undefined,
       dryRun: !!job.data.dryRun,
       limit: typeof job.data.limit === 'number' ? job.data.limit : undefined,
       sinceIso: typeof job.data.sinceIso === 'string' ? job.data.sinceIso : undefined,

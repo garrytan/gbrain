@@ -154,3 +154,15 @@ describe('#6232 facts_backstop opt-out', () => {
     expect(isFactsBackstopEligible('meetings/2026-05-09-kickoff', meeting)).toEqual({ ok: false, reason: 'opted_out' });
   });
 });
+
+// #6259 (quarantine leaks, item 2): a page the content-quality gate hid as junk is never offered to the backstop.
+describe('isFactsBackstopEligible — quarantined pages', () => {
+  test('a quarantine marker makes an otherwise eligible page ineligible with reason quarantined', () => {
+    const { slug, parsed } = fixture({ frontmatter: { quarantine: { reason: 'junk_pattern', detail: 'cloudflare_ray_id', assessed_at: '2026-10-07T00:00:00.000Z' } } });
+    expect(isFactsBackstopEligible(slug, parsed)).toEqual({ ok: false, reason: 'quarantined' });
+  });
+  test('a content_flag (searchable, warned) leaves the page eligible', () => {
+    const { slug, parsed } = fixture({ frontmatter: { content_flag: { reason: 'markup_heavy', detail: 'x', assessed_at: '2026-10-07T00:00:00.000Z' } } });
+    expect(isFactsBackstopEligible(slug, parsed)).toEqual({ ok: true });
+  });
+});

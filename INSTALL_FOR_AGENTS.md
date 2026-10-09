@@ -179,9 +179,11 @@ lane; moving engines is `gbrain migrate`'s.
 `--json` emits `{status, engine, ladder_rung, url_source}` as the ONLY stdout
 content so a scripted install can `| jq` it. The access token is never
 persisted, logged, or echoed.
-Tradeoff to know before choosing: Postgres brains get MCP tools every session plus
-the pull protocol, but NOT the PGLite-only per-turn bootstrap hook lane (see
-`BOOTSTRAP_FOR_AGENTS.md` and the degradation matrix in `docs/guides/bootstrap.md`).
+Postgres brains get MCP tools every session plus the pull protocol, and keep the
+per-turn bootstrap hook lane: the IPC listener is engine-uniform (it keys its
+socket off the connection URL), so the hooks fire whenever a `gbrain serve` for
+the brain is running, same as PGLite (see the degradation matrix in
+`docs/guides/bootstrap.md`).
 
 **Runtime failure loop (how the harness self-heals).** When Postgres access
 breaks at runtime, gbrain emits a machine marker: `GBRAIN_DB_ACCESS <reason>`
@@ -362,9 +364,9 @@ policy. Memory write access is not
 including the parent, needs its own principal and private handoff.
 
 Discover with `list_skills` using `schema_version: 2`, then fetch only relevant
-`get_skill` revisions and approved `get_skill_asset` dependencies. Starter
-supports these tools subject to grants; the `--surface verbs` examples below
-are deliberately memory-only. MCP resources at `gbrain://skills` offer the same
+`get_skill` revisions and approved `get_skill_asset` dependencies. The
+`--surface full` registrations below serve these tools subject to grants (the
+narrower `--surface verbs` is deliberately memory-only). MCP resources at `gbrain://skills` offer the same
 authorized catalog, not a promise that every client loads native skills.
 
 Managed Claude Code/Codex/opencode routers report `restart_required` and native
@@ -419,7 +421,7 @@ model gbrain removed in v0.33, needs `gbrain skillpack migrate-fence` once.)
 **If you are Hermes:** register gbrain as your MCP server:
 
 ```bash
-printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve
+printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface full
 ```
 
 Keep `--args` last (everything after it becomes server argv) and verify with
@@ -429,12 +431,12 @@ Keep `--args` last (everything after it becomes server argv) and verify with
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface verbs
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface full
 ```
 
 The add is lazy (exit 0 without connecting) — verify with
-`grok mcp doctor gbrain`, which spawns the server and must report
-`7 tools discovered`. This is the brain-only install; the `gbrain bootstrap`
+`grok mcp doctor gbrain`, which spawns the server and must report the tools it
+discovered (the full surface). This is the brain-only install; the `gbrain bootstrap`
 personal-agent path does not support Grok yet (Claude Code, Codex, and opencode only).
 Verified against Grok Build v1.0.4. Full reference:
 [docs/mcp/GROK.md](docs/mcp/GROK.md).
@@ -445,7 +447,7 @@ install, follow `BOOTSTRAP_FOR_AGENTS.md` instead of this page. For the
 brain-only MCP registration:
 
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface verbs
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface full
 ```
 
 The add is lazy (exit 0 without connecting) — verify with `opencode mcp list`,

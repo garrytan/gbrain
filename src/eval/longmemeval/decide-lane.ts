@@ -95,5 +95,5 @@ export const LME_ABSTAIN_HYPOTHESIS = 'I cannot answer this: the conversation hi
  */
 export function lmeAbstention(run: DecideEvalRun | null | undefined, meta: HybridSearchMeta | undefined): ReaderAnswer | null {
   if (run?.slots.answerable !== 'on' || meta?.decide?.answerable?.effective !== 'on' || meta.answerability?.verdict !== 'abstain') return null;
-  return { text: LME_ABSTAIN_HYPOTHESIS, finish_reason: 'end_turn', response_model: null, context_chars: 0, context_sessions: 0, sessions_truncated: 0 };
+  return { text: LME_ABSTAIN_HYPOTHESIS, finish_reason: 'end_turn', usage: null, response_model: null, context_chars: 0, context_sessions: 0, sessions_truncated: 0 };
 }

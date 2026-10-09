@@ -15,7 +15,7 @@
 
 import { join } from 'path';
 
-import { chat as gwChat } from '../ai/gateway.ts';
+import { chat as gwChat, thinkingOffOutputCap } from '../ai/gateway.ts';
 import type { ChatMessage } from '../ai/gateway.ts';
 import { aggregate } from './aggregate.ts';
 import type { AggregateResult, SlotResult } from './aggregate.ts';
@@ -399,21 +399,29 @@ export function estimateCost(slots: SlotConfig[], cycles: number, maxTokens: num
   // file" note (cost estimate may be low), preserving prior behavior.
   const ESTIMATED_INPUT_TOKENS = 5000;
 
+  // Each slot is priced at the output cap its thinking-off call sends, which
+  // is above `maxTokens` on a route that cannot turn reasoning off.
   const notes: string[] = [];
   let perCycle = 0;
+  let largestCap = maxTokens;
   for (const slot of slots) {
+    const cap = thinkingOffOutputCap(slot.model, maxTokens);
+    largestCap = Math.max(largestCap, cap);
+    if (cap !== maxTokens) {
+      notes.push(`(${slot.model}): cannot turn thinking off; its calls send and are priced at a ${cap}-token output cap`);
+    }
     const p = canonicalLookup(slot.model);
     if (!p) {
       notes.push(`(${slot.model}): no pricing on file; cost estimate may be low`);
       continue;
     }
-    const cost = (ESTIMATED_INPUT_TOKENS * p.input + maxTokens * p.output) / 1_000_000;
+    const cost = (ESTIMATED_INPUT_TOKENS * p.input + cap * p.output) / 1_000_000;
     perCycle += cost;
   }
   return {
     perCycleUSD: round2(perCycle),
     perRunMaxUSD: round2(perCycle * cycles),
-    perCallTokens: ESTIMATED_INPUT_TOKENS + maxTokens,
+    perCallTokens: ESTIMATED_INPUT_TOKENS + largestCap,
     notes,
   };
 }

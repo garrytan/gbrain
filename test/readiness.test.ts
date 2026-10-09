@@ -168,13 +168,13 @@ describe('harness_wiring by state', () => {
   const BIN = '/opt/gbrain/bin/gbrain';
   const owner = (transport: 'stdio' | 'http', is_self = false): LockOwner => ({ pid: 4242, transport, is_self });
 
-  test('one harness, no serve: harness-native stdio registration with the absolute binary and --surface starter', () => {
+  test('one harness, no serve: harness-native stdio registration with the absolute binary and --surface full', () => {
     const claude = harnessWiringEntry({ transport: 'cli', harnesses: ['claude-code'], lockOwner: null, gbrainBin: BIN });
-    expect(claude.fix?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', BIN, 'serve', '--surface', 'starter']);
+    expect(claude.fix?.argv).toEqual(['claude', 'mcp', 'add', 'gbrain', '--', BIN, 'serve', '--surface', 'full']);
     expect(claude.fix?.consent).toEqual(['persistent_install']);
     expect(claude.fix?.why).toContain('~/.claude.json');
     expect(harnessWiringEntry({ transport: 'cli', harnesses: ['codex'], lockOwner: null, gbrainBin: BIN }).fix?.argv)
-      .toEqual(['codex', 'mcp', 'add', 'gbrain', '--', BIN, 'serve', '--surface', 'starter']);
+      .toEqual(['codex', 'mcp', 'add', 'gbrain', '--', BIN, 'serve', '--surface', 'full']);
     expect(harnessWiringEntry({ transport: 'cli', harnesses: ['opencode'], lockOwner: null, gbrainBin: BIN }).fix?.argv)
       .toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks']);
   });

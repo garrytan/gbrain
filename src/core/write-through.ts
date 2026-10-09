@@ -22,7 +22,7 @@ import { hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesyst
  * only does "row exists + repo is a real dir → render + atomic write".
  */
 
-import { existsSync, statSync, mkdirSync, unlinkSync, readdirSync } from 'fs';
+import { existsSync, statSync, mkdirSync, unlinkSync, readdirSync, readFileSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { atomicWriteFileSync } from './atomic-write.ts';
 import type { BrainEngine } from './engine.ts';
@@ -88,8 +88,11 @@ export interface WriteThroughResult {
    *     (macOS/Windows default), the target directory already holds a
    *     differently-cased entry that the FS folds onto this page's file, so
    *     writing would silently clobber the OTHER slug's file (#2831) — refused.
+   *   - file_changed: the caller passed `expectedFileBytes` and the file on
+   *     disk no longer holds them (an edit landed after the caller read it) —
+   *     the edit is kept and nothing is written.
    */
-  skipped?: 'disabled_by_config' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
+  skipped?: 'disabled_by_config' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision' | 'file_changed';
   /** Caller-visible advisory when a permitted DB-only outcome is still risky. */
   warning?: string;
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
@@ -101,6 +104,13 @@ export interface WritePageThroughOpts {
   /** Merged over the page's own frontmatter at render time (e.g. provenance). */
   frontmatterOverrides?: Record<string, unknown>;
   logger?: WriteThroughLogger;
+  /**
+   * The file bytes the caller read before writing the database row (null:
+   * the file was absent). Rechecked under the source filesystem lock right
+   * before the rename; a file that changed since is left untouched
+   * (`skipped: 'file_changed'`). Omitted: no preimage check.
+   */
+  expectedFileBytes?: string | null;
 }
 
 export function withNoRepoWriteThroughWarning<T extends { written: boolean; skipped?: string; warning?: string }>(result: T, sourceId: string, operation = 'put_page'): T {
@@ -450,6 +460,11 @@ export async function writePageThrough(
     // EEXIST when the directory already exists (POSIX no-ops it). That aborts
     // the put_page / enrich / capture write-through whenever the prefix dir
     // already exists, silently leaving the DB and the .md file plane out of sync.
+    if (opts.expectedFileBytes !== undefined
+      && (existsSync(filePath) ? readFileSync(filePath, 'utf-8') : null) !== opts.expectedFileBytes) {
+      return { written: false, skipped: 'file_changed' };
+    }
+
     assertSourceFilesystemActive();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 

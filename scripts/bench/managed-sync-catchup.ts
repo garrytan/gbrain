@@ -4,14 +4,16 @@
  * schema: docs/eval/managed-sync-catchup.md.
  *
  *   bun scripts/bench/managed-sync-catchup.ts [--files 500] [--deletes 34] [--history 0]
- *     [--rtt 57,0] [--rows cli,reentry,unmanaged,serve,effects,foreground,all,newcomer]
+ *     [--rtt 57,0] [--rows cli,reentry,unmanaged,serve,effects,foreground,foreground-open,all,newcomer]
  *     [--max-minutes 20] [--stall-iterations 8] [--pad-words 0] [--receipt-history 0] [--seed 1] [--label <name>] [--out <file.json>]
- *     [--database-url <admin url>] [--pg-port 55432] [--proxy-port 55433] [--api-port 58474] [--keep]
+ *     [--fg-interval 5] [--pool-size N] [--pooler pgbouncer]
+ *     [--database-url <admin url>] [--pg-port 55432] [--proxy-port 55433] [--api-port 58474] [--pooler-port 55434] [--keep]
  *   bun scripts/bench/managed-sync-catchup.ts --analyze <sql-trace.jsonl> [--out <file.json>]
  *
- * `--analyze` re-runs the critical-path, group publication and counter-hold
- * analysis (managed-sync-catchup-phases.ts) on a kept trace, without Docker;
- * `foreground-{idle,busy}.json` beside the trace add per-put_page round trips.
+ * `--analyze` re-runs the critical-path, group publication, counter-hold,
+ * feeder, lane, describe and steady-state analysis (managed-sync-catchup-phases.ts)
+ * on a kept trace, without Docker; `foreground-{idle,busy,open}.json` beside the
+ * trace add per-put_page round trips and span timelines.
  *
  * Starts (or reuses) a pgvector Postgres with pg_stat_statements in Docker and
  * a toxiproxy in front of it with `--rtt` milliseconds of round trip split
@@ -31,6 +33,9 @@
  *              plus time to retrieval-ready
  *   foreground `cli` while a second process submits put_page every second (p95, lock_timeout count),
  *              after an idle foreground baseline
+ *   foreground-open
+ *              `cli` while a second process submits one put_page every --fg-interval seconds whether or
+ *              not earlier ones finished (open loop: arrival rate, p50/p95, failures by code)
  *   all        `gbrain sync --all --no-pull --no-embed --json` re-run until synced, two sources
  *   newcomer   cold start to first progress line, and a 5-page managed source to a search hit
  *
@@ -38,8 +43,12 @@
  * each database round trip is attributed to its process; pg_stat_statements
  * gives the server-side totals; pg_locks/pg_stat_activity are sampled every
  * 100 ms for lock waits and their holders. Rows stop at --max-minutes and
- * report a labelled extrapolation. Works against any branch: it only drives
- * the CLI, performSync and submitPageMutation.
+ * report a labelled extrapolation. `--pool-size N` sets GBRAIN_POOL_SIZE for
+ * every gbrain process (unset: the product default of 10); `--pooler pgbouncer`
+ * puts a transaction-mode PgBouncer between toxiproxy and Postgres and runs
+ * gbrain with GBRAIN_PREPARE=false (report-only). Each row records its pool,
+ * lane and pooler settings. Works against any branch: it only drives the CLI,
+ * performSync and submitPageMutation.
  */
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -53,7 +62,8 @@ import {
   BENCH_SQL, classify, family, flatSql, isTxnControl, groupStatements, measureRtt, pct, readEffects, readPgStatStatements, readTrace, round1, startEffectsSampler, startEmbeddingStub,
   startHarness, startLockSampler, sum, normalizeSql, type Harness, type LockSample, type TraceRecord,
 } from './managed-sync-catchup-lib.ts';
-import { criticalPath, foregroundRoundTrips, publicationBreakdown, publishedPages, renderAnalysis } from './managed-sync-catchup-phases.ts';
+import { commitTimes, criticalPath, describeRoundTrips, feederBreakdown, foregroundRoundTrips, foregroundSpans, laneApply, publicationBreakdown, publishedPages, renderAnalysis,
+  renderPhase0, steadyRate, syncStart } from './managed-sync-catchup-phases.ts';
 
 const REPO = resolve(import.meta.dir, '../..');
 const CLI = join(REPO, 'src/cli.ts');
@@ -70,16 +80,27 @@ if (analyze) analyzeTrace(resolve(analyze), flag('out', ''));
 function analyzeTrace(file: string, out: string): never {
   if (!existsSync(file)) { console.error(`trace not found: ${file}`); process.exit(2); }
   const records = readTrace(file, r => r.label !== 'setup');
-  const cp = criticalPath(records, publishedPages(records) || null);
+  const pages = publishedPages(records) || null;
+  const cp = criticalPath(records, pages);
   const pub = publicationBreakdown(records);
+  const phase0 = { feeder: feederBreakdown(records, pages), lanes: laneApply(records), describes: describeRoundTrips(records), steady: steadyRate(commitTimes(records), syncStart(records)) };
   const foreground: Record<string, unknown> = {};
-  for (const tag of ['idle', 'busy']) {
+  const spans: Record<string, Record<string, unknown>> = {};
+  for (const tag of ['idle', 'busy', 'open']) {
     const results = join(dirname(file), `foreground-${tag}.json`);
-    if (existsSync(results)) foreground[tag] = foregroundRoundTrips(records, JSON.parse(readFileSync(results, 'utf8')));
+    if (!existsSync(results)) continue;
+    const writes = JSON.parse(readFileSync(results, 'utf8'));
+    foreground[tag] = foregroundRoundTrips(records, writes);
+    spans[tag] = foregroundSpans(records, writes);
   }
   console.log(renderAnalysis(cp, pub));
+  console.log(renderPhase0({ ...phase0, spans }));
   for (const [tag, rt] of Object.entries(foreground)) console.log(`\nForeground ${tag} per put_page: ${JSON.stringify(rt)}`);
-  if (out) { mkdirSync(dirname(resolve(out)), { recursive: true }); writeFileSync(resolve(out), JSON.stringify({ trace: file, critical_path: cp, publication: pub, foreground }, null, 2) + '\n'); }
+  if (out) {
+    mkdirSync(dirname(resolve(out)), { recursive: true });
+    writeFileSync(resolve(out), JSON.stringify({ trace: file, critical_path: cp, publication: pub, feeder: phase0.feeder, lanes: phase0.lanes, describes: phase0.describes,
+      steady_state: phase0.steady, foreground, foreground_spans: spans }, null, 2) + '\n');
+  }
   process.exit(0);
 }
 
@@ -96,6 +117,22 @@ const STALL_ITERATIONS = Number(flag('stall-iterations', '8'));
 const LABEL = flag('label', gitDescribe());
 const OUT = resolve(flag('out', join(REPO, '.context', 'bench', `managed-sync-catchup-${LABEL.replace(/[^\w.-]/g, '_')}-${Date.now()}.json`)));
 const KEEP = process.argv.includes('--keep');
+const FG_INTERVAL_S = Number(flag('fg-interval', '5'));
+const POOL_SIZE = flag('pool-size', '');
+const POOLER = flag('pooler', '');
+if (POOLER && POOLER !== 'pgbouncer') { console.error(`--pooler takes pgbouncer; got ${POOLER}`); process.exit(2); }
+if (POOL_SIZE && !(Number.isInteger(Number(POOL_SIZE)) && Number(POOL_SIZE) > 0)) { console.error(`--pool-size takes a whole number above 0; got ${POOL_SIZE}`); process.exit(2); }
+if (!(FG_INTERVAL_S > 0)) { console.error(`--fg-interval takes seconds above 0; got ${FG_INTERVAL_S}`); process.exit(2); }
+/** Pool, lane and pooler settings every measured gbrain process runs with, recorded on each row. */
+const SETTINGS = {
+  pool_size: Number(POOL_SIZE || process.env.GBRAIN_POOL_SIZE || 10),
+  pool_size_source: POOL_SIZE ? '--pool-size' : process.env.GBRAIN_POOL_SIZE ? 'GBRAIN_POOL_SIZE' : 'product default',
+  sync_lanes_env: process.env.GBRAIN_SYNC_LANES ?? null,
+  sync_bulk_env: process.env.GBRAIN_SYNC_BULK ?? null,
+  pooler: POOLER || null,
+  prepare_env: POOLER ? 'false' : process.env.GBRAIN_PREPARE ?? null,
+};
+const DEFAULT_SETTINGS = !POOL_SIZE && !process.env.GBRAIN_POOL_SIZE && SETTINGS.sync_lanes_env === null && SETTINGS.sync_bulk_env === null && !POOLER && SETTINGS.prepare_env === null;
 const SOURCE = 'bench';
 const SOURCE_B = 'bench-b';
 const work = mkdtempSync(join(tmpdir(), 'gbrain-catchup-'));
@@ -118,7 +155,8 @@ const log = (msg: string) => console.error(`[catchup ${new Date().toISOString().
 function childEnv(home: string, extra: Record<string, string | undefined> = {}): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...process.env };
   for (const key of Object.keys(env)) if (/_API_KEY$|_API_TOKEN$|^DATABASE_URL$|^GBRAIN_DATABASE_URL$|^OPENAI_BASE_URL$/.test(key)) delete env[key];
-  return { ...env, GBRAIN_HOME: home, GBRAIN_NO_BANNER: '1', GBRAIN_BACKUP_CHECK: '0', GBRAIN_SKILLS_DIR: join(home, 'skills'), NO_COLOR: '1', ...extra };
+  return { ...env, GBRAIN_HOME: home, GBRAIN_NO_BANNER: '1', GBRAIN_BACKUP_CHECK: '0', GBRAIN_SKILLS_DIR: join(home, 'skills'), NO_COLOR: '1',
+    ...(POOL_SIZE ? { GBRAIN_POOL_SIZE: POOL_SIZE } : {}), ...(POOLER ? { GBRAIN_PREPARE: 'false' } : {}), ...extra };
 }
 
 interface CliRun { killed: boolean; code: number; stdout: string; stderr: string; wallMs: number; firstStderrMs: number | null; firstProgressMs: number | null; json: Record<string, unknown> | null }
@@ -345,24 +383,37 @@ async function runWorker(kind: string): Promise<never> {
       if (result.status !== 'partial') break;
       await Bun.sleep(250);
     }
-  } else if (kind === 'foreground') {
+  } else if (kind === 'foreground' || kind === 'foreground-open') {
     const { submitPageMutation } = await import('../../src/core/persistence/page-mutations.ts');
     const stopFile = process.env.BENCH_STOP!;
-    const results: Array<{ t: number; ms: number; ok: boolean; code?: string; state?: string }> = [];
+    const results: ForegroundWrite[] = [];
     const logger = { info() {}, warn() {}, error() {} };
-    for (let i = 0; !existsSync(stopFile); i++) {
+    const open = kind === 'foreground-open';
+    const submit = async (i: number): Promise<void> => {
       const t = performance.now();
+      const start = Date.now();
+      const slug = `notes/bench-${open ? 'open' : 'foreground'}-${process.pid}-${i}`;
       try {
         const out = await submitPageMutation({ engine, config, remote: false, dryRun: false, sourceId, logger } as unknown as Parameters<typeof submitPageMutation>[0],
-          { operation: 'put_page', params: { slug: `notes/bench-foreground-${process.pid}-${i}`, content: `---\ntitle: Foreground ${i}\n---\nForeground write ${i} during catch-up.\n` }, waitMs: 30_000 });
+          { operation: 'put_page', params: { slug, content: `---\ntitle: Foreground ${i}\n---\nForeground write ${i} during catch-up.\n` }, waitMs: 30_000 });
         const state = String((out as { state?: string; status?: string }).state ?? (out as { status?: string }).status ?? '');
-        results.push({ t: Date.now(), ms: round1(performance.now() - t), ok: !['failed', 'conflict', 'cancelled'].includes(state), state });
+        results.push({ start, t: Date.now(), ms: round1(performance.now() - t), ok: !['failed', 'conflict', 'cancelled'].includes(state), state });
       } catch (error) {
         const e = error as { code?: string; message?: string };
-        results.push({ t: Date.now(), ms: round1(performance.now() - t), ok: false, code: e.code ?? (/lock timeout/i.test(e.message ?? '') ? '55P03' : 'error'), state: (e.message ?? '').slice(0, 200) });
+        results.push({ start, t: Date.now(), ms: round1(performance.now() - t), ok: false, code: e.code ?? (/lock timeout/i.test(e.message ?? '') ? '55P03' : 'error'), state: (e.message ?? '').slice(0, 200) });
       }
-      await Bun.sleep(Math.max(0, 1000 - (performance.now() - t)));
+    };
+    const intervalMs = open ? Number(process.env.BENCH_INTERVAL_MS) : 1000;
+    const inflight = new Set<Promise<void>>();
+    const began = performance.now();
+    for (let i = 0; !existsSync(stopFile); i++) {
+      const t = performance.now();
+      if (!open) { await submit(i); await Bun.sleep(Math.max(0, 1000 - (performance.now() - t))); continue; }
+      const write: Promise<void> = submit(i).finally(() => inflight.delete(write));
+      inflight.add(write);
+      while (!existsSync(stopFile) && performance.now() < began + (i + 1) * intervalMs) await Bun.sleep(Math.min(250, Math.max(1, began + (i + 1) * intervalMs - performance.now())));
     }
+    await Promise.all(inflight);
     writeFileSync(process.env.BENCH_RESULTS!, JSON.stringify(results));
   }
   await disposePersistenceConsumer(engine);
@@ -370,11 +421,14 @@ async function runWorker(kind: string): Promise<never> {
   process.exit(0);
 }
 
-async function foregroundWriter(row: RowContext, tag: string): Promise<{ stop: () => Promise<Array<{ t: number; ms: number; ok: boolean; code?: string; state?: string }>> }> {
+interface ForegroundWrite { start?: number; t: number; ms: number; ok: boolean; code?: string; state?: string }
+
+async function foregroundWriter(row: RowContext, tag: string, kind: 'foreground' | 'foreground-open' = 'foreground'): Promise<{ stop: () => Promise<ForegroundWrite[]> }> {
   const stopFile = join(row.home, `foreground-${tag}.stop`);
   const results = join(row.home, `foreground-${tag}.json`);
-  const child = Bun.spawn([process.execPath, import.meta.path, '--worker', 'foreground'], { cwd: row.home, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
-    env: childEnv(row.home, { GBRAIN_SQL_TRACE: row.trace, GBRAIN_SQL_TRACE_LABEL: 'foreground', BENCH_SOURCE: SOURCE, BENCH_STOP: stopFile, BENCH_RESULTS: results }) });
+  const child = Bun.spawn([process.execPath, import.meta.path, '--worker', kind], { cwd: row.home, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
+    env: childEnv(row.home, { GBRAIN_SQL_TRACE: row.trace, GBRAIN_SQL_TRACE_LABEL: 'foreground', BENCH_SOURCE: SOURCE, BENCH_STOP: stopFile, BENCH_RESULTS: results,
+      BENCH_INTERVAL_MS: String(FG_INTERVAL_S * 1000) }) });
   return {
     async stop() {
       writeFileSync(stopFile, '');
@@ -385,11 +439,28 @@ async function foregroundWriter(row: RowContext, tag: string): Promise<{ stop: (
   };
 }
 
+/** Latency, failures by code and per-put_page round trips and spans of one foreground writer's results. */
+function summarizeWrites(rs: ForegroundWrite[], fgRecords: TraceRecord[]): Record<string, unknown> {
+  const code = (r: ForegroundWrite) => r.code ?? r.state ?? '?';
+  return { writes: rs.length, round_trips: foregroundRoundTrips(fgRecords, rs), spans: foregroundSpans(fgRecords, rs), p50_ms: pct(rs.map(r => r.ms), 50), p95_ms: pct(rs.map(r => r.ms), 95),
+    failures: rs.filter(r => !r.ok).length,
+    lock_timeouts: rs.filter(r => r.code === '55P03' || /lock_timeout|lock timeout/i.test(r.state ?? '')).length,
+    failure_codes: Object.fromEntries([...new Set(rs.filter(r => !r.ok).map(code))].map(c => [c, rs.filter(r => !r.ok && code(r) === c).length])) };
+}
+
 function startServe(row: RowContext, env: Record<string, string> = {}): { stop: () => Promise<string> } {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const child = Bun.spawn([process.execPath, CLI, 'serve', '--http', '--bind', '127.0.0.1', '--port', String(port)], { cwd: row.home, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
     env: childEnv(row.home, { GBRAIN_SQL_TRACE: row.trace, GBRAIN_SQL_TRACE_LABEL: 'serve', ...env }) });
   return { async stop() { child.kill('SIGTERM'); const t = setTimeout(() => child.kill('SIGKILL'), 15_000); const err = await new Response(child.stderr).text(); await child.exited; clearTimeout(t); return err.slice(-2000); } };
+}
+
+/** Most writes of one writer in flight at once. */
+function maxInFlight(rs: ForegroundWrite[]): number {
+  const events = rs.flatMap(r => [{ t: r.t - r.ms, d: 1 }, { t: r.t, d: -1 }]).sort((a, b) => a.t - b.t || a.d - b.d);
+  let open = 0, max = 0;
+  for (const e of events) { open += e.d; max = Math.max(max, open); }
+  return max;
 }
 
 /** Statements a CLI process issues before its first admission, and what fraction of a process's statements that is. */
@@ -457,8 +528,10 @@ async function collect(row: RowContext, driven: Driven, locks: LockSample[], mea
   const publications = byFamily(/^UPDATE persistence_requests SET state=\$2,outcome=/);
   const releases = byFamily(/^UPDATE persistence_requests SET state='queued',execution_token=NULL/);
   const traced = records.filter(r => (r.kind === 'execute' || r.kind === 'simple') && !isTxnControl(r.sql)).length;
+  const lanes = laneApply(records);
   return {
     row: row.name, rtt_target_ms: row.rtt, managed: row.managed, backlog_entries: row.backlog, home: row.home, database: row.db,
+    settings: { ...SETTINGS, default_settings: DEFAULT_SETTINGS, pooler_detail: harness.pooler, lanes_busy_max_observed: (lanes.lanes_busy as { max: number }).max },
     done: driven.done, timed_out: driven.timedOut, error: driven.error ?? null,
     wall_s: round1(driven.wallMs / 1000),
     entries_committed: committed.length,
@@ -466,6 +539,8 @@ async function collect(row: RowContext, driven: Driven, locks: LockSample[], mea
     entries_waived: null,
     pages_per_min: minutes > 0 ? round1(pages / minutes) : null,
     extrapolated_full_backlog_h: !driven.done && pages > 0 ? round1((row.backlog / (pages / minutes)) / 60) : null,
+    steady_state: { ...steadyRate(commitTimes(records), syncStart(records)), source: 'trace',
+      db: { ...steadyRate(completions, measureStart.getTime()), source: 'persistence_requests.completed_at; first commit from the row start' } },
     per_page_wall_ms: { p50: pct(gaps, 50), p90: pct(gaps, 90), import_p50: pct(gapOf('managed_sync_import'), 50), delete_p50: pct(gapOf('managed_sync_delete'), 50) },
     admission_to_commit_ms: { p50: pct(committed.map(r => r.completed! - r.created), 50), p90: pct(committed.map(r => r.completed! - r.created), 90), p99: pct(committed.map(r => r.completed! - r.created), 99) },
     requests_by_state: Object.fromEntries([...new Set(stats.reqs.map(r => `${r.kind ?? r.operation}:${r.state}`))].map(k => [k, stats.reqs.filter(r => `${r.kind ?? r.operation}:${r.state}` === k).length])),
@@ -496,6 +571,9 @@ async function collect(row: RowContext, driven: Driven, locks: LockSample[], mea
       re_entry: processBreakdown(records),
       critical_path: criticalPath(records, pages || null),
       publication: publicationBreakdown(records),
+      feeder: feederBreakdown(records, pages || null),
+      lanes,
+      describes: describeRoundTrips(records),
       pg_stat_statements_calls_ex_txn: pss.calls_ex_txn, traced_executions_ex_txn: traced,
       reconciliation_pct: pss.available && pss.calls_ex_txn ? round1(100 * (traced - pss.calls_ex_txn) / pss.calls_ex_txn) : null,
     },
@@ -532,7 +610,7 @@ async function measure(row: RowContext, drive: () => Promise<Driven>, extra: () 
   await harness.setRtt(row.rtt);
   const sizeBefore = await admin(async sql => Number((await sql.unsafe(BENCH_SQL + ' SELECT pg_database_size(current_database())::float8 AS b'))[0]!.b), row.db);
   await admin(sql => sql.unsafe(BENCH_SQL + ' SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname=$1), 0)', [row.db]).catch(() => undefined));
-  const measuredRtt = await measureRtt(row.proxyUrl);
+  const measuredRtt = await measureRtt(row.proxyUrl, !POOLER);
   const sampler = startLockSampler(harness.adminUrl, row.db);
   const effectsSampler = startEffectsSampler(row.directUrl);
   const start = new Date();
@@ -545,11 +623,19 @@ async function measure(row: RowContext, drive: () => Promise<Driven>, extra: () 
     final_backlog: Number((await sql.unsafe(`${BENCH_SQL} SELECT count(*) FILTER (WHERE state IN ('queued','running'))::int AS n FROM persistence_effects`))[0]!.n) }), row.db);
   const result = await collect(row, driven, locks, start, { rtt_measured_ms: measuredRtt, ...more, effects,
     effects_backlog: { samples: backlog.length, sample_every_ms: 2000, max: pct(backlog, 100), p50: pct(backlog, 50), final: effects.final_backlog } });
-  const trace = result.trace as { critical_path: Record<string, unknown>; publication: Record<string, unknown> };
-  console.error(renderAnalysis(trace.critical_path, trace.publication));
-  for (const key of ['foreground_idle', 'foreground_during_catchup']) {
-    const fg = result[key] as { round_trips?: unknown } | undefined;
+  const trace = result.trace as Record<string, Record<string, unknown>>;
+  console.error(renderAnalysis(trace.critical_path!, trace.publication!));
+  const spans: Record<string, Record<string, unknown>> = {};
+  for (const key of ['foreground_idle', 'foreground_during_catchup', 'foreground_open']) {
+    const fg = result[key] as { round_trips?: unknown; spans?: Record<string, unknown> } | undefined;
     if (fg?.round_trips) console.error(`${key} per put_page: ${JSON.stringify(fg.round_trips)}`);
+    if (fg?.spans) spans[key] = fg.spans;
+  }
+  console.error(renderPhase0({ feeder: trace.feeder, lanes: trace.lanes, describes: trace.describes, steady: result.steady_state as Record<string, unknown>, spans }));
+  const open = result.foreground_open as Record<string, unknown> | undefined;
+  if (open) {
+    Object.assign(open, { catchup_pages_per_min: result.pages_per_min, catchup_steady_pages_per_min: (result.steady_state as Record<string, unknown>).pages_per_min_10_90 });
+    console.error(`foreground_open: ${open.submitted} submitted at ${open.arrival_per_min}/min, p50 ${open.p50_ms} ms, p95 ${open.p95_ms} ms, failures ${JSON.stringify(open.failure_codes)}, catch-up ${open.catchup_pages_per_min} pages/min`);
   }
   console.error(`effects: ${JSON.stringify(effects)}; backlog ${JSON.stringify(result.effects_backlog)}`);
   const committed = result.entries_committed as number;
@@ -627,10 +713,19 @@ async function runRow(name: string, rtt: number): Promise<Record<string, unknown
     return measure(row, async () => { busy = await foregroundWriter(row, 'busy'); return driveCli(row, syncArgs); }, async () => {
       const busyResults = await busy!.stop();
       const fgRecords = readTrace(row.trace, r => family(r.label) === 'foreground');
-      const summarize = (rs: typeof idleResults) => ({ writes: rs.length, round_trips: foregroundRoundTrips(fgRecords, rs), p50_ms: pct(rs.map(r => r.ms), 50), p95_ms: pct(rs.map(r => r.ms), 95), failures: rs.filter(r => !r.ok).length,
-        lock_timeouts: rs.filter(r => r.code === '55P03' || /lock_timeout|lock timeout/i.test(r.state ?? '')).length,
-        failure_codes: Object.fromEntries([...new Set(rs.filter(r => !r.ok).map(r => r.code ?? r.state ?? '?'))].map(c => [c, rs.filter(r => !r.ok && (r.code ?? r.state ?? '?') === c).length])) });
-      return { foreground_idle: summarize(idleResults), foreground_during_catchup: summarize(busyResults) };
+      return { foreground_idle: summarizeWrites(idleResults, fgRecords), foreground_during_catchup: summarizeWrites(busyResults, fgRecords) };
+    });
+  }
+  if (name === 'foreground-open') {
+    const row = await setupRow(name, rtt, { managed: true, sources: 1, files: FILES, deletes: DELETES });
+    let open: Awaited<ReturnType<typeof foregroundWriter>> | undefined;
+    return measure(row, async () => { open = await foregroundWriter(row, 'open', 'foreground-open'); return driveCli(row, syncArgs); }, async () => {
+      const results = await open!.stop();
+      const fgRecords = readTrace(row.trace, r => family(r.label) === 'foreground');
+      const starts = results.flatMap(r => r.start === undefined ? [] : [r.start]).sort((a, b) => a - b);
+      const spanMin = starts.length > 1 ? (starts.at(-1)! - starts[0]!) / 60_000 : 0;
+      return { foreground_open: { interval_s: FG_INTERVAL_S, submitted: results.length, arrival_per_min: spanMin > 0 ? round1((starts.length - 1) / spanMin) : null,
+        max_in_flight: maxInFlight(results), ...summarizeWrites(results, fgRecords) } };
     });
   }
   if (name === 'all') {
@@ -662,10 +757,12 @@ async function newcomer(rtt: number): Promise<Record<string, unknown>> {
 }
 
 harness = await startHarness({ pgPort: Number(flag('pg-port', '55432')), proxyPort: Number(flag('proxy-port', '55433')), apiPort: Number(flag('api-port', '58474')),
-  adminUrl: process.argv.includes('--database-url') ? flag('database-url', '') : undefined, keep: KEEP });
+  adminUrl: process.argv.includes('--database-url') ? flag('database-url', '') : undefined, keep: KEEP, poolerPort: POOLER ? Number(flag('pooler-port', '55434')) : undefined });
 const report: Record<string, unknown> = {
   schema: 'gbrain.bench.managed-sync-catchup/v1', label: LABEL, commit: gitDescribe(), started_at: new Date().toISOString(),
-  params: { files: FILES, deletes: DELETES, history: HISTORY, receipt_history: RECEIPT_HISTORY, pad_words: PAD_WORDS, seed: SEED, rtt_ms: RTTS, rows: ROWS, max_minutes: MAX_MS / 60_000 },
+  params: { files: FILES, deletes: DELETES, history: HISTORY, receipt_history: RECEIPT_HISTORY, pad_words: PAD_WORDS, seed: SEED, rtt_ms: RTTS, rows: ROWS, max_minutes: MAX_MS / 60_000,
+    fg_interval_s: FG_INTERVAL_S, pool_size: POOL_SIZE ? Number(POOL_SIZE) : null, pooler: POOLER || null },
+  settings: { ...SETTINGS, default_settings: DEFAULT_SETTINGS }, pooler: harness.pooler,
   host: { cpus: navigator.hardwareConcurrency, platform: process.platform, bun: Bun.version },
   rerun: `bun scripts/bench/managed-sync-catchup.ts ${process.argv.slice(2).join(' ')}`,
   rows: [] as Array<Record<string, unknown>>,

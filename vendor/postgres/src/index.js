@@ -68,6 +68,20 @@ function Postgres(a, b) {
 
   Object.assign(sql, {
     get parameters() { return options.parameters },
+    // GBrain: the pool's own queue lengths, read-only, for the consumer's pool diagnostics (#6317).
+    get pool() {
+      return {
+        max: options.max,
+        open: open.length,
+        busy: busy.length,
+        full: full.length,
+        reserved: reserved.length,
+        connecting: connecting.length,
+        closed: closed.length,
+        ended: ended.length,
+        queued: queries.length
+      }
+    },
     largeObject: largeObject.bind(null, sql),
     subscribe,
     CLOSE,
@@ -636,6 +650,7 @@ function parseOptions(a, b) {
     onnotify        : o.onnotify,
     onclose         : o.onclose,
     onpoisoned      : o.onpoisoned,
+    shared_types    : o.shared_types === false ? null : o.shared_types instanceof Map ? o.shared_types : new Map(),
     onparameter     : o.onparameter,
     socket          : o.socket,
     transform       : parseTransform(o.transform || { undefined: undefined }),

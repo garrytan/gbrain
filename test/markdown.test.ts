@@ -2,7 +2,7 @@ import { describe, test, expect, afterEach } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { parseMarkdown, serializeMarkdown, splitBody, resolveSourceLocalFilePath } from '../src/core/markdown.ts';
+import { parseMarkdown, serializeMarkdown, splitBody, resolveSourceLocalFilePath, sourceGitScope } from '../src/core/markdown.ts';
 
 describe('Markdown Parser', () => {
   test('parses frontmatter + compiled_truth + timeline (explicit sentinel)', () => {
@@ -742,5 +742,43 @@ describe('resolveSourceLocalFilePath — POSIX backslash-in-filename (undeclared
     repoRoot = mkdtempSync(join(tmpdir(), 'gbrain-backslash-win-'));
     mkdirSync(join(repoRoot, '.git'));
     expect(resolveSourceLocalFilePath(repoRoot, '..\\..\\evil.md')).toBeNull();
+  });
+});
+
+describe('resolveSourceLocalFilePath — precomputed gitScope (GBRA-68)', () => {
+  test('passing sourceGitScope(localPath) resolves every page exactly as the per-call walk', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-git-scope-'));
+    try {
+      const repo = join(root, 'repo');
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      mkdirSync(join(root, 'linked'), { recursive: true });
+      writeFileSync(join(root, 'linked', '.git'), 'gitdir: ../repo/.git\n');
+      mkdirSync(join(root, 'plain', 'notes'), { recursive: true });
+      for (const rel of ['public/changelog/a.md', 'public/changelog/notes/b.md', 'public/changelog/public/changelog/c.md', 'journal/d.md', 'e.md']) {
+        mkdirSync(join(repo, rel, '..'), { recursive: true });
+        writeFileSync(join(repo, rel), '# x\n');
+      }
+      writeFileSync(join(root, 'plain', 'notes', 'f.md'), '# f\n');
+      writeFileSync(join(root, 'linked', 'g.md'), '# g\n');
+      const locals = [repo, join(repo, 'public'), join(repo, 'public', 'changelog'), join(root, 'plain'), join(root, 'plain', 'notes'), join(root, 'linked'), join(root, 'missing')];
+      const sourcePaths = [null, '', 'a.md', 'b.md', 'c.md', 'd.md', 'e.md', 'f.md', 'g.md', 'notes/b.md', 'notes/f.md', 'public/changelog/a.md',
+        'public/changelog/notes/b.md', 'public/changelog/public/changelog/c.md', 'journal/d.md', '../e.md', '/abs/e.md', 'x.txt', 'missing/z.md'];
+      const slugs = [undefined, null, 'a', 'notes/b', 'public/changelog/c', 'journal/d', 'e', 'notes/f', 'g', '../x'];
+      const modes = [undefined, 'git-root', 'source-root'] as const;
+      let resolved = 0;
+      for (const local of locals) {
+        const scope = sourceGitScope(local);
+        for (const sp of sourcePaths) for (const slug of slugs) for (const mode of modes) {
+          const walked = resolveSourceLocalFilePath(local, sp, slug, mode);
+          expect({ local, sp, slug, mode, got: resolveSourceLocalFilePath(local, sp, slug, mode, scope) }).toEqual({ local, sp, slug, mode, got: walked });
+          if (walked) resolved++;
+        }
+      }
+      expect(sourceGitScope(join(repo, 'public', 'changelog'))).toEqual(['public', 'changelog']);
+      expect(sourceGitScope(join(root, 'linked'))).toEqual([]);
+      expect(resolved).toBeGreaterThan(1000);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

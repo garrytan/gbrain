@@ -9,9 +9,24 @@ export interface PageMutationPrecondition {
 export interface PageWriteOptions extends PageMutationPrecondition {
   sourceId?: string;
   allowEmptyOverwrite?: boolean;
+  /**
+   * #5984: inside a page transaction, write in that transaction instead of a
+   * savepoint (one round trip less); a failure then aborts the transaction.
+   */
+  inline?: boolean;
+  /**
+   * #5984: stamps the page's contextual retrieval state in the same statement,
+   * as `updatePageContextualRetrievalState` would right after it. Not for the
+   * `none` tier, whose stamp also clears tier vectors.
+   */
+  contextualRetrieval?: { mode: string; corpusGeneration: string | null };
 }
 
-export interface PageKey { sourceId: string; slug: string }
+export interface PageKey {
+  sourceId: string; slug: string;
+  /** #5984: the source incarnation the caller already verified; lets a page lock send its source read with the guard statements. */
+  incarnation?: string;
+}
 export interface PageSnapshotOptions extends GetPageOpts {
   /** Exact slug wins; only follow a source-scoped alias when explicitly requested. */
   resolveAlias?: boolean;

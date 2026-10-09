@@ -55,6 +55,8 @@ import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { currentVerifiedLocalWriter, localHostId } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
+import { checkOwner, ownerUnavailableError } from './owner-refusal.ts';
+import { loadRepairBusySet, repairBusy, repairBusyError } from './repair-busy.ts';
 import { submitPageMutation } from './page-mutations.ts';
 import { clearGitHold, recordSyncImportProvenance } from './sync-holds.ts';
 import { screenSyncImport } from './sync-prepare.ts';
@@ -182,7 +184,7 @@ export async function prepareRepairPublication(engine: BrainEngine, input: Repai
   let prepared: PreparedContentImport | undefined;
   let result;
   try {
-    result = await importFromContent(engine, renamed ? input.base!.page.slug : input.slug, content, { sourceId: input.sourceId, noEmbed: true, remote: false,
+    result = await importFromContent(engine, renamed ? input.base!.page.slug : input.slug, content, { sourceId: input.sourceId, noEmbed: true, remote: false, preserveGateMarkers: true,
       activePack: input.activePack, filename: basename(input.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: input.sourcePath, allowEmptyOverwrite: true,
       prepare: async value => { prepared = value; return value.result; } });
   } catch (error) {
@@ -212,21 +214,26 @@ function assertTrustedRepairCaller(ctx: Pick<OperationContext, 'remote'>): void 
   }
 }
 
-/** The active local owner's canonical root of a source, or a refusal naming writer status. */
-export async function managedRepairRoot(engine: BrainEngine, sourceId: string, kind: FileRepairKind = 'frontmatter'): Promise<{ root: string; ownerEpoch: string }> {
+/**
+ * The active local owner's canonical root of a source, or an `owner_unavailable` refusal whose reason names the
+ * condition (owner-refusal.ts). `remote` (default true) keeps the local identity path out of the text.
+ */
+export async function managedRepairRoot(engine: BrainEngine, sourceId: string, kind: FileRepairKind = 'frontmatter', opts: { remote?: boolean } = {}): Promise<{ root: string; ownerEpoch: string; incarnation: string }> {
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
   const binding = await getWorktreeBinding(engine, sourceId);
-  if (!binding?.local_path || binding.owner_host_id !== localHostId() || binding.state !== 'active') {
-    throw opError('owner_unavailable', 'A managed file repair must run on the active canonical owner of its source.',
-      `This host is not the active owner of source ${sourceId}, so nothing was written. Run gbrain repair ${kind} on the owner host that writer status names, or wait until its owner is active.`,
-      { fix: ownerStatusFix(sourceId) });
-  }
-  return { root: join(binding.local_path, binding.relative_path), ownerEpoch: String(binding.owner_epoch) };
+  const hostId = localHostId();
+  const owner = checkOwner(binding, source?.incarnation ?? '', hostId);
+  if (owner.reason) throw ownerUnavailableError({ sourceId, reason: owner.reason, binding, incarnation: source?.incarnation ?? '', hostId, remote: opts.remote !== false, work: `the ${kind} repair` });
+  return { root: join(owner.binding.local_path, owner.binding.relative_path), ownerEpoch: String(owner.binding.owner_epoch), incarnation: owner.binding.source_incarnation };
 }
 
 /**
  * Admits and waits for one `managed_file_repair` write. Refuses before
  * admission when the caller is not the trusted local CLI, the path is not a
- * confined regular file, or the file no longer has the previewed bytes.
+ * confined regular file, the file no longer has the previewed bytes, or a
+ * write in flight or an unfinished sync's frozen manifest names the path or
+ * page (`sync_in_progress`, #6278: the plan's busy check is repeated here
+ * because a sync can start while a repair waits on its model call).
  */
 export interface ManagedFileRepairInput {
   sourceId: string; requestId: string; slug: string; path: string; sourcePath: string; content: string;
@@ -239,9 +246,13 @@ export async function submitManagedFileRepair(ctx: OperationContext, input: Mana
   assertTrustedRepairCaller(ctx);
   const kind: FileRepairKind = input.fenceRepair !== undefined ? 'fences' : 'frontmatter';
   checkedFenceRepair(input, input.sourceId);
-  const { root, ownerEpoch } = await managedRepairRoot(ctx.engine, input.sourceId, kind);
+  const { root, ownerEpoch, incarnation } = await managedRepairRoot(ctx.engine, input.sourceId, kind, { remote: false });
   const target = confinedRepairTarget(root, input.path, input.sourceId, kind);
   if (fileSha256(target) !== input.beforeHash) throw changedSincePreview(input.sourceId, input.path, 'the file bytes differ from the previewed hash', kind);
+  const busy = await loadRepairBusySet(ctx.engine, input.sourceId, incarnation);
+  if (repairBusy(busy, { path: input.path, sourcePath: input.sourcePath, slug: input.slug }) || (input.renameFrom && repairBusy(busy, { sourcePath: input.renameFrom.sourcePath, slug: input.renameFrom.slug }))) {
+    throw repairBusyError(busy, input.sourceId, input.path);
+  }
   const { sourceId, requestId, expected_revision, ...rest } = input;
   const params: Record<string, unknown> = { ...rest, kind: 'managed_file_repair', ownerEpoch, source_id: sourceId, request_id: requestId,
     ...(expected_revision ? { expected_revision } : {}) };
@@ -299,7 +310,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   const ready = publication.ready;
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, 'file');
   const importContent = p.content.replace(/^\uFEFF/, '');
-  const importOptions = { ...source, noEmbed: true, remote: false, activePack: screenConfig.activePack, filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
+  const importOptions = { ...source, noEmbed: true, remote: false, preserveGateMarkers: true, activePack: screenConfig.activePack, filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
   return { observedRevision: snapshot?.revision ?? null, noop: ready.noop && !fileChanges && !moved, contentUnchanged: ready.noop && !fileChanges && !moved,
     deferEmbedding: p.noEmbed, ...(moved ? { additionalPageKeys: [{ sourceId: row.source_id, slug: moved.slug }] } : {}),
     ...(fileChanges ? { file: { root, path: target, content: bytes, expectedBeforeHash: p.beforeHash, ...(fenceRepair ? { commit: fenceRepairCommit(p.path, fenceRepair.classes) } : {}) } } : {}),

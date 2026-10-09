@@ -201,7 +201,7 @@
         "docs": "docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
         "requires_exclusive": false,
         "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-        "why": "Register `<absolute path to gbrain> serve --surface starter` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+        "why": "Register `<absolute path to gbrain> serve --surface full` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
       },
       "message": "No agent harness was detected. Wire one when the user picks an agent app.",
       "name": "harness_wiring",

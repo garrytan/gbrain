@@ -268,7 +268,7 @@ export function embeddingMismatchMessage(opts: EmbeddingMismatchOpts): string {
     `  DROP INDEX IF EXISTS idx_chunks_embedding;`,
     `  -- NULL embeddings BEFORE the alter: pgvector refuses to cast existing`,
     `  -- vectors across dimensions and aborts the transaction. NULLs cast fine.`,
-    `  UPDATE content_chunks SET embedding = NULL, embedded_at = NULL;`,
+    `  UPDATE content_chunks SET embedding = NULL, embedded_at = NULL, embedding_pending_since = now();`,
     `  ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${requestedDims});`,
     `  ${reindexLine.split('\n').join('\n  ')}`,
     `  COMMIT;`,

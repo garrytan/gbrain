@@ -109,11 +109,12 @@ function readinessTail(entries: readonly ReadinessEntry[], callable: (op: string
 export function buildMcpInstructions(opts?: { writeback?: AmbientWritebackOpts | null; tools?: InstructionTools }): string {
   const tools = opts?.tools;
   const clauses = contractClauses(tools?.callable ?? ALL, opts?.writeback);
-  let text = `GBrain agent operating contract (apply on every cold start):\n${clauses.map((c, i) => `${i + 1}. ${c}`).join('\n')}`;
+  // D1: capped harnesses read the first 2,048 characters, so the hidden-tool sentence leads the contract.
+  const hidden = tools?.hiddenCallable && tools.callable('request_tools')
+    ? `The tool list shows the everyday tools; ${tools.hiddenCallable} more are callable. Call request_tools with no arguments to list them, or with tools: [names] for their schemas, then call them directly.\n`
+    : '';
+  let text = `GBrain agent operating contract (apply on every cold start):\n${hidden}${clauses.map((c, i) => `${i + 1}. ${c}`).join('\n')}`;
   if (tools?.statusLine) text += `\n${tools.statusLine}`;
-  if (tools?.hiddenCallable && tools.callable('request_tools')) {
-    text += `\nThe tool list shows the everyday tools; ${tools.hiddenCallable} more are callable. Call request_tools with no arguments to list them, or with tools: [names] for their schemas, then call them directly.`;
-  }
   if (opts?.writeback) text += `\n\n${buildAmbientWritebackSection(opts.writeback)}`;
   const tail = tools?.readiness ? readinessTail(tools.readiness, tools.callable) : null;
   if (tail) text += `\n\n${tail}`;

@@ -22,7 +22,7 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, openSync, closeSync, unlinkSync, statSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { execSync, execFileSync } from 'child_process';
-import { compareVersions } from '../commands/migrations/index.ts';
+import { compareVersions } from './migration-ledger.ts';
 import { gbrainPath } from './config.ts';
 import type { GBrainConfig } from './config.ts';
 import { promptLineStderr } from './cli-util.ts';

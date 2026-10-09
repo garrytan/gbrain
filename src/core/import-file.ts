@@ -3,7 +3,7 @@ import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { assertImportBase, sameCanonicalImport, sameContentAnyKeyOrder } from './page-state/import-guard.ts';
 import { stabilizeSafetyAssessments } from './persistence/reconcile-safety.ts';
-import { carryStoredQuarantineOverride, settleGateOwnedMarkers } from './quarantine-override.ts';
+import { carryStoredQuarantineOverride } from './quarantine-override.ts';
 import { decideImportIdentity, collidingSlugOwner, fileOriginUri } from './import-identity.ts';
 import { readSourceFileSync } from './minions/source-filesystem.ts';
 import { readFileSync, statSync, lstatSync } from 'fs';
@@ -11,7 +11,7 @@ import { basename, extname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { classifyImportHold, parseMarkdown, resolveParsedSubtype, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
-import { assessImportSanity, loadImportSanityConfig, MAX_FILE_SIZE, screenImportContent, type ContentRefusal, type FenceScreen } from './import-screen.ts';
+import { assessImportSanity, loadImportSanityConfig, MAX_FILE_SIZE, screenImportContent, stripGateOwnedMarkers, type ContentRefusal, type FenceScreen } from './import-screen.ts';
 import { applyImportFences } from './fence-repair/import-step.ts';
 import type { FenceIssueWire } from './fence-repair/tier1.ts';
 import type { FenceFix } from './fence-repair/types.ts';
@@ -37,6 +37,8 @@ import { isEmbeddingZeroNormError, type EmbeddingZeroNormError } from './ai/embe
 import { slugifyPath, slugifyCodePath, isCodeFilePath, hasMalformedPathSegment } from './sync.ts';
 import type { ChunkInput, Page, PageInput, PageType } from './types.ts';
 import type { PageSnapshot } from './page-state/types.ts';
+import { pipelined } from './page-state/transactions.ts';
+import { addPageTags } from './page-state/tags.ts';
 import { computeEffectiveDate, fallbackCreatedAt, isValidTimeZone } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
@@ -243,6 +245,8 @@ export async function importFromContent(
     prepare?: (prepared: import('./persistence/prepared-import.ts').PreparedContentImport) => Promise<ImportResult>;
     /** #5984, with `prepare`: the coordinator proves the base revision under its page guard, and the caller seals the text projection and checks the read-back (`contentHash`) from its own read after apply; apply skips all three. */
     coordinated?: boolean;
+    /** With `coordinated`: the caller's own read of this page (deleted rows included) just before, reused as the import base. */
+    existingSnapshot?: import('./page-state/types.ts').PageSnapshot | null;
     /** Internal canonical metadata, after protected-body overlays and before hashing. */
     prepareFrontmatter?: (page: ParsedPage) => void;
     noEmbed?: boolean;
@@ -299,20 +303,16 @@ export async function importFromContent(
     source_kind?: string | null;
     source_uri?: string | null;
     ingested_via?: string | null;
-    /**
-     * v0.42 (#1699 trust boundary). When `true` (untrusted caller — remote MCP
-     * put_page), gate-owned frontmatter markers (`quarantine`, `content_flag`,
-     * `embed_skip`) are STRIPPED from the incoming content before the content-
-     * sanity gate runs, so only the gate itself can set them. Without this, a
-     * write-scoped OAuth client could `put_page` clean content carrying a
-     * hand-crafted `quarantine` marker to hide arbitrary pages from search, or
-     * a `content_flag.detail` to inject text into the agent-trusted warning
-     * channel. `put_page` passes `ctx.remote !== false` (fail-closed: anything
-     * not strictly local is untrusted, matching the v0.26.9 F7b posture).
-     * Local/trusted callers (sync, capture, dream, `quarantine clear/scan`)
-     * leave it unset → markers preserved (the gate + CLI own them).
-     */
+    /** Untrusted caller (remote MCP put_page: `ctx.remote !== false`); drives the remote fence merge and hidden rows. */
     remote?: boolean;
+    /**
+     * #1699/#6259: gate-owned markers (`quarantine`, `content_flag`, `embed_skip`,
+     * `atoms_scan_hash`, `quarantine_override`) are stripped from incoming content
+     * unless an owner-tier path (owner sync/import, reindex, file repair,
+     * reconcile, cycle derivers, `quarantine clear/scan`) sets this
+     * (`stripGateOwnedMarkers`, import-screen.ts). Local put_page does not.
+     */
+    preserveGateMarkers?: boolean;
     /**
      * Threaded to `tx.putPage` as its empty-overwrite escape hatch (the
      * engine refuses to blank a non-empty body otherwise). Only two callers
@@ -353,8 +353,8 @@ export async function importFromContent(
   parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
   parsed.timeline = sanitizeText(parsed.timeline);
 
-  // #1699 trust boundary: only the gate and trusted local callers set gate-owned markers (quarantine-override.ts).
-  settleGateOwnedMarkers(parsed, opts.remote === true);
+  // #1699/#6259 trust boundary: only the gate and owner-tier paths keep gate-owned markers (import-screen.ts).
+  stripGateOwnedMarkers(parsed, opts);
 
   // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
   // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
@@ -414,7 +414,7 @@ export async function importFromContent(
     // Disposition for the high-confidence junk path: quarantine (hide) by
     // default, or reject (throw → sync-failure) when the operator opts in.
     const junkDisposition = sanityCfg.junkDisposition;
-    const sanityResult = await carryStoredQuarantineOverride(engine, parsed, assessImportSanity(parsed, sanityCfg), { slug, sourceId, remote: opts.remote === true });
+    const sanityResult = await carryStoredQuarantineOverride(engine, parsed, assessImportSanity(parsed, sanityCfg), { slug, sourceId, stripped: opts.preserveGateMarkers !== true });
     if (!sanityDisabled && !sanityResult.shouldQuarantine && sanityResult.flag_reason !== 'oversized' && (parsed.frontmatter[EMBED_SKIP_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized') {
       delete parsed.frontmatter[EMBED_SKIP_KEY];
       if ((parsed.frontmatter[CONTENT_FLAG_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized') delete parsed.frontmatter[CONTENT_FLAG_KEY];
@@ -542,7 +542,7 @@ export async function importFromContent(
   // engine.putPage defaults to 'default' when sourceId is unset, so the read
   // mirrors that default instead of matching the slug in ANY source (the
   // unscoped-check/scoped-write bug class).
-  const existingSnapshot = opts.prepare ? await engine.readPageSnapshot(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }) : null;
+  const existingSnapshot = !opts.prepare ? null : opts.coordinated && opts.existingSnapshot !== undefined ? opts.existingSnapshot : await engine.readPageSnapshot(slug, { sourceId: sourceId ?? 'default', includeDeleted: true });
   const existing = opts.prepare ? existingSnapshot?.page ?? null : await engine.getPage(slug, { sourceId: sourceId ?? 'default', includeDeleted: true });
   if (existing) stabilizeSafetyAssessments(parsed.frontmatter, existing.frontmatter);
 
@@ -831,9 +831,8 @@ export async function importFromContent(
   const [timeZone, mentionPolicy] = await Promise.all([loadBrainTimeZone(engine), readMentionPolicy(engine).catch(() => null)]);
   const applyPrepared = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
     if (!opts.coordinated) await assertImportBase(tx, slug, txOpts.sourceId, existing, reused.size > 0);
-    await assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug);
-    if (existing) await tx.createVersion(slug, preimage ? { ...txOpts, preimage } : txOpts);
-
+    // #5984: the canonical writes go out in two pipelined waves of mutually independent statements; the
+    // second depends on the first (the page row and its id, the old chunks gone). A failure rolls back the caller's transaction.
     // v0.29.1 — compute effective_date from frontmatter precedence chain.
     // Filename comes from importFromFile path (basename) or the slug tail
     // (put_page MCP op fallback). An undated page falls back to a stable
@@ -852,83 +851,85 @@ export async function importFromContent(
       createdAt: fallbackCreatedAt({ existing, fileTimes: opts.fileTimes, now: nowDate }),
     });
 
-    const written = await tx.putPage(slug, {
-      type: parsed.type,
-      title: parsed.title,
-      compiled_truth: parsed.compiled_truth,
-      timeline: parsed.timeline || '',
-      frontmatter: parsed.frontmatter,
-      content_hash: hash,
-      effective_date: effectiveDate,
-      effective_date_source: effectiveDateSource,
-      import_filename: filenameForChain,
-      // Preserve the repo-relative path for sync's delete/rename handling.
-      source_path: opts.sourcePath ?? null,
-      // v0.39.3.0 provenance write-through (WARN-8). Engine layer applies
-      // COALESCE-preserve UPDATE so omitting these on a later put_page
-      // doesn't erase the original ingestion's audit trail.
-      source_kind: opts.source_kind ?? null,
-      source_uri: opts.source_uri ?? originUri,
-      ingested_via: opts.ingested_via ?? null,
-      // ingested_at is server-stamped at the engine layer when any
-      // provenance write fires; never client-controlled.
-      // Empty-overwrite escape hatch only when the caller vouched (file
-      // import / explicit allow_empty); otherwise the engine guard stays on.
-    }, opts.allowEmptyOverwrite === true ? { ...txOpts, allowEmptyOverwrite: true } : txOpts);
-
-    // v0.40.3.0: stamp the contextual retrieval state columns alongside
-    // the page write. updatePageContextualRetrievalState is a narrow
-    // UPDATE that runs after putPage's INSERT/UPDATE so the row exists.
-    // Deferred embedders reproduce it: the prepared outbox installs only
-    // under CAS, and --no-embed drains read it back. Every chunk row is
-    // replaced below, so no older vector survives under this stamp.
-    // This stamp certifies no vector: embedding_signature stays deferred.
-    await tx.updatePageContextualRetrievalState(
-      slug,
-      sourceId ?? 'default',
-      effectiveCRMode,
-      corpusGeneration,
-    );
-
-    // Tag reconciliation (A14): frontmatter tags carry tag_source='frontmatter'.
-    // A frontmatter-owned row whose tag left the frontmatter is deleted; rows
-    // explicit adds own ('added': add_tag, enrichment, the code importer) and
-    // legacy NULL rows are never deleted here (#1621: reindex must not wipe
-    // enrichment). A legacy row still in the frontmatter is adopted. Prepared
-    // (managed) imports keep the add-only union their canonical file renders.
-    if (!opts.prepare) {
-      await tx.executeRaw(`DELETE FROM tags t USING pages p WHERE p.id = t.page_id AND p.source_id = $1 AND p.slug = $2
-        AND t.tag_source = 'frontmatter' AND NOT (t.tag = ANY($3::text[]))`, [txOpts.sourceId, slug, parsed.tags]);
-    }
-    for (const tag of parsed.tags) {
-      await tx.addTag(slug, tag, opts.prepare ? txOpts : { ...txOpts, tagSource: 'frontmatter' });
-    }
-
-    // Replace every derived row atomically. Only vectors the A13 reuse gate
-    // above admitted carry over; a new seal otherwise inherits nothing from an
-    // older index, whose contextual vector may have included a private sibling.
-    await tx.deleteChunks(slug, txOpts);
-    if (chunks.length > 0) {
-      const embeddingColumn = await stampEmbeddingInputs(tx, chunks, null,
-        { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
-      await tx.upsertChunks(slug, chunks, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: MARKDOWN_CHUNKER_VERSION });
-      // v0.41.31: stamp embedding provenance when this import actually
-      // embedded (not --no-embed), so a later model/dims swap is detectable
-      // as stale via embed --stale. The deferred/backfill + per-slug embed
-      // paths stamp too; this covers the inline import/sync path.
-      if (!opts.noEmbed && !opts.onPostCommitEmbedding && !embeddingDeferred) {
-        // D9: signature is null when the gateway is unconfigured — skip the
-        // stamp (a wrong signature is worse than none).
-        const importSig = currentEmbeddingSignature();
-        if (importSig) {
-          await tx.setPageEmbeddingSignature(slug, { sourceId, signature: importSig });
+    if (existing && !preimage) await tx.createVersion(slug, txOpts); // reads the page itself, so before the page write
+    let written: Page | undefined;
+    await pipelined(tx, [
+      () => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
+      async () => { if (existing && preimage) await tx.createVersion(slug, { ...txOpts, preimage }); },
+      async () => {
+        written = await tx.putPage(slug, {
+          type: parsed.type,
+          title: parsed.title,
+          compiled_truth: parsed.compiled_truth,
+          timeline: parsed.timeline || '',
+          frontmatter: parsed.frontmatter,
+          content_hash: hash,
+          effective_date: effectiveDate,
+          effective_date_source: effectiveDateSource,
+          import_filename: filenameForChain,
+          // Preserve the repo-relative path for sync's delete/rename handling.
+          source_path: opts.sourcePath ?? null,
+          // v0.39.3.0 provenance write-through (WARN-8). Engine layer applies
+          // COALESCE-preserve UPDATE so omitting these on a later put_page
+          // doesn't erase the original ingestion's audit trail.
+          source_kind: opts.source_kind ?? null,
+          source_uri: opts.source_uri ?? originUri,
+          ingested_via: opts.ingested_via ?? null,
+          // ingested_at is server-stamped at the engine layer when any
+          // provenance write fires; never client-controlled.
+          // Empty-overwrite escape hatch only when the caller vouched (file
+          // import / explicit allow_empty); otherwise the engine guard stays on.
+        }, { ...txOpts, ...(opts.allowEmptyOverwrite === true ? { allowEmptyOverwrite: true } : {}), inline: true,
+          ...(effectiveCRMode !== 'none' ? { contextualRetrieval: { mode: effectiveCRMode, corpusGeneration } } : {}) });
+        // v0.40.3.0: the contextual retrieval state is stamped with the page write (the `none` tier's
+        // stamp, which also clears tier vectors, follows it). Deferred embedders reproduce it; every
+        // chunk row is replaced below. This stamp certifies no vector: embedding_signature stays deferred.
+        if (effectiveCRMode === 'none') await tx.updatePageContextualRetrievalState(slug, sourceId ?? 'default', effectiveCRMode, corpusGeneration);
+      },
+      // Replace every derived row atomically. Only vectors the A13 reuse gate above admitted carry over; a new
+      // seal otherwise inherits nothing from an older index, whose contextual vector may have included a private sibling.
+      () => tx.deleteChunks(slug, txOpts),
+      // Alias projection and readback share the page commit. A later writer can
+      // no longer turn a successful import into a postcommit verification error.
+      () => writePageAliases(tx, slug, sourceId ?? 'default', parsed, opts.activePack, mentionPolicy),
+    ]);
+    const pageId = written && written.deleted_at == null ? written.id : undefined;
+    await pipelined(tx, [
+      async () => {
+        // Tag reconciliation (A14): frontmatter tags carry tag_source='frontmatter'.
+        // A frontmatter-owned row whose tag left the frontmatter is deleted; rows
+        // explicit adds own ('added': add_tag, enrichment, the code importer) and
+        // legacy NULL rows are never deleted here (#1621: reindex must not wipe
+        // enrichment). A legacy row still in the frontmatter is adopted. Prepared
+        // (managed) imports keep the add-only union their canonical file renders.
+        if (!opts.prepare) await tx.executeRaw(`DELETE FROM tags t USING pages p WHERE p.id = t.page_id AND p.source_id = $1 AND p.slug = $2
+          AND t.tag_source = 'frontmatter' AND NOT (t.tag = ANY($3::text[]))`, [txOpts.sourceId, slug, parsed.tags]);
+        if (pageId !== undefined) return addPageTags(tx, Number(pageId), parsed.tags, opts.prepare ? undefined : 'frontmatter');
+        for (const tag of parsed.tags) await tx.addTag(slug, tag, opts.prepare ? txOpts : { ...txOpts, tagSource: 'frontmatter' });
+      },
+      async () => {
+        if (chunks.length > 0) {
+          const embeddingColumn = await stampEmbeddingInputs(tx, chunks, null,
+            { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
+          await tx.upsertChunks(slug, chunks, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: MARKDOWN_CHUNKER_VERSION,
+            ...(pageId !== undefined ? { pageId: Number(pageId) } : {}) });
+          // v0.41.31: stamp embedding provenance when this import actually
+          // embedded (not --no-embed), so a later model/dims swap is detectable
+          // as stale via embed --stale. The deferred/backfill + per-slug embed
+          // paths stamp too; this covers the inline import/sync path.
+          if (!opts.noEmbed && !opts.onPostCommitEmbedding && !embeddingDeferred) {
+            // D9: signature is null when the gateway is unconfigured — skip the
+            // stamp (a wrong signature is worse than none).
+            const importSig = currentEmbeddingSignature();
+            if (importSig) await tx.setPageEmbeddingSignature(slug, { sourceId, signature: importSig });
+          }
+        } else {
+          // Seal only the completed, full-body sanitized replacement (the upsert above seals its own); a
+          // body-only write or a failed transaction must never certify old stored fragments.
+          await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
         }
-      }
-    } else {
-      // Seal only the completed, full-body sanitized replacement (the upsert above seals its own); a
-      // body-only write or a failed transaction must never certify old stored fragments.
-      await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
-    }
+      },
+    ]);
     if (!opts.coordinated) await sealPageTextProjection(tx, slug, txOpts.sourceId);
 
     // v0.19.0 E1 — doc↔impl linking: if this markdown page cites code paths
@@ -967,9 +968,6 @@ export async function importFromContent(
         ));
       } catch { /* same reason — silent skip */ }
     }
-    // Alias projection and readback share the page commit. A later writer can
-    // no longer turn a successful import into a postcommit verification error.
-    await writePageAliases(tx, slug, sourceId ?? 'default', parsed, opts.activePack, mentionPolicy);
     if (!opts.coordinated) await verifyPageReadable(tx, slug, hash, sourceId, 'importFromContent');
     await opts.beforeCommit?.(tx, slug);
     if (opts.onPostCommitEmbedding && !opts.noEmbed && chunks.length > 0) {
@@ -1274,7 +1272,7 @@ export async function importFromFile(
   // filename `2024-03-15`.
   const fileBasename = basename(relativePath, '.md');
   const imported = await importFromContent(engine, resolvedSlug, content, {
-    ...opts,
+    ...opts, preserveGateMarkers: true,
     filename: fileBasename,
     sourcePath: relativePath,
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- walks up from the caller's own file path by the depth of its own relative path to recover the import root; import-identity confines every probe under that root

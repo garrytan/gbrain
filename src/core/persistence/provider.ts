@@ -19,6 +19,13 @@ import type { Action } from '../agent-output.ts';
 const localWritersFix: Action = { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'], consent: [], actor: 'agent',
   why: 'Shows this brain\'s local writer registrations with their grants, read-only.', requires_exclusive: false };
 
+/**
+ * localOnly operations the verified local CLI may run through the resident
+ * owner: dispatched with the `stdio` locality marker so the localOnly
+ * backstop admits them; remote principals never get it.
+ */
+const LOCAL_CLI_LOCAL_ONLY_OPS = new Set(['takes_remove', 'takes_rebuild']);
+
 /** Resident lifecycle owns the consumer; each connection proves its own durable registration. */
 export async function createPersistenceIpcProvider(engine: BrainEngine, config: GBrainConfig): Promise<PersistenceIpcProvider> {
   for (const lane of ['cli', 'stdio'] as const) {
@@ -70,7 +77,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
       return (await import('../transcripts.ts')).listRecentTranscripts(engine, { days: typeof p.days === 'number' ? p.days : undefined,
         summary: typeof p.summary === 'boolean' ? p.summary : undefined, limit: typeof p.limit === 'number' ? p.limit : undefined });
     }
-    const localCliLocalOnly = !verified.remote && verified.principal.kind === 'local_cli' && request.operation === 'takes_remove';
+    const localCliLocalOnly = !verified.remote && verified.principal.kind === 'local_cli' && LOCAL_CLI_LOCAL_ONLY_OPS.has(request.operation);
     const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
     const result = await dispatchToolCall(engine, request.operation, params, {
       config, remote: verified.remote, transport: verified.remote || localSkillAdministration || localCliLocalOnly ? 'stdio' : undefined, sourceId, auth,

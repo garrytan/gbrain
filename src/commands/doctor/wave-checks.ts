@@ -119,6 +119,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async engine => (await import('./checks/persistence-requests.ts')).writeStallCheck(engine),
   },
   {
+    id: 'persistence_session_timeouts', resolution: 'operator', registration: 'wave',
+    count: d => d.reason === 'session_timeouts_not_applied' ? 1 : 0,
+    hostOnly: 'The connection URL and its pooler are brain-host configuration outside any source scope.',
+    impact: 'A transaction-mode pooler drops the configured session statement_timeout, so autocommit statements outside a transaction have no server-side bound',
+    instruction: 'Set the default on the role instead: `ALTER ROLE <gbrain role> SET statement_timeout = \'5min\'` (docs/guides/troubleshooting.md#session-timeouts-not-applied).',
+    run: async engine => (await import('./checks/persistence-requests.ts')).sessionTimeoutsCheck(engine),
+  },
+  {
     id: 'connector_held_items', resolution: 'operator', registration: 'wave',
     count: d => Number(d.held ?? 0),
     impact: 'Some connector items are held after repeated failures and are not imported',
@@ -237,6 +245,21 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     count: d => Number(d.evidenced ?? 0) + Number(d.ambiguous ?? 0),
     impact: 'Some conversation-extractor facts were expired by the pre-v0.60.11.0 canonical projection and recall no longer returns them',
     run: async (engine, scope) => (await import('./checks/extractor-facts.ts')).extractorFactsCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'conversation_label_facts', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Retiring label-misattributed conversation facts is a host-side, explicit-only repair.',
+    count: d => Number(d.evidenced ?? 0),
+    impact: 'Some conversation facts were extracted from meeting-note labels read as speakers by an older parser, and recall still returns them',
+    run: async (engine, scope) => (await import('./checks/conversation-outcomes.ts')).conversationLabelFactsCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'conversation_outcomes_stale', resolution: 'operator', registration: 'wave',
+    hostOnly: 'Re-extracting conversation facts spends model calls on the brain host.',
+    instruction: 'Preview re-extracting a page the check names with gbrain extract-conversation-facts --source-id <id> --slug <slug> --force --dry-run, then run it without --dry-run after the user agrees to the spend.',
+    count: d => Number(d.stale ?? 0),
+    impact: 'Some conversation pages keep an extraction outcome recorded by an older conversation parser, which is never reopened automatically',
+    run: async (engine, scope) => (await import('./checks/conversation-outcomes.ts')).conversationOutcomesStaleCheck(engine, scope.sourceIds),
   },
   {
     id: 'captured_facts_active', resolution: 'repair', registration: 'wave',

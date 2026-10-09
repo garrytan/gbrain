@@ -48,7 +48,7 @@ ALLOWED=(
   "src/core/shared-skills/tool-access.ts"       # skill usability intersects locality, scopes, snapshots, source fences, surface and publication gates
   "src/mcp/skill-resources.ts"                  # resources map only catalog reads through equivalent scope/snapshot/surface/gate checks and shared dispatch
   "src/core/harness/capabilities.ts"            # introspection applies !op.localOnly plus effective surface, scope, fence, snapshot and publish-gate filters
-  "src/cli.ts"                                  # local CLI; user owns the machine, no trust boundary
+  "src/cli/main.ts"                             # local CLI dispatcher (loaded by src/cli.ts); user owns the machine, no trust boundary
   "src/mcp/dispatch.ts"                         # shared dispatch; sets ctx.remote from caller, handlers self-gate
   "src/mcp/server.ts"                           # stdio MCP; local-trusted (binary on user's box)
   "src/mcp/http-transport.ts"                   # superseded by serve-http.ts; kept for back-compat tests

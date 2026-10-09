@@ -1257,7 +1257,7 @@ export async function runPhaseExtractAtoms(
           );
           if (managed) managedAtoms.push({ slug, content: md, links: [] });
           else await importFromContent(engine, slug, md, {
-              sourceId,
+              sourceId, preserveGateMarkers: true,
               noEmbed: !isAvailable('embedding'),
             });
           importedSlugs.push(slug);

@@ -12,7 +12,7 @@
     {
       "old": "src/cli.ts:CLI_ONLY",
       "kind": "moved",
-      "facade": "src/cli.ts:CLI_ONLY",
+      "facade": "src/cli/main.ts:CLI_ONLY",
       "wasExported": true,
       "new": [
         "src/cli/command-table.ts:CLI_ONLY"
@@ -39,7 +39,7 @@
     {
       "old": "src/cli.ts:THIN_CLIENT_REFUSED_COMMANDS",
       "kind": "moved",
-      "facade": "src/cli.ts:THIN_CLIENT_REFUSED_COMMANDS",
+      "facade": "src/cli/main.ts:THIN_CLIENT_REFUSED_COMMANDS",
       "wasExported": true,
       "new": [
         "src/cli/command-table.ts:THIN_CLIENT_REFUSED_COMMANDS"
@@ -48,14 +48,14 @@
     {
       "old": "src/cli.ts:handleCliOnly",
       "kind": "split",
-      "facade": "src/cli.ts:handleCliOnly",
+      "facade": "src/cli/main.ts:handleCliOnly",
       "wasExported": false,
       "new": [
-        "src/cli.ts:connectCliOnlyEngine",
-        "src/cli.ts:prepareConnectedDispatch",
-        "src/cli.ts:routeCliOnlyBeforeTable",
-        "src/cli.ts:routeEngineFreeSubcommands",
-        "src/cli.ts:runReadOnlyTimeoutDispatch",
+        "src/cli/main.ts:connectCliOnlyEngine",
+        "src/cli/main.ts:prepareConnectedDispatch",
+        "src/cli/main.ts:routeCliOnlyBeforeTable",
+        "src/cli/main.ts:routeEngineFreeSubcommands",
+        "src/cli/main.ts:runReadOnlyTimeoutDispatch",
         "src/cli/commands/advisor.ts:run",
         "src/cli/commands/agent.ts:run",
         "src/cli/commands/anomalies.ts:run",
@@ -151,10 +151,10 @@
     {
       "old": "src/cli.ts:main",
       "kind": "extracted",
-      "facade": "src/cli.ts:main",
+      "facade": "src/cli/main.ts:main",
       "wasExported": false,
       "new": [
-        "src/cli.ts:runSharedOperation"
+        "src/cli/main.ts:runSharedOperation"
       ]
     },
     {

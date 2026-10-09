@@ -212,7 +212,7 @@ export async function deactivatePersistence(engine: BrainEngine, opts: { dryRun?
       if (binding && binding.owner_host_id === hostId && binding.local_path) local.set(binding.worktree_id, binding);
     }
     for (const binding of [...local.values()].sort((a, b) => a!.worktree_id.localeCompare(b!.worktree_id))) {
-      const lock = await acquireWorktree(binding!);
+      const lock = await acquireWorktree(binding!, 0, undefined, undefined, { yieldLanes: true });
       if (!lock) throw new OperationError('writer_lock_unavailable', `A local process holds the canonical worktree lock of source '${binding!.source_id}'.`,
         'Stop the resident owner on this host (gbrain serve or autopilot), then rerun deactivate.');
       locks.push(lock);

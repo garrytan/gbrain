@@ -15,6 +15,9 @@
  */
 import { expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { invalidateStaleSignatureEmbeddingsGuarded } from '../../src/core/embedding-invalidation.ts';
+import { reconcileContextualEmbeddingInputs } from '../../src/core/page-state/contextual-proof.ts';
+import { installPageProjection, readProjectionSnapshot } from '../../src/core/page-state/projections.ts';
 import { installFixtureChunks } from './page-projection.ts';
 
 export interface RollbackCase {
@@ -167,6 +170,94 @@ export const ROLLBACK_CASES: RollbackCase[] = [
       return rows[0]?.s ?? null;
     },
   },
+  // Every site that leaves a chunk without its vector stamps
+  // embedding_pending_since (doctor ages the embedding backlog from it).
+  // Seeded embedded, so the stamp is NULL before the write.
+  {
+    domain: 'chunks (upsertChunks insert without a vector stamps embedding_pending_since)',
+    async seed(engine) {
+      await seedPage(engine);
+      await engine.deleteChunks(SLUG);
+    },
+    async write(tx) {
+      await tx.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: 'pending chunk', chunk_source: 'compiled_truth' }]);
+      expect(await vectorState(tx)).toEqual({ missing: true, pending: true });
+    },
+    observe: pendingStamp,
+  },
+  {
+    domain: 'chunks (upsertChunks text change NULLs the vector and stamps embedding_pending_since)',
+    seed: (engine) => seedEmbeddedChunk(engine),
+    async write(tx) {
+      await tx.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: 'edited chunk', chunk_source: 'compiled_truth' }]);
+      expect(await vectorState(tx)).toEqual({ missing: true, pending: true });
+    },
+    observe: pendingStamp,
+  },
+  {
+    domain: 'chunks (invalidateStaleSignatureEmbeddings stamps embedding_pending_since)',
+    seed: (engine) => seedEmbeddedChunk(engine),
+    async write(tx) {
+      expect(await tx.invalidateStaleSignatureEmbeddings({ signature: await swapSignature(tx), includeNullSignature: true })).toBe(1);
+      expect(await vectorState(tx)).toEqual({ missing: true, pending: true });
+    },
+    observe: pendingStamp,
+  },
+  {
+    domain: 'chunks (invalidateContentDriftEmbeddings stamps embedding_pending_since)',
+    async seed(engine) {
+      await seedEmbeddedChunk(engine);
+      await engine.executeRaw(`UPDATE content_chunks SET chunk_text = 'drifted chunk'
+        WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = 'default')`, [SLUG]);
+    },
+    async write(tx) {
+      expect(await tx.invalidateContentDriftEmbeddings()).toBe(1);
+      expect(await vectorState(tx)).toEqual({ missing: true, pending: true });
+    },
+    observe: pendingStamp,
+  },
+  {
+    domain: 'embedding-invalidation (guarded model-swap invalidation stamps embedding_pending_since)',
+    seed: (engine) => seedEmbeddedChunk(engine),
+    async write(tx) {
+      expect(await invalidateStaleSignatureEmbeddingsGuarded(tx, { signature: await swapSignature(tx), includeNullSignature: true })).toBe(1);
+      expect(await vectorState(tx)).toEqual({ missing: true, pending: true });
+    },
+    observe: pendingStamp,
+  },
+  {
+    domain: 'pages (contextual mode back to none stamps embedding_pending_since)',
+    async seed(engine) {
+      await seedEmbeddedChunk(engine);
+      await engine.executeRaw(`UPDATE pages SET contextual_retrieval_mode = 'title' WHERE slug = $1 AND source_id = 'default'`, [SLUG]);
+    },
+    async write(tx) {
+      await tx.updatePageContextualRetrievalState(SLUG, 'default', 'none', null);
+      expect(await vectorState(tx)).toEqual({ missing: true, pending: true });
+    },
+    observe: pendingStamp,
+  },
+  {
+    domain: 'contextual proof (a vector from a retired model input stamps embedding_pending_since)',
+    seed: (engine) => seedEmbeddedChunk(engine, RETIRED_MODEL),
+    async write(tx) {
+      const snapshot = await tx.readPageSnapshot(SLUG, { sourceId: 'default' });
+      expect(await reconcileContextualEmbeddingInputs(tx, snapshot!, 'none', null)).toBe(1);
+      expect(await vectorState(tx)).toEqual({ missing: true, pending: true });
+    },
+    observe: pendingStamp,
+  },
+  {
+    domain: 'projections (a re-seal that drops a retired vector stamps embedding_pending_since)',
+    seed: (engine) => seedEmbeddedChunk(engine, RETIRED_MODEL),
+    async write(tx) {
+      const snapshot = await readProjectionSnapshot(tx, SLUG, 'default', { allowUnsealed: true });
+      await installPageProjection(tx, snapshot!, [{ chunk_index: 0, chunk_text: EMBEDDED_TEXT, chunk_source: 'compiled_truth' }],
+        { seal: true, preserveEmbeddings: true });
+      expect(await vectorState(tx)).toEqual({ missing: true, pending: true });
+    },
+    observe: pendingStamp,
+  },
   {
     domain: 'pages',
     async seed(engine) {
@@ -246,6 +337,45 @@ async function chunkTexts(engine: BrainEngine): Promise<string[]> {
     `SELECT cc.chunk_text AS t FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
       WHERE p.slug = $1 AND p.source_id = 'default' ORDER BY cc.chunk_index`, [SLUG]);
   return rows.map((r) => r.t);
+}
+
+const EMBEDDED_TEXT = 'embedded chunk';
+const CURRENT_MODEL = 'openai:text-embedding-3-large';
+const RETIRED_MODEL = 'rollback:retired-model';
+
+/** SLUG with one sealed chunk embedded through the real upsert, no contextual mode, no signature. */
+async function seedEmbeddedChunk(engine: BrainEngine, model = CURRENT_MODEL): Promise<void> {
+  await seedPage(engine);
+  await engine.executeRaw(`UPDATE pages SET contextual_retrieval_mode = NULL, embedding_signature = NULL
+    WHERE slug = $1 AND source_id = 'default'`, [SLUG]);
+  await installFixtureChunks(engine, SLUG, [{ chunk_index: 0, chunk_text: EMBEDDED_TEXT, chunk_source: 'compiled_truth', model }]);
+  const vector = new Float32Array(await embeddingDims(engine));
+  vector[0] = 1;
+  await engine.upsertChunks(SLUG, [{ chunk_index: 0, chunk_text: EMBEDDED_TEXT, chunk_source: 'compiled_truth', embedding: vector, model }]);
+  expect(await vectorState(engine)).toEqual({ missing: false, pending: false });
+}
+
+async function embeddingDims(engine: BrainEngine): Promise<number> {
+  const rows = await engine.executeRaw<{ dim: number }>(
+    `SELECT atttypmod AS dim FROM pg_attribute WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding' AND attnum > 0`);
+  return Number(rows[0].dim);
+}
+
+/** A signature for a model the seeded chunk was not embedded with. */
+async function swapSignature(engine: BrainEngine): Promise<string> {
+  return `rollback:swapped-model:${await embeddingDims(engine)}`;
+}
+
+async function vectorState(engine: BrainEngine): Promise<{ missing: boolean; pending: boolean } | null> {
+  const rows = await engine.executeRaw<{ missing: boolean; pending: boolean }>(
+    `SELECT cc.embedding IS NULL AS missing, cc.embedding_pending_since IS NOT NULL AS pending
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE p.slug = $1 AND p.source_id = 'default' AND cc.chunk_index = 0`, [SLUG]);
+  return rows[0] ? { missing: rows[0].missing, pending: rows[0].pending } : null;
+}
+
+async function pendingStamp(engine: BrainEngine): Promise<boolean | null> {
+  return (await vectorState(engine))?.pending ?? null;
 }
 
 async function rollbackChunk(engine: BrainEngine): Promise<number> {

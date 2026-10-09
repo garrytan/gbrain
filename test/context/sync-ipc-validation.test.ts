@@ -12,6 +12,7 @@ import {
   DELEGATED_SYNC_OPTION_FIELDS,
   DELEGATED_SYNC_TIMEOUT_MAX_SECONDS,
   WIRE_PAGES_AFFECTED_MAX,
+  isSyncStartRegistration,
   toWireSyncResult,
   validateDelegatedSyncOptions,
 } from '../../src/core/context/sync-ipc.ts';
@@ -37,6 +38,27 @@ describe('validateDelegatedSyncOptions', () => {
     if (!v.ok) throw new Error('unreachable');
     expect(v.options).toEqual(raw);
     expect(v.options).not.toBe(raw as never);
+  });
+
+  test('#6317: the managed catch-up fields validate by shape (lanes 1..16, explicitProcessing from the three processing keys)', () => {
+    const ok = validateDelegatedSyncOptions({ noBulk: true, lanes: 4, explicitProcessing: ['noEmbed', 'noExtract'], timeoutSeconds: 60 });
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) throw new Error('unreachable');
+    expect(ok.options).toEqual({ noBulk: true, lanes: 4, explicitProcessing: ['noEmbed', 'noExtract'], timeoutSeconds: 60 });
+    for (const lanes of [0, 17, 1.5, '4']) expect(validateDelegatedSyncOptions({ lanes, timeoutSeconds: 60 })).toEqual({ ok: false, error: 'invalid_options:lanes' });
+    for (const explicitProcessing of ['noEmbed', ['repoPath'], [1], ['noEmbed', 'noEmbed', 'noExtract', 'noSchemaPack']]) {
+      expect(validateDelegatedSyncOptions({ explicitProcessing, timeoutSeconds: 60 })).toEqual({ ok: false, error: 'invalid_options:explicitProcessing' });
+    }
+  });
+
+  test('#6317: a registration rides sync_start only in the agreed shape (uuid id, 64-hex credential, lane cli)', () => {
+    const id = '11111111-2222-4333-8444-555555555555', credential = 'a'.repeat(64);
+    expect(isSyncStartRegistration({ id, credential, lane: 'cli' })).toBe(true);
+    expect(isSyncStartRegistration({ id, credential, lane: 'stdio' })).toBe(false);
+    expect(isSyncStartRegistration({ id, credential: 'short', lane: 'cli' })).toBe(false);
+    expect(isSyncStartRegistration({ id: 'not-a-uuid', credential, lane: 'cli' })).toBe(false);
+    expect(isSyncStartRegistration({ id, credential, lane: 'cli', extra: 1 })).toBe(false);
+    expect(isSyncStartRegistration(null)).toBe(false);
   });
 
   test('minimal valid payload: only timeoutSeconds', () => {
@@ -107,8 +129,11 @@ describe('validateDelegatedSyncOptions', () => {
     // that drift loud.
     expect(Object.keys(DELEGATED_SYNC_OPTION_FIELDS).sort()).toEqual([
       'dryRun',
+      'explicitProcessing',
       'full',
       'includeGitignored',
+      'lanes',
+      'noBulk',
       'noEmbed',
       'noExtract',
       'noPull',

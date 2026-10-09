@@ -100,7 +100,7 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
   let ready: PreparedContentImport | undefined;
   const imported = await importFromContent(engine, state.pins.slug, content, {
     sourceId: state.pins.source_id, sourcePath: state.snapshot.page.source_path ?? state.originSourcePath ?? undefined,
-    filename: basename(state.path).replace(/\.mdx?$/i, ''), noEmbed: true, remote: false, allowEmptyOverwrite: true,
+    filename: basename(state.path).replace(/\.mdx?$/i, ''), noEmbed: true, remote: false, preserveGateMarkers: true, allowEmptyOverwrite: true,
     prepareFrontmatter: page => stabilizeSafetyAssessments(page.frontmatter, state.snapshot.page.frontmatter, state.pins.assessment_at),
     prepare: async prepared => { ready = prepared; return prepared.result; },
   });

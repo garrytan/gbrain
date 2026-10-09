@@ -12,17 +12,17 @@ describe('takes holder semantics', () => {
     const fence = `<!--- gbrain:takes:begin -->
 | # | claim | kind | who | weight | since | source |
 |---|-------|------|-----|--------|-------|--------|
-| 1 | AI will replace 50% of coding by 2030 | bet | people/garry-tan | 0.75 | 2026-01 | Lightcone |
+| 1 | AI will replace 50% of coding by 2030 | bet | people/alice-example | 0.75 | 2026-01 | podcast |
 <!--- gbrain:takes:end -->`;
     const result = parseTakesFence(fence);
-    expect(result.takes[0].holder).toBe('people/garry-tan');
+    expect(result.takes[0].holder).toBe('people/alice-example');
   });
 
   it('analysis ABOUT a person by brain → holder is brain, not the subject', () => {
     const fence = `<!--- gbrain:takes:begin -->
 | # | claim | kind | who | weight | since | source |
 |---|-------|------|-----|--------|-------|--------|
-| 1 | Garry has a hero/rescuer pattern from childhood parentification | hunch | brain | 0.75 | 2026-04 | therapy analysis |
+| 1 | Alice has a hero/rescuer pattern | hunch | brain | 0.75 | 2026-04 | brain analysis |
 <!--- gbrain:takes:end -->`;
     const result = parseTakesFence(fence);
     expect(result.takes[0].holder).toBe('brain');
@@ -33,7 +33,7 @@ describe('takes holder semantics', () => {
     const fence = `<!--- gbrain:takes:begin -->
 | # | claim | kind | who | weight | since | source |
 |---|-------|------|-----|--------|-------|--------|
-| 1 | Clipboard Health raised a $100M Series C | fact | world | 1.00 | 2026-03 | TechCrunch |
+| 1 | Acme Example raised a $100M Series C | fact | world | 1.00 | 2026-03 | press release |
 <!--- gbrain:takes:end -->`;
     const result = parseTakesFence(fence);
     expect(result.takes[0].holder).toBe('world');
@@ -44,10 +44,10 @@ describe('takes holder semantics', () => {
     const fence = `<!--- gbrain:takes:begin -->
 | # | claim | kind | who | weight | since | source |
 |---|-------|------|-----|--------|-------|--------|
-| 1 | We can hit $10M ARR by Q3 | bet | people/bo-lu | 0.70 | 2026-04 | OH meeting |
+| 1 | We can hit $10M ARR by Q3 | bet | people/bob-example | 0.70 | 2026-04 | OH meeting |
 <!--- gbrain:takes:end -->`;
     const result = parseTakesFence(fence);
-    expect(result.takes[0].holder).toBe('people/bo-lu');
+    expect(result.takes[0].holder).toBe('people/bob-example');
     expect(result.takes[0].kind).toBe('bet');
   });
 
@@ -55,18 +55,18 @@ describe('takes holder semantics', () => {
     const fence = `<!--- gbrain:takes:begin -->
 | # | claim | kind | who | weight | since | source |
 |---|-------|------|-----|--------|-------|--------|
-| 1 | Founded in 2019, incorporated in Delaware | fact | companies/clipboard-health | 1.00 | 2019-01 | SEC filing |
+| 1 | Founded in 2019, incorporated in Delaware | fact | companies/acme-example | 1.00 | 2019-01 | SEC filing |
 <!--- gbrain:takes:end -->`;
     const result = parseTakesFence(fence);
-    expect(result.takes[0].holder).toBe('companies/clipboard-health');
+    expect(result.takes[0].holder).toBe('companies/acme-example');
   });
 
   it('parser preserves weight values as-is (rounding is at engine layer)', () => {
     const fence = `<!--- gbrain:takes:begin -->
 | # | claim | kind | who | weight | since | source |
 |---|-------|------|-----|--------|-------|--------|
-| 1 | Strong technical founder | take | people/garry-tan | 0.85 | 2026-04 | OH |
-| 2 | Market timing is risky | hunch | people/garry-tan | 0.74 | 2026-04 | OH |
+| 1 | Strong technical founder | take | people/alice-example | 0.85 | 2026-04 | OH |
+| 2 | Market timing is risky | hunch | people/alice-example | 0.74 | 2026-04 | OH |
 <!--- gbrain:takes:end -->`;
     const result = parseTakesFence(fence);
     expect(result.takes[0].weight).toBeCloseTo(0.85, 2);

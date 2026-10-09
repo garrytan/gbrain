@@ -104,6 +104,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('page_generation_clock', 'operational', 'Page generation clock (derived side table, verified equal).'),
     carry('page_mention_state', 'operational', 'Entity mention index: per-page mention watermark; without it every page is due for a rescan.'),
     carry('page_projection_jobs', 'operational', 'Pending page projection work (derived side table, verified equal).'),
+    carry('page_retrievals', 'operational', 'Retrieval telemetry: when a user-facing read last surfaced each page (stale-page bias, volunteer usage stats).'),
     carry('page_versions', 'user_data', 'Page revision history with attribution.'),
     carry('page_write_guards', 'user_data', 'Page write guards per source incarnation and slug.'),
     carry('pages', 'user_data', 'Pages with ids, knowledge_revision, revision attribution and timestamps.'),
@@ -170,6 +171,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     entry('gbrain_cycle_locks', 'discard', 'operational', 'TTL run locks; every row is an orphan under the kernel lock.'),
     entry('budget_reservations', 'discard', 'operational', 'Daily-ledger holds (src/core/budget/daily-ledger.ts) that expire within minutes; budget_ledger carries the day\'s totals, so a hold dropped mid-graduation stays counted as reserved until its UTC day ends (only tightening that day\'s cap).'),
     entry('subagent_rate_leases', 'discard', 'operational', 'Job-owned concurrency leases that expire.'),
+    entry('persistence_consumers', 'discard', 'operational', 'Per-process consumer heartbeat rows (#6317): each is renewed every 10 s by a live process on the source host and lapses in 90 s; the target\'s consumers write their own rows.'),
     entry('oauth_codes', 'discard', 'security', 'One-time authorization codes; an in-flight OAuth handshake restarts.'),
 
     entry('page_links', 'schema_owned', 'operational', 'View over links; each engine\'s schema defines it.', { kind: 'view' }),

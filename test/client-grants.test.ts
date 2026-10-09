@@ -76,6 +76,20 @@ describe('client capability grants', () => {
     expect(JSON.stringify(rows)).not.toContain('client_secret_hash');
   });
 
+  test('new profile registration is full-surface and records the catalog its snapshot was written against', async () => {
+    const created = await memoryClient('provenance-audit-example');
+    const grant = await readClientGrant(engine, created.clientId);
+    expect(grant.surface).toBe('full');
+    expect(grant.surfaceSetBy).toBe('operator');
+    const [row] = await engine.executeRaw('SELECT after_grant FROM oauth_grant_audit WHERE client_id = $1', [created.clientId]);
+    const audit = row.after_grant as { allowedOperations: string[]; catalogProvenance: { version: number; operations: string[] } };
+    expect(audit.catalogProvenance.version).toBe(1);
+    expect(audit.catalogProvenance.operations).toEqual(expect.arrayContaining(audit.allowedOperations));
+    await rescopeClientGrant(engine, created.clientId, { tokenTtlSeconds: 7200 }, { actor: 'test' });
+    const rows = await engine.executeRaw('SELECT after_grant FROM oauth_grant_audit WHERE client_id = $1 ORDER BY id', [created.clientId]);
+    expect((rows[1].after_grant as Record<string, unknown>).catalogProvenance).toBeUndefined();
+  });
+
   test('raw agent registration rejects incomplete or unavailable delegation before insert', async () => {
     await expect(provider.registerClientManual('missing-bindings-example', ['client_credentials'], 'agent')).rejects.toThrow('delegated_tools_missing');
     await expect(provider.registerClientManual('unknown-tools-example', ['client_credentials'], 'agent', [], 'default', undefined, undefined, {
@@ -136,7 +150,7 @@ describe('client capability grants', () => {
   test('CAS rejects stale operators without changing grant or credential hash', async () => {
     const created = await memoryClient('cas-example');
     const before = await readClientGrant(engine, created.clientId);
-    await rescopeClientGrant(engine, created.clientId, { surface: 'full' }, { actor: 'first', expectedRevision: before.revision });
+    await rescopeClientGrant(engine, created.clientId, { surface: 'starter' }, { actor: 'first', expectedRevision: before.revision });
     await expect(rescopeClientGrant(engine, created.clientId, { scopes: ['admin'] }, { actor: 'stale', expectedRevision: before.revision })).rejects.toThrow('Grant changed');
     const after = await readClientGrant(engine, created.clientId);
     expect(after.scopes).toEqual(before.scopes);
@@ -209,7 +223,7 @@ describe('client capability grants', () => {
     expect(changed.grant.profile).toBe('coding-agent');
     expect(changed.grant.allowedOperations).toContain('put_page');
     expect(changed.grant.boundSlugPrefixes).toEqual(['existing-example/']);
-    expect(changed.grant.surface).toBe('starter');
+    expect(changed.grant.surface).toBe('full');
     const cleared = await provisionHarnessGrant(engine, { ...input, profile: 'memory-writer', patch: { boundSlugPrefixes: null } }, 'test');
     expect(cleared.grant.boundSlugPrefixes).toBeNull();
     expect(cleared.grant.allowedOperations).toContain('remember');

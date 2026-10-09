@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 208650,
-    "stdoutSha256": "85819a6dd610e66bca99074a566a435bb0d29f352391b90b3ef306e17407fbb9",
+    "stdoutBytes": 209938,
+    "stdoutSha256": "a8804aad5e3f0691c8a937f411df17e2592662c8eed52ea9c116f90ad05b433d",
     "toolNames": [
       "remember",
       "entity",
@@ -104,6 +104,7 @@
       "takes_resolve",
       "takes_supersede",
       "takes_remove",
+      "takes_rebuild",
       "whoami",
       "sources_add",
       "sources_list",
@@ -361,7 +362,7 @@
         "scope": "write"
       },
       {
-        "description": "Read a page by slug (fuzzy optional; renamed slugs redirect). To edit, pass include_content:true and send `content` to put_page, or use edit_page. Timeline rows need include_timeline_entries.",
+        "description": "Read a page by slug. To edit, pass include_content:true and send `content` to put_page, or use edit_page.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -369,8 +370,10 @@
         "parameters": {
           "content_only": "boolean?",
           "fuzzy": "boolean?",
+          "grammar_diagnostics": "boolean?",
           "include_content": "boolean?",
           "include_deleted": "boolean?",
+          "include_quarantined": "boolean?",
           "include_timeline_entries": "boolean?",
           "slug": "string",
           "source_id": "string?"
@@ -386,12 +389,20 @@
               "description": "Fuzzy slug match.",
               "type": "boolean"
             },
+            "grammar_diagnostics": {
+              "description": "Also return every line-grammar finding for the page.",
+              "type": "boolean"
+            },
             "include_content": {
               "description": "Full markdown + revision, for editing.",
               "type": "boolean"
             },
             "include_deleted": {
               "description": "Include soft-deleted pages.",
+              "type": "boolean"
+            },
+            "include_quarantined": {
+              "description": "Admin: quarantined body.",
               "type": "boolean"
             },
             "include_timeline_entries": {
@@ -773,7 +784,8 @@
         "mutating": false,
         "name": "fetch",
         "parameters": {
-          "id": "string"
+          "id": "string",
+          "include_quarantined": "boolean?"
         },
         "required_scopes": [],
         "schema": {
@@ -781,6 +793,10 @@
             "id": {
               "description": "Opaque result id from a prior `search` call. Pass unchanged. Unambiguous legacy slugs are also accepted.",
               "type": "string"
+            },
+            "include_quarantined": {
+              "description": "Admin: quarantined body.",
+              "type": "boolean"
             }
           },
           "required": [
@@ -4330,6 +4346,35 @@
           "required": [
             "slug",
             "row_num"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Rebuild one page's takes index from the takes fence the page holds. Local-only. Rows whose number and claim still match keep their resolution; rows the index and the fence disagree on are re-inserted from the fence. CLI: `gbrain takes rebuild <slug>`.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": true,
+        "name": "takes_rebuild",
+        "parameters": {
+          "request_id": "string?",
+          "slug": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "request_id": {
+              "description": "UUID; retry with it on timeout.",
+              "type": "string"
+            },
+            "slug": {
+              "description": "Page slug.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug"
           ],
           "type": "object"
         },

@@ -23,6 +23,24 @@
  * exists on this host. Everything else is counted and left alone: a NULL
  * entity slug, a missing page or file, or a source without a checkout here.
  *
+ * Adoption oracle (#6278, `adoptableClaim`): the fence codec trims a claim,
+ * folds CRLF/CR to LF, reads `~~x~~` as a struck row and `<br>` as a line
+ * break, so a legacy claim is adopted only when `parseFactsFence(
+ * renderFactsTable([row]))` hands it back active, non-empty, with the same
+ * kind, visibility, validity and source, differing from the stored text by
+ * whitespace and line endings alone. The parsed text is what the fence will
+ * project, so it is written back into `facts.fact` with the row number (the
+ * canonical projection expires any adopted row whose text differs from its
+ * fence row). A row the codec would change further, or whose normalized
+ * claim, source and visibility another active fence row or planned row
+ * already carries (the reconciler indexes a duplicate once and would retire
+ * the second),
+ * stays a legacy row exactly as it is: never deleted or expired, recorded as
+ * an `UnadoptableFactRecord` (source, page, fact id, reason class; never the
+ * claim text) and named in `failed_pages` with the stable token
+ * `<slug> (fence_unrenderable: N row(s), <class>)`. The other rows of the
+ * page still adopt; a page with no adoptable row submits nothing.
+ *
  * Write discipline (`fenceUnfencedFacts`):
  * - Managed: one `managed_maintenance_adopt_fact_fence` request per page
  *   through the coordinator, which publishes the fence and adopts the rows
@@ -38,7 +56,8 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { isDurabilityHardened } from '../brain-repo-durability.ts';
-import { formatFenceDate, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence } from '../facts-fence.ts';
+import { formatFenceDate, normalizeClaimWhitespace, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, type ParsedFact } from '../facts-fence.ts';
+import { FENCE_SOURCE_DEFAULT } from './extract-from-fence.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { withPageLock } from '../page-lock.ts';
@@ -50,7 +69,7 @@ import { contentHash } from '../utils.ts';
 import { resolvePageWriteTarget } from '../write-through.ts';
 import { commitFactFenceFile, gitPathState } from './fence-write.ts';
 
-interface UnfencedFactRow {
+export interface UnfencedFactRow {
   id: string;
   source_id: string;
   entity_slug: string | null;
@@ -84,6 +103,90 @@ export interface UnfencedFactsOutcome {
   fenced_slugs: string[];
   /** Unmanaged: `<slug> (<reason>)` per live page whose canonical file is not on this host (counted in skipped_no_page). */
   missing_files: string[];
+  /** Legacy rows this run left as they are because the fence codec would change them or the page already carries the claim (#6278). */
+  unadoptable_rows: UnadoptableFactRecord[];
+}
+
+/**
+ * What the fence codec would change about a legacy claim, by column or
+ * character class: `empty` (whitespace-only), `struck` (`~~x~~` reads back
+ * inactive), `line_break_markup` (a literal `<br>` reads back as a newline),
+ * `claim` (any other change to the text), `kind` / `visibility` /
+ * `validity` / `source` (another column reads back different), `parse` (the
+ * single-row fence does not parse at all).
+ */
+export type UnrenderableClass = 'empty' | 'struck' | 'line_break_markup' | 'claim' | 'kind' | 'visibility' | 'validity' | 'source' | 'parse';
+
+/** One legacy row left unadopted, by location only: the claim text is never copied into a diagnostic. */
+export interface UnadoptableFactRecord {
+  source_id: string;
+  slug: string;
+  fact_id: number;
+  reason: 'fence_unrenderable' | 'duplicate_claim';
+  class: UnrenderableClass | 'duplicate_claim';
+}
+
+function fenceRowOf(row: UnfencedFactRow, rowNum: number, claim: string): ParsedFact {
+  // Full timestamps survive the fence (date-only at midnight UTC), so the
+  // canonical projection writes back the value the row already holds.
+  const validFromStr = formatFenceDate(row.valid_from instanceof Date ? row.valid_from : new Date(row.valid_from));
+  const validUntilStr = row.valid_until
+    ? formatFenceDate(row.valid_until instanceof Date ? row.valid_until : new Date(row.valid_until))
+    : undefined;
+  return {
+    rowNum,
+    active: true,
+    claim,
+    kind:       row.kind,
+    confidence: Number(row.confidence),
+    visibility: row.visibility,
+    notability: row.notability,
+    validFrom:  validFromStr,
+    validUntil: validUntilStr,
+    source:     row.source,
+    context:    row.context ?? undefined,
+    ...(row.claim_metric ? { claimMetric: row.claim_metric } : {}),
+    ...(row.claim_value != null ? { claimValue: Number(row.claim_value) } : {}),
+    ...(row.claim_unit ? { claimUnit: row.claim_unit } : {}),
+    ...(row.claim_period ? { claimPeriod: row.claim_period } : {}),
+  };
+}
+
+/**
+ * The parser as the oracle (#6278): render the row as a one-row fence, parse
+ * it back, and accept the parsed claim only when it is active, non-empty,
+ * keeps the row's kind, visibility, validity and source, differs from the
+ * stored text by whitespace and line endings alone, and survives a second
+ * round trip unchanged (it is the text written back into `facts.fact`).
+ */
+export function adoptableClaim(row: Pick<UnfencedFactRow, 'fact' | 'kind' | 'visibility' | 'notability' | 'confidence' | 'context'
+  | 'valid_from' | 'valid_until' | 'source' | 'claim_metric' | 'claim_value' | 'claim_unit' | 'claim_period'>): { claim: string } | { rejected: UnrenderableClass } {
+  const desired = fenceRowOf(row as UnfencedFactRow, 1, row.fact);
+  const once = parseFactsFence(renderFactsTable([desired]));
+  const back = once.facts[0];
+  if (once.warnings.length > 0 || once.facts.length !== 1 || !back) return { rejected: 'parse' };
+  if (!back.active) return { rejected: 'struck' };
+  if (back.claim === '') return { rejected: 'empty' };
+  if (normalizeClaimWhitespace(back.claim) !== normalizeClaimWhitespace(row.fact)) {
+    return { rejected: /<br\s*\/?>/i.test(row.fact) ? 'line_break_markup' : 'claim' };
+  }
+  if (back.kind !== desired.kind) return { rejected: 'kind' };
+  if (back.visibility !== desired.visibility) return { rejected: 'visibility' };
+  if ((back.validFrom ?? '') !== (desired.validFrom ?? '') || (back.validUntil ?? '') !== (desired.validUntil ?? '')) return { rejected: 'validity' };
+  if ((back.source ?? '') !== (desired.source ?? '')) return { rejected: 'source' };
+  const twice = parseFactsFence(renderFactsTable([{ ...desired, claim: back.claim }])).facts[0];
+  if (!twice?.active || twice.claim !== back.claim) return { rejected: 'claim' };
+  return { claim: back.claim };
+}
+
+/** The `failed_pages` entry for a page with unadoptable rows: `<slug> (fence_unrenderable: N row(s), <class>; duplicate_claim: N row(s))`. */
+export function unadoptableRowsToken(slug: string, records: UnadoptableFactRecord[]): string {
+  const parts: string[] = [];
+  const unrenderable = records.filter(r => r.reason === 'fence_unrenderable');
+  if (unrenderable.length) parts.push(`fence_unrenderable: ${unrenderable.length} row(s), ${[...new Set(unrenderable.map(r => r.class))].sort().join(', ')}`);
+  const duplicates = records.filter(r => r.reason === 'duplicate_claim');
+  if (duplicates.length) parts.push(`duplicate_claim: ${duplicates.length} row(s)`);
+  return `${slug} (${parts.join('; ')})`;
 }
 
 export interface UnfencedFactsPlan {
@@ -123,7 +226,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   );
   const outcome: UnfencedFactsOutcome = {
     scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
-    skipped_archived: 0, pages_touched: 0, failed_pages: [], fenced_slugs: [], missing_files: [],
+    skipped_archived: 0, pages_touched: 0, failed_pages: [], fenced_slugs: [], missing_files: [], unadoptable_rows: [],
   };
   const groups = new Map<string, UnfencedFactRow[]>();
   for (const row of rows) {
@@ -152,14 +255,18 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
 }
 
 /**
- * Append a page's unfenced rows to its facts fence. Row numbering starts above
- * every occupied `row_num` on the page, conversation-extractor rows included,
- * so no fence row can take an extractor row's position. A fence row left by a
- * partial earlier run with the same claim and source and no database owner is
- * reused instead of appended again.
+ * Append a page's adoptable unfenced rows to its facts fence. Row numbering
+ * starts above every occupied `row_num` on the page, conversation-extractor
+ * rows included, so no fence row can take an extractor row's position. A
+ * fence row left by a partial earlier run with the same claim and source and
+ * no database owner is reused instead of appended again. Each assignment
+ * carries the parsed claim the fence projects, to be written back into
+ * `facts.fact` with the row number. Rows the codec would change further, and
+ * a second row whose normalized claim and source the page already carries,
+ * are returned in `rejected` and left alone.
  */
-async function planFence(engine: BrainEngine, sourceId: string, entitySlug: string, body: string, group: UnfencedFactRow[]):
-  Promise<{ body: string; assignments: Array<{ id: string; row_num: number }> } | { warnings: string[] }> {
+export async function planFence(engine: BrainEngine, sourceId: string, entitySlug: string, body: string, group: UnfencedFactRow[]):
+  Promise<{ body: string; assignments: Array<{ id: string; row_num: number; fact: string }>; rejected: UnadoptableFactRecord[] } | { warnings: string[] }> {
   const existingFence = parseFactsFence(body);
   if (existingFence.warnings.length > 0) return { warnings: existingFence.warnings };
   const occupiedRows = await engine.executeRaw<{ row_num: number; fact: string; source: string | null }>(
@@ -170,48 +277,56 @@ async function planFence(engine: BrainEngine, sourceId: string, entitySlug: stri
   const occupied = new Map(occupiedRows.map(row => [Number(row.row_num), row]));
   let nextRowNum = Math.max(0, ...occupied.keys(), ...existingFence.facts.map(f => f.rowNum)) + 1;
   const claimed = new Set<number>();
-  const assignments: Array<{ id: string; row_num: number }> = [];
+  const assignments: Array<{ id: string; row_num: number; fact: string }> = [];
+  const rejected: UnadoptableFactRecord[] = [];
+  // The reconciler indexes active rows with one claim and source once (#1781)
+  // and retires the later copy, so a claim the page already carries with the
+  // same source and visibility (the projection's identity), or that an
+  // earlier row of this group plans, is not adopted a second time. A private
+  // and a world row with one text are two facts and both adopt, as before.
+  const dupKey = (claim: string, source: string | undefined, visibility: string) => `${claim}\u0000${source || FENCE_SOURCE_DEFAULT}\u0000${visibility}`;
+  const planned = new Set<string>();
+  const ownedKeys = new Set(existingFence.facts.filter(f => {
+    const owner = occupied.get(f.rowNum);
+    return f.active && owner !== undefined && owner.fact === f.claim && (owner.source ?? '') === (f.source ?? '');
+  }).map(f => dupKey(f.claim, f.source, f.visibility)));
   for (const row of group) {
+    const oracle = adoptableClaim(row);
+    if ('rejected' in oracle) {
+      rejected.push({ source_id: sourceId, slug: entitySlug, fact_id: Number(row.id), reason: 'fence_unrenderable', class: oracle.rejected });
+      continue;
+    }
+    const key = dupKey(oracle.claim, row.source, row.visibility);
+    if (planned.has(key) || ownedKeys.has(key)) {
+      rejected.push({ source_id: sourceId, slug: entitySlug, fact_id: Number(row.id), reason: 'duplicate_claim', class: 'duplicate_claim' });
+      continue;
+    }
+    planned.add(key);
     const existing = existingFence.facts.find(f => {
       const owner = occupied.get(f.rowNum);
-      return f.active && !claimed.has(f.rowNum) && f.claim === row.fact &&
+      return f.active && !claimed.has(f.rowNum) && f.claim === oracle.claim &&
         (f.source ?? '') === (row.source ?? '') &&
         (!owner || owner.fact !== f.claim || (owner.source ?? '') !== (f.source ?? ''));
     });
     if (existing) {
       if (occupied.has(existing.rowNum)) existing.rowNum = nextRowNum++;
-      assignments.push({ id: row.id, row_num: existing.rowNum });
+      assignments.push({ id: row.id, row_num: existing.rowNum, fact: oracle.claim });
       claimed.add(existing.rowNum);
       continue;
     }
-    // Full timestamps survive the fence (date-only at midnight UTC), so the
-    // canonical projection writes back the value the row already holds.
-    const validFromStr = formatFenceDate(row.valid_from instanceof Date ? row.valid_from : new Date(row.valid_from));
-    const validUntilStr = row.valid_until
-      ? formatFenceDate(row.valid_until instanceof Date ? row.valid_until : new Date(row.valid_until))
-      : undefined;
     const rowNum = nextRowNum++;
-    existingFence.facts.push({
-      rowNum,
-      active: true,
-      claim:      row.fact,
-      kind:       row.kind,
-      confidence: row.confidence,
-      visibility: row.visibility,
-      notability: row.notability,
-      validFrom:  validFromStr,
-      validUntil: validUntilStr,
-      source:     row.source,
-      context:    row.context ?? undefined,
-      ...(row.claim_metric ? { claimMetric: row.claim_metric } : {}),
-      ...(row.claim_value != null ? { claimValue: Number(row.claim_value) } : {}),
-      ...(row.claim_unit ? { claimUnit: row.claim_unit } : {}),
-      ...(row.claim_period ? { claimPeriod: row.claim_period } : {}),
-    });
-    assignments.push({ id: row.id, row_num: rowNum });
+    existingFence.facts.push(fenceRowOf(row, rowNum, oracle.claim));
+    assignments.push({ id: row.id, row_num: rowNum, fact: oracle.claim });
     claimed.add(rowNum);
   }
-  return { body: replaceOrInsertFactsFence(body, renderFactsTable(existingFence.facts)), assignments };
+  return { body: replaceOrInsertFactsFence(body, renderFactsTable(existingFence.facts)), assignments, rejected };
+}
+
+/** Keep the typed records and name the page once in `failed_pages` with the stable token; the rows stay as they are. */
+function recordUnadoptable(outcome: UnfencedFactsOutcome, slug: string, records: UnadoptableFactRecord[]): void {
+  if (records.length === 0) return;
+  outcome.unadoptable_rows.push(...records);
+  outcome.failed_pages.push(unadoptableRowsToken(slug, records));
 }
 
 /**
@@ -244,6 +359,8 @@ async function fenceManaged(engine: BrainEngine, plan: UnfencedFactsPlan): Promi
         outcome.failed_pages.push(`${entitySlug} (${fence.warnings.join('; ')})`);
         continue;
       }
+      recordUnadoptable(outcome, entitySlug, fence.rejected);
+      if (fence.assignments.length === 0) continue;
       const target = await resolvePageWriteTarget(engine, entitySlug, sourceId);
       await submitFactFenceAdoption(engine, authority, entitySlug, {
         content: fence.body, expectedRevision: snapshot.revision,
@@ -271,6 +388,8 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
       outcome.failed_pages.push(`${entitySlug} (${fence.warnings.join('; ')})`);
       return;
     }
+    recordUnadoptable(outcome, entitySlug, fence.rejected);
+    if (fence.assignments.length === 0) return;
     const durable = isDurabilityHardened(writeRoot);
     const prewrite = durable ? gitPathState(writeRoot, filePath) : 'clean';
     const tmpPath = `${filePath}.tmp`;
@@ -294,11 +413,14 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
         await tx.refreshPageBody(entitySlug, sourceId, sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
           existing.content_hash || contentHash(existing));
       }
+      // The parsed claim is what the fence projects; the row keeps its id,
+      // vectors and provenance (the reconcile would retire a row whose text
+      // differs from its fence row).
       for (const a of fence.assignments) {
         await tx.executeRaw(
-          `UPDATE facts SET row_num = $1, source_markdown_slug = $2
+          `UPDATE facts SET row_num = $1, source_markdown_slug = $2, fact = $5
             WHERE id = $3 AND source_id = $4 AND row_num IS NULL`,
-          [a.row_num, entitySlug, a.id, sourceId],
+          [a.row_num, entitySlug, a.id, sourceId, a.fact],
         );
       }
     });
@@ -312,6 +434,35 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
   } catch (err) {
     outcome.failed_pages.push(`${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
   }
+}
+
+/**
+ * Read-only (#6278): the rows of a plan the fence step would leave unadopted
+ * and why, by location only, for doctor `fence_integrity`. Each page's body
+ * is read the way the write path reads it (the database snapshot on a managed
+ * brain, the canonical file otherwise) and planned without writing. A plan
+ * the deadline cut short reports `complete: false`.
+ */
+export async function auditUnadoptableFacts(engine: BrainEngine, plan: UnfencedFactsPlan, opts: { deadline?: number } = {}):
+  Promise<{ records: UnadoptableFactRecord[]; complete: boolean }> {
+  const records: UnadoptableFactRecord[] = [];
+  for (const [key, group] of plan.groups) {
+    if (opts.deadline !== undefined && Date.now() > opts.deadline) return { records, complete: false };
+    const [sourceId, entitySlug] = key.split('\0');
+    let body: string;
+    if (plan.managed) {
+      const snapshot = await engine.readPageSnapshot(entitySlug, { sourceId });
+      if (!snapshot) continue;
+      body = serializePageToMarkdown(snapshot.page, snapshot.tags);
+    } else {
+      const filePath = plan.filePaths.get(key);
+      if (!filePath || !existsSync(filePath)) continue;
+      body = readFileSync(filePath, 'utf-8');
+    }
+    const fence = await planFence(engine, sourceId, entitySlug, body, group);
+    if (!('warnings' in fence)) records.push(...fence.rejected);
+  }
+  return { records, complete: true };
 }
 
 /**

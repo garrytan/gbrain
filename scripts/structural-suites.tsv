@@ -93,6 +93,7 @@ test/cycle-abort.test.ts	CycleOpts.signal contract (v0.20.5)	3	readFileSync
 test/cycle-abort.test.ts	autopilot-cycle handler contract (v0.20.5)	3	readFileSync,source-surface-helper
 test/cycle-drain-renewal.test.ts	db-lock heartbeat wiring (structural — issue #6 cancellation)	1	readFileSync
 test/cycle-drain-renewal.test.ts	drain-loop wiring (structural — the shape guard only covers worker.ts)	2	readFileSync
+test/cycle-embed-phase-warn.serial.test.ts	cycle embed phase reports embed failures (E-A)	4	source-surface-helper
 test/cycle-legacy-phases.test.ts	cycle.lint_exclude (#6134)	4	readFileSync
 test/cycle-patterns-deadline-budget.test.ts	deadline plumbing wiring (structural)	7	readFileSync,source-surface-helper
 test/cycle-patterns.test.ts	patterns private-queue keepalive wiring	1	readFileSync
@@ -141,6 +142,9 @@ test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistenc
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
 test/env-trust-protected-keys.test.ts	CWD_DOTENV_PROTECTED_KEYS covers every suspicious GBRAIN_* env read in src/	3	readFileSync
 test/error-catalogue.test.ts	error code registry (agent contract v1)	5	readFileSync
+test/error-registry-6317-contract.test.ts	#6317 codes are registered with a full envelope	3	readFileSync
+test/error-registry-6317-contract.test.ts	drain_stalled: the same-host stop has a cause vocabulary and a filled writer-status fix	3	readFileSync
+test/error-registry-6317-contract.test.ts	the doctor codes each have a troubleshooting symptom row that names who acts, consent and a verify step	1	readFileSync
 test/eval-brainbench-e2e.slow.test.ts	--llm availability gate	1	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	privacy guard violation branches (negative path)	1	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	render-brainbench-delta.ts (the CI step-summary block)	2	exec-scan
@@ -248,6 +252,7 @@ test/postgres-driver-vendor.test.ts	vendored Postgres driver packaging	3	readFil
 test/postgres-engine.test.ts	postgres-engine / search date filtering	2	source-surface-helper
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	source-surface-helper
 test/private-visibility.test.ts	shared private predicate lives once (#4352 remediation)	1	readFileSync
+test/q2-typing-package.test.ts	(file-level)	3	readFileSync
 test/redos-hardening.test.ts	#1569 --no-schema-pack + heartbeat wiring (structural)	2	readFileSync,source-surface-helper
 test/redos-hardening.test.ts	megawave vm-watchdog removal (bootstrap-verify freeze)	5	readFileSync
 test/register-client-source-normalize.test.ts	register-client route wiring (structural)	1	readFileSync
@@ -263,7 +268,7 @@ test/runtime-version.test.ts	stated Bun floor	1	readFileSync
 test/schema-bootstrap-coverage.test.ts	(file-level)	14	source-surface-helper
 test/schema-pack-unify-types-handler.test.ts	#1575 unify-types worker dry-run default	1	source-surface-helper
 test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural)	1	readFileSync
-test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	8	exec-scan
+test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	9	exec-scan
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/ci-executed-counts.test.ts	CLI	2	readFileSync
@@ -355,6 +360,7 @@ test/sync.test.ts	isSyncable	8	source-surface-helper
 test/sync.test.ts	resolveSlugByPathOrSourcePath (CJK wave v0.32.7, codex F4)	3	source-surface-helper
 test/sync.test.ts	sync auto-embed arguments	2	source-surface-helper
 test/sync.test.ts	sync regression — #132 nested transaction deadlock	3	source-surface-helper
+test/takes-reservation-callers.test.ts	(file-level)	1	readFileSync
 test/template-repo-generator.test.ts	generateTemplateTree	0	readFileSync
 test/template-repo-generator.test.ts	renderTemplateReadme	5	readFileSync
 test/think-embed-question-wiring.serial.test.ts	#3734 — CRAG think escalation wires embedQuestion (source pin)	1	readFileSync

@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { extractLinksForSlugs, runExtract, runExtractCore } from '../src/commands/extract.ts';
-import { prepareAutomaticLinks } from '../src/core/persistence/links-preparation.ts';
+import { LINK_ENDPOINTS_SQL, prepareAutomaticLinks } from '../src/core/persistence/links-preparation.ts';
 import { disposePersistenceConsumer, persistenceConsumerStatus } from '../src/core/persistence/service.ts';
 import { runMaintenanceSweep } from '../src/core/sweep.ts';
 import { buildRelationalArm } from '../src/core/search/relational-recall.ts';
@@ -517,7 +517,7 @@ for (const kind of testBackends()) {
         let armed = true;
         const race = spyOn(engine, 'executeRaw').mockImplementation(async function<T>(this: BrainEngine, sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) {
           const result = await executeRaw.bind(this)<T>(sql, params, opts);
-          if (armed && sql === 'SELECT slug, source_id, type, knowledge_revision FROM pages WHERE slug=ANY($1::text[]) AND deleted_at IS NULL') {
+          if (armed && sql === LINK_ENDPOINTS_SQL) {
             armed = false;
             if (change === 'delete') await engine.softDeletePage(person, { sourceId });
             else await engine.putPage(person, { type: change === 'retype' ? 'company' : 'person', title: 'Alice Example', compiled_truth: 'A concurrent edit.' }, { sourceId });
@@ -596,7 +596,7 @@ for (const kind of testBackends()) {
       const snapshot = (await engine.readPageSnapshot(meeting, { sourceId }))!;
       const executeRaw = engine.executeRaw;
       const metadata = spyOn(engine, 'executeRaw').mockImplementation(function<T>(this: BrainEngine, sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) {
-        return sql === 'SELECT slug, source_id, type, knowledge_revision FROM pages WHERE slug=ANY($1::text[]) AND deleted_at IS NULL'
+        return sql === LINK_ENDPOINTS_SQL
           ? Promise.resolve<T[]>([]) : executeRaw.bind(this)<T>(sql, params, opts);
       });
       try {

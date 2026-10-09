@@ -369,7 +369,9 @@ slim_git() {
     specs+=("+refs/remotes/origin/master:refs/remotes/origin/master")
   fi
   git init -q "$dir" &&
-    git -C "$dir" fetch -q --update-shallow --no-tags --no-write-fetch-head "$src" "${specs[@]}" &&
+    # --update-head-ok: the fresh repo's unborn HEAD names init's default branch
+    # (master), which is also the branch a checkout on master fetches into.
+    git -C "$dir" fetch -q --update-head-ok --update-shallow --no-tags --no-write-fetch-head "$src" "${specs[@]}" &&
     cp "$common/config" "$dir/.git/config" &&
     { [ ! -f "$git_dir/index" ] || cp "$git_dir/index" "$dir/.git/index"; } &&
     if [ -n "$branch" ]; then git -C "$dir" symbolic-ref HEAD "$branch"; else git -C "$dir" update-ref --no-deref HEAD "$(git -C "$src" rev-parse HEAD)"; fi

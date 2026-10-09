@@ -8,6 +8,7 @@ import {
   FENCE_REASON_CODES, FENCE_REASONS, GATE_REASONS, fenceMessage, renderFenceFix,
 } from '../src/core/fence-repair/reasons.ts';
 import type { FenceReason } from '../src/core/fence-repair/types.ts';
+import { OWNER_UNAVAILABLE_REASONS } from '../src/core/persistence/owner-refusal.ts';
 
 const SPEC_MANUAL: FenceReason[] = [
   'missing_begin', 'split_rows', 'repeated_marker', 'takes_in_facts', 'superseded_ambiguous', 'enum_unmapped',
@@ -21,6 +22,8 @@ const ADDED_MANUAL: FenceReason[] = ['unclosed_trailing_content', 'marker_near_m
  */
 const EVAL_MANUAL: FenceReason[] = ['extra_cells', 'claim_split'];
 const SPEC_TIER3: FenceReason[] = ['header_unmapped', 'no_header', 'row_before_header', 'short_row'];
+/** #6278: the owner conditions the `owner_unavailable` reasons matrix names (persistence/owner-refusal.ts); `owner_unavailable` stays the generic fallback. */
+const OWNER_CONDITIONS: FenceReason[] = ['host_mismatch', 'transfer_in_progress', 'clone_in_progress', 'incarnation_changed', 'local_path_missing', 'coordination_path_missing'];
 const SPEC_OTHERS: FenceReason[] = [
   'holder_unresolved',
   'unparseable', 'row_collision', 'quoted_fence_rows', 'stored_row_collision', 'withdrawn_claim_in_malformed_fence',
@@ -33,7 +36,17 @@ const SPEC_OTHERS: FenceReason[] = [
 
 describe('FENCE_REASONS', () => {
   test('holds exactly the reasons the spec names (plus the documented additions)', () => {
-    expect([...FENCE_REASON_CODES].sort()).toEqual([...SPEC_MANUAL, ...ADDED_MANUAL, ...EVAL_MANUAL, ...SPEC_TIER3, ...SPEC_OTHERS].sort());
+    expect([...FENCE_REASON_CODES].sort()).toEqual([...SPEC_MANUAL, ...ADDED_MANUAL, ...EVAL_MANUAL, ...SPEC_TIER3, ...OWNER_CONDITIONS, ...SPEC_OTHERS].sort());
+  });
+
+  test('owner conditions match the owner_unavailable reasons matrix: host_admin acts, only the in-progress ones retry by themselves', () => {
+    expect(OWNER_CONDITIONS.every(reason => (OWNER_UNAVAILABLE_REASONS as readonly string[]).includes(reason))).toBe(true);
+    for (const reason of OWNER_CONDITIONS) {
+      expect([reason, FENCE_REASONS[reason].actor, FENCE_REASONS[reason].stage, FENCE_REASONS[reason].tier]).toEqual([reason, 'host_admin', 'repair', null]);
+      expect([reason, FENCE_REASONS[reason].autoRetry]).toEqual([reason, reason === 'transfer_in_progress' || reason === 'clone_in_progress']);
+      expect(FENCE_REASONS[reason].fix).toContain('gbrain sources writer status --source <source> --json');
+    }
+    expect(FENCE_REASONS.host_mismatch.fix).toContain('never copy or regenerate host.json');
   });
 
   test('screen residual classes carry the spec\'s tier and manual-only flag', () => {

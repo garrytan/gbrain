@@ -3,7 +3,7 @@
  *
  * gbrain's CLI_ONLY commands read flags ad hoc (`args.includes('--force')`,
  * per-command parseFlags helpers), so there is no parser to make strict. The
- * pre-dispatch validator in src/cli.ts needs to know each command's legal
+ * pre-dispatch validator in src/cli/main.ts needs to know each command's legal
  * flags; this script derives them from the source instead of a hand-typed
  * list that would rot.
  *
@@ -11,7 +11,7 @@
  * its dispatch text: the record's module under src/cli/commands/ (the former
  * `case 'X':` / plain `if (command === 'X')` body, moved verbatim in refactor
  * wave 1) plus every block of the explicit handleCliOnly pipeline in
- * src/cli.ts (handleCliOnly and its @cliPipelineStage functions, see
+ * src/cli/main.ts (handleCliOnly and its @cliPipelineStage functions, see
  * scripts/lib/cli-pipeline.ts) segmented on its dispatch markers — every
  * `if (command === 'X' …)` head, plain or compound, and `case 'X':` labels (see
  * segmentDispatchBlocks). Collect every `import('…/commands/Y.ts')` in that
@@ -373,7 +373,7 @@ function buildFlagArtifacts(root: string): { registry: Record<string, string[]>;
   const commands = records.map(r => r.name);
 
   // Dispatch text per command, from two sources (refactor wave 1, W4 cli):
-  //  1. the explicit handleCliOnly pipeline in src/cli.ts: handleCliOnly and
+  //  1. the explicit handleCliOnly pipeline in src/cli/main.ts: handleCliOnly and
   //     every @cliPipelineStage function it calls, each segmented on its own
   //     (bounded at the function, so no function's tail bleeds into the next;
   //     unbounded, the LAST block once absorbed every --flag literal in the
@@ -383,10 +383,10 @@ function buildFlagArtifacts(root: string): { registry: Record<string, string[]>;
   // Import specifiers resolve relative to the file the text came from.
   const blocks = new Map<string, Array<{ text: string; dir: string }>>();
   const addBlock = (label: string, text: string, dir: string) => blocks.set(label, [...(blocks.get(label) ?? []), { text, dir }]);
-  const pipeline = flattenCliPipeline(parseSource(root, 'src/cli.ts'));
+  const pipeline = flattenCliPipeline(parseSource(root, 'src/cli/main.ts'));
   for (const fn of [pipeline.entry, ...pipeline.stages]) {
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- build-time generator over this repository's own source tree; every joined segment is a constant module name or a path the generator itself discovered under ROOT
-    for (const [label, text] of segmentDispatchBlocks(fn.getText())) addBlock(label, text, join(root, 'src'));
+    for (const [label, text] of segmentDispatchBlocks(fn.getText())) addBlock(label, text, join(root, 'src', 'cli'));
   }
   for (const record of records) {
     const mod = record.loadSpecifier ? readCommandModule(root, record.loadSpecifier) : null;

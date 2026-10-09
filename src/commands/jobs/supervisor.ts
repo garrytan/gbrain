@@ -301,14 +301,20 @@ const STOP_WAIT_MS = 45_000;
  * is gone" is not enough. Success also needs the supervisor's own `stopped`
  * audit row (after its `shutting_down`) saying the worker drained, every
  * worker it spawned gone, and its queue lock row released. Anything less is
- * reported with the failing check and exits 1.
+ * reported with the failing check and exits 1. W9F item 7: the audit rows are
+ * the run's own (from its `started` row, searched back across weekly files);
+ * a worker is live only when its pid is alive with the start time recorded at
+ * spawn; a run with no `started` row on record is `unverified`, never
+ * `drained`; and a PID file whose pid now belongs to a different process
+ * (start time mismatch) is reported `stale_pid_file` without signaling it.
  */
 async function stopSupervisor(engine: BrainEngine, args: string[], pidFile: string, jsonMode: boolean): Promise<void> {
   const { existsSync, readFileSync } = await import('fs');
   const { hostname } = await import('os');
-  const { readSupervisorEvents } = await import('../../core/minions/handlers/supervisor-audit.ts');
+  const { readSupervisorRun } = await import('../../core/minions/handlers/supervisor-audit.ts');
   const { supervisorLockId } = await import('../../core/minions/supervisor.ts');
   const { inspectLock } = await import('../../core/db-lock.ts');
+  const { processStartTime } = await import('../../core/pglite-lock.ts');
   const report = (payload: Record<string, unknown>, human: string, ok: boolean): never => {
     if (jsonMode) console.log(JSON.stringify(payload));
     else if (ok) console.log(human);
@@ -318,21 +324,35 @@ async function stopSupervisor(engine: BrainEngine, args: string[], pidFile: stri
   const isAlive = (pid: number): boolean => {
     try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
   };
+  // W9F item 7: a live pid whose kernel start time differs from the recorded
+  // one is a different (recycled) process. Unknown start times compare equal.
+  const sameProcess = (pid: number, recordedStart: unknown): boolean => {
+    if (!isAlive(pid)) return false;
+    const current = processStartTime(pid);
+    return typeof recordedStart !== 'string' || current === null || current === recordedStart;
+  };
 
   if (!existsSync(pidFile)) {
     report({ stopped: false, reason: 'pid_file_missing', pid_file: pidFile }, `No PID file at ${pidFile}; supervisor not running.`, false);
   }
   let supervisorPid: number;
+  let recordedStart: string | null;
   try {
-    supervisorPid = parseInt(readFileSync(pidFile, 'utf8').trim().split('\n')[0], 10);
+    const [pidLine, startLine] = readFileSync(pidFile, 'utf8').trim().split('\n');
+    supervisorPid = parseInt(pidLine, 10);
     if (isNaN(supervisorPid) || supervisorPid <= 0) throw new Error('invalid pid');
+    recordedStart = /^\d+$/.test(startLine?.trim() ?? '') ? startLine!.trim() : null;
   } catch (err) {
     return report({ stopped: false, reason: 'pid_file_corrupt', error: String(err) }, `PID file corrupt: ${err}`, false);
   }
 
-  const ownEvents = () => readSupervisorEvents().filter(e => e.supervisor_pid === supervisorPid);
-  const startedEvt = ownEvents().filter(e => e.event === 'started').pop();
-  const queue = (typeof startedEvt?.queue === 'string' ? startedEvt.queue : undefined) ?? parseFlag(args, '--queue') ?? 'default';
+  const before = readSupervisorRun(supervisorPid, { supervisorStart: recordedStart });
+  const supervisorStart = recordedStart ?? before.started?.supervisor_start;
+  if (isAlive(supervisorPid) && !sameProcess(supervisorPid, supervisorStart)) {
+    report({ stopped: false, reason: 'stale_pid_file', supervisor_pid: supervisorPid, pid_file: pidFile },
+      `PID file ${pidFile} names pid ${supervisorPid}, which now belongs to a different process; the supervisor is not running and nothing was signaled.`, true);
+  }
+  const queue = (typeof before.started?.queue === 'string' ? before.started.queue : undefined) ?? parseFlag(args, '--queue') ?? 'default';
 
   try { process.kill(supervisorPid, 'SIGTERM'); }
   catch (err: unknown) {
@@ -356,13 +376,28 @@ async function stopSupervisor(engine: BrainEngine, args: string[], pidFile: stri
       `Supervisor ${supervisorPid} did not exit within ${STOP_WAIT_MS / 1000}s.`, false);
   }
 
-  const events = ownEvents();
+  const run = readSupervisorRun(supervisorPid, { supervisorStart: typeof supervisorStart === 'string' ? supervisorStart : null });
+  if (!run.started) {
+    report({ stopped: true, supervisor_pid: supervisorPid, queue, reason: 'unverified', drained: false, audit_files: run.files },
+      `Supervisor ${supervisorPid} exited, but its audit trail has no record of the run (missing, pruned or corrupt; searched ${run.files.length ? run.files.join(', ') : 'no existing audit files'}), so the drain cannot be verified. ` +
+      'Inspect in-flight jobs with `gbrain jobs list --status active`.', false);
+  }
+  const events = run.events;
   const shuttingIdx = events.map(e => e.event).lastIndexOf('shutting_down');
   const stoppedEvt = shuttingIdx >= 0 ? events.slice(shuttingIdx + 1).find(e => e.event === 'stopped') : undefined;
-  const spawned = events
-    .filter(e => e.event === 'worker_spawned' && typeof e.pid === 'number')
-    .map(e => e.pid as number);
-  const liveWorkers = spawned.filter(isAlive);
+  // The live set: spawns with no later exit. An exit row carries the child's
+  // pid (null: no process was created); a row written before exits carried
+  // one (no `pid` key) pairs with the oldest open spawn.
+  const open: Array<{ pid: number; start: unknown }> = [];
+  let legacyPairing = false;
+  for (const e of events) {
+    if (e.event === 'worker_spawned' && typeof e.pid === 'number') open.push({ pid: e.pid, start: e.pid_start });
+    if (e.event !== 'worker_exited' || e.pid === null) continue;
+    if (!('pid' in e)) legacyPairing = true;
+    const idx = typeof e.pid === 'number' ? open.findIndex(w => w.pid === e.pid) : 0;
+    if (idx >= 0) open.splice(idx, 1);
+  }
+  const liveWorkers = open.filter(w => sameProcess(w.pid, w.start)).map(w => w.pid);
   let lockReleased: boolean | null;
   try {
     const snap = await inspectLock(engine, supervisorLockId(queue));
@@ -389,6 +424,8 @@ async function stopSupervisor(engine: BrainEngine, args: string[], pidFile: stri
     : `Supervisor ${supervisorPid} exited but the stop is not verified as drained (${reason}): ` +
       `${JSON.stringify(checks)}${liveWorkers.length > 0 ? `; live worker pid(s): ${liveWorkers.join(', ')}` : ''}. ` +
       'Inspect in-flight jobs with `gbrain jobs list --status active`.';
+  if (legacyPairing) console.error('Warning: audit rows written before worker exits carried a pid were paired with spawns by order.');
   report({ stopped: true, supervisor_pid: supervisorPid, queue, reason, drained, checks,
-    ...(liveWorkers.length > 0 ? { live_worker_pids: liveWorkers } : {}) }, human, drained);
+    ...(liveWorkers.length > 0 ? { live_worker_pids: liveWorkers } : {}),
+    ...(legacyPairing ? { warnings: ['legacy_exit_pairing'] } : {}) }, human, drained);
 }

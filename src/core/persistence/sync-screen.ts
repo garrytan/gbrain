@@ -11,6 +11,8 @@
  * normalized file; a dry run lists it in `would_normalize`), and a residual
  * fence is held as `invalid_fence`.
  */
+import { realpathSync } from 'node:fs';
+import { relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { loadImportSanityConfig, screenNormalized, type ImportSanityConfig } from '../import-screen.ts';
@@ -25,11 +27,12 @@ import { isImageFilePath, resolveSlugForPath } from '../sync.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { VERSION } from '../../version.ts';
 import { sha256 } from './digest.ts';
-import { readSyncFile, syncGitPath, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
-import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
+import { readSyncContent, readSyncFile, syncGitPath, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
+import { PINNED_WINDOW, readBlobContents, readPinnedBlob, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { screenSyncImport, type SyncImportScreenInput } from './sync-prepare.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
-import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldItem, type GitHoldRecord, type SyncHoldPolicy } from './sync-holds.ts';
+import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
+import type { WriteRequest } from './model.ts';
 
 type Snapshot = Awaited<ReturnType<BrainEngine['readPageSnapshot']>>;
 export type HeldEntry = Pick<GitHoldRecord, 'path' | 'source_path' | 'slug' | 'page_id' | 'code' | 'message' | 'upstream_version' | 'meta'>;
@@ -54,10 +57,26 @@ export function isSyncReadBound(error: unknown): boolean {
   return error instanceof OperationError && error.code === 'request_too_large' && error.message === 'Sync file exceeds the bounded import size.';
 }
 
-/** The pinned blob of one entry (one `ls-tree`), or null when the commit lacks it. */
-export function pinnedBlob(discovery: Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target'>, path: string): TreeBlob | null {
-  const gitPath = syncGitPath(discovery, path);
-  return readTreeBlobs(discovery.gitRoot, discovery.target, [gitPath]).get(gitPath) ?? null;
+type PinnedCursor = Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target' | 'entries'> & { index: number };
+
+/** Git paths of the committed imports from the cursor's entry on: the window one pinned read lists. */
+function upcomingGitPaths(cursor: PinnedCursor): () => string[] {
+  return () => {
+    const gitRoot = realpathSync.native(cursor.gitRoot), root = realpathSync.native(cursor.root);
+    return cursor.entries.slice(cursor.index, cursor.index + PINNED_WINDOW).filter(entry => entry.action === 'import' && !entry.working)
+      .map(entry => relative(gitRoot, resolve(root, entry.path)).split(sep).join('/'));
+  };
+}
+
+/** The pinned blob of one entry, or null when the commit lacks it; read with the entries after it (`readPinnedBlob`). */
+export function pinnedBlob(cursor: PinnedCursor, path: string): TreeBlob | null {
+  return readPinnedBlob(cursor.gitRoot, cursor.target, syncGitPath(cursor, path), upcomingGitPaths(cursor));
+}
+
+/** The frozen import content of one entry (`readSyncContent`); a committed entry's pinned blob is read with the entries after it. */
+export function pinnedContent(cursor: SyncDiscovery & { index: number }, entry: SyncEntry): string {
+  const content = entry.working ? null : readPinnedContent(cursor.gitRoot, cursor.target, syncGitPath(cursor, entry.path), upcomingGitPaths(cursor));
+  return content ?? readSyncContent(cursor, entry);
 }
 
 function heldEntry(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null,
@@ -83,6 +102,34 @@ export function prepareTimeFenceHold(entry: Pick<SyncEntry, 'path' | 'sourcePath
   // An older gbrain's receipt named no section: take it from the refused bytes themselves.
   const fence = completeFenceLocation(receipt, parseMarkdown(content, `${slug}.md`));
   return heldEntry(entry, slug, pageId, { code: 'invalid_fence', reason: 'prepare_time', fence, message: fenceMessage(fence) }, content, blobOid ? { oid: blobOid } : null);
+}
+
+/** #6278: the receipt fields a `preparation_stalled` hold keeps (the owner's step vocabulary only, never content). */
+export function preparationStallMeta(receipt: Pick<WriteRequest, 'request_id' | 'error_detail'>, syncArgv: string[]): PreparationStallMeta {
+  const detail = receipt.error_detail && typeof receipt.error_detail === 'object' ? receipt.error_detail as Record<string, unknown> : {};
+  const waiting = detail.waiting_on;
+  return { request_id: receipt.request_id, step: typeof detail.step === 'string' ? detail.step.slice(0, 64) : null,
+    waiting_on: typeof waiting === 'string' && ['git', 'fs', 'db', 'pool', 'unknown'].includes(waiting) ? waiting as PreparationStallMeta['waiting_on'] : null,
+    attempts: typeof detail.attempts === 'number' && Number.isFinite(detail.attempts) ? detail.attempts : null, gbrain_version: VERSION, sync_argv: syncArgv };
+}
+
+/**
+ * #6278: the hold a `managed_sync_import` or `managed_sync_delete` member earns
+ * when its owner finished it `failed` with `preparation_stalled` (the
+ * preparation never settled within its attempts). The file is not the
+ * problem, so the hold carries the receipt's step and wait cause and routes
+ * to writer status, then `sources retry-held` and the same sync. A delete
+ * hold has no content (`upstream_version` null) and is marked `deleted`, so
+ * discovery leaves it alone until a retry or a gbrain change.
+ */
+export function preparationStalledHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>, slug: string, pageId: number | null,
+  receipt: Pick<WriteRequest, 'request_id' | 'error_detail'>, content: string | null, blobOid: string | null | undefined, syncArgv: string[]): HeldEntry {
+  const stall = preparationStallMeta(receipt, syncArgv);
+  const where = stall.step ? ` at step ${stall.step}` : '';
+  const held = heldEntry(entry, slug, pageId, { code: 'preparation_stalled',
+    message: `${entry.path}: its ${entry.action === 'delete' ? 'deletion' : 'import'} could not finish preparing${where} (request ${receipt.request_id}), so it is held and the rest of the source synced. `
+      + `Inspect the writer with gbrain sources writer status, then gbrain sources retry-held and the same sync.` }, content, blobOid ? { oid: blobOid } : null);
+  return { ...held, meta: { ...held.meta, stall, ...(entry.action === 'delete' ? { deleted: true as const } : {}) } };
 }
 
 /**

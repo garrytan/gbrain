@@ -681,17 +681,18 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
     }
 
     const finishReason = claudeCliFinishReason(result.stop_reason, toolCalls.length > 0);
-    const inputTokens = result.usage?.input_tokens;
-    const outputTokens = result.usage?.output_tokens;
-    const totalTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
-    // `cache_creation_input_tokens` is deliberately NOT surfaced here — the AI
-    // SDK's LanguageModelV2Usage has no corresponding field, and folding it in
-    // would need a claude-cli-specific branch in the gateway's usage assembly
-    // (src/core/ai/gateway.ts). Out of scope for this fix.
+    // The CLI reports Anthropic's separate buckets; LanguageModelV2Usage wants
+    // the TOTAL input with the cache read as a subset (what every SDK provider
+    // reports), so the gateway prices cache tokens once. Cache creation has no
+    // V2 field: it stays inside the total at the input rate.
     const cachedInputTokens =
       result.usage?.cache_read_input_tokens !== undefined
         ? Number(result.usage.cache_read_input_tokens)
         : undefined;
+    const inputTokens = result.usage?.input_tokens === undefined ? undefined
+      : result.usage.input_tokens + (cachedInputTokens ?? 0) + Number(result.usage.cache_creation_input_tokens ?? 0);
+    const outputTokens = result.usage?.output_tokens;
+    const totalTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
 
     return {
       content,

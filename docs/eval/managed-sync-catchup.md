@@ -134,7 +134,82 @@ reads `persistence_requests` and `op_checkpoints`.
   to `now()`, which is the transaction start, so this figure leaves out
   the publication transaction itself (about 5 s at 57 ms). Time-boxed
   rows also report an extrapolation for the full backlog, labelled as
-  one.
+  one. `steady_state` adds the rate between the 10% and 90% committed
+  marks, from commit times in the trace (each committed group
+  publication counts one commit per member, any process; each committed
+  single publication of a sync process counts one, except in rows with a
+  foreground writer, where the sync process's consumer also publishes
+  `put_page` writes the trace cannot tell apart), and the time from
+  the first record of the first sync process to the first commit.
+  `steady_state.db` is the same from `persistence_requests.completed_at`,
+  with the first commit measured from the row's start.
+- **Transaction classification.** The critical path and publication
+  tables split each process's records into transactions per
+  connection, whichever process or connection runs them. A group
+  publication is a transaction with the set-based completion
+  (`WITH m AS (SELECT * FROM unnest(...)) ... UPDATE persistence_requests r
+  SET state='committed'`), or with a member attribution
+  (`set_config('gbrain.write_request',...)`) and an `INSERT INTO pages` /
+  `UPDATE pages` (a lane group rolled back before its completion). A
+  single publication has the ownership guard, the counter lock and the
+  single completion. Admission, recovery record, claim, waiver (a
+  checkpoint write under a page guard), and cursor transactions follow.
+  The full rules are in `RULES` in `managed-sync-catchup-phases.ts` and
+  in each row's JSON.
+- **Feeder (`trace.feeder`).** The sync process runs the sync loop and
+  its consumer in one process, so its records are split by marker.
+  Markers are statements only the sync loop sends: cursor, waiver and
+  admission transactions, `op_checkpoints` reads, request lookups by
+  `request_id`, the admit-ahead foreground check, and write-wait reads.
+  A gap between markers that ends at a write-wait read is idle
+  (`awaitWrite`); every other gap is producing. Loose reads in producing
+  gaps are freeze and waiver-screen reads. Reads inside a consumer
+  preparation span (the k-th claim chain's end to the k-th publication's
+  begin) are reported apart as `overlapping_preparation`, because the
+  screen and the consumer's preparation run the same helpers. A freeze
+  sends one origin read, one page snapshot and one writer check, so the
+  freeze/screen split is an estimate on that basis. Waves here are
+  counted across connections. Each bucket reports statements, waves and
+  describes per entry, per group and per page.
+- **Lanes (`trace.lanes`).** Per group publication: apply time (begin
+  to the commit-turn poll), turn wait (the trailing run of
+  `SELECT state FROM persistence_requests WHERE ... request_id=$3`
+  polls), completion, statements per page before the turn, and describes
+  per group. Also the time-weighted number of open group publications
+  while at least one is open, with its distribution.
+- **Describes (`trace.describes`).** Describe round trips per
+  connection over the run, by process, and per single publication.
+- **Foreground spans (`foreground_*.spans`).** Each `put_page` is matched to
+  the writer's transactions: writes in start order take admissions in
+  order; a write's publication is the latest unassigned single
+  publication before its reply, and its claim and recovery record are
+  the latest before that. Spans: pre-admission, admission,
+  admission+claim, preparation (claim to publication begin, including
+  the recovery record), recovery record, publication, and visible
+  (publication end to the reply). p50/p95 per span.
+- **Open-loop foreground (`foreground-open`).** `cli` while a second
+  process submits one `put_page` every `--fg-interval` seconds
+  (default 5) for the whole run, whether or not earlier writes finished.
+  `foreground_open` reports the arrival rate, most writes in flight,
+  p50/p95, failures by code (`write_pending` included), spans, and the
+  catch-up rate during the row. The closed-loop `foreground` row is
+  unchanged.
+- **Settings (`settings`).** `--pool-size N` sets `GBRAIN_POOL_SIZE`
+  for every gbrain process; unset, the product default of 10 applies.
+  Each row records the effective pool size and its source,
+  `GBRAIN_SYNC_LANES` and `GBRAIN_SYNC_BULK` when set, the pooler, the
+  most lanes observed busy, and `default_settings` (true only when
+  nothing was overridden).
+- **Pooler (`--pooler pgbouncer`, report-only).** A transaction-mode
+  PgBouncer (`edoburu/pgbouncer`, pinned by digest, PgBouncer 1.26.0,
+  `default_pool_size=50`, recreated each run) runs on loopback between toxiproxy and
+  Postgres, so the RTT stays between gbrain and the pooler. gbrain runs
+  with `GBRAIN_PREPARE=false`. Stock PgBouncer refuses the
+  `statement_timeout` and `idle_in_transaction_session_timeout` startup
+  parameters gbrain sends, so the pooler ignores them (listed in the
+  row's `settings.pooler_detail.ignore_startup_parameters`): those session timeouts do
+  not reach the server. Setup still talks to Postgres directly.
+  `--pooler-port` picks the listener (default 55434).
 
 ## JSON schema (`gbrain.bench.managed-sync-catchup/v1`)
 
@@ -735,3 +810,102 @@ What is left between the steady state and the wall figure is the startup:
 discovery and already-deleted files run one at a time before the first
 group. At 57 ms that is about 80 s for this corpus, which is why the wall
 rate of a short backlog stays below 150 even when the lanes run at it.
+
+## Feeder, lanes to 16 and foreground priority (lanes/startup/foreground plan)
+
+Before and after on Ubicloud `standard-16` VMs (Ubuntu 24.04, Postgres in
+Docker, toxiproxy at 57 ms), default settings unless a row says otherwise:
+master `a865f8f8` against the branch at `0ba3b1f7c` (G4's lane means are from
+`d00f4d035`, the same lane code). The 57 ms `cli` rows ran on 1,500 files
+time-boxed at 10 min (8 min for the lane sweep); the 10k row ran to
+completion. **Steady** is pages/min between the 10% and 90% commits; **first
+commit** is from the sync process's first statement. G7 is the open-loop row:
+one `put_page` every 5 s for the whole run, whether or not the last one
+finished. G6 is the closed-loop row (next write when the last returns, 1 s
+floor).
+
+| Gate | Master | Branch | Target | Result |
+|---|---|---|---|---|
+| G1 steady, 10k corpus | 174.8 | 367.9 | >= 300 | met |
+| G2 10k backlog wall | 74.5 min | 33.6 min | <= 40 min | met |
+| G3 first commit, 1,500 files (34 waived first) | 78.9 s | 18.4 s | <= 15 s | missed |
+| G4 steady at 4 / 6 / 8 / 12 / 16 lanes, pool 20 | falls past 6 | 333.5 / 369.4 / 399.9 / 406.6 / 408.5 (8 to 16: mean of 3 runs) | non-decreasing within the 6-lane spread | met |
+| G5 `put_page` idle p50 / p95 | 8.6 / 11.6 s | 2.46 / 2.72 s | <= 3 / 4 s | met |
+| G6 `put_page` during catch-up p95, closed loop | 17.1 s | 4.06 s (idle 2.59 s), 0 of 184 failed | <= idle + 1 s (provisional) | missed (idle + 1.5 s) |
+| G7 catch-up while a write arrives every 5 s, open loop | 0.4 (115 of 120 writes failed) | 174.4 (45% of idle 391.1), 0 of 120 failed; writes p50 / p95 3.5 / 21.9 s | >= 50% of idle | missed |
+| G8 steady at ~0 ms | 2,404 | 3,332 | >= 700 | met |
+
+The three repeated default (6-lane) runs gave 381.3, 378.9 and 374.5 pages/min.
+The 8, 12 and 16 lane rows ran three times each: 418.1 / 384.8 / 396.9, 418.8 /
+392.5 / 408.4 and 409.3 / 398.5 / 417.6. Runs at one lane count spread by about
+30 pages/min, and the means rise with the lane count. A single sweep at
+`0ba3b1f7c` gave 334.2 / 388.7 / 395.7 / 415.5 / 371.9 for 4 / 6 / 8 / 12 / 16;
+its 16-lane run sits inside the spread of single runs but below 12, and was not
+repeated.
+
+An earlier open-loop run at `e2656589d` measured G7 at 204.2 pages/min (53% of
+idle 385), writes p50 / p95 3.2 / 14.6 s; the code between it and `0ba3b1f7c`
+changed startup only. One run at each head is not enough to tell a regression
+from run-to-run spread, so G7 is recorded from the final run.
+
+**G3.** Of the 18 s before the first commit, about 3.9 s is startup reads, 3.9
+s the 34 waived deletions (screened four at a time, then one waiver
+transaction), 3.2 s the first group's waiver and admission, about 3 s its claim
+and preparation and 3.3 s its publication. Each is a serial chain of round
+trips; about 2 s of it is first-use statement descriptions, which a
+cross-process description cache in the driver would remove.
+
+**G6 and G7.** A foreground write that names no queued or running group's page
+now publishes beside running lane groups in the sync process, instead of
+waiting for them and holding new groups back. On the open-loop row master
+catches up at 0.4 pages/min with 115 of 120 writes failing; the branch runs at
+174 to 204 pages/min with none failing. The remaining tail is
+writes in the drain's first minute waiting on the brain-wide persistence
+counters that every lane group also updates.
+
+**Admit-ahead fix.** Before `d00f4d035`, admit-ahead asked for more requests
+at once than the writer's outstanding-request limit (100) allowed whenever
+groups were large (16 pages at ~0 ms) or lanes were many (8+); the admission
+was refused and lanes ran one at a time. The sweep at `4004f1f2f` shows it:
+8 / 12 / 16 lanes at 88.1 / 69.2 / 56.5 pages/min. Now the batch takes only the
+room left after the cursor's next group and a reserve of 10.
+
+## Startup reads, lock scope and a held claim (follow-up wave)
+
+Three runs per head on Ubicloud `standard-16` VMs at 57 ms, default settings,
+1,500 files with 34 waived deletions first: master `b5f12b12e` (v0.60.117.0)
+against this wave at `d6d9d5956`. G6 and G7 are judged on the mean of three
+runs per head from here on, because single runs of the open-loop row spread by
+more than the gate's margin.
+
+| Gate | Master | This wave | Target | Result |
+|---|---|---|---|---|
+| G3 first commit | 19.0 / 19.3 / 19.6 s | 15.6 / 15.6 / 15.5 s | <= 15 s | missed by 0.5 s |
+| G6 `put_page` p95 during catch-up, over idle | +0.52 / +0.59 / +2.28 s, 1 failed write | +0.52 / +0.52 / +0.77 s, none failed | <= idle + 1 s | met |
+| G7 catch-up while a write arrives every 5 s | 65.1 / 60.9 / 63.4% | 55.4 / 64.4 / 60.1% | >= 50% of idle | met |
+| Idle steady pages/min | 374 / 379 / 370 | 392 / 370 / 393 | no regression | held |
+
+**G7 correction.** The v0.60.111.0 row above (45%, from one run) was low
+against every later run of the same code: three more runs at `9d013e52d`
+measured 60.6, 63.2 and 62.3%, and master has stayed between 57 and 71% since.
+G7 is met.
+
+**G3.** Three changes take 3.7 s off the first commit. Described parameter
+types are saved for the next process (about 40 fewer describe round trips per
+run; a statement only the catch-up runs still describes on its first run, which
+is why a brain's second catch-up starts faster than the bench's first). A
+waiver run's screen reuses the page snapshot and authority check its freeze
+just made instead of repeating them for each entry, and each freeze reads the
+page beside its origin check. The remaining 15.5 s is serial: about 4 s of
+startup reads, 2.5 s of screening the 34 waived entries four at a time, 1.3 s
+for their waiver transaction and about 6 s for the first group.
+
+**G6.** Two lock waits are gone. Claiming a lane group's followers locked up
+to 63 rows after the group, including the next foreground write's row, for the
+claim's round trips; it now locks only the members (lock-wait samples per run
+from about 190 to 84). And a foreground write the writer's own process had
+claimed, but could not publish while the sync's lanes held the worktree, did
+not hold back new lane heads, so groups kept starting ahead of it until it was
+handed back. Master's +2.28 s run (one write not committed within its wait)
+fits that case, but its bench output does not name the cause; the forced test
+in `test/managed-sync-foreground-priority.test.ts` reproduces the held claim.

@@ -483,7 +483,7 @@ export async function runReindex(engine: BrainEngine, args: string[], runOpts: R
             { type: page.type, title: page.title, tags },
           );
           const imported = await importFromContent(engine, row.slug, fullMarkdown, {
-            sourceId: row.source_id,
+            sourceId: row.source_id, preserveGateMarkers: true,
             noEmbed: !!opts.noEmbed,
             forceRechunk: true,
           });

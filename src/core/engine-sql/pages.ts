@@ -119,10 +119,17 @@ export async function putPage(
     const sourceUri = page.source_uri ?? null;
     const ingestedVia = page.ingested_via ?? null;
     const ingestedAt = (sourceKind || sourceUri || ingestedVia) ? new Date() : null;
+    // #5984: the contextual retrieval stamp, when the caller passes it, rides in this statement.
+    const cr = opts?.contextualRetrieval && opts.contextualRetrieval.mode !== 'none' ? opts.contextualRetrieval : null;
+    const crColumns = cr ? sqlFragment`, contextual_retrieval_mode, corpus_generation` : sqlFragment``;
+    const crValues = cr ? sqlFragment`, ${cr.mode}, ${cr.corpusGeneration}` : sqlFragment``;
+    const crSet = cr ? sqlFragment`
+        contextual_retrieval_mode = EXCLUDED.contextual_retrieval_mode,
+        corpus_generation     = EXCLUDED.corpus_generation,` : sqlFragment``;
     const { rows } = await exec.run(sqlFragment`
-      INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at)
-      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${jsonbParam(frontmatter)}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, ${chunkerVersion}::smallint, ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt})
-      ON CONFLICT (source_id, slug) DO UPDATE SET
+      INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at${crColumns})
+      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${jsonbParam(frontmatter)}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, ${chunkerVersion}::smallint, ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt}${crValues})
+      ON CONFLICT (source_id, slug) DO UPDATE SET${crSet}
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
         title = EXCLUDED.title,
@@ -340,7 +347,7 @@ export async function updatePageContextualRetrievalState(
           RETURNING p.id, previous.old_mode, previous.skipped
         )
         UPDATE content_chunks cc SET ${vector}=NULL, embedded_at=NULL,
-          embedded_text_hash=NULL, embedding_input_hash=NULL
+          embedded_text_hash=NULL, embedding_input_hash=NULL, embedding_pending_since=now()
         FROM changed WHERE cc.page_id=changed.id
           AND changed.old_mode IN ('title','per_chunk_synopsis') AND NOT changed.skipped
           AND cc.${vector} IS NOT NULL`);
@@ -501,10 +508,11 @@ export async function listPrefixSampledPages(scoped: ScopedReadRunner, opts: Dom
           p.source_id,
           p.title,
           p.compiled_truth,
-          p.last_retrieved_at,
+          GREATEST(p.last_retrieved_at, r.last_retrieved_at) AS last_retrieved_at,
           substring(p.slug from '^[^/]+/[^/]+') AS prefix,
           COUNT(pl.id) AS connection_count
         FROM pages p
+        LEFT JOIN page_retrievals r ON r.page_id = p.id
         LEFT JOIN page_links pl ON pl.to_page_id = p.id
         WHERE p.deleted_at IS NULL
           AND substring(p.slug from '^[^/]+/[^/]+') = ANY(${opts.prefixes}::text[])
@@ -514,7 +522,7 @@ export async function listPrefixSampledPages(scoped: ScopedReadRunner, opts: Dom
             OR (${sourceIds}::text[] IS NULL AND ${sourceId}::text IS NOT NULL AND p.source_id = ${sourceId})
             OR (${sourceIds}::text[] IS NULL AND ${sourceId}::text IS NULL)
           )
-        GROUP BY p.id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at
+        GROUP BY p.id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at, r.last_retrieved_at
       ),
       ranked AS (
         SELECT
@@ -587,10 +595,11 @@ export async function listCorpusSample(scoped: ScopedReadRunner, opts: CorpusSam
           p.source_id,
           p.title,
           p.compiled_truth,
-          p.last_retrieved_at,
+          GREATEST(p.last_retrieved_at, r.last_retrieved_at) AS last_retrieved_at,
           substring(p.slug from '^[^/]+/[^/]+') AS prefix,
           (SELECT COUNT(*) FROM page_links pl WHERE pl.to_page_id = p.id) AS connection_count
         FROM pages p
+        LEFT JOIN page_retrievals r ON r.page_id = p.id
         WHERE p.deleted_at IS NULL
           AND (cardinality(${exclude}::text[]) = 0 OR NOT (p.slug = ANY(${exclude}::text[])))
           AND (

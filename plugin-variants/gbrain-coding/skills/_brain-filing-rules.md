@@ -175,11 +175,11 @@ examples lives in `docs/takes-vs-facts.md`.
 1. **Holder ≠ subject.** The test: did this person SAY or CLEARLY IMPLY this?
    - YES → `holder = people/<slug>`
    - NO, it's your analysis OF them → `holder = brain`
-   - Example: "Garry has a hero/rescuer pattern" → `holder=brain` (analysis ABOUT Garry, not stated BY Garry)
+   - Example: "Alice has a hero/rescuer pattern" → `holder=brain` (analysis ABOUT Alice, not stated BY Alice)
 2. **Atomic claims.** Split compound rows into separate rows. One claim per row.
 3. **Amplification ≠ endorsement.** A retweet-only signal caps at `weight 0.55`.
    The user shared something; they didn't necessarily endorse every clause.
-4. **Self-reported ≠ verified.** "Saif reports 7 figures" → `holder=people/saif`,
+4. **Self-reported ≠ verified.** "Charlie reports 7 figures" → `holder=people/charlie-example`,
    `weight=0.75`, NOT `holder=world/1.0`. Self-report is a strong individual
    signal, not consensus fact.
 5. **No false precision.** Use 0.05 increments only (`0.35`, `0.55`, `0.75`).
@@ -195,8 +195,8 @@ examples lives in `docs/takes-vs-facts.md`.
 - `people/<slug>` (individual's stated belief)
 - `companies/<slug>` (institutional fact, no individual claimant)
 
-Slugs use the standard grammar (`[a-z0-9._-]+`). `Garry`, `people/Garry-Tan`,
-and `world/garry-tan` all fail validation.
+Slugs use the standard grammar (`[a-z0-9._-]+`). `Alice`, `people/Alice-Example`,
+and `world/alice-example` all fail validation.
 
 **Write takes with `takes_add`, not by hand.** `takes_add` (and `takes_update`
 for an existing row) writes the row for you: it allocates the row number,
@@ -214,5 +214,5 @@ format in `docs/guides/fence-format.md`.
 
 **Founder-describing-own-company rule.** When a founder describes their own
 company, the holder is the FOUNDER, not the company. "We can hit $10M ARR"
-said by Bo Lu → `holder=people/bo-lu`, NOT `holder=companies/clipboard-health`.
+said by Bob Example → `holder=people/bob-example`, NOT `holder=companies/acme-example`.
 Companies don't speak; their employees do.

@@ -1,0 +1,19 @@
+{
+  "id": "q2-dev-board-investor",
+  "note": "Development-only phrasing for the Q2 typing units (gbrain test/fixtures/q2-dev-phrasings). Not held-out material.",
+  "templates": {
+    "current": "{name} works at {company} as {role}.",
+    "stale_summary": "{name} works at {company} as {role}.",
+    "rejoin_eu": "Previously at {company}, {name} now runs {company}'s EU team.",
+    "former": "Earlier, {name} worked at {company}.",
+    "advises": "{name} sits on the advisory board of {company}.",
+    "tl_move": "linkedin — Left {prev} to join {company} as {role}",
+    "tl_join": "linkedin — Joined {company} as {role}",
+    "tl_leave": "linkedin — Left {company}",
+    "tl_advise": "note — Took an advisory role with {company}",
+    "tl_invest": "note — Took a board seat at {company} as an investor",
+    "tl_alumni": "meeting — Sat in on the {company} board meeting as an observer",
+    "explicit_start": "note — Started works_at [[{slug}]] as {role}",
+    "explicit_end": "note — Ended works_at [[{slug}]]"
+  }
+}

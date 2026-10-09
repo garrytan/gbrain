@@ -52,6 +52,7 @@ export const ERROR_CATALOGUE = {
   timeline_comment_markup: { code: 'timeline_comment_markup', docs: 'docs/guides/repair.md#timeline-comments' },
   timeline_rows_would_be_removed: { code: 'timeline_rows_would_be_removed', docs: 'docs/guides/write-refusals.md#timeline_rows_would_be_removed' },
   reconcile_private_facts: { code: 'permission_denied', docs: 'docs/guides/write-refusals.md#reconcile-private-facts' },
+  maintenance_backpressure: { code: 'maintenance_backpressure', docs: 'docs/guides/write-refusals.md#maintenance_backpressure' },
   // F0 `gbrain sources refresh` (worktree-wide coordinated ff-only refresh).
   refresh_not_managed: { code: 'refresh_not_managed', docs: 'docs/guides/write-refusals.md#refresh_not_managed' },
   refresh_not_owner: { code: 'refresh_not_owner', docs: 'docs/guides/write-refusals.md#refresh_not_owner' },
@@ -71,6 +72,10 @@ export const ERROR_CATALOGUE = {
   sync_drain_database_contention: { code: 'database_contention', docs: 'docs/guides/write-refusals.md#drain-database-contention' },
   sync_drain_writer_blocked: { code: 'recovery_required', docs: 'docs/guides/write-refusals.md#drain-writer-blocked' },
   sync_drain_blocked_by_failures: { code: 'blocked_by_failures', docs: 'docs/guides/write-refusals.md#drain-blocked-by-a-failed-page' },
+  sync_drain_preparation_abandoned: { code: 'preparation_abandoned', docs: 'docs/guides/write-refusals.md#drain-preparation-abandoned' },
+  sync_drain_preparation_systemic: { code: 'preparation_systemic', docs: 'docs/guides/write-refusals.md#preparation_systemic' },
+  sync_drain_write_capacity: { code: 'queue_capacity', docs: 'docs/guides/write-refusals.md#drain-write-capacity' },
+  sync_drain_connection_lost: { code: 'connection_lost', docs: 'docs/guides/write-refusals.md#drain-connection-lost' },
 } as const satisfies Record<string, CatalogueEntry>;
 
 export type CatalogueName = keyof typeof ERROR_CATALOGUE;

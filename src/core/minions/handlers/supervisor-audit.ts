@@ -117,6 +117,56 @@ export function readSupervisorEvents(opts: { sinceMs?: number } = {}): Superviso
   return events;
 }
 
+/** Weekly audit files `readSupervisorRun` searches back for a run's `started` row. */
+export const SUPERVISOR_RUN_LOOKBACK_WEEKS = 26;
+
+export interface SupervisorRun {
+  /** The run's `started` row, or null when no file in the bound holds it (missing, pruned or corrupt audit). */
+  started: SupervisorEmission | null;
+  /** The run's rows from its `started` row on, oldest first (empty when `started` is null). */
+  events: SupervisorEmission[];
+  /** The audit files that exist among those searched, newest first. */
+  files: string[];
+}
+
+/**
+ * The rows of one supervisor run (W9F item 7): from the last `started` row of
+ * `supervisorPid` on, searching back across weekly files (at most
+ * `maxWeeks`) so a supervisor started before an ISO-week boundary keeps its
+ * `worker_spawned` rows. With `supervisorStart` (the process start time the
+ * PID file recorded), a `started` row stamped with a different start belongs
+ * to an earlier process that had the same pid and is skipped; legacy rows
+ * without a stamp match on pid alone.
+ */
+export function readSupervisorRun(supervisorPid: number,
+  opts: { supervisorStart?: string | null; now?: Date; maxWeeks?: number } = {}): SupervisorRun {
+  const fs = require('node:fs') as typeof import('node:fs');
+  const path = require('node:path') as typeof import('node:path');
+  const dir = writer.resolveDir();
+  const now = opts.now ?? new Date();
+  const files: string[] = [];
+  let rows: SupervisorEmission[] = [];
+  for (let week = 0; week < (opts.maxWeeks ?? SUPERVISOR_RUN_LOOKBACK_WEEKS); week++) {
+    const file = path.join(dir, computeSupervisorAuditFilename(new Date(now.getTime() - week * 7 * 86_400_000)));
+    let raw: string;
+    try { raw = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    files.push(file);
+    const own: SupervisorEmission[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line) as SupervisorEmission;
+        if (obj.event && obj.ts && obj.supervisor_pid === supervisorPid) own.push(obj);
+      } catch { /* truncated or corrupt line */ }
+    }
+    rows = [...own, ...rows];
+    const startedIdx = rows.findLastIndex(e => e.event === 'started'
+      && (!opts.supervisorStart || e.supervisor_start === undefined || e.supervisor_start === opts.supervisorStart));
+    if (startedIdx >= 0) return { started: rows[startedIdx]!, events: rows.slice(startedIdx), files };
+  }
+  return { started: null, events: [], files };
+}
+
 /**
  * Cross-week supervisor read for windows that can straddle a Monday boundary
  * (issue #1685, CODEX #7). The single-file `readSupervisorEvents` above can lose

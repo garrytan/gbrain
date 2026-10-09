@@ -59,17 +59,16 @@ the OAuth request when issuing my owner login link."*
 ### Local stdio (zero setup)
 
 ```bash
-gbrain serve                  # full operation catalog (default)
-gbrain serve --surface verbs  # just the 7 memory verbs (quickstart surface)
+gbrain serve --surface full   # full operation catalog (what registrations pin; also the bare-serve default)
 ```
 
 Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
 No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
-`--surface verbs` exposes exactly the seven-verb memory protocol (`recall`,
-`remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` —
-[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) instead of the full catalog;
-`--surface starter` sits between (~27 ops: the verbs plus the daily-driver set);
-omit the flag (default `full`) for every operation.
+`--surface full` serves every operation. For a client that cannot hold the full
+catalog, `--surface verbs` exposes exactly the seven-verb memory protocol
+(`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`,
+`delta` — [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)) and `--surface
+starter` sits between (40 ops: the verbs plus the daily-driver set).
 
 `--surface` is the callable ceiling. To keep every operation callable while
 listing fewer tools to the agent, set `mcp.advertised_surface`:

@@ -10,7 +10,7 @@ import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { readLocalWriter, currentVerifiedLocalWriter, verifyLocalWriter, type LocalGrant } from './identity.ts';
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWrites } from './page-visibility.ts';
-import { transactionMemo } from '../page-state/transactions.ts';
+import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 
 function deny(message: string): never { throw new OperationError('permission_denied', message, 'Inspect the current writer registration and source/operation grants.'); }
 function strings(value: unknown): value is string[] { return Array.isArray(value) && value.every(v => typeof v === 'string'); }
@@ -77,6 +77,28 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
   return a;
 }
 
+/** #5984: one local-writer read per transaction; a FOR SHARE read also answers a plain one. */
+function localWriterRow(engine: SqlEngine, id: string, lock: boolean) {
+  const key = `local-writer:${id}`;
+  return transactionMemo(engine, lock ? [`${key}:share`] : [key, `${key}:share`],
+    () => engine.executeRaw<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>(
+      `SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid${lock ? ' FOR SHARE' : ''}`, [id]));
+}
+/** #5984: one membership read per source per transaction; a FOR SHARE read also answers a plain one. */
+function sourceMembership(engine: SqlEngine, sourceId: string, lock: boolean) {
+  return transactionMemo(engine, lock ? [`source-membership:${sourceId}:share`] : [`source-membership:${sourceId}`, `source-membership:${sourceId}:share`],
+    () => engine.executeRaw<{ incarnation: string; archived: boolean }>(`SELECT incarnation,archived FROM sources WHERE id=$1${lock ? ' FOR SHARE' : ''}`, [sourceId]));
+}
+/**
+ * #5984: the reads `authorizeStoredRequest` shares across the rows of one
+ * transaction (each source's membership, each local writer), as calls a
+ * caller pipelines; the rows' own checks then answer them from the memo.
+ */
+export function storedAuthorizationReads(engine: SqlEngine, rows: readonly WriteRequest[], lock = false): Array<() => Promise<unknown>> {
+  const sources = [...new Set(rows.map(row => row.source_id))];
+  const writers = [...new Set(rows.flatMap(row => ['local_cli', 'local_stdio'].includes(row.authority?.principal?.kind) ? [row.authority.principal.id] : []))];
+  return [...sources.map(id => () => sourceMembership(engine, id, lock)), ...writers.map(id => () => localWriterRow(engine, id, lock))];
+}
 /**
  * #5994: a failed write replayed by `gbrain repair failed-writes` keeps its
  * original authority ceiling instead of the replay context's: the same
@@ -130,10 +152,7 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
   }
   if (a.principal.kind === 'local_cli' || a.principal.kind === 'local_stdio') {
     // #5984: one local-writer read per transaction; a FOR SHARE read also answers a plain one.
-    const key = `local-writer:${a.principal.id}`;
-    const [row] = await transactionMemo(engine, lock ? [`${key}:share`] : [key, `${key}:share`],
-      () => engine.executeRaw<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>(
-        `SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid${suffix}`, [a.principal.id]));
+    const [row] = await localWriterRow(engine, a.principal.id, lock);
     const lane = a.principal.kind === 'local_cli' ? 'cli' : 'stdio';
     if (!row || row.revoked_at != null || row.lane !== lane || a.remote !== (lane === 'stdio')) deny('The local writer is revoked or its trust lane changed.');
     const g = row.grant_ceiling;
@@ -147,14 +166,18 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
 /** `pageVisibility: false` is for a caller that checks the target's visibility itself after locking the page. */
 export async function authorizeStoredRequest(engine: SqlEngine, row: WriteRequest, lock = false, opts: { pageVisibility?: boolean } = {}): Promise<void> {
   // #5984: one membership read per source per transaction; a FOR SHARE read also answers a plain one.
-  const [source] = await transactionMemo(engine, lock ? [`source-membership:${row.source_id}:share`] : [`source-membership:${row.source_id}`, `source-membership:${row.source_id}:share`],
-    () => engine.executeRaw<{ incarnation: string; archived: boolean }>(`SELECT incarnation,archived FROM sources WHERE id=$1${lock ? ' FOR SHARE' : ''}`, [row.source_id]));
-  if (!source || source.archived || source.incarnation !== row.source_incarnation) {
-    throw opError('source_changed', 'The accepted source is no longer active.',
-      `Source ${row.source_id} was archived, removed, or recreated after request ${row.request_id} was accepted, so it will not be applied. Check the source's writer status; a new write must target the current source.`,
-      { fix: readFix(`Shows source ${row.source_id}'s current registration and requests, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', row.source_id, '--json'] }) });
-  }
-  await authorizeWrite(engine, row.authority, row.operation, row.slug, lock);
+  // The source lock and the writer check are sent together in lock order; a source refusal is reported first.
+  await pipelined(engine, [
+    async () => {
+      const [source] = await sourceMembership(engine, row.source_id, lock);
+      if (!source || source.archived || source.incarnation !== row.source_incarnation) {
+        throw opError('source_changed', 'The accepted source is no longer active.',
+          `Source ${row.source_id} was archived, removed, or recreated after request ${row.request_id} was accepted, so it will not be applied. Check the source's writer status; a new write must target the current source.`,
+          { fix: readFix(`Shows source ${row.source_id}'s current registration and requests, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', row.source_id, '--json'] }) });
+      }
+    },
+    () => authorizeWrite(engine, row.authority, row.operation, row.slug, lock),
+  ]);
   if (skillWrite(row.operation)) {
     const affected = (row.authority as WriteAuthority & { skillSlugsUsed?: unknown }).skillSlugsUsed;
     if (affected !== undefined) {

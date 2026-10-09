@@ -25,7 +25,7 @@ import { lookupEmbeddingPrice, estimateCostFromChars } from '../embedding-pricin
 import { shellQuote, type Action } from '../agent-output.ts';
 import type { RepairKindSpec } from './registry.ts';
 
-export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'extractor-facts', 'captured-facts', 'loop-facts', 'ontology-facts', 'orphan-children', 'failed-writes', 'frontmatter', 'fences', 'timeline-comments'] as const;
+export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'extractor-facts', 'conversation-labels', 'captured-facts', 'loop-facts', 'ontology-facts', 'orphan-children', 'failed-writes', 'frontmatter', 'fences', 'timeline-comments'] as const;
 export type RepairKind = typeof REPAIR_KINDS[number];
 
 export interface RepairScope { brain_id: string; source_ids: string[] }
@@ -74,7 +74,9 @@ export interface RepairListing { item: string; class: string; detail?: string }
  * the run's paid-model allowance (it only lowers the kind's own cap). `deadline` (epoch ms) bounds a discovery scan.
  */
 export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[]; slugs?: string[];
-  noLlm?: boolean; maxLlmUsd?: number; deadline?: number }
+  noLlm?: boolean; maxLlmUsd?: number; deadline?: number;
+  /** `ctx.remote !== false` of the run: a remote caller's plan never names a local path (unset reads as remote). */
+  remote?: boolean }
 
 export interface RepairHandler {
   kind: RepairKind;
@@ -251,7 +253,7 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
   const now = opts.now ?? Date.now;
   const planOpts: RepairPlanOptions = { apply: opts.apply, expect: opts.expect, includeAmbiguous: opts.includeAmbiguous, only: opts.only, skip: opts.skip,
     ...(opts.slugs?.length ? { slugs: opts.slugs } : {}), ...(opts.noLlm ? { noLlm: true } : {}), ...(opts.maxLlmUsd !== undefined ? { maxLlmUsd: opts.maxLlmUsd } : {}),
-    ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}) };
+    ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), remote: ctx.remote !== false };
   const plan = await handler.plan(ctx.engine, scope, resumed, planOpts);
   const pending = opts.limit !== undefined ? plan.items.slice(0, opts.limit) : plan.items;
   const counters = await capacity(ctx);

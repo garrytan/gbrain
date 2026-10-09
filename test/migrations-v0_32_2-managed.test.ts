@@ -14,6 +14,16 @@
  * conversation-extractor row on the same page, or when verify counts every
  * fence row against the index although extract_facts indexes a duplicate once.
  * Seams: none; `managedBrain` and the migration's exported `__testing` phases.
+ *
+ * #6278 (2.1, 2.6): a page whose timeline repeats the facts fence marker is
+ * skipped before submission with the fence reason (no request is admitted,
+ * so no preparation refusal and no consumed request id) while the other
+ * page still adopts; a legacy row the codec cannot render is reported with
+ * the stable `FACTS_FENCE_FAILED: <slug> (fence_unrenderable: …)` token in
+ * the phase detail while the page's other rows adopt. Fails when: the
+ * adoption is admitted and fails at preparation (`invalid_params`, the
+ * reporter's two repeated_marker refusals), or the unrenderable row refuses
+ * the whole page.
  */
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -100,6 +110,58 @@ for (const backend of testBackends()) {
     } });
   }, 120_000);
 
+  test(`${backend}: a page whose timeline repeats the facts fence marker is skipped before submission; the other page adopts (#6278 2.6)`, async () => {
+    let seed!: LegacySeed;
+    await managedBrain(async ({ engine, root }) => {
+      const before = await factRows(engine, seed.legacyFactIds);
+      const file = readFileSync(join(root, `${LEGACY_FILE_SLUG}.md`), 'utf8');
+      const phase = await __testing.phaseBFenceFacts(engine, OPTS);
+      expect(phase.status).toBe('failed');
+      expect(phase.detail).toContain('scanned=3 fenced=1 pages=1');
+      expect(phase.detail).toContain(`FACTS_FENCE_FAILED: ${LEGACY_FILE_SLUG} (Fence repeated_marker: in the facts fence (timeline)`);
+      // Skipped before admission: no request for the page exists, nothing changed on it.
+      expect(await engine.executeRaw('SELECT request_id FROM persistence_requests WHERE slug = $1', [LEGACY_FILE_SLUG])).toEqual([]);
+      expect(await factRows(engine, seed.legacyFactIds)).toEqual(before);
+      expect(readFileSync(join(root, `${LEGACY_FILE_SLUG}.md`), 'utf8')).toBe(file);
+      // The database-only page adopted its row in the same pass.
+      const [dana] = await factRows(engine, seed.dbOnlyFactIds);
+      expect(dana).toMatchObject({ row_num: 1, source_markdown_slug: LEGACY_DB_ONLY_SLUG, expired_at: null });
+    }, { databaseUrl, setup: async ({ engine, root }) => {
+      seed = await seedLegacyManagedContent(engine, root);
+      const fence = (n: number, claim: string) => renderFactsTable([{ rowNum: n, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'high', active: true, source: 'notes' }]);
+      const snapshot = (await engine.readPageSnapshot(LEGACY_FILE_SLUG, { sourceId: 'default' }))!;
+      await engine.putPage(LEGACY_FILE_SLUG, { ...snapshot.page, compiled_truth: snapshot.page.compiled_truth,
+        timeline: `## Facts\n\n${fence(1, 'Alice example keeps bees')}\n\n## Facts\n\n${fence(2, 'Alice example keeps bees too')}\n` });
+      const updated = (await engine.readPageSnapshot(LEGACY_FILE_SLUG, { sourceId: 'default' }))!;
+      writeFileSync(join(root, `${LEGACY_FILE_SLUG}.md`), serializePageToMarkdown(updated.page, updated.tags));
+    } });
+  }, 120_000);
+
+  test(`${backend}: a legacy row the fence codec cannot render is reported with the stable token while the page's other rows adopt (#6278 2.1)`, async () => {
+    let seed!: LegacySeed;
+    let struckId!: number;
+    await managedBrain(async ({ engine, root }) => {
+      const [struckBefore] = await factRows(engine, [struckId]);
+      const phase = await __testing.phaseBFenceFacts(engine, OPTS);
+      expect(phase.status).toBe('failed');
+      expect(phase.detail).toContain('scanned=4 fenced=3 pages=2 ');
+      expect(phase.detail).toContain(`FACTS_FENCE_FAILED: ${LEGACY_FILE_SLUG} (fence_unrenderable: 1 row(s), struck)`);
+      expect(phase.detail).not.toContain('left Acme');
+      const after = await factRows(engine, [...seed.legacyFactIds, struckId]);
+      expect(after.map(r => [Number(r.id), r.row_num, r.source_markdown_slug])).toEqual([
+        [seed.legacyFactIds[0], 2, LEGACY_FILE_SLUG], [seed.legacyFactIds[1], 3, LEGACY_FILE_SLUG], [struckId, null, null]]);
+      expect(after[2]).toEqual(struckBefore);
+      expect(parseFactsFence(readFileSync(join(root, `${LEGACY_FILE_SLUG}.md`), 'utf8')).facts.map(f => f.claim)).toEqual([
+        'Alice example founded Acme example', 'Alice example moved to Lisbon']);
+    }, { databaseUrl, setup: async ({ engine, root }) => {
+      seed = await seedLegacyManagedContent(engine, root);
+      const [row] = await engine.executeRaw<{ id: number }>(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence)
+         VALUES ('default', $1, '~~Alice example left Acme example~~', 'fact', 'world', 'medium', '2026-03-01', 'mcp:remember', 0.8) RETURNING id`, [LEGACY_FILE_SLUG]);
+      struckId = Number(row.id);
+    } });
+  }, 120_000);
+
   test(`${backend}: a refused adoption is retried under a new request identity once the file is restored`, async () => {
     let seed!: LegacySeed;
     await managedBrain(async ({ engine, root }) => {
@@ -128,7 +190,8 @@ for (const backend of testBackends()) {
       const attempt = (assignments: Array<{ id: number; row_num: number }>) => submitFactFenceAdoption(engine, authority, LEGACY_FILE_SLUG,
         { content, expectedRevision: snapshot.revision, assignments, file: true });
       await expect(attempt([{ id: seed.legacyFactIds[0], row_num: 1 }])).rejects.toMatchObject({ code: 'revision_conflict' });
-      await expect(attempt([{ id: seed.legacyFactIds[1], row_num: 1 }])).rejects.toMatchObject({ code: 'invalid_params' });
+      // #6278: a fence row that does not read back as its legacy fact is a planning defect (class server), not caller input.
+      await expect(attempt([{ id: seed.legacyFactIds[1], row_num: 1 }])).rejects.toMatchObject({ code: 'fence_unrenderable' });
       await expect(attempt([{ id: seed.legacyFactIds[0], row_num: 1 }, { id: seed.legacyFactIds[1], row_num: 1 }]))
         .rejects.toMatchObject({ code: 'invalid_params' });
       expect(await factRows(engine, [...seed.legacyFactIds, seed.extractorFactId])).toEqual(before);

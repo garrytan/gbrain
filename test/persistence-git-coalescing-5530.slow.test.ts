@@ -16,8 +16,8 @@
  *
  * PGLite here; Postgres through test/e2e/persistence-git-coalescing-5530-postgres.test.ts.
  */
-import { describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -33,6 +33,7 @@ import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
+import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -46,8 +47,13 @@ function git(root: string, ...args: string[]): string {
 
 interface Repo { root: string; remote: string; pushes: () => number; rejectPushes: (on: boolean) => void; commits: () => number }
 
-function makeRepo(home: string, name: string): Repo {
-  const root = join(home, name), remote = join(home, `${name}.git`), log = join(home, `${name}.pushes`), reject = join(home, `${name}.reject`);
+// Each repository shape is built once per file and copied per test: a fresh repository costs ten
+// git processes, and under CPU contention process startup dominated every test that made one.
+let repoTemplates: string | undefined;
+function repoTemplate(name: string): string {
+  repoTemplates ??= realpathSync.native(mkdtempSync(join(tmpdir(), 'gbrain-coalesce-5530-repos-')));
+  const root = join(repoTemplates, name), remote = join(repoTemplates, `${name}.git`);
+  if (existsSync(remote)) return repoTemplates;
   mkdirSync(root); mkdirSync(remote);
   git(root, 'init', '-q', '-b', 'main');
   git(root, 'config', 'user.name', 'Example Writer');
@@ -56,6 +62,15 @@ function makeRepo(home: string, name: string): Repo {
   git(root, 'add', 'README.md'); git(root, 'commit', '-q', '-m', 'Initial');
   git(remote, 'init', '-q', '--bare');
   git(root, 'remote', 'add', 'origin', remote); git(root, 'push', '-q', '-u', 'origin', 'main');
+  return repoTemplates;
+}
+
+function makeRepo(home: string, name: string): Repo {
+  const root = join(home, name), remote = join(home, `${name}.git`), log = join(home, `${name}.pushes`), reject = join(home, `${name}.reject`);
+  const template = repoTemplate(name);
+  cpSync(join(template, name), root, { recursive: true });
+  cpSync(join(template, `${name}.git`), remote, { recursive: true });
+  git(root, 'remote', 'set-url', 'origin', remote);
   const preReceive = join(remote, 'hooks', 'pre-receive');
   writeFileSync(preReceive, `#!/bin/sh\necho push >> '${log}'\n[ -f '${reject}' ] && exit 1\nexit 0\n`);
   chmodSync(preReceive, 0o755);
@@ -76,11 +91,20 @@ function harden(repo: Repo): void {
 
 const pageContent = (i: number, note = '') => `---\ntype: note\ntitle: Page ${i}\n---\n\nCoalescing page ${i}.${note}\n`;
 
+// PostgreSQL brains are clones of one migrated template database rather than a full migration run per test.
+let pgTemplate: ReturnType<typeof persistencePostgresTemplate> | undefined;
+afterAll(async () => {
+  await (await pgTemplate)?.dispose();
+  if (repoTemplates) rmSync(repoTemplates, { recursive: true, force: true });
+});
+
 async function withBrain(kind: 'pglite' | 'postgres', run: (b: { engine: BrainEngine; home: string; ctx: (source: string) => OperationContext }) => Promise<void>) {
   const home = realpathSync.native(mkdtempSync(join(tmpdir(), 'gbrain-coalesce-5530-')));
   try {
     await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
-      const { engine, close } = await isolatedSharedSkillsEngine(kind === 'postgres' ? process.env.GBRAIN_TEST_COALESCE_PG! : undefined);
+      const { engine, close } = kind === 'postgres'
+        ? await (pgTemplate ??= persistencePostgresTemplate(process.env.GBRAIN_TEST_COALESCE_PG!)).then(template => template.clone())
+        : await isolatedSharedSkillsEngine();
       try {
         const ctx = (source: string) => ({ engine, config: { engine: engine.kind, embedding_disabled: true }, sourceId: source,
           remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } }) as OperationContext;
@@ -126,12 +150,11 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
     const repo = makeRepo(home, 'content');
     await bindSource(engine, 'default', repo);
     await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
-    await seed(ctx('default'), PAGES - 1);
-    await disposePersistenceConsumer(engine);
-    // A seed write's Git effect can still be queued here, backed off after a
-    // writer-busy attempt while the consumer was publishing; apply it now so
-    // only the grandfather's and the interleaved write's effects are pending
-    // below.
+    // The seed's own Git effects are setup, not under test: hold them while
+    // seeding (the consumer would otherwise probe the worktree once per page)
+    // and apply them all here, before hardening, so only the grandfather's and
+    // the interleaved write's effects are pending below.
+    await pauseGitEffects(engine, () => seed(ctx('default'), PAGES - 1));
     for (let i = 0; (await gitStates(engine)).queued && i < 50; i++) { await release(engine); await pass(engine); }
     expect((await gitStates(engine)).queued).toBeUndefined();
     harden(repo);

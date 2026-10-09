@@ -5,9 +5,10 @@
  * withheld when the sweep cannot run. Postgres arm: test/e2e/w5-persistence-postgres.test.ts.
  */
 import { expect, test } from 'bun:test';
-import { managedStaleSweep, managedStaleSweepKeepsNormalizedTimeline, staleExtractionWithheldWhenItCannotRun } from './helpers/w5-scenarios.ts';
+import { managedStaleSweep, managedStaleSweepKeepsNormalizedTimeline, managedStaleSweepManyPages, staleExtractionWithheldWhenItCannotRun } from './helpers/w5-scenarios.ts';
 
 test('managed extract --stale publishes through the coordinator and clears the recommendation', () => managedStaleSweep(), 120_000);
+test('managed extract --stale stamps every page and resolves every link', () => managedStaleSweepManyPages(), 120_000);
 test('managed extract --stale does not duplicate a stored row that differs only by whitespace', () => managedStaleSweepKeepsNormalizedTimeline(), 120_000);
 test('extract.stale is withheld while the sweep cannot run', () => staleExtractionWithheldWhenItCannotRun(), 120_000);
 

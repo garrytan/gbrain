@@ -909,13 +909,18 @@ ${bootstrapFromEnv
   // Automatic facts drain (Lane D): the resident HTTP serve owns a PGLite brain the way stdio serve does.
   const { startFactsDrainScheduler } = await import('../core/facts/drain-scheduler.ts');
   const factsDrain = startFactsDrainScheduler(engine, { owner: 'serve_http', log: (line) => console.error(line) });
+  // #6317 (B4): one notice when a managed source's sync data stops moving (reader in persistence/sync-movement.ts).
+  const { startMovementWatch } = await import('../core/persistence/sync-movement.ts');
+  const movementWatch = startMovementWatch(engine, { log: (line) => console.error(line) });
   const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', async () => {
+    movementWatch.stop();
     await factsDrain.stop();
     await engine.disconnect();
   });
   try {
     await waitForHttpServerLifecycle(httpServer);
   } finally {
+    movementWatch.stop();
     await factsDrain.stop();
     // Close the IPC listener + reap the socket file on orderly shutdown
     // (abnormal termination goes through the registered cleanup above).

@@ -1,4 +1,5 @@
 import type { SearchOpts } from '../types.ts';
+import type { VectorSearchStatement } from './vector-statement.ts';
 
 export interface VectorPoolBatch {
   rows: Record<string, unknown>[];
@@ -14,6 +15,28 @@ export interface VectorPoolAttempt {
   maxScanTuples: number;
   remainingMs: number;
   exact: boolean;
+  /** Run the statement's `indexWalkSql` with INDEX_WALK_SETTINGS instead of `sql`. */
+  indexWalk?: boolean;
+}
+
+/**
+ * Runs the statement's index walk (when it has one) before the pool. Its rows
+ * answer the search when its window is full and they fill the limit; otherwise,
+ * or past its 2 s budget, this returns null and the caller runs the pool.
+ */
+export async function searchIndexWalk(
+  stmt: Pick<VectorSearchStatement, 'indexWalkSql' | 'innerLimit'>,
+  limit: number,
+  run: (attempt: VectorPoolAttempt) => Promise<VectorPoolBatch>,
+): Promise<Record<string, unknown>[] | null> {
+  if (!stmt.indexWalkSql) return null;
+  try {
+    const batch = await run({ innerLimit: stmt.innerLimit, maxScanTuples: 2_000, remainingMs: 2_000, exact: false, indexWalk: true });
+    return batch.candidatePool >= stmt.innerLimit && batch.rows.length >= limit ? batch.rows : null;
+  } catch (error) {
+    if ((error as { code?: string }).code === '57014') return null;
+    throw error;
+  }
 }
 
 export function remainingVectorBudget(deadline: number): number {

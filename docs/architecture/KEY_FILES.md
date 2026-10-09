@@ -30,7 +30,7 @@ boundary and add its link here rather than raising the cap.
 | [Agent operator contract](key-files/agent-contract.md) | `agent-output.ts`, error registry + docs, notice ledger, `isCallable`, `--json` guard, contract scanner |
 | [Commands (1/6)](key-files/commands-1.md) | `src/commands/agent-logs.ts` through `src/commands/db-repair.ts` |
 | [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` and `src/commands/doctor/` |
-| [Commands (2/6, continued)](key-files/commands-2-continued.md) | `src/commands/dream-retriage.ts` through `src/commands/embed.ts` |
+| [Commands (2/6, continued)](key-files/commands-2-continued.md) | `doctor/checks/routing-federation.ts`, `dream-retriage.ts` to `embed.ts` |
 | [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `src/commands/frontmatter-install-hook.ts` |
 | [Commands (4/6)](key-files/commands-4.md) | `src/commands/frontmatter.ts` through `src/commands/pglite-repair.ts` |
 | [Commands (4/6, continued)](key-files/commands-4-continued.md) | `src/commands/protocol.ts` through `src/commands/reindex-search-vector.ts`, `init-mode-picker.ts`, `src/core/embedding-migration-cli.ts` |
@@ -43,11 +43,11 @@ boundary and add its link here rather than raising the cap.
 | [Core Minions (1/2)](key-files/core-minions-1.md) | `src/core/minions/` through `src/core/minions/rss-default.ts` |
 | [Core Minions (2/2)](key-files/core-minions-2.md) | `src/core/minions/run-child.ts` through `src/core/minions/worker.ts` |
 | [Core Persistence](key-files/core-persistence.md) | `src/core/persistence/` write journal, coordinator, effects, canonical projections and managed sync |
-| [Core Persistence (continued)](key-files/core-persistence-continued.md) | `src/core/persistence/connector-*.ts`, `src/core/connectors/item-holds*.ts`, checkpoint validation, no-op kernel, accepted-pending receipts, verb types/errors, database-write, attribution, purge-deleted and loop-fact retirement |
+| [Core Persistence (continued)](key-files/core-persistence-continued.md) | `worktree-refresh*.ts`, `persistence/connector-*.ts`, `connectors/item-holds*.ts`, checkpoint validation, no-op kernel, accepted-pending receipts, verb types/errors, database-write, attribution, purge-deleted, fact retirement, single-write path |
 | [Core Persistence (engine graduation)](key-files/core-persistence-graduation.md) | `engine-graduation*.ts`, `graduation-*.ts`, `src/commands/migrate-graduation.ts`, the graduation doctor finding |
-| [Managed sync and persistence stalls (key files cluster)](key-files/persistence-stalls.md) | `claim-phase.ts`, `pre-activation-release.ts`, `sync-concurrent-write.ts`, `worktree-manifest.ts`, `src/core/hardened-git.ts` |
+| [Managed sync and persistence stalls](key-files/persistence-stalls.md) | preparation budgets, `claim-phase.ts`, `consumer.ts`, `group-publish.ts`, `journal.ts`, `diagnostics.ts`, `worktree-manifest.ts` |
 | [Core Search (1/2)](key-files/core-search-1.md) | `src/core/search/` through `src/core/search/rerank.ts` |
-| [Core Search (2/2)](key-files/core-search-2.md) | `src/core/search/return-policy.ts` through `src/core/search/vector-pool.ts`, plus the relational arm and multi-hop chain modules (`relational-recall.ts`, `relational-rerank-pin.ts`, `relational-chain.ts`, `relational-plan.ts`, `hub-dampening.ts`) |
+| [Core Search (2/2)](key-files/core-search-2.md) | `src/core/search/return-policy.ts` through `src/core/search/vector-pool.ts`, the relational arm and multi-hop chain modules, `hub-dampening.ts` |
 | [Core Services (1/3)](key-files/core-services-1.md) | `src/core/advisor/{types,run,render,recommended-set,history,apply,collect-*}.ts` through `src/core/connectors/` |
 | [Core Services (1/3, continued)](key-files/core-services-1-continued.md) | `src/core/context/` through `src/core/context/ipc-path.ts` |
 | [Core Services (2/3)](key-files/core-services-2.md) | `src/core/conversation-parser/` through `src/core/progressive-batch/`, except `src/core/persistence/` |
@@ -80,6 +80,7 @@ boundary and add its link here rather than raising the cap.
 | [Always-loaded core memory (key files cluster)](key-files/core-memory.md) | Core tier, write-path guard and lock order, delivery lanes, pressure notice |
 | [Workspace push and backup coverage (key files cluster)](key-files/workspace-push-and-backup.md) | Workspace push, hook push backstops, backup verdicts |
 | [Ambient capture consent gate (key files cluster)](key-files/ambient-capture.md) | `memory.auto_writeback` capture lanes |
+| [Quarantine (cluster)](key-files/quarantine.md) | Gate-marker strip; quarantined pages in facts, reads, writes |
 
 ## BrainBench — in a sibling repo
 

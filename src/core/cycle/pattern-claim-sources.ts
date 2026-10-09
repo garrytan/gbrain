@@ -120,7 +120,7 @@ export async function dedupePatternClaimSources(engine: BrainEngine, maintenance
         }
       } else {
         const [{ importFromContent }, { isAvailable }] = await Promise.all([import('../import-file.ts'), import('../ai/gateway.ts')]);
-        await importFromContent(engine, slug, content, { noEmbed: !isAvailable('embedding'), sourceId });
+        await importFromContent(engine, slug, content, { noEmbed: !isAvailable('embedding'), sourceId, preserveGateMarkers: true });
       }
       rewritten.push(slug);
     } catch (error) {

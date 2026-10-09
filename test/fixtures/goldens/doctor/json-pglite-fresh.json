@@ -44,7 +44,7 @@
             "next": "report",
             "requires_exclusive": false,
             "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "Register `<absolute path to gbrain> serve --surface starter` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "why": "Register `<absolute path to gbrain> serve --surface full` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
           "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
           "name": "retrieval_reflex_health",
@@ -386,7 +386,7 @@
             "next": "report",
             "requires_exclusive": false,
             "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
-            "why": "Register `<absolute path to gbrain> serve --surface starter` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            "why": "Register `<absolute path to gbrain> serve --surface full` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
           },
           "message": "No agent harness was detected. Wire one when the user picks an agent app.",
           "name": "harness_wiring",
@@ -521,7 +521,7 @@
         },
         {
           "category": "meta",
-          "message": "986 column(s) verified against live schema",
+          "message": "1003 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -831,10 +831,27 @@
             "count": 0,
             "docs": "docs/guides/troubleshooting.md#persistence-write-stall",
             "max_claim_ms": "<volatile>",
+            "preparation_policy": {
+              "maintenance_preparation_ms": "<volatile>",
+              "max_preparation_attempts": 2,
+              "preparation_ceiling_ms": "<volatile>",
+              "sync_preparation_ms": "<volatile>"
+            },
             "stalls": []
           },
           "message": "No write request has held its claim longer than persistence.max_claim_ms (600000 ms).",
           "name": "persistence_write_stall",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "applied": null,
+            "configured": "5min",
+            "docs": "docs/guides/troubleshooting.md#session-timeouts-not-applied"
+          },
+          "message": "PGLite has no session to time out.",
+          "name": "persistence_session_timeouts",
           "status": "ok"
         },
         {
@@ -987,6 +1004,33 @@
           },
           "message": "No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
           "name": "extractor_facts_expired",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "capped": false,
+            "docs": "docs/guides/repair.md#conversation-labels",
+            "evidenced": 0,
+            "repair": "conversation-labels"
+          },
+          "message": "No conversation fact carries the pre-fix meeting-label signature (a 1970-01-01 segment on a label page).",
+          "name": "conversation_label_facts",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "capped": false,
+            "docs": "docs/guides/repair.md#conversation-labels",
+            "extractor_version": 1,
+            "sample": [],
+            "scanned": 0,
+            "stale": 0,
+            "unstamped": 0
+          },
+          "message": "No conversation extraction outcome predates extractor version 1.",
+          "name": "conversation_outcomes_stale",
           "status": "ok"
         },
         {
@@ -1269,6 +1313,17 @@
           },
           "message": "Every active legacy token has explicit scopes.",
           "name": "legacy_token_null_scope",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#grants-that-cannot-reach-new-operations",
+            "grants": [],
+            "server_surface": "full"
+          },
+          "message": "Every active client and token can call the operations its scopes allow.",
+          "name": "grant_new_ops_available",
           "status": "ok"
         },
         {
@@ -1751,6 +1806,53 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#managed-sync-not-moving",
+            "parked": 0,
+            "sources": []
+          },
+          "message": "No managed sync is pending.",
+          "name": "managed_sync_not_moving",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "consumers": [],
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#two-consumers-on-host"
+          },
+          "message": "PGLite admits one process; no consumer heartbeat rows are kept.",
+          "name": "two_consumers_on_host",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#two-consumers-on-host",
+            "owners": []
+          },
+          "message": "PGLite admits one process; no consumer heartbeat rows are kept.",
+          "name": "consumers_without_heartbeat",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#host-identity-mismatch",
+            "host_id": "<uuid>",
+            "host_json_path": "<home>/.gbrain/persistence/host.json",
+            "mismatches": []
+          },
+          "message": "This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
+          "name": "host_identity_mismatch",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "details": {
             "docs": "docs/guides/write-refusals.md#invalid_fence",
@@ -1816,6 +1918,11 @@
               }
             ],
             "uncommitted_repairs": 0,
+            "unrenderable_legacy_facts": {
+              "complete": true,
+              "pages": [],
+              "total": 0
+            },
             "warn_at_normalized_7d": 20
           },
           "message": "No malformed facts or takes fence is held, stored or waiting in a checkout (1 source(s) scanned).",

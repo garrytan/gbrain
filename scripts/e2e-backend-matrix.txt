@@ -55,3 +55,4 @@ test/e2e/mentions-parity.test.ts
 test/e2e/persistence-publish-lock-order-postgres.test.ts
 test/e2e/p8-memory-writes-postgres.test.ts
 test/e2e/delta-cursor-integrity-postgres.test.ts
+test/e2e/single-write-group-parity-postgres.test.ts

@@ -1405,6 +1405,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.return_budget_default',
   'search.return_budget_conversation',
   'search.return_budget_max_remote',
+  'search.auto_packing',
   'think.return_unit',
   // Models tier system (v0.31.12)
   'models.default',
@@ -1635,6 +1636,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'wanted_pages.enabled',
   // Remote writes (the persistence `links` effect) record missing mention targets too. On by default (held-out verdict H8).
   'wanted_pages.remote',
+  // context_pack cards list the newest pages dated after the entity page that mention it (src/core/mentions/newer-mentions.ts). On by default.
+  'mentions.newer_on_cards',
   // Line grammar (src/core/line-grammar.ts): typed relation lines, off by default
   // (held-out verdict H3); undeclared relation types fall back to inference unless allowed.
   'line_grammar.enabled',
@@ -1674,7 +1677,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync.bulk',
   'sync.bulk_size',
   'sync.bulk_max_txn_ms',
-  'sync.lanes',
+  'sync.lanes', 'sync.waive_batch', 'persistence.single_write_group', 'persistence.preadmit_cache', // the last three: write-path kill switches (persistence/switches.ts)
   // Persisted indexing scope (comma/newline-separated glob list; trailing '/'
   // normalizes to a '/**' subtree glob). Read best-effort at the top of
   // performSyncInner and UNIONED with any per-call --exclude so internal
@@ -1724,6 +1727,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.limits.principal_terminal_bytes', 'persistence.limits.brain_terminal_bytes',
   'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes',
   'persistence.receipt_retention_days', 'persistence.unbound_write', 'persistence.max_claim_ms', // #5254: persistence/unbound-source.ts; #6176: persistence/claim-phase.ts
+  'persistence.sync_preparation_ms', 'persistence.maintenance_preparation_ms', 'persistence.preparation_ceiling_ms', 'persistence.max_preparation_attempts', 'persistence.preparation_deadlines', // #6278: persistence/preparation-budget.ts, switches.ts
+  'persistence.single_consumer', // #6317: persistence/switches.ts, consumer-election.ts (one full consumer per host; off by default)
   // shared-skills migration inventory bounds (src/core/shared-skills/inventory-limits.ts)
   'shared_skills.inventory.max_files', 'shared_skills.inventory.max_total_bytes', 'shared_skills.inventory.max_file_bytes', 'shared_skills.inventory.max_entries',
   'persistence.write_wait_ms', // #5232: file plane, persistence/write-wait.ts

@@ -1,0 +1,19 @@
+{
+  "id": "q2-dev-signed-on",
+  "note": "Development-only phrasing for the Q2 typing units (gbrain test/fixtures/q2-dev-phrasings). Not held-out material.",
+  "templates": {
+    "current": "{name} signed on with {company} as {role} and remains on the team.",
+    "stale_summary": "{name} signed on with {company} as {role}.",
+    "rejoin_eu": "{name} signed back on with {company} to lead the EU team.",
+    "former": "{name} was once on staff at {company}.",
+    "advises": "{name} serves as an adviser to {company}.",
+    "tl_move": "linkedin — Left {prev} and signed on with {company} as {role}",
+    "tl_join": "linkedin — Signed on with {company} as {role}",
+    "tl_leave": "linkedin — Handed in her notice at {company}",
+    "tl_advise": "note — Signed on as an adviser to {company}",
+    "tl_invest": "note — Wrote a check into {company} after leaving",
+    "tl_alumni": "event — Spoke at a {company} alumni panel",
+    "explicit_start": "note — Started works_at [[{slug}]] as {role}",
+    "explicit_end": "note — Ended works_at [[{slug}]]"
+  }
+}

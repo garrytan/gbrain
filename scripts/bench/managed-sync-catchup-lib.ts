@@ -26,14 +26,24 @@ function docker(args: string[], allowFail = false): string {
   return (r.stdout ?? '').trim();
 }
 
-export interface Harness { adminUrl: string; proxyUrl: (db: string) => string; directUrl: (db: string) => string; setRtt: (ms: number) => Promise<void>; stop: () => void }
+export interface Harness { adminUrl: string; proxyUrl: (db: string) => string; directUrl: (db: string) => string; setRtt: (ms: number) => Promise<void>; stop: () => void;
+  /** The transaction-mode pooler between toxiproxy and Postgres, when one was asked for. */
+  pooler: Record<string, unknown> | null }
+
+/** PgBouncer for `--pooler pgbouncer`, pinned by digest (PgBouncer 1.26.0). */
+export const PGBOUNCER_IMAGE = 'edoburu/pgbouncer@sha256:9c78945868a6a142c7fc40ccd843bbe5a606df163c7ffce4de70e0d628d696a2';
+const PGBOUNCER_POOL = { POOL_MODE: 'transaction', DEFAULT_POOL_SIZE: '50', MAX_CLIENT_CONN: '2000', IGNORE_STARTUP_PARAMETERS: 'extra_float_digits,options,statement_timeout,idle_in_transaction_session_timeout' };
 
 /**
  * Starts (or reuses) `gbrain-bench-pg` (pgvector + pg_stat_statements) and
  * `gbrain-bench-toxiproxy` (host network, loopback listeners). With an
  * explicit admin URL only toxiproxy is started, in front of that server.
+ * With `poolerPort`, a transaction-mode `gbrain-bench-pgbouncer` (host network,
+ * loopback, recreated each run) sits between toxiproxy and Postgres, so the
+ * RTT stays on the client side of the pooler. It ignores the session-timeout
+ * startup parameters gbrain sends, which stock PgBouncer refuses.
  */
-export async function startHarness(opts: { pgPort: number; proxyPort: number; apiPort: number; adminUrl?: string; keep: boolean }): Promise<Harness> {
+export async function startHarness(opts: { pgPort: number; proxyPort: number; apiPort: number; adminUrl?: string; keep: boolean; poolerPort?: number }): Promise<Harness> {
   const started: string[] = [];
   let upstreamHost = '127.0.0.1';
   let upstreamPort = opts.pgPort;
@@ -56,6 +66,26 @@ export async function startHarness(opts: { pgPort: number; proxyPort: number; ap
     docker(['run', '-d', '--name', 'gbrain-bench-toxiproxy', '--network', 'host', 'ghcr.io/shopify/toxiproxy:2.12.0', '-host', '127.0.0.1', '-port', String(opts.apiPort)]);
     started.push('gbrain-bench-toxiproxy');
   }
+  let pooler: Harness['pooler'] = null;
+  if (opts.poolerPort) {
+    const admin = new URL(adminUrl);
+    docker(['rm', '-f', 'gbrain-bench-pgbouncer'], true);
+    const env = { DB_HOST: upstreamHost, DB_PORT: String(upstreamPort), DB_USER: decodeURIComponent(admin.username), DB_PASSWORD: decodeURIComponent(admin.password),
+      AUTH_TYPE: 'scram-sha-256', LISTEN_ADDR: '127.0.0.1', LISTEN_PORT: String(opts.poolerPort), ...PGBOUNCER_POOL };
+    docker(['run', '-d', '--name', 'gbrain-bench-pgbouncer', '--network', 'host', ...Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]), PGBOUNCER_IMAGE]);
+    started.push('gbrain-bench-pgbouncer');
+    for (let i = 0; ; i++) {
+      try {
+        const viaPooler = new URL(adminUrl); viaPooler.hostname = '127.0.0.1'; viaPooler.port = String(opts.poolerPort);
+        const probe = postgres(viaPooler.toString(), { max: 1, onnotice: () => {}, connect_timeout: 2, prepare: false });
+        await probe`SELECT 1`; await probe.end();
+        break;
+      } catch (error) { if (i > 60) throw error; }
+      await Bun.sleep(1000);
+    }
+    pooler = { kind: 'pgbouncer', image: PGBOUNCER_IMAGE, listen: `127.0.0.1:${opts.poolerPort}`, ...Object.fromEntries(Object.entries(PGBOUNCER_POOL).map(([k, v]) => [k.toLowerCase(), v])) };
+    upstreamHost = '127.0.0.1'; upstreamPort = opts.poolerPort;
+  }
   const api = `http://127.0.0.1:${opts.apiPort}`;
   for (let i = 0; ; i++) {
     try {
@@ -72,7 +102,7 @@ export async function startHarness(opts: { pgPort: number; proxyPort: number; ap
   const withDb = (url: string, db: string) => { const u = new URL(url); u.pathname = `/${db}`; return u.toString(); };
   const proxied = new URL(adminUrl); proxied.hostname = '127.0.0.1'; proxied.port = String(opts.proxyPort);
   return {
-    adminUrl,
+    adminUrl, pooler,
     directUrl: db => withDb(adminUrl!, db),
     proxyUrl: db => withDb(proxied.toString(), db),
     async setRtt(ms: number) {
@@ -91,9 +121,9 @@ export async function startHarness(opts: { pgPort: number; proxyPort: number; ap
   };
 }
 
-/** Measures the harness round trip: median of 20 `SELECT 1` through the proxy on one connection. */
-export async function measureRtt(url: string): Promise<number> {
-  const sql = postgres(url, { max: 1, onnotice: () => {} });
+/** Measures the harness round trip: median of 20 `SELECT 1` through the proxy on one connection (unprepared behind a transaction-mode pooler). */
+export async function measureRtt(url: string, prepare = true): Promise<number> {
+  const sql = postgres(url, { max: 1, onnotice: () => {}, prepare });
   try {
     await sql`SELECT 1`;
     const xs: number[] = [];

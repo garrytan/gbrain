@@ -29,7 +29,12 @@ frontmatter fix with 'gbrain repair frontmatter --source <id>'. A fence hold
 preview it with 'gbrain repair fences --source <id>' (read-only, no model
 call), which prints the apply command, or the exact edit for a fence gbrain
 will not guess. A source a file blocked before this release recovers on its
-next sync ('--no-pull' on a managed brain).
+next sync ('--no-pull' on a managed brain). On a managed brain a write whose
+preparation never finishes within its attempts is held as
+preparation_stalled: the file is fine, so no repair applies; inspect the
+writer with 'gbrain sources writer status --source <id> --json', fix what it
+names, then 'gbrain sources retry-held <id>' and the same sync. Many such
+stalls in one run stop it with outcome blocked / preparation_systemic.
 'gbrain config set sync.holds fail' restores fail-closed blocking.
 
 Options:
@@ -99,16 +104,20 @@ Options:
                        'gbrain config set sync.bulk false' or
                        GBRAIN_SYNC_BULK=0; tune with sync.bulk_size and
                        sync.bulk_max_txn_ms.
-  --lanes N            Managed Postgres sync: publish up to N bulk groups at
-                       once (1-8, default 6, capped by the connection pool).
-                       Pages still commit in file order. Persist with
-                       'gbrain config set sync.lanes N' or GBRAIN_SYNC_LANES.
+  --lanes N            Managed Postgres sync: publish at most N bulk groups at
+                       once (1-16, default 16, capped by the connection pool:
+                       GBRAIN_POOL_SIZE minus 4). Pages still commit in file
+                       order. Persist with 'gbrain config set sync.lanes N' or
+                       GBRAIN_SYNC_LANES; the drain reports what limited it.
   --no-lanes           Same as --lanes 1: one bulk group at a time.
-  --no-delegate        On a PGLite brain with a live 'gbrain serve', sync
-                       normally delegates the run to the serve process over
-                       its IPC socket (the lock owner does the work; embeds
-                       defer to serve's background sweep). This flag (or
-                       GBRAIN_SYNC_NO_DELEGATE=1) opts out — sync then fails
+  --no-delegate        Keep this process's own write consumer even when a
+                       live 'gbrain serve' could run the sync. Normally sync
+                       hands the run to that serve over its IPC socket and
+                       prints its progress: on PGLite because the serve holds
+                       the single-writer lock, on a managed Postgres brain so
+                       the host keeps one write consumer. This flag (or
+                       GBRAIN_SYNC_NO_DELEGATE=1) opts out: on Postgres the
+                       sync runs here beside the serve; on PGLite it fails
                        fast if a live serve holds the brain.
   --no-schema-pack     Skip loading the active schema pack (no per-file pack
                        regex runs; pages use legacy prefix typing). Escape
@@ -153,13 +162,29 @@ Options:
                        backlog on managed Postgres).
   --yes                Accept any interactive prompts (CI / non-TTY).
 
+Subcommands:
+  gbrain sync status --source <id> [--json]
+                       Where a managed catch-up stands: cursor, pages
+                       committed in the last 10 minutes, each hold and the
+                       last error with class / safe_actions / needs_human,
+                       and the next action (for an operator agent's loop).
+  gbrain sync unblock --source <id> [--apply] [--json]
+                       Performs the safe action for every hold (re-screens a
+                       held file whose edit is now committed, retries a
+                       stalled preparation) and refuses the rest by name.
+                       Runbook: docs/guides/sync-unblock-runbook.md
+
 See also:
   gbrain embed --stale    Re-embed all stale chunks (post --no-embed).
   gbrain doctor           Diagnose dim mismatches and other sync issues.
   gbrain sources status <id>              Held files with their next command.
   gbrain repair frontmatter --source <id> Preview the fix for frontmatter holds.
   gbrain repair fences --source <id>      Preview the repair of fence holds.
+  gbrain sources writer status --source <id> --json
+                                          What a stalled write was doing (preparation_stalled holds).
   docs/guides/repair.md#held-files        Walkthrough.
+  docs/guides/troubleshooting.md#catch-up-stuck
+                                          Catch-up stuck / held N files runbook.
 `);
 }
 
@@ -195,7 +220,7 @@ export function parseSyncFlags(args: string[]) {
   const noPull = args.includes('--no-pull');
   const noBulk = args.includes('--no-bulk');
   const lanesAt = args.indexOf('--lanes');
-  const lanes = args.includes('--no-lanes') ? 1 : lanesAt === -1 ? undefined : intFlagValue(args[lanesAt + 1], '--lanes', { min: 1, max: 8, example: 4 });
+  const lanes = args.includes('--no-lanes') ? 1 : lanesAt === -1 ? undefined : intFlagValue(args[lanesAt + 1], '--lanes', { min: 1, max: 16, example: 8 });
   let noEmbed = resolveNoEmbed(args, loadConfig());
   const noExtract = args.includes('--no-extract'); // v0.42.7 #1696
   const skipFailed = args.includes('--skip-failed');

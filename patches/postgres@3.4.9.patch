@@ -1,5 +1,5 @@
 diff --git a/cjs/src/connection.js b/cjs/src/connection.js
-index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124dbb94e18b 100644
+index 07f6716..ec88b7c 100644
 --- a/cjs/src/connection.js
 +++ b/cjs/src/connection.js
 @@ -78,6 +78,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -42,7 +42,25 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
      } catch (error) {
        sent.length === 0 && write(Sync)
        errored(error)
-@@ -295,7 +301,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -235,10 +241,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     q.onlyDescribe && (delete statements[q.signature])
+     q.parameters = q.parameters || parameters
+     q.prepared = q.prepare && q.signature in statements
+-    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared)
++    // GBrain: a statement this pool already described on another connection reuses its parameter
++    // types, so it is parsed, described and executed in one pipelined message group (no describe first).
++    q.typesKey = options.shared_types && parameters.length && !q.onlyDescribe ? types + string : null
++    const shared = !q.prepared && q.typesKey && options.shared_types.get(q.typesKey)
++    q.sharedTypes = !!shared
++    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !shared)
+     q.statement = q.prepared
+       ? statements[q.signature]
+-      : { string, types, name: q.prepare ? statementId + statementCount++ : '' }
++      : { string, types: shared ? shared.slice() : types, name: q.prepare ? statementId + statementCount++ : '' }
+ 
+     typeof options.debug === 'function' && options.debug(id, string, parameters, types)
+   }
+@@ -295,7 +306,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
  
    /* c8 ignore next 3 */
    function drain() {
@@ -51,7 +69,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
    }
  
    function data(x) {
-@@ -379,6 +385,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -379,6 +390,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function error(err) {
@@ -60,7 +78,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
      if (connection.queue === queues.connecting && options.host[retries + 1])
        return
  
-@@ -388,6 +396,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -388,6 +401,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function errored(err) {
@@ -69,27 +87,55 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
      stream && (stream.destroy(err), stream = null)
      query && queryError(query, err)
      initial && (queryError(initial, err), initial = null)
-@@ -447,6 +457,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -438,6 +453,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     remaining = 0
+     incomings = null
+     clearImmediate(nextWriteTimer)
++    // GBrain (#6355): bytes still waiting for the cleared immediate belonged to this socket. Left in place, the next
++    // connection's StartupMessage is appended to them and never scheduled for writing (the timer handle is not
++    // null), so the connection sits open until CONNECT_TIMEOUT and every statement bound to it fails.
++    chunk = nextWriteTimer = null
+     socket.removeListener('data', data)
+     socket.removeListener('connect', connected)
+     idleTimer.cancel()
+@@ -447,10 +466,23 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      socket.removeAllListeners()
      socket = null
  
+-    if (initial)
 +    if (cancelMessage)
 +      return cancelError || hadError
 +        ? cancelReject(cancelError || Errors.connection('CONNECTION_CLOSED', options))
 +        : cancelResolve()
 +
-     if (initial)
++    if (initial) {
++      // GBrain (#6355): a connection that died during startup (its backend terminated under the array-types fetch)
++      // leaves that internal query and the error it saw behind. The fresh connection must not deliver the stale
++      // error to the caller's query at its first ReadyForQuery, and the internal query settles here instead of
++      // rejecting with nobody to hear it.
++      query && query !== initial && queryError(query, Errors.connection('CONNECTION_CLOSED', options, socket))
++      query = results = errorResponse = null
        return reconnect()
++    }
  
-@@ -533,6 +548,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    query = null
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
+@@ -533,8 +565,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function ReadyForQuery(x) {
 +    connection.status = x[5]
      if (query) {
        if (errorResponse) {
++        // GBrain: a failed statement describes again next time instead of trusting shared parameter types.
++        query.sharedTypes && options.shared_types.delete(query.typesKey)
          query.retried
-@@ -564,10 +580,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+           ? errored(query.retried)
+           : query.prepared && retryRoutines.has(errorResponse.routine)
+@@ -564,10 +599,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
          return fetchArrayTypes()
        }
  
@@ -104,7 +150,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
      }
  
      while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
-@@ -580,7 +598,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -580,7 +617,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        ? !connection.reserved.release && x[5] === 73 // I
          ? ending
            ? terminate()
@@ -113,11 +159,72 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..e5800bca79ea3e5d638176bcdfa6124d
          : connection.reserved()
        : ending
          ? terminate()
+@@ -630,6 +667,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+       !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
+ 
+     query.prepare && (statements[query.signature] = query.statement)
++    // GBrain: only built-in parameter types are shared; a database's own types may be recreated under a new oid.
++    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
++      && options.shared_types.set(query.typesKey, query.statement.types.slice())
+     query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
+   }
+ 
+@@ -767,14 +807,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+   async function fetchArrayTypes() {
+     needsTypes = false
+-    const types = await new Query([`
+-      select b.oid, b.typarray
+-      from pg_catalog.pg_type a
+-      left join pg_catalog.pg_type b on b.oid = a.typelem
+-      where a.typcategory = 'A'
+-      group by b.oid, b.typarray
+-      order by b.oid
+-    `], [], execute)
++    let types
++    try {
++      types = await new Query([`
++        select b.oid, b.typarray
++        from pg_catalog.pg_type a
++        left join pg_catalog.pg_type b on b.oid = a.typelem
++        where a.typcategory = 'A'
++        group by b.oid, b.typarray
++        order by b.oid
++      `], [], execute)
++    } catch (error) {
++      // GBrain (#6355): the fetch failed or its connection closed; errored() has already told the caller's query, and
++      // connected() re-arms the fetch for the next connection. Nothing awaits this promise, so it must not reject.
++      return
++    }
+     types.forEach(({ oid, typarray }) => addArrayType(oid, typarray))
+   }
+ 
 diff --git a/cjs/src/index.js b/cjs/src/index.js
-index f09c61c7e998f411560b95c9a8e1ed6a97972c11..c72e4135627296dd00179e30d02094d591047267 100644
+index f09c61c..694550b 100644
 --- a/cjs/src/index.js
 +++ b/cjs/src/index.js
-@@ -200,40 +200,134 @@ function Postgres(a, b) {
+@@ -68,6 +68,20 @@ function Postgres(a, b) {
+ 
+   Object.assign(sql, {
+     get parameters() { return options.parameters },
++    // GBrain: the pool's own queue lengths, read-only, for the consumer's pool diagnostics (#6317).
++    get pool() {
++      return {
++        max: options.max,
++        open: open.length,
++        busy: busy.length,
++        full: full.length,
++        reserved: reserved.length,
++        connecting: connecting.length,
++        closed: closed.length,
++        ended: ended.length,
++        queued: queries.length
++      }
++    },
+     largeObject: largeObject.bind(null, sql),
+     subscribe,
+     CLOSE,
+@@ -200,40 +214,134 @@ function Postgres(a, b) {
      return await sql`select pg_notify(${ channel }, ${ '' + payload })`
    }
  
@@ -271,7 +378,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..c72e4135627296dd00179e30d02094d5
      let savepoints = 0
        , connection
        , prepare = null
-@@ -249,9 +343,13 @@ function Postgres(a, b) {
+@@ -249,9 +357,13 @@ function Postgres(a, b) {
      }
  
      async function scope(c, fn, name) {
@@ -285,7 +392,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..c72e4135627296dd00179e30d02094d5
        let uncaughtError
          , result
  
-@@ -281,6 +379,8 @@ function Postgres(a, b) {
+@@ -281,6 +393,8 @@ function Postgres(a, b) {
        return result
  
        function savepoint(name, fn) {
@@ -294,7 +401,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..c72e4135627296dd00179e30d02094d5
          if (name && Array.isArray(name.raw))
            return savepoint(sql => sql.apply(sql, arguments))
  
-@@ -290,18 +390,16 @@ function Postgres(a, b) {
+@@ -290,18 +404,16 @@ function Postgres(a, b) {
  
        function handler(q) {
          q.catch(e => uncaughtError || (uncaughtError = e))
@@ -317,7 +424,42 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..c72e4135627296dd00179e30d02094d5
      }
    }
  
-@@ -398,7 +496,14 @@ function Postgres(a, b) {
+@@ -351,7 +463,7 @@ function Postgres(a, b) {
+     return new Promise((resolve, reject) => {
+       query.state
+         ? query.active
+-          ? Connection(options).cancel(query.state, resolve, reject)
++          ? cancelActive(query, resolve, reject)
+           : query.cancelled = { resolve, reject }
+         : (
+           queries.remove(query),
+@@ -362,6 +474,25 @@ function Postgres(a, b) {
+     })
+   }
+ 
++  function cancelActive(query, resolve, reject, delay = 50) {
++    Connection(options).cancel(query.state, () => {
++      if (!query.active)
++        return resolve()
++      let waiting = true
++      const timer = setTimeout(next, delay)
++      Promise.prototype.then.call(query, next, next)
++      function next() {
++        if (!waiting)
++          return
++        waiting = false
++        clearTimeout(timer)
++        query.active
++          ? cancelActive(query, resolve, reject, Math.min(delay * 2, 1000))
++          : resolve()
++      }
++    }, reject)
++  }
++
+   async function end({ timeout = null } = {}) {
+     if (ending)
+       return ending
+@@ -398,7 +529,14 @@ function Postgres(a, b) {
      move(c, ended)
    }
  
@@ -333,7 +475,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..c72e4135627296dd00179e30d02094d5
      if (queries.length === 0)
        return move(c, open)
  
-@@ -418,12 +523,32 @@ function Postgres(a, b) {
+@@ -418,12 +556,32 @@ function Postgres(a, b) {
        : move(c, full)
    }
  
@@ -367,16 +509,17 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..c72e4135627296dd00179e30d02094d5
    }
  }
  
-@@ -491,6 +616,7 @@ function parseOptions(a, b) {
+@@ -491,6 +649,8 @@ function parseOptions(a, b) {
      onnotice        : o.onnotice,
      onnotify        : o.onnotify,
      onclose         : o.onclose,
 +    onpoisoned      : o.onpoisoned,
++    shared_types    : o.shared_types === false ? null : o.shared_types instanceof Map ? o.shared_types : new Map(),
      onparameter     : o.onparameter,
      socket          : o.socket,
      transform       : parseTransform(o.transform || { undefined: undefined }),
 diff --git a/cjs/src/query.js b/cjs/src/query.js
-index 45327f2fabcdbf8f8ec5020675012c310c04fee6..1d092504ac1ce1fdac78cb0c4ef3a8aa957676e4 100644
+index 45327f2..1d09250 100644
 --- a/cjs/src/query.js
 +++ b/cjs/src/query.js
 @@ -23,11 +23,12 @@ const Query = module.exports.Query = class Query extends Promise {
@@ -420,7 +563,7 @@ index 45327f2fabcdbf8f8ec5020675012c310c04fee6..1d092504ac1ce1fdac78cb0c4ef3a8aa
            this.execute()
            return promise
 diff --git a/cjs/src/queue.js b/cjs/src/queue.js
-index 8438f5da92cf7637d98a33491d75c75b1c817c25..c444310ff87b0ac81fd19cd3170a0ba607a66781 100644
+index 8438f5d..c444310 100644
 --- a/cjs/src/queue.js
 +++ b/cjs/src/queue.js
 @@ -15,6 +15,7 @@ function Queue(initial = []) {
@@ -432,7 +575,7 @@ index 8438f5da92cf7637d98a33491d75c75b1c817c25..c444310ff87b0ac81fd19cd3170a0ba6
        const out = xs[index++]
  
 diff --git a/src/connection.js b/src/connection.js
-index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641cb55178d0 100644
+index 1b1cccd..c4d90e6 100644
 --- a/src/connection.js
 +++ b/src/connection.js
 @@ -78,6 +78,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -475,7 +618,25 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
      } catch (error) {
        sent.length === 0 && write(Sync)
        errored(error)
-@@ -295,7 +301,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -235,10 +241,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     q.onlyDescribe && (delete statements[q.signature])
+     q.parameters = q.parameters || parameters
+     q.prepared = q.prepare && q.signature in statements
+-    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared)
++    // GBrain: a statement this pool already described on another connection reuses its parameter
++    // types, so it is parsed, described and executed in one pipelined message group (no describe first).
++    q.typesKey = options.shared_types && parameters.length && !q.onlyDescribe ? types + string : null
++    const shared = !q.prepared && q.typesKey && options.shared_types.get(q.typesKey)
++    q.sharedTypes = !!shared
++    q.describeFirst = q.onlyDescribe || (parameters.length && !q.prepared && !shared)
+     q.statement = q.prepared
+       ? statements[q.signature]
+-      : { string, types, name: q.prepare ? statementId + statementCount++ : '' }
++      : { string, types: shared ? shared.slice() : types, name: q.prepare ? statementId + statementCount++ : '' }
+ 
+     typeof options.debug === 'function' && options.debug(id, string, parameters, types)
+   }
+@@ -295,7 +306,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
  
    /* c8 ignore next 3 */
    function drain() {
@@ -484,7 +645,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
    }
  
    function data(x) {
-@@ -379,6 +385,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -379,6 +390,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function error(err) {
@@ -493,7 +654,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
      if (connection.queue === queues.connecting && options.host[retries + 1])
        return
  
-@@ -388,6 +396,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -388,6 +401,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function errored(err) {
@@ -502,27 +663,55 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
      stream && (stream.destroy(err), stream = null)
      query && queryError(query, err)
      initial && (queryError(initial, err), initial = null)
-@@ -447,6 +457,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -438,6 +453,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     remaining = 0
+     incomings = null
+     clearImmediate(nextWriteTimer)
++    // GBrain (#6355): bytes still waiting for the cleared immediate belonged to this socket. Left in place, the next
++    // connection's StartupMessage is appended to them and never scheduled for writing (the timer handle is not
++    // null), so the connection sits open until CONNECT_TIMEOUT and every statement bound to it fails.
++    chunk = nextWriteTimer = null
+     socket.removeListener('data', data)
+     socket.removeListener('connect', connected)
+     idleTimer.cancel()
+@@ -447,10 +466,23 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      socket.removeAllListeners()
      socket = null
  
+-    if (initial)
 +    if (cancelMessage)
 +      return cancelError || hadError
 +        ? cancelReject(cancelError || Errors.connection('CONNECTION_CLOSED', options))
 +        : cancelResolve()
 +
-     if (initial)
++    if (initial) {
++      // GBrain (#6355): a connection that died during startup (its backend terminated under the array-types fetch)
++      // leaves that internal query and the error it saw behind. The fresh connection must not deliver the stale
++      // error to the caller's query at its first ReadyForQuery, and the internal query settles here instead of
++      // rejecting with nobody to hear it.
++      query && query !== initial && queryError(query, Errors.connection('CONNECTION_CLOSED', options, socket))
++      query = results = errorResponse = null
        return reconnect()
++    }
  
-@@ -533,6 +548,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    query = null
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
+@@ -533,8 +565,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function ReadyForQuery(x) {
 +    connection.status = x[5]
      if (query) {
        if (errorResponse) {
++        // GBrain: a failed statement describes again next time instead of trusting shared parameter types.
++        query.sharedTypes && options.shared_types.delete(query.typesKey)
          query.retried
-@@ -564,10 +580,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+           ? errored(query.retried)
+           : query.prepared && retryRoutines.has(errorResponse.routine)
+@@ -564,10 +599,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
          return fetchArrayTypes()
        }
  
@@ -537,7 +726,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
      }
  
      while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
-@@ -580,7 +598,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -580,7 +617,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        ? !connection.reserved.release && x[5] === 73 // I
          ? ending
            ? terminate()
@@ -546,11 +735,72 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..9a61cd9dcc9772e843842284e516641c
          : connection.reserved()
        : ending
          ? terminate()
+@@ -630,6 +667,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+       !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
+ 
+     query.prepare && (statements[query.signature] = query.statement)
++    // GBrain: only built-in parameter types are shared; a database's own types may be recreated under a new oid.
++    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
++      && options.shared_types.set(query.typesKey, query.statement.types.slice())
+     query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
+   }
+ 
+@@ -767,14 +807,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+   async function fetchArrayTypes() {
+     needsTypes = false
+-    const types = await new Query([`
+-      select b.oid, b.typarray
+-      from pg_catalog.pg_type a
+-      left join pg_catalog.pg_type b on b.oid = a.typelem
+-      where a.typcategory = 'A'
+-      group by b.oid, b.typarray
+-      order by b.oid
+-    `], [], execute)
++    let types
++    try {
++      types = await new Query([`
++        select b.oid, b.typarray
++        from pg_catalog.pg_type a
++        left join pg_catalog.pg_type b on b.oid = a.typelem
++        where a.typcategory = 'A'
++        group by b.oid, b.typarray
++        order by b.oid
++      `], [], execute)
++    } catch (error) {
++      // GBrain (#6355): the fetch failed or its connection closed; errored() has already told the caller's query, and
++      // connected() re-arms the fetch for the next connection. Nothing awaits this promise, so it must not reject.
++      return
++    }
+     types.forEach(({ oid, typarray }) => addArrayType(oid, typarray))
+   }
+ 
 diff --git a/src/index.js b/src/index.js
-index c7fba3dace20173f4cb13f3f138bb6d213b43683..e9af339e13ee79e38d13fe82733ed17dc7529b46 100644
+index c7fba3d..fc9f766 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -200,40 +200,134 @@ function Postgres(a, b) {
+@@ -68,6 +68,20 @@ function Postgres(a, b) {
+ 
+   Object.assign(sql, {
+     get parameters() { return options.parameters },
++    // GBrain: the pool's own queue lengths, read-only, for the consumer's pool diagnostics (#6317).
++    get pool() {
++      return {
++        max: options.max,
++        open: open.length,
++        busy: busy.length,
++        full: full.length,
++        reserved: reserved.length,
++        connecting: connecting.length,
++        closed: closed.length,
++        ended: ended.length,
++        queued: queries.length
++      }
++    },
+     largeObject: largeObject.bind(null, sql),
+     subscribe,
+     CLOSE,
+@@ -200,40 +214,134 @@ function Postgres(a, b) {
      return await sql`select pg_notify(${ channel }, ${ '' + payload })`
    }
  
@@ -704,7 +954,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..e9af339e13ee79e38d13fe82733ed17d
      let savepoints = 0
        , connection
        , prepare = null
-@@ -249,9 +343,13 @@ function Postgres(a, b) {
+@@ -249,9 +357,13 @@ function Postgres(a, b) {
      }
  
      async function scope(c, fn, name) {
@@ -718,7 +968,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..e9af339e13ee79e38d13fe82733ed17d
        let uncaughtError
          , result
  
-@@ -281,6 +379,8 @@ function Postgres(a, b) {
+@@ -281,6 +393,8 @@ function Postgres(a, b) {
        return result
  
        function savepoint(name, fn) {
@@ -727,7 +977,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..e9af339e13ee79e38d13fe82733ed17d
          if (name && Array.isArray(name.raw))
            return savepoint(sql => sql.apply(sql, arguments))
  
-@@ -290,18 +390,16 @@ function Postgres(a, b) {
+@@ -290,18 +404,16 @@ function Postgres(a, b) {
  
        function handler(q) {
          q.catch(e => uncaughtError || (uncaughtError = e))
@@ -750,7 +1000,42 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..e9af339e13ee79e38d13fe82733ed17d
      }
    }
  
-@@ -398,7 +496,14 @@ function Postgres(a, b) {
+@@ -351,7 +463,7 @@ function Postgres(a, b) {
+     return new Promise((resolve, reject) => {
+       query.state
+         ? query.active
+-          ? Connection(options).cancel(query.state, resolve, reject)
++          ? cancelActive(query, resolve, reject)
+           : query.cancelled = { resolve, reject }
+         : (
+           queries.remove(query),
+@@ -362,6 +474,25 @@ function Postgres(a, b) {
+     })
+   }
+ 
++  function cancelActive(query, resolve, reject, delay = 50) {
++    Connection(options).cancel(query.state, () => {
++      if (!query.active)
++        return resolve()
++      let waiting = true
++      const timer = setTimeout(next, delay)
++      Promise.prototype.then.call(query, next, next)
++      function next() {
++        if (!waiting)
++          return
++        waiting = false
++        clearTimeout(timer)
++        query.active
++          ? cancelActive(query, resolve, reject, Math.min(delay * 2, 1000))
++          : resolve()
++      }
++    }, reject)
++  }
++
+   async function end({ timeout = null } = {}) {
+     if (ending)
+       return ending
+@@ -398,7 +529,14 @@ function Postgres(a, b) {
      move(c, ended)
    }
  
@@ -766,7 +1051,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..e9af339e13ee79e38d13fe82733ed17d
      if (queries.length === 0)
        return move(c, open)
  
-@@ -418,12 +523,32 @@ function Postgres(a, b) {
+@@ -418,12 +556,32 @@ function Postgres(a, b) {
        : move(c, full)
    }
  
@@ -800,16 +1085,17 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..e9af339e13ee79e38d13fe82733ed17d
    }
  }
  
-@@ -491,6 +616,7 @@ function parseOptions(a, b) {
+@@ -491,6 +649,8 @@ function parseOptions(a, b) {
      onnotice        : o.onnotice,
      onnotify        : o.onnotify,
      onclose         : o.onclose,
 +    onpoisoned      : o.onpoisoned,
++    shared_types    : o.shared_types === false ? null : o.shared_types instanceof Map ? o.shared_types : new Map(),
      onparameter     : o.onparameter,
      socket          : o.socket,
      transform       : parseTransform(o.transform || { undefined: undefined }),
 diff --git a/src/query.js b/src/query.js
-index 0d44a15cd9e42beaf11d4be6ccde60223e09508a..96967780bdb55671bdcdda0fd0bb6e718e0a0e78 100644
+index 0d44a15..9696778 100644
 --- a/src/query.js
 +++ b/src/query.js
 @@ -23,11 +23,12 @@ export class Query extends Promise {
@@ -853,7 +1139,7 @@ index 0d44a15cd9e42beaf11d4be6ccde60223e09508a..96967780bdb55671bdcdda0fd0bb6e71
            this.execute()
            return promise
 diff --git a/src/queue.js b/src/queue.js
-index c4ef97164f057db99dce1b9af3401dbb1af37e31..8fba891b879e8f5c7fdb03ea0590753663c824c3 100644
+index c4ef971..8fba891 100644
 --- a/src/queue.js
 +++ b/src/queue.js
 @@ -15,6 +15,7 @@ function Queue(initial = []) {
@@ -865,10 +1151,10 @@ index c4ef97164f057db99dce1b9af3401dbb1af37e31..8fba891b879e8f5c7fdb03ea05907536
        const out = xs[index++]
  
 diff --git a/types/index.d.ts b/types/index.d.ts
-index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..19103a998359c7277cd966c246cf245aedec4297 100644
+index 13c3432..03f1ddf 100644
 --- a/types/index.d.ts
 +++ b/types/index.d.ts
-@@ -119,6 +119,11 @@ interface BaseOptions<T extends Record<string, postgres.PostgresType>> {
+@@ -119,6 +119,18 @@ interface BaseOptions<T extends Record<string, postgres.PostgresType>> {
     */
    publications: string
    onclose: (connId: number) => void;
@@ -877,10 +1163,17 @@ index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..19103a998359c7277cd966c246cf245a
 +   * reused because its ReadyForQuery status was not idle ('T' or 'E').
 +   */
 +  onpoisoned: (status: string) => void;
++  /**
++   * GBrain: share the parameter types of a described statement across this pool's
++   * connections, so a connection running it for the first time skips the describe
++   * round trip and keeps pipelining. Only built-in types are shared.
++   * @default true
++   */
++  shared_types: boolean | Map<string, number[]>;
    backoff: boolean | ((attemptNum: number) => number);
    max_lifetime: number | null;
    keep_alive: number | null;
-@@ -605,7 +610,7 @@ declare namespace postgres {
+@@ -605,7 +617,7 @@ declare namespace postgres {
      writable(): Promise<Writable>;
  
      execute(): this;
@@ -889,7 +1182,7 @@ index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..19103a998359c7277cd966c246cf245a
  
      /**
       * @deprecated `.stream` has been renamed to `.forEach`
-@@ -659,6 +664,7 @@ declare namespace postgres {
+@@ -659,6 +671,7 @@ declare namespace postgres {
    | Fragment[]
  
    interface UnsafeQueryOptions {
@@ -897,7 +1190,16 @@ index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..19103a998359c7277cd966c246cf245a
      /**
       * When executes query as prepared statement.
       * @default false
-@@ -717,10 +723,11 @@ declare namespace postgres {
+@@ -705,6 +718,8 @@ declare namespace postgres {
+ 
+     options: ParsedOptions<TTypes>;
+     parameters: ConnectionParameters;
++    /** GBrain: the pool's own queue lengths at this instant (`queued` = queries waiting for a connection). */
++    pool: { max: number; open: number; busy: number; full: number; reserved: number; connecting: number; closed: number; ended: number; queued: number };
+ 
+     end(options?: { timeout?: number | undefined } | undefined): Promise<void>;
+ 
+@@ -717,10 +732,11 @@ declare namespace postgres {
      begin<T>(cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
      begin<T>(options: string, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
  
@@ -910,7 +1212,7 @@ index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..19103a998359c7277cd966c246cf245a
      savepoint<T>(cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
      savepoint<T>(name: string, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
  
-@@ -728,6 +735,7 @@ declare namespace postgres {
+@@ -728,6 +744,7 @@ declare namespace postgres {
    }
  
    interface ReservedSql<TTypes extends Record<string, unknown> = {}> extends Sql<TTypes> {

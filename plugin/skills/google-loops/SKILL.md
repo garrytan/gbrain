@@ -194,14 +194,3 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - **Marking loops done for the user.** Close (`gbrain loops done <id>`) only
   after the user says it's handled; thread loops self-close on the next sync
   when the reply is visible in Gmail.
-
-## Tools outside your MCP surface
-
-This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
-does not have it, call request_tools {"surface":"full"} to add it to this session, or run its gbrain CLI equivalent:
-
-- `loops_close` → `gbrain loops done`
-- `loops_mute` → `gbrain loops mute`
-- `open_loops` → `gbrain loops list`
-
-To widen every new session, set this machine's plugin surface with GBRAIN_SURFACE=full.

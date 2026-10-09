@@ -202,8 +202,8 @@ export async function runSchemaTransition(engine: BrainEngine, targetDim: number
   // embedding_is_null), so this clear is belt-and-braces, DELIBERATELY outside
   // the DDL transaction: a ~1M-row UPDATE inside the ACCESS EXCLUSIVE window
   // would hold the exclusive lock through row churn (the pooler-contention
-  // class pace-mode exists for), and a crash mid-batch leaves only
-  // redundant-lie rows that nothing reads. Batched with an event-loop yield
+  // class pace-mode exists for). It also stamps embedding_pending_since (kept when already
+  // pending) for doctor's backlog age; a row a crash skipped has none. Batched with an event-loop yield
   // between batches (setTimeout(0), NOT setImmediate — Bun starves the timers
   // phase under a tight setImmediate loop) so lock heartbeats keep firing.
   try {
@@ -217,10 +217,10 @@ export async function runSchemaTransition(engine: BrainEngine, targetDim: number
       const res = await engine.executeRaw<{ n: number; max_id: number | null }>(
         `WITH b AS (
            SELECT id FROM content_chunks
-            WHERE id > $1 AND embedded_at IS NOT NULL
+            WHERE id > $1 AND (embedded_at IS NOT NULL OR embedding_pending_since IS NULL)
             ORDER BY id LIMIT 50000
          ),
-         u AS (UPDATE content_chunks c SET embedded_at = NULL FROM b WHERE c.id = b.id RETURNING b.id)
+         u AS (UPDATE content_chunks c SET embedded_at = NULL, embedding_pending_since = COALESCE(c.embedding_pending_since, now()) FROM b WHERE c.id = b.id RETURNING b.id)
          SELECT count(*)::int AS n, max(id)::int AS max_id FROM u`,
         [cursor],
       );

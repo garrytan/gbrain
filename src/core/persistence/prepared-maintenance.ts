@@ -1,4 +1,6 @@
 import { realpathSync } from 'node:fs';
+import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
+import { boundedReads } from './bounded-reads.ts';
 import { join } from 'node:path';
 import type { BrainEngine, FactRow } from '../engine.ts';
 import { loadConfig, type GBrainConfig } from '../config.ts';
@@ -6,11 +8,13 @@ import { opError, type OperationContext } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
-import { serializePageToMarkdown } from '../markdown.ts';
-import { parseFactsFence } from '../facts-fence.ts';
+import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
+import { fenceOperationError, scanCanonicalFences } from '../fence-repair/refusal.ts';
+import { normalizeClaimWhitespace, parseFactsFence } from '../facts-fence.ts';
 import { submissionAuthority, authorizeStoredRequest, authorizeWrite } from './authority.ts';
 import { currentVerifiedLocalWriter, localHostId, registerLocalWriter } from './identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
+import { checkOwner, ownerUnavailableError } from './owner-refusal.ts';
 import { admitWrite, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
 import { preparePageMutation, prepareFileTarget } from './page-prepare.ts';
@@ -46,6 +50,27 @@ function maintenanceRequestId(value: unknown): string {
   return `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
 }
 
+/**
+ * The cheap up-front part of a managed maintenance preflight, for runs that
+ * resolve `maintenancePreflight` lazily at their first write: refuses a
+ * caller the coordinator cannot accept (a remote job or writer) and an
+ * inactive source before any provider work, dry runs included. Returns
+ * whether the brain is managed; needs no canonical owner.
+ */
+export async function maintenanceCallerPreflight(engine: BrainEngine, sourceId: string): Promise<boolean> {
+  if (!await managedPersistenceEnabled(engine)) return false;
+  assertPersistenceAccepting(engine);
+  const job = currentSubmissionAuthority();
+  if (job && job.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
+    throw trustedCliRequired('Managed fact maintenance requires a local writer; remote maintenance jobs are not supported.');
+  }
+  const [source] = await engine.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1', [sourceId]);
+  if (!source || source.archived) throw opError('source_changed', 'The maintenance source is not active.',
+    `Source '${sourceId}' is missing or archived, so maintenance submitted nothing and no model was called. Check it with the command in fix; restore an archived source with gbrain sources restore ${sourceId} before running maintenance on it.`,
+    { fix: readFix('Lists registered sources, archived ones included.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
+  return true;
+}
+
 export async function maintenancePreflight(engine: BrainEngine, sourceId: string, root?: string,
   opts: { deadlineAtMs?: number | null } = {}): Promise<MaintenanceAuthority | null> {
   if (!await managedPersistenceEnabled(engine)) return null;
@@ -76,19 +101,16 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
   const writeThrough = !/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true');
   const configuredRoot = source.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
   if (writeThrough && (root || configuredRoot || binding)) {
-    if (!binding || binding.source_incarnation !== source.incarnation || binding.owner_host_id !== localHostId() ||
-      binding.state !== 'active' || !binding.local_path || !binding.coordination_path) {
-      throw opError('owner_unavailable', 'The maintenance source needs an active canonical owner before model work.',
-        `Source '${sourceId}' has no active canonical owner on this host, so no model work ran. Inspect the owner with the command in fix and run maintenance on the host it names; do not claim or transfer ownership just to run maintenance.`,
-        { fix: ownerStatusFix(sourceId) });
-    }
-    if (root && realpathSync(root) !== realpathSync(join(binding.local_path, binding.relative_path))) {
+    const hostId = localHostId();
+    const owner = checkOwner(binding, source.incarnation, hostId);
+    if (owner.reason) throw ownerUnavailableError({ sourceId, reason: owner.reason, binding, incarnation: source.incarnation, hostId, remote: false, work: 'maintenance' });
+    if (root && realpathSync(root) !== realpathSync(join(owner.binding.local_path, owner.binding.relative_path))) {
       throw opError('source_changed', 'The maintenance directory is not the canonical source root.',
         `Run maintenance for '${sourceId}' against its registered canonical root (the command in fix shows it), or without a directory argument; nothing was submitted.`,
         { fix: ownerStatusFix(sourceId) });
     }
     await nativeLockCapability();
-    assertPhysicalRoot(binding.local_path, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
+    assertPhysicalRoot(owner.binding.local_path, { worktreeId: owner.binding.worktree_id, coordinationPath: owner.binding.coordination_path });
   }
   if (!writeThrough) writer.databaseOnlyReason = 'disabled_by_config';
   else if (!binding) writer.databaseOnlyReason = 'no_repo_configured';
@@ -122,13 +144,29 @@ async function submitMaintenance(engine: BrainEngine, authority: MaintenanceAuth
     return writeResponse(wait.observe(await waitForWrite(engine, prior, loadConfig() ?? { engine: engine.kind }, wait.ms())));
   }
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: authority.writer.sourceId, includeDeleted: true });
+  // A deleted-page intent (extract_facts expiring a soft-deleted page's facts) admits only a page that is still soft-deleted.
+  if (intent.deleted_page === true && !snapshot?.page.deleted_at) {
+    throw opError('page_identity_changed', 'The deleted page was restored or purged before maintenance admitted its request.',
+      `Page ${slug} in '${authority.writer.sourceId}' is no longer soft-deleted, so nothing was submitted for it. Run maintenance again to plan from the current pages.`);
+  }
   // #5876: only a Life Chronicle event its extractor retired may be restored by a later generation.
-  if (snapshot?.page.deleted_at && !(intent.restore_retired === true && snapshot.page.frontmatter?.retired_by === 'life-chronicle')) {
+  if (snapshot?.page.deleted_at && intent.deleted_page !== true && !(intent.restore_retired === true && snapshot.page.frontmatter?.retired_by === 'life-chronicle')) {
     throw opError('page_not_found', 'Maintenance cannot restore a deleted page.',
       `Page ${slug} in '${authority.writer.sourceId}' was deleted after maintenance read it, and maintenance never recreates deleted pages; nothing was submitted. Run maintenance again to plan from the current pages.`);
   }
   if ((snapshot?.revision ?? null) !== intent.expected_revision) throw opError('revision_conflict', 'The maintenance target changed before admission.',
     `Page ${slug} in '${authority.writer.sourceId}' changed after maintenance read it; nothing was submitted. Run maintenance again so it works from the current revision.`);
+  // #6278: the same fence scan the canonical projection runs, over the whole
+  // submitted body and timeline, before a request exists. A fence defect the
+  // write would not clear (a second facts fence in the timeline survives
+  // every adoption, which replaces only the first fence) is refused here with
+  // its fence reason, so maintenance skips the page instead of admitting a
+  // request that fails at preparation; the census already lists the stored
+  // defect as a repair candidate. A repair whose postimage is clean passes.
+  if (typeof intent.content === 'string') {
+    const scan = scanCanonicalFences(parseMarkdown(intent.content, slug));
+    if (scan.defects.length) throw fenceOperationError(scan.defects[0]!, slug, authority.writer.sourceId);
+  }
   const row = await admitWrite(engine, { principal: authority.writer.principal, requestId, operation: 'submit_job',
     sourceId: authority.writer.sourceId, sourceIncarnation: authority.writer.sourceIncarnation, slug,
     pageId: snapshot?.page.id ?? null, authority: authority.writer, callerIntent: intent, intent,
@@ -266,7 +304,12 @@ export async function submitFactFenceAdoption(engine: BrainEngine, authority: Ma
   }
 }
 
-async function prepareFactFenceAdoption(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
+/**
+ * `clock` (#6278): the claim's phase clock; the adoption's await boundaries (read facts, parse, occupied rows, the page) name
+ * their step, and its preparation reads of `facts` run bounded by the remaining budget (`boundedReads`).
+ */
+async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
+  const engine = boundedReads(unbounded, clock);
   const p = row.intent!;
   const facts = p.facts as FactFenceAssignment[];
   if (p.source_incarnation !== row.source_incarnation) throw opError('source_changed', 'The fact adoption source changed.',
@@ -277,8 +320,11 @@ async function prepareFactFenceAdoption(engine: BrainEngine, row: WriteRequest, 
       `Fact-fence adoption request ${row.request_id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. The plan itself is malformed, so report the request ID to the user rather than running the same backfill again.`,
       { fix: receiptFix(row) });
   }
+  enterClaimStep(clock, 'adoption_parse_fence');
   const fence = new Map(parseFactsFence(p.content as string).facts.map(f => [f.rowNum, f]));
+  // `lock` is the publication transaction's re-check: the claim's clock stamps only the preparation's reads.
   const check = async (db: BrainEngine, lock: boolean) => {
+    if (!lock) enterClaimStep(clock, 'adoption_read_facts', undefined, 'db');
     const current = await readFacts(db, row.source_id, facts.map(f => f.id), lock);
     for (const assignment of facts) {
       const fact = current.find(f => f.id === assignment.id);
@@ -288,13 +334,18 @@ async function prepareFactFenceAdoption(engine: BrainEngine, row: WriteRequest, 
           `A legacy fact on ${row.slug} in ${row.source_id} changed before fact-fence adoption request ${row.request_id} published; nothing was written. The next fact backfill run re-reads the facts and plans a fresh request.`,
           { fix: receiptFix(row) });
       }
+      // #6278: the fence codec trims and folds line endings, so the cell is
+      // compared with the legacy text modulo that whitespace; the cell's text
+      // is what the projection expects and is written back on apply.
       const cell = fence.get(assignment.row_num);
-      if (!cell?.active || cell.claim !== fact.value.fact || cell.visibility !== fact.value.visibility) {
-        throw opError('invalid_params', 'The adopted fence row does not render its legacy fact.',
-          `Fact-fence adoption request ${row.request_id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. The rendered fence does not match the facts it adopts, so report the request ID to the user rather than running the same backfill again.`,
+      if (!cell?.active || cell.claim === '' || normalizeClaimWhitespace(cell.claim) !== normalizeClaimWhitespace(String(fact.value.fact))
+        || cell.visibility !== fact.value.visibility) {
+        throw opError('fence_unrenderable', 'The adopted fence row does not render its legacy fact.',
+          `Fact-fence adoption request ${row.request_id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. Fence row ${assignment.row_num} does not read back as legacy fact ${assignment.id} (${!cell ? 'the row is missing from the rendered fence' : !cell.active ? 'it reads back struck' : cell.claim === '' ? 'it reads back empty' : cell.visibility !== fact.value.visibility ? 'its visibility differs' : 'its text differs by more than whitespace'}). This is a gbrain planning defect, not caller input: report the request ID with the gbrain version; the legacy fact stays active and searchable and nothing is lost.`,
           { fix: receiptFix(row) });
       }
     }
+    if (!lock) enterClaimStep(clock, 'adoption_occupied_rows', undefined, 'db');
     const occupied = await db.executeRaw(`SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2
       AND row_num=ANY($3::integer[])${lock ? ' FOR UPDATE' : ''}`, [row.source_id, row.slug, facts.map(f => f.row_num)]);
     if (occupied.length) throw opError('revision_conflict', 'An adopted fence position is already owned by another fact.',
@@ -302,15 +353,18 @@ async function prepareFactFenceAdoption(engine: BrainEngine, row: WriteRequest, 
       { fix: receiptFix(row) });
   };
   await check(engine, false);
-  const prepared = await preparePageMutation(engine, { ...row, intent: { kind: 'managed_maintenance_page', content: p.content,
-    expected_revision: p.expected_revision } }, config);
+  const prepared = await preparePageMutation(unbounded, { ...row, intent: { kind: 'managed_maintenance_page', content: p.content,
+    expected_revision: p.expected_revision } }, config, undefined, undefined, { clock });
   return { ...prepared, validate: async tx => { await prepared.validate?.(tx); await check(tx, true); }, apply: async tx => {
     // Runs ahead of the page import and its canonical projection, so the
     // projection's expiry pass and insertFacts see the adopted positions.
-    const adopted = await tx.executeRaw(`UPDATE facts f SET row_num=a.row_num,source_markdown_slug=$2
-      FROM jsonb_to_recordset($3::text::jsonb) AS a(id integer,row_num integer)
+    // The fence cell's parsed text is written back with the row number: the
+    // projection expires any row whose (row_num, fact, visibility) differs from
+    // its fence row and inserts a new one, which would lose the legacy id.
+    const adopted = await tx.executeRaw(`UPDATE facts f SET row_num=a.row_num,source_markdown_slug=$2,fact=a.fact
+      FROM jsonb_to_recordset($3::text::jsonb) AS a(id integer,row_num integer,fact text)
       WHERE f.source_id=$1 AND f.id=a.id AND f.row_num IS NULL RETURNING f.id`,
-    [row.source_id, row.slug, JSON.stringify(facts.map(({ id, row_num }) => ({ id, row_num })))]);
+    [row.source_id, row.slug, JSON.stringify(facts.map(({ id, row_num }) => ({ id, row_num, fact: fence.get(row_num)!.claim })))]);
     if (adopted.length !== facts.length) throw opError('revision_conflict', 'A legacy fact was adopted by another run.',
       `Another run adopted a legacy fact on ${row.slug} in ${row.source_id} while request ${row.request_id} was publishing, so its transaction rolled back. Read the receipt with gbrain write-request -- ${row.request_id} for the final state before planning any new adoption.`,
       { fix: receiptFix(row) });
@@ -335,14 +389,22 @@ export async function applyPreservingTakeResolutions(tx: BrainEngine, pageId: nu
   return outcome;
 }
 
-export async function prepareMaintenanceMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
+/** `clock` (#6278): the claim's phase clock, threaded to the page and adoption preparers' step boundaries. */
+export async function prepareMaintenanceMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
   if (row.authority.remote) throw trustedCliRequired('Remote maintenance publication is not supported.');
+  enterClaimStep(clock, 'maintenance_dispatch');
   if (row.intent?.kind === 'managed_maintenance_restore_extractor_facts') return (await import('../repair/extractor-facts.ts')).prepareExtractorFactsRestore(engine, row);
   if (row.intent?.kind === 'managed_maintenance_expire_captured_facts') return (await import('../repair/captured-facts.ts')).prepareCapturedFactsExpiry(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_conversation_label_retire') return (await import('../repair/conversation-labels.ts')).prepareConversationLabelRetirement(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_conversation_facts') return (await import('../facts/conversation-publication.ts')).prepareConversationFactsPublication(engine, row, config);
+  if (row.intent?.kind === 'managed_maintenance_fence_facts') return (await import('../cycle/extract-facts.ts')).prepareFenceFactsReconcile(engine, row, config);
+  if (row.intent?.kind === 'managed_maintenance_deleted_page_facts_expire') return (await import('../cycle/extract-facts.ts')).prepareDeletedPageFactsExpiry(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_takes_reextract') return (await import('../cycle/extract-takes.ts')).prepareTakesReextract(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_take_reproject') return (await import('../repair/take-supersession.ts')).prepareTakeReprojection(engine, row);
   if (row.intent?.kind === 'managed_maintenance_timeline_extract') return (await import('../../commands/extract-timeline-db.ts')).prepareTimelineExtract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_page') {
     const prepared = await preparePageMutation(engine, row.intent.expected_revision === null
-      ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config);
+      ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config, undefined, undefined, { clock });
     const projection = row.intent.event_projection as MaintenanceEventProjection | undefined;
     if (!projection) return prepared;
     // #5523: the event page and its depth-page timeline row commit together in
@@ -356,7 +418,7 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
       return { ...outcome, event_projected: projected };
     } };
   }
-  if (row.intent?.kind === 'managed_maintenance_adopt_fact_fence') return prepareFactFenceAdoption(engine, row, config);
+  if (row.intent?.kind === 'managed_maintenance_adopt_fact_fence') return prepareFactFenceAdoption(engine, row, config, clock);
   if (row.intent?.kind === 'managed_maintenance_phantom_merge') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomMerge(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_phantom_delete') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomDelete(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_chronicle_event' || row.intent?.kind === 'managed_maintenance_chronicle_retire') {

@@ -52,6 +52,13 @@ test('group sizing follows the transaction budget and bulk settings follow flag 
   expect(nextGroupSize(settings, 2000)).toBe(5);
   expect(nextGroupSize(settings, 100)).toBe(16);
   expect(nextGroupSize(settings, 60_000)).toBe(1);
+  const laned = { ...settings, maxTxnMs: 15_000, lanes: 6 };
+  expect(nextGroupSize(laned, 1400, { first: true })).toBe(2);
+  expect(nextGroupSize(laned, null)).toBe(16);
+  expect(nextGroupSize(laned, 400)).toBe(12);
+  expect(nextGroupSize(laned, 400, { foreground: true })).toBe(5);
+  expect(nextGroupSize({ ...laned, maxTxnMs: 1_000, maxTxnExplicit: true }, 400)).toBe(2);
+  expect(nextGroupSize({ ...laned, maxTxnMs: 60_000, maxTxnExplicit: true }, 400)).toBe(12);
   if (!engine) return;
   expect(await resolveBulkSettings(engine, true)).toMatchObject({ enabled: false, reason: 'disabled by --no-bulk' });
   await withEnv({ GBRAIN_SYNC_BULK: '0' }, async () => expect(await resolveBulkSettings(engine!, false)).toMatchObject({ enabled: false, reason: 'disabled by GBRAIN_SYNC_BULK=0' }));

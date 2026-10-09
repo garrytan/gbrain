@@ -45,6 +45,19 @@ export async function windowPredecessorCommitted(engine: Pick<BrainEngine, 'exec
   return prior?.state === 'committed';
 }
 
+/**
+ * #6252: whether an earlier member of this row's bulk group ended without committing (failed, cancelled or
+ * conflicted). Such a row must not publish: a group commits in manifest order, so its pages after a member that
+ * did not commit are cancelled and re-frozen once that member is resolved, never written ahead of it.
+ */
+export async function earlierGroupMemberFailed(engine: Pick<BrainEngine, 'executeRaw'>, row: Pick<WriteRequest, 'intent' | 'request_id' | 'worktree_id' | 'sequence'>): Promise<boolean> {
+  const group = (row.intent as Record<string, unknown> | null | undefined)?.group;
+  if (typeof group !== 'string' || group === row.request_id || !row.worktree_id) return false;
+  const failed = await engine.executeRaw(`SELECT 1 FROM persistence_requests WHERE worktree_id=$1::uuid AND intent->>'group'=$2
+    AND sequence<$3 AND state IN ('failed','cancelled','conflict') LIMIT 1`, [row.worktree_id, group, row.sequence]);
+  return failed.length > 0;
+}
+
 /** Cancels a claimed window group (outside lanes) that may not publish; null when it may (`claimedHeadOrder`). */
 export async function cancelOrphanedWindowGroup(engine: BrainEngine, head: WriteRequest): Promise<WriteRequest[] | null> {
   const order = await claimedHeadOrder(engine, head, false);
@@ -114,13 +127,24 @@ export async function cancelWindow(engine: BrainEngine, window: Array<Array<{ re
  * whose predecessor ended without committing (a lane that saw its predecessor go back to the queue releases its
  * group, which the window cancellation had skipped while it was claimed). The consumer's FIFO claim cancels the
  * same rows later (`claimedHeadOrder`); this settles them before the drain reports. A group member is judged by
- * the member before it (`claimedPredecessorState`), so a member released mid-group is cancelled with its group.
+ * the member before it (`claimedPredecessorState`), so a member released mid-group is cancelled with its group. With
+ * `settleMs`, it also waits (up to that long) for orphans the consumer already claimed under the FIFO to finish
+ * cancelling, so a blocked drain never reports one of them still running.
  */
-export async function cancelOrphanedLaneRows(engine: BrainEngine, run: string): Promise<void> {
-  const rows = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE state='queued' AND intent->>'lane'=$1 ORDER BY sequence`, [run]);
-  for (const row of rows) {
-    // In manifest order, so a row cancelled here is the uncommitted predecessor the next row sees.
-    if (ENDED_UNCOMMITTED.includes(await claimedPredecessorState(engine, row) ?? '')) await cancelRows(engine, [row]);
+export async function cancelOrphanedLaneRows(engine: BrainEngine, run: string, settleMs = 0): Promise<void> {
+  const started = Date.now();
+  for (;;) {
+    const rows = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE state IN ('queued','running') AND intent->>'lane'=$1 ORDER BY sequence`, [run]);
+    let unsettled = false;
+    for (const row of rows) {
+      // In manifest order, so a row cancelled here is the uncommitted predecessor the next row sees.
+      if (!ENDED_UNCOMMITTED.includes(await claimedPredecessorState(engine, row) ?? '')) continue;
+      // A running orphan is one the consumer claimed under the FIFO after the lanes closed; it cancels it itself.
+      if (row.state === 'running') unsettled = true;
+      else await cancelRows(engine, [row]);
+    }
+    if (!unsettled || Date.now() - started >= settleMs) return;
+    await new Promise(resolve => setTimeout(resolve, 50));
   }
 }
 

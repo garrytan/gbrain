@@ -123,6 +123,43 @@ restart them for you, so they run on the new Bun. Hosts still running a
 release from before this check do not run it, so a Bun floor raise reaches
 them only after they have upgraded past this release.
 
+<a id="restart-and-verify"></a>
+### Restart and verify: a deploy ends with data movement
+
+`gbrain upgrade` swaps the binary and runs `post-upgrade`; it never restarts a
+running `gbrain serve`, jobs worker or autopilot, and the autopilot `--swap-only`
+channel exits for its supervisor to relaunch. So an upgrade is not finished when
+the new version starts: a managed brain whose processes stay alive while no page
+commits reads healthy on `/health`, on the pid and on `sync_running: true`. Both
+`upgrade` and `post-upgrade` end by printing the supervisor's step, bare, so it
+inherits the default window:
+
+```bash
+# on the brain host, after the swap
+systemctl restart gbrain-serve gbrain-jobs gbrain-autopilot   # or your supervisor's equivalent: every resident gbrain process
+gbrain sources writer movement           # waits one window (max(300 s, preparation budget + 60 s)); exit 0 only when pending work moved or nothing is pending
+gbrain doctor --json                     # managed_sync_not_moving, two_consumers_on_host, consumers_without_heartbeat, host_identity_mismatch all ok
+```
+
+`writer movement [<source>] [--wait <dur>] [--warn-only] [--json]` snapshots
+each active managed source (newest committed `managed_sync_*` receipt, the
+head's step, the cursor and its holds), waits the window and judges: `moved` or
+`current` exit 0; `held` exits 0 with the holds and their route
+(`gbrain repair fences --source <id>` for fence holds, `gbrain sources writer
+status --source <id> --json` then `gbrain sources retry-held <id>` for
+`preparation_stalled`); `within_allowance` (a multi-wave group still preparing
+with its step advancing) exits 0 with `retry_after_ms`; `not_moving` exits 1
+with `managed_sync_not_moving` (`reason: movement_check`) and the writer-status
+command as its fix; `unknown` carries the read failure's own code. `--warn-only`
+prints the same envelopes and exits 0 for pipelines that cannot fail;
+`--wait <dur>` takes sync's duration syntax. Restart every resident process, not
+only `serve`: an older jobs worker or autopilot left running writes no
+`persistence_consumers` heartbeat row and never defers to the resident
+consumer (doctor `consumers_without_heartbeat`), and a worker started under a
+different `HOME`/`GBRAIN_HOME` reads the binding as another host's (doctor
+`host_identity_mismatch`). Runbook for a check that fails:
+[the catch-up is parked](troubleshooting.md#managed-sync-not-moving).
+
 `gbrain config set self_upgrade.<key>` writes `~/.gbrain/config.json` (the
 file plane every self-upgrade reader uses) and refuses a value the readers
 would ignore: an unknown key or mode, a quiet-hours window with an hour

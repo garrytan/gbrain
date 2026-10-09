@@ -493,6 +493,80 @@ The preview warns, naming the host, when a consumer older than v0.60.11.0
 published writes after `writer_version_cutoff`: an old consumer expires
 restored facts again. Upgrade and restart it first.
 
+<a id="conversation-labels"></a>
+### Conversation labels
+
+Before v0.60.69 the conversation parser read meeting-note labels such as
+`**Date:**`, `**Attendees:**` and `**Summary:**` as speakers, so
+`gbrain extract-conversation-facts` stored facts like "Date said the review is
+on Monday", dated at 1970-01-01 when the page had no date. The parser is
+fixed, but those pages stay marked complete, so an upgrade never re-extracts
+them. `gbrain repair conversation-labels` retires those facts. It is
+explicit-only, preview-bound and destructive (it needs the user's consent),
+and it makes no model calls.
+
+**Say to your agent:** *"Doctor says some conversation facts came from
+meeting-note labels. Show me which ones before removing anything."* The agent
+runs the preview, shows you the list and, after you agree, runs the printed
+apply command with `--yes`.
+
+```bash
+gbrain doctor                                          # conversation_label_facts
+gbrain repair conversation-labels                      # preview: every candidate, per-page outcome, hash
+gbrain repair conversation-labels --apply --expect <hash> --yes
+gbrain extract-conversation-facts --source-id <id> --slugs <pages> --dry-run      # printed by the preview
+gbrain extract-conversation-facts --source-id <id> --slugs <pages> --max-cost-usd <n>
+gbrain doctor
+```
+
+Candidates are active conversation-extractor facts on pages that carry a bold
+metadata label line. Each gets one class:
+
+| Class | Meaning | Retired |
+| --- | --- | --- |
+| `evidenced` | Its context names a `segment 1970-01-01` window, which only the pre-fix parser wrote (the fixed one records an undated page as not extractable). | By `--apply --expect <hash> --yes` |
+| `ambiguous` | Any other fact of a label page: a post-fix transcript with a `**Date:**` header, a model-written context, a fact that legitimately mentions a label. Nothing on the row proves the misattribution. | Only with `--include-ambiguous` and that preview's hash |
+| `excluded:<reason>` | `current_extractor` (the page's outcome carries `extractor_version`, so the fixed parser extracted it), `withdrawn`, `superseded`, `superseded_by_reference` (another fact names it), `open_loop_reference` (an open loop points at it). | Never |
+
+The preview also gives each page its outcome:
+
+| Outcome | What the apply does | Cost |
+| --- | --- | --- |
+| `non_extractable` | Retires the facts, expires the completion marker and records the page as not extractable (prose notes, an undated page, a single email), as the fixed parser would. | $0 |
+| `awaiting_reextraction` | Retires the facts and expires the completion marker; the page re-enters the ordinary extraction backlog. | The next extraction, under its own cap |
+| `cleaned` | Retires the facts; the page had no completion marker. | $0 |
+
+A per-fact apply outcome of `changed_since_preview` means the fact changed (it
+was edited, withdrawn, superseded or already expired); it stays as it is.
+
+There is no `--reextract` or `--max-usd` here: `gbrain repair` never spends.
+The preview prints the hand-off, one dry run and one capped run per 50 pages
+waiting for extraction:
+`gbrain extract-conversation-facts --source-id <id> --slugs <a,b,…> --dry-run`,
+then the same command with `--max-cost-usd <n>` (default $5 when omitted; the
+opt-in `cycle.conversation_facts_backfill` also picks them up at $1 per run and
+$5 in total). Nothing re-extracts automatically.
+
+Retired facts are expired, not deleted: each keeps its id and gains
+`retired: conversation-labels <hash>` in its context, recall stops returning
+it, and a later extraction, its orphan cleanup and `gbrain repair
+extractor-facts` leave it alone. To bring a page's facts back, re-extract the
+page with the commands above. Pages apply in batches of up to 25: on a
+managed brain each batch publishes one database-only
+`managed_maintenance_conversation_label_retire` request (one receipt for the
+batch, each page rechecked on its own), and a rerun after a crash skips
+batches whose request already committed. A non-interactive
+apply without `--yes` exits 3 with the consent payload and changes nothing;
+`preview_changed` means the hash names no saved preview, the preview is older
+than 7 days, or the apply's `--source` or `--include-ambiguous` differs from
+the preview's. Under a live `gbrain serve` on PGLite the command is refused at
+once: stop the serve, run the repair, then restart the serve (the refusal's
+`fix` names the steps).
+
+Conversation outcomes now record the parser version (`extractor_version=<n>`
+in the outcome row). Doctor `conversation_outcomes_stale` counts outcomes a
+later parser version would reconsider; they are never reopened automatically.
+
 <a id="captured-facts"></a>
 ### Captured facts
 
@@ -818,13 +892,34 @@ with `gbrain repair frontmatter --source <id>`, and `--remediate` never runs the
 repair. `frontmatter_hook` warns when an installed pre-commit hook is older
 than the running gbrain's hook; refresh it with `gbrain frontmatter install-hook --force`.
 
+**A hold that blames the write owner, not the file.** A `preparation_stalled`
+hold means the owner could not finish preparing that file's write within its
+attempts (`persistence.max_preparation_attempts`, each bounded by
+`persistence.sync_preparation_ms`). The file is fine and `gbrain repair` has
+nothing to change in it: `sources status`, `sources retry-held` and doctor
+`git_held_files` route it to the writer instead of to frontmatter or fence
+repair, and a source holding all three kinds prints one route for each. Read
+what the owner was stuck on, fix that, then re-screen the held files and run
+the same sync with the same options (the hold prints them, `--no-embed`
+included). Nothing here is destructive and no hash is involved.
+
+```bash
+gbrain sources status notes --json                  # the held files, each with the step it stalled on
+gbrain sources writer status --source notes --json  # read-only: the owner, its gbrain version, the stuck step
+gbrain sources retry-held notes                     # after the cause is fixed or gbrain is upgraded
+gbrain sync --source notes --no-pull --no-embed     # the option-preserving command retry-held prints
+```
+
+Runbook: [catch-up stuck / held N files](troubleshooting.md#catch-up-stuck);
+reference: [`preparation_stalled`](write-refusals.md#preparation_stalled).
+
 Settings, all read by every sync:
 
 | Key | Default | Effect |
 | --- | --- | --- |
 | `sync.holds` | `hold` | `fail` makes sync fail closed: a content refusal blocks the sync. |
 | `sync.hold_cap` | `500` | How many holds a sync result lists in detail; storage is never capped and valid files always import. |
-| `sync.hold_escalate_count` / `sync.hold_escalate_pct` | `50` / `5` | A source holding more files, or a run holding more than that share of at least 40 screened imports, reports `holds_escalated` and doctor `git_held_files` fails. |
+| `sync.hold_escalate_count` / `sync.hold_escalate_pct` | `50` / `5` | A source holding more files, or a run holding more than that share of at least 40 screened imports, reports `holds_escalated` and doctor `git_held_files` fails. A run whose `preparation_stalled` holds would cross it stops as `preparation_systemic` instead of holding them. |
 | `sync.parser_regression` | `stop` | `hold` holds a file whose exact bytes imported under an earlier gbrain (`parser_regression`) instead of stopping the run with `sync_parser_regression`. |
 
 To prevent new broken files, write brain files through `put_page`/`capture`
@@ -874,8 +969,10 @@ hash binds the selected files, their exact before and after bytes, and the
 page each import would store (bound to the page revision). The apply derives
 each change again from the file as it is: a file, proposal or page that
 changed since the preview reports `changed_since_preview` and is not written.
-The apply refuses while an unfinished managed sync still names a selected file
-(`sync_in_progress`; finish it with `gbrain sync --source <id> --no-pull`).
+The apply refuses a selected file a write in flight or an unfinished managed
+sync's frozen manifest still names (`sync_in_progress`, checked again when the
+write is admitted; finish the sync with `gbrain sync --source <id> --no-pull`
+or let the next run pick the file up).
 
 On a managed brain each file is one coordinated write (`managed_file_repair`):
 the exact approved bytes, the import, and the hold clear commit together, and
@@ -1067,11 +1164,54 @@ with the exact `git add`/`git commit` step until the path is committed; a
 stored page with no file by a revision-bound page write; a read-only mirror in
 the database only (the file is never written). Every write's receipt carries
 the actor `fence-repair`, the tier, the classes, rows and columns, the model,
-the before and after sha256 and the cost, never a cell value. A source this
-host does not own is skipped (`owner_unavailable`), and so is one whose sync is
-still running (`sync_in_progress`); the next run picks them up. MCP and
+the before and after sha256 and the cost, never a cell value. MCP and
 thin-client callers cannot run a repair or reach the model; a hold's fix hands
 them the owner-host command to give the user.
+
+<a id="fence-repair-during-a-sync"></a>
+#### Fence repair during a sync
+
+A running `gbrain sync` of the source no longer stops the repair. Each
+candidate is checked on its own against the sync's busy set, and only the
+ones below wait as `sync_in_progress`; every other candidate is repaired while
+the catch-up runs, including a file the sync held earlier (a held path is not
+busy, because the sync retries a held file only once its bytes change, and
+the repair is what changes them).
+
+| Busy (waits as `sync_in_progress`) | Why |
+| --- | --- |
+| A file or page a queued, running or recovering write names, or a finished write whose recovery is still open; both endpoints of a rename | The write is still publishing it. |
+| A file still ahead in the running sync's frozen manifest (from the cursor's index on) | The sync admits it later with the raw hash it reads then; a repair that changed the bytes first would make that entry refuse (`source_changed`). |
+| Every candidate, when the busy set cannot be read (a failed query, a cursor whose manifest is missing) | The check fails closed; the hold's text says so. |
+
+The busy set is read when the plan is made, again when each item is applied
+(a sync may have started since the preview), and once more when the managed
+file write is admitted, because a sync can freeze the candidate while the
+repair waits on its model call. An item caught at that last check is skipped
+`sync_in_progress`, nothing is written, and its model attempt is recorded as
+transient, so the next run sends the same bytes again.
+
+<a id="owner-reasons"></a>
+#### Owner reasons
+
+Fence repairs write only on the host that owns the source's checkout. When
+this host may not, the candidate is skipped with the condition as its reason
+(the same reasons `gbrain errors owner_unavailable` lists and chronicle and
+the other maintenance writers refuse with), and the hold records it:
+
+| Reason | What it means | Who acts | Next |
+| --- | --- | --- | --- |
+| `host_mismatch` | Another host id owns the checkout; the text prints both ids' first 8 characters and, for a local caller, the `host.json` path this process read. Two environments on one machine with different `GBRAIN_HOME` values (a launchd or cron worker and a shell) look exactly like this. Not retryable. | host administrator | Run the repair on the owner host (`gbrain sources writer status --source <id> --json` names it), or give the worker and the shell one `GBRAIN_HOME`. Never copy or regenerate `host.json`. |
+| `transfer_in_progress` | The worktree is draining for a prepared writer transfer. | nobody | Wait 30 s and retry; the next maintenance run repairs it once the transfer is accepted or cancelled. |
+| `clone_in_progress` | A topology clone or reclone is recovering the worktree. | nobody | Wait 30 s and retry; the next run repairs it once the clone finishes. |
+| `incarnation_changed` | The checkout binding is from an earlier incarnation of the source (removed and re-added, or restored). | host administrator | Review writer status and re-bind the checkout. |
+| `local_path_missing` | This host owns the worktree but has no checkout path registered. | host administrator | Review writer status and register the checkout again. |
+| `coordination_path_missing` | This host's registration has no coordination directory. | host administrator | Review writer status and repair the registration. |
+| `owner_unavailable` | The generic fallback: a source with no owner at all, or an older hold. | host administrator | Review writer status. |
+
+Nothing in this path claims or transfers ownership to get a repair through;
+the fix is always the read-only writer status. Remote callers get the host ids
+but never a local path.
 
 Inspect or undo a repair:
 
@@ -1403,6 +1543,7 @@ Then recover what doctor names, in this order (skip a step whose check is ok):
 | `[gbrain] warning: OPENAI_API_KEY in this process's environment differs from openai_api_key …`; doctor `embedding_key_source` warns | `embedding_key_source` ([provider key source](#embedding-key-source)) | `gbrain doctor` (`embedding_key_source`) | remove the variable and restart that process, or `gbrain config unset openai_api_key` | the warning no longer prints; `gbrain doctor` shows `embedding_key_source` ok | user (owns the key) | `credentials` |
 | `The OpenAI embedding provider rejected its key (HTTP 401)` | [`embedding_auth_failed`](write-refusals.md#embedding_auth_failed) | `gbrain doctor` (`embedding_key_source`, `embedding_provider`) | the printed fix for the key source in effect, then `gbrain embed --stale` | `gbrain doctor` shows `embedding_provider` ok | user (owns the key) | `credentials`; `paid` for `embed --stale` |
 | Conversation facts missing from recall after managed writes | `extractor_facts_expired` | `gbrain repair extractor-facts` | `gbrain repair extractor-facts --apply --expect <hash>` (ambiguous: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | `destructive` (rewrites expired facts) |
+| Recall returns conversation facts such as "Date said …" or "Attendees said …", or facts dated 1970-01-01; doctor `conversation_label_facts` warns; the upgrade banner prints `conversation_label_facts: N (explicit_kind_required; …)` | `gbrain repair conversation-labels` (ambiguous: add `--include-ambiguous`) | `gbrain repair conversation-labels --apply --expect <hash> --yes`, then the printed `gbrain extract-conversation-facts --slugs … --dry-run` | `gbrain doctor --only conversation_label_facts --json` | brain host, after the user agrees | `destructive` (retires facts; no model calls) |
 
 
 ### Upgrading to v0.60.20.0
