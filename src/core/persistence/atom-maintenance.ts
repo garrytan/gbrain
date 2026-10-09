@@ -328,6 +328,22 @@ export async function resumeManagedAtoms(engine: BrainEngine, session: ManagedAt
   return true;
 }
 
+/** Batch-filter settled transcript attempts before they enter the phase's work pool. */
+export async function settledManagedAtomTranscriptKeys(engine: BrainEngine, session: ManagedAtomSession,
+  transcripts: Array<{ filePath: string; contentHash: string }>): Promise<Set<string>> {
+  // Explicit retries must reach resumeManagedAtoms under their new approved run key.
+  if (!transcripts.length || session.retry) return new Set();
+  const rows = await engine.executeRaw<{ locator: string; content_hash: string }>(
+    `SELECT completed_keys->0->>'locator' AS locator, completed_keys->0->>'contentHash' AS content_hash
+     FROM op_checkpoints WHERE op='managed-atoms'
+       AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'=$2
+       AND completed_keys->0->>'kind'='transcript'
+       AND completed_keys->0->>'locator'=ANY($3::text[])
+       AND completed_keys->0->>'contentHash'=ANY($4::text[])`,
+    [session.sourceId, session.incarnation, transcripts.map(t => t.filePath), transcripts.map(t => t.contentHash)]);
+  return new Set(rows.map(row => JSON.stringify([row.locator, row.content_hash])));
+}
+
 export interface ManagedAtomRetirement {
   slug: string;
   pageId: number;
@@ -512,14 +528,21 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
   } };
 }
 
-/** The completed, failure-free `managed-atoms` checkpoint `ac` for one page at its current content hash. */
-export function managedAtomCompletedSql(page: { sourceId: string; slug: string; pageId: string; contentHash: string }): string {
+/** A settled attempt at this exact source incarnation, page identity and full content hash. */
+function managedAtomSettledSql(page: { sourceId: string; slug: string; pageId: string; contentHash: string }): string {
   return `ac.op='managed-atoms' AND ac.completed_keys->0->>'sourceId'=${page.sourceId}
     AND ac.completed_keys->0->>'incarnation'=(SELECT incarnation::text FROM sources WHERE id=${page.sourceId})
     AND ac.completed_keys->0->>'kind'='page' AND ac.completed_keys->0->>'locator'=${page.slug}
-    AND ac.completed_keys->0->>'pageId'=${page.pageId}::text AND ac.completed_keys->0->>'contentHash'=${page.contentHash}
-    AND ac.completed_keys->0->>'failure' IS NULL`;
+    AND ac.completed_keys->0->>'pageId'=${page.pageId}::text AND ac.completed_keys->0->>'contentHash'=${page.contentHash}`;
 }
 
+/** Successful replacement coverage, not a failed attempt that must keep earlier atoms. */
+export function managedAtomCompletedSql(page: { sourceId: string; slug: string; pageId: string; contentHash: string }): string {
+  return `${managedAtomSettledSql(page)} AND ac.completed_keys->0->>'failure' IS NULL`;
+}
+
+// A malformed managed attempt is terminal until an explicit paid retry is approved.
+// Rediscovering it cannot make progress and must not consume the batch's discovery slots.
+// Keep it separate from successful coverage used by stale-atom retirement.
 export const MANAGED_ATOM_DISCOVERY_SQL = `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
-  WHERE ${managedAtomCompletedSql({ sourceId: 'p.source_id', slug: 'p.slug', pageId: 'p.id', contentHash: 'p.content_hash' })})`;
+  WHERE ${managedAtomSettledSql({ sourceId: 'p.source_id', slug: 'p.slug', pageId: 'p.id', contentHash: 'p.content_hash' })})`;

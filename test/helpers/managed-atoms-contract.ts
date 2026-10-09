@@ -132,8 +132,10 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
         expect(checkpoints).toHaveLength(1);
         expect(checkpoints[0].content_hash).toBe(page.content_hash!);
         expect(await engine.executeRaw('SELECT request_id FROM persistence_requests WHERE request_id=$1::uuid AND state=\'committed\'', [checkpoints[0].request_id])).toHaveLength(1);
-        expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(scenario === 'zero_yield' ? 0 : 1);
-        expect((await discoverExtractablePages(engine, sourceId)).map(item => item.slug)).toEqual(scenario === 'zero_yield' ? [] : [page.slug]);
+        // Both successful and failed managed attempts are settled for automatic discovery;
+        // only the explicit retry path may spend again on a retained failure.
+        expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
+        expect(await discoverExtractablePages(engine, sourceId)).toEqual([]);
       }
       if (scenario.startsWith('malformed_retry') || scenario === 'publication_retry') {
         expect(first.status).toBe('warn');

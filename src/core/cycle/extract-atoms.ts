@@ -87,7 +87,7 @@ import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { utcDate } from './cycle-date.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
-import { managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, MANAGED_ATOM_DISCOVERY_SQL, type AtomOrigin } from '../persistence/atom-maintenance.ts';
+import { managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, settledManagedAtomTranscriptKeys, MANAGED_ATOM_DISCOVERY_SQL, type AtomOrigin } from '../persistence/atom-maintenance.ts';
 import { effectiveVisibility } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
@@ -765,8 +765,14 @@ export async function runPhaseExtractAtoms(
     sourceId,
     allHashes16,
   );
+  const settledTranscriptKeys = managed && !opts.dryRun
+    ? await settledManagedAtomTranscriptKeys(engine, managed, transcripts) : new Set<string>();
   for (const t of transcripts) {
     const hash16 = t.contentHash.slice(0, 16);
+    if (settledTranscriptKeys.has(JSON.stringify([t.filePath, t.contentHash]))) {
+      duplicatesSkipped++;
+      continue;
+    }
     if (existingHashes.has(hash16)) {
       duplicatesSkipped++;
       continue;
