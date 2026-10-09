@@ -679,7 +679,7 @@
       "stdout": [
         "Usage: gbrain query <query> [options]",
         "",
-        "Hybrid search plus multi-query expansion for concept or landscape questions (expansion recovers synonym-phrased matches). Still top-K; return_unit returns whole sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper (no expansion LLM call). Personal: get_recent_salience, find_anomalies; transcripts: `gbrain transcripts recent` on the host. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. fields: \"full\" adds diagnostics.",
+        "Hybrid search plus multi-query expansion for concept or landscape questions (expansion recovers synonyms). Still top-K; return_unit: whole sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper (no LLM call). Personal: get_recent_salience, find_anomalies; transcripts: host `gbrain transcripts recent`. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. fields: \"full\" adds diagnostics.",
         "",
         "Options:",
         "  <query>                    Question or topic (required unless image).",
@@ -707,8 +707,8 @@
         "  --source-id                One source, or '__all__'.",
         "  --cross-modal              Default auto.",
         "  --embedding-column         Registered embedding column.",
-        "  --adaptive-return          true when one answer is wanted (fewer rows; never returns empty); omit for breadth.",
-        "  --autocut                  Default on (never returns empty); false gives full top-K for breadth, unlike adaptive_return.",
+        "  --adaptive-return          true for one answer (fewer rows, never empty); omit for breadth.",
+        "  --autocut                  Default on (never empty); false: full top-K for breadth.",
         "  --relational               Relationship-graph arm (default on).",
         "  --explain                  Per-row score_details.",
         "  --explain-target           Expected page (slug or source:slug): why it is missing."

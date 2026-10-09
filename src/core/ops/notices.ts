@@ -16,7 +16,7 @@ const mute_notice: Operation = {
   mutating: true,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Stop a coaching or info notice (or first_run_decisions) from appearing for this client; muted: false unmutes.',
+  description: 'Mute a coaching or info notice (or first_run_decisions) for this client; muted: false unmutes.',
   params: {
     code: { type: 'string', required: true, description: 'Notice code, the word after `[gbrain notice` in the block.' },
     muted: { type: 'boolean', description: 'false unmutes. Default true.' },

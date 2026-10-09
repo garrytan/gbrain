@@ -69,8 +69,11 @@ function contractClauses(c: CallablePredicate, writeback?: AmbientWritebackOpts 
   const brief = c('entity') ? `For a brief on an account, person or company, call \`entity\`, then walk \`referenced_by\`${c('get_backlinks') ? ' or `get_backlinks`' : ''} by type.` : null;
   if (brief && !any('search', 'query')) out.push(brief);
   if (any('search', 'query')) {
-    // Cat 40 (#5932): measured answer-completeness guidance; keep its wording.
-    out.push(`Answering from the brain: a search returns the best-ranked excerpts, not every relevant page, so keep going until the evidence is complete. Run separate searches for separate parts of a question. ${brief ?? 'People and companies appear under several names (abbreviations, codes, nicknames); when a page lists another name, search for that too.'} For what is true now, prefer the newest governing source: a later correction, handoff or executed change outranks an older record, and drafts, proposals and agent-written notes do not override records.`);
+    // Cat 40 (#5932): measured answer-completeness guidance. Cat 40 Hard round 4: separate parts stay separate,
+    // but lists of names are batched and independent calls go out together (one call per name ran readers out of turns).
+    const batchVia = [c('entity') ? '`entity` with `names`' : null, c('search') ? 'one keyword `search` for "A" OR "B" OR …' : null].filter(Boolean);
+    const batch = `Keep separate parts of a question in separate searches, but batch lists: resolve many names or codes in one call${batchVia.length ? ` (${batchVia.join(' or ')})` : ''}, and issue independent calls together in one turn, not one per turn.`;
+    out.push(`Answering from the brain: a search returns the best-ranked excerpts, not every relevant page, so keep going until the evidence is complete. ${batch} ${brief ?? 'People and companies appear under several names (abbreviations, codes, nicknames); when a page lists another name, search for that too.'} For what is true now, prefer the newest governing source: a later correction, handoff or executed change outranks an older record, and drafts, proposals and agent-written notes do not override records.`);
   }
   if (c('list_skills') && c('get_skill')) {
     out.push(`When the task calls for a procedure or workflow, discover available skills with list_skills using schema_version:2 when supported. Match descriptions and frontmatter triggers to the task, then read the matching skill in full with get_skill using its qualified_id, revision and schema_version:2.${c('get_skill_asset') ? ' Load approved dependencies from that exact revision with get_skill_asset.' : ''} If an older server explicitly rejects version 2, use its documented legacy discovery; an unavailable catalog is not empty.`);
