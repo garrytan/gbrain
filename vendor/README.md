@@ -47,7 +47,10 @@ parsed, described and executed in one message group. Only built-in types (oid
 below 16384) are shared, since a database's own types (pgvector) can be
 recreated under a new oid; a statement that fails forgets its shared types, and
 `PostgresEngine.initSchema` clears them after applying migrations (#5984,
-`test/e2e/postgres-shared-types.test.ts`).
+`test/e2e/postgres-shared-types.test.ts`). `shared_types` also accepts the Map
+to share types in: GBrain passes one per database target, so every pool in a
+process that reaches one database shares it, and `src/core/pg-type-cache.ts`
+saves it for the next process.
 
 ## Reproduce and update
 

@@ -1,6 +1,6 @@
 import { lookupRefsForSlugs } from './link-reconciliation.ts';
 import { collectWantedLinks, isWantedPagesEnabled, type WantedLinkInput } from './wanted-links.ts';
-import { lineGrammarOptions } from './line-grammar.ts';
+import { readLineGrammarSettings } from './line-grammar.ts';
 /**
  * Serve-resident maintenance sweep [CX-P0.1, CX-P0.3, CX2-4].
  *
@@ -432,7 +432,9 @@ async function runLinksTimelinePass(
   const incomplete = new Set<string>();
   const wantedBySlug = new Map<string, WantedLinkInput[]>();
   const wantedEnabled = await isWantedPagesEnabled(engine);
-  const lineGrammar = await lineGrammarOptions(engine);
+  // One settings snapshot per sweep; publication refuses a page if the settings move meanwhile (it stays unstamped).
+  const grammar = await readLineGrammarSettings(engine);
+  const lineGrammar = { enabled: grammar.enabled, allowUndeclaredTypes: grammar.allowUndeclaredTypes };
   if (pageCandidates.length > 0) {
     const needed = new Set<string>();
     for (const { slug, candidates } of pageCandidates) {
@@ -545,7 +547,7 @@ async function runLinksTimelinePass(
         const snapshot = snapshots.get(ref.slug)!;
         const result = await engine.replaceDerivedLinks({ slug: ref.slug, sourceId,
           expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation }, desired,
-        { includeFrontmatter: false, preserveExisting: true,
+        { includeFrontmatter: false, preserveExisting: true, lineGrammar: grammar,
           wanted: { producers: ['body'], rows: wantedBySlug.get(ref.slug) ?? [] }, expectedEndpoints: [...new Set(desired.flatMap(row =>
           [`${row.from_source_id}\0${row.from_slug}`, `${row.to_source_id}\0${row.to_slug}`]))].map(key => {
           const endpoint = endpointMetadata.get(key)!;

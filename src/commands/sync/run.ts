@@ -63,6 +63,11 @@ export async function runSyncInner(engine: BrainEngine, args: string[]) {
   if (args[0] === 'trigger') {
     return runSyncTrigger(engine, args.slice(1));
   }
+  // #6340: the operator contract (status / unblock) reads and schedules; it never runs a sync.
+  if (args[0] === 'status' || args[0] === 'unblock') {
+    const { runSyncStatus, runSyncUnblock } = await import('./operator.ts');
+    return args[0] === 'status' ? runSyncStatus(engine, args.slice(1)) : runSyncUnblock(engine, args.slice(1));
+  }
 
   // v0.37 fix wave (Lane D.4 + CDX2-12): print usage when `--help`/`-h` is
   // passed. Pre-fix this was unreachable because the dispatcher's generic

@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.118.0] - 2026-10-08
+## [0.60.123.0] - 2026-10-09
 
 **The weight-miner's unit-test probe no longer depends on wall-clock scheduling: a fixed-timestamp fixture replaces a race-prone real-time assertion (#6312).**
 
@@ -37,6 +37,183 @@ weight-mining test suite.
 | Where | What changed |
 |---|---|
 | `test/scripts/capture-test-log.test.ts` | A new `syntheticUnitArtifact()` helper builds a unit-lane capture artifact with fixed, injected timestamps; a new test proves the weight miner mines a positive delta deterministically and a zero delta as `0`. The existing real-capture assertion now allows `0` as a legitimate outcome instead of asserting strictly positive. |
+
+## [0.60.122.0] - 2026-10-09
+
+**An eval-only evidence brief for the LongMemEval harness: a cheap model's claims, each with a verbatim quote, a pointer and a date, checked against the sessions before a reader sees them.**
+
+Wave 1 of the 10x memory advantage plan asked whether a short, model-written brief can stand in for the five whole conversations gbrain hands a reader (about 14,000 tokens a question). `src/eval/longmemeval/evidence-brief.ts` is the builder the gbrain-evals pilot used. It makes no model call and changes no product default; nothing outside the eval harness imports it.
+
+- **Grounded claims.** Every claim's quote is located in its session with the dream-cycle verifier (`groundSource`, `groundQuote`, `unsupportedNumericClaims`) and carries a pointer (session id, UTF-16 span, SHA-256 of the span and of the body) plus the session's date. Claims whose quote is not found, that cross or misattribute a speaker turn, that state a number the session does not, or that sit in instruction-like context are dropped and counted.
+- **Provenance, not truth.** A paraphrase whose negation disagrees with its quote is withheld (the reader sees the quote), a later correction the brief did not cite is appended verbatim, and a count is never presented as complete. Unit fixtures cover an omitted correction, a reversed negation, a wrong attribution, a literally quoted malicious instruction, a false "complete" claim and an injection that tries to add a claim.
+- **Scope wording.** An empty brief says "No supporting evidence was returned from the searched scope" and lists the sessions searched; it never says something is not in the brain. Claims render inside the reader's sanitized `<chat_session>` framing within a token budget, and the brief falls back to the full text when the builder's output cannot be parsed or most claims fail grounding.
+
+### Measured
+
+The gbrain-evals pilot (garrytan/gbrain-evals#107, 100 LongMemEval-S development questions) found the Haiku-built 2,000-token brief kept Sonnet 5.5 at 92 of 100 against 93 for whole sessions, at $0.0079 against $0.0473 a question, with a p95 of 8.6 s against 2.5 s. A cheap model reading the whole sessions directly matched the brief at lower cost and latency, so the plan's preregistered off-ramp fired and the brief stays eval-only.
+
+### For contributors
+
+- `test/e2e/client-grants.test.ts` reads `whoami`'s result block instead of joining the notice blocks prefixed to it. A brain whose sources row predates the fresh-brain grace gets the one-time `behavior_changes` disclosure on a client's first admitted call, which broke the JSON the D4 tests parsed whenever the shared CI database was old enough (forced probe: backdating `sources.created_at` by two hours fails both tests before the fix and passes after).
+- `scripts/check-orphan-modules.mjs` permits the new eval-only module as test-only.
+
+## [0.60.121.0] - 2026-10-09
+
+**A managed catch-up on a live checkout finishes unattended: a page that moves under the run is held, a dropped database connection is retried, a relaunch resumes the frozen manifest, and `gbrain sync status` / `gbrain sync unblock` let an operator agent run the recovery loop without a human.**
+
+One brain's catch-up (`gbrain sync --source default`, about 14,000 pages, six to eight agents committing to the checkout every few minutes) died seven times in three hours across four fault classes, every one of them recoverable with a plain retry: a page edited in the database after the manifest froze (`revision_conflict`), a file an agent was mid-edit on (`source_changed [pinned_git_worktree_conflict]`), a page another run imported first (`page_identity_changed`), and the session-mode pooler dropping the socket (`write ECONNABORTED`). Each death wrote a failure-ledger row, and the relaunch with `--retry-failed` read the row and re-froze all 14,000 entries (eight to twelve minutes of silence) before writing a page, so about half the wall clock went to re-planning. The hold machinery that should have caught the page faults already existed (#5988, #6188, #6194, #6278); these codes were never routed into it, and the retry classifier did not know `ECONNABORTED`.
+
+### How to use it
+
+```bash
+gbrain sync --source <id> --no-pull                 # a page that moved is held (concurrent_write / worktree_dirty) and the run goes on; a pooler drop reconnects and retries 5/15/45 s
+gbrain sync status --source <id> --json             # cursor, committed_last_10m, each hold and the last error with class / safe_actions / needs_human, and next
+gbrain sync unblock --source <id> --apply --json    # re-screens every held file whose condition holds (a committed edit, a stalled preparation); refuses the rest by name
+gbrain sync --source <id> --no-pull --retry-failed  # a cursor an older release left blocked converts in place: same run, no re-freeze
+gbrain errors worktree_dirty                        # the new hold code, offline
+```
+
+The operator loop (`docs/guides/sync-unblock-runbook.md`): `status` every N minutes; when `committed_last_10m` is 0 and `needs_human` is false, `unblock --apply` and the sync it prints; when `needs_human` is true, relay `next.user_message` with the slug.
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A page edited, deleted or re-bound in the database after the manifest froze | Held as `concurrent_write` at freeze time (the hold records `page_revision` and `expected_revision`, and the competing request when #6194's proof finds one); the run finishes `synced` with the hold listed. A page that still holds exactly what the file would import is re-bound to its new revision and passed. A `revision_conflict` receipt whose page really moved converts the same way; a run-level conflict (the page is where it was) still blocks. |
+| A file committed between admission and publication (`source_changed` / `raw_file_changed`) | Re-frozen once under a fresh request: committed bytes import as HEAD has them, uncommitted ones reach the dirty hold; a file that changes again under the re-frozen request is held `worktree_dirty`, never a third request. |
+| A file an agent is mid-edit on | Held with the new code `worktree_dirty` (the pinned blob and a hash of the working bytes; the local edit is never touched). A later commit that changes the file re-screens it on its own; `sync unblock --apply` re-screens it as soon as its bytes are committed at HEAD. Held three times, it is reported `needs_human`. |
+| A file committed past the pinned target | Imported as HEAD has it (a commit is not an uncoordinated local edit); the pin..HEAD diff later re-imports the same bytes as a no-op. From PR #6323 by @garrytan-agents, moved to freeze time so no receipt is minted. |
+| `write ECONNABORTED` / `ETIMEDOUT` / `EPIPE` mid-run | The drain reconnects and retries after 5, 15 and 45 s instead of exiting; a drop that then moves data is not even a warning. Three drops with no page committed between them stop the drain `connection_lost` with the resume command as a loopable `next`. Nothing is recorded against the source. |
+| The relaunch | With or without `--retry-failed`, it resumes the stored run at its index against the frozen manifest: no rediscovery, no re-waiving. A cursor an older release left blocked on a page fault converts in place under `--retry-failed`. |
+| HEAD moved during the run | The drain takes exactly one more pass (an incremental pin..HEAD discovery) so the invocation ends at HEAD; never a second one. `drain.extra_pass` names the span. |
+| `gbrain sync status --source <id> --json` | New: `run_id`, `cursor {index, total, pinned_target, last_advance_at, done}`, `committed_last_10m`, `rate_pages_per_min`, `holds[]` and `last_error` each with `class` (`page` / `connection` / `systemic`), `safe_actions`, `needs_human`, `human_reason`, `attempts`, and one `next` action. |
+| `gbrain sync unblock --source <id> [--apply] --json` | New: performs the safe action for every hold and refuses the rest by name (`applied`, `refused` with each fix, `next`). Idempotent; it never writes a page, clears a hold or drops content. |
+| `sources status`, doctor `git_held_files`, `sources retry-held` | Count and route `worktree_dirty` holds (`dirty`) with `sync unblock --apply` as the step. |
+| `sync.holds=fail`, company-brain sources | Keep the blocking refusals, as before. |
+
+### Things to watch
+
+- **`concurrent_write` needs a person by design**: the file and the page both changed, and `sync status` says so (`needs_human`, the reconcile preview). The loop pages a human with the slug instead of guessing.
+- **A dirty file is held, not imported, until it is committed.** The run no longer stops on it, so a source can finish `synced` with holds; `held_count` and `holds_outstanding` on the receipt say how many. The agent that edits the file should commit it.
+- **Old tests that asserted the run stops** on these faults now assert the hold and that nothing was overwritten; the data invariant is unchanged.
+- **`CONNECTION_DESTROYED` / `CONNECTION_CLOSED` are not retried as drops**: #6329 classifies them as this process's own settle of a cancelled statement, which stays on the stall path.
+- **Migration-speed fix folded in (Subagent 65):** the consumer remembers the request ids it settled most recently (1,024), so a waiter that registers after its write already settled reads at once instead of sleeping the 200 ms first poll; grandfather migrations went from about 200 ms to about 18 ms per page.
+
+### Itemized changes
+
+- `src/core/persistence/sync-page-fault.ts` (new): `headCommittedBytes`, `pageChangeProof`, `pageChangedHold`, `worktreeDirtyHold`, `originFaultHold`, `receiptPageFaultHold`, `pinnedWorktreeConflict`, `fileChangedAfterAdmission`, `pageMovedSinceAdmission`. `sync-write-diagnostic.ts` (new): `managedSyncWriteDiagnostic`, moved out of `sync-run.ts` unchanged. `sync-run.ts`: `freezeEntry` resolves the three freeze-time throws into holds (or a re-bind) when holds are on; `holdFailedFenceRequest` converts the pinned-worktree and moved-page receipts (imports and deletes); `convertBlockedCursor` converts an older release's blocked cursor and re-freezes a dirty file that is committed now; the `--retry-failed` start converts before it rediscovers; the catch skips the failure ledger for connection errors and statement timeouts.
+- `sync-holds.ts`: `worktree_dirty` code, `meta.attempts` (counted by `writeGitHold` per re-hold with the same code), `expected_revision`, `working_hash`, the `dirty` summary counter and repair route; `held-reads.ts`, doctor `git_held_files`, `sources retry-held` and the run's hold report route it.
+- `retry-matcher.ts`: `ECONNABORTED`, `ETIMEDOUT`, `EPIPE`. `sync-drain.ts`: `isConnectionDrop`, `CONNECTION_RETRY_MS` (5/15/45 s), `CONNECTION_STRIKES`, `DrainInput.reconnect` (`engine.reconnect`), the `connection_lost` stop reason with `drain.connection` and a loopable `next`, `drainManagedSync`'s one extra pass with `drain.extra_pass`.
+- `sync-fault-class.ts` (new): `SYNC_FAULT_TABLE` / `classifySyncFault`. `sync-status.ts` (new): `readSyncStatus`, `unblockSync`. `src/commands/sync/operator.ts` (new): `gbrain sync status`, `gbrain sync unblock` (routed in `sync/run.ts`; `cli.ts` skips the sync watchdog and serve delegations for them).
+- Registry: `worktree_dirty`, `connection_lost`; catalogue `sync_drain_connection_lost`; three `BEHAVIOR_CHANGES` rows. Docs: `docs/guides/sync-unblock-runbook.md` (new, table pinned by `test/sync-runbook-table.test.ts`), `write-refusals.md` (`worktree_dirty`, `connection_lost`, the `concurrent_write` row), `troubleshooting.md`, `error-codes.md`, `AGENTS.md` common tasks, `llms.txt`, KEY_FILES.
+- `service.ts`: `recentlySettled` (1,024 ids) makes `awaitWrite`'s first poll immediate for a request this process already settled; `test/persistence-git-coalescing-5530.slow.test.ts` fixtures clone a template database and copy the Git repos (96 s → 49 s); E2E weights updated.
+- Tests: `test/managed-sync-page-fault-holds.test.ts`, `test/sync-drain-connection.test.ts`, `test/sync-status-unblock.test.ts`, `test/sync-runbook-table.test.ts`; `test/persistence-managed-sync.test.ts` and `test/managed-sync-concurrent-write-hold.test.ts` assert the holds where they asserted the stop; `test/persistence-consumer-scheduling.test.ts` gains the settled-first-read probe.
+
+Fixes #6340. Fixes #6320. Supersedes #6323 (contributed by @garrytan-agents). Follows #6278 and #6317.
+
+## [0.60.120.0] - 2026-10-08
+
+**Advisers, board members and investors stop showing up as employees, typed relation lines refuse template and dictionary junk and explain every refusal, and turning the line grammar on or off now changes the graph instead of only new writes.**
+
+Link inference typed "is an adviser to [X]" as nothing, "not an advisor to [X]" as `advises`, "board director at [X]" as `works_at`, and read "Became an advisor at [X]" as the start of a job, so a person's board seats and advisory roles read as jobs and opened employment stints that never existed. Three typing changes fix that; each was preregistered and confirmed on held-out data that nobody on the change saw (decision `q2-parser-gaps-2026-10`). The opt-in typed relation lines (`line_grammar.enabled`) got guards against the shapes the first held-out audit caught (unfilled template slots, separator rows, placeholders, dictionary usage labels) and a finding for every line they refuse. They stay off by default: the second held-out audit, run on fresh natural pages with the guards, still read 583 list lines as grammar lines, 459 of them wrong, and minted 17 of 52 decoy lines; typed lines written on purpose were read 511 of 511.
+
+### How to use it
+
+```bash
+gbrain extract --stale                                   # finish the one-time re-extraction now (zero model calls); managed extraction does it in the background
+gbrain doctor --json                                     # links_extraction_lag 0 when every page is re-extracted
+gbrain config set line_grammar.enabled true              # opt in to typed relation lines; prints how many pages re-extract
+gbrain get people/alice-example --grammar-diagnostics    # every line-grammar finding for a page (MCP: get_page grammar_diagnostics: true)
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Link types (U1) | "is an adviser to [X]", "serves as an adviser to", "now advising [X]" type `advises`. "not an advisor to [X]", "no longer advises [X]" and "stopped advising [X]" no longer type `advises` for that occurrence (a dated "no longer advises" still ends an `advises` the page states elsewhere). A job title such as "financial adviser at [Bank]" and a third party's role stay as they were. |
+| Link types (U3) | "board director at [X]", "independent director of [X]", "joined as an observer at [X]" never type `works_at`; "holds a board seat at [X]" types `invested_in` only with investor wording or an investor role prior. Board membership is not a type of its own, so these links read `mentions` unless a role prior applies. |
+| Employment starts (U4) | "Became an advisor at [X]", "Took an advisory role with [X]", "Took a board role at [X]" no longer start a `works_at` stint; advisory, board, investor, angel and observer roles are skipped by the employment start cue. |
+| Existing pages | `LINK_EXTRACTOR_VERSION_TS` moves to 2026-10-08, so every page re-extracts its links once in the background with zero model calls. |
+| `gbrain config set/unset line_grammar.*` | The setting and the time it changed commit together, every page extracted before that time re-extracts once, and the command prints how many pages are queued. Turning the grammar off restores inferred types on every page; setting the same value again changes nothing. |
+| Typed relation and fact lines (opt-in) | `- [Time] - [Event]`, `- [Date] — Kickoff`, `- [Item] TBD` and `- [noun] a thing` are no longer read as fact lines. `- **works_at** [[x]]`, `` - `works_at` [[x]] `` and `- works_at: [[x]]` are refused with the bare form as the fix. |
+| `put_page` and `get_page` | `put_page`'s `line_grammar` findings follow the agent operator contract (`code`, `why`, `canonical`, `verify`), at most five per write with `more` naming the call that lists all of them: `get_page` with `grammar_diagnostics: true`, which reads the brain's settings and the source's schema pack. A brain whose settings cannot be read returns `diagnostics_failed` with a `gbrain doctor` step, never an ungated reading. |
+
+### Numbers
+
+Measured on the three units together (dev set, temporal-edges phrasings A, A2, A3, seeds 3 and 5): false employment starts 48/48/37 → 0, wrong closures from them 24/24/8 → 0, wrong transitions by identity 89/89/59 → 17/17/14, live recall and traps unchanged. Two more candidate units were not shipped: ordinary role wording with leave idioms (U25) added nothing on the held-out confirmation set (difference 0.000 on all 200 pairs), and start framings such as "first day at" (U6) failed the held-out safety conditions.
+
+Re-extraction cost after a version bump or a line-grammar toggle (`scripts/bench-link-extraction-drain.ts`): Postgres 10k pages drains at 21.4 ms/page (218 s), and 100k pages on a 16-vCPU VM at 15.9 ms/page (26.6 min), with `get_links` at 13.6 ms while 71,550 pages wait; `put_page` p50/p95/p99 is 121/180/238 ms with the grammar off and 126/151/174 ms with it on at 100k. PGLite on the same VM drains 10k pages at 7.9 ms/page (80 s) and 100k pages at 5.9 ms/page (9.9 min), with `get_links` at 7.6 ms while 63,150 pages wait and `put_page` p50/p95/p99 116/145/202 ms (grammar off) and 110/127/195 ms (on) at 100k. Those PGLite numbers include the stale-statistics fix that shipped separately (`ANALYZE` after bulk writes); without it, the same 10k drain took 119 ms/page.
+
+### For contributors
+
+- `src/core/link-typing-units.ts` holds the units and `ENABLED_TYPING_UNITS` (U3, U4, U1); `explainLinkType` / `traceLinkType` report the rule, unit, attachment and suppressed matches behind each link type, and `scripts/q2-typing-dev.ts` / `scripts/q2-typing-package.ts` rebuild the dev digests and unit packages.
+- `test/link-typing-units-subsets.test.ts` pins world-v1 typing: with no unit it is byte-identical to master, and with the shipped units it is the confirmed held-out package plus master's later target-role rule (#6191).
+- The grammar's settings-bound extraction lives in `src/core/line-grammar-config.ts` and `src/core/link-extraction-watermark.ts`; `src/core/line-grammar-report.ts` builds the findings.
+- The preregistration, harness and held-out verdicts are in gbrain-evals (`docs/benchmarks/2026-10-06-q2-parser-gaps-preregistration.md`, `docs/benchmarks/2026-10-05-heldout-program/q2.md`).
+
+## [0.60.119.0] - 2026-10-08
+
+**A managed catch-up starts committing about 4 seconds sooner, and a page you save during it no longer waits on locks the sync never needed.**
+
+On a managed Postgres brain 57 ms from the database, the first page of a catch-up used to land about 19 seconds after `gbrain sync` started; now it lands after about 15.5. A page save during the catch-up stays within a second of its idle time at the slow end, where one run in three on the previous release went over two seconds and lost a write to its wait.
+
+### How to use it
+
+```bash
+gbrain sync --source <id>                    # nothing to change
+GBRAIN_PG_TYPE_CACHE_PERSIST=0 gbrain sync   # keep described parameter types in this process only
+GBRAIN_PG_TYPE_CACHE=0 gbrain sync           # no sharing of described parameter types at all
+```
+
+### The numbers that matter
+
+Ubicloud 16-core VMs, Postgres behind a 57 ms proxy, 1,500 files with 34 already-deleted files first, default settings, three runs each.
+
+| What you do | v0.60.117.0 | Now |
+|---|---|---|
+| Time until the first page is committed | 19.0 to 19.6 s | 15.5 to 15.6 s |
+| Slowest saves during a catch-up (p95), over the same save with nothing running | +0.5 to +2.3 s, one save failed | +0.5 to +0.8 s, none failed |
+| Catch-up speed while your agent saves a page every 5 s | 61 to 65% of idle | 55 to 64% of idle |
+| Catch-up pages per minute with nothing else running | 370 to 379 | 370 to 393 |
+
+### Things to watch
+
+- **gbrain now keeps a small cache file per database** under `~/.gbrain/cache/pg-types/`: the parameter types Postgres described for gbrain's statements, so the next command skips asking again. It holds hashes and type numbers only (no SQL text, no credentials), is ignored when the Postgres version or the brain's schema version differs, and is deleted when a migration runs.
+- **The first catch-up after an upgrade is slower than the next one.** A statement only the catch-up runs still asks Postgres for its types the first time.
+- **The first page still takes 15.5 s, not the 15 s target.** What remains is serial startup reads, screening already-deleted files four at a time, and the first group's own round trips.
+
+### Itemized changes
+
+- Postgres: a pool's `shared_types` takes the Map to share described parameter types in; every pool in a process that reaches one database shares one, and it is saved for the next process, scoped to the server version, the schema version and the database as the server names it.
+- Sync: a waiver run screens each entry it froze against that freeze's page read and authority check instead of repeating both, and each freeze reads the page beside its origin check.
+- Lanes: claiming a lane group's followers locks only the group's rows, not the write queued after it.
+- Lanes: a foreground write another process claimed but has not started publishing holds back new lane groups, as a queued one does; before, groups kept starting ahead of it until that process handed it back.
+- Benchmarks: `docs/eval/managed-sync-catchup.md` corrects v0.60.111.0's catch-up-while-saving figure (45%, one low run) to the 57 to 71% every later run of that code measured.
+- Driver: `patches/postgres@3.4.9.patch` matches the vendored driver again (`bash vendor/update-postgres.sh --check` passes).
+
+## [0.60.118.0] - 2026-10-08
+
+**Background fact extraction now uses Claude Haiku 5.5 when nothing else chooses a model, cutting the cost of a gbrain write from $15.94 to $1.38 per 1,000 pages.**
+
+Every page an agent writes queues a background job that asks a chat model which facts the page states. With an Anthropic key and no model set, that model was Claude Sonnet 4.6, an older generation and most of the cost of a write: on 1,000 LongMemEval-S sessions at v0.60.110.0 the job cost $15.60 of the $15.94 total. A preregistered facts-absorb quality gate in gbrain-evals ran the real job with three models on the same pages (`docs/benchmarks/2026-10-08-facts-extraction-model.md`). Claude Haiku 5.5 passed every check against Sonnet 4.6: recall and precision non-inferior, attribution and correction handling no worse, no parse failures, every fact readable after a restart. A switched-off extractor and an extractor whose output is dropped both failed the gate. GPT-6 Luna failed the attribution check, so OpenAI-only installs keep their current default.
+
+The cost is a small loss on long natural conversations: on 20 natural transcripts, Haiku 5.5's facts covered 4.6 points fewer planted items than Sonnet 4.6's (95% interval −9.0 to −0.6), inside the gate's 10-point harm margin. To keep Sonnet 4.6:
+
+```bash
+gbrain config set facts.extraction_model anthropic:claude-sonnet-4-6
+gbrain models          # the facts.extraction_model row shows the model and "measured default" when the new default applies
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Fact extraction (`facts-absorb`, `extract_facts`, the drain) | Uses `anthropic:claude-haiku-5-5` when `facts.extraction_model`, `models.tier.reasoning`, `models.default` and `GBRAIN_MODEL` are all unset and the reasoning tier resolves through Anthropic. Any of those settings still wins. |
+| `gbrain models` | The `facts.extraction_model` row reports the model extraction actually uses and the setting that chose it (`measured default`, `config: facts.extraction_model`, `config: models.tier.reasoning`, ...). |
+| Budget caps | `anthropic:claude-haiku-5-5` is priced ($0.10 / $0.50 per 1M tokens, prompts up to 100,000 tokens), so `--max-usd` and the drain's caps meter it. |
+| Takes extraction | Unchanged: it uses the gateway's chat model, not `facts.extraction_model`. |
+
+The `behavior_changes` notice lists this change once.
 
 ## [0.60.117.0] - 2026-10-08
 

@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
-import { LINK_EXTRACTOR_VERSION_TS } from '../link-extraction.ts';
+import { effectiveLinkExtractorWatermark } from '../link-extraction-watermark.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { preparationConfigView } from './config-snapshot.ts';
@@ -17,7 +17,7 @@ export interface ManagedLinkExtraction { pages: number; created: number; removed
 /** `gbrain extract --stale` on a managed brain, locally or inside the PGLite owner. */
 export async function runManagedStaleExtraction(engine: BrainEngine, opts: { sourceId?: string; dryRun?: boolean }): Promise<ManagedLinkExtraction> {
   if (!opts.dryRun) return extractManagedStaleLinks(engine, { sourceId: opts.sourceId });
-  const remaining = await engine.countStalePagesForExtraction({ sourceId: opts.sourceId, versionTs: LINK_EXTRACTOR_VERSION_TS });
+  const remaining = await engine.countStalePagesForExtraction({ sourceId: opts.sourceId, versionTs: await effectiveLinkExtractorWatermark(engine) });
   const m = await previewMentionPass(engine, opts.sourceId);
   return { pages: 0, created: 0, removed: 0, timeline: 0, skipped: 0, remaining, mention_due: m.due, mention_last_pass_at: m.last_pass_at };
 }
@@ -72,12 +72,14 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
   const withMentions = opts.mentions !== false;
   const deadline = withMentions ? await linkPhaseDeadline(engine, opts.sourceId, startMs, opts.timeBudgetMs)
     : opts.timeBudgetMs === undefined ? Infinity : startMs + opts.timeBudgetMs;
-  const versionTs = LINK_EXTRACTOR_VERSION_TS;
   const maxPages = opts.maxPages ?? Infinity;
   const done = new Set<string>();
   const attribution = await maintenanceAttribution(engine);
-  // #5984: every page's link preparation reads the same config; one read answers them for this run.
+  // #5984: every page's link preparation reads the same config; one read answers them for this run. The watermark
+  // comes from the same read, so a page is stamped against the line-grammar generation it was prepared under;
+  // publication refuses it if the generation moved since (derived-links.ts), and it stays stale.
   const settings = await preparationConfigView(engine);
+  const versionTs = await effectiveLinkExtractorWatermark(settings);
   const derive = async (slug: string, sourceId: string, stamp?: string) => {
     opts.signal?.throwIfAborted();
     done.add(`${sourceId}\0${slug}`);

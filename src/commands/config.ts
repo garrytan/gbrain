@@ -374,7 +374,10 @@ export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
  * extraction, so they validate here too, and an explicit auto_chronicle set
  * records the operator's answer to the default-on change.
  */
+const setLineGrammarConfig = async (engine: BrainEngine, key: string, value: string) => (await import('./config-line-grammar.ts')).setLineGrammarConfig(engine, key, value);
+
 async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value: string, force = false): Promise<void> {
+  if (await setLineGrammarConfig(engine, key, value)) return;
   if (key.startsWith('decide.')) {
     const { validateDecideConfigValue } = await import('../core/ai/decide/config.ts');
     const err = validateDecideConfigValue(key, value);
@@ -712,7 +715,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         console.error('Usage: gbrain config unset --pattern <prefix>');
         process.exit(1);
       }
-      const keys = await engine.listConfigKeys(prefix);
+      const keys = (await engine.listConfigKeys(prefix)).filter(k => !k.startsWith('_internal.'));
       // Dual-plane keys matching the prefix must ALSO leave the file mirror
       // (codex re-review, this wave): a DB-only pattern delete would report
       // success while the engine-free Stop hook keeps reading the mirror's
@@ -742,11 +745,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         console.log(`No keys match prefix "${prefix}".`);
         return;
       }
-      let deleted = 0;
-      for (const k of keys) {
-        const n = await engine.unsetConfig(k);
-        if (n > 0) deleted += n;
-      }
+      const deleted = await (await import('./config-line-grammar.ts')).unsetConfigKeys(engine, keys);
       console.log(`Unset ${deleted} key(s) matching "${prefix}":`);
       for (const k of keys) console.log(`  - ${k}`);
       for (const k of fileSwept) {
@@ -862,7 +861,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
       return;
     }
-    const n = await engine.unsetConfig(key);
+    const n = await (await import('./config-line-grammar.ts')).unsetConfigKeys(engine, [key], { single: true });
     if (n > 0) {
       console.log(`Unset ${key}${key === 'auto_chronicle' ? AUTO_CHRONICLE_UNSET_NOTE : ''}`);
       if (key === 'facts.default_visibility') await restampVisibilityPosture(null);

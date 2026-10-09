@@ -30,6 +30,9 @@ import { isIdentityEntity, sameEntityName } from './entities/resolve.ts';
 import type { SchemaPackManifest } from './schema-pack/manifest-v1.ts';
 import { inferLinkTypeFromPack, frontmatterLinkTypeFromPack, ownsAttendanceInference } from './schema-pack/link-inference.ts';
 import { PageRegexBudget } from './schema-pack/redos-guard.ts';
+import { UNIT_VERB_RULES, typingUnitEnabled, unitOfRule, unitVerbVeto, type TypingUnit } from './link-typing-units.ts';
+import { deriveTemporalEvidence, rowKey, type DerivedTransition } from './link-temporal-evidence.ts';
+import { buildRelationshipState, relationSemantics, type AssertionTense, type Stint } from './link-validity.ts';
 
 /**
  * #3190: the slice of a schema-pack manifest link extraction consumes.
@@ -97,8 +100,8 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // 2026-10-02: hyphen-run basenames resolve (#5623); 2026-10-05: temporal edges derive dated evidence on extraction.
 // 2026-10-05T03: typed relation lines (core/line-grammar.ts) state their link's type; a per-edge verb that
 // belongs to another link in the window no longer types this one; "joined [X] as <role>" reads as works_at.
-// Re-extract so existing pages pick these up.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-10-05T03:00:00Z';
+// 2026-10-08: held-out-confirmed Q2 units U1, U3, U4 (core/link-typing-units.ts). Re-extract so pages pick these up.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-10-08T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -629,6 +632,8 @@ export interface ExtractPageLinksOptions {
   lineGrammar?: { enabled?: boolean; allowUndeclaredTypes?: boolean };
   targetType?: (slug: string, sourceId?: string) => string | undefined;
   onResolvedFrontmatterTarget?: (slug: string) => void;
+  /** Receives every body-link typing decision with its reasons (explainLinkType, development reports). */
+  explain?: (e: LinkTypeExplanation) => void;
 }
 
 /** The authored reference of a wikilink at `idx`: a slug path, or a bare name keyed by its basename. */
@@ -644,6 +649,83 @@ export interface AuthoredRef {
   kind: 'slug' | 'name';
   target: string;
   targetSourceId?: string;
+}
+
+/** One explained typing decision for a body link occurrence (explainLinkType, ExtractPageLinksOptions.explain). */
+export interface LinkTypeExplanation extends Omit<LinkTypeTrace, 'type'> {
+  target: string;
+  /** Offset of the link in the page content (-1 or undefined when unknown). */
+  index?: number;
+  context: string;
+  linkType: string;
+  /** A typed relation line's type (core/line-grammar.ts), which wins over everything below. */
+  stated: string | null;
+  /** The pack link type whose inference rule decided, if any. */
+  packRule: string | null;
+}
+
+type TypeFor = (ctx: string, targetSlug: string, idx?: number, sourceId?: string, bodyReference?: boolean) => Pick<LinkCandidate, 'linkType' | 'canonicalAttendance'>;
+
+/**
+ * The per-occurrence typer of extractPageLinks. Order: a typed relation line (stated type), then the active pack's
+ * inference rules, then meeting attendance, then inferLinkType's verb rules and role priors, then unit post-passes.
+ */
+function makeTypeFor(content: string, pageType: PageType, opts: ExtractPageLinksOptions, attendancePending: Set<number>, attendanceResolved: Set<number>): TypeFor {
+  // #3190: pack-aware verb inference. Pack-declared verbs win (page-type
+  // bindings, then pack regexes under the shared per-page ReDoS budget);
+  // the in-code inferLinkType stays the fall-through for everything the
+  // pack doesn't claim — matching the resolution order extract-ner already
+  // ships (schema-pack/link-inference.ts header). Pre-fix a user pack's
+  // `link_types[].inference.regex` (e.g. parent_of) was silently ignored
+  // here and every such edge landed as 'mentions'.
+  const pack = opts.pack ?? null;
+  const packBudget = pack ? new PageRegexBudget() : undefined;
+  const packOwnsAttendance = ownsAttendanceInference(pack);
+  // Timeline / See-also links never receive the page-role prior — see
+  // rolePriorSuppressedRanges (matched on the code-stripped content, so a
+  // fenced `## Timeline` never opens a range). idx is the link's position in
+  // `content` (stripCodeBlocks and the wikilink mask are length-preserving,
+  // so indices line up); idx < 0 / undefined keeps the old behavior.
+  const suppressedRanges = rolePriorSuppressedRanges(stripCodeBlocks(content));
+  const attendanceRanges = attendanceEvidenceRanges(content);
+  const statedType = statedRelationTypes(content, { ...opts.lineGrammar, declaredVerbs: pack?.link_types.map(lt => lt.name) });
+  return (ctx, targetSlug, idx, sourceId, bodyReference = true) => {
+    const explain = opts.explain;
+    const decide = (linkType: string, why: Partial<LinkTypeExplanation> = {}, canonicalAttendance?: boolean) => {
+      explain?.({ target: targetSlug, index: idx, context: ctx, linkType, stated: null, packRule: null, rule: null, attachment: 'none', suppressed: [], prior: null, unit: null, ...why });
+      return canonicalAttendance ? { linkType, canonicalAttendance } : { linkType };
+    };
+    const stated = bodyReference ? statedType(idx) : undefined; // a typed relation line wins (core/line-grammar.ts)
+    if (stated && !(stated === 'attended' && pageType === 'meeting')) return decide(stated, { stated });
+    const targetType = opts.targetType?.(targetSlug, sourceId);
+    if (pack) {
+      const packVerb = inferLinkTypeFromPack(pack, pageType as string, ctx, packBudget, targetType);
+      if (packVerb && (packOwnsAttendance || packVerb !== 'attended' || pageType !== 'meeting')) {
+        if (packVerb === 'attended' && pageType === 'meeting'
+          && (opts.targetType ? targetType !== 'person' : !targetSlug.startsWith('people/'))) return decide('mentions', { packRule: packVerb });
+        return decide(packVerb, { packRule: packVerb });
+      }
+    }
+    if (pageType === 'meeting') {
+      if (!bodyReference) return decide('mentions', { rule: 'page.meeting' });
+      if (packOwnsAttendance && pack?.link_types.some(lt => lt.name === 'attended' && (lt.inference?.page_type || lt.inference?.target_type))) return decide('mentions', { rule: 'page.meeting', packRule: 'attended' });
+      if (idx !== undefined && hasAttendanceEvidence(attendanceRanges, idx)) {
+        attendancePending.add(idx);
+        if (!opts.targetType || targetType !== undefined) attendanceResolved.add(idx);
+      }
+      if ((opts.targetType ? targetType === 'person' : targetSlug.startsWith('people/'))
+        && idx !== undefined && hasAttendanceEvidence(attendanceRanges, idx)) {
+        return decide('attended', { rule: 'page.meeting.attendance' }, true);
+      }
+      return decide('mentions', { rule: 'page.meeting' });
+    }
+    const suppressPrior = idx !== undefined && idx >= 0 && inSuppressedRange(suppressedRanges, idx);
+    const trace = traceLinkType(pageType, ctx, suppressPrior ? undefined : content, targetSlug,
+      opts.targetType ? targetType ?? null : undefined, bodyReference && idx !== undefined && idx >= 0 ? excerptAnchor(content, idx, 240) : undefined, content, !!explain);
+    const { type, ...why } = trace;
+    if (pack?.link_types.some(lt => lt.name === type && (lt.inference?.page_type || lt.inference?.target_type))) return decide('mentions', { ...why, packRule: type });
+    return decide(type, why);
+  };
 }
 
 /**
@@ -686,58 +768,11 @@ export async function extractPageLinks(
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
-  // #3190: pack-aware verb inference. Pack-declared verbs win (page-type
-  // bindings, then pack regexes under the shared per-page ReDoS budget);
-  // the in-code inferLinkType stays the fall-through for everything the
-  // pack doesn't claim — matching the resolution order extract-ner already
-  // ships (schema-pack/link-inference.ts header). Pre-fix a user pack's
-  // `link_types[].inference.regex` (e.g. parent_of) was silently ignored
-  // here and every such edge landed as 'mentions'.
   const pack = opts.pack ?? null;
-  const packBudget = pack ? new PageRegexBudget() : undefined;
-  const packOwnsAttendance = ownsAttendanceInference(pack);
-  // Timeline / See-also links never receive the page-role prior — see
-  // rolePriorSuppressedRanges (matched on the code-stripped content, so a
-  // fenced `## Timeline` never opens a range). idx is the link's position in
-  // `content` (stripCodeBlocks and the wikilink mask are length-preserving,
-  // so indices line up); idx < 0 / undefined keeps the old behavior.
-  const suppressedRanges = rolePriorSuppressedRanges(stripCodeBlocks(content));
-  const attendanceRanges = attendanceEvidenceRanges(content);
   const attendancePending = new Set<number>();
   const attendanceResolved = new Set<number>();
   const attendanceAmbiguous = new Set<number>();
-  const statedType = statedRelationTypes(content, { ...opts.lineGrammar, declaredVerbs: pack?.link_types.map(lt => lt.name) });
-  const typeFor = (ctx: string, targetSlug: string, idx?: number, sourceId?: string, bodyReference = true): Pick<LinkCandidate, 'linkType' | 'canonicalAttendance'> => {
-    const stated = bodyReference ? statedType(idx) : undefined; // a typed relation line wins (core/line-grammar.ts)
-    if (stated && !(stated === 'attended' && pageType === 'meeting')) return { linkType: stated };
-    const targetType = opts.targetType?.(targetSlug, sourceId);
-    if (pack) {
-      const packVerb = inferLinkTypeFromPack(pack, pageType as string, ctx, packBudget, targetType);
-      if (packVerb && (packOwnsAttendance || packVerb !== 'attended' || pageType !== 'meeting')) {
-        if (packVerb === 'attended' && pageType === 'meeting'
-          && (opts.targetType ? targetType !== 'person' : !targetSlug.startsWith('people/'))) return { linkType: 'mentions' };
-        return { linkType: packVerb };
-      }
-    }
-    if (pageType === 'meeting') {
-      if (!bodyReference) return { linkType: 'mentions' };
-      if (packOwnsAttendance && pack?.link_types.some(lt => lt.name === 'attended' && (lt.inference?.page_type || lt.inference?.target_type))) return { linkType: 'mentions' };
-      if (idx !== undefined && hasAttendanceEvidence(attendanceRanges, idx)) {
-        attendancePending.add(idx);
-        if (!opts.targetType || targetType !== undefined) attendanceResolved.add(idx);
-      }
-      if ((opts.targetType ? targetType === 'person' : targetSlug.startsWith('people/'))
-        && idx !== undefined && hasAttendanceEvidence(attendanceRanges, idx)) {
-        return { linkType: 'attended', canonicalAttendance: true };
-      }
-      return { linkType: 'mentions' };
-    }
-    const suppressPrior = idx !== undefined && idx >= 0 && inSuppressedRange(suppressedRanges, idx);
-    const legacy = inferLinkType(pageType, ctx, suppressPrior ? undefined : content, targetSlug,
-      opts.targetType ? targetType ?? null : undefined, bodyReference && idx !== undefined && idx >= 0 ? excerptAnchor(content, idx, 240) : undefined);
-    if (pack?.link_types.some(lt => lt.name === legacy && (lt.inference?.page_type || lt.inference?.target_type))) return { linkType: 'mentions' };
-    return { linkType: legacy };
-  };
+  const typeFor = makeTypeFor(content, pageType, opts, attendancePending, attendanceResolved);
 
   // 1. Markdown entity refs.
   for (const ref of extractEntityRefs(content)) {
@@ -1183,7 +1218,9 @@ const WORKS_AT_RE = /\b(?:joined\b[^.\n]{0,80}?\bas (?:an? |the )?(?:senior |sta
 // Series A"), narrative verbs ("invests in", "investing in"), historical
 // ("early investor in", "first check"), and portfolio framing ("portfolio
 // company", "portfolio includes").
-const INVESTED_RE = /\b(?:invested in|invests in|investing in|invest in|investment in|investments in|backed by|funding from|funded by|raised from|led the (?:seed|Series|round|investment|round)|led .{0,30}(?:Series [A-Z]|seed|round|investment)|participated in (?:the )?(?:seed|Series|round)|wrote (?:a |the )?check|first check|early investor|portfolio (?:company|includes)|board seat (?:at|in|on)|term sheet for)\b/i;
+const INVESTED_RE = /\b(?:invested in|invests in|investing in|invest in|investment in|investments in|backed by|funding from|funded by|raised from|led the (?:seed|Series|round|investment|round)|led .{0,30}(?:Series [A-Z]|seed|round|investment)|participated in (?:the )?(?:seed|Series|round)|wrote (?:a |the )?check|first check|early investor|portfolio (?:company|includes)|term sheet for)\b/i;
+// "board seat at/in/on": its own rule (same verb, same precedence) so U3 can require an investor prior for it.
+const BOARD_SEAT_RE = /\bboard seat (?:at|in|on)\b/i;
 
 // Founded patterns. Includes the noun-form "founder of" / "founders include"
 // because that's how real prose identifies founders ("Carol Wilson is the
@@ -1239,10 +1276,23 @@ const ADVISOR_ROLE_RE = /\b(?:full-time advisor|professional advisor|advises (?:
 const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security|DevOps|platform)? ?engineer at|is an? (?:senior|staff|principal|lead)? ?(?:developer|designer|product manager|engineering manager|director|VP) (?:at|of)|holds? the (?:CTO|CEO|CFO|COO|CMO|CRO|VP) (?:role|position|seat|title) at|is the (?:CTO|CEO|CFO|COO|CMO|CRO) of|employee at|on the team at|works on .{0,30} at)\b/i;
 
 
-const VERB_RULES: ReadonlyArray<readonly [RegExp, string]> = [
-  [FOUNDED_RE, 'founded'], [INVESTED_RE, 'invested_in'], [ADVISES_RE, 'advises'], [WORKS_AT_RE, 'works_at'],
-  [ZH_FOUNDED_RE, 'founded'], [ZH_INVESTED_RE, 'invested_in'], [ZH_ADVISES_RE, 'advises'], [ZH_WORKS_AT_RE, 'works_at'], [ZH_CITED_RE, 'cited'],
+/** A per-edge verb rule. `id` is stable: tests, explainLinkType and development reports name rules by it. */
+interface VerbRule { id: string; re: RegExp; verb: string; unit?: TypingUnit }
+const CORE_VERB_RULES: ReadonlyArray<VerbRule> = [
+  { id: 'verb.founded', re: FOUNDED_RE, verb: 'founded' },
+  { id: 'verb.invested_in', re: INVESTED_RE, verb: 'invested_in' },
+  { id: 'verb.invested_in.board_seat', re: BOARD_SEAT_RE, verb: 'invested_in' },
+  { id: 'verb.advises', re: ADVISES_RE, verb: 'advises' },
+  { id: 'verb.works_at', re: WORKS_AT_RE, verb: 'works_at' },
+  { id: 'verb.zh.founded', re: ZH_FOUNDED_RE, verb: 'founded' },
+  { id: 'verb.zh.invested_in', re: ZH_INVESTED_RE, verb: 'invested_in' },
+  { id: 'verb.zh.advises', re: ZH_ADVISES_RE, verb: 'advises' },
+  { id: 'verb.zh.works_at', re: ZH_WORKS_AT_RE, verb: 'works_at' },
+  { id: 'verb.zh.cited', re: ZH_CITED_RE, verb: 'cited' },
 ];
+/** Core rules with each typing unit's rules right after the core rule they extend (skipped unless the unit is on). */
+const VERB_RULES: ReadonlyArray<VerbRule> = CORE_VERB_RULES.flatMap(r => [r, ...UNIT_VERB_RULES.filter(u => u.after === r.id)]);
+const ruleOn = (r: VerbRule) => !r.unit || typingUnitEnabled(r.unit);
 
 /**
  * The per-edge verb for one link when its context window holds several links.
@@ -1260,8 +1310,9 @@ const coordinated = (between: string) => {
   const [lead, ...gaps] = between.split(INLINE_LINK_RE);
   return !lead.trim() && gaps.length > 0 && gaps.every(gap => CONNECTOR_RE.test(gap));
 };
-const GLOBAL_VERB_RULES = VERB_RULES.map(([re, verb]) => [new RegExp(re.source, `${re.flags.replace('g', '')}g`), verb] as const);
-function attachedVerb(context: string, targetSlug?: string, anchor?: number, targetType?: string | null): string | null | undefined {
+const GLOBAL_VERB_RULES = VERB_RULES.map(r => ({ ...r, re: new RegExp(r.re.source, `${r.re.flags.replace('g', '')}g`) })); // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- recompiles the module's own literal VERB_RULES patterns
+interface Attachment { rule: VerbRule | null; suppressed: string[]; otherLink: boolean }
+function attachedVerb(context: string, targetSlug?: string, anchor?: number, explain = false, investorPrior: () => boolean = () => false, targetType?: string | null): Attachment | undefined {
   const fromAnchor = targetSlug && anchor !== undefined ? context.indexOf(targetSlug, anchor) : -1;
   const at = fromAnchor >= 0 ? fromAnchor : targetSlug ? context.indexOf(targetSlug) : -1;
   if (at < 0) return undefined;
@@ -1269,16 +1320,46 @@ function attachedVerb(context: string, targetSlug?: string, anchor?: number, tar
   const linkStart = open >= 0 && at - open <= 120 ? (context[open - 1] === '[' ? open - 1 : open) : at;
   const close = context.slice(at).search(/\)|\]\]/);
   const linkEnd = close >= 0 ? at + close + (context[at + close] === ')' ? 1 : 2) : at + targetSlug!.length;
-  for (const [re, verb] of GLOBAL_VERB_RULES) {
-    for (const m of context.matchAll(re)) {
+  const suppressed: string[] = [];
+  let rule: VerbRule | null = null;
+  let otherLink = false;
+  for (const r of GLOBAL_VERB_RULES) {
+    if (!ruleOn(r)) continue;
+    for (const m of context.matchAll(r.re)) {
       const start = m.index ?? 0; const end = start + m[0].length;
-      if (end <= linkStart && LINK_MARK_RE.test(context.slice(end, linkStart))
-        && !coordinated(context.slice(end, linkStart))) continue;
-      if (start >= linkEnd && (LINK_MARK_RE.test(context.slice(linkEnd, start)) || /^\s*(?:(?:with|at|to|for|of|in|on)\s+)?\[/i.test(context.slice(end)))) continue;
-      if (targetTakesVerb(verb, targetSlug, targetType)) return verb; // #6191: e.g. no works_at toward a meeting or person
+      if ((end <= linkStart && LINK_MARK_RE.test(context.slice(end, linkStart)) && !coordinated(context.slice(end, linkStart)))
+        || (start >= linkEnd && (LINK_MARK_RE.test(context.slice(linkEnd, start)) || /^\s*(?:(?:with|at|to|for|of|in|on)\s+)?\[/i.test(context.slice(end))))) {
+        otherLink = true;
+        if (explain) suppressed.push(`${r.id}:other-link`);
+        continue;
+      }
+      const veto = unitVerbVeto({ rule: r, context, start, end, investorPrior, linkStart, linkEnd });
+      if (veto) { suppressed.push(veto); continue; }
+      // #6191: a target that cannot take the verb (works_at toward a meeting or person) skips the rule.
+      if (!targetTakesVerb(r.verb, targetSlug, targetType)) { if (explain) suppressed.push(`${r.id}:target-role`); continue; }
+      if (rule) { suppressed.push(`${r.id}:outranked`); break; }
+      rule = r;
+      if (!explain) return { rule, suppressed, otherLink };
+      break;
     }
   }
-  return null;
+  return { rule, suppressed: [...new Set(suppressed)], otherLink };
+}
+
+/** Why inferLinkType chose a type: the rule, how it attached, what it suppressed, and the prior. */
+export interface LinkTypeTrace {
+  type: string;
+  /** Stable id of the deciding rule (`verb.*`, `prior.*`, `page.*`, `unit.*`), or null for plain `mentions`. */
+  rule: string | null;
+  /** attached: the verb belongs to this link; window: the link was not located, plain precedence over the window;
+   *  other-links: every verb in the window belongs to another link; none: no verb in the window. */
+  attachment: 'attached' | 'window' | 'other-links' | 'none';
+  /** Rule ids that matched but did not decide (`:other-link` belonged to another link, `:outranked` lost on precedence). */
+  suppressed: string[];
+  /** The page-role prior that decided (`prior.investor`, `prior.advisor`, `prior.employee`), if any. */
+  prior: string | null;
+  /** The typing unit that changed this decision (src/core/link-typing-units.ts), if any. */
+  unit: TypingUnit | null;
 }
 
 /**
@@ -1298,24 +1379,44 @@ function attachedVerb(context: string, targetSlug?: string, anchor?: number, tar
  * ("Her current board seats reflect her portfolio: [Co A], [Co B], [Co C]").
  */
 export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null, anchor?: number): string {
+  return traceLinkType(pageType, context, globalContext, targetSlug, targetType, anchor).type;
+}
+
+/** inferLinkType with its reasons. `pageText` is the whole page (role priors read `globalContext`, which timeline links do not get). */
+export function traceLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null, anchor?: number, pageText?: string, explain = false): LinkTypeTrace {
+  const out = (type: string, rule: string | null, attachment: LinkTypeTrace['attachment'] = 'none', suppressed: string[] = [], prior: string | null = null): LinkTypeTrace =>
+    ({ type, rule, attachment, suppressed, prior, unit: unitOfRule(rule) ?? unitOfRule(suppressed.find(id => id.startsWith('unit.'))) });
   if (pageType === 'media') {
-    return 'mentions';
+    return out('mentions', 'page.media');
   }
   // v0.27.1: image pages link to their text sibling via 'image_of' (the
   // image is OF that meeting/note). Set explicitly by the import-image
   // path-proximity helper, not by markdown extraction — but the type is
   // declared here so graph-query knows the edge name.
-  if ((pageType as string) === 'image') return 'image_of';
+  if ((pageType as string) === 'image') return out('image_of', 'page.image');
   if ((pageType as string) === 'meeting') {
-    return targetType !== undefined ? (targetType === 'person' ? 'attended' : 'mentions')
-      : (!targetSlug || targetSlug.startsWith('people/') ? 'attended' : 'mentions');
+    return out(targetType !== undefined ? (targetType === 'person' ? 'attended' : 'mentions')
+      : (!targetSlug || targetSlug.startsWith('people/') ? 'attended' : 'mentions'), 'page.meeting');
   }
   // Per-edge verb rules, precedence founded > invested_in > advises > works_at
   // (then the Chinese rules), over the verbs that belong to this link: in
   // "works at [A] and also advises [B]", A is works_at and B advises.
-  const attached = attachedVerb(context, targetSlug, anchor, targetType);
-  if (attached) return attached;
-  if (attached === undefined) for (const [re, verb] of VERB_RULES) if (re.test(context) && targetTakesVerb(verb, targetSlug, targetType)) return verb;
+  const investorPrior = () => pageType === 'person' && PARTNER_ROLE_RE.test(pageText ?? globalContext ?? '');
+  const attached = attachedVerb(context, targetSlug, anchor, explain, investorPrior, targetType);
+  if (attached?.rule) return out(attached.rule.verb, attached.rule.id, 'attached', attached.suppressed);
+  const suppressed = attached?.suppressed ?? [];
+  if (attached === undefined) {
+    for (const r of GLOBAL_VERB_RULES) {
+      if (!ruleOn(r)) continue;
+      for (const m of context.matchAll(r.re)) {
+        const veto = unitVerbVeto({ rule: r, context, start: m.index ?? 0, end: (m.index ?? 0) + m[0].length, investorPrior });
+        if (veto) { suppressed.push(veto); continue; }
+        if (!targetTakesVerb(r.verb, targetSlug, targetType)) { suppressed.push(`${r.id}:target-role`); continue; }
+        return out(r.verb, r.id, 'window', suppressed);
+      }
+    }
+  }
+  const attachment = attached?.otherLink ? 'other-links' : 'none';
   // Page-role prior: only fires for person -> company links. Concept pages
   // about VC topics naturally contain "venture capital" in their text, but
   // their company refs are mentions, not investments. Partner pages mentioning
@@ -1326,11 +1427,58 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   // employee/advisor match would mis-classify; keep investor first so those
   // phrasings resolve correctly.
   if (pageType === 'person' && globalContext && targetSlug?.startsWith('companies/')) {
-    if (PARTNER_ROLE_RE.test(globalContext)) return 'invested_in';
-    if (ADVISOR_ROLE_RE.test(globalContext)) return 'advises';
-    if (EMPLOYEE_ROLE_RE.test(globalContext)) return 'works_at';
+    if (PARTNER_ROLE_RE.test(globalContext)) return out('invested_in', 'prior.investor', attachment, suppressed, 'prior.investor');
+    if (ADVISOR_ROLE_RE.test(globalContext)) return out('advises', 'prior.advisor', attachment, suppressed, 'prior.advisor');
+    if (EMPLOYEE_ROLE_RE.test(globalContext)) return out('works_at', 'prior.employee', attachment, suppressed, 'prior.employee');
   }
-  return 'mentions';
+  return out('mentions', null, attachment, suppressed);
+}
+
+/** explainLinkType's answer for one target: every occurrence's typing decision, the kept types, tense and dated transitions. */
+export interface LinkExplanation {
+  target: string;
+  occurrences: LinkTypeExplanation[];
+  /** The distinct types extractPageLinks emits for the target, sorted (a `mentions` row can sit beside a typed one). */
+  types: string[];
+  /** Tense per kept temporal type ('past' or 'present'). */
+  tense: Record<string, AssertionTense>;
+  /** Dated transitions for the kept types, each with the id of the cue that produced it. */
+  transitions: Array<DerivedTransition & { rule: string }>;
+  /** Validity stints per temporal type, from this page's tense and transitions alone (link-validity.ts buildRelationshipState). */
+  stints: Record<string, Stint[]>;
+}
+
+/**
+ * Why a page links to `target` with the type it does: a pure (database-free, deterministic) replay of
+ * extractPageLinks' typing and deriveTemporalEvidence for one page. Shared by tests and development reports.
+ * `content` is the page body (compiled truth and timeline); frontmatter links are skipped unless `frontmatter` is given.
+ */
+export async function explainLinkType(input: {
+  slug: string; content: string; pageType: PageType; target: string;
+  frontmatter?: Record<string, unknown>; lineGrammar?: ExtractPageLinksOptions['lineGrammar']; pack?: LinkExtractionPack | null;
+}): Promise<LinkExplanation> {
+  const occurrences: LinkTypeExplanation[] = [];
+  const resolver: SlugResolver = { resolve: async () => null };
+  const { candidates } = await extractPageLinks(input.slug, input.content, input.frontmatter ?? {}, input.pageType, resolver, {
+    skipFrontmatter: !input.frontmatter, lineGrammar: input.lineGrammar, pack: input.pack ?? null,
+    explain: e => { if (e.target === input.target) occurrences.push(e); },
+  });
+  const types = [...new Set(candidates.filter(c => c.targetSlug === input.target).map(c => c.linkType))].sort();
+  const transitions: LinkExplanation['transitions'] = [];
+  const evidence = deriveTemporalEvidence({ slug: input.slug, compiled_truth: input.content, timeline: '', frontmatter: input.frontmatter ?? {} },
+    candidates.map(c => ({ from_slug: c.fromSlug ?? input.slug, to_slug: c.targetSlug, link_type: c.linkType, link_source: c.linkSource ?? 'markdown', origin_field: c.originField ?? null })),
+    (t, rule) => { if (t.to_slug === input.target || t.from_slug === input.target) transitions.push({ ...t, rule }); });
+  const tense: Record<string, AssertionTense> = {};
+  const stints: Record<string, Stint[]> = {};
+  for (const t of types) {
+    const v = evidence.tense.get(rowKey({ from_slug: input.slug, to_slug: input.target, link_type: t }));
+    if (v) tense[t] = v;
+    const semantics = relationSemantics(t);
+    if (semantics === 'reference') continue;
+    stints[t] = buildRelationshipState(semantics, v ? [{ tense: v, originPageId: 1 }] : [],
+      transitions.filter(x => x.link_type === t).map(x => ({ kind: x.kind, occurredOn: x.occurred_on, producer: x.producer, originPageId: 1 }))).stints;
+  }
+  return { target: input.target, occurrences, types, tense, transitions, stints };
 }
 
 // ─── Frontmatter link extraction (v0.13) ────────────────────────

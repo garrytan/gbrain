@@ -1,0 +1,19 @@
+{
+  "id": "q2-dev-paren-move",
+  "note": "Development-only phrasing for the Q2 typing units (gbrain test/fixtures/q2-dev-phrasings). Not held-out material.",
+  "templates": {
+    "current": "{name} is now at {company} ({role}).",
+    "stale_summary": "{name}: {company} ({role}).",
+    "rejoin_eu": "{name} rejoined {company} ({role} for the EU region).",
+    "former": "Earlier: {company}.",
+    "advises": "{name} advises {company}.",
+    "tl_move": "linkedin — Moved from {prev} to {company} ({role})",
+    "tl_join": "linkedin — Joined {company} ({role})",
+    "tl_leave": "linkedin — Exit from {company}",
+    "tl_advise": "note — Became an advisor to {company}",
+    "tl_invest": "note — Invested in {company}'s Series C",
+    "tl_alumni": "meeting — Met with the {company} alumni group",
+    "explicit_start": "note — Started works_at [[{slug}]] as {role}",
+    "explicit_end": "note — Ended works_at [[{slug}]]"
+  }
+}

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 209744,
-    "stdoutSha256": "c6e089c565d3dfd6051c02f362790822322a3328669521135a2a4d4a79acaf29",
+    "stdoutBytes": 209938,
+    "stdoutSha256": "a8804aad5e3f0691c8a937f411df17e2592662c8eed52ea9c116f90ad05b433d",
     "toolNames": [
       "remember",
       "entity",
@@ -370,6 +370,7 @@
         "parameters": {
           "content_only": "boolean?",
           "fuzzy": "boolean?",
+          "grammar_diagnostics": "boolean?",
           "include_content": "boolean?",
           "include_deleted": "boolean?",
           "include_quarantined": "boolean?",
@@ -386,6 +387,10 @@
             },
             "fuzzy": {
               "description": "Fuzzy slug match.",
+              "type": "boolean"
+            },
+            "grammar_diagnostics": {
+              "description": "Also return every line-grammar finding for the page.",
               "type": "boolean"
             },
             "include_content": {

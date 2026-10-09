@@ -254,6 +254,14 @@ export async function buildHistoryFixture(engine: BrainEngine,
   // A Git effect that fails on a stale index.lock reschedules into the future. A lock younger than
   // 10 minutes is contention (`git_index_locked`, retried after 250 ms), so the lock is dated
   // 11 minutes back: the effect fails as `git_index_stale` and requeues 30 s out.
+  // A committed op's Git effect can still be queued or running (always so when replies outlive
+  // their wait); a lock planted under a running effect is renamed away by Git's own commit.
+  const drainDeadline = Date.now() + 60_000;
+  while ((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM persistence_effects
+    WHERE kind='git' AND state IN ('queued','running')`))[0].n > 0) {
+    assert(Date.now() < drainDeadline, 'history fixture: Git effects were still in flight 60 s after every op committed');
+    await Bun.sleep(100);
+  }
   const delayedSource = fixtureSources[0];
   const lock = join(checkouts[delayedSource.worktree], '.git', 'index.lock');
   writeFileSync(lock, '');

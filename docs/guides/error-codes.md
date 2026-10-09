@@ -540,6 +540,16 @@ More: [docs/guides/write-refusals.md#concurrent_write](../../docs/guides/write-r
 |---|---|---|---|---|---|---|
 | --source and --all-sources were both given. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### connection_lost
+
+<a id="connection_lost"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The managed sync drain lost its database connection three times in a row without committing a page in between, so it stopped where the cursor stands; nothing is recorded against the source. | A pooler drop (ECONNABORTED, ECONNRESET, ETIMEDOUT, EPIPE) is a transport fault, not a page fault: the drain reconnects and retries at 5, 15 and 45 seconds, and the frozen manifest and cursor stay as they are. Three consecutive drops with no progress mean the database is unreachable from here for now. | Check the database URL and pooler (gbrain doctor --json), then rerun the same gbrain sync; it resumes at the stored cursor without re-freezing the manifest. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#drain-connection-lost](../../docs/guides/write-refusals.md#drain-connection-lost)
+
 ### connector_account_changed
 
 <a id="connector_account_changed"></a>
@@ -2751,6 +2761,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The withdrawal target manifest is invalid. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### worktree_dirty
+
+<a id="worktree_dirty"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A managed sync held a file whose uncommitted working-tree bytes match neither the pinned commit nor the current page; the rest of the source synced and the local edit was not overwritten. | On a live checkout an agent may be mid-edit on a file the catch-up reaches. The bytes are not committed at HEAD, so sync cannot tell a deliberate local change from a stray one, and importing the pinned version would discard the edit; before #6340 this refusal stopped the whole run. | Commit the file (or restore it), then run gbrain sync unblock --source <id> --apply (it re-screens every held file that is now committed) and the same gbrain sync; a later commit that changes the file re-screens it on its own. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#worktree_dirty](../../docs/guides/write-refusals.md#worktree_dirty)
 
 ### write_claim_lost
 
