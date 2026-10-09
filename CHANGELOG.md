@@ -10,6 +10,46 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.134.0] - 2026-10-09
+
+**An MCP client sees `gbrain serve`'s tool list sooner, importing and syncing chunk pages about twice as fast, editing a page through `put_page` re-embeds only the chunks you changed, and a scoped vector search on a source of long pages finds its true neighbours. Chunks, tool lists and unscoped search come out the same.**
+
+`gbrain serve` used to load every operation's code and start its background services before it answered the MCP handshake. It now answers `initialize` and `tools/list` from a generated list of the operations' names, schemas and descriptions, then loads the handlers and starts the IPC socket, persistence consumer and startup sweep right after. The chunker counted words by rescanning the growing chunk on every merge; it now counts each piece once. A page edit through the persistence path (serve `put_page`, managed sync) used to delete every chunk and send all of them back to the embedding provider; unchanged chunks now keep their rows and vectors. Scoped vector search now counts a source's chunks instead of inferring them from its share of pages, so a source of long pages is routed by its real size.
+
+### What you'd see
+
+4 vCPU box, Bun 1.4.2, Postgres 16 + pgvector 0.8.7, synthetic brains of 5,001 pages / 25,331 chunks and 50,010 pages / 248,802 chunks (1024-dim vectors), before and after on the same machine.
+
+| what | before p50/p95 | after p50/p95 |
+|---|---|---|
+| `gbrain serve` spawn → `tools/list`, Postgres (cold, N=20) | 535/619 ms | 467/513 ms |
+| `gbrain serve` spawn → `tools/list`, PGLite (cold, N=20) | 828/962 ms | 675/713 ms |
+| chunk every page, 5k brain (warm, N=20 passes) | 8.3/8.7 s | 4.1/4.3 s |
+| chunk every page, 50k brain (warm, N=20 passes) | 80.5/84.0 s | 41.7/44.6 s |
+| chunk 2,000 CJK-heavy pages (warm, N=20 passes) | 13.3/13.7 s | 11.5/11.9 s |
+
+Editing one paragraph of an 8-chunk page through `put_page` on the 50k brain sends 2 chunks to the embedding provider instead of 8 and writes 295 KB of WAL instead of 736 KB; the embed step takes 54-75 ms instead of 101-126 ms (p50). A source holding 26% of the 50k brain's pages but 93,500 chunks now gets the exact scan when the index comes back short: recall 0.69 → 0.94 (N=25 queries, local reader), p95 79 → 502 ms. A sessions-like source (16% of pages, 75,000 chunks) keeps recall 0.95 at the same latency.
+
+### What to watch for
+
+- A client that calls a tool in the same breath as `tools/list` waits for the deferred boot: its first call takes about 120-150 ms longer, and spawn to first answer stays within about 60 ms of before. A client that pauses even briefly between listing and calling pays nothing.
+- The resolve IPC socket, persistence consumer and startup sweep now come up just after the MCP handshake instead of before it (within about 1 s when no client ever connects).
+- A chunk kept across an edit keeps its row id, `created_at` and `embedded_at`.
+- Scoped vector search on a source of 25,000-120,000 chunks whose content sits away from the query now pays for the exact scan after the walk (about 0.6 s at 120,000 chunks) in exchange for complete results. The scope's chunk count is refreshed in the background at most once a minute per scope; the first search after a start routes on the old estimate.
+
+### Itemized changes
+
+- **Static tool list (`src/core/operation-manifest.generated.ts`, `scripts/build-operation-manifest.ts`).** Every operation minus its handler, in registry order; `bun run build:operation-manifest` regenerates it, and `test/operation-manifest.test.ts` fails when it is stale. `src/mcp/server.ts`, `src/cli/main.ts` and the listing helpers read it; handlers load on the first tool call. `test/mcp-tool-list-snapshot.test.ts` pins `initialize` and `tools/list` byte for byte against the live registry in six surface and gate modes.
+- **Deferred serve boot (`src/mcp/server.ts`).** Boot starts once the first `tools/list` is answered, 25 ms after `initialize` when none is in flight, or after 1 s without a client. Every tool call and skill resource read waits for it and rejects with the boot error if it failed.
+- **Word counting (`src/core/cjk.ts`, `src/core/chunkers/recursive.ts`).** `wordStats` gathers whitespace runs, non-whitespace and CJK code units in one pass, and `concatWordStats` combines two pieces in constant time, so `greedyMerge` never recounts its chunk. A 1,500-case mixed CJK / Latin / emoji golden captured before the change pins every chunk boundary.
+- **Prepared edits (`src/core/import-file.ts`).** The prepared publish applies the same vector-reuse rules as the inline import inside its publication transaction, keeps each stored row identical to its new chunk, and writes only the rest.
+- **Scope chunk count (`src/core/search/vector-statement.ts`).** `SCOPE_CHUNKS_SQL` counts a scope's live pages and the chunks of a hash-stride sample of about 400 of them; the scope scan cap is 120,000 counted chunks (was 60,000 estimated).
+
+### For contributors
+
+- `bun run bench:efficiency` runs the efficiency bench harness (`scripts/bench/efficiency/`): synthetic brains, import and hot-path benches, Postgres statement and cold-start probes, the chunk pass (`bench-chunk.ts`), MCP start (`probe-mcp-start.ts`) and per-scope vector recall (`vector-scope-share.ts`, moved from `scripts/bench/`).
+- After editing any operation's description or params, run `bun run build:operation-manifest` (also part of `bun run regen:all`).
+
 ## [0.60.133.0] - 2026-10-09
 
 **A page with ` ```lua ` fences no longer stalls the writer: the Lua grammar is replaced, Lua definitions become semantic chunks for the first time, and only Lua files re-chunk on upgrade.**

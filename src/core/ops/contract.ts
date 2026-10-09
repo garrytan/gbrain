@@ -784,6 +784,14 @@ export interface Operation {
 }
 
 /**
+ * Everything about an operation except its handler: the data tools/list,
+ * surface filtering, publish gates and CLI arg parsing read. Checked in as
+ * src/core/operation-manifest.generated.ts so `gbrain serve` and the CLI
+ * dispatcher can answer without loading every handler module.
+ */
+export type OperationMeta = Omit<Operation, 'handler'>;
+
+/**
  * An op that declares its own `source` param (timeline-add, ontology-add,
  * takes add/update/supersede, raw data) takes `--source` as that param, e.g.
  * provenance. Every CLI route (direct, delegated to a resident serve, thin

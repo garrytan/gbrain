@@ -33,7 +33,8 @@ import { resolveBrainId as resolveBrainIdForDbMarker } from '../core/brain-resol
 import type { GBrainConfig } from '../core/config.ts';
 import type { AIGatewayConfig } from '../core/ai/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError } from '../core/operations.ts';
+import { OperationError, type OperationMeta } from '../core/ops/contract.ts';
+import { OPERATION_MANIFEST, cliOps } from './op-manifest.ts';
 import { resolveSourceIdEngineFree } from '../core/source-resolver.ts';
 import { installCliRoutingFor } from './fix-routing-provider.ts';
 import { formatVolunteeredPage } from '../core/context/volunteer.ts';
@@ -85,15 +86,6 @@ function dbMarkerBrainId(): string | undefined {
     return resolveBrainIdForDbMarker(getCliOptions().brain ?? null);
   } catch {
     return undefined;
-  }
-}
-
-// Build CLI name -> operation lookup
-const cliOps = new Map<string, Operation>();
-for (const op of operations) {
-  const name = op.cliHints?.name;
-  if (name && !op.cliHints?.hidden) {
-    cliOps.set(name, op);
   }
 }
 
@@ -183,12 +175,12 @@ async function printSelfHelpWithoutEngine(command: string, args: string[]): Prom
 // load — a silent route-shadow is worse than a loud boot failure. CLI_ONLY is
 // derived from the command table (src/cli/command-table.ts), so the check runs
 // over every table record. Exported for the table test's collision case.
-export function buildCliAliases(
-  ops: readonly Operation[],
-  primary: ReadonlyMap<string, Operation>,
+export function buildCliAliases<T extends OperationMeta>(
+  ops: readonly T[],
+  primary: ReadonlyMap<string, OperationMeta>,
   cliOnly: ReadonlySet<string>,
-): Map<string, Operation> {
-  const aliases = new Map<string, Operation>();
+): Map<string, T> {
+  const aliases = new Map<string, T>();
   for (const op of ops) {
     if (op.cliHints?.hidden) continue;
     for (const alias of op.cliHints?.aliases ?? []) {
@@ -204,7 +196,7 @@ export function buildCliAliases(
   return aliases;
 }
 
-export const cliAliases = buildCliAliases(operations, cliOps, CLI_ONLY);
+export const cliAliases = buildCliAliases(OPERATION_MANIFEST, cliOps, CLI_ONLY);
 
 /**
  * Emit the self-upgrade marker on the hot path. CACHE-READ-ONLY: a statSync +
@@ -524,8 +516,9 @@ async function main() {
  */
 async function runSharedOperation(command: string, subArgs: string[], cliOpts: CliOptions): Promise<void> {
   // Shared operations (fall through to aliases, e.g. link-add -> add_link)
-  const op = cliOps.get(command) ?? cliAliases.get(command);
-  if (!op) exitCliError(usageError(`Unknown command: ${command}`, 'Run `gbrain --help` for available commands.', { code: 'unknown_command' }), command);
+  const meta = cliOps.get(command) ?? cliAliases.get(command);
+  if (!meta) exitCliError(usageError(`Unknown command: ${command}`, 'Run `gbrain --help` for available commands.', { code: 'unknown_command' }), command);
+  const op = (await import('../core/operations.ts')).operations.find(o => o.name === meta.name)!;
 
   // v0.31.1 (Issue #734, CDX-1): parse CLI args BEFORE engine connect so
   // the routing seam below can decide local-vs-remote without paying a
@@ -1318,7 +1311,7 @@ export function findUnknownFlag(args: string[], legal: ReadonlySet<string>): str
 }
 
 /** Op lane: mirrors parseOpArgs so flag VALUES starting with '--' are skipped. */
-export function findUnknownOpFlag(op: Operation, args: string[]): string | null {
+export function findUnknownOpFlag(op: OperationMeta, args: string[]): string | null {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--') break;
@@ -2938,7 +2931,7 @@ const OP_HELP_EXAMPLES: Record<string, string[]> = {
   ],
 };
 
-export function printOpHelp(op: Operation, invokedName?: string) {
+export function printOpHelp(op: OperationMeta, invokedName?: string) {
   const positional = (op.cliHints?.positional || []).map(p => `<${p}>`).join(' ');
   // v114 (#1941): when invoked via an alias (e.g. `gbrain link-add --help`),
   // show the alias the user typed, not the primary op name.

@@ -21,11 +21,12 @@ import { prepareCodeChunks, installCodeChunkEdges } from './code-chunks.ts';
 import { detectCodeLanguage, CHUNKER_VERSION, GRAMMAR_REVISIONS, type SupportedCodeLanguage } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { installPageEmbeddings, installPageProjection, preparePageProjection, projectionBelowSafeFence, queuePageProjection, readProjectionSnapshot, resealSafeChunks,
-  sealPageTextProjection, stampEmbeddingInputs, embeddingWriteTarget, embeddingInputContext, type ProjectionSnapshot } from './page-state/projections.ts';
+  sealPageTextProjection, stampEmbeddingInputs, type ProjectionSnapshot } from './page-state/projections.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { hasProtectedBody, safeChunksFilter } from './search/safe-chunks.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
-import { canReuseMarkdownVector, planEmbeddingReuse } from './embed-reuse.ts';
+import { planEmbeddingReuse } from './embed-reuse.ts';
+import { reuseStoredChunkVectors } from './import-chunk-reuse.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 // #3374 — import-path embeds ride the shared retry loop (429 retry-after +
@@ -759,26 +760,15 @@ export async function importFromContent(
   // recorded before provenance existed, when the input is the raw chunk text
   // under the same model. The old index must be sealed and neither body may
   // hold protected fences, so no reused vector can carry a private sibling.
-  const reused = new Set<number>();
-  if (existing && !existing.deleted_at && !opts.noEmbed && !opts.forceRechunk && !opts.prepare && !opts.onPostCommitEmbedding && chunks.length > 0
-    && !hasProtectedBody(`${existing.compiled_truth}\n${existing.timeline ?? ''}`) && !hasProtectedBody(`${parsed.compiled_truth}\n${parsed.timeline ?? ''}`)) {
-    const target = await embeddingWriteTarget(engine);
-    const provenance = embeddingInputContext(target, parsed.title, corpusGeneration, chunks);
-    const tier = effectiveCRMode === 'title' ? 'title' : 'none';
-    const recorded = new Map((await engine.executeRaw<{ chunk_index: number; embedding_input_hash: string | null }>(
-      `SELECT c.chunk_index, c.embedding_input_hash FROM content_chunks c JOIN pages p ON p.id = c.page_id
-        WHERE p.source_id = $1 AND p.slug = $2`, [sourceId ?? 'default', slug])).map(row => [Number(row.chunk_index), row.embedding_input_hash]));
-    // Reuse is keyed on chunk source + text, so a stored chunk's current-input
-    // hash is the hash its matching new chunk would record.
-    const stored = (await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true, requireSafeChunks: true }))
-      .filter(chunk => canReuseMarkdownVector(recorded.get(chunk.chunk_index), existing.contextual_retrieval_mode, tier, provenance, chunk));
-    for (const [i, matched] of planEmbeddingReuse(stored, chunks, c => `${c.chunk_source}\0${c.chunk_text}`).reuse) {
-      chunks[i].embedding = matched.embedding as Float32Array;
-      chunks[i].token_count = matched.token_count ?? undefined;
-      if (matched.model) chunks[i].model = matched.model;
-      reused.add(i);
-    }
-  }
+  // A prepared (persistence) import defers embedding to its effect worker, so
+  // it reuses inside its publication transaction, under the page guard, from
+  // the chunks it is about to replace; only the chunks left without a vector
+  // reach the provider.
+  const reusable = !!existing && !existing.deleted_at && !opts.forceRechunk && !opts.onPostCommitEmbedding && chunks.length > 0
+    && !(opts.prepare && modeRequiresSynopsis(effectiveCRMode)) && !hasProtectedBody(`${existing.compiled_truth}\n${existing.timeline ?? ''}`) && !hasProtectedBody(`${parsed.compiled_truth}\n${parsed.timeline ?? ''}`);
+  const reuseCtx = { slug, sourceId: sourceId ?? 'default', title: parsed.title, corpusGeneration, tier: effectiveCRMode === 'title' ? 'title' as const : 'none' as const };
+  const reuseStoredVectors = (exec: BrainEngine, into: ChunkInput[]) => reuseStoredChunkVectors(exec, into, { ...reuseCtx, prepared: !!opts.prepare });
+  const reused = reusable && !opts.noEmbed && !opts.prepare ? await reuseStoredVectors(engine, chunks) : new Map<number, number | null>();
 
   let embeddingPartial: EmbeddingZeroNormError | undefined;
   const embedChunks = async () => {
@@ -852,6 +842,11 @@ export async function importFromContent(
     });
 
     if (existing && !preimage) await tx.createVersion(slug, txOpts); // reads the page itself, so before the page write
+    // A prepared import keeps each stored row that is identical to its new chunk
+    // and writes only the rest, so an edit rewrites only the chunks it changed.
+    const fresh = reusable && opts.prepare ? chunks.map(chunk => ({ ...chunk })) : chunks;
+    const kept = new Map([...(fresh !== chunks ? await reuseStoredVectors(tx, fresh) : [])].filter(([, id]) => id !== null));
+    const keptIds = [...kept.values()];
     let written: Page | undefined;
     await pipelined(tx, [
       () => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
@@ -888,7 +883,8 @@ export async function importFromContent(
       },
       // Replace every derived row atomically. Only vectors the A13 reuse gate above admitted carry over; a new
       // seal otherwise inherits nothing from an older index, whose contextual vector may have included a private sibling.
-      () => tx.deleteChunks(slug, txOpts),
+      () => keptIds.length ? tx.executeRaw(`DELETE FROM content_chunks WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2)
+        AND NOT (id = ANY($3::int[]))`, [slug, txOpts.sourceId, keptIds]) : tx.deleteChunks(slug, txOpts),
       // Alias projection and readback share the page commit. A later writer can
       // no longer turn a successful import into a postcommit verification error.
       () => writePageAliases(tx, slug, sourceId ?? 'default', parsed, opts.activePack, mentionPolicy),
@@ -909,9 +905,9 @@ export async function importFromContent(
       },
       async () => {
         if (chunks.length > 0) {
-          const embeddingColumn = await stampEmbeddingInputs(tx, chunks, null,
+          const embeddingColumn = await stampEmbeddingInputs(tx, fresh, null,
             { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
-          await tx.upsertChunks(slug, chunks, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: MARKDOWN_CHUNKER_VERSION,
+          await tx.upsertChunks(slug, kept.size ? fresh.filter((_, i) => !kept.has(i)) : fresh, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: MARKDOWN_CHUNKER_VERSION,
             ...(pageId !== undefined ? { pageId: Number(pageId) } : {}) });
           // v0.41.31: stamp embedding provenance when this import actually
           // embedded (not --no-embed), so a later model/dims swap is detectable

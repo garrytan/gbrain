@@ -57,8 +57,10 @@
     "wave-security-scan": "bash scripts/wave-security-scan.sh",
     "audit:contributors": "bun scripts/contributor-audit.ts",
     "build:flag-registry": "bun run scripts/generate-flag-registry.ts",
+    "build:operation-manifest": "bun run scripts/build-operation-manifest.ts",
     "weights:mine": "bun run scripts/mine-shard-weights.ts",
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
+    "bench:efficiency": "bash scripts/bench/efficiency/run-all.sh",
     "test": "bash scripts/run-unit-parallel.sh",
     "test:admin": "playwright test --config admin/playwright.config.ts",
     "eval:autocut": "bun test test/search/autocut-eval.test.ts",
@@ -226,7 +228,7 @@
     "bun": ">=1.4.0"
   },
   "license": "MIT",
-  "version": "0.60.133.0",
+  "version": "0.60.134.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",

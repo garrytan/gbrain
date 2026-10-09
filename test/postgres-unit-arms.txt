@@ -72,6 +72,7 @@ test/page-state-engine.test.ts
 test/persistence-commit-durability.test.ts
 test/persistence-deactivate.test.ts
 test/persistence-diagnostics.test.ts
+test/persistence-edit-embedding-reuse.test.ts
 test/persistence-file-import.test.ts
 test/persistence-git-subdir-origin.test.ts
 test/persistence-graph-publication.test.ts

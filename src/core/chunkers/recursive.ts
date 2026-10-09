@@ -20,7 +20,7 @@
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
 
-import { countCJKAwareWords, isCJKDominant, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
+import { countCJKAwareWords, isCJKDominant, wordStats, concatWordStats, wordCountOf, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
 import { estimateEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -345,21 +345,28 @@ function splitOnWhitespace(text: string, target: number): string[] {
 
 /**
  * Greedily merge adjacent pieces until each chunk is near the target size.
- * Avoids creating chunks larger than target * 1.5.
+ * Avoids creating chunks larger than target * 1.5. The running chunk's word
+ * stats grow with it (concatWordStats), so each piece is counted once instead
+ * of recounting the whole chunk on every merge.
  */
 function greedyMerge(pieces: string[], target: number): string[] {
   if (pieces.length === 0) return [];
 
   const result: string[] = [];
+  const limit = Math.ceil(target * 1.5);
   let current = pieces[0];
+  let currentStats = wordStats(current);
 
   for (let i = 1; i < pieces.length; i++) {
-    const combined = current + pieces[i];
-    if (countWords(combined) <= Math.ceil(target * 1.5)) {
-      current = combined;
+    const pieceStats = wordStats(pieces[i]);
+    const combinedStats = concatWordStats(currentStats, pieceStats);
+    if (wordCountOf(combinedStats) <= limit) {
+      current += pieces[i];
+      currentStats = combinedStats;
     } else {
       result.push(current);
       current = pieces[i];
+      currentStats = pieceStats;
     }
   }
 

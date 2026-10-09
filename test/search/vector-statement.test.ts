@@ -243,6 +243,59 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     expect(sourceScope(stats, {})).toBeUndefined();
   });
 
+  test('a sampled chunk count replaces the share estimate; an empty sample falls back to it', () => {
+    expect(sourceScope(stats, { sourceId: 'sessions' }, { pages: 250, sampled: 125, sample_chunks: 1_200 })).toEqual({ share: 0.25, chunks: 2_400 });
+    expect(sourceScope(stats, { sourceId: 'sessions' }, { pages: 7_900, sampled: 416, sample_chunks: 3_922 })).toEqual({ share: 0.25, chunks: 74_480 });
+    expect(sourceScope(stats, { sourceId: 'sessions' }, { pages: 0, sampled: 0, sample_chunks: 0 })).toEqual({ share: 0.25, chunks: 50_000 });
+    expect(sourceScope({ ...stats, chunk_reltuples: -1 }, { sourceId: 'sessions' }, { pages: 0, sampled: 0, sample_chunks: 0 })).toEqual({ share: 0.25 });
+  });
+
+  test('a scope of long pages routes on its counted chunks: walk first with the scan as fallback instead of scan first', () => {
+    const estimated = sourceScope(stats, { sourceId: 'sessions' })!;
+    const counted = sourceScope(stats, { sourceId: 'sessions' }, { pages: 250, sampled: 250, sample_chunks: 100_000 })!;
+    expect(estimated.chunks!).toBeLessThanOrEqual(SCOPE_SCAN_FIRST_MAX_CHUNKS * 2);
+    expect(counted.chunks!).toBeGreaterThan(SCOPE_SCAN_FIRST_MAX_CHUNKS);
+    expect(counted.chunks!).toBeLessThanOrEqual(SCOPE_SCAN_MAX_CHUNKS);
+    const scanFirst = buildVectorSearchStatement({ dialect: 'postgres', embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, sourceId: 'sessions' }, scope: { share: 0.25, chunks: SCOPE_SCAN_FIRST_MAX_CHUNKS } });
+    const walkFirst = buildVectorSearchStatement({ dialect: 'postgres', embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, sourceId: 'sessions' }, scope: counted });
+    expect([!!scanFirst.indexWalkSql, !!scanFirst.scopeScanSql]).toEqual([false, true]);
+    expect([!!walkFirst.indexWalkSql, !!walkFirst.scopeScanSql]).toEqual([true, true]);
+    expect(walkFirst.scopeScanSql).toBe(scanFirst.scopeScanSql!);
+  });
+
+  test('the loader counts chunks only for scopes under SCOPE_SCAN_MAX_SHARE, in the background, once a minute per scope, and keeps the estimate on a failed count', async () => {
+    const asked: string[][] = [];
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const scope = vectorScopeLoader(async () => [stats], async ids => { asked.push(ids); await gate; return [{ pages: 250, sampled: 250, sample_chunks: 90_000 }]; });
+    expect(await scope({ sourceIds: ['notes'] })).toEqual({ share: 0.7, chunks: 140_000 });
+    expect(asked).toEqual([]);
+    // The first search routes on the share estimate while the count runs.
+    expect(await scope({ sourceId: 'sessions' })).toEqual({ share: 0.25, chunks: 50_000 });
+    expect(await scope({ sourceIds: ['sessions', 'sessions'] })).toEqual({ share: 0.25, chunks: 50_000 });
+    expect(asked).toEqual([['sessions']]);
+    release();
+    await Bun.sleep(0);
+    expect(await scope({ sourceId: 'sessions' })).toEqual({ share: 0.25, chunks: 90_000 });
+    await scope({ sourceIds: ['small', 'sessions'] });
+    await Bun.sleep(0);
+    expect((await scope({ sourceIds: ['sessions', 'small'] }))?.chunks).toBe(90_000);
+    expect(asked).toEqual([['sessions'], ['small', 'sessions']]);
+    const now = performance.now();
+    const clock = spyOn(performance, 'now').mockReturnValue(now + 61_000);
+    try {
+      // A refresh keeps routing on the last count until it lands.
+      expect((await scope({ sourceId: 'sessions' }))?.chunks).toBe(90_000);
+      expect(asked).toHaveLength(3);
+    } finally {
+      clock.mockRestore();
+    }
+    const failing = vectorScopeLoader(async () => [stats], async () => { throw new Error('canceling statement due to statement timeout'); });
+    await failing({ sourceId: 'sessions' });
+    await Bun.sleep(0);
+    expect(await failing({ sourceId: 'sessions' })).toEqual({ share: 0.25, chunks: 50_000 });
+  });
+
   test('no scope or no statistics leaves the walk on', () => {
     expect(sourceScopeShare(stats, {})).toBeUndefined();
     expect(sourceScopeShare(stats, { sourceIds: [] })).toBeUndefined();
