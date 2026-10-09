@@ -23,7 +23,7 @@ interface MockState {
 function makeMockEngine(state: MockState): BrainEngine {
   const config = state.config ?? (state.config = new Map());
   const order = state.order ?? (state.order = []);
-  return {
+  const engine = {
     executeRaw: async (sql: string) => {
       state.calls.push(sql);
       order.push(sql);
@@ -35,6 +35,7 @@ function makeMockEngine(state: MockState): BrainEngine {
       return [];
     },
     getConfig: async (key: string) => config.get(key) ?? null,
+    transaction: async <T>(fn: (tx: BrainEngine) => Promise<T>) => fn(engine),
     setConfig: async (key: string, value: string) => {
       order.push(`set:${key}`);
       config.set(key, value);
@@ -44,6 +45,7 @@ function makeMockEngine(state: MockState): BrainEngine {
       return config.delete(key) ? 1 : 0;
     },
   } as unknown as BrainEngine;
+  return engine;
 }
 
 const MARKER = 'fts.reindex_in_progress';
@@ -120,14 +122,14 @@ describe('runReindexSearchVector', () => {
     expect(result.pagesUpdated).toBe(50);
     expect(result.chunksUpdated).toBe(200);
 
-    // 1 inventory + 2 CREATE + 2 backfill batches (mock returns no rows, so
-    // the keyset loop terminates after the first batch per table) = 5 calls
+    // 1 inventory + 2 CREATE + page batch read + chunk batch UPDATE (the mock
+    // returns no page rows, so no page UPDATE is needed) = 5 calls.
     expect(state.calls.length).toBe(5);
     expect(state.calls[1]).toContain('CREATE OR REPLACE FUNCTION update_page_search_vector');
     expect(state.calls[1]).toContain("to_tsvector('pt_br'");
     expect(state.calls[2]).toContain('CREATE OR REPLACE FUNCTION update_chunk_search_vector');
     expect(state.calls[2]).toContain("to_tsvector('pt_br'");
-    expect(state.calls[3]).toMatch(/UPDATE pages/);
+    expect(state.calls[3]).toContain('SELECT id,timeline FROM pages');
     expect(state.calls[4]).toMatch(/UPDATE content_chunks/);
     expect(state.calls[4]).toContain("to_tsvector('pt_br'");
     // v120/#1647 hardening must survive the CREATE OR REPLACE (which resets
@@ -150,13 +152,11 @@ describe('runReindexSearchVector', () => {
     expect(result.language).toBe('english');
     expect(state.calls.length).toBe(5);
 
-    // Trigger recreates (calls 1, 2) and chunks backfill (call 4) embed the
-    // language literal. Pages backfill (call 3) is UPDATE-to-self that
-    // re-fires the trigger, so the language literal lives in the trigger
-    // function body — not in the UPDATE statement.
+    // Trigger recreates and chunks backfill embed the language literal. The
+    // empty page batch only reads its bounded, locked selection.
     expect(state.calls[1]).toContain("'english'");
     expect(state.calls[2]).toContain("'english'");
-    expect(state.calls[3]).toMatch(/UPDATE pages/);
+    expect(state.calls[3]).toContain('SELECT id,timeline FROM pages');
     expect(state.calls[4]).toContain("'english'");
   });
 

@@ -52,6 +52,7 @@ import { consentGate } from '../core/consent-cli.ts';
 import type { ConsentEnv } from '../core/consent.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { sanitizeRemoteBody } from '../core/remote-body.ts';
 
 export interface ReindexSearchVectorOpts {
   dryRun?: boolean;
@@ -84,8 +85,30 @@ export const BACKFILL_BATCH_SIZE = 5000;
 /** Checkpoint names (→ `backfill.<name>.last_id`), one per backfilled table. */
 const CHECKPOINT_NAME = { pages: 'fts_pages', content_chunks: 'fts_content_chunks' } as const;
 
+/** Rebuild from the same safe timeline as sealPageTextProjection, without changing its revision seal.
+ * The column-list page trigger does not fire on id=id; firing it on title=title would index raw fences.
+ * Lock only this keyset batch so a concurrent canonical edit cannot be overwritten with an older timeline.
+ */
+async function backfillPageBatch(engine: BrainEngine, cursor: number): Promise<{ id: number }[]> {
+  return engine.transaction(async tx => {
+    const pages = await tx.executeRaw<{ id: number; timeline: string }>(`
+      SELECT id,timeline FROM pages
+      WHERE search_vector IS NOT NULL AND id > $1
+      ORDER BY id LIMIT ${BACKFILL_BATCH_SIZE} FOR UPDATE`, [cursor]);
+    if (pages.length === 0) return [];
+    return tx.executeRaw<{ id: number }>(`
+      UPDATE pages AS p SET search_vector =
+        setweight(to_tsvector('${getFtsLanguage()}',COALESCE(p.title,'')),'A') ||
+        setweight(to_tsvector('${getFtsLanguage()}',safe.timeline),'C')
+      FROM unnest($1::int[], $2::text[]) AS safe(id,timeline)
+      WHERE p.id=safe.id RETURNING p.id`,
+    [pages.map(page => Number(page.id)), pages.map(page => sanitizeRemoteBody(page.timeline))]);
+  });
+}
+
 /**
- * Keyset-batched UPDATE: applies `setClause` to `table` rows where
+ * Keyset-batched rebuild: pages use the sanitized, locked batch above;
+ * chunks apply `setClause` directly. Both select rows where
  * search_vector IS NOT NULL, BACKFILL_BATCH_SIZE ids at a time, ticking
  * the shared progress reporter after each batch. Terminates when a batch
  * returns fewer rows than the batch size (or none). The cursor is persisted
@@ -94,14 +117,14 @@ const CHECKPOINT_NAME = { pages: 'fts_pages', content_chunks: 'fts_content_chunk
 async function batchedBackfill(
   engine: BrainEngine,
   table: 'pages' | 'content_chunks',
-  setClause: string,
+  setClause: string | null,
   tick: (n: number) => void
 ): Promise<void> {
   const key = checkpointKey(CHECKPOINT_NAME[table]);
   const saved = Number(await engine.getConfig(key));
   let cursor = Number.isFinite(saved) && saved > 0 ? saved : 0;
   for (;;) {
-    const rows = await engine.executeRaw<{ id: number }>(`
+    const rows = table === 'pages' ? await backfillPageBatch(engine, cursor) : await engine.executeRaw<{ id: number }>(`
       UPDATE ${table} SET ${setClause}
       WHERE id IN (
         SELECT id FROM ${table}
@@ -255,11 +278,10 @@ export async function runReindexSearchVector(
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
-  // Backfill: UPDATE-to-self forces the pages trigger to re-fire
-  // (Postgres re-fires on UPDATE-to-same-value); content_chunks gets a
-  // direct vector compute since the column itself is what we want.
+  // Rebuild page vectors directly from their sanitized timeline, preserving
+  // the seal and avoiding the raw-timeline trigger. Chunks remain set-based.
   progress.start('reindex_search_vector.pages', pagesCount);
-  await batchedBackfill(engine, 'pages', 'id = id', n => progress.tick(n));
+  await batchedBackfill(engine, 'pages', null, n => progress.tick(n));
   progress.finish();
 
   progress.start('reindex_search_vector.chunks', chunksCount);
