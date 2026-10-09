@@ -230,6 +230,7 @@ export interface LeftoverRef extends AddedLine { oldVersion: number }
 /** Generated or regenerated paths: never scanned for leftover references. */
 export const GENERATED_PATHS = [
   `${MIGRATIONS_DIR}/registry.generated.ts`,
+  `${MIGRATIONS_DIR}/latest.generated.ts`,
   'test/fixtures/goldens/migrations/records.json',
   'llms.txt',
   'llms-full.txt',

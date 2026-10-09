@@ -508,10 +508,11 @@ export async function listPrefixSampledPages(scoped: ScopedReadRunner, opts: Dom
           p.source_id,
           p.title,
           p.compiled_truth,
-          p.last_retrieved_at,
+          GREATEST(p.last_retrieved_at, r.last_retrieved_at) AS last_retrieved_at,
           substring(p.slug from '^[^/]+/[^/]+') AS prefix,
           COUNT(pl.id) AS connection_count
         FROM pages p
+        LEFT JOIN page_retrievals r ON r.page_id = p.id
         LEFT JOIN page_links pl ON pl.to_page_id = p.id
         WHERE p.deleted_at IS NULL
           AND substring(p.slug from '^[^/]+/[^/]+') = ANY(${opts.prefixes}::text[])
@@ -521,7 +522,7 @@ export async function listPrefixSampledPages(scoped: ScopedReadRunner, opts: Dom
             OR (${sourceIds}::text[] IS NULL AND ${sourceId}::text IS NOT NULL AND p.source_id = ${sourceId})
             OR (${sourceIds}::text[] IS NULL AND ${sourceId}::text IS NULL)
           )
-        GROUP BY p.id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at
+        GROUP BY p.id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at, r.last_retrieved_at
       ),
       ranked AS (
         SELECT
@@ -594,10 +595,11 @@ export async function listCorpusSample(scoped: ScopedReadRunner, opts: CorpusSam
           p.source_id,
           p.title,
           p.compiled_truth,
-          p.last_retrieved_at,
+          GREATEST(p.last_retrieved_at, r.last_retrieved_at) AS last_retrieved_at,
           substring(p.slug from '^[^/]+/[^/]+') AS prefix,
           (SELECT COUNT(*) FROM page_links pl WHERE pl.to_page_id = p.id) AS connection_count
         FROM pages p
+        LEFT JOIN page_retrievals r ON r.page_id = p.id
         WHERE p.deleted_at IS NULL
           AND (cardinality(${exclude}::text[]) = 0 OR NOT (p.slug = ANY(${exclude}::text[])))
           AND (

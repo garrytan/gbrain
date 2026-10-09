@@ -1,5 +1,5 @@
 import { registerManagedFilesystemEngine } from './persistence/filesystem-guard.ts';
-import { replaceDerivedLinks, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
+import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { trackPgliteDatabase, PgliteClosingError, notifyPgliteOpened } from './pglite-lifecycle.ts';
 import { mutatePageTag } from './page-state/tags.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
@@ -71,11 +71,10 @@ import {
   isNovelDimension, isBackdatedObservation,
 } from './chronicle/ontology.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
-import { runMigrations } from './migrate.ts';
 import { supportsHnswIterativeScan } from './vector-index.ts';
-import { searchVectorPool, readVectorPool } from './search/vector-pool.ts';
+import { searchIndexWalk, searchVectorPool, readVectorPool, type VectorPoolAttempt } from './search/vector-pool.ts';
 import { beforePlannerRead, plannerRead } from './planner-stats.ts';
-import { buildVectorSearchStatement, VECTOR_EXTENSION_VERSION_SQL } from './search/vector-statement.ts';
+import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeShareLoader, type PageSourceStats } from './search/vector-statement.ts';
 import { withVectorSettings } from './search/vector-settings.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
@@ -706,6 +705,7 @@ export async function probePgliteScratchStore(
 
 export class PGLiteEngine implements BrainEngine {
   private vectorIterativeScan?: Promise<boolean>;
+  private readonly vectorScopeShare = vectorScopeShareLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   private _checkpointGuard: PgliteCheckpointGuard | undefined;
@@ -1139,7 +1139,7 @@ export class PGLiteEngine implements BrainEngine {
     await this.applyForwardReferenceBootstrap();
     await this.db.exec(getPGLiteSchema(dims, model));
 
-    const { applied } = await runMigrations(this);
+    const { applied } = await (await import('./migrate.ts')).runMigrations(this); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
     if (applied > 0) {
       process.stderr.write(`  ${applied} migration(s) applied\n`);
     }
@@ -1682,7 +1682,7 @@ export class PGLiteEngine implements BrainEngine {
     }
     // Same statement as postgres-engine (search/vector-statement.ts); the
     // PGLite dialect adds the timeline `stale` flag and has no exact fallback.
-    const stmt = buildVectorSearchStatement({ dialect: 'pglite', embedding, limit, offset: opts?.offset || 0, opts });
+    const stmt = buildVectorSearchStatement({ dialect: 'pglite', embedding, limit, offset: opts?.offset || 0, opts, scopeShare: await this.vectorScopeShare(opts) });
     this.vectorIterativeScan ??= this.executeRaw<{ extversion: string }>(VECTOR_EXTENSION_VERSION_SQL)
       .then(rows => supportsHnswIterativeScan(rows[0]?.extversion));
     const probe = this.vectorIterativeScan;
@@ -1692,14 +1692,14 @@ export class PGLiteEngine implements BrainEngine {
       if (this.vectorIterativeScan === probe) this.vectorIterativeScan = undefined;
       throw error;
     }
-    const rows = await searchVectorPool(limit, stmt.innerLimit, iterative, stmt.indexed, 'pglite',
-      async ({ innerLimit: requested, maxScanTuples }) => this.db.transaction(async tx => {
-        return withVectorSettings(async (sql, values) => (await tx.query<Record<string, unknown>>(sql, values)).rows, iterative, requested, maxScanTuples, async () => {
-          const bound = [...stmt.params];
-          bound[stmt.innerLimitIdx] = requested;
-          return readVectorPool((await tx.query<Record<string, unknown>>(stmt.sql, bound)).rows);
-        }, undefined, opts?.hnswIterativeScan);
-      }),
+    const attempt = ({ innerLimit: requested, maxScanTuples, indexWalk }: VectorPoolAttempt) => this.db.transaction(async tx => withVectorSettings(
+      async (sql, values) => (await tx.query<Record<string, unknown>>(sql, values)).rows, iterative, requested, maxScanTuples, async () => {
+        const bound = [...stmt.params];
+        bound[stmt.innerLimitIdx] = requested;
+        return readVectorPool((await tx.query<Record<string, unknown>>(indexWalk && stmt.indexWalkSql || stmt.sql, bound)).rows);
+      }, undefined, opts?.hnswIterativeScan, indexWalk && !!stmt.indexWalkSql));
+    const rows = await searchIndexWalk(stmt, limit, attempt) ?? await searchVectorPool(limit, stmt.innerLimit, iterative, stmt.indexed, 'pglite',
+      attempt,
       async pool => {
         const { rows } = await this.db.query<{ eligible: number }>(stmt.hasMoreSql, [...stmt.params.slice(0, stmt.innerLimitIdx), pool + 1]);
         return Number(rows[0].eligible) > pool;
@@ -1882,6 +1882,10 @@ export class PGLiteEngine implements BrainEngine {
 
   async replaceDerivedLinks(origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions) {
     return replaceDerivedLinks(this, origin, links, opts);
+  }
+
+  async replaceDerivedLinksBatch(items: readonly DerivedLinkBatchItem[]) {
+    return replaceDerivedLinksBatch(this, items);
   }
 
   // #3674 — see BrainEngine.removeLinksByPagesAndSource JSDoc. Identical SQL

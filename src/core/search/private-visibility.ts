@@ -73,10 +73,10 @@ function declaredLineagePrivateSql(p: string): string {
     SELECT 1 FROM pages declared_origin
     WHERE declared_origin.source_id = ${p}.source_id
       AND declared_origin.frontmatter->>'visibility' = 'private'
-      AND declared_origin.slug IN (
+      AND declared_origin.slug = ANY(ARRAY(
         SELECT regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text(
           CASE WHEN jsonb_typeof(${p}.frontmatter->'derived_from') = 'array' THEN ${p}.frontmatter->'derived_from'
-            ELSE jsonb_build_array(${p}.frontmatter->'derived_from') END) AS declared(slug))) ELSE false END)`;
+            ELSE jsonb_build_array(${p}.frontmatter->'derived_from') END) AS declared(slug)))) ELSE false END)`;
 }
 
 /**

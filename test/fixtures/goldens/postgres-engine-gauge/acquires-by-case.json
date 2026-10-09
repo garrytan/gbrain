@@ -290,6 +290,10 @@
       "raw": 12,
       "tx": 1
     },
+    "replaceDerivedLinksBatch#default": {
+      "raw": 13,
+      "tx": 1
+    },
     "resolveSlugWithAlias#default": {},
     "resolveSlugWithAliasDetailed#default": {},
     "resolveSlugWithAliasDetailed#excludePrivate": {},

@@ -34,7 +34,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { dirname, join, relative } from 'path';
-import { CLI_ONLY } from '../src/cli.ts';
+import { CLI_ONLY } from '../src/cli/main.ts';
 import {
   codeRegions, flagRejection, gbrainInvocations, HISTORICAL_MARKER, liveCliVerbs,
 } from './helpers/cli-command-surface.ts';

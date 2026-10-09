@@ -113,7 +113,7 @@ beforeAll(async () => {
     order: 99,
     drain: async () => { events.push('drain'); return { unfinished: 0 }; },
   });
-  main = (await import('../src/cli.ts')).__testing.main;
+  main = (await import('../src/cli/main.ts')).__testing.main;
 });
 
 afterAll(() => {

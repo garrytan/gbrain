@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { makeContext } from '../src/cli.ts';
+import { makeContext } from '../src/cli/main.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
 import { runTranscripts } from '../src/commands/transcripts.ts';
 import { disposePersistenceConsumer, stopPersistenceConsumer } from '../src/core/persistence/service.ts';

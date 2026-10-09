@@ -137,6 +137,7 @@
       "page_generation_clock.page_generation_clock_pkey": "p PRIMARY KEY (id)",
       "page_projection_jobs.page_projection_jobs_pkey": "p PRIMARY KEY (source_incarnation, slug)",
       "page_projection_jobs.page_projection_jobs_source_incarnation_fkey": "f FOREIGN KEY (source_incarnation) REFERENCES sources(incarnation) ON DELETE CASCADE",
+      "page_retrievals.page_retrievals_pkey": "p PRIMARY KEY (page_id)",
       "page_versions.page_versions_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "page_versions.page_versions_pkey": "p PRIMARY KEY (id)",
       "page_write_guards.page_write_guards_pkey": "p PRIMARY KEY (source_incarnation, slug)",
@@ -293,6 +294,7 @@
       "enforce_minion_queue_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=be82640d1979fc81dc812efb78bb3596ef536f656d20750e5e4aa19016bf4784",
       "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=ae793ff5263f7b76311e0c22593fb658db9f82e7b3781914421d9508b6da0e88",
       "gbrain_advance_tag_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=7807b26b4933148aa63c67fca824a60d3492396728205d04e16c48c81174cbd5",
+      "gbrain_forget_page_retrievals()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=0f053c08f9d5a4512d10406f7b20b9c60ec43d9bbea48b28b7e4cf7187ee191b",
       "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e8b5589dafd4a355106104daffdf57c7776d34fe18c5b5f5336a27de188688a1",
       "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=f27354966c25d961fcecbffebba0e45747ad3de23575351319f6aee4f9aefd47",
       "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=12baf1d365a8aa3009ac0fe6605497e6433304e8d5915a3fc0b0b39ad748f6c2",
@@ -455,6 +457,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "page_projection_jobs": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "page_retrievals": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "page_versions": [
@@ -749,11 +754,11 @@
       "page_aliases_uniq": "CREATE UNIQUE INDEX page_aliases_uniq ON public.page_aliases USING btree (source_id, alias_norm, slug)",
       "page_generation_clock_pkey": "CREATE UNIQUE INDEX page_generation_clock_pkey ON public.page_generation_clock USING btree (id)",
       "page_projection_jobs_pkey": "CREATE UNIQUE INDEX page_projection_jobs_pkey ON public.page_projection_jobs USING btree (source_incarnation, slug)",
+      "page_retrievals_pkey": "CREATE UNIQUE INDEX page_retrievals_pkey ON public.page_retrievals USING btree (page_id)",
       "page_versions_pkey": "CREATE UNIQUE INDEX page_versions_pkey ON public.page_versions USING btree (id)",
       "page_write_guards_pkey": "CREATE UNIQUE INDEX page_write_guards_pkey ON public.page_write_guards USING btree (source_incarnation, slug)",
       "pages_coalesce_date_idx": "CREATE INDEX pages_coalesce_date_idx ON public.pages USING btree (COALESCE(effective_date, updated_at))",
       "pages_deleted_at_purge_idx": "CREATE INDEX pages_deleted_at_purge_idx ON public.pages USING btree (deleted_at) WHERE (deleted_at IS NOT NULL)",
-      "pages_last_retrieved_at_idx": "CREATE INDEX pages_last_retrieved_at_idx ON public.pages USING btree (last_retrieved_at)",
       "pages_links_extracted_at_idx": "CREATE INDEX pages_links_extracted_at_idx ON public.pages USING btree (source_id, links_extracted_at)",
       "pages_pkey": "CREATE UNIQUE INDEX pages_pkey ON public.pages USING btree (id)",
       "pages_source_slug_key": "CREATE UNIQUE INDEX pages_source_slug_key ON public.pages USING btree (source_id, slug)",
@@ -765,7 +770,7 @@
       "persistence_host_bindings_pkey": "CREATE UNIQUE INDEX persistence_host_bindings_pkey ON public.persistence_host_bindings USING btree (worktree_id, host_id)",
       "persistence_local_writers_credential_hash_key": "CREATE UNIQUE INDEX persistence_local_writers_credential_hash_key ON public.persistence_local_writers USING btree (credential_hash)",
       "persistence_local_writers_pkey": "CREATE UNIQUE INDEX persistence_local_writers_pkey ON public.persistence_local_writers USING btree (id)",
-      "persistence_requests_committed_watermark": "CREATE INDEX persistence_requests_committed_watermark ON public.persistence_requests USING btree (worktree_id, completed_at DESC) WHERE (state = 'committed'::text)",
+      "persistence_requests_compactable": "CREATE INDEX persistence_requests_compactable ON public.persistence_requests USING btree (completed_at) WHERE ((recovery IS NULL) AND (NOT compacted) AND (state = ANY (ARRAY['committed'::text, 'conflict'::text, 'failed'::text, 'cancelled'::text])))",
       "persistence_requests_database_pending": "CREATE INDEX persistence_requests_database_pending ON public.persistence_requests USING btree (source_incarnation, sequence) WHERE ((worktree_id IS NULL) AND (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text])))",
       "persistence_requests_pending": "CREATE INDEX persistence_requests_pending ON public.persistence_requests USING btree (worktree_id, sequence) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text, 'recovering'::text]))",
       "persistence_requests_pkey": "CREATE UNIQUE INDEX persistence_requests_pkey ON public.persistence_requests USING btree (id)",
@@ -775,6 +780,7 @@
       "persistence_requests_sequence_key": "CREATE UNIQUE INDEX persistence_requests_sequence_key ON public.persistence_requests USING btree (sequence)",
       "persistence_requests_sync_run_committed": "CREATE INDEX persistence_requests_sync_run_committed ON public.persistence_requests USING btree (source_id, ((intent ->> 'runId'::text)), ((intent ->> 'index'::text))) WHERE ((state = 'committed'::text) AND (intent ? 'runId'::text))",
       "persistence_requests_sync_run_open": "CREATE INDEX persistence_requests_sync_run_open ON public.persistence_requests USING btree (worktree_id, ((intent ->> 'runId'::text))) WHERE ((state <> 'committed'::text) AND ((intent ->> 'kind'::text) = ANY (ARRAY['managed_sync_import'::text, 'managed_sync_delete'::text])))",
+      "persistence_requests_sync_watermark": "CREATE INDEX persistence_requests_sync_watermark ON public.persistence_requests USING btree (worktree_id, source_incarnation, completed_at DESC) WHERE ((state = 'committed'::text) AND (COALESCE((intent ->> 'kind'::text), ''::text) ~~ 'managed_sync_%'::text))",
       "persistence_source_bindings_pkey": "CREATE UNIQUE INDEX persistence_source_bindings_pkey ON public.persistence_source_bindings USING btree (source_id)",
       "persistence_topology_changes_pkey": "CREATE UNIQUE INDEX persistence_topology_changes_pkey ON public.persistence_topology_changes USING btree (id)",
       "persistence_topology_changes_principal_id_request_id_key": "CREATE UNIQUE INDEX persistence_topology_changes_principal_id_request_id_key ON public.persistence_topology_changes USING btree (principal_id, request_id)",
@@ -1736,6 +1742,13 @@
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
+      "page_retrievals": {
+        "columns": [
+          "1 page_id integer/int4 NOT NULL",
+          "2 last_retrieved_at timestamp with time zone/timestamptz NOT NULL"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
       "page_versions": {
         "columns": [
           "1 id integer/int4 NOT NULL DEFAULT nextval('page_versions_id_seq'::regclass)",
@@ -2402,6 +2415,7 @@
       "pages.bump_page_generation_clock_trg": "CREATE TRIGGER bump_page_generation_clock_trg AFTER INSERT OR DELETE OR UPDATE ON public.pages FOR EACH STATEMENT EXECUTE FUNCTION bump_page_generation_clock_fn()",
       "pages.bump_page_generation_trg": "CREATE TRIGGER bump_page_generation_trg BEFORE INSERT OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION bump_page_generation_fn()",
       "pages.managed_writer_guard": "CREATE TRIGGER managed_writer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_require_managed_writer()",
+      "pages.pages_forget_retrievals": "CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON public.pages REFERENCING OLD TABLE AS gbrain_deleted_pages FOR EACH STATEMENT EXECUTE FUNCTION gbrain_forget_page_retrievals()",
       "pages.pages_knowledge_revision": "CREATE TRIGGER pages_knowledge_revision BEFORE UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_advance_page_revision()",
       "pages.pages_projection_queue": "CREATE TRIGGER pages_projection_queue AFTER INSERT OR DELETE OR UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_queue_page_projection()",
       "pages.trg_pages_search_vector": "CREATE TRIGGER trg_pages_search_vector BEFORE INSERT OR UPDATE OF title, timeline ON public.pages FOR EACH ROW EXECUTE FUNCTION update_page_search_vector()",

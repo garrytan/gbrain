@@ -1,5 +1,5 @@
 diff --git a/cjs/src/connection.js b/cjs/src/connection.js
-index 07f6716..f6d76e5 100644
+index 07f6716..ec88b7c 100644
 --- a/cjs/src/connection.js
 +++ b/cjs/src/connection.js
 @@ -78,6 +78,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -87,19 +87,43 @@ index 07f6716..f6d76e5 100644
      stream && (stream.destroy(err), stream = null)
      query && queryError(query, err)
      initial && (queryError(initial, err), initial = null)
-@@ -447,6 +462,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -438,6 +453,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     remaining = 0
+     incomings = null
+     clearImmediate(nextWriteTimer)
++    // GBrain (#6355): bytes still waiting for the cleared immediate belonged to this socket. Left in place, the next
++    // connection's StartupMessage is appended to them and never scheduled for writing (the timer handle is not
++    // null), so the connection sits open until CONNECT_TIMEOUT and every statement bound to it fails.
++    chunk = nextWriteTimer = null
+     socket.removeListener('data', data)
+     socket.removeListener('connect', connected)
+     idleTimer.cancel()
+@@ -447,10 +466,23 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      socket.removeAllListeners()
      socket = null
  
+-    if (initial)
 +    if (cancelMessage)
 +      return cancelError || hadError
 +        ? cancelReject(cancelError || Errors.connection('CONNECTION_CLOSED', options))
 +        : cancelResolve()
 +
-     if (initial)
++    if (initial) {
++      // GBrain (#6355): a connection that died during startup (its backend terminated under the array-types fetch)
++      // leaves that internal query and the error it saw behind. The fresh connection must not deliver the stale
++      // error to the caller's query at its first ReadyForQuery, and the internal query settles here instead of
++      // rejecting with nobody to hear it.
++      query && query !== initial && queryError(query, Errors.connection('CONNECTION_CLOSED', options, socket))
++      query = results = errorResponse = null
        return reconnect()
++    }
  
-@@ -533,8 +553,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    query = null
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
+@@ -533,8 +565,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function ReadyForQuery(x) {
@@ -111,7 +135,7 @@ index 07f6716..f6d76e5 100644
          query.retried
            ? errored(query.retried)
            : query.prepared && retryRoutines.has(errorResponse.routine)
-@@ -564,10 +587,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -564,10 +599,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
          return fetchArrayTypes()
        }
  
@@ -126,7 +150,7 @@ index 07f6716..f6d76e5 100644
      }
  
      while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
-@@ -580,7 +605,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -580,7 +617,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        ? !connection.reserved.release && x[5] === 73 // I
          ? ending
            ? terminate()
@@ -135,7 +159,7 @@ index 07f6716..f6d76e5 100644
          : connection.reserved()
        : ending
          ? terminate()
-@@ -630,6 +655,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -630,6 +667,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
  
      query.prepare && (statements[query.signature] = query.statement)
@@ -143,6 +167,36 @@ index 07f6716..f6d76e5 100644
 +    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
 +      && options.shared_types.set(query.typesKey, query.statement.types.slice())
      query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
+   }
+ 
+@@ -767,14 +807,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+   async function fetchArrayTypes() {
+     needsTypes = false
+-    const types = await new Query([`
+-      select b.oid, b.typarray
+-      from pg_catalog.pg_type a
+-      left join pg_catalog.pg_type b on b.oid = a.typelem
+-      where a.typcategory = 'A'
+-      group by b.oid, b.typarray
+-      order by b.oid
+-    `], [], execute)
++    let types
++    try {
++      types = await new Query([`
++        select b.oid, b.typarray
++        from pg_catalog.pg_type a
++        left join pg_catalog.pg_type b on b.oid = a.typelem
++        where a.typcategory = 'A'
++        group by b.oid, b.typarray
++        order by b.oid
++      `], [], execute)
++    } catch (error) {
++      // GBrain (#6355): the fetch failed or its connection closed; errored() has already told the caller's query, and
++      // connected() re-arms the fetch for the next connection. Nothing awaits this promise, so it must not reject.
++      return
++    }
+     types.forEach(({ oid, typarray }) => addArrayType(oid, typarray))
    }
  
 diff --git a/cjs/src/index.js b/cjs/src/index.js
@@ -521,7 +575,7 @@ index 8438f5d..c444310 100644
        const out = xs[index++]
  
 diff --git a/src/connection.js b/src/connection.js
-index 1b1cccd..792c83d 100644
+index 1b1cccd..c4d90e6 100644
 --- a/src/connection.js
 +++ b/src/connection.js
 @@ -78,6 +78,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -609,19 +663,43 @@ index 1b1cccd..792c83d 100644
      stream && (stream.destroy(err), stream = null)
      query && queryError(query, err)
      initial && (queryError(initial, err), initial = null)
-@@ -447,6 +462,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -438,6 +453,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     remaining = 0
+     incomings = null
+     clearImmediate(nextWriteTimer)
++    // GBrain (#6355): bytes still waiting for the cleared immediate belonged to this socket. Left in place, the next
++    // connection's StartupMessage is appended to them and never scheduled for writing (the timer handle is not
++    // null), so the connection sits open until CONNECT_TIMEOUT and every statement bound to it fails.
++    chunk = nextWriteTimer = null
+     socket.removeListener('data', data)
+     socket.removeListener('connect', connected)
+     idleTimer.cancel()
+@@ -447,10 +466,23 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      socket.removeAllListeners()
      socket = null
  
+-    if (initial)
 +    if (cancelMessage)
 +      return cancelError || hadError
 +        ? cancelReject(cancelError || Errors.connection('CONNECTION_CLOSED', options))
 +        : cancelResolve()
 +
-     if (initial)
++    if (initial) {
++      // GBrain (#6355): a connection that died during startup (its backend terminated under the array-types fetch)
++      // leaves that internal query and the error it saw behind. The fresh connection must not deliver the stale
++      // error to the caller's query at its first ReadyForQuery, and the internal query settles here instead of
++      // rejecting with nobody to hear it.
++      query && query !== initial && queryError(query, Errors.connection('CONNECTION_CLOSED', options, socket))
++      query = results = errorResponse = null
        return reconnect()
++    }
  
-@@ -533,8 +553,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    query = null
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
+@@ -533,8 +565,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function ReadyForQuery(x) {
@@ -633,7 +711,7 @@ index 1b1cccd..792c83d 100644
          query.retried
            ? errored(query.retried)
            : query.prepared && retryRoutines.has(errorResponse.routine)
-@@ -564,10 +587,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -564,10 +599,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
          return fetchArrayTypes()
        }
  
@@ -648,7 +726,7 @@ index 1b1cccd..792c83d 100644
      }
  
      while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
-@@ -580,7 +605,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -580,7 +617,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        ? !connection.reserved.release && x[5] === 73 // I
          ? ending
            ? terminate()
@@ -657,7 +735,7 @@ index 1b1cccd..792c83d 100644
          : connection.reserved()
        : ending
          ? terminate()
-@@ -630,6 +655,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -630,6 +667,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
  
      query.prepare && (statements[query.signature] = query.statement)
@@ -665,6 +743,36 @@ index 1b1cccd..792c83d 100644
 +    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
 +      && options.shared_types.set(query.typesKey, query.statement.types.slice())
      query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
+   }
+ 
+@@ -767,14 +807,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+   async function fetchArrayTypes() {
+     needsTypes = false
+-    const types = await new Query([`
+-      select b.oid, b.typarray
+-      from pg_catalog.pg_type a
+-      left join pg_catalog.pg_type b on b.oid = a.typelem
+-      where a.typcategory = 'A'
+-      group by b.oid, b.typarray
+-      order by b.oid
+-    `], [], execute)
++    let types
++    try {
++      types = await new Query([`
++        select b.oid, b.typarray
++        from pg_catalog.pg_type a
++        left join pg_catalog.pg_type b on b.oid = a.typelem
++        where a.typcategory = 'A'
++        group by b.oid, b.typarray
++        order by b.oid
++      `], [], execute)
++    } catch (error) {
++      // GBrain (#6355): the fetch failed or its connection closed; errored() has already told the caller's query, and
++      // connected() re-arms the fetch for the next connection. Nothing awaits this promise, so it must not reject.
++      return
++    }
+     types.forEach(({ oid, typarray }) => addArrayType(oid, typarray))
    }
  
 diff --git a/src/index.js b/src/index.js

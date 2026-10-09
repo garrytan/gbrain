@@ -23,7 +23,7 @@ import {
   findDbOnlyCollisions,
 } from '../../../core/storage-config.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync.ts';
-import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
+import { resolveSourceLocalFilePath, sourceGitScope } from '../../../core/markdown.ts';
 import { scannerSlugRootMode } from '../../../core/write-through.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
@@ -448,10 +448,11 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
       if (rows.length === 0) continue;
       let backedWithoutSourcePath: Set<string> | null = null;
       const mode = await scannerSlugRootMode(engine, src.id, src.local_path!);
+      const gitScope = sourceGitScope(src.local_path!);
       for (const { slug, source_path: sourcePath } of rows) {
         if (dbOnlyDirs.some(dir => slug.startsWith(dir))) continue;
         if (sourcePath) {
-          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug, mode);
+          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug, mode, gitScope);
           if (filePath && existsSync(filePath)) continue;
         } else {
           backedWithoutSourcePath ??= collectMarkdownSlugs(src.local_path!);

@@ -2780,6 +2780,16 @@ More: [docs/guides/write-refusals.md#worktree_dirty](../../docs/guides/write-ref
 |---|---|---|---|---|---|---|
 | Execution claim changed before publication. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### write_outcome_unknown
+
+<a id="write_outcome_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The database connection dropped while a write was being admitted, and it kept dropping through the re-reads, so whether the write was accepted is unknown. | A session that closes under an admission (a pooler reap, a failover, pg_terminate_backend) leaves the transaction either committed or rolled back with no way to tell from the lost socket. gbrain re-runs the attempt, which starts by reading the retained request_id, so a single drop resolves by itself; this code means the database stayed unreachable through those re-reads. Before #6355 the raw socket error reached the caller, and a receipt oracle took it for a refusal while the write committed. | Read the request first (the fix names it): a committed or pending row means the write was accepted, replay the same request_id to wait for it; no row means it was not, submit it again with the same request_id. Never resubmit under a new request_id without that read. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#write_outcome_unknown](../../docs/guides/write-refusals.md#write_outcome_unknown)
+
 ### write_pending
 
 <a id="write_pending"></a>

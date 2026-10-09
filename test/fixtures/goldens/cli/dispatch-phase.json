@@ -781,7 +781,7 @@
             "unconditionalFor": []
           },
           {
-            "condition": "command === 'extract' && args.includes('--stale') && !hasHelpFlag(args) && await (await import('./commands/extract-stale-delegate.ts')).maybeDelegateExtractStale(loadConfig(), args)",
+            "condition": "command === 'extract' && args.includes('--stale') && !hasHelpFlag(args) && await (await import('../commands/extract-stale-delegate.ts')).maybeDelegateExtractStale(loadConfig(), args)",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -1122,7 +1122,7 @@
         "phase": "post-connect",
         "preConnectRules": [
           {
-            "condition": "command === 'migrate' && await (await import('./commands/migrate-graduation.ts')).tryRunMigrateGraduation(args)",
+            "condition": "command === 'migrate' && await (await import('../commands/migrate-graduation.ts')).tryRunMigrateGraduation(args)",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -1719,7 +1719,7 @@
             ]
           },
           {
-            "condition": "command === 'sources' && args[0] === 'refresh' && !hasHelpFlag(args) && await (await import('./commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefresh(loadConfig(), args.slice(1))",
+            "condition": "command === 'sources' && args[0] === 'refresh' && !hasHelpFlag(args) && await (await import('../commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefresh(loadConfig(), args.slice(1))",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,
@@ -1895,7 +1895,7 @@
         "phase": "post-connect",
         "preConnectRules": [
           {
-            "condition": "command === 'transcripts' && args[0] === 'recent' && !hasHelpFlag(args) && await (await import('./commands/transcripts.ts')).runDelegatedTranscriptsRecent(args.slice(1))",
+            "condition": "command === 'transcripts' && args[0] === 'recent' && !hasHelpFlag(args) && await (await import('../commands/transcripts.ts')).runDelegatedTranscriptsRecent(args.slice(1))",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,

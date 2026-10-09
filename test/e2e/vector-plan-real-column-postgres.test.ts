@@ -8,11 +8,14 @@
  *   1. precondition: the pre-fix guard placement (the legacy-guard variant,
  *      byte-for-byte the guard 3a284ae emitted) does NOT use the index on this
  *      fixture, so an undersized fixture fails loudly instead of passing;
- *   2. the statement searchVector emits now uses idx_chunks_embedding, through
- *      the same tx.unsafe path, scoped read transaction and scan settings
- *      (PostgresEngine.explainVectorSearch), across a filter matrix incl. RLS;
+ *   2. the statement searchVector emits first (the index walk) uses
+ *      idx_chunks_embedding, through the same tx.unsafe path, scoped read
+ *      transaction and scan settings (PostgresEngine.explainVectorSearch),
+ *      across a filter matrix incl. remote readers, wide windows and RLS;
  *   3. stale-heavy pools escalate or fall back exactly instead of underfilling;
- *   4. doctor `vector_plan` reports each outcome.
+ *   4. doctor `vector_plan` reports each outcome;
+ *   5. a source scope holding a small share of pages skips the walk and runs
+ *      the joined statement first.
  *
  * Runs in a dedicated 64-dim database created on the E2E server and dropped in
  * afterAll, so the shared 1536-dim schema is untouched.
@@ -23,7 +26,7 @@ import postgres from '#postgres';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { refreshProjectionStatistics } from '../../src/core/search/projection-statistics.ts';
-import { buildVectorSearchStatement } from '../../src/core/search/vector-statement.ts';
+import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, PAGE_SOURCE_STATS_SQL, sourceScopeShare, type PageSourceStats } from '../../src/core/search/vector-statement.ts';
 import * as vectorPool from '../../src/core/search/vector-pool.ts';
 import type { VectorPoolAttempt, VectorPoolBatch } from '../../src/core/search/vector-pool.ts';
 import { vectorPlanCheck } from '../../src/commands/doctor/checks/vector-plan.ts';
@@ -139,7 +142,7 @@ function axis(d: number): Float32Array {
         get(target, key) {
           if (key !== 'unsafe') return Reflect.get(target, key);
           return (sql: string, params: unknown[]) => {
-            if (sql.includes('WITH hnsw_candidates')) statements.push({ sql, params: [...params] });
+            if (sql.includes('WITH hnsw_candidates') || sql.includes('WITH ann AS MATERIALIZED')) statements.push({ sql, params: [...params] });
             return target.unsafe(sql, params);
           };
         },
@@ -222,7 +225,7 @@ function axis(d: number): Float32Array {
     const [explained, searched] = statements.slice(start);
     expect(explained.sql).toBe(`EXPLAIN (FORMAT JSON) ${searched.sql}`);
     expect(explained.params).toEqual(searched.params);
-    expect(searched.sql).toBe(buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 20, offset: 0, opts: { embeddingColumn: column } }).sql);
+    expect(searched.sql).toBe(buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 20, offset: 0, opts: { embeddingColumn: column } }).indexWalkSql!);
 
     // Diagnostic only: the generic plan (no parameter values), PG16+.
     const generic = await engine.executeRaw(`EXPLAIN (GENERIC_PLAN, FORMAT JSON) ${searched.sql}`).catch(error => String(error));
@@ -235,6 +238,9 @@ function axis(d: number): Float32Array {
       ['sourceIds covering most rows', { sourceIds: ['default', 'side'] }],
       ['common type', { type: 'note' }],
       ['wide date range', { afterDate: '2000-01-01', beforeDate: '2100-01-01' }],
+      ['remote reader (private-page rule)', { excludePrivate: true }],
+      ['remote reader, 50-row limit', { excludePrivate: true, limit: 50 }],
+      ['200-row limit', { limit: 200 }],
     ];
     for (const [label, opts] of matrix) {
       const plan = await engine.explainVectorSearch(query, { limit: 20, embeddingColumn: column, ...opts });
@@ -367,5 +373,32 @@ function axis(d: number): Float32Array {
       await engine.executeRaw('RESET enable_seqscan');
       await engine.executeRaw('RESET enable_sort');
     }
+  }, 60_000);
+
+  test('a source scope holding a small share of pages skips the walk: EXPLAIN and the first attempt run the joined statement', async () => {
+    await seedEngine.executeRaw(`INSERT INTO sources (id, name) VALUES ('tiny', 'tiny') ON CONFLICT (id) DO NOTHING`);
+    await seedEngine.executeRaw(`INSERT INTO pages (slug, source_id, type, title, compiled_truth, knowledge_revision, text_projection_revision, chunker_version)
+      SELECT 'tiny/n-' || i, 'tiny', 'note', 'Tiny ' || i, 'body', '00000000-0000-4000-8000-000000000001'::uuid, '00000000-0000-4000-8000-000000000001'::uuid, 4
+      FROM generate_series(0, 19) i`);
+    await seedEngine.executeRaw(`INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, model, embedded_text_hash, embedding)
+      SELECT p.id, 0, 'tiny ' || p.id, 'compiled_truth', '${MODEL}', md5('tiny ' || p.id), e.v
+      FROM pages p CROSS JOIN LATERAL (SELECT array_agg(random()::real - 0.5)::vector AS v FROM generate_series(1, ${DIM}) WHERE p.id > 0) e
+      WHERE p.source_id = 'tiny'`);
+    await seedEngine.executeRaw('ANALYZE pages');
+    const opts: SearchOpts = { limit: 10, embeddingColumn: column, sourceId: 'tiny', excludePrivate: true };
+    const [stats] = await engine.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL);
+    expect(sourceScopeShare(stats, opts)!).toBeLessThan(INDEX_WALK_MIN_SCOPE_SHARE);
+    const unscoped = buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 10, offset: 0, opts });
+    expect(unscoped.indexWalkSql).toBeDefined();
+
+    const start = statements.length;
+    await engine.explainVectorSearch(query, opts);
+    const hits = await engine.searchVector(query, opts);
+    const [explained, searched] = statements.slice(start);
+    expect(explained.sql).toBe(`EXPLAIN (FORMAT JSON) ${unscoped.sql}`);
+    expect(searched.sql).toBe(unscoped.sql);
+    expect(statements.slice(start).some(entry => entry.sql.includes('WITH ann AS MATERIALIZED'))).toBe(false);
+    expect(hits).toHaveLength(10);
+    expect(hits.every(hit => hit.source_id === 'tiny')).toBe(true);
   }, 60_000);
 });

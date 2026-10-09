@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { BrainEngine, LinkBatchInput } from '../src/core/engine.ts';
-import type { DerivedLinkReplacementOptions } from '../src/core/derived-links.ts';
+import type { DerivedLinkOrigin, DerivedLinkReplacementOptions } from '../src/core/derived-links.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtract, extractStaleFromDB } from '../src/commands/extract.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -69,17 +69,25 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
           await engine.executeRaw('UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1 AND slug=$2', [sourceId, originSlug]);
           const targetSnapshot = (await engine.readPageSnapshot(targetSlug, { sourceId: targetSourceId }))!;
           const original = engine.replaceDerivedLinks;
+          const originalBatch = engine.replaceDerivedLinksBatch;
           let retyped = false;
           let captured: LinkBatchInput[] = [];
           let fences: DerivedLinkReplacementOptions['expectedEndpoints'];
-          engine.replaceDerivedLinks = async (origin, links, opts) => {
+          const retypeBeforePublishing = async (origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions) => {
             if (!retyped && origin.sourceId === sourceId && origin.slug === originSlug) {
               retyped = true;
               captured = links;
               fences = opts?.expectedEndpoints;
               await engine.putPage(targetSlug, { type: 'decision', title: 'Decision Example', compiled_truth: 'Retyped after inference.' }, { sourceId: targetSourceId });
             }
+          };
+          engine.replaceDerivedLinks = async (origin, links, opts) => {
+            await retypeBeforePublishing(origin, links, opts);
             return original.call(engine, origin, links, opts);
+          };
+          engine.replaceDerivedLinksBatch = async items => {
+            for (const item of items) await retypeBeforePublishing(item.origin, item.links, item.opts);
+            return originalBatch.call(engine, items);
           };
           const errors: string[] = [];
           const errorSpy = spyOn(console, 'error').mockImplementation((...args) => { errors.push(args.join(' ')); });
@@ -92,6 +100,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
             }
           } finally {
             engine.replaceDerivedLinks = original;
+            engine.replaceDerivedLinksBatch = originalBatch;
             errorSpy.mockRestore();
             exitSpy.mockRestore();
           }

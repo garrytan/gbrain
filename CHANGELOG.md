@@ -10,6 +10,294 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.130.0] - 2026-10-09
+
+**`gbrain import` is twice as fast, `gbrain extract all --source db` four times, and a managed `gbrain sync` stops running Git once per page. Every page, chunk, link and timeline row comes out the same.**
+
+A managed import wrote each file through its own admission and its own publication, about 167 database round trips per page. Now up to 32 files are admitted in one transaction and published in groups of 8, the path `put_pages` already used. Each file keeps its own request id, receipt, revision check and result. `extract all --source db` read every page twice and replaced each page's links in its own transaction. Now it reads 100 pages with one statement and writes their links in one transaction, and replays page by page if that transaction fails. A managed sync ran three `git` processes per page. Now it reads pinned blobs with one `ls-tree` and one `cat-file --batch` per window of up to 256 entries, and finds the checkout's Git top level once per run.
+
+### What you'd see
+
+4 vCPU box, Postgres 16 + pgvector 0.8.7 and PGLite, a synthetic brain of 5,003 pages / 26,344 chunks, cold CLI process, N=1:
+
+| | Postgres before | Postgres after | PGLite before | PGLite after |
+|---|---|---|---|---|
+| `gbrain import --no-embed`, all sources | 371 s (74.2 ms/page) | 182 s (36.4 ms/page) | 334 s (66.8 ms/page) | 186 s (37.3 ms/page) |
+| `gbrain extract all --source db` | 60.2 s | 14.7 s | 34.2 s | 11.2 s |
+
+On a managed first sync of a 3,700-page source, Git processes go from 11,113 to 76 on Postgres and 44 on PGLite. With the real `git` binary, sync takes 37% less time on Postgres (91.5 → 58.1 s) and 33% less on PGLite (199.6 → 133.7 s), N=3.
+
+### What to watch for
+
+- A managed import's per-file results, failures and checkpoint are reported exactly as before. A refused file (bad frontmatter, a path outside the source) settles only that file.
+- If the database connection keeps dropping while a batch is being admitted, each file reports `write_outcome_unknown` with its own request id. Rerunning the import replays those same request ids, so no file is written twice.
+- Two files that map to the same slug keep the old order: the second one imports after the first, never in the same batch.
+
+### Itemized changes
+
+- **Batched managed import (`src/core/persistence/import-mutations.ts`).** `importManagedFiles` takes up to `IMPORT_BATCH_MAX_PAGES` (32) files or 8 MiB. One statement writes each file's durable intent (`op_checkpoints` `managed-file-import`) and one clears it. New requests are admitted together through `admitBatch` and carry one `intent.import_batch`, which `publicationGroupKey` maps to an independent `import:` group. Those groups publish 8 pages per transaction on Postgres and PGLite alike. `runImport` accounts each file of a batch in order through its usual bookkeeping.
+- **Import preparation (`import-prepare.ts`).** The import prepares `coordinated`: publication proves the base revision under its page guard. The apply then reads the page once after its write and uses that read for the read-back check, the projection target, the text seal and the receipt's postimage.
+- **Batched `extract all --source db` (`src/commands/extract.ts`, `extract-timeline-db.ts`).** `readPageSnapshotsBatch` (`src/core/page-snapshot-batch.ts`) returns exactly what `readPageSnapshot` returns, for up to 100 pages or 32 MiB of bodies in one statement. `replaceDerivedLinksBatch` (`src/core/derived-links.ts`, engine member on both engines) runs many origins in one transaction: one sorted guard lock, one extraction-generation check, then each origin's own revision check and writes. A failed batch replays page by page, so the settings-changed skip and the first error stay per page.
+- **Pinned Git reads in managed sync (`src/core/persistence/sync-blobs.ts`, `sync-screen.ts`, `sync-run.ts`, `sync-prepare.ts`).** `readPinnedBlob` and `readPinnedContent` answer from a window keyed by the full commit id. Anything the window can't answer falls back to the per-entry read. `syncGitTopLevel` runs `rev-parse --show-toplevel` once per root and run, and runs it again when the top level's `.git` changes. `readBlobContents` now skips a `missing` reply instead of misreading every blob after it.
+
+### For contributors
+
+- `test/persistence-import-batch.test.ts` imports the same files one by one and batched on two brains, then compares pages, chunks, links, timeline, facts, takes, tags, aliases, versions and the canonical files row by row, along with every per-file result. It runs on PGLite and Postgres. It also covers resume after an interrupted batch, a lost COMMIT acknowledgment (same request ids and digests, one row per file) and the `import:` group claim.
+- `test/extract-db-batch-equivalence.test.ts` and its Postgres twin compare every row extract writes against goldens captured on the previous release. They cover managed and unmanaged brains, each batched and with every batch forced to replay. `test/page-snapshot-batch.test.ts` checks that the batched read equals the per-page read.
+- `test/managed-sync-pinned-reads.test.ts` compares every table across per-entry reads, the default window and a window of 3, over two rounds of commits, and pins the Git spawn counts.
+
+## [0.60.129.0] - 2026-10-09
+
+**Postgres reads stop writing: retrieval tracking moves off `pages`, and the two persistence reads `gbrain serve` repeats in the background stop scanning every write receipt ever stored.**
+
+Every `search`, `query` and `get_page` recorded which pages it surfaced by updating `pages.last_retrieved_at`. Because that column was indexed, each update wrote a new copy of the whole page row plus an entry in every one of its 22 indexes, and fired seven triggers. One of those triggers advanced the page generation clock even when the five-minute throttle matched no row, so every read also threw away the query cache, the `get_health` memo and the search-readiness memo. In a mixed read/write serve workload on a 50,000-page brain, that update wrote 96% of all write-ahead log. The timestamp now lives in a small `page_retrievals` table, and every reader takes the newer of it and the old column, so the stale-page bias, volunteer usage stats and entity cards see the same values.
+
+`gbrain serve` checks every minute whether each managed source's sync is moving. That check read the newest committed sync receipt through an index holding every committed receipt, so on a source whose receipts are imports it walked and decompressed all of them. Write receipts are kept forever on purpose (after 30 days compaction drops their payload, not the row), so the check slowed down with every write. The idle receipt compaction pass had the same problem as a sequential scan. Both now read small partial indexes.
+
+A vector search scoped to a small source now skips the index walk that v0.60.127.0 added, because that walk came back short and fell back anyway.
+
+### What you'd see
+
+Warm, Postgres 16 + pgvector 0.8.7 on a 4 vCPU box, synthetic brains of 5,001 pages / 25,331 chunks and 50,010 pages / 248,802 chunks, p50 ms:
+
+| | 5k before | 5k after | 50k before | 50k after |
+|---|---|---|---|---|
+| Sync movement check, per source (25 runs) | 97 | 0.5 | 971 | 0.5 |
+| Receipt compaction scan (25 runs) | 2.6 | 0.7 | 30 | 0.3 |
+| Retrieval bump, 20 new pages (300 runs) | 5.8 | 0.8 | 15.4 | 0.7 |
+| WAL from those 300 bumps | 65 MB | 0.8 MB | 159 MB | 1.2 MB |
+| Vector search, remote reader, 0.1% source | 24–31 | 10–17 | 33–41 | 10–19 |
+| Vector search, remote reader, 1.7% source | 42–49 | 19–29 | 87–88 | 67–76 |
+
+Over 150 s of a mixed serve workload (`get_page`, `search`, `query`, `list_pages`, `put_page`), database time went from 22.8 to 21.7 s at 5k and from 42.1 to 36.1 s at 50k, and write-ahead log from 11 to 6.4 MB and from 153 to 15 MB. Tool latencies stayed the same, since the bump never blocked a response.
+
+### What to watch for
+
+- Retrieval tracking still writes at most once per page per five minutes. An older gbrain binary on the same database keeps updating `pages.last_retrieved_at`, and readers still see those values.
+- Two things were measured and left out. Storing chunk vectors inline (`SET STORAGE MAIN`) made keyword search 45% slower and chunk scans 12x slower at 50k, and moving existing rows would rewrite every chunk. Sizing the vector walk's `ef_search` to the window either lost recall or made remote readers fall back more often.
+
+## To take advantage of v0.60.129.0
+
+`gbrain upgrade` applies migrations v223 and v224. On Postgres, v223 builds two partial indexes on `persistence_requests` without blocking writers (2.3 s for 50,000 receipts) and drops v222's watermark index. v224 creates `page_retrievals`, copies existing timestamps (0.2 s for 50,000 pages) and drops the unused `pages_last_retrieved_at_idx`.
+
+### Itemized changes
+
+- **Retrieval tracking (`src/core/last-retrieved.ts`).** `bumpLastRetrievedAt` upserts `page_retrievals(page_id, last_retrieved_at)`. The SELECT skips rows still inside the five-minute window, so a repeat bump locks nothing; the ON CONFLICT test stops a concurrent bump from moving a row twice. Ids of pages that don't exist are skipped, as before. The table has no foreign key, because its lock would dirty the page row on every bump. A `pages_forget_retrievals` statement trigger deletes rows for hard-deleted pages instead. The domain-bank samplers, `volunteerUsageStats` and the entity card read `GREATEST(pages.last_retrieved_at, page_retrievals.last_retrieved_at)`.
+- **Movement watermark.** `persistence_requests_sync_watermark` on `(worktree_id, source_incarnation, completed_at DESC) WHERE state='committed' AND COALESCE(intent->>'kind','') LIKE 'managed_sync_%'` replaces `persistence_requests_committed_watermark`. The read (`MOVEMENT_WATERMARK_SQL`) repeats the predicate text, so the planner proves the index applies. Compaction drops a receipt's intent and so removes it from the index, the same rows the read already skipped.
+- **Compaction candidates.** `persistence_requests_compactable` on `(completed_at) WHERE recovery IS NULL AND NOT compacted AND state IN (terminal states)`.
+- **Small-source vector scope.** Both engines read `pages.source_id` planner statistics, at most once a minute and only for source-scoped searches. Below a 10% share of pages, `buildVectorSearchStatement` leaves out the index walk, like a type filter does. The joined, exact and has-more statements are unchanged, and missing statistics keep the walk.
+
+### For contributors
+
+- `test/page-retrievals.test.ts` runs the legacy UPDATE and the upsert on the same pages and ages. It checks they bump the same pages and leave the same effective timestamps, that a bump never advances the generation clock (the legacy UPDATE did, even matching nothing), that hard deletes clean up, and that every reader takes the newer value.
+- `test/sync-movement.test.ts` checks the watermark read returns the same row with and without index scans, across non-sync receipts, another incarnation, queued requests and compaction. `test/serve-loop-migrations.test.ts` and its Postgres twin `test/e2e/serve-loop-migrations-postgres.test.ts` cover fresh installs and upgrades: every timestamp is copied, the column keeps its values, and a re-run changes nothing. `test/e2e/persistence-consumers-postgres.test.ts` checks the watermark plan uses the new index.
+- `test/search/vector-statement.test.ts` checks that a below-threshold scope leaves every other statement byte-identical. It also covers the share math (most-common values, unlisted sources, negative `n_distinct`) and the loader cache. `test/search/vector-index-walk.test.ts` uses real PGLite statistics: a tiny source skips the walk and returns the joined statement's rows, and a large one still walks. With the threshold forced to 0, the three skip tests fail.
+
+## [0.60.128.0] - 2026-10-09
+
+**The nightly Heavy Tests run is green again.**
+
+v0.60.113.0 made `full` the one MCP registration surface for every plugin manifest, but the real-binary codex plugin install test, which only runs in the nightly Heavy Tests workflow, still expected `starter` in the installed manifest's arguments and in its tools/list oracle. Both now read `REGISTRATION_SURFACE`, so the test follows the manifest instead of a copy of it. This is a test-only change; gbrain itself behaves the same.
+
+## To take advantage of v0.60.128.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
+## [0.60.127.0] - 2026-10-09
+
+**Postgres search, list, page and backlink reads stop taking the slow plan: vector search walks the vector index first, remote reads stop compiling every statement before running it, and `get_page` looks up the exact page before trying aliases.**
+
+Three plan problems showed up while profiling synthetic brains shaped like a real 5,000-page brain. First, vector search often skipped the vector index. On a 25,000-chunk brain it read and sorted every chunk instead, at a 50-result limit and on some remote reads. Second, the rule that hides private pages looked so expensive to Postgres that it compiled any statement using it to machine code first, at 40 to 570 ms a call, then ran it in about one. That rule covers listing pages, backlink counts and the search legs. Third, the hold lookup that `get_page` and every search run could only join pages by text-casting every page id. Fourth, `get_page` matched the page or any alias in one statement, which scans the source's pages. Results don't change: the same rows come back in the same order.
+
+### What you'd see
+
+Warm reads on a 4 vCPU box, Postgres 16 + pgvector 0.8.7, synthetic brains (5,001 pages / 25,331 chunks and 50,010 pages / 248,802 chunks), p50 ms over 25 calls. Recall is measured against an exact scan:
+
+| Read | 5k before | 5k after | 50k before | 50k after |
+|---|---|---|---|---|
+| Vector search, 20 results | 177 (recall 0.90) | 24 (0.97) | 23 (0.53) | 31 (0.67) |
+| Vector search, 50 results | 193 (1.00) | 37 (0.995) | 42 (0.63) | 57 (0.79) |
+| Vector search, remote reader, 50 results | 93 (1.00) | 33 (0.995) | 52 (0.63) | 58 (0.79) |
+| Vector search, remote reader, type filter | 239 | 256 | 8,091 (2.8 of 20 results) | 1,064 (20 of 20) |
+| `list_pages` over MCP | 70 | 11 | 52 | 12 |
+| `get_page` over MCP | 18 | 12 | 15 | 9 |
+| Backlink count statement (search and query) | 265 | 4 | 571 | 8 |
+| `search` over MCP (includes the embedding call) | 880 | 668 | 866 | 715 |
+
+### What to watch for
+
+- On the 50k brain the planner already picked the vector index, and the walk reads twice the window to keep recall, so vector-only searches cost 6 to 15 ms more there while recall rises 14 to 16 points.
+- A vector search scoped to a small source (a tenth of a percent of the brain) costs about 25 ms more: the walk comes back short and the search falls back to the previous statement, with the same results. Type and date filters skip the walk.
+
+### Itemized changes
+
+- **Vector index walk.** `buildVectorSearchStatement` adds `indexWalkSql`. Its `ann` CTE orders `content_chunks` alone with only the chunk-level filters (modality, model, `detail`, language, symbol kind) over twice the candidate window. It then joins pages and sources by key and applies every page filter, visibility and the private-page rule to those rows, keeping the nearest `innerLimit`. Both engines run it first with `enable_sort = off` (the HNSW scan is then the only ordered path) and `hnsw.ef_search` sized for the doubled window. They accept it when the window is full and fills the limit; otherwise they run the joined statement and its escalation exactly as before. Type and date filters, the legacy guard and non-indexed columns skip it. Doctor `vector_plan` and `explainVectorSearch` explain the walk.
+- **Private-page rule.** `privatePagesFilterFragment` matches `derived_from` slugs with `= ANY(ARRAY(...))` instead of `IN (SELECT ... jsonb_array_elements_text(...))`. The rows are the same, but the planner stopped pricing a 100-row semi-join per page, which kept `list_pages`, backlink counts and remote search legs past `jit_above_cost`. No read needs a JIT-off wrapper.
+- **Held-page read.** `readHeldPages` joins `pages` on `p.id = (page_id)::int`, so the page lookup is a primary-key probe whatever the small-table statistics say.
+- **Page snapshot.** An alias-resolving `readPageSnapshot` (`get_page`, `fetch`) runs the exact-slug statement first and the `slug = $1 OR EXISTS (alias)` statement only on a miss: an exact match outranks every alias match there, so the row is the same. An ambiguity check (`requireUnambiguous`) still runs the alias statement alone. The statement drops from 3.8 to 0.7 ms at 5k and 1.8 to 0.8 ms at 50k.
+
+### For contributors
+
+- `test/search/vector-index-walk.test.ts` (PGLite) checks that a full walk window returns the joined statement's rows in the same order across a filter matrix (private-page rules, archived and quarantined pages, deleted pages, stale hashes). It also checks that a short window falls back to the joined result. `test/search/vector-statement.test.ts` pins the walk's shape.
+- `test/e2e/private-visibility-plan-postgres.test.ts` proves both spellings of the private-page rule hide exactly the same pages, and that the planner's cost per page now stays under `jit_above_cost / 500`. A precondition fails if the old spelling would also pass.
+- `test/e2e/vector-plan-real-column-postgres.test.ts` checks the walk uses `idx_chunks_embedding` for remote readers and 50- and 200-result windows. `test/held-read-signals.test.ts` checks the held-page read probes `pages_pkey` (it fails on the text-cast join). `test/page-snapshot-exact-first.test.ts` covers exact hits, alias fallback, an exact page in another source, deleted and private exact pages, the ambiguity check and a miss.
+- `test/bounded-child-exec.test.ts`: the SIGTERM test installs the child's trap before it writes the lockfile and waits for the lockfile instead of sleeping 200 ms; on a loaded runner the child had not started yet (forced probe: delaying the child 0.5 s fails the old test and passes the new one).
+- `test/no-allow-protected-flag.test.ts` skips a file or directory that another test deletes while the guard walks `test/` (ENOENT), instead of failing the run (forced probe: a dangling `test/.probe-vanished.md` fails the old guard and passes the new one).
+
+## [0.60.126.0] - 2026-10-09
+
+**When you ask your agent about a person or a company, the brain now shows it the newest mails and notes that mention them, so a later correction reaches the agent before it answers.**
+
+A person page says who handles procurement and when the next meeting is. Weeks later a mail says someone else took over, and another moves the meeting. Until now the agent's first look at that person showed only what the page said; the mails that corrected it surfaced only if the agent thought to ask a second, more specific question. Many agents never did, so they greeted the wrong person and quoted the old date.
+
+Each card in `context_pack` now ends with the newest pages that mention the entity and are dated after its own page, newest first, each with its date, title and a short preview. The agent reads them on its first call and opens the ones that matter.
+
+### How to use it
+
+Nothing to do: it is on by default. To turn it off:
+
+```bash
+gbrain config set mentions.newer_on_cards false
+```
+
+### What you see
+
+On the T0b program-primary workload (gbrain-evals, development seeds, 144 paired runs against master, three reader models), failed runs fell from 67 to 27 (2.45x fewer; 95% interval for the failure-risk ratio 0.25 to 0.64). On eight freshly drawn seeds the same comparison went from 33 to 9 of 72 (3.53x fewer). Greeting a contact who had handed off, or giving a meeting date that had moved, fell from 74 failed items to 1. Token use and latency stayed within 10% of master for every reader.
+
+| Reader | Master | With newer mentions |
+|---|---:|---:|
+| Opus 5.5 | 40 of 48 failed | 6 of 48 |
+| Sonnet 5.5 | 24 of 48 | 20 of 48 |
+| gpt-6.1-sol | 3 of 48 | 1 of 48 |
+
+### Things to watch
+
+- A remote caller never sees a private page, a derived page or a page from another source in the list; it follows the same read policy as the `entity` card.
+- The section is bounded: at most 8 pages and 2,000 characters per card and 6,000 per pack. It is the first thing dropped when `budget_tokens` is tight, and it never delays a card or a fact.
+- A page that names an entity only by a short code it has not declared (a note titled "Call with JOF") does not link to the entity, so it does not appear here.
+
+### Itemized changes
+
+- `src/core/mentions/newer-mentions.ts` (new): `readNewerMentions` reads the entity page's `COALESCE(effective_date, updated_at)` and the `referenced_by` referrer query (`readReferrerPage`, the card's private-page and private-origin filters and preview), keeps rows dated after the page, newest first, within `NEWER_MENTIONS_CAP` (8) rows and `NEWER_MENTIONS_CARD_CHARS` (2,000); `more` when further newer pages exist; `isNewerMentionsEnabled` reads `mentions.newer_on_cards` (unset means on).
+- `src/core/context/turn-context.ts`: `assemblePack` reads newer mentions after cards and hot facts, under the pack deadline and `NEWER_MENTIONS_PACK_CHARS` (6,000); `renderPack` renders them in a section after hot memory inside the "data, not instructions" envelope.
+- `src/core/ops/facts.ts`: `context_pack` packs them last under `budget_tokens` and returns `cards[].newer_mentions`.
+- `src/core/verbs/entity-card.ts`: optional `EntityCard.newer_mentions`.
+- `mentions.newer_on_cards` registered in `KNOWN_CONFIG_KEYS`; `docs/guides/entity-recall.md`, `docs/mcp/TOOL_REFERENCE.md` and the key-files index describe it. MCP tool descriptions and the advertised schema are unchanged.
+- Tests: `test/context-pack-newer-mentions.test.ts` (ordering, dates, the row and character caps, `budget_tokens`, the off switch, an entity with no newer mentions, and stdio and HTTP remote callers never seeing private, derived or other-source referrers).
+
+## [0.60.125.0] - 2026-10-09
+
+**Every one-shot `gbrain` command starts and exits faster: `--version` and help answer in about 70 ms instead of 590, reads like `list`, `get` and `search` save about 300 ms per call, `gbrain doctor` uses a third less CPU, and import spends less than a third as long chunking.**
+
+An agent that shells out to `gbrain` pays process start-up and exit on every call. Each call paid two avoidable costs. It waited a fixed 250 ms before exiting whenever stdout was a pipe, and it loaded every operation and command module (about 1,200 modules) before reading argv, `--version` included. The same profiling found three CPU hot spots on large brains: the code stripper behind link and citation extraction copied text one character at a time, the chunker ran a full tiktoken encode for every chunk, and `doctor` re-listed the same git checkout several times per run.
+
+| Cold CLI call, stdout piped (5,003-page Postgres brain, 4 vCPU, N=25) | before p50 / p95 | after p50 / p95 |
+|---|---|---|
+| `gbrain --version` | 591 / 628 ms | 73 / 77 ms |
+| `gbrain --help` | 585 / 632 ms | 73 / 84 ms |
+| `gbrain list --limit 5` | 684 / 730 ms | 381 / 431 ms |
+| `gbrain get <slug>` | 729 / 766 ms | 417 / 439 ms |
+| `gbrain search <q>` | 869 / 974 ms | 580 / 651 ms |
+| `gbrain doctor --json` | 5,975 / 6,519 ms | 4,223 / 4,623 ms |
+
+### Itemized changes
+
+- **No fixed exit delay.** A one-shot command now exits as soon as its piped output is delivered. It still waits for a slow reader: stdout goes through the delivery-exact write chain, and a backlog on stderr holds the exit until Bun reports the pipe drained. The 250 ms grace (`GBRAIN_FLUSH_GRACE_MS`) is now only an upper bound for that wait.
+- **Lazy start-up.** `gbrain --version`, bare `gbrain` and `gbrain --help` answer without loading the dispatcher. Real commands skip the schema-migration modules unless the brain is behind, skip the version-upgrade registry, and load the MCP HTTP client only for thin-client calls. Output, exit codes, the CLI surface and the MCP tool list are unchanged.
+- **Faster code stripping.** Link extraction, citation parsing and the doctor checks that read page bodies strip code 23-33x faster, with byte-identical output.
+- **Faster chunk token counts.** Import counts are still exact cl100k counts, memoized per pre-token, so chunk boundaries are identical. The chunk pass is about 3.5x faster, and `extract all` uses about 2.5x less CPU.
+- **Cheaper `gbrain doctor`.** One `git ls-files` per checkout per run (34 git spawns instead of 50), no citation parsing on pages without `[Source:`, and one `.git` lookup per source instead of one per page. Output and exit codes are unchanged. At 50,030 pages `doctor --json` takes 15.8 s instead of 19.4 s (p50).
+
+### To take advantage of v0.60.125.0
+
+`gbrain upgrade`. Nothing to configure. If you raised `GBRAIN_FLUSH_GRACE_MS` for a slow consumer, it still caps how long the exit waits for a pipe to drain.
+
+### For contributors
+
+- The dispatcher moved from `src/cli.ts` to `src/cli/main.ts`. `src/cli.ts` is now the light entry point, and tests import the dispatcher's helpers from `src/cli/main.ts`. The top-level help text lives in `src/cli/top-help.ts`.
+- `bun run build:schema-migrations` also writes `src/core/schema-migrations/latest.generated.ts`, which the connect-time pending check reads.
+- New equivalence pins: `test/cli-exit-drain.test.ts` (real pipes), `test/cli-fast-path.test.ts` (fast path and import-graph bounds), `test/markdown-code-equivalence.test.ts` and `test/chunkers/token-estimate-pieces.test.ts` (fuzzed against the previous implementations), and `test/doctor-content-golden.test.ts` (doctor output on a brain with content, captured on the previous release).
+
+## [0.60.124.0] - 2026-10-09
+
+**When you give `query`, `search`, `recall` or `assemble_evidence` a token budget for whole-conversation evidence, gbrain now stays inside it. Calls without a budget return exactly what they did before.**
+
+Ask gbrain for "the evidence, within 8,000 tokens" and the default `auto` delivery used to treat that number as a target, not a limit: it reserved a matching snippet for every hit, grew conversations in rank order, and appended every conversation that no longer fit as extra chunks outside the budget. On the LongMemEval-S development slice, a 6,200-token budget over 25 hits came back at about 10,500 tokens on every question, mostly cut conversations and spilled chunks. A budget you pass is a cost promise, so it is now a hard cap: titles, evidence and every marker fit inside it, the best hit always comes first, and anything that does not fit is counted instead of appended. Evidence handed over for a frozen list of hits also keeps each page's date now, the same date a live `query` returns.
+
+### How to use it
+
+```bash
+gbrain query "when did the acme-example renewal move?" --return-unit auto --token-budget 8000   # capped at 8,000
+gbrain config set search.auto_packing breadth_capped     # how conversations share the budget (default cap_only)
+gbrain config set search.auto_packing off                # the old uncapped behavior, even with a budget
+```
+
+**Say to your agent:** *"What did we decide about the widget-co launch? Keep the evidence under 8,000 tokens."*
+
+### What you'd see
+
+| Call | Before | Now |
+|---|---|---|
+| `query`, `return_unit: "auto"`, `token_budget: 6200`, 25 hits on chat sessions | about 10,500 tokens delivered; conversations that did not fit appended as chunks | at most 6,200 tokens; conversations that do not fit listed in `dropped_reasons` |
+| Same call, no `token_budget` | 24,000-token default, uncapped spill | byte-identical to before |
+| `query` with a bare `token_budget` and no `return_unit` | legacy chunk budgeting | unchanged (legacy chunk budgeting) |
+| `token_budget: 10` with `return_unit: "auto"` | accepted, over budget | `invalid_params`: the minimum is 32 tokens |
+| `assemble_evidence` on a frozen hit list | no `effective_date` | each row's `effective_date` and `effective_date_source`, as live `query` returns them |
+
+### Itemized changes
+
+- **The cap** (`src/core/search/evidence-delivery.ts`). An explicit budget under `auto` (on `query`, `search`, `recall`'s results arm and `assemble_evidence`; `think` passes none) is a hard cap on the recount of every result's title plus `chunk_text`. Rank one, note or conversation, is reserved first and cut at a piece boundary with the marker `\n\n[…]` if it alone exceeds the budget; the other non-conversation chunks keep the rank-order prefix that fits (the rest are `budget_note`); a conversation that does not fit is dropped (`budget_floor`), never spilled. Redaction and an explicit `snippet_chars` run before the final recount, a snippet's recovery marker is paid from the row's own allocation (`snippet_marker_omitted` when it cannot fit), and `budget_used` is that recount (`budget_recount` drops anything still over). `delivery.auto_packing` names the packing when the cap ran.
+- **Three packings** (`search.auto_packing`, registered and validated at `config set`): `cap_only` (default: every matching span first, then growth in rank order), `breadth_capped` (the longest rank-order prefix of conversations whose title, matching span and `return_window` target window fit; the rest `breadth_cap`), `depth_first` (each conversation whole if it fits, else as much around its match as fits, else skipped). `off` keeps the uncapped behavior. `assembleEvidenceForHits` takes a library-only `auto_packing` that wins over config per call, for evaluations on one frozen hit list.
+- **The minimum.** An explicit `auto` budget below 32 tokens fails with `invalid_params` naming the minimum and the parameter (`token_budget`, or `budget_tokens` on `recall`), and so does a zero, negative or non-finite one passed with `return_unit: "auto"`; with the unit omitted such a budget still means no budget. Above it, a non-empty readable hit list always returns non-empty evidence.
+- **No budget, no change.** The evidence plan now records whether the caller passed the budget (`budgetExplicit`) and the resolved packing; without an explicit budget the allocator runs the previous code. A structural property test over random corpora pins every packing to the previous bytes, and the off-path golden is unchanged.
+- **Frozen-hit dates.** `resolveFrozenHits` projects `effective_date` and `effective_date_source` through the same normalizer live search rows use (`applyEffectiveDate` in `src/core/utils.ts`), so frozen and live delivery hand a reader the same dates.
+- Docs: `docs/evidence-delivery.md` ("Explicit budgets (the cap)", drop and fallback codes, errors, the frozen-candidate interface); KEY_FILES entries for `evidence-delivery.ts` and the new `src/core/search/evidence-packing.ts`.
+- Tests: explicit-budget twins of the auto property and spill tests (the originals keep pinning the no-budget path), fixed cases for mixed notes and chats, notes only, tiny budgets, rank one over budget, the `breadth_capped` prefix, the `depth_first` order and skip rule, a source-swamp fixture, redaction growth, the snippet marker, CJK spans, fetch failure and cached hits; op-level checks through all four operations; live-against-frozen parity on every consumed field including dates; and the leak suite and engine parity under every packing on PGLite and Postgres.
+
+## To take advantage of v0.60.124.0
+
+Nothing to migrate. Callers that pass no budget see no change. A caller that passes `token_budget` under `auto` now gets at most that many tokens; to keep the old behavior for a while, run `gbrain config set search.auto_packing off`, and check a call with:
+
+```bash
+gbrain query "renewal terms" --return-unit auto --token-budget 4000 --json   # delivery.budget_used <= 4000, delivery.auto_packing
+```
+
+## [0.60.123.0] - 2026-10-09
+
+**A write whose database session drops during admission no longer hands the caller a false refusal: the admission is re-run against the retained request id, and a session that keeps dropping returns the typed `write_outcome_unknown`. Two reconnect defects in the vendored Postgres driver that the same fault reached are fixed with it.**
+
+The crash robot (`pooler_disconnect`, seed 5105, master run 37872222822) caught an `edit_page` caller receiving the raw `write CONNECTION_CLOSED` from a dropped session while its admitted request went on to commit: the receipt the caller held said refused, the page held the write (`untrue_receipt`, `lost_write`). `retryWriteAdmission` was right not to retry an admission on a lost socket, since a second INSERT could double-apply, but the safe step was missing: every admission attempt begins by reading the retained `request_id` and replays an admitted row, so re-running the attempt is a read, never a second admission. Pre-existing (the same shape replays on the commit before #6347); found by the robot's seed, fixed here.
+
+### How to use it
+
+Nothing to configure. A single drop resolves by itself (re-runs after 100, 300 and 900 ms). When the session keeps dropping the caller sees:
+
+```bash
+gbrain errors write_outcome_unknown      # the new code, offline
+gbrain write-request -- <request_id>     # the fix it names: a committed or pending row means accepted (replay the same id); no row means not (submit again with the same id)
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A write whose session drops under admission | Re-run after 100, 300 and 900 ms; the re-run replays the admitted row when the lost acknowledgment had committed, admits when it had not. |
+| A session that keeps dropping | `write_outcome_unknown` (`reason: connection_lost`, `detail` the socket error without URLs, `fix` the read of the request by id, `write_error` on the receipt) instead of the raw `CONNECTION_CLOSED` / `57P01`. |
+| A write admitted on this process's warm lane (the consumer's reserved backend) whose session dropped | The re-run takes a transaction from the engine's pool instead of the dead reservation, and the consumer gives the lane up at once (retaken after a minute) whatever the admission makes of the loss. Before, every re-run and the next write hit "Connection is no longer owned" on the same reservation. |
+| A backend terminated while the driver is still starting its connection (during the driver's own array-types fetch) | The fresh connection serves the caller's first statement. Before, the driver reconnected but kept the dead startup's internal query and its FATAL `57P01`: the caller's first statement on the live connection failed with that stale `57P01` (the robot's `put_page refused/57P01`), and the orphaned internal query rejected with nobody awaiting it, which Bun treats as fatal (the robot worker's exit 1). |
+| A connection closed while a statement's bytes still wait for its write immediate | The next connection on that pool slot starts normally. Before, the cleared immediate left its handle and bytes behind, the reconnect's StartupMessage was appended and never scheduled, and the slot sat open until `CONNECT_TIMEOUT` (10 s) on every statement bound to it, for as long as it kept being chosen (the robot's effects worker, for minutes, leaving a running effect unreclaimed). |
+| A managed sync's stall line in the unit lane (`test/sync-drain-claims.test.ts`) | Attributed to the head read that produced it instead of counted by position, so a read in flight across a park no longer reads as the park's first line (the master flake on #6271). |
+| Confirmed aborts (`40001`, `40P01`, `55P03`, `57014`) | Unchanged. |
+
+### Itemized changes
+
+- `src/core/retry-matcher.ts`: `isConnectionLoss` (connection-class SQLSTATEs, postgres.js connection codes, `57P01`/`57P02`/`57P03`, socket errnos; not auth or timeouts). `src/core/persistence/admission-retry.ts`: `CONNECTION_LOSS_RETRY_MS`, `writeOutcomeUnknown`, the re-run branch. `types.ts`: `write_outcome_unknown` in `WRITE_ERROR_CODES`. Registry, `write-refusals.md`, `error-codes.md`, KEY_FILES, one `BEHAVIOR_CHANGES` row.
+- `vendor/postgres` (`src`, `cjs/src`, `cf/src` `connection.js`; `patches/postgres@3.4.9.patch` regenerated, `bash vendor/update-postgres.sh --check` clean): `closed()` settles a startup's internal query and clears its saved error before reconnecting for `initial`, clears the pending write buffer and its immediate handle, and drops the errored `query`; `fetchArrayTypes` swallows its own failure (`errored()` has already told the caller's query; `connected()` re-arms the fetch). `scripts/persistence/ops.ts`: the harness read retry also covers `CONNECTION_DESTROYED` and `CONNECT_TIMEOUT` (a backend killed mid-handshake surfaces as a connect timeout), still only after a drop the robot injected.
+- `src/core/persistence/journal.ts` `admitWrite`: after a connection loss the re-run runs on `engine.transaction` (the pool), never again on a lent transaction, once `engine.reconnect` rebuilt the pool. `src/core/persistence/consumer.ts` `onLane`: a lent transaction that reports a connection loss (`isConnectionLoss`) releases the lane and sets the one-minute retake delay in `finally`, independent of how `run` ends.
+- Tests: `test/persistence-admission-connection-loss.test.ts` (classifier; re-run / typed outcome / budget / other errors untouched; forced probes: `admitWrite` with a lost COMMIT acknowledgment returns the admitted row and exactly one request exists, and a dead lent transaction is used once with the pool finishing the write; on the previous code the raw `write CONNECTION_CLOSED` escapes). `test/persistence-consumer-lane-loss.test.ts` (forced probe: the lane is given up after a lost lent transaction whether the run ends typed or succeeds; kept on success; fails on the previous `onLane`). `test/sync-drain-claims.test.ts`: stall lines are attributed to their head read's start (`parkedStallLines`), with a forced probe replaying the by-position misattribution. `test/postgres-driver-startup-death.test.ts` (scripted wire-protocol server, no database: a connection killed with FATAL 57P01 at its first statement, and a close delivered while a statement's bytes wait for the write immediate; both fail on the previous driver with 57P01 / CONNECT_TIMEOUT). The seed-5105 crash-robot manifest replays clean (20 of 20 sequential after the driver fixes; before them 1 run in about 7 wedged or crashed).
+
+Fixes #6355. Follows #6347.
+
 ## [0.60.122.0] - 2026-10-09
 
 **An eval-only evidence brief for the LongMemEval harness: a cheap model's claims, each with a verbatim quote, a pointer and a date, checked against the sessions before a reader sees them.**

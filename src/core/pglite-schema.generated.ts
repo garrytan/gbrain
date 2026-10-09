@@ -133,8 +133,20 @@ CREATE INDEX IF NOT EXISTS idx_pages_slug_basename ON pages (source_id, (regexp_
 CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
   ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
-CREATE INDEX IF NOT EXISTS pages_last_retrieved_at_idx
-  ON pages (last_retrieved_at);
+CREATE TABLE IF NOT EXISTS page_retrievals (
+  page_id           INTEGER PRIMARY KEY,
+  last_retrieved_at TIMESTAMPTZ NOT NULL
+);
+CREATE OR REPLACE FUNCTION gbrain_forget_page_retrievals() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$\$
+BEGIN
+  DELETE FROM page_retrievals r USING gbrain_deleted_pages d WHERE r.page_id = d.id;
+  RETURN NULL;
+END \$\$;
+DROP TRIGGER IF EXISTS pages_forget_retrievals ON pages;
+CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON pages
+  REFERENCING OLD TABLE AS gbrain_deleted_pages
+  FOR EACH STATEMENT EXECUTE FUNCTION gbrain_forget_page_retrievals();
 CREATE INDEX IF NOT EXISTS pages_links_extracted_at_idx
   ON pages (source_id, links_extracted_at);
 CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
@@ -1307,8 +1319,10 @@ CREATE INDEX IF NOT EXISTS persistence_requests_sync_run_open
   ON persistence_requests(worktree_id,(intent->>'runId')) WHERE state<>'committed' AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete');
 CREATE INDEX IF NOT EXISTS persistence_requests_sync_run_committed
   ON persistence_requests(source_id,(intent->>'runId'),(intent->>'index')) WHERE state='committed' AND intent ? 'runId';
-CREATE INDEX IF NOT EXISTS persistence_requests_committed_watermark
-  ON persistence_requests(worktree_id,completed_at DESC) WHERE state='committed';
+CREATE INDEX IF NOT EXISTS persistence_requests_sync_watermark
+  ON persistence_requests(worktree_id,source_incarnation,completed_at DESC) WHERE state='committed' AND COALESCE(intent->>'kind','') LIKE 'managed_sync_%';
+CREATE INDEX IF NOT EXISTS persistence_requests_compactable
+  ON persistence_requests(completed_at) WHERE recovery IS NULL AND NOT compacted AND state IN ('committed','conflict','failed','cancelled');
 CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC);
 CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,
