@@ -451,6 +451,181 @@
           }
         ]
       },
+      "replaceDerivedLinksBatch": {
+        "default": [
+          {
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT key FROM config WHERE key LIKE $1 ESCAPE '\\' ORDER BY key",
+            "textSha256": "3b7f63477b863dc13bb07fe9cd6980979bd0f7e84196810c1f74ea994df43e79"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
+            "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "INSERT INTO page_write_guards(source_incarnation,slug) SELECT i,s FROM unnest($1::uuid[],$2::text[]) WITH ORDINALITY AS k(i,s,n) ORDER BY n ON CONFLICT DO NOTHING",
+            "textSha256": "db6394eda2abba2a8ba0e233234bb764b79859d5462be942b725e581e8249151"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT g.slug FROM unnest($1::uuid[],$2::text[]) WITH ORDINALITY AS k(i,s,n) JOIN page_write_guards g ON g.source_incarnation=k.i AND g.slug=k.s ORDER BY k.n FOR UPDATE OF g",
+            "textSha256": "69ee3b628ca6ff5d3e9e33077b9b22cb99da711d1bce84a4a566944b81d83d8e"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT p.id FROM unnest($1::text[],$2::text[]) WITH ORDINALITY AS k(src,s,n) JOIN pages p ON p.source_id=k.src AND p.slug=k.s ORDER BY k.n FOR UPDATE OF p",
+            "textSha256": "d2598c8eb0d051b3f8d25208513a7494b6db488c95574a3781e6db376d945b56"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT value FROM config WHERE key = $1",
+            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>",
+              "number"
+            ],
+            "sql": "WITH wanted AS ( SELECT v.slug AS batch_slug, v.source_id AS batch_source_id, v.n AS batch_n, p.id AS batch_page_id, COALESCE(sum(octet_length(p.compiled_truth) + COALESCE(octet_length(p.timeline), 0)) OVER (ORDER BY v.n ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS batch_prior_bytes FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS v(slug, source_id, n) LEFT JOIN pages p ON p.slug = v.slug AND p.source_id = v.source_id AND p.deleted_at IS NULL ), chosen AS ( SELECT w.batch_n, w.batch_slug, w.batch_source_id, p.* FROM wanted w LEFT JOIN pages p ON p.id = w.batch_page_id WHERE w.batch_n = 1 OR w.batch_prior_bytes < $3 ) SELECT p.*, (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags, wd.snapshot_withdrawals, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body, CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord) FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline FROM chosen p CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at) ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug) GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals) wd ORDER BY p.batch_n",
+            "textSha256": "831bb872f432b759aa480dc25b68755c59a83977fe089b4cfe149876fc972c84"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "array<string>",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT from_page_id, to_page_id, link_type FROM links WHERE (origin_page_id = $1 OR (origin_page_id IS NULL AND from_page_id = $2)) AND link_type = ANY($3::text[]) UNION SELECT from_page_id, to_page_id, link_type FROM link_transitions WHERE origin_page_id = $4 UNION SELECT from_page_id, to_page_id, link_type FROM link_relationships WHERE from_page_id = $5 AND scope = 'all'",
+            "textSha256": "205ec70125f3e9182b0e9a6bb8865f923305e5652e69c750bca14d3568aecdb3"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number"
+            ],
+            "sql": "SELECT 1 FROM links WHERE link_source='frontmatter' AND origin_page_id IS NULL AND (from_page_id=$1 OR to_page_id=$2) LIMIT 1",
+            "textSha256": "b2c03345c2ab3512619e399a0e0aa81f14e82a23f6d3d9dedbac5a7066525049"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "object"
+            ],
+            "sql": "SELECT 1 FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(from_slug text, to_slug text, from_source_id text, to_source_id text) LEFT JOIN pages f ON f.slug=v.from_slug AND f.source_id=v.from_source_id AND f.deleted_at IS NULL LEFT JOIN pages t ON t.slug=v.to_slug AND t.source_id=v.to_source_id AND t.deleted_at IS NULL WHERE f.id IS NULL OR t.id IS NULL LIMIT 1",
+            "textSha256": "6446f477cc034315f2e55e7d2489029b3229ffa2bcd339ee147aa3475914c957"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT value FROM config WHERE key = $1",
+            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT value FROM config WHERE key = $1",
+            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "number",
+              "number"
+            ],
+            "sql": "DELETE FROM links WHERE link_source=ANY($1::text[]) AND (origin_page_id=$2 OR (origin_page_id IS NULL AND from_page_id=$3 AND link_source IN ('markdown','wikilink-resolved'))) RETURNING id",
+            "textSha256": "139b6f1adbab926678851d9ab9aa31c10522ad78488ed0ce1daca8c5b2952cac"
+          },
+          {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "object"
+            ],
+            "sql": "INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field) SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v( from_slug text, to_slug text, link_type text, context text, link_source text, origin_slug text, origin_field text, from_source_id text, to_source_id text, origin_source_id text, link_kind text ) JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING RETURNING from_page_id, to_page_id, link_type",
+            "textSha256": "feee32f8e94cf3aafc82c8d95828ed2d63babe9d9caf645435bc20050158e1b8"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "object",
+              "number",
+              "number"
+            ],
+            "sql": "UPDATE links l SET assertion_tense = v.tense FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(from_slug text, to_slug text, link_type text, link_source text, from_source_id text, to_source_id text, tense text) JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id WHERE l.from_page_id = f.id AND l.to_page_id = t.id AND l.link_type = v.link_type AND l.link_source = v.link_source AND (l.origin_page_id = $2 OR (l.origin_page_id IS NULL AND l.from_page_id = $3)) AND l.assertion_tense IS DISTINCT FROM v.tense",
+            "textSha256": "3e981a0e85ebda344f510e8c26068decb62c8c54a85f1e3bcfc2cae0963ef3aa"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "array<string>"
+            ],
+            "sql": "DELETE FROM link_transitions WHERE origin_page_id = $1 AND producer = ANY($2::text[])",
+            "textSha256": "968b36242f79a4ab122e45782864f2b3d0a9a7fb0f415c42b01a84985d19e7c3"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "number",
+              "number",
+              "array<string>",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT from_page_id, to_page_id, link_type FROM links WHERE (origin_page_id = $1 OR (origin_page_id IS NULL AND from_page_id = $2)) AND link_type = ANY($3::text[]) UNION SELECT from_page_id, to_page_id, link_type FROM link_transitions WHERE origin_page_id = $4 UNION SELECT from_page_id, to_page_id, link_type FROM link_relationships WHERE from_page_id = $5 AND scope = 'all'",
+            "textSha256": "205ec70125f3e9182b0e9a6bb8865f923305e5652e69c750bca14d3568aecdb3"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
+          }
+        ]
+      },
       "traverseGraph": {
         "default": [
           {

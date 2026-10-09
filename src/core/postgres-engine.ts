@@ -1,5 +1,5 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
-import { replaceDerivedLinks, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
+import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -1601,6 +1601,10 @@ export class PostgresEngine implements BrainEngine {
 
   async replaceDerivedLinks(origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions) {
     return replaceDerivedLinks(this, origin, links, opts);
+  }
+
+  async replaceDerivedLinksBatch(items: readonly DerivedLinkBatchItem[]) {
+    return replaceDerivedLinksBatch(this, items);
   }
 
   // #3674 — see BrainEngine.removeLinksByPagesAndSource JSDoc. Identical SQL

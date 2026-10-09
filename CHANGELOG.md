@@ -10,6 +10,42 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.130.0] - 2026-10-09
+
+**`gbrain import` is twice as fast, `gbrain extract all --source db` four times, and a managed `gbrain sync` stops running Git once per page. Every page, chunk, link and timeline row comes out the same.**
+
+A managed import wrote each file through its own admission and its own publication, about 167 database round trips per page. Now up to 32 files are admitted in one transaction and published in groups of 8, the path `put_pages` already used. Each file keeps its own request id, receipt, revision check and result. `extract all --source db` read every page twice and replaced each page's links in its own transaction. Now it reads 100 pages with one statement and writes their links in one transaction, and replays page by page if that transaction fails. A managed sync ran three `git` processes per page. Now it reads pinned blobs with one `ls-tree` and one `cat-file --batch` per window of up to 256 entries, and finds the checkout's Git top level once per run.
+
+### What you'd see
+
+4 vCPU box, Postgres 16 + pgvector 0.8.7 and PGLite, a synthetic brain of 5,003 pages / 26,344 chunks, cold CLI process, N=1:
+
+| | Postgres before | Postgres after | PGLite before | PGLite after |
+|---|---|---|---|---|
+| `gbrain import --no-embed`, all sources | 371 s (74.2 ms/page) | 182 s (36.4 ms/page) | 334 s (66.8 ms/page) | 186 s (37.3 ms/page) |
+| `gbrain extract all --source db` | 60.2 s | 14.7 s | 34.2 s | 11.2 s |
+
+On a managed first sync of a 3,700-page source, Git processes go from 11,113 to 76 on Postgres and 44 on PGLite. With the real `git` binary, sync takes 37% less time on Postgres (91.5 → 58.1 s) and 33% less on PGLite (199.6 → 133.7 s), N=3.
+
+### What to watch for
+
+- A managed import's per-file results, failures and checkpoint are reported exactly as before. A refused file (bad frontmatter, a path outside the source) settles only that file.
+- If the database connection keeps dropping while a batch is being admitted, each file reports `write_outcome_unknown` with its own request id. Rerunning the import replays those same request ids, so no file is written twice.
+- Two files that map to the same slug keep the old order: the second one imports after the first, never in the same batch.
+
+### Itemized changes
+
+- **Batched managed import (`src/core/persistence/import-mutations.ts`).** `importManagedFiles` takes up to `IMPORT_BATCH_MAX_PAGES` (32) files or 8 MiB. One statement writes each file's durable intent (`op_checkpoints` `managed-file-import`) and one clears it. New requests are admitted together through `admitBatch` and carry one `intent.import_batch`, which `publicationGroupKey` maps to an independent `import:` group. Those groups publish 8 pages per transaction on Postgres and PGLite alike. `runImport` accounts each file of a batch in order through its usual bookkeeping.
+- **Import preparation (`import-prepare.ts`).** The import prepares `coordinated`: publication proves the base revision under its page guard. The apply then reads the page once after its write and uses that read for the read-back check, the projection target, the text seal and the receipt's postimage.
+- **Batched `extract all --source db` (`src/commands/extract.ts`, `extract-timeline-db.ts`).** `readPageSnapshotsBatch` (`src/core/page-snapshot-batch.ts`) returns exactly what `readPageSnapshot` returns, for up to 100 pages or 32 MiB of bodies in one statement. `replaceDerivedLinksBatch` (`src/core/derived-links.ts`, engine member on both engines) runs many origins in one transaction: one sorted guard lock, one extraction-generation check, then each origin's own revision check and writes. A failed batch replays page by page, so the settings-changed skip and the first error stay per page.
+- **Pinned Git reads in managed sync (`src/core/persistence/sync-blobs.ts`, `sync-screen.ts`, `sync-run.ts`, `sync-prepare.ts`).** `readPinnedBlob` and `readPinnedContent` answer from a window keyed by the full commit id. Anything the window can't answer falls back to the per-entry read. `syncGitTopLevel` runs `rev-parse --show-toplevel` once per root and run, and runs it again when the top level's `.git` changes. `readBlobContents` now skips a `missing` reply instead of misreading every blob after it.
+
+### For contributors
+
+- `test/persistence-import-batch.test.ts` imports the same files one by one and batched on two brains, then compares pages, chunks, links, timeline, facts, takes, tags, aliases, versions and the canonical files row by row, along with every per-file result. It runs on PGLite and Postgres. It also covers resume after an interrupted batch, a lost COMMIT acknowledgment (same request ids and digests, one row per file) and the `import:` group claim.
+- `test/extract-db-batch-equivalence.test.ts` and its Postgres twin compare every row extract writes against goldens captured on the previous release. They cover managed and unmanaged brains, each batched and with every batch forced to replay. `test/page-snapshot-batch.test.ts` checks that the batched read equals the per-page read.
+- `test/managed-sync-pinned-reads.test.ts` compares every table across per-entry reads, the default window and a window of 3, over two rounds of commits, and pins the Git spawn counts.
+
 ## [0.60.129.0] - 2026-10-09
 
 **Postgres reads stop writing: retrieval tracking moves off `pages`, and the two persistence reads `gbrain serve` repeats in the background stop scanning every write receipt ever stored.**

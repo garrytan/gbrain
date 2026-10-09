@@ -172,10 +172,12 @@ function storedTimeline(engine: BrainEngine, pageId: number): Promise<StoredTime
  * Timeline tuples the coordinator projects from a canonical page body that
  * have no stored row on the page under the same normalized key. Insert-only
  * callers (managed `extract --stale`) add exactly these, so a stored row that
- * differs only by whitespace is not duplicated.
+ * differs only by whitespace is not duplicated. `storedRows` is the caller's
+ * own read of the page's non-event rows (a batched walk).
  */
-export async function unrecordedCanonicalTimeline(engine: BrainEngine, pageId: number, body: CanonicalBody, slug: string): Promise<ExtractedTimelineEntry[]> {
-  const stored = new Set((await storedTimeline(engine, pageId)).map(row => timelineKey(row)));
+export async function unrecordedCanonicalTimeline(engine: BrainEngine, pageId: number, body: CanonicalBody, slug: string,
+  storedRows?: ReadonlyArray<Pick<StoredTimelineRow, 'date' | 'source' | 'summary'>>): Promise<ExtractedTimelineEntry[]> {
+  const stored = new Set((storedRows ?? await storedTimeline(engine, pageId)).map(row => timelineKey(row)));
   return [...canonicalTimeline(body, slug)].filter(([key]) => !stored.has(key)).map(([, entry]) => entry);
 }
 

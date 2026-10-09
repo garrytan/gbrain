@@ -11,6 +11,8 @@
  * normalized file; a dry run lists it in `would_normalize`), and a residual
  * fence is held as `invalid_fence`.
  */
+import { realpathSync } from 'node:fs';
+import { relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { loadImportSanityConfig, screenNormalized, type ImportSanityConfig } from '../import-screen.ts';
@@ -25,8 +27,8 @@ import { isImageFilePath, resolveSlugForPath } from '../sync.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { VERSION } from '../../version.ts';
 import { sha256 } from './digest.ts';
-import { readSyncFile, syncGitPath, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
-import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
+import { readSyncContent, readSyncFile, syncGitPath, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
+import { PINNED_WINDOW, readBlobContents, readPinnedBlob, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { screenSyncImport, type SyncImportScreenInput } from './sync-prepare.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
 import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
@@ -55,10 +57,26 @@ export function isSyncReadBound(error: unknown): boolean {
   return error instanceof OperationError && error.code === 'request_too_large' && error.message === 'Sync file exceeds the bounded import size.';
 }
 
-/** The pinned blob of one entry (one `ls-tree`), or null when the commit lacks it. */
-export function pinnedBlob(discovery: Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target'>, path: string): TreeBlob | null {
-  const gitPath = syncGitPath(discovery, path);
-  return readTreeBlobs(discovery.gitRoot, discovery.target, [gitPath]).get(gitPath) ?? null;
+type PinnedCursor = Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target' | 'entries'> & { index: number };
+
+/** Git paths of the committed imports from the cursor's entry on: the window one pinned read lists. */
+function upcomingGitPaths(cursor: PinnedCursor): () => string[] {
+  return () => {
+    const gitRoot = realpathSync.native(cursor.gitRoot), root = realpathSync.native(cursor.root);
+    return cursor.entries.slice(cursor.index, cursor.index + PINNED_WINDOW).filter(entry => entry.action === 'import' && !entry.working)
+      .map(entry => relative(gitRoot, resolve(root, entry.path)).split(sep).join('/'));
+  };
+}
+
+/** The pinned blob of one entry, or null when the commit lacks it; read with the entries after it (`readPinnedBlob`). */
+export function pinnedBlob(cursor: PinnedCursor, path: string): TreeBlob | null {
+  return readPinnedBlob(cursor.gitRoot, cursor.target, syncGitPath(cursor, path), upcomingGitPaths(cursor));
+}
+
+/** The frozen import content of one entry (`readSyncContent`); a committed entry's pinned blob is read with the entries after it. */
+export function pinnedContent(cursor: SyncDiscovery & { index: number }, entry: SyncEntry): string {
+  const content = entry.working ? null : readPinnedContent(cursor.gitRoot, cursor.target, syncGitPath(cursor, entry.path), upcomingGitPaths(cursor));
+  return content ?? readSyncContent(cursor, entry);
 }
 
 function heldEntry(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null,

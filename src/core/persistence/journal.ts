@@ -321,16 +321,24 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
  * is never claimed past an unfinished non-member, so the FIFO order holds.
  */
 /**
- * The publication group key of a request: a bulk sync's `intent.group`, or the
- * batch id of a `put_pages` child (`intent.page_batch.id`, #6007). Null when it
+ * The publication group key of a request: a bulk sync's `intent.group`, the
+ * batch id of a `put_pages` child (`intent.page_batch.id`, #6007), or the
+ * batch id of a managed file import (`intent.import_batch`). Null when it
  * publishes alone.
  */
 export function publicationGroupKey(row: Pick<WriteRequest, 'operation' | 'intent'>): string | null {
   if (typeof row.intent?.group === 'string') return `sync:${row.intent.group}`;
+  if (row.operation !== 'put_page') return null;
+  if (row.intent?.kind === 'managed_file_import') return typeof row.intent.import_batch === 'string' ? `import:${row.intent.import_batch}` : null;
   const batch = row.intent?.page_batch as { id?: unknown } | undefined;
-  return row.operation === 'put_page' && !row.intent?.kind && typeof batch?.id === 'string' ? `batch:${batch.id}` : null;
+  return !row.intent?.kind && typeof batch?.id === 'string' ? `batch:${batch.id}` : null;
+}
+/** Groups whose members are independent page writes: one member's failure never cancels the others. */
+export function independentGroup(key: string | null): boolean {
+  return key !== null && (key.startsWith('batch:') || key.startsWith('import:'));
 }
 const GROUP_KEY_SQL = `CASE WHEN intent ? 'group' THEN 'sync:'||(intent->>'group')
+  WHEN operation='put_page' AND intent->>'kind'='managed_file_import' AND jsonb_typeof(intent->'import_batch')='string' THEN 'import:'||(intent->>'import_batch')
   WHEN operation='put_page' AND NOT (intent ? 'kind') AND jsonb_typeof(intent->'page_batch'->'id')='string' THEN 'batch:'||(intent->'page_batch'->>'id') END`;
 export async function claimGroupFollowers(engine: BrainEngine, head: WriteRequest, group: string, max: number, leaseMs = 30_000): Promise<WriteRequest[]> {
   if (!head.worktree_id || max <= 0) return [];

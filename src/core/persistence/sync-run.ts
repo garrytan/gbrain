@@ -12,7 +12,7 @@ import { getWriteRequest, admitWriteInTransaction, foregroundPriority, intentDig
 import { preparationConfigView } from './config-snapshot.ts';
 import { isWriteCapacityWait, retryWriteAdmission } from './admission-retry.ts';
 import { assertPersistenceAccepting, awaitWrite, foregroundWriteCompletions, startPersistenceConsumer, type WriteWait } from './service.ts';
-import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncContent, readSyncFile, syncGit, type ManagedSyncContext, type SyncDiscovery } from './sync-discovery.ts';
+import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncFile, syncGit, type ManagedSyncContext, type SyncDiscovery } from './sync-discovery.ts';
 import { isImageFilePath } from '../sync.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, SYNC_PROCESSING_KEYS, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
@@ -41,7 +41,7 @@ import { laneApplyMsPerMember, lanePolicy, openLanes } from './sync-lanes.ts';
 import { isContentRefusal } from '../import-screen.ts';
 import { isRetryableConnError, isStatementTimeoutError } from '../retry-matcher.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
-import { dryRunScreen, isSyncReadBound, loadSyncScreenRun, managedImageHold, pinnedBlob, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
+import { dryRunScreen, isSyncReadBound, loadSyncScreenRun, managedImageHold, pinnedBlob, pinnedContent, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
 import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { managedSyncWriteDiagnostic } from './sync-write-diagnostic.ts';
 import { fileChangedAfterAdmission, headCommittedBytes, originFaultHold, pageChangeProof, pageChangedHold, pinnedWorktreeConflict, receiptPageFaultHold, worktreeDirtyHold } from './sync-page-fault.ts';
@@ -352,7 +352,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
         `Source ${cursor.sourceId}'s approved company-brain content manifest no longer includes ${entry.path} for this run (its approval changed, or the file is no longer an included path), so nothing was imported for it. If the approval changed, inspect and approve the repository again first (gbrain sources inspect --help).`);
       content = (await readCommittedBlob(cursor.companyPlan.revision!, blob, cursor.companyPlan.limits)).toString('utf8');
       assertActive();
-    } else content = entry.action === 'import' && !oversize ? readSyncContent(cursor, entry) : null;
+    } else content = entry.action === 'import' && !oversize ? pinnedContent(cursor, entry) : null;
     // #6340: working-tree bytes that differ from the pinned blob but are committed at HEAD (a commit past the pin on a
     // live checkout) are imported as HEAD has them; the pin..HEAD diff later re-imports the same bytes as a no-op.
     // Uncommitted bytes keep the pinned content and reach the publication screen (idea from PR #6323).

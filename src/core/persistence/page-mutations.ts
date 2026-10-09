@@ -54,8 +54,9 @@ const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 /**
  * Pre-admission reads every page of one batch makes with the same arguments:
  * the source row, the worktree binding, the writer registration, the shared
- * skillpack roots, the persistence identity and config values. All of them
- * are rechecked under lock by the admission transaction.
+ * skillpack roots, the persistence identity and config values, and a managed
+ * import's source-root and company-profile checks. All of them are rechecked
+ * under lock by the admission transaction or by publication.
  */
 const BATCH_SHARED_READS = new Set([
   "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1",
@@ -64,8 +65,11 @@ const BATCH_SHARED_READS = new Set([
   'SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid',
   'SELECT brain_id FROM persistence_brain WHERE singleton=1',
   'SELECT value FROM config WHERE key=$1',
+  "SELECT config,incarnation FROM sources WHERE id=$1",
+  "SELECT id FROM source_ingestion_receipts WHERE source_id=$1 AND source_incarnation=$2::uuid AND profile='company-brain' LIMIT 1",
+  'SELECT s.id,s.local_path,h.local_path AS worktree_path,b.relative_path FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid WHERE NOT s.archived',
 ]);
-function batchSharedReads(engine: BrainEngine): BrainEngine {
+export function batchSharedReads(engine: BrainEngine): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
     let value = reads.get(id) as Promise<T> | undefined;
@@ -152,7 +156,7 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   return resolveSlugForPath(scannerSourcePath(canonicalRoot, join(canonicalRoot, capturePath), await scannerSlugRootMode(ctx.engine, sourceId, canonicalRoot)));
 }
 
-function pendingAwareResponse(ctx: OperationContext, row: WriteRequest): Record<string, unknown> {
+export function pendingAwareResponse(ctx: OperationContext, row: WriteRequest): Record<string, unknown> {
   try { return writeResponse(row, { retryAfterMs: estimatedRetryAfterMs(ctx.engine, 1), waiterOnlyOwner: waiterOnlyOwner(ctx.engine) }); } catch (error) {
     // #5929: a trusted local caller is told when an owner on another build ran the failed attempt.
     const mismatch = ctx.remote === false ? ownerBuildMismatch(row.error_detail, VERSION) : null;

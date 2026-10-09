@@ -90,7 +90,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'countStalePagesForExtraction': 'pages', 'listStalePagesForExtraction': 'pages', 'markPagesExtractedBatch': 'pages',
   'markPagesAttendanceBlocked': 'pages',
   // links
-  'addLink': 'links', 'addLinksBatch': 'links', 'replaceDerivedLinks': 'links', 'removeLinksByPagesAndSource': 'links',
+  'addLink': 'links', 'addLinksBatch': 'links', 'replaceDerivedLinks': 'links', 'replaceDerivedLinksBatch': 'links', 'removeLinksByPagesAndSource': 'links',
   'removeLink': 'links', 'getLinks': 'links', 'getBacklinks': 'links', 'listLinkSources': 'links',
   'traverseGraph': 'links', 'traversePaths': 'links', 'traversePathsDetailed': 'links', 'findOrphanPages': 'links',
   'rewriteLinks': OOS.stub,
@@ -393,6 +393,11 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('addLinksBatch', [['default', (e) => e.addLinksBatch([{ from_slug: SLUG, to_slug: SLUG2, link_type: 'works_at' }])]]),
   ...variants('replaceDerivedLinks', [
     ['default', (e) => e.replaceDerivedLinks({ slug: SLUG, sourceId: SRC, expectedRevision: REVISION, sourceIncarnation: INCARNATION }, [{ from_slug: SLUG, to_slug: SLUG2, link_type: 'works_at' }]), [[/INSERT INTO links \(from_page_id, to_page_id, link_type, context, link_source, link_kind/, [{ one: 1 }]]]],
+  ]),
+  ...variants('replaceDerivedLinksBatch', [
+    ['default', (e) => e.replaceDerivedLinksBatch([{ origin: { slug: SLUG, sourceId: SRC, expectedRevision: REVISION, sourceIncarnation: INCARNATION }, links: [{ from_slug: SLUG, to_slug: SLUG2, link_type: 'works_at' }] }]), [
+      [/AS batch_prior_bytes/, [{ ...PAGE_ROW, batch_n: 1, batch_slug: SLUG, batch_source_id: SRC, source_incarnation: INCARNATION, snapshot_tags: [], snapshot_withdrawals: [], fingerprint_body: null, fingerprint_timeline: null }]],
+      [/INSERT INTO links \(from_page_id, to_page_id, link_type, context, link_source, link_kind/, [{ one: 1 }]]]],
   ]),
   ...variants('removeLinksByPagesAndSource', [
     ['default', (e) => e.removeLinksByPagesAndSource([{ slug: SLUG, source_id: SRC }], { linkSource: 'markdown' })],

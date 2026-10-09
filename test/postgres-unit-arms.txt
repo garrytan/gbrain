@@ -61,6 +61,7 @@ test/managed-sync-group-uncommitted-head.test.ts
 test/managed-sync-images-5493.test.ts
 test/managed-sync-lanes.test.ts
 test/managed-sync-page-fault-holds.test.ts
+test/managed-sync-pinned-reads.test.ts
 test/managed-sync-preparation-stalled-holds.test.ts
 test/managed-sync-row-parity.test.ts
 test/managed-sync-stale-group-head.test.ts
@@ -76,6 +77,7 @@ test/persistence-git-subdir-origin.test.ts
 test/persistence-graph-publication.test.ts
 test/persistence-history-fixture.test.ts
 test/persistence-image-import.serial.test.ts
+test/persistence-import-batch.test.ts
 test/persistence-managed-lifecycle.test.ts
 test/persistence-managed-sync.test.ts
 test/persistence-manifest-git-scope.test.ts
