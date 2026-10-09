@@ -259,6 +259,7 @@ describe('hybridSearch cross-modal routing (Phase 1 integration)', () => {
 
   test('the same inferred image intent still routes to the image arm when a multimodal model is configured', async () => {
     configureBoth();
+    await seedImageChunk();
     await hybridSearch(engine, 'A photo of Half Dome during sunset', { limit: 5 });
     expect(fetchUrlsSeen.some(u => u.includes('multimodalembeddings'))).toBe(true);
   });
