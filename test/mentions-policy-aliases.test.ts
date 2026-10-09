@@ -17,6 +17,7 @@ import {
 } from '../src/core/mentions/policy.ts';
 import { aliasRejection, captureName, declarationsIn, declaredNames, deriveEntityAliases, titleSubject } from '../src/core/mentions/aliases.ts';
 import { aliasDeclarations } from '../src/core/ops/search.ts';
+import { isShortCode, SHORT_CODE_STOPLIST } from '../src/core/mentions/short-codes.ts';
 
 const none = { typeAdds: [], typeRemoves: [] };
 const pack = async (name: string) => (await loadResolvedPackByName(name)).manifest;
@@ -90,8 +91,8 @@ describe('derived aliases', () => {
     expect(norms).not.toContain('secr');
   });
 
-  test('guards: 3-character code, first word of the own name, generic word', () => {
-    const r = deriveEntityAliases({ title: 'CRM record: Quormiro Capital', compiled_truth: 'Ticker: QCO. Also known as Quormiro Capital.\nShort name: Quormiro\naka Staff' });
+  test('guards: 3-character code without a short-code cue, first word of the own name, generic word', () => {
+    const r = deriveEntityAliases({ title: 'CRM record: Quormiro Capital', compiled_truth: 'It goes by QCO. Also known as Quormiro Capital.\nShort name: Quormiro\naka Staff' });
     expect(r.aliases.map(a => a.alias_text)).toEqual(['Quormiro Capital']);
     expect(r.rejected).toEqual(expect.arrayContaining([
       expect.objectContaining({ alias: 'QCO', origin: 'declared', reason: 'below_min_length' }),
@@ -212,4 +213,64 @@ describe('declared-name grammar: mid-line labels and quoted "calls it"', () => {
     'We call it "the plan".',
     'Status: open. Our partner calls it "Blue Harbor".',
   ])('no alias: %s', text => { expect(names(text)).toEqual([]); });
+});
+
+describe('short codes (2-3 characters) the page declares for itself', () => {
+  const derived = (body: string, title = 'Company: Joffrey Foods') =>
+    deriveEntityAliases({ title, compiled_truth: body }).aliases.filter(a => a.origin === 'declared').map(a => `${a.alias_text}${a.case_sensitive ? ' (cs)' : ''}`);
+
+  test('each short-code cue and label declares the code, case-sensitive', () => {
+    for (const body of [
+      'Also called JOF in my notes. Procurement: Arjun Example.',
+      'Joffrey Foods, also known as JOF, buys seats.',
+      'Joffrey Foods is better known as JOF.',
+      'Known as JOF on the sales floor.',
+      'Joffrey Foods (a.k.a. JOF) renewed.',
+      'Joffrey Foods aka JOF.',
+      'JF is short for nothing; Joffrey Foods is short for JOF.',
+      'It is also called JOF.',
+      'Account code: JOF',
+      '| Ticker | JOF |\n',
+      'Region: EMEA. Short name: JOF.',
+    ]) expect(derived(body)).toContain('JOF (cs)');
+  });
+
+  test('two characters, digits and mixed case with a capital are codes', () => {
+    expect(derived('Also called J2.')).toContain('J2 (cs)');
+    expect(derived('Also called 3M.')).toContain('3M (cs)');
+    expect(derived('Also called JoF.')).toContain('JoF (cs)');
+  });
+
+  test('a code another entity\'s sentence declares is not this page\'s, even with a short-code cue', () => {
+    expect(derived('Widget Co, also called WCO, is a reseller.')).toEqual([]);
+    expect(derived('Our competitor, also called WCO, cut prices.')).toEqual([]);
+    expect(derived('Widget Co is also known as WCO.')).toEqual([]);
+    // Four characters and up keep the existing rule: any cue on the page declares them.
+    expect(derived('Widget Co, also called WICO, is a reseller.')).toEqual(['WICO (cs)']);
+  });
+
+  test('a short code declared on another page is not an alias of the entity it names', () => {
+    const other = deriveEntityAliases({ title: 'Company: Widget Co', compiled_truth: 'Joffrey Foods, also called JOF, is a customer.' });
+    expect(other.aliases.map(a => a.alias_text)).toEqual(['Widget Co']);
+    expect(other.rejected).toEqual(expect.arrayContaining([expect.objectContaining({ alias: 'JOF', reason: 'below_min_length' })]));
+  });
+
+  test('a short code after a cue outside the short-code list stays out', () => {
+    for (const body of ['It goes by JOF.', 'Formerly JOF.', 'Nicknamed JOF.', 'Referred to as JOF.']) expect(derived(body)).toEqual([]);
+  });
+
+  test('lower-case short words never qualify, even with a cue', () => {
+    for (const body of ['Also called it.', 'Also known as us.', 'Short for and.', 'Account code: abc']) expect(derived(body)).toEqual([]);
+  });
+
+  test('stoplisted capitals and business acronyms never qualify, in any case', () => {
+    for (const code of ['IT', 'US', 'OK', 'AI', 'It', 'Us', 'Ok', 'CEO', 'SSO', 'API', 'SOC', 'HR', 'B2B']) {
+      expect(isShortCode(code)).toBe(false);
+      expect(derived(`Also called ${code}.`)).toEqual([]);
+      expect(derived(`Account code: ${code}`)).toEqual([]);
+    }
+    for (const code of ['JOF', 'J2', '3M', 'JoF']) expect(isShortCode(code)).toBe(true);
+    for (const text of ['J', 'JOFF', 'jo', 'J-F', 'J F']) expect(isShortCode(text)).toBe(false);
+    expect([...SHORT_CODE_STOPLIST].every(c => c === c.toUpperCase())).toBe(true);
+  });
 });

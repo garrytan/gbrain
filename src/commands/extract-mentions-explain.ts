@@ -50,7 +50,7 @@ const DROP_REASON: Record<DroppedName['reason'], ExplainReason> = {
 
 const MESSAGES: Record<ExplainReason, string> = {
   ambiguous_first_word: 'This single word is the first word of a longer entity name in this source, so it never links alone; write the full name.',
-  below_min_length: 'Names shorter than 4 characters never link (too many false matches); write the full name or declare a longer alias.',
+  below_min_length: 'Names shorter than 4 characters never link (too many false matches), except a 2-3 character code the entity page declares for itself ("Also called JOF", "Account code: JOF"); write the full name or declare the code on the entity\'s own page.',
   generic_token: 'This is a generic word (role, document or placeholder), so it never links as a single-word name.',
   alias_collision: 'Another page in this source claims the same name (or it is another page\'s exact title), so the alias is dropped as ambiguous.',
   case_mismatch: 'This alias is case-sensitive (a single-word declared code) and the text uses a different case.',

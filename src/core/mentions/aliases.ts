@@ -32,6 +32,7 @@ import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
 import { isGenericEntityToken } from '../entity-name-quality.ts';
 import { hasCJK, tokenizeTitle } from '../by-mention.ts';
+import { isShortCode } from './short-codes.ts';
 
 const CUES = [
   'also known as', 'a\\.k\\.a\\.?', 'aka', 'known internally as', 'internally known as', 'known to the team as', 'better known as',
@@ -43,6 +44,10 @@ const CUES = [
 ];
 /** Cues that declare a name only when it is quoted ("the team calls it \"Copper Fox\""). */
 const QUOTED_CUE_RE = /(?<![A-Za-z])(?:calls?|called|call) it\s+/gi;
+/** Cues that may declare a 2-3 character code for the page itself (mentions/short-codes.ts); labels qualify too. */
+const SHORT_CODE_CUE_RE = /^(?:also known as|better known as|widely known as|known as|a\.k\.a\.?|aka|also called|short for)$/i;
+/** A pronoun subject that names the page itself ("It is also called JOF"). */
+const SELF_SUBJECT_RE = /^(?:it|this|this (?:company|account|customer|client|project|team))$/i;
 const CUE_RE = new RegExp(`(?<![A-Za-z0-9])(?:${CUES.join('|')})(?![A-Za-z0-9])`, 'gi');
 const LABEL_NOUN_RE = /(?<![a-z])(?:nicknames?|alias(?:es)?|aka|a\.k\.a\.?|also known as|short name|trading name|trade name|brand name|former (?:legal )?name|previous name|legal name|display name|dba|d\/b\/a|code ?name|account code|customer code|ticker)(?![a-z])/i;
 const RELATIONAL_NOUN_RE = /\b(?:competitors?|rivals?|partners?|parent(?: company)?|subsidiar(?:y|ies)|affiliates?|vendors?|suppliers?|customers?|clients?|acquirers?|investors?)\b/i;
@@ -66,8 +71,13 @@ export interface DeclarationOpts {
   ownNames?: string[];
 }
 
-/** One declared name with the line that declares it (0-based line index into the scanned text). */
-export interface Declaration { alias: string; line: number }
+/**
+ * One declared name with the line that declares it (0-based line index into the
+ * scanned text). `selfCode` marks a 2-3 character code (mentions/short-codes.ts)
+ * declared by an alias label, or by a short-code cue whose sentence names
+ * nothing before it but the page itself.
+ */
+export interface Declaration { alias: string; line: number; selfCode?: true }
 
 const isQuarter = (t: string) => /^(?:q[1-4]|h[12]|fy\d{2,4})$/i.test(t);
 const isCommon = (t: string) => COMMON_WORDS.has(t.toLowerCase()) || isQuarter(t);
@@ -137,7 +147,13 @@ export function declarationsIn(text: string, opts: DeclarationOpts = {}): Declar
   const multiword = opts.multiword !== false;
   const lines = (text ?? '').split('\n');
   const out: Declaration[] = [];
-  const push = (alias: string | null, line: number) => { if (alias && !out.some(d => d.alias === alias)) out.push({ alias, line }); };
+  const push = (alias: string | null, line: number, selfCode = false) => {
+    if (!alias) return;
+    const prior = out.find(d => d.alias === alias);
+    const code = selfCode && isShortCode(alias);
+    if (!prior) out.push({ alias, line, ...(code ? { selfCode: true as const } : {}) });
+    else if (code && !prior.selfCode) prior.selfCode = true;
+  };
   const ownNames = (opts.ownNames ?? []).filter(Boolean);
   const ownLower = ownNames.map(n => n.toLowerCase());
   /** Whether `before` ends with one of the page's own names, after any corporate suffixes and a trailing comma. */
@@ -161,20 +177,20 @@ export function declarationsIn(text: string, opts: DeclarationOpts = {}): Declar
     if (trimmed.startsWith('|')) {
       const cells = trimmed.replace(/^\||\|$/g, '').split('|').map(c => stripLineMarkup(c));
       if (cells.length >= 2 && !isTableSeparator(trimmed) && !isTableSeparator(lines[i + 1]) && isLabel(cells[0]!.replace(/:$/, ''))) {
-        for (const name of labelValues(cells[1]!, multiword)) push(name, i);
+        for (const name of labelValues(cells[1]!, multiword)) push(name, i, true);
       }
       continue;
     }
     const plain = stripLineMarkup(line);
     const colon = plain.indexOf(':');
     if (colon > 0 && colon <= 60 && isLabel(plain.slice(0, colon))) {
-      for (const name of labelValues(plain.slice(colon + 1), multiword)) push(name, i);
+      for (const name of labelValues(plain.slice(colon + 1), multiword)) push(name, i, true);
     }
     // A label can also open a later sentence of the line ("Account: X. Nickname used by the team: Y.").
     for (const segment of plain.split(/(?<=[.;!?])\s+/).slice(1)) {
       const at = segment.indexOf(':');
       if (at > 0 && at <= 60 && isLeadingLabel(segment.slice(0, at))) {
-        for (const name of labelValues(segment.slice(at + 1), multiword)) push(name, i);
+        for (const name of labelValues(segment.slice(at + 1), multiword)) push(name, i, true);
       }
     }
     const sentenceBefore = (at: number) => {
@@ -182,9 +198,14 @@ export function declarationsIn(text: string, opts: DeclarationOpts = {}): Declar
       return before.slice(Math.max(before.lastIndexOf('. '), before.lastIndexOf('; '), -1) + 1);
     };
     CUE_RE.lastIndex = 0;
+    /** The sentence before a cue names only the page: nothing, a pronoun, or one of its own names. */
+    const namesOnlySelf = (at: number) => {
+      const subject = sentenceBefore(at).trim().replace(/[,(\-\u2013\u2014]+$/, '').trim().replace(/\s+(?:is|was)$/i, '').trim();
+      return subject === '' || SELF_SUBJECT_RE.test(subject) || endsWithOwnName(subject);
+    };
     for (const m of plain.matchAll(CUE_RE)) {
       if (RELATIONAL_NOUN_RE.test(sentenceBefore(m.index!))) continue;
-      push(captureName(plain.slice(m.index! + m[0].length), { multiword }), i);
+      push(captureName(plain.slice(m.index! + m[0].length), { multiword }), i, SHORT_CODE_CUE_RE.test(m[0]) && namesOnlySelf(m.index!));
     }
     for (const m of plain.matchAll(QUOTED_CUE_RE)) {
       const rest = plain.slice(m.index! + m[0].length);
@@ -243,10 +264,14 @@ export function publicBody(body: string): string {
   return stripFactsFence(stripTakesFence(body ?? ''), { keepVisibility: ['world'] });
 }
 
-/** Why a derived name can never be linked or stored; null when it can. */
-export function aliasRejection(alias: string, ownName: string): AliasRejection | null {
+/**
+ * Why a derived name can never be linked or stored; null when it can. `selfCode`
+ * (the page declares the name for itself with a short-code cue or a label) lets
+ * a 2-3 character code through (mentions/short-codes.ts).
+ */
+export function aliasRejection(alias: string, ownName: string, opts: { selfCode?: boolean } = {}): AliasRejection | null {
   const tokens = tokenizeTitle(alias);
-  if (!hasCJK(alias) && alias.length < MIN_ALIAS_LENGTH) return 'below_min_length';
+  if (!hasCJK(alias) && alias.length < MIN_ALIAS_LENGTH && !(opts.selfCode && isShortCode(alias))) return 'below_min_length';
   if (tokens.length === 1 && isGenericEntityToken(tokens[0]!)) return 'generic_token';
   const first = tokenizeTitle(ownName)[0];
   if (tokens.length === 1 && first && tokens[0] === first && tokenizeTitle(ownName).length > 1) return 'ambiguous_first_word';
@@ -283,10 +308,10 @@ export function deriveEntityAliases(
   const lines = new Map<string, string>();
   const deny = new Set([...(opts.deny ?? []), ...frontmatterList(page.frontmatter?.alias_deny)].map(normalizeAlias).filter(Boolean));
   const seen = new Set<string>([normalizeAlias(title)]);
-  const push = (alias: string, origin: 'declared' | 'subject', caseSensitive: boolean, line?: string) => {
+  const push = (alias: string, origin: 'declared' | 'subject', caseSensitive: boolean, line?: string, selfCode = false) => {
     const norm = normalizeAlias(alias);
     if (!norm || seen.has(norm)) return;
-    const reason = deny.has(norm) ? 'denied' : aliasRejection(alias, name);
+    const reason = deny.has(norm) ? 'denied' : aliasRejection(alias, name, { selfCode });
     if (reason) { rejected.push({ alias, origin, reason, ...(line !== undefined ? { line } : {}) }); return; }
     seen.add(norm);
     if (line !== undefined) lines.set(norm, line);
@@ -300,7 +325,7 @@ export function deriveEntityAliases(
   const own = name.toLowerCase();
   for (const d of declarationsIn(text, { multiword: opts.multiword, ownNames: [name, ...ownNames] })) {
     if (d.alias.toLowerCase() === own) continue;
-    push(d.alias, 'declared', tokenizeTitle(d.alias).length === 1, textLines[d.line]?.trim());
+    push(d.alias, 'declared', tokenizeTitle(d.alias).length === 1, textLines[d.line]?.trim(), d.selfCode === true);
   }
   return { aliases, rejected, lines };
 }

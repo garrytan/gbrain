@@ -18,7 +18,7 @@ beforeAll(async () => { engine = await mentionBrain(); }, 120_000);
 afterAll(async () => { await engine.disconnect(); });
 beforeEach(async () => { await resetMentionBrain(engine); });
 
-const account = () => page(engine, 'crm/123', 'crm', 'CRM record: Quormiro Capital', 'Account code: QUCO. Ticker: QCO.');
+const account = () => page(engine, 'crm/123', 'crm', 'CRM record: Quormiro Capital', 'Account code: QUCO. It goes by QCO.');
 
 describe('extract mentions --explain reason codes', () => {
   test('a linking name reports its entry and origin', async () => {
@@ -45,6 +45,14 @@ describe('extract mentions --explain reason codes', () => {
     await account();
     await sweep(engine);
     expect((await explainMention(engine, 'QCO')).reason).toBe('below_min_length');
+  });
+
+  test('a 3-character code the page declares for itself with a label links (short codes)', async () => {
+    await page(engine, 'crm/123', 'crm', 'CRM record: Quormiro Capital', 'Ticker: QCO.');
+    await sweep(engine);
+    const r = await explainMention(engine, 'QCO');
+    expect(r.reason).toBeNull();
+    expect(r.entries).toEqual([{ name: 'QCO', slug: 'crm/123', origin: 'declared', case_sensitive: true }]);
   });
 
   test('generic_token', async () => {
@@ -107,16 +115,16 @@ describe('extract mentions --explain reason codes', () => {
 
 describe('extract mentions --explain <slug>: names, rejections and the sibling decision', () => {
   test('lists each derived alias with its origin and line, each rejected candidate with its reason', async () => {
-    await page(engine, 'crm/123', 'crm', 'CRM record: Quormiro Capital', 'Account code: QUCO. Ticker: QCO.\nInternal nickname: Copper Fox\nShort name: Quormiro');
+    await page(engine, 'crm/123', 'crm', 'CRM record: Quormiro Capital', 'Account code: QUCO. It goes by QCO.\nInternal nickname: Copper Fox\nShort name: Quormiro');
     await sweep(engine);
     const r = await explainMention(engine, 'crm/123');
     expect(r.aliases).toEqual(expect.arrayContaining([
       { alias: 'Quormiro Capital', origin: 'subject' },
-      { alias: 'QUCO', origin: 'declared', line: 'Account code: QUCO. Ticker: QCO.' },
+      { alias: 'QUCO', origin: 'declared', line: 'Account code: QUCO. It goes by QCO.' },
       { alias: 'Copper Fox', origin: 'declared', line: 'Internal nickname: Copper Fox' },
     ]));
     expect(r.rejected).toEqual(expect.arrayContaining([
-      { alias: 'QCO', origin: 'declared', reason: 'below_min_length', line: 'Account code: QUCO. Ticker: QCO.' },
+      { alias: 'QCO', origin: 'declared', reason: 'below_min_length', line: 'Account code: QUCO. It goes by QCO.' },
       { alias: 'Quormiro', origin: 'declared', reason: 'ambiguous_first_word', line: 'Short name: Quormiro' },
     ]));
     expect(r.siblings).toEqual({ pages: [], capped: false, verdict: 'none' });

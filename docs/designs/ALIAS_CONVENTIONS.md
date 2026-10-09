@@ -42,9 +42,10 @@ A capture is rejected when:
   `vendor`, `supplier`, `customer`, `client`, `acquirer`, `investor`) appears
   between the start of the sentence and the cue (`our competitor, also known
   as Blue Harbor` declares nothing for this page);
-- the existing post-filters reject it (`aliasRejection`: under 4 characters,
-  a generic token, the first word of the page's own multi-word name) or it
-  equals the page's own name;
+- the existing post-filters reject it (`aliasRejection`: under 4 characters
+  unless it is a short code the page declares for itself, below; a generic
+  token; the first word of the page's own multi-word name) or it equals the
+  page's own name;
 - it equals another live page's exact title in the same source (the existing
   reader and gazetteer guard).
 
@@ -113,6 +114,34 @@ parentheses elsewhere in a page names many things. A parenthetical cue
 (`(aka Blue Harbor)`, `(formerly Gearbox Labs)`, `(d/b/a Northwind Ops)`) is a
 prose cue and needs no name.
 
+## Short codes the page declares for itself
+
+A name under 4 characters is kept only as a short code (`src/core/mentions/short-codes.ts`):
+
+- **Shape.** 2 or 3 letters or digits with at least one capital letter: `JOF`,
+  `J2`, `3M`, `JoF`. Lower-case words (`it`, `us`, `and`) never qualify.
+- **Stoplist.** Capitalized English words and everyday business abbreviations
+  never qualify, compared upper-cased (`IT`, `US`, `OK`, `AI`, `HR`, `CEO`,
+  `API`, `SSO`, `SOC`, `B2B` and the rest of `SHORT_CODE_STOPLIST`).
+- **Own-page declaration.** The page's own body declares it with an alias label
+  (`Account code: JOF`, a mid-line `Short name: JOF`, a table row) or with one
+  of these cues: `also called`, `a.k.a.` / `aka`, `known as` (with `also`,
+  `better`, `widely`), `short for`. Before the cue, its sentence names nothing
+  but the page: nothing at all (`Also called JOF in my notes`), a pronoun
+  (`It is also called JOF`) or one of the page's own names (`Joffrey Foods,
+  a.k.a. JOF`). `Widget Co, also called WCO` on another entity's page declares
+  nothing for that page; other cues (`goes by`, `formerly`, `nicknamed`) never
+  declare a short code.
+
+A short code is a single token, so it is stored `case_sensitive` and links only
+as written, as a whole token: "Call with JOF" links, "jof" does not.
+
+| Positive fixture | Negative fixture |
+|---|---|
+| `Also called JOF in my notes.` | `Also called IT internally.` (stoplist) |
+| `Joffrey Foods (a.k.a. JOF) renewed.` | `Widget Co, also called WCO, is a reseller.` (another entity's sentence) |
+| `Account code: J2` | `It goes by JOF.` (cue outside the short-code list) |
+
 ## Escape hatches
 
 - Brain config `mentions.alias_deny` (JSON array or comma list) and page
@@ -131,6 +160,15 @@ prose cue and needs no name.
   verbatim instead.
 
 ## Changelog
+
+- 2026-10-08: short codes (2-3 characters) the page declares for itself with an
+  alias label or an `also called` / `a.k.a.` / `known as` / `short for` cue, with
+  a stoplist of common capitals and acronyms. Origin: the Program Primary Hard
+  root cause (gbrain-evals#109), where a company page said "Also called JOF in
+  my notes" and mails naming "JOF" never linked to the company. The Cat 40 Hard
+  development world has no codes under 4 characters, so its derived aliases are
+  unchanged (5,690 on its account pages, all correct; 5,770 declared over all
+  55,440 documents, none under 4 characters, before and after).
 
 - 2026-10-08: added labels that open a later sentence of a line and the
   quoted-only "calls it" cue. Origin: the Cat 40 Hard development (calibration)

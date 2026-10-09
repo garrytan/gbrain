@@ -56,9 +56,9 @@ import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 
 /** Bump to rescan every page's mentions once (gazetteer or scanner behavior change). */
-export const MENTION_EXTRACTOR_VERSION = 4;
+export const MENTION_EXTRACTOR_VERSION = 5;
 /** Bump to re-derive every entity page's declared aliases and title subject once. */
-export const ALIAS_DERIVATION_VERSION = 3;
+export const ALIAS_DERIVATION_VERSION = 4;
 
 const RECONCILE_BATCH = 200;
 const ALIAS_BATCH = 200;

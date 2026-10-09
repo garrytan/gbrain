@@ -40,6 +40,7 @@ import { stripCodeBlocks, isCrossSourceLinksEnabled } from './link-extraction.ts
 import { isGenericEntityToken } from './entity-name-quality.ts';
 import { ALWAYS_LINKABLE_TYPES, linkableTypesFor, loadSourcePack, readMentionPolicy, type MentionPolicy, type PackTypes } from './mentions/policy.ts';
 import { siblingVerdict, type SiblingCandidate } from './mentions/siblings.ts';
+import { isShortCode } from './mentions/short-codes.ts';
 
 /**
  * The four types that are always linkable, whatever the schema pack says. The
@@ -628,13 +629,15 @@ export async function buildGazetteer(
     if (rank(a.origin) > claim.rank) continue;
     if (excludedSlugs.has(a.slug)) { drop({ ...base, reason: 'excluded_slug' }); continue; }
     if (claim.slugs.size > 1 && !claim.shared) { drop({ ...base, reason: 'alias_collision' }); continue; }
-    if (alias.length < MIN_NAME_LENGTH && !hasCJK(alias)) { drop({ ...base, reason: 'below_min_length' }); continue; }
+    // A declared 2-3 character code passed the own-page cue gate at derivation; it links only as written.
+    const shortCode = a.origin === 'declared' && !!a.case_sensitive && !!a.alias_text && isShortCode(a.alias_text);
+    if (alias.length < MIN_NAME_LENGTH && !hasCJK(alias) && !shortCode) { drop({ ...base, reason: 'below_min_length' }); continue; }
     if (hasCJK(alias) && cjkCharCount(alias) < MIN_CJK_NAME_LENGTH) { drop({ ...base, reason: 'below_min_length' }); continue; }
     if (ignoreLc.has(alias.toLowerCase())) { drop({ ...base, reason: 'ignored' }); continue; }
     if (titleBySource.has(`${src} ${alias.toLowerCase()}`)) { drop({ ...base, reason: 'title_wins' }); continue; }
     const tokens = tokenizeTitle(alias);
     if (tokens.length === 0) continue;
-    if (tokens[0]!.length < MIN_NAME_LENGTH && tokens.length === 1) { drop({ ...base, reason: 'below_min_length' }); continue; }
+    if (tokens[0]!.length < MIN_NAME_LENGTH && tokens.length === 1 && !shortCode) { drop({ ...base, reason: 'below_min_length' }); continue; }
     if (userIgnore.has(tokens.join(' '))) { drop({ ...base, reason: 'ignored' }); continue; }
     if (tokens.length === 1 && isGenericEntityToken(tokens[0]!)) { drop({ ...base, reason: 'generic_token' }); continue; }
     const caseTokens = a.case_sensitive && a.alias_text ? caseTokensOf(a.alias_text) : undefined;
