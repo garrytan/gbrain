@@ -1407,7 +1407,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         if (held?.request_id !== pending.requestId || held.same !== true) throw new CursorMoved();
         assertActive();
         return accepted;
-      })).catch(error => cursorMovedAdmission(engine, key, admitting, pending, error));
+      }), undefined, error => engine.reconnect({ error })).catch(error => cursorMovedAdmission(engine, key, admitting, pending, error));
       if (!row) { cursor = await currentCursor(engine, key, cursor); continue; }
       await validateSyncAuthority(engine, cursor.authority, pending.slug);
       assertSyncDispatchActive();

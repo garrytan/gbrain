@@ -235,7 +235,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
         : { id, expired: true, path: 'legacy_db', reason: reason ?? 'forgotten' };
       return completeWrite(tx, row, 'committed', { ...outcome, persistence: { mode: 'database' } });
     }, requestAttribution(row));
-  }));
+  }), undefined, error => ctx.engine.reconnect({ error }));
   // The commit removed the withdrawn pages' chunks. Rebuild them before
   // acknowledging: a CLI process exits without a resident projection worker.
   // A failed rebuild stays queued as durable projection work.

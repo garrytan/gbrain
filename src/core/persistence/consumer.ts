@@ -29,6 +29,7 @@ import { faultPoint } from './fault-points.ts';
 import { releaseAbandonedClaims } from './effect-journal.ts';
 import { readWriteSwitchSnapshot, writeSwitchOn } from './switches.ts';
 import { consumerConnectionRoute, consumerStatementEngine, poolerExposureLine } from './consumer-lane.ts';
+import { isConnectionLoss } from '../retry-matcher.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
@@ -370,15 +371,23 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     const conn = await this.acquireIdleLane(undefined, true) as (ReservedConnection & Partial<ReservedTransactions>) | undefined;
     if (!conn?.transaction || this.laneInUse || this.probeOnLane || this.idleLane?.conn !== conn) return LANE_BUSY;
     this.laneInUse = true;
+    // #6355: a lent transaction that lost its session says the lane's backend is gone (a pooler or failover closed it);
+    // the lane is given up whatever `run` makes of the error (admission re-runs on the pool and may still succeed).
+    let lost = false;
+    const lend = async <R>(fn: (tx: BrainEngine) => Promise<R>): Promise<R> => {
+      try { return await conn.transaction!(fn); }
+      catch (error) { if (isConnectionLoss(error)) lost = true; throw error; }
+    };
     try {
-      return await run(fn => conn.transaction!(fn));
+      return await run(lend);
     } catch (error) {
       const code = (error as { code?: unknown } | null)?.code;
-      if (!(error instanceof OperationError) && !(typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) && this.idleLane?.conn === conn) {
-        this.laneInUse = false; await this.releaseIdleLane(); this.idleLaneRetryAt = Date.now() + 60_000;
-      }
+      if (!lost && !(error instanceof OperationError) && !(typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code))) lost = true;
       throw error;
-    } finally { this.laneInUse = false; }
+    } finally {
+      this.laneInUse = false;
+      if (lost && this.idleLane?.conn === conn) { await this.releaseIdleLane(); this.idleLaneRetryAt = Date.now() + 60_000; }
+    }
   }
   private async probeQuery<T>(lane: ReservedConnection | undefined, sql: string, params: unknown[], signal?: AbortSignal): Promise<T[]> {
     if (!lane) return this.statements.executeRaw<T>(sql, params, { signal });

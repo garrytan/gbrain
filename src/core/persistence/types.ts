@@ -21,6 +21,7 @@ export const WRITE_ERROR_CODES = [
   'timeline_rows_would_be_removed', 'preparation_stalled',
   'timeline_rows_would_be_removed',
   'fence_unrenderable',
+  'write_outcome_unknown',
 ] as const;
 
 export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];

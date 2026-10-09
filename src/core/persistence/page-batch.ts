@@ -191,7 +191,7 @@ async function admitBatch(ctx: OperationContext, batchId: string, admissions: Wr
       indexes.forEach((index, position) => { rows[index] = admitted[position]!; });
     }
     return rows;
-  }), BATCH_ADMISSION_BUDGET_MS);
+  }), BATCH_ADMISSION_BUDGET_MS, error => ctx.engine.reconnect({ error }));
 }
 
 async function prepareAll(caller: OperationContext, batchId: string, sourceId: string, pages: BatchPage[], repeats: Repeats) {

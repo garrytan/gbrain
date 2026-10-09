@@ -10,6 +10,42 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.123.0] - 2026-10-09
+
+**A write whose database session drops during admission no longer hands the caller a false refusal: the admission is re-run against the retained request id, and a session that keeps dropping returns the typed `write_outcome_unknown`. Two reconnect defects in the vendored Postgres driver that the same fault reached are fixed with it.**
+
+The crash robot (`pooler_disconnect`, seed 5105, master run 37872222822) caught an `edit_page` caller receiving the raw `write CONNECTION_CLOSED` from a dropped session while its admitted request went on to commit: the receipt the caller held said refused, the page held the write (`untrue_receipt`, `lost_write`). `retryWriteAdmission` was right not to retry an admission on a lost socket, since a second INSERT could double-apply, but the safe step was missing: every admission attempt begins by reading the retained `request_id` and replays an admitted row, so re-running the attempt is a read, never a second admission. Pre-existing (the same shape replays on the commit before #6347); found by the robot's seed, fixed here.
+
+### How to use it
+
+Nothing to configure. A single drop resolves by itself (re-runs after 100, 300 and 900 ms). When the session keeps dropping the caller sees:
+
+```bash
+gbrain errors write_outcome_unknown      # the new code, offline
+gbrain write-request -- <request_id>     # the fix it names: a committed or pending row means accepted (replay the same id); no row means not (submit again with the same id)
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| A write whose session drops under admission | Re-run after 100, 300 and 900 ms; the re-run replays the admitted row when the lost acknowledgment had committed, admits when it had not. |
+| A session that keeps dropping | `write_outcome_unknown` (`reason: connection_lost`, `detail` the socket error without URLs, `fix` the read of the request by id, `write_error` on the receipt) instead of the raw `CONNECTION_CLOSED` / `57P01`. |
+| A write admitted on this process's warm lane (the consumer's reserved backend) whose session dropped | The re-run takes a transaction from the engine's pool instead of the dead reservation, and the consumer gives the lane up at once (retaken after a minute) whatever the admission makes of the loss. Before, every re-run and the next write hit "Connection is no longer owned" on the same reservation. |
+| A backend terminated while the driver is still starting its connection (during the driver's own array-types fetch) | The fresh connection serves the caller's first statement. Before, the driver reconnected but kept the dead startup's internal query and its FATAL `57P01`: the caller's first statement on the live connection failed with that stale `57P01` (the robot's `put_page refused/57P01`), and the orphaned internal query rejected with nobody awaiting it, which Bun treats as fatal (the robot worker's exit 1). |
+| A connection closed while a statement's bytes still wait for its write immediate | The next connection on that pool slot starts normally. Before, the cleared immediate left its handle and bytes behind, the reconnect's StartupMessage was appended and never scheduled, and the slot sat open until `CONNECT_TIMEOUT` (10 s) on every statement bound to it, for as long as it kept being chosen (the robot's effects worker, for minutes, leaving a running effect unreclaimed). |
+| A managed sync's stall line in the unit lane (`test/sync-drain-claims.test.ts`) | Attributed to the head read that produced it instead of counted by position, so a read in flight across a park no longer reads as the park's first line (the master flake on #6271). |
+| Confirmed aborts (`40001`, `40P01`, `55P03`, `57014`) | Unchanged. |
+
+### Itemized changes
+
+- `src/core/retry-matcher.ts`: `isConnectionLoss` (connection-class SQLSTATEs, postgres.js connection codes, `57P01`/`57P02`/`57P03`, socket errnos; not auth or timeouts). `src/core/persistence/admission-retry.ts`: `CONNECTION_LOSS_RETRY_MS`, `writeOutcomeUnknown`, the re-run branch. `types.ts`: `write_outcome_unknown` in `WRITE_ERROR_CODES`. Registry, `write-refusals.md`, `error-codes.md`, KEY_FILES, one `BEHAVIOR_CHANGES` row.
+- `vendor/postgres` (`src`, `cjs/src`, `cf/src` `connection.js`; `patches/postgres@3.4.9.patch` regenerated, `bash vendor/update-postgres.sh --check` clean): `closed()` settles a startup's internal query and clears its saved error before reconnecting for `initial`, clears the pending write buffer and its immediate handle, and drops the errored `query`; `fetchArrayTypes` swallows its own failure (`errored()` has already told the caller's query; `connected()` re-arms the fetch). `scripts/persistence/ops.ts`: the harness read retry also covers `CONNECTION_DESTROYED` and `CONNECT_TIMEOUT` (a backend killed mid-handshake surfaces as a connect timeout), still only after a drop the robot injected.
+- `src/core/persistence/journal.ts` `admitWrite`: after a connection loss the re-run runs on `engine.transaction` (the pool), never again on a lent transaction, once `engine.reconnect` rebuilt the pool. `src/core/persistence/consumer.ts` `onLane`: a lent transaction that reports a connection loss (`isConnectionLoss`) releases the lane and sets the one-minute retake delay in `finally`, independent of how `run` ends.
+- Tests: `test/persistence-admission-connection-loss.test.ts` (classifier; re-run / typed outcome / budget / other errors untouched; forced probes: `admitWrite` with a lost COMMIT acknowledgment returns the admitted row and exactly one request exists, and a dead lent transaction is used once with the pool finishing the write; on the previous code the raw `write CONNECTION_CLOSED` escapes). `test/persistence-consumer-lane-loss.test.ts` (forced probe: the lane is given up after a lost lent transaction whether the run ends typed or succeeds; kept on success; fails on the previous `onLane`). `test/sync-drain-claims.test.ts`: stall lines are attributed to their head read's start (`parkedStallLines`), with a forced probe replaying the by-position misattribution. `test/postgres-driver-startup-death.test.ts` (scripted wire-protocol server, no database: a connection killed with FATAL 57P01 at its first statement, and a close delivered while a statement's bytes wait for the write immediate; both fail on the previous driver with 57P01 / CONNECT_TIMEOUT). The seed-5105 crash-robot manifest replays clean (20 of 20 sequential after the driver fixes; before them 1 run in about 7 wedged or crashed).
+
+Fixes #6355. Follows #6347.
+
 ## [0.60.122.0] - 2026-10-09
 
 **An eval-only evidence brief for the LongMemEval harness: a cheap model's claims, each with a verbatim quote, a pointer and a date, checked against the sessions before a reader sees them.**
