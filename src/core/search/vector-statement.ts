@@ -33,7 +33,10 @@
  * when its window is full, and otherwise run the joined statement as before,
  * whose plans stay with the planner for selective filters. A type or date
  * filter skips the walk: it is an explicit narrowing that usually leaves the
- * window short, so the walk would only add its cost.
+ * window short, so the walk would only add its cost. So does a source scope
+ * whose share of pages (`pages.source_id` planner statistics, `scopeShare`)
+ * is below INDEX_WALK_MIN_SCOPE_SHARE: the nearest chunks overall rarely
+ * fill its window.
  */
 import type { SearchOpts } from '../types.ts';
 import { hnswIndexExpected } from '../vector-index.ts';
@@ -51,6 +54,8 @@ export interface VectorSearchStatementInput {
   limit: number;
   offset: number;
   opts?: SearchOpts;
+  /** Estimated share of pages the source scope holds (`vectorScopeShareLoader`); below INDEX_WALK_MIN_SCOPE_SHARE the walk is omitted. */
+  scopeShare?: number;
 }
 
 export interface VectorSearchStatement {
@@ -78,6 +83,48 @@ export const INDEX_WALK_OVERFETCH = 2;
  * HNSW scan is the only path that delivers `ann` in distance order.
  */
 export const INDEX_WALK_SETTINGS: Readonly<Record<string, string>> = { enable_sort: 'off' };
+
+/** Source scopes holding a smaller share of pages skip the index walk. */
+export const INDEX_WALK_MIN_SCOPE_SHARE = 0.1;
+
+/** Planner statistics for `pages.source_id`; PGLite analyzes `pages` itself (planner-stats.ts), Postgres through autovacuum. */
+export const PAGE_SOURCE_STATS_SQL = `SELECT most_common_vals::text::text[] AS sources, most_common_freqs AS freqs, n_distinct, null_frac,
+    (SELECT reltuples FROM pg_class WHERE oid = 'pages'::regclass) AS reltuples
+  FROM pg_stats WHERE schemaname = current_schema() AND tablename = 'pages' AND attname = 'source_id'`;
+
+export interface PageSourceStats {
+  sources: string[] | null;
+  freqs: number[] | null;
+  n_distinct: number;
+  null_frac: number;
+  reltuples: number;
+}
+
+/** Share of pages the source scope holds, or undefined without a scope or statistics. */
+export function sourceScopeShare(stats: PageSourceStats | undefined, opts?: SearchOpts): number | undefined {
+  const scope = opts?.sourceIds?.length ? opts.sourceIds : opts?.sourceId ? [opts.sourceId] : undefined;
+  if (!scope || !stats) return undefined;
+  const sources = stats.sources ?? [];
+  const freqs = (stats.freqs ?? []).map(Number);
+  const distinct = Number(stats.n_distinct) < 0 ? -Number(stats.n_distinct) * Number(stats.reltuples) : Number(stats.n_distinct);
+  const unlisted = Math.max(0, 1 - Number(stats.null_frac) - freqs.reduce((sum, freq) => sum + freq, 0)) / Math.max(1, distinct - sources.length);
+  return [...new Set(scope)].reduce((sum, id) => sum + (sources.includes(id) ? freqs[sources.indexOf(id)]! : unlisted), 0);
+}
+
+/**
+ * The engines' scope-share lookup: PAGE_SOURCE_STATS_SQL through `load`, at
+ * most once a minute and only for source-scoped searches. A share only
+ * decides whether the walk runs, never which rows return, so stale or
+ * missing statistics cost speed at most.
+ */
+export function vectorScopeShareLoader(load: () => Promise<PageSourceStats[]>): (opts?: SearchOpts) => Promise<number | undefined> {
+  let cached: { at: number; stats: Promise<PageSourceStats | undefined> } | undefined;
+  return async opts => {
+    if (!opts?.sourceIds?.length && !opts?.sourceId) return undefined;
+    if (!cached || performance.now() - cached.at > 60_000) cached = { at: performance.now(), stats: load().then(rows => rows[0], () => undefined) };
+    return sourceScopeShare(await cached.stats, opts);
+  };
+}
 
 export function buildVectorSearchStatement(input: VectorSearchStatementInput): VectorSearchStatement {
   const { dialect, limit, offset, opts } = input;
@@ -122,9 +169,11 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
   let modelParam: string | undefined;
   if (resolvedCol.name === 'embedding') modelParam = bind(resolvedCol.embeddingModel || null);
   const relaxed = indexed && modelParam !== undefined && opts?.vectorLegacyGuard !== true;
-  // A type or date filter is the caller narrowing the search; the walk would
-  // usually come back short, so those keep the joined statement alone.
-  const narrowed = !!(opts?.type || opts?.types?.length || opts?.afterDate || opts?.beforeDate);
+  // A type or date filter, or a source scope with a small share of pages, is
+  // the caller narrowing the search; the walk would usually come back short,
+  // so those keep the joined statement alone.
+  const narrowed = !!(opts?.type || opts?.types?.length || opts?.afterDate || opts?.beforeDate)
+    || (input.scopeShare !== undefined && input.scopeShare < INDEX_WALK_MIN_SCOPE_SHARE);
   const preMigration = modelParam ? `(${modelParam}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state'))` : '';
   const hashCurrent = `(cc.embedded_text_hash=md5(cc.chunk_text) OR cc.embedded_text_hash IS NULL)`;
   const guardedGeneration = modelParam ? `AND ((cc.model=${modelParam} AND ${hashCurrent})

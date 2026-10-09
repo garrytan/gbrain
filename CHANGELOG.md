@@ -10,6 +10,63 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.129.0] - 2026-10-09
+
+**Postgres reads stop writing: retrieval tracking moves off `pages`, and the two persistence reads `gbrain serve` repeats in the background stop scanning every write receipt ever stored.**
+
+Every `search`, `query` and `get_page` recorded which pages it surfaced by updating `pages.last_retrieved_at`. Because that column was indexed, each update wrote a new copy of the whole page row plus an entry in every one of its 22 indexes, and fired seven triggers. One of those triggers advanced the page generation clock even when the five-minute throttle matched no row, so every read also threw away the query cache, the `get_health` memo and the search-readiness memo. In a mixed read/write serve workload on a 50,000-page brain, that update wrote 96% of all write-ahead log. The timestamp now lives in a small `page_retrievals` table, and every reader takes the newer of it and the old column, so the stale-page bias, volunteer usage stats and entity cards see the same values.
+
+`gbrain serve` checks every minute whether each managed source's sync is moving. That check read the newest committed sync receipt through an index holding every committed receipt, so on a source whose receipts are imports it walked and decompressed all of them. Write receipts are kept forever on purpose (after 30 days compaction drops their payload, not the row), so the check slowed down with every write. The idle receipt compaction pass had the same problem as a sequential scan. Both now read small partial indexes.
+
+A vector search scoped to a small source now skips the index walk that v0.60.127.0 added, because that walk came back short and fell back anyway.
+
+### What you'd see
+
+Warm, Postgres 16 + pgvector 0.8.7 on a 4 vCPU box, synthetic brains of 5,001 pages / 25,331 chunks and 50,010 pages / 248,802 chunks, p50 ms:
+
+| | 5k before | 5k after | 50k before | 50k after |
+|---|---|---|---|---|
+| Sync movement check, per source (25 runs) | 97 | 0.5 | 971 | 0.5 |
+| Receipt compaction scan (25 runs) | 2.6 | 0.7 | 30 | 0.3 |
+| Retrieval bump, 20 new pages (300 runs) | 5.8 | 0.8 | 15.4 | 0.7 |
+| WAL from those 300 bumps | 65 MB | 0.8 MB | 159 MB | 1.2 MB |
+| Vector search, remote reader, 0.1% source | 24–31 | 10–17 | 33–41 | 10–19 |
+| Vector search, remote reader, 1.7% source | 42–49 | 19–29 | 87–88 | 67–76 |
+
+Over 150 s of a mixed serve workload (`get_page`, `search`, `query`, `list_pages`, `put_page`), database time went from 22.8 to 21.7 s at 5k and from 42.1 to 36.1 s at 50k, and write-ahead log from 11 to 6.4 MB and from 153 to 15 MB. Tool latencies stayed the same, since the bump never blocked a response.
+
+### What to watch for
+
+- Retrieval tracking still writes at most once per page per five minutes. An older gbrain binary on the same database keeps updating `pages.last_retrieved_at`, and readers still see those values.
+- Two things were measured and left out. Storing chunk vectors inline (`SET STORAGE MAIN`) made keyword search 45% slower and chunk scans 12x slower at 50k, and moving existing rows would rewrite every chunk. Sizing the vector walk's `ef_search` to the window either lost recall or made remote readers fall back more often.
+
+## To take advantage of v0.60.129.0
+
+`gbrain upgrade` applies migrations v223 and v224. On Postgres, v223 builds two partial indexes on `persistence_requests` without blocking writers (2.3 s for 50,000 receipts) and drops v222's watermark index. v224 creates `page_retrievals`, copies existing timestamps (0.2 s for 50,000 pages) and drops the unused `pages_last_retrieved_at_idx`.
+
+### Itemized changes
+
+- **Retrieval tracking (`src/core/last-retrieved.ts`).** `bumpLastRetrievedAt` upserts `page_retrievals(page_id, last_retrieved_at)`. The SELECT skips rows still inside the five-minute window, so a repeat bump locks nothing; the ON CONFLICT test stops a concurrent bump from moving a row twice. Ids of pages that don't exist are skipped, as before. The table has no foreign key, because its lock would dirty the page row on every bump. A `pages_forget_retrievals` statement trigger deletes rows for hard-deleted pages instead. The domain-bank samplers, `volunteerUsageStats` and the entity card read `GREATEST(pages.last_retrieved_at, page_retrievals.last_retrieved_at)`.
+- **Movement watermark.** `persistence_requests_sync_watermark` on `(worktree_id, source_incarnation, completed_at DESC) WHERE state='committed' AND COALESCE(intent->>'kind','') LIKE 'managed_sync_%'` replaces `persistence_requests_committed_watermark`. The read (`MOVEMENT_WATERMARK_SQL`) repeats the predicate text, so the planner proves the index applies. Compaction drops a receipt's intent and so removes it from the index, the same rows the read already skipped.
+- **Compaction candidates.** `persistence_requests_compactable` on `(completed_at) WHERE recovery IS NULL AND NOT compacted AND state IN (terminal states)`.
+- **Small-source vector scope.** Both engines read `pages.source_id` planner statistics, at most once a minute and only for source-scoped searches. Below a 10% share of pages, `buildVectorSearchStatement` leaves out the index walk, like a type filter does. The joined, exact and has-more statements are unchanged, and missing statistics keep the walk.
+
+### For contributors
+
+- `test/page-retrievals.test.ts` runs the legacy UPDATE and the upsert on the same pages and ages. It checks they bump the same pages and leave the same effective timestamps, that a bump never advances the generation clock (the legacy UPDATE did, even matching nothing), that hard deletes clean up, and that every reader takes the newer value.
+- `test/sync-movement.test.ts` checks the watermark read returns the same row with and without index scans, across non-sync receipts, another incarnation, queued requests and compaction. `test/serve-loop-migrations.test.ts` and its Postgres twin `test/e2e/serve-loop-migrations-postgres.test.ts` cover fresh installs and upgrades: every timestamp is copied, the column keeps its values, and a re-run changes nothing. `test/e2e/persistence-consumers-postgres.test.ts` checks the watermark plan uses the new index.
+- `test/search/vector-statement.test.ts` checks that a below-threshold scope leaves every other statement byte-identical. It also covers the share math (most-common values, unlisted sources, negative `n_distinct`) and the loader cache. `test/search/vector-index-walk.test.ts` uses real PGLite statistics: a tiny source skips the walk and returns the joined statement's rows, and a large one still walks. With the threshold forced to 0, the three skip tests fail.
+
+## [0.60.128.0] - 2026-10-09
+
+**The nightly Heavy Tests run is green again.**
+
+v0.60.113.0 made `full` the one MCP registration surface for every plugin manifest, but the real-binary codex plugin install test, which only runs in the nightly Heavy Tests workflow, still expected `starter` in the installed manifest's arguments and in its tools/list oracle. Both now read `REGISTRATION_SURFACE`, so the test follows the manifest instead of a copy of it. This is a test-only change; gbrain itself behaves the same.
+
+## To take advantage of v0.60.128.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
 ## [0.60.127.0] - 2026-10-09
 
 **Postgres search, list, page and backlink reads stop taking the slow plan: vector search walks the vector index first, remote reads stop compiling every statement before running it, and `get_page` looks up the exact page before trying aliases.**

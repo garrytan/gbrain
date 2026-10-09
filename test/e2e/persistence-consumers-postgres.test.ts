@@ -33,6 +33,7 @@ import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { admitWrite } from '../../src/core/persistence/journal.ts';
 import { claimPhaseStamp, startClaimPhase } from '../../src/core/persistence/claim-phase.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
+import { MOVEMENT_WATERMARK_SQL } from '../../src/core/persistence/sync-movement.ts';
 import { consumersWithoutHeartbeatCheck, hostIdentityMismatchCheck, twoConsumersOnHostCheck } from '../../src/commands/doctor/checks/persistence-consumers.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { hasDatabase } from './helpers.ts';
@@ -277,7 +278,7 @@ describe('persistence_consumers on PGLite (#6317)', () => {
     await pglite.initSchema();
     try {
       const [table] = await pglite.executeRaw<{ present: boolean }>("SELECT to_regclass('persistence_consumers') IS NOT NULL AS present");
-      const [index] = await pglite.executeRaw<{ present: boolean }>("SELECT to_regclass('persistence_requests_committed_watermark') IS NOT NULL AS present");
+      const [index] = await pglite.executeRaw<{ present: boolean }>("SELECT to_regclass('persistence_requests_sync_watermark') IS NOT NULL AND to_regclass('persistence_requests_committed_watermark') IS NULL AS present");
       expect(table?.present).toBe(true);
       expect(index?.present).toBe(true);
       const heartbeat = startConsumerHeartbeat(pglite, randomUUID(), { kind: 'serve', mode: 'full', report: () => ({ restart_required: false, root_barrier_age_ms: null }) });
@@ -287,10 +288,15 @@ describe('persistence_consumers on PGLite (#6317)', () => {
       expect(await listHostConsumers(pglite, randomUUID())).toEqual([]);
       await heartbeat.stop();
       if (hasDatabase()) {
-        const [pg] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('persistence_requests_committed_watermark') IS NOT NULL AS present");
+        const [pg] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('persistence_requests_sync_watermark') IS NOT NULL AND to_regclass('persistence_requests_committed_watermark') IS NULL AS present");
         expect(pg?.present).toBe(true);
-        const [def] = await engine.executeRaw<{ def: string }>("SELECT indexdef AS def FROM pg_indexes WHERE indexname='persistence_requests_committed_watermark'");
-        expect(def?.def).toContain("(worktree_id, completed_at DESC) WHERE (state = 'committed'::text)");
+        const [def] = await engine.executeRaw<{ def: string }>("SELECT indexdef AS def FROM pg_indexes WHERE indexname='persistence_requests_sync_watermark'");
+        expect(def?.def).toContain("(worktree_id, source_incarnation, completed_at DESC) WHERE ((state = 'committed'::text) AND (COALESCE((intent ->> 'kind'::text), ''::text) ~~ 'managed_sync_%'::text))");
+        const plan = await engine.transaction(async tx => {
+          await tx.executeRaw('SET LOCAL enable_seqscan = off');
+          return tx.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN ${MOVEMENT_WATERMARK_SQL.replaceAll('$1::uuid', `'${randomUUID()}'::uuid`).replaceAll('$2::uuid', `'${randomUUID()}'::uuid`)}`);
+        });
+        expect(plan.map(row => row['QUERY PLAN']).join('\n')).toContain('persistence_requests_sync_watermark');
       }
     } finally { await pglite.disconnect(); }
   }, 120_000);

@@ -7,7 +7,7 @@
  * timeline `stale` column.
  */
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { buildVectorSearchStatement, type VectorSearchStatementInput } from '../../src/core/search/vector-statement.ts';
+import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, sourceScopeShare, vectorScopeShareLoader, type PageSourceStats, type VectorSearchStatementInput } from '../../src/core/search/vector-statement.ts';
 import { _resetVectorLegacyGuardForTests, readVectorLegacyGuard, resolveVectorLegacyGuard } from '../../src/core/search/vector-legacy-guard.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
@@ -15,8 +15,8 @@ const MD5 = 'md5(cc.chunk_text)';
 const indexedColumn = { name: 'embedding', type: 'vector' as const, dimensions: 1536, embeddingModel: 'openai:text-embedding-3-large' };
 const wideColumn = { name: 'embedding', type: 'vector' as const, dimensions: 3072, embeddingModel: 'openai:text-embedding-3-large' };
 
-function build(overrides: Partial<VectorSearchStatementInput['opts']> = {}, dialect: 'postgres' | 'pglite' = 'postgres') {
-  return buildVectorSearchStatement({ dialect, embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, ...overrides } });
+function build(overrides: Partial<VectorSearchStatementInput['opts']> = {}, dialect: 'postgres' | 'pglite' = 'postgres', scopeShare?: number) {
+  return buildVectorSearchStatement({ dialect, embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, ...overrides }, scopeShare });
 }
 
 /** The WHERE of the `hnsw_candidates` CTE, between its FROM and its ORDER BY. */
@@ -136,6 +136,65 @@ describe('vector index walk statement', () => {
     expect(placeholders(pg.indexWalkSql!)).toEqual(placeholders(pg.sql));
     expect(lite.indexWalkSql!.replace(' p.updated_at,', '').replace(/CASE WHEN bpp\.updated_at < \([\s\S]*?\) THEN true ELSE false END AS stale/, 'false AS stale'))
       .toBe(pg.indexWalkSql!);
+  });
+});
+
+describe('index walk skip for small source scopes', () => {
+  const stats: PageSourceStats = { sources: ['notes', 'sessions', 'small'], freqs: [0.7, 0.25, 0.01], n_distinct: 5, null_frac: 0, reltuples: 1000 };
+
+  test('a scope share below the threshold omits the walk and leaves every other statement byte-identical', () => {
+    for (const dialect of ['postgres', 'pglite'] as const) {
+      const unscoped = build({ sourceId: 'small', excludePrivate: true }, dialect);
+      const sparse = build({ sourceId: 'small', excludePrivate: true }, dialect, INDEX_WALK_MIN_SCOPE_SHARE / 2);
+      const wide = build({ sourceId: 'small', excludePrivate: true }, dialect, INDEX_WALK_MIN_SCOPE_SHARE);
+      expect(sparse.indexWalkSql).toBeUndefined();
+      expect(wide.indexWalkSql).toBe(unscoped.indexWalkSql!);
+      for (const stmt of [sparse, wide]) {
+        expect([stmt.sql, stmt.exactSql, stmt.hasMoreSql, stmt.params, stmt.innerLimit, stmt.innerLimitIdx])
+          .toEqual([unscoped.sql, unscoped.exactSql, unscoped.hasMoreSql, unscoped.params, unscoped.innerLimit, unscoped.innerLimitIdx]);
+      }
+    }
+  });
+
+  test('scope share sums the planner frequencies of the scoped sources', () => {
+    expect(sourceScopeShare(stats, { sourceId: 'sessions' })).toBe(0.25);
+    expect(sourceScopeShare(stats, { sourceIds: ['notes', 'sessions', 'notes'] })).toBeCloseTo(0.95);
+    expect(sourceScopeShare(stats, { sourceIds: ['small'], sourceId: 'notes' })).toBe(0.01);
+    // Unlisted sources split what the MCV list leaves: (1 - 0.96) / (5 - 3).
+    expect(sourceScopeShare(stats, { sourceId: 'missing' })).toBeCloseTo(0.02);
+    // A negative n_distinct is a fraction of the row estimate.
+    expect(sourceScopeShare({ ...stats, n_distinct: -0.005 }, { sourceId: 'missing' })).toBeCloseTo(0.04 / 2);
+    expect(sourceScopeShare({ sources: null, freqs: null, n_distinct: 4, null_frac: 0, reltuples: 100 }, { sourceId: 'x' })).toBe(0.25);
+  });
+
+  test('no scope or no statistics leaves the walk on', () => {
+    expect(sourceScopeShare(stats, {})).toBeUndefined();
+    expect(sourceScopeShare(stats, { sourceIds: [] })).toBeUndefined();
+    expect(sourceScopeShare(undefined, { sourceId: 'small' })).toBeUndefined();
+    expect(build({ sourceId: 'small' }, 'postgres', undefined).indexWalkSql).toBeDefined();
+  });
+
+  test('the loader reads statistics only for scoped searches, once a minute, and treats a failed read as unknown', async () => {
+    let reads = 0;
+    const share = vectorScopeShareLoader(async () => { reads++; return [stats]; });
+    expect(await share({})).toBeUndefined();
+    expect(await share(undefined)).toBeUndefined();
+    expect(reads).toBe(0);
+    expect(await share({ sourceId: 'small' })).toBe(0.01);
+    expect(await share({ sourceIds: ['notes'] })).toBe(0.7);
+    expect(reads).toBe(1);
+    const now = performance.now();
+    const clock = spyOn(performance, 'now').mockReturnValue(now + 61_000);
+    try {
+      expect(await share({ sourceId: 'small' })).toBe(0.01);
+      expect(reads).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+    const failing = vectorScopeShareLoader(async () => { throw new Error('permission denied for pg_stats'); });
+    expect(await failing({ sourceId: 'small' })).toBeUndefined();
+    const empty = vectorScopeShareLoader(async () => []);
+    expect(await empty({ sourceId: 'small' })).toBeUndefined();
   });
 });
 

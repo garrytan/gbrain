@@ -23,10 +23,37 @@ export const PERSISTENCE_SYNC_RUN_INDEXES = [
  * that `writer movement`, `data_moving` and doctor `managed_sync_not_moving`
  * read; the baseline indexes cover pending, recovery and principal reads
  * only. Postgres builds it CONCURRENTLY in migration v222; PGLite inline.
+ * Superseded by the sync watermark below: v223 drops it, and fresh installs
+ * build only the new one.
  */
 export const PERSISTENCE_COMMITTED_WATERMARK_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_committed_watermark
   ON persistence_requests(worktree_id,completed_at DESC) WHERE state='committed'`;
 export const PERSISTENCE_COMMITTED_WATERMARK_INDEX = { name: 'persistence_requests_committed_watermark', table: 'persistence_requests', sql: PERSISTENCE_COMMITTED_WATERMARK_INDEX_SQL } as const;
+/**
+ * The movement watermark read (sync-movement.ts): the newest committed managed
+ * sync receipt of one worktree and incarnation. v222's index above holds every
+ * committed receipt, so on a brain whose newest receipts are imports or
+ * maintenance writes the read walked all of them and detoasted each intent to
+ * test its kind (about 1 s at 50k receipts). Receipts are permanent (compaction
+ * after `persistence.receipt_retention_days` only drops the intent), so that
+ * walk grew with every write. This index holds only the receipts the read can
+ * return, and compaction removes a receipt from it. Postgres builds it
+ * CONCURRENTLY in migration v223, which drops v222's index; PGLite inline.
+ */
+export const PERSISTENCE_SYNC_WATERMARK_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_sync_watermark
+  ON persistence_requests(worktree_id,source_incarnation,completed_at DESC) WHERE state='committed' AND COALESCE(intent->>'kind','') LIKE 'managed_sync_%'`;
+export const PERSISTENCE_SYNC_WATERMARK_INDEX = { name: 'persistence_requests_sync_watermark', table: 'persistence_requests', sql: PERSISTENCE_SYNC_WATERMARK_INDEX_SQL } as const;
+/**
+ * Receipt compaction's candidate scan (journal.ts `compactWriteReceipts`, on
+ * every idle maintenance tick of a resident consumer): terminal receipts not
+ * yet compacted whose `completed_at` is past the retention window. Without it
+ * the scan read every receipt ever written (82 ms at 50k receipts, growing with
+ * each write) to find none. Compaction removes a receipt from the index.
+ * Postgres builds it CONCURRENTLY in migration v223; PGLite inline.
+ */
+export const PERSISTENCE_COMPACTABLE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_compactable
+  ON persistence_requests(completed_at) WHERE recovery IS NULL AND NOT compacted AND state IN ('committed','conflict','failed','cancelled')`;
+export const PERSISTENCE_COMPACTABLE_INDEX = { name: 'persistence_requests_compactable', table: 'persistence_requests', sql: PERSISTENCE_COMPACTABLE_INDEX_SQL } as const;
 /**
  * #6317: one row per process that runs a full persistence consumer on a host
  * (consumer-heartbeat.ts). The primary key carries the process nonce, so a
@@ -57,7 +84,7 @@ export const PERSISTENCE_CONSUMERS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS persi
   )`;
 /** Indexes the Postgres blob omits because a migration builds them CONCURRENTLY. */
 export const POSTGRES_CONCURRENT_PERSISTENCE_INDEXES: ReadonlySet<string> = new Set([
-  PERSISTENCE_DATABASE_PENDING_INDEX_SQL, PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL, PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL, PERSISTENCE_COMMITTED_WATERMARK_INDEX_SQL,
+  PERSISTENCE_DATABASE_PENDING_INDEX_SQL, PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL, PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL, PERSISTENCE_SYNC_WATERMARK_INDEX_SQL, PERSISTENCE_COMPACTABLE_INDEX_SQL,
 ]);
 /** Durable infrastructure: never reconstruct or discard these rows during page reindexing. */
 export const PERSISTENCE_SCHEMA_STATEMENTS = [
@@ -148,7 +175,8 @@ export const PERSISTENCE_SCHEMA_STATEMENTS = [
   PERSISTENCE_DATABASE_PENDING_INDEX_SQL,
   PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL,
   PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL,
-  PERSISTENCE_COMMITTED_WATERMARK_INDEX_SQL,
+  PERSISTENCE_SYNC_WATERMARK_INDEX_SQL,
+  PERSISTENCE_COMPACTABLE_INDEX_SQL,
   `CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC)`,
   `CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,

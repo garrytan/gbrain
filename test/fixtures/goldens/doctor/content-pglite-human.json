@@ -64,7 +64,7 @@
       "  [OK] pglite_scale: PGLite at 5 pages — comfortable below the 1000-page threshold",
       "  [OK] rls: Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
       "  [OK] schema_version: Version <latest> (latest: <latest>)",
-      "  [OK] schema_columns: 1045 column(s) verified against live schema",
+      "  [OK] schema_columns: 1047 column(s) verified against live schema",
       "  [OK] rls_event_trigger: Skipped (PGLite — no event trigger support)",
       "  [INFO] embeddings: Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
       "  [INFO] embedding_provider: Not probed: embeddings are disabled on this brain by choice (keyword search keeps working).",

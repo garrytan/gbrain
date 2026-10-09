@@ -281,13 +281,30 @@ CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 -- stays low. Don't add a regular \`(deleted_at)\` index without measuring.
 CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
   ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
--- v0.37.0: full B-tree index on last_retrieved_at supports LSD's stale-page
--- query \`WHERE last_retrieved_at IS NULL OR last_retrieved_at < NOW() -
--- INTERVAL '90 days'\`. Postgres handles NULL in B-tree indexes (sorted to
--- one end) so one index covers both branches. A partial WHERE NOT NULL
--- would miss the NULL branch that LSD prioritizes (codex round 2 #6).
-CREATE INDEX IF NOT EXISTS pages_last_retrieved_at_idx
-  ON pages (last_retrieved_at);
+-- Retrieval telemetry (src/core/last-retrieved.ts, migration v224): when a
+-- user-facing read last surfaced a page, written at most once per page per 5
+-- minutes. Kept off \`pages\` so the per-read upsert is a HOT update of a narrow
+-- row: an UPDATE of pages fires its triggers, rewrites a wide tuple with an
+-- entry in every pages index and advances page_generation_clock_seq, which
+-- expires the query-cache bookmark. Readers take GREATEST of this and the
+-- legacy pages.last_retrieved_at column (copied here by v224; v224 also drops
+-- its unused index). No foreign key: its KEY SHARE lock would dirty the pages
+-- row on every bump; the statement trigger below removes rows of hard-deleted
+-- pages instead.
+CREATE TABLE IF NOT EXISTS page_retrievals (
+  page_id           INTEGER PRIMARY KEY,
+  last_retrieved_at TIMESTAMPTZ NOT NULL
+);
+CREATE OR REPLACE FUNCTION gbrain_forget_page_retrievals() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$\$
+BEGIN
+  DELETE FROM page_retrievals r USING gbrain_deleted_pages d WHERE r.page_id = d.id;
+  RETURN NULL;
+END \$\$;
+DROP TRIGGER IF EXISTS pages_forget_retrievals ON pages;
+CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON pages
+  REFERENCING OLD TABLE AS gbrain_deleted_pages
+  FOR EACH STATEMENT EXECUTE FUNCTION gbrain_forget_page_retrievals();
 -- v0.42.7 (migration v112): composite B-tree backing \`extract --stale\` and the
 -- \`links_extraction_lag\` doctor check. source_id leads so source-scoped staleness
 -- scans (\`extract --stale --source X\`, \`gbrain doctor --source X\`) are indexed;

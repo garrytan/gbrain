@@ -6,14 +6,16 @@
  * Fixture (PGLite, 8-dim): three sources (one archived), five page types,
  * pages that the private-page rule hides (explicit `visibility: private`,
  * atoms, synthesized concepts, `derived_from` a private page), quarantined
- * and soft-deleted pages, stale chunk hashes, and three chunks per page. Both
+ * and soft-deleted pages, stale chunk hashes, and three chunks per page, plus
+ * a `tiny` source with 2% of pages, which skips the walk. Both
  * statements run with index scans disabled, so each computes its window
  * exactly and the comparison is row-for-row, order included. The Postgres
  * plan proof is test/e2e/vector-plan-real-column-postgres.test.ts.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { buildVectorSearchStatement } from '../../src/core/search/vector-statement.ts';
+import * as vectorPool from '../../src/core/search/vector-pool.ts';
+import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, PAGE_SOURCE_STATS_SQL, sourceScopeShare, type PageSourceStats } from '../../src/core/search/vector-statement.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
 
 const MODEL = 'test:vector-index-walk';
@@ -47,7 +49,7 @@ beforeAll(async () => {
   await engine.executeRaw('DROP INDEX IF EXISTS idx_chunks_embedding');
   await engine.executeRaw(`ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(${DIM})`);
   await engine.executeRaw('CREATE INDEX idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops)');
-  await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('side', 'side'), ('gone', 'gone') ON CONFLICT (id) DO NOTHING`);
+  await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('side', 'side'), ('gone', 'gone'), ('tiny', 'tiny') ON CONFLICT (id) DO NOTHING`);
   await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = 'gone'`);
   // Page i sits in block i / 20, which sets its source; inside a block,
   // offsets 0-3 are hidden from remote readers by four private-page rules
@@ -65,6 +67,10 @@ beforeAll(async () => {
       '00000000-0000-4000-8000-000000000001'::uuid, '00000000-0000-4000-8000-000000000001'::uuid, 4,
       CASE WHEN i % 37 = 0 THEN now() END
     FROM generate_series(0, ${PAGES - 1}) i`);
+  await engine.executeRaw(`INSERT INTO pages (slug, source_id, type, title, compiled_truth, frontmatter, knowledge_revision, text_projection_revision, chunker_version)
+    SELECT 'tiny/n-' || i, 'tiny', 'note', 'Tiny ' || i, 'body', '{}'::jsonb,
+      '00000000-0000-4000-8000-000000000001'::uuid, '00000000-0000-4000-8000-000000000001'::uuid, 4
+    FROM generate_series(1004, 1015) i`);
   const pages = await engine.executeRaw<{ id: number; slug: string }>(`SELECT id, slug FROM pages ORDER BY id`);
   const ids: number[] = [], idx: number[] = [], texts: string[] = [], hashes: (string | null)[] = [], vectors: string[] = [];
   for (const page of pages) {
@@ -120,6 +126,48 @@ describe('vector index walk (PGLite)', () => {
       expect([0, 1, 2, 3]).not.toContain(n % 20);
       expect(n % 37 === 0 || n % 31 === 0 || hit.source_id === 'gone').toBe(false);
     }
+  });
+
+  async function statementsSearched(opts: SearchOpts) {
+    const seen: Array<string | undefined> = [];
+    const original = vectorPool.searchIndexWalk;
+    const spy = spyOn(vectorPool, 'searchIndexWalk').mockImplementation((stmt, limit, run) => {
+      seen.push(stmt.indexWalkSql);
+      return original(stmt, limit, run);
+    });
+    await engine.executeRaw('SET enable_indexscan = off');
+    try {
+      return { hits: await engine.searchVector(vec(7), opts), seen };
+    } finally {
+      await engine.executeRaw('RESET enable_indexscan');
+      spy.mockRestore();
+    }
+  }
+
+  test('a source scope below the share threshold skips the walk and returns the joined statement result', async () => {
+    const opts: SearchOpts = { limit: 10, embeddingColumn: column, sourceId: 'tiny', excludePrivate: true };
+    const [stats] = await engine.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL);
+    const share = sourceScopeShare(stats, opts)!;
+    expect(share).toBeGreaterThan(0);
+    expect(share).toBeLessThan(INDEX_WALK_MIN_SCOPE_SHARE);
+    const stmt = buildVectorSearchStatement({ dialect: 'pglite', embedding: vec(7), limit: 10, offset: 0, opts, scopeShare: share });
+    expect(stmt.indexWalkSql).toBeUndefined();
+    const unscoped = buildVectorSearchStatement({ dialect: 'pglite', embedding: vec(7), limit: 10, offset: 0, opts });
+    expect(stmt.sql).toBe(unscoped.sql);
+    const joined = await exactRows(stmt.sql, [...stmt.params]);
+    const { hits, seen } = await statementsSearched(opts);
+    expect(seen).toEqual([undefined]);
+    expect(hits).toHaveLength(10);
+    expect(hits.map(hit => hit.slug)).toEqual(shape(joined).map(row => String(row[0])));
+  });
+
+  test('a source scope at or above the share threshold still runs the walk', async () => {
+    const opts: SearchOpts = { limit: 20, embeddingColumn: column, sourceIds: ['default', 'side'], excludePrivate: true };
+    const [stats] = await engine.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL);
+    expect(sourceScopeShare(stats, opts)!).toBeGreaterThanOrEqual(INDEX_WALK_MIN_SCOPE_SHARE);
+    const { hits, seen } = await statementsSearched(opts);
+    expect(seen).toEqual([buildVectorSearchStatement({ dialect: 'pglite', embedding: vec(7), limit: 20, offset: 0, opts }).indexWalkSql!]);
+    expect(hits).toHaveLength(20);
   });
 
   test('a selective filter leaves the walk short and searchVector returns the joined statement result', async () => {
