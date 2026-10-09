@@ -1046,7 +1046,11 @@ export class PostgresEngine implements BrainEngine {
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
 
-    const rawQuery = `
+    // Keep the relaxed FTS lookup separate from page joins. Otherwise the
+    // planner can scan every chunk through idx_chunks_page to favor page
+    // memoization, evaluating FTS as a filter despite the matching GIN.
+    // OFFSET 0 blocks subquery flattening without truncating any matches.
+    const rawQuery = (relaxed = false) => `
       WITH ranked_chunks AS (
         SELECT
           p.slug, p.id as page_id, p.title, p.type, p.source_id,
@@ -1057,10 +1061,12 @@ export class PostgresEngine implements BrainEngine {
             THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score
-        FROM content_chunks cc
+        FROM ${relaxed ? `(SELECT * FROM content_chunks
+          WHERE search_vector @@ websearch_to_tsquery('${ftsLang}', $1)
+            AND modality = 'text' OFFSET 0)` : 'content_chunks'} cc
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
-        WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1)
+        WHERE ${relaxed ? 'true' : `cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1)`}
           ${typeClause}
           ${typesClause}
           ${excludeSlugsClause}
@@ -1104,7 +1110,7 @@ export class PostgresEngine implements BrainEngine {
         if (relaxed) await tx`SET LOCAL enable_seqscan = off`;
         const boundParams = [...params];
         boundParams[0] = queryText;
-        const rows = await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
+        const rows = await tx.unsafe(rawQuery(relaxed), boundParams as Parameters<typeof tx.unsafe>[1]);
         if (relaxed) await tx`SELECT set_config('enable_seqscan', ${previous[0].enable_seqscan}, true)`;
         return rows;
       }, { alwaysTransaction: true, jitOff: true });

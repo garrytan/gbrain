@@ -1,6 +1,7 @@
 /** Degradation-stamp helpers shared by hybridSearch, its stages and hybridSearchCached. */
 import type { DegradedStage, DegradedStageEntry, DegradedReason } from '../../types.ts';
 import type { TokenBudgetMeta } from '../token-budget.ts';
+import { getMessage } from '../../retry-matcher.ts';
 
 /**
  * WP2/T3 — classify an embed/vector failure as a timeout vs a provider
@@ -10,6 +11,9 @@ import type { TokenBudgetMeta } from '../token-budget.ts';
  * goes to stderr via warnOncePerProcess only.
  */
 export function isTimeoutError(err: unknown): boolean {
+  // SQLSTATE 57014 also covers user cancellation. Require the timeout
+  // message, including on plain driver objects, before the Error guard.
+  if (/\bstatement_timeout exceeded\b|\bcanceling statement due to statement timeout\b/i.test(getMessage(err))) return true;
   if (!(err instanceof Error)) return false;
   if (/deadline \d+ms exceeded/.test(err.message)) return true;
   return err.name === 'TimeoutError' || err.name === 'AbortError';
