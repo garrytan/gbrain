@@ -551,14 +551,20 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
   const deferred: { effects: PersistenceEffect[]; binding: WorktreeBinding; hardened: Promise<DurabilityProbe> }[] = [];
   const unpushed = new Map<string, { binding: WorktreeBinding; items: { effect: PersistenceEffect; git: string; target?: string }[] }>();
   const commitGroup = async (effects: PersistenceEffect[], binding: WorktreeBinding & { local_path: string }) => {
-    // A short group yields to publications still queued for its worktree, so a
-    // serial producer (the grandfather step) publishes ahead and its Git work
-    // arrives as one group. Each yield is a claim, so attempts bound the delay.
-    if (effects.length < GIT_GROUP_SIZE && effects.every(effect => effect.attempts <= GIT_YIELD_ATTEMPTS)) {
+    // A group yields to publications still queued for its worktree: a serial
+    // producer (the grandfather step) publishes ahead and its Git work arrives
+    // as one group, and a write admitted behind a backlog of full groups takes
+    // the worktree lock between groups instead of after the whole backlog.
+    // Each yield is a claim, so attempts bound the delay under a steady stream of writes.
+    if (effects.every(effect => effect.attempts <= GIT_YIELD_ATTEMPTS)) {
       const [pending] = await engine.executeRaw<{ pending: boolean }>(`SELECT EXISTS(SELECT 1 FROM persistence_requests
         WHERE worktree_id=$1::uuid AND state IN ('queued','running')) AS pending`, [effects[0]!.worktree_id]);
       if (pending?.pending) {
-        for (const effect of effects) await retryEffect(engine, effect, 'publication_pending', GIT_YIELD_MS);
+        await engine.executeRaw(`UPDATE persistence_effects e SET state='queued',execution_token=NULL,claim_expires_at=NULL,error_code='publication_pending',
+          next_attempt_at=now()+($2::double precision*interval '1 millisecond'),updated_at=now()
+          FROM jsonb_to_recordset($1::text::jsonb) AS t(id bigint,token uuid)
+          WHERE e.id=t.id AND e.execution_token=t.token AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
+        [JSON.stringify(effects.map(effect => ({ id: String(effect.id), token: effect.execution_token }))), GIT_YIELD_MS]);
         return;
       }
     }

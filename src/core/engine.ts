@@ -227,7 +227,7 @@ export interface ReservedConnection {
   executeRaw<T = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; prepare?: boolean },
   ): Promise<T[]>;
 }
 

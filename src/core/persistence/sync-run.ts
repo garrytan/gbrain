@@ -52,6 +52,7 @@ import { principalAttribution } from './attribution.ts';
 import { recordSyncRunTrend } from '../fence-repair/census-store.ts';
 import { addFencesNormalized, addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, heldGitPaths, fencesNormalizedReport, holdsEscalated, readGitHoldRetryPaths, readGitSourceHolds, readSyncHoldPolicy, recordSyncConversion, recoveredReport, requestGitHoldRetry, writeGitHold, type FencesTally, type SyncHoldPolicy } from './sync-holds.ts';
 import { withScreeningPaths } from './screening-paths.ts';
+import { withBoundedReadSession } from './bounded-reads.ts';
 
 export interface ManagedSyncWriteDiagnostic {
   source_id: string;
@@ -808,7 +809,8 @@ const WAIVER_RUN_MAX = 64;
 async function waiveRun(engine: BrainEngine, cursor: Cursor, head: Pending, key: string, config: GBrainConfig, assertActive: () => void,
   frozenRun: Parameters<typeof freezeEntry>[4], drainStartedAt: number, limit: number, onProgress: SyncOpts['onProgress']): Promise<Cursor | null> {
   // The run's screens share one memo of root-level path facts (screening-paths.ts); waiveNoopRun re-validates each entry.
-  const run = await withScreeningPaths(() => screenWaiverRun(engine, cursor, head, key, config, assertActive, frozenRun, limit));
+  // GBRA-75 wave 9: and one bounded-read session (bounded-reads.ts), so the run's screens share one transaction.
+  const run = await withScreeningPaths(() => withBoundedReadSession(engine, session => screenWaiverRun(session, cursor, head, key, config, assertActive, frozenRun, limit)));
   if (!run) return null;
   assertActive();
   const observedAt = frozenRun.observedAt ?? new Date().toISOString();

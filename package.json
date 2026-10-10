@@ -230,7 +230,7 @@
     "bun": ">=1.4.0"
   },
   "license": "MIT",
-  "version": "0.60.146.0",
+  "version": "0.60.147.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",

@@ -3722,7 +3722,7 @@
       {
         "kind": "interface",
         "members": [
-          "executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { signal?: AbortSignal; }) => Promise<T[]>"
+          "executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { signal?: AbortSignal; prepare?: boolean; }) => Promise<T[]>"
         ],
         "name": "ReservedConnection"
       },

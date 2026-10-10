@@ -682,16 +682,16 @@ export class PostgresEngine implements BrainEngine {
         async executeRaw<R = Record<string, unknown>>(
           query: string,
           params?: unknown[],
-          opts?: { signal?: AbortSignal },
+          opts?: { signal?: AbortSignal; prepare?: boolean },
         ): Promise<R[]> {
-          // ReservedConnection.executeRaw doesn't wire AbortSignal today
-          // (the only use site is migrations + cycle-lock writes that don't
-          // want cancellation). Signature matches the interface so callers
-          // that pass opts don't typecheck-break; opts.signal is ignored.
+          // ReservedConnection.executeRaw doesn't wire AbortSignal today (migrations and cycle-lock writes
+          // don't want cancellation); opts.signal is ignored. GBRA-75 w9: `prepare` names a parameterized
+          // statement (bounded read sessions); postgres.js ANDs it with the connection option, as runUnsafe does.
+          // Without it the statement stays unnamed, as before.
           void opts;
           const rows = params === undefined
             ? await reserved.unsafe(query)
-            : await reserved.unsafe(query, params as Parameters<typeof reserved.unsafe>[1]);
+            : await reserved.unsafe(query, params as Parameters<typeof reserved.unsafe>[1], { prepare: opts?.prepare === true });
           return rows as unknown as R[];
         },
       };

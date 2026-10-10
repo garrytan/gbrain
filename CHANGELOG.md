@@ -10,6 +10,32 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.147.0] - 2026-10-10
+
+**A write that arrives while a brain folder with the Git durability hook is committing a backlog of Git effects now publishes after the group in flight, inside its 5 s wait. Before, it waited out the whole backlog and came back pending. On Postgres, a first sync of an already-imported source now issues 40 statements per unchanged file instead of 82.**
+
+Efficiency wave 9 (GBRA-75). Base is master at wave 8 (310371559). Measured on 4-vCPU AMD EPYC / 16 GiB machines with Bun 1.4.2 and synthetic brains, base and branch interleaved, p50 / p95.
+
+| Path | Engine, brain, N | Before | After |
+|---|---|---|---|
+| write submitted while 6 full Git groups (600 effects, 1 s per commit) are committing in a hooked folder | PGLite, N=6 | 6 of 6 still pending at the 5 s wait | 6 of 6 published (about 1.8 s) |
+| same | Postgres, N=1 | pending | published |
+| first sync of an already-imported 3,700-file source | Postgres 5k, N=3 | 22,859 / 23,139 ms | 21,227 / 21,989 ms |
+| statements per unchanged file in that sync | Postgres 5k | 82.2 | 40.3 |
+| `SET LOCAL statement_timeout` statements per sync | Postgres 5k | 51.8k | about 80 |
+| 1-page sync / no-change sync (guards) | Postgres 5k, N=10 | 1,426 / 737 ms | 1,450 / 751 ms |
+
+### Itemized changes
+
+- **Full Git groups yield to a queued write** (`persistence/effects.ts`). A Git group in a folder with the durability hook already stood aside, for at most 20 claims, when a publication was queued or running on its worktree. Groups of 100 never did, though, so under a backlog every group was full. A write's publication found the worktree lock held, was released as `writer_busy`, and missed every gap until the backlog ended. Every group now yields, in a single update with `publication_pending` (250 ms). The attempt cap still bounds the delay under a steady stream of writes. Effects stay in claim order per worktree, and no group spans a publication of its own worktree.
+- **A released claim no longer looks like a stalled preparation** (`persistence/journal.ts`). An uncharged release (`writer_busy`, `owner_unavailable`, `recovery_required`, capacity) now clears the claim phase. A row that waits on the worktree lock used to keep reading `preparing` / `waiting_on=unknown`. A charged `preparation_deadline` release keeps its phase, which kill accounting reads.
+- **One bounded-read session per waiver run** (`persistence/bounded-reads.ts` `withBoundedReadSession`, `sync-run.ts`, `sync-waivers.ts`, `postgres-engine.ts`). On Postgres, a waiver run's screens now share one reserved connection and one transaction. `SET LOCAL statement_timeout` is set again before any read whose bound differs by more than 25 ms, so every read keeps its server-side budget. Before, each bounded read had its own `BEGIN; SET LOCAL; read; COMMIT`. A failed read rolls back the transaction, and reads it aborted run again in a new transaction. A lost connection, a pool with no long-hold capacity, or PGLite all fall back to the per-read path. Session reads are prepared statements unless the pool is a transaction pooler.
+- Tests:
+  - `persistence-git-coalescing-5530.slow.test.ts` and its Postgres twin add two cases. A write behind six full groups, sent while one is committing, must publish within the wait with at most the in-flight group ahead of it; this fails on base on both engines. A write that finds the worktree locked is requeued as `writer_busy` with no claim phase.
+  - `persistence-bounded-read-session.test.ts` has 7 cases: sequencing, bound refresh, rollback and retry, joining a run's session, prepared reads, the PGLite and no-permit paths, a real lock wait that ends at its bound with nothing left running, and a re-sync. On the re-sync, base runs 101 bounded transactions for 8 files and the branch runs 16.
+  - `managed-sync-foreground-priority.test.ts` (Postgres arm) flake fixed. "a stream of writes from another process" now boots and connects its writer process before the drain starts. Before, the drain's lead depended on how fast a cold process started, so a slow runner could commit most groups before the first write. Forcing a 600 ms boot fails the old test 4 of 4 times and passes the new one 4 of 4.
+  - Crash robot: 600 s on each engine, every seam, with PgBouncer and `pooler_disconnect` on Postgres.
+
 ## [0.60.146.0] - 2026-10-10
 
 **On PGLite at 50,000 pages, the vector index now builds (11 minutes, where it used to run out of memory) and vector search drops from 1.7 s to 27 ms. A 50,000-page import no longer leaves about 30,000 Git effects queued, so `gbrain serve`'s first call is 189 ms instead of 640 ms and the first write after it 266 ms instead of 758 ms. The first sync of an already-imported 3,700-file source takes 22 s instead of 96 s on Postgres and 28 s instead of 60 s on PGLite.**

@@ -70,6 +70,7 @@ test/owner-refusal.test.ts
 test/pack-relation-direction-engine.test.ts
 test/page-embedding-install-batch.test.ts
 test/page-state-engine.test.ts
+test/persistence-bounded-read-session.test.ts
 test/persistence-commit-durability.test.ts
 test/persistence-deactivate.test.ts
 test/persistence-diagnostics.test.ts

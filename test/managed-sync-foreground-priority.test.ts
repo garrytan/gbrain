@@ -64,8 +64,8 @@ function recordClaims(e: BrainEngine): { claims: Map<string, number>; restore: (
 function writer(source: string, slugs: string[], intervalMs = 0, go?: string, preparingHoldMs = 0, ready?: string) {
   const out = join(home, `worker-${randomUUID()}.json`);
   const child = Bun.spawn([process.execPath, join(import.meta.dir, 'fixtures', 'foreground-put-page-worker.ts')], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
-    env: { ...process.env, GBRAIN_HOME: home, WORKER_DATABASE_URL: databaseUrl, WORKER_SOURCE: source, WORKER_SLUGS: slugs.join(',') || '-', WORKER_INTERVAL_MS: String(intervalMs), WORKER_OUT: out, ...(go ? { WORKER_GO: go } : {}),
-      ...(preparingHoldMs ? { WORKER_PREPARING_HOLD_MS: String(preparingHoldMs) } : {}), ...(ready ? { WORKER_READY: ready } : {}) } });
+    env: { ...process.env, GBRAIN_HOME: home, WORKER_DATABASE_URL: databaseUrl, WORKER_SOURCE: source, WORKER_SLUGS: slugs.join(',') || '-', WORKER_INTERVAL_MS: String(intervalMs), WORKER_OUT: out, ...(go ? { WORKER_GO: go } : {}), ...(ready ? { WORKER_READY: ready } : {}),
+      ...(preparingHoldMs ? { WORKER_PREPARING_HOLD_MS: String(preparingHoldMs) } : {}) } });
   return async () => {
     const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
     if (code !== 0) throw new Error(`writer exited ${code}: ${stderr.slice(-2000)}`);
@@ -233,8 +233,8 @@ test('a stream of writes from another process still lets the drain publish a gro
   if (!engine) return;
   resetWriteSwitches();
   const e = engine, source = await fixture(e, 64);
-  // The writer process boots and connects before the drain starts, so its first write follows the drain's first
-  // group commit at once: the drain publishes the 16 groups in well under a second, less than a cold process start.
+  // The writer process boots and connects before the drain starts, so the stream begins right after the first group
+  // commits instead of whenever a cold process gets going (by then a fast drain can have committed most of its groups).
   const go = join(home, `go-${randomUUID()}`), ready = join(home, `ready-${randomUUID()}`);
   const finish = writer(source, [], 0, go, 0, ready);
   await until(async () => existsSync(ready));

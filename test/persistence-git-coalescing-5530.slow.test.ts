@@ -25,10 +25,10 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { phaseCGrandfather } from '../src/commands/migrations/v0_13_1.ts';
 import { admitCanonicalGrandfather } from '../src/core/persistence/grandfather.ts';
-import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
-import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, startPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { claimCoalescedGitEffects } from '../src/core/persistence/effect-journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
@@ -143,6 +143,8 @@ const gitStates = async (engine: BrainEngine) => Object.fromEntries((await engin
   "SELECT state, count(*)::int AS n FROM persistence_effects WHERE kind='git' GROUP BY state ORDER BY state")).map(r => [r.state, Number(r.n)]));
 
 const PAGES = Number(process.env.GBRAIN_TEST_COALESCE_PAGES ?? 250);
+// Six full groups whose commits each take a second: on master the write waits out about six seconds of them.
+const BACKLOG = 600, COMMIT_SLEEP_S = 1;
 
 for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind})`, () => {
   if (kind === 'postgres') process.env.GBRAIN_TEST_COALESCE_PG ??= process.env.DATABASE_URL;
@@ -359,6 +361,54 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
       ['notes/page-0700', 'failed', 'source_changed', null, null],
       ['notes/page-0701', 'failed', 'source_changed', null, null],
     ]);
+  }), 300_000);
+  // Wave 9: under a backlog every group is full. A write admitted while the consumer drains a hooked
+  // worktree's Git effects publishes within the 5 s write wait instead of waiting out the whole backlog.
+  test('a write admitted behind a full-group Git backlog publishes within the write wait', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    await bindSource(engine, 'default', repo);
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    harden(repo);
+    await pauseGitEffects(engine, () => seed(ctx('default'), BACKLOG));
+    const real = Bun.which('git')!;
+    const committing = join(home, 'committing');
+    const stub = stubGit(home, `case " $* " in *" commit "*) touch '${committing}'; sleep ${COMMIT_SLEEP_S};; esac\nexec '${real}' "$@"`);
+    await withEnv({ PATH: `${stub}:${process.env.PATH}` }, async () => {
+      await release(engine);
+      startPersistenceConsumer(engine, { engine: engine.kind, embedding_disabled: true } as never);
+      // The consumer is committing a full group under the worktree lock when the write arrives.
+      for (let i = 0; i < 200 && !existsSync(committing); i++) await Bun.sleep(25);
+      expect(existsSync(committing)).toBe(true);
+      const commitsBefore = repo.commits();
+      const started = performance.now();
+      const result = await submitPageMutation(ctx('default'), { operation: 'put_page', waitMs: 5000,
+        params: { slug: 'notes/behind-backlog', request_id: randomUUID(), content: pageContent(9999) } });
+      const elapsed = performance.now() - started;
+      expect(result.status).not.toBe('pending');
+      expect(elapsed).toBeLessThan(5000);
+      // It went ahead of the backlog: at most the group already committing when it arrived landed first.
+      expect(repo.commits() - commitsBefore).toBeLessThanOrEqual(2);
+      await disposePersistenceConsumer(engine);
+    });
+    // Every effect still commits, in claim order per worktree.
+    await release(engine);
+    while ((await gitStates(engine)).queued) { await release(engine); await pass(engine); }
+    expect(await gitStates(engine)).toEqual({ committed: BACKLOG + 1 });
+  }), 300_000);
+  test('a write that finds the worktree busy is requeued as writer_busy with no stale preparing phase', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    await bindSource(engine, 'default', repo);
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    await seed(ctx('default'), 1);
+    const binding = (await getWorktreeBinding(engine, 'default', localHostId()))!;
+    const held = (await acquireWorktree(binding, 30_000, undefined, engine))!;
+    try {
+      await submitPageMutation(ctx('default'), { operation: 'put_page', waitMs: 1500,
+        params: { slug: 'notes/lock-held', request_id: randomUUID(), content: pageContent(7777) } }).catch(() => undefined);
+      const [row] = await engine.executeRaw<{ state: string; blocked_reason: string | null; claim_phase: unknown }>(
+        "SELECT state,blocked_reason,claim_phase FROM persistence_requests ORDER BY created_at DESC LIMIT 1");
+      expect(row).toEqual({ state: 'queued', blocked_reason: 'writer_busy', claim_phase: null });
+    } finally { await held.release(); await disposePersistenceConsumer(engine); }
   }), 300_000);
   // Wave 7: the coalesced claim hoists its worktree-wide conditions into one InitPlan. This is the claim's
   // predicate before that change, row by row; every state below must claim exactly the rows it selects.
