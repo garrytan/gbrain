@@ -10,6 +10,85 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.158.0] - 2026-10-10
+
+**`engine.transaction(fn, { signal })` and `engine.transactionDirect(fn, { signal })`: an `AbortSignal` that cancels a running Postgres transaction. No behavior changes for callers that pass no signal.**
+
+The publication deadline planned in #6288 / #6352 needs to end a specific publish transaction when its ceiling passes, so that its promise rejects and the caller's `finally` releases the request-row lock, page locks, worktree lock and capacity. Until now nothing could cancel one transaction's connection.
+
+### Itemized changes
+
+- **`TransactionOptions.signal`** (`src/core/engine.ts`, `src/core/postgres-engine.ts`, `src/core/postgres-engine/transaction-abort.ts`). On Postgres an abort discards the transaction's connection through the begin handle's `discard()` (the connection-ownership hunk from #5466 / #5560): the socket closes, the server rolls the transaction back on its own whether a statement is in flight or not, directly or through a transaction-mode pooler, and the pool reconnects on its next checkout. The transaction rejects with an `AbortError` whose `message` is the signal's reason and whose `cause` is the driver's `CONNECTION_CLOSED` error; every `finally` on the way out runs and the `tx` gauge is released. An already-aborted signal rejects before `BEGIN` is sent. An abort after `COMMIT` returned changes nothing. A nested transaction shares its parent's connection, so aborting it aborts the parent too.
+- **PGLite** (`src/core/pglite-engine.ts`): one in-process connection cannot interrupt a statement, so only the pre-`BEGIN` check applies; a mid-flight abort is ignored and the transaction commits.
+- Tests: `test/e2e/postgres-transaction-abort-postgres.test.ts` (5 cases: mid-flight abort on `transaction` and `transactionDirect` with `finally`, rollback checked again after the in-flight statement would have finished, pool and gauge freed; pre-aborted signal sends no `BEGIN`; abort after `COMMIT`; no signal), 3 of 5 fail on master (the option is ignored and the transaction commits); `test/transaction-abort.test.ts` (8 cases: the abort-before-and-after-attach paths, error mapping, listener removal, and PGLite's two behaviors).
+
+## [0.60.157.0] - 2026-10-10
+
+**A database-only `validate: false` stamp no longer refuses every write; lost memory writes are counted and replayable.**
+
+The v0.13.1 grandfather stamped `validate: false` into the database. On an unmanaged brain that migration never wrote the file (by design), so once the brain was managed every page with the stamp looked hand-edited and every coordinated write on it, `remember` included, was refused `source_changed` (#6429: 209k of 304k pages on one brain, 68 facts dropped silently). The stamp is now read as what it is, a mechanical database-side annotation, and the next write publishes it to the file. Nothing needs doing after you upgrade; to recover facts that were refused, run `gbrain repair failed-writes --source <id>` on the brain host and apply the set it prints after you agree.
+
+### Itemized changes
+
+- `prepareFileTarget` (`fileMatchesSnapshot`) treats a stored `validate: false` the way #5943 treats a pack-inferred `subtype`: a canonical file without a `validate:` key keeps the stored stamp instead of counting as an uncoordinated local edit. A file that records its own `validate:` decision is still compared as written. `put_page`, `remember`, maintenance pages, lint and `sources reconcile --audit` all route through it.
+- `gbrain repair failed-writes` also lists and replays caller writes (`remember`, `put_page`, `add_timeline_entry`) that ended `conflict` with `source_changed`, with the same dispositions. A replay refused `source_changed` is classified `file_database_drift` only while the file still differs from the database: a reconcile that rewrites only the file makes the write a candidate again (before, only a change to the page row did).
+- Doctor `lost_caller_writes` (ops) counts, per source, the caller writes whose receipt still holds an intent that never landed and names the `repair failed-writes` preview; a write whose replay or retry committed, or whose page was later deleted, is not counted.
+
+### For contributors
+
+- `test/ingestion/put-page-write-through.test.ts` (#6429 case) proves the stamp carry on PGLite (fails before the fix with `source_changed`); `test/repair-failed-writes-conflict-6429.test.ts` covers the conflict replay and the doctor check on PGLite and Postgres; `test/doctor-lost-caller-writes.test.ts` pins the registry wiring. Doctor goldens were regenerated for the new check.
+## [0.60.156.0] - 2026-10-10
+
+**`gbrain setup claude-code` gives Claude Code memory in one command.** It finds or creates your brain, wires the MCP server and the read-context hooks, and checks that they answer. A second run changes nothing, and `--remove` takes out only what setup wrote.
+
+### What you get
+
+- **One command after install.** `bun install -g github:garrytan/gbrain`, then `gbrain setup claude-code`. With no brain configured it creates a keyless local one (`gbrain init --pglite --no-embedding`). It then writes the stdio MCP entry to `~/.claude.json` and the `SessionStart` and `UserPromptSubmit` hooks to `~/.claude/settings.json`, and runs the same stdio smoke as `gbrain doctor --only harness_wiring`.
+- **Target first.** Before any write, setup prints the brain, source, launcher, MCP surface and registration owner it chose. `--dry-run` stops there; `--json` prints one document.
+- **Three separate decisions.** Wiring scope (`--scope user|project`, `--no-hooks`), automatic capture (`--capture` adds the `Stop` and `SessionEnd` hooks) and provider use (`--providers`). Capture and providers are off unless you accept them. An existing `memory.auto_writeback: off` or `GBRAIN_HOOKS=0` wins over a flag.
+- **Owned by hash.** A connection receipt beside `~/.claude.json` records the exact hash of each entry setup wrote. An entry you edited afterwards is kept and reported, never overwritten or removed. An interrupted run resumes without duplicating anything. Two installs on one machine each remove only their own entries.
+- **Refuses instead of guessing.** A hosted brain is never shadowed by a new local one (`setup_hosted_connection`). A live PGLite server, an MCP entry setup did not write, another install's receipt or an existing `bootstrap harness` wiring refuses with `setup_owner_conflict` and the exact next step. `codex`, `openclaw` and `hermes` print their per-harness guide (`setup_harness_unsupported`). `gbrain errors <code>` explains each.
+- **Honest states.** Setup reports `configured`, `connection-verified` and `native-pending` separately; it never claims that memory reaches a fresh session on its own until that is observed.
+
+### For contributors
+
+- `writeClaudeHooksAt` and `removeClaudeHooksAt` accept an opt-in `ownedEntryHashes` set (`hookEntryHash`: sha256 over type, command and timeout). With it, a marker match alone never replaces or removes an entry, and edited entries come back in `preserved`. Existing callers are unchanged.
+- `src/core/setup/capabilities.ts` is the versioned harness × transport capability table that setup reads.
+- Guide: `docs/guides/setup.md`. Refusals: `docs/guides/repair.md#setup-refusals`.
+
+## [0.60.155.0] - 2026-10-10
+
+**The Postgres E2E test for filtered HNSW recall under iterative scan no longer fails at random. It averages four index builds instead of trusting one.** Product code is unchanged.
+
+`test/e2e/hnsw-iterative-scan-recall-postgres.test.ts` builds a deliberately sparse HNSW index (m 4, ef_construction 8, 20k vectors) and asserts that default recall stays at or above 0.6. pgvector draws each element's graph level from the server's own unseeded random generator, so every build is a different graph. One build failed on CI with 0.5825.
+
+| measure (local pg16, pgvector 0.8.7) | one build | mean of four builds |
+|---|---|---|
+| default recall: mean / sd / min (200 builds) | 0.714 / 0.037 / 0.629 | 0.714 / 0.018 / 0.674 (50 groups) |
+| forced probe: runs failing at a 0.67 bar, 30 fresh runs each | 3 / 30 | 0 / 30 |
+
+Both bounds are unchanged (default ≥ 0.6, default − strict ≥ 0.1). The test takes about 5 s instead of 3 s.
+
+## [0.60.154.0] - 2026-10-10
+
+**`gbrain serve` answers while a large effects backlog drains.** A big import followed by `gbrain embed --stale` left tens of thousands of queued page embedding effects whose chunks already had current vectors. The serve consumer ran each one through a claim, a guard, a projection read and a completion, and PGLite resolves its queries as one microtask chain, so stdin waited for the whole drain: on a 47k-page brain the first tool call took 432 to 489 s. It now answers in about 2 s, and the same backlog settles in about 18 s.
+
+Nothing needs doing after you upgrade. A drain longer than 5 s prints one progress line on serve's stderr.
+
+### Itemized changes
+
+- **No-op embedding effects settle in bulk** (`src/core/persistence/embedding-noop-settle.ts`). The serve drain first settles queued page embedding effects that have nothing left to embed, one statement per window of 200. An effect settles there only if the effect runner would find nothing to embed: never attempted, claimable by this host, its source unchanged, its page live and sealed at the effect's revision, and every chunk carrying a vector for the current signature, write column and model. The row ends exactly as the runner's own completion leaves it. Everything else, including any effect the settle passes over, still runs through the runner.
+- **A per-process cursor** keeps a backlog that cannot settle (stale vectors, an unconfigured provider) from being rescanned on every drain: on a 40k stale backlog the first sweep takes about 2 s and every later drain costs one indexed read.
+- **The drain yields to the event loop** between settle windows and between effect batches, never inside a Git group or while a worktree lock is held.
+- **The PGLite checkpoint guard reuses a WAL probe for up to 50 ms** while the reading leaves a full window of headroom at a bound well above the measured peak WAL rate, so a run of small writes no longer probes once per statement.
+- **Progress line.** `[persistence] phase=effects_drain state=running|done settled_noop_embeddings=… ran=… elapsed_s=…` on serve's stderr (never on CLI output), and `status()` reports the drain in progress.
+
+### For contributors
+
+- `test/persistence-drain-latency.serial.test.ts` is the forced probe: a tool call every 50 ms while 8,000 no-op effects drain must answer, and the event loop must not stall, within 2,000 ms (master: no call answers during the drain, worst gap 30.9 s).
+- `test/persistence-embedding-noop-settle.test.ts` (PGLite and Postgres) covers a mixed queue, Git rows untouched, row and request parity with the runner, a crash inside the settle (fault point `effect:embedding:settle`), guard refusals, the cursor, numeric id order and the runner fallback for passed effects.
+- `test/pglite-checkpoint-guard.test.ts` covers the probe reuse window, including WAL crossing the threshold inside it; `test/persistence-git-coalescing-5530.slow.test.ts` adds a write behind a Git backlog and a no-op embedding backlog.
+
 ## [0.60.153.0] - 2026-10-10
 
 **A repeated query in a long-running `gbrain serve` no longer waits on the embedding provider: about 110–150 ms faster per repeat, and 75 of 100 provider embed calls avoided on a realistic mix. Cold `search`, `query` and `stats` start 100–175 ms faster on both engines. Doctor's `eval_drift` stops paying 0.2–0.4 s per run on a freshly cloned or just-pulled source checkout. Rankings and output are unchanged.**

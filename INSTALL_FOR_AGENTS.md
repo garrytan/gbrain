@@ -107,6 +107,22 @@ comes from agent-authored `## Facts` fences and the `remember` verb.
 
 ## Step 3: Create the Brain
 
+**If you are Claude Code**, one command does Step 3 and the MCP registration:
+
+```bash
+gbrain setup claude-code --dry-run --json   # the resolved target; writes nothing
+gbrain setup claude-code --json             # brain (if none) + MCP + read-context hooks, verified
+```
+
+It runs `gbrain init --pglite --no-embedding` only when no brain exists, and its
+`--json` document carries init's first-run decision bundle in `notices`: relay
+the search-mode matrix (Step 3.5) and the decisions in one reply. Capture
+(`--capture`) and providers (`--providers`) stay off unless the user accepts
+them. A coded refusal (`setup_owner_conflict`, `setup_hosted_connection`) means
+another owner or a hosted brain holds the target; follow its `fix`.
+`--remove` undoes only what setup wrote. Guide:
+[docs/guides/setup.md](docs/guides/setup.md). Otherwise:
+
 ```bash
 gbrain init --pglite --no-embedding     # keyless memory, no server needed
 gbrain doctor --json                   # inspect diagnostics and any warnings

@@ -1625,6 +1625,25 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "setup": {
+        "hasSwitchCase": false,
+        "phase": "pre-connect",
+        "preConnectRules": [
+          {
+            "condition": "command === 'setup'",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "setup"
+            ]
+          }
+        ],
+        "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
       "skillify": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

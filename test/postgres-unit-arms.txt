@@ -75,6 +75,7 @@ test/persistence-commit-durability.test.ts
 test/persistence-deactivate.test.ts
 test/persistence-diagnostics.test.ts
 test/persistence-edit-embedding-reuse.test.ts
+test/persistence-embedding-noop-settle.test.ts
 test/persistence-file-import.test.ts
 test/persistence-git-subdir-origin.test.ts
 test/persistence-graph-publication.test.ts
@@ -101,6 +102,7 @@ test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/remediation-manual-only.test.ts
 test/repair-embedding-effects.test.ts
+test/repair-failed-writes-conflict-6429.test.ts
 test/repair-failed-writes-drift-w411.test.ts
 test/repair-fences.test.ts
 test/repair-frontmatter.test.ts

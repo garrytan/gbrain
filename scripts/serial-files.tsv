@@ -271,6 +271,7 @@ test/openclaw-context-engine-native.serial.test.ts	global-state	global-state: bi
 test/ops-run-onboard-scope-gate.serial.test.ts	R2	R2: mock.module(../src/core/onboard/checks.ts, ../src/core/remediation/index.ts, ../src/core/onboard/render.ts) replaces modules for every file in the process
 test/page-summary-length.serial.test.ts	R1	R1: mutates process.env (GBRAIN_AUDIT_DIR)
 test/pending-write-exit.serial.test.ts	global-state	global-state: binds local servers/ports
+test/persistence-drain-latency.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console; times event-loop gaps against a bound, so a parallel neighbour would distort the measurement
 test/persistence-image-import.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
 test/persistence-publication-native.serial.test.ts	global-state	global-state: platform-gated (darwin) machine integration
 test/persistence-reconnect.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect

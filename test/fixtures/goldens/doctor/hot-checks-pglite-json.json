@@ -923,6 +923,19 @@
           {
             "category": "ops",
             "details": {
+              "compacted_unreplayable": 0,
+              "count": 0,
+              "docs": "docs/guides/repair.md#failed-writes",
+              "repair": "failed-writes",
+              "writes": []
+            },
+            "message": "Every caller write with a retained receipt committed or was superseded.",
+            "name": "lost_caller_writes",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
               "applied": null,
               "configured": "5min",
               "docs": "docs/guides/troubleshooting.md#session-timeouts-not-applied"
@@ -3921,6 +3934,19 @@
             },
             "message": "No write request has held its claim longer than persistence.max_claim_ms (600000 ms).",
             "name": "persistence_write_stall",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "compacted_unreplayable": 0,
+              "count": 0,
+              "docs": "docs/guides/repair.md#failed-writes",
+              "repair": "failed-writes",
+              "writes": []
+            },
+            "message": "Every caller write with a retained receipt committed or was superseded.",
+            "name": "lost_caller_writes",
             "status": "ok"
           },
           {
