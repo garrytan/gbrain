@@ -365,6 +365,8 @@ interface ServeHttpOptions {
    * at startup so the privacy posture change is visible.
    */
   logFullParams?: boolean;
+  /** `--log-read-params`: read ops log scrubbed params + returned slugs/fact ids (src/mcp/read-log.ts). */
+  logReadParams?: boolean;
   /**
    * Network interface(s) to bind. Defaults to `127.0.0.1` (loopback only) in
    * v0.34.1+ — gbrain's primary use case is a personal-knowledge brain on a
@@ -472,6 +474,7 @@ export interface ServeHttpContext {
   bind: string;
   enableDcr: boolean;
   logFullParams: boolean | undefined;
+  logReadParams?: boolean | undefined;
   /** --surface: the server tool-surface ceiling. */
   surface: McpSurface | undefined;
   /** Every non-localOnly operation: the only op list the network surface sees. */
@@ -505,10 +508,14 @@ export interface ServeHttpContext {
  * Returns the banner's skill-publishing status.
  */
 async function logServeHttpStartup(engine: BrainEngine, options: ServeHttpOptions, config: ServeHttpContext['config']) {
-  const { publicUrl, logFullParams } = options;
+  const { publicUrl, logFullParams, logReadParams } = options;
   if (logFullParams) {
     console.error(
       '[serve-http] WARNING: --log-full-params writes raw request payloads to mcp_request_log + SSE feed. Disable for shared dashboards or production.',
+    );
+  } else if (logReadParams) {
+    console.error(
+      '[serve-http] --log-read-params: read operations log their query (PII-scrubbed) and the slugs/fact ids returned to mcp_request_log + SSE feed; writes stay redacted.',
     );
   }
 
@@ -605,7 +612,7 @@ async function resolveDcrTtlWindow(engine: BrainEngine, tokenTtl: number): Promi
  * the resolve-IPC binding and shutdown.
  */
 export async function buildServeHttpApp(app: express.Express, engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams } = options;
+  const { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, logReadParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
   // gbrain's primary use case is a personal-knowledge brain on a laptop;
   // the pre-v0.34 default exposed brains on every interface. Server
@@ -815,7 +822,7 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   const requireAdmin = createRequireAdmin(adminSessions);
   const { ingestRateLimiter, githubWebhookLimiter } = createWebhookLimiters();
   const ctx: ServeHttpContext = {
-    noticeLedger: new NoticeLedger(), readinessCache: createReadinessCache(), engine, config, sql, bind, enableDcr, logFullParams, surface: options.surface, mcpOperationsBase,
+    noticeLedger: new NoticeLedger(), readinessCache: createReadinessCache(), engine, config, sql, bind, enableDcr, logFullParams, logReadParams, surface: options.surface, mcpOperationsBase,
     issuerUrl, mcpResourceUrl, resourceMetadataUrl, oauthProvider, resourceVerifier,
     bootstrapHash, adminSessions, adminCookie,
     magicLinkNonces: new Map<string, number>(),

@@ -69,6 +69,7 @@ ALLOWED=(
   "src/commands/tools-json.ts"                  # gbrain --tools-json introspection; full op list IS the purpose
   "src/mcp/publish-gates.ts"                    # reads op.publishGateKey/name only to compute gate-DISABLED sets and the gate key set; never lists/exposes ops
   "src/mcp/tool-catalog.ts"                     # docs/TOOL_CATALOG.md renderer; filters !op.localOnly at the boundary; never a transport surface
+  "src/mcp/read-log.ts"                         # --log-read-params request-log summarizer; filters !op.localOnly at the boundary; reads op metadata, never serves the list
   "src/commands/serve-http.ts"                  # MUST APPLY .filter(op => !op.localOnly) — verified by grep below
   "src/core/ops/request-tools.ts"               # visibleOpsForCaller loads the assembled list lazily (verbs.ts house pattern) and applies (isLocal || !op.localOnly) + surface + gate filtering
   # The four below predate the widened specifier regex (they import via

@@ -22,6 +22,7 @@ import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, requestMetaSessionId, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, type ToolResult } from '../mcp/dispatch.ts';
+import { isReadOperation, readParamsLog, readResultLog } from '../mcp/read-log.ts';
 import { toAgentError } from '../core/agent-output.ts';
 import { STATUS_TOOL_NAME, statusModeOf, statusToolResult } from '../mcp/status-mode.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
@@ -287,7 +288,7 @@ async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
 }
 
 async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, request: CallToolRequest): Promise<ToolResult> {
-  const { engine, broadcastEvent, logFullParams } = ctx;
+  const { engine, broadcastEvent, logFullParams, logReadParams } = ctx;
   const { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows } = state;
   const { name, arguments: params } = request.params;
   // A server that recovered from status-only mode answers clients still holding the status tool list (never listed).
@@ -329,10 +330,12 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
   // 'tools/list'. Pre-existing string-shaped rows are normalized by
   // migration v41 in src/core/migrate.ts.
   const safeParamsSummary = summarizeMcpParams(name, params);
+  // --log-read-params: read ops log scrubbed declared params (result added on success below).
+  const readLog = !logFullParams && logReadParams && isReadOperation(name) ? readParamsLog(name, params) : null;
   const logParamsObj: unknown = logFullParams
     ? (params || null)
-    : (safeParamsSummary || null);
-  const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
+    : (readLog || safeParamsSummary || null);
+  const broadcastParams = logFullParams ? (params || {}) : (readLog || safeParamsSummary);
 
   // v0.31 (D12 / eE1): refactor the inlined op.handler call to go through
   // src/mcp/dispatch.ts so HTTP MCP shares the same dispatch path as
@@ -445,6 +448,10 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
     return errorResult(e, { remote: true, transport: 'http', auth: authInfo, surface, ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}) }, { op: name });
   }
 
+  if (readLog && !toolResult.isError) {
+    const withResult = { ...readLog, result: readResultLog(toolResult) };
+    return recordMcpToolResult(ctx, state, name, toolResult, withResult, withResult);
+  }
   return recordMcpToolResult(ctx, state, name, toolResult, logParamsObj, broadcastParams);
 }
 
