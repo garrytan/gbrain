@@ -13,6 +13,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { logStubGuardEvent } from '../src/core/facts/stub-guard-audit.ts';
 import { stubGuardEntry } from '../src/commands/doctor/checks/local-audits.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import type { Check } from '../src/commands/doctor.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
@@ -24,7 +25,7 @@ async function stubGuardCheck(events: Array<'unprefixed' | 'fallback_resolution'
   try {
     return await withEnv({ GBRAIN_AUDIT_DIR: dir, GBRAIN_HOME: dir }, async () => {
       events.forEach((reason, i) => logStubGuardEvent({ slug: `people/p${i}`, source_id: 'default', fact_count: 1, ...(reason ? { reason } : {}) }));
-      const checks = await stubGuardEntry.run({ engine, orphanRatioSourceId: null } as unknown as DoctorContext);
+      const checks = await stubGuardEntry.run({ engine, orphanRatioSourceId: null } as unknown as DoctorContext) as Check[];
       return checks.find(c => c.name === 'stub_guard_24h');
     });
   } finally { rmSync(dir, { recursive: true, force: true }); }
