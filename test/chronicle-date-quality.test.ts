@@ -147,7 +147,7 @@ describe('cutoff arithmetic', () => {
     expect(chronicleEventCutoff(ctx, 'Asia/Tokyo', now)).toBe('2026-04-18');
     const { kept, dropped } = screenChronicleProposals([
       ev('2026-04-18T22:00:00-07:00', 'Late call'), ev('2026-04-19', 'Next day'), ev('2026-04', 'Sometime in April'),
-    ], ctx, 'America/Los_Angeles', now);
+    ], ctx, 'America/Los_Angeles', now, { maxEvents: 25 });
     expect(kept.map((k) => k.what)).toEqual(['Late call']);
     expect(dropped).toEqual({ future_dated: 1, date_imprecise: 1 });
   });
