@@ -179,6 +179,11 @@
               "session_end": "extract",
               "writeback": "retire"
             },
+            "corpus_source_holds": {
+              "legacy_unstamped": 0,
+              "sessions": 0,
+              "unresolved": 0
+            },
             "counters_note": "local, append-only, loss-tolerant observability over the last 7d — never a source of truth",
             "cross_lane_duplicates_7d": 0,
             "instruction_visibility": "world",

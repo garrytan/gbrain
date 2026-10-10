@@ -376,6 +376,7 @@ export const CODES = {
   source_binding_required: { class: 'caller', summary: "A write needs an explicit source binding on this MCP server (--source-guard)." },
   source_changed: { class: 'caller', summary: "The source changed during the operation; nothing was committed." },
   source_id_taken: { class: 'caller', summary: "This source already exists and does not match this exact admitted request." },
+  source_mismatch: { class: 'caller', summary: "The request names a different source than the one this serve is bound to; it is refused, never rerouted." },
   source_not_ready: { class: 'caller', summary: "A committed source and approved schema are required." },
   source_profile_no_backfill: { class: 'unavailable', summary: "This source profile disables automatic embedding backfill." },
   source_referenced: { class: 'caller', summary: "OAuth clients still reference this source." },

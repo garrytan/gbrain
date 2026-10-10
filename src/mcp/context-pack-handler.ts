@@ -29,6 +29,7 @@ import { scheduleCheckpointHarvest, type HarvestAck } from '../core/context/chec
 import { corpusSpoolDir, parseWbFileName } from '../core/context/corpus-segments.ts';
 import { freezeSessionSource, resolveCorpusFileSource } from '../core/context/corpus-source.ts';
 import { loadCoreBlock } from '../core/core-memory.ts';
+import { opError } from '../core/ops/contract.ts';
 import { coreTrustIdentity } from '../core/context/openclaw-core.ts';
 import type { TurnContextResult } from '../core/context/turn-context.ts';
 
@@ -90,7 +91,11 @@ export function makeContextPackIpcHandler(
     // #6268: the transport's bound-source check [CX2-10] already refuses a
     // foreign sourceId; the handler refuses too (direct callers), never
     // rerouting a session's manifest, state or harvest to another source.
-    if (sessionSource !== defaultSource) throw new Error('source_mismatch');
+    if (sessionSource !== defaultSource) {
+      throw opError('source_mismatch', `source_mismatch: this serve is bound to source "${defaultSource}", not "${sessionSource}"`,
+        "Send the session's requests to the serve bound to its own source; nothing was rerouted.",
+        { why: "A session's manifest, state and harvest belong to the source it was captured under." });
+    }
     if (req.manifestOnly === true) {
       const links = sessionId
         ? await getCheckpointManifest(engine, sessionSource, null, sessionId)

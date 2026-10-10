@@ -74,11 +74,9 @@ import {
   CORPUS_PROGRESS_LOCK_SUFFIX,
   HARVEST_RECEIPT_SUFFIX,
   segmentHash,
-  CORPUS_UNRESOLVED_STAMP,
-  ensureCorpusSpoolDir,
   sessionCorpusFileName,
 } from '../core/context/corpus-segments.ts';
-import { openSessionSource } from '../core/context/corpus-source.ts';
+import { openSessionCorpus } from '../core/context/corpus-source.ts';
 import { hookLaneLabel, resolveSeat, seatReasonHint, writeSeatSidecar } from '../core/context/seat.ts';
 import { gateWritebackTurn, WRITEBACK_SKIP_REASONS } from '../core/facts/writeback-gate.ts';
 import { resolveWritebackConfigFromFile } from '../core/facts/writeback-config.ts';
@@ -543,8 +541,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
       //    digest above must never be hostage to the brain being down.
       try {
         const cfg = loadConfig();
-        const startSid = sanitizeSessionId(j?.session_id);
-        if (startSid !== 'unknown') await sessionCorpus(io, cfg, startSid, ws); // #6268: the session source freezes at start
+        if (sanitizeSessionId(j?.session_id) !== 'unknown') await sessionCorpus(io, cfg, sanitizeSessionId(j?.session_id), ws); // #6268: freeze at start
         // Engine-uniform (#4245): same config-keyed socket/secret resolution
         // as the user-prompt and compact arms (PGLite data dir; Postgres
         // hash12(database_url) run-dir). Null → silent skip, as before.
@@ -1628,12 +1625,8 @@ async function corpusDir(cfg: GBrainConfig | null): Promise<string> {
 }
 
 /** #6268: the session's spool dir and frozen source stamp (`source` unset while unresolved). */
-async function sessionCorpus(io: HookIo, cfg: GBrainConfig | null, sessionId: string, cwd: string): Promise<{ root: string; dir: string; stamp: string; source?: string }> {
-  const root = await corpusDir(cfg);
-  const dir = ensureCorpusSpoolDir(root);
-  const { stamp } = await openSessionSource(root, sessionId, { cwd, harness: io.harness ?? 'claude-code' });
-  return { root, dir, stamp, ...(stamp !== CORPUS_UNRESOLVED_STAMP ? { source: stamp } : {}) };
-}
+const sessionCorpus = async (io: HookIo, cfg: GBrainConfig | null, sessionId: string, cwd: string) =>
+  openSessionCorpus(await corpusDir(cfg), sessionId, { cwd, harness: io.harness ?? 'claude-code' });
 
 function corpusRetentionDays(cfg: GBrainConfig | null): number {
   // Key is plan-defined [G15] but not yet in the GBrainConfig type (config.ts

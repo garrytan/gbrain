@@ -41,6 +41,7 @@ import {
   corpusFileSessionId,
   corpusFileStamp,
   corpusSpoolDir,
+  ensureCorpusSpoolDir,
   isCorpusSourceStamp,
   parseWbFileName,
   sessionSourceFileName,
@@ -182,6 +183,17 @@ export async function openSessionSource(
   } catch {
     return { stamp: CORPUS_UNRESOLVED_STAMP, record: null };
   }
+}
+
+/** A capture writer's view of its session: the spool dir and the frozen stamp (`source` unset while unresolved). */
+export async function openSessionCorpus(
+  root: string,
+  sessionId: string,
+  meta: { cwd: string | null; harness: string },
+): Promise<{ root: string; dir: string; stamp: string; source?: string }> {
+  const dir = ensureCorpusSpoolDir(root);
+  const { stamp } = await openSessionSource(root, sessionId, meta);
+  return { root, dir, stamp, ...(stamp !== CORPUS_UNRESOLVED_STAMP ? { source: stamp } : {}) };
 }
 
 /**
