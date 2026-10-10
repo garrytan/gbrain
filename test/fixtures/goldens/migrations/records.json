@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 225,
+    "count": 226,
     "gaps": [
       17,
       18,
@@ -9,6 +9,8 @@
     ],
     "helpers": {
       "ALIAS_TABLES": "cddd37c636af42d862c08ca7754a57dfe9d12576b769fa8f74a5f02c803f67a0",
+      "FACT_PURGES_ALL_SUBJECTS_INDEX": "99e2eb6c24134b539cb4cfd6e5ff66a724463525d09e9ba1fdde3c13f5787b6c",
+      "FACT_PURGES_SUBJECT_INDEX": "f4fba07082f2e26da3fa51b0b689f3fe78a3d09afd20c1924dbc2fbe6b1560f1",
       "FACT_RELINK_TABLE_SQL": "1fdde4b99d0077365274096f294be64a992961c7b4544af794224de238b03630",
       "FACT_UNLINKED_INDEX_SQL": "87dcf23c3fa570d93bfb214b6bbb024faa9ff9bff227aa78869a29580be03298",
       "ISSUANCE_CLOCK_SLACK_SECONDS": "8f36c80392df6f9b9c754826289b63969d9d41ca8955213291e4413d614dce35",
@@ -39,7 +41,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "59d9ccfea1c53384d8607874a51209a9c2dfd51b2b85a2cb6269fa4120faf1f3"
     },
-    "latest": 230,
+    "latest": 231,
     "records": [
       {
         "handler": {
@@ -3429,6 +3431,30 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 230
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "FACT_PURGES_ALL_SUBJECTS_INDEX",
+            "FACT_PURGES_SUBJECT_INDEX",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "migrationNotice",
+            "quietMigrationNotices"
+          ],
+          "sha256": "13e51e81b20b251087af7c0e7b59f1dac434dbde7eedebc0f8312b346932f3f6"
+        },
+        "idempotent": true,
+        "name": "fact_purge_lookup_indexes",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 231
       }
     ],
     "versions": [
@@ -3656,7 +3682,8 @@
       227,
       228,
       229,
-      230
+      230,
+      231
     ]
   },
   "normalizer": "migrations-record-v1"

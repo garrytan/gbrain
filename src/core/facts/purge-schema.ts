@@ -90,6 +90,29 @@ ${RLS('needs_rederive')}
  * lock on the source row, which the purge holds FOR UPDATE while it writes the
  * ledger and deletes the rows.
  */
+/**
+ * Page snapshot reads (page-state/snapshot.ts) look up a page's own fact purge
+ * tombstones (subject = the slug), the subject-'*' marker (count and latest
+ * purged_at) and, lazily, the '*' tombstones naming a fence row's fingerprint.
+ * The primary key leads with visibility, so each of those scanned every
+ * tombstone of the source (GBRA-69: 4-5 ms per snapshot at 10,000 fact
+ * tombstones, about 7 snapshots per import). `fact_purges_subject_idx` serves
+ * a page's own tombstones and the lazy '*' lookup by fingerprint;
+ * `fact_purges_all_subjects_idx` holds only the '*' rows the marker counts.
+ * The import probes that match a fence row against `subject='*' OR
+ * subject=slug` (facts/purge-overlay.ts, eligibility/fence-overlay.ts) become
+ * a bitmap OR over the pair. Migration v231 builds both (CONCURRENTLY on
+ * Postgres).
+ */
+export const FACT_PURGES_SUBJECT_INDEX = { name: 'fact_purges_subject_idx', table: 'fact_purges',
+  sql: 'CREATE INDEX IF NOT EXISTS fact_purges_subject_idx ON fact_purges (source_id, subject, fact_hash) INCLUDE (visibility, purged_at)' } as const;
+export const FACT_PURGES_ALL_SUBJECTS_INDEX = { name: 'fact_purges_all_subjects_idx', table: 'fact_purges',
+  sql: "CREATE INDEX IF NOT EXISTS fact_purges_all_subjects_idx ON fact_purges (source_id, purged_at) WHERE subject = '*'" } as const;
+export const FACT_PURGE_LOOKUP_INDEX_SQL = `
+${FACT_PURGES_SUBJECT_INDEX.sql};
+${FACT_PURGES_ALL_SUBJECTS_INDEX.sql};
+`;
+
 export const MEMORY_PURGE_GUARD_SQL = `
 CREATE OR REPLACE FUNCTION gbrain_refuse_purged_fact() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$

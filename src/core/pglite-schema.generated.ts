@@ -2163,6 +2163,9 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 
+CREATE INDEX IF NOT EXISTS fact_purges_subject_idx ON fact_purges (source_id, subject, fact_hash) INCLUDE (visibility, purged_at);
+CREATE INDEX IF NOT EXISTS fact_purges_all_subjects_idx ON fact_purges (source_id, purged_at) WHERE subject = '*';
+
 -- #5575 blocking write gate: verdict receipts and held facts/takes.
 CREATE TABLE IF NOT EXISTS write_gate_receipts (
   id               BIGSERIAL PRIMARY KEY,

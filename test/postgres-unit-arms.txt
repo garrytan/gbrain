@@ -96,6 +96,7 @@ test/persistence-sync-holds.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/purge-fact.test.ts
+test/purge-global-marker.test.ts
 test/remediation-manual-only.test.ts
 test/repair-embedding-effects.test.ts
 test/repair-failed-writes-drift-w411.test.ts

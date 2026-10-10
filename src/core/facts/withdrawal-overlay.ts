@@ -110,6 +110,21 @@ export function hasAmbiguousWithdrawalFence(body: string): boolean {
   return ambiguousWithdrawalFenceSegments(body).length > 0;
 }
 
+/** Both fingerprints `overlayWithdrawalBody` looks a fence row's claim up by: the normalized claim and the raw normalized-line claim. */
+export function fenceClaimHashes(normalizedTexts: readonly string[]): string[] {
+  const hashes = new Set<string>();
+  for (const text of normalizedTexts) {
+    if (!text.includes('gbrain:facts:begin')) continue;
+    for (const block of withdrawalFenceBlocks(text)) {
+      for (const f of block.parsed.facts) {
+        hashes.add(createHash('sha256').update(normalizeLoweredClaim(f.claim)).digest('hex'));
+        hashes.add(createHash('sha256').update(f.claim).digest('hex'));
+      }
+    }
+  }
+  return [...hashes];
+}
+
 /** Apply hashes from DB-normalized companion text to the original Markdown. */
 export function overlayWithdrawalBody(body: string, normalizedBody: string, withdrawals: PageWithdrawal[]): string {
   if (!withdrawals.length || !body.includes('gbrain:facts:begin')) return body;

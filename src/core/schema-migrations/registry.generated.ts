@@ -231,6 +231,7 @@ import { v227 } from './v227-write-gate.ts';
 import { v228 } from './v228-memory-purge.ts';
 import { v229 } from './v229-trust-allow-rules.ts';
 import { v230 } from './v230-trust-generation.ts';
+import { v231 } from './v231-fact-purge-lookup-indexes.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -460,4 +461,5 @@ export const MIGRATIONS: Migration[] = [
   v228,
   v229,
   v230,
+  v231,
 ];

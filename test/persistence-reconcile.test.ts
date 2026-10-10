@@ -752,6 +752,37 @@ test('a fact withdrawn between reconciliation preparation and publication leaves
   }
 }), 120_000);
 
+// Subject-'*' purges ride the preview as a count/latest marker (page-state/types.ts GlobalPurgeMarker), not a list:
+// a '*' tombstone added after the preview, for a claim in the page or any other, makes the preview stale; an artifact
+// written before the marker existed reads stale too, never trusted.
+test("a subject-'*' purge recorded after the preview makes it stale; an artifact without the purge marker is stale", async () => isolated(async engine => {
+  const claim = 'purged after the reconciliation preview';
+  const fence = renderFactsTable([{ rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium', active: true, context: 'test evidence' }]);
+  const purgeAll = (sourceId: string, text: string) => engine.executeRaw(
+    "INSERT INTO fact_purges(source_id,visibility,subject,fact_hash) VALUES($1,'world','*',gbrain_fact_fingerprint($2))", [sourceId, text]);
+  for (const target of [claim, 'an unrelated claim purged everywhere']) {
+    const f = await fixture(engine, false, `Facts: ${fence}`), originalBytes = readFileSync(f.file);
+    await local(engine, f.registration, async () => {
+      const { preview } = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
+      expect(preview.preimages.database).not.toHaveProperty('globalPurges');
+      await purgeAll(f.id, target);
+      await expect(runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview, request_id: randomUUID() })).rejects.toMatchObject({ code: 'source_changed' });
+      expect(readFileSync(f.file)).toEqual(originalBytes);
+      expect((await engine.readPageSnapshot(f.slug, { sourceId: f.id }))?.revision).toBe(f.snapshot.revision);
+      const fresh = (await runReconcilePreview(engine, { source_id: f.id, slug: f.slug })).preview;
+      expect(fresh.preimages.database.globalPurges).toMatchObject({ count: 1 });
+      // The purged row is still in the file but no longer in the database view, so that preview needs a decision.
+      if (target === claim) { expect(fresh.status).toBe('needs_resolution'); return; }
+      expect(fresh.status).toBe('ready');
+      const { globalPurges: _marker, ...legacyDatabase } = fresh.preimages.database;
+      const legacy = { ...fresh, preimages: { ...fresh.preimages, database: legacyDatabase } };
+      await expect(runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview: legacy as typeof fresh, request_id: randomUUID() }))
+        .rejects.toMatchObject({ code: 'source_changed' });
+      expect(readFileSync(f.file)).toEqual(originalBytes);
+    });
+  }
+}), 120_000);
+
 // #6137: private fact rows are identified by (row number, claim), never by claim text alone.
 type FenceRow = { rowNum: number; claim: string; visibility: 'private' | 'world'; context?: string; source?: string; confidence?: number; forgotten?: boolean };
 const LONG_PRIVATE_CONTEXT = 'Told in confidence at the example offsite';
