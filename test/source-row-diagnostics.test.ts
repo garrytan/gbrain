@@ -5,7 +5,7 @@
  * other errors and successes pass through untouched.
  * Seams: none; PGLite always, Postgres when DATABASE_URL is set.
  */
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { opError } from '../src/core/ops/contract.ts';
@@ -13,25 +13,25 @@ import { withSourceRowDiagnostics } from './helpers/source-row-diagnostics.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
-const closers: Array<() => Promise<void>> = [];
-afterAll(async () => { for (const close of closers.splice(0)) await close(); });
-
-async function open(backend: 'pglite' | 'postgres'): Promise<BrainEngine> {
-  if (backend === 'postgres') {
-    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
-    closers.push(pg.close);
-    return pg.engine;
-  }
-  const engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
-  closers.push(() => engine.disconnect());
-  return engine;
-}
-
 for (const backend of testBackends()) describe(`${backend}: withSourceRowDiagnostics`, () => {
+  let engine: BrainEngine;
+  let close: () => Promise<void>;
+  beforeAll(async () => {
+    if (backend === 'postgres') {
+      const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
+      engine = pg.engine;
+      close = pg.close;
+    } else {
+      const pglite = new PGLiteEngine();
+      await pglite.connect({});
+      await pglite.initSchema();
+      engine = pglite;
+      close = () => pglite.disconnect();
+    }
+  }, 120_000);
+  afterAll(async () => { await close?.(); });
+
   test('a source_changed failure carries the engine and fresh-client views; other outcomes pass through', async () => {
-    const engine = await open(backend);
     await engine.executeRaw("INSERT INTO sources(id,name,archived,archived_at) VALUES('diag-archived','diag-archived',true,now())");
     const original = opError('source_changed', 'The atom source is unavailable.', 'Source diag-archived is missing or archived.');
     const caught = await withSourceRowDiagnostics(engine, 'diag-archived', async () => { throw original; }).then(() => null, (e: Error) => e);
