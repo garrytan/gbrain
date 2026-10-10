@@ -11,6 +11,7 @@ import { readDecideConfig, providerKind } from '../ai/decide/config.ts';
 import { hasTypesafeKey } from '../ai/decide/index.ts';
 import { CONFLICT_MIN_COSINE } from '../ai/decide/conflict.ts';
 import { REVIEW_WITHDRAW_KEY, reviewWithdrawOn } from './withdrawal.ts';
+import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 
 export const SIMILAR_ACTIVE_LIMIT = 5;
 
@@ -42,7 +43,7 @@ const REVIEW_LINE: Record<SemanticReviewState, string> = {
 };
 
 export async function similarActiveAfterForget(engine: BrainEngine, opts: {
-  sourceId: string; factId: number; remote: boolean; committed: boolean; semanticReview?: boolean;
+  sourceId: string; factId: number; remote: boolean; committed: boolean; semanticReview?: boolean; excludePrivate?: boolean;
 }): Promise<SimilarActive> {
   const semantic_review = await reviewState(engine, opts.semanticReview === false);
   const finish = (state: SimilarActive['state'], candidates: SimilarActive['candidates'], lead: string): SimilarActive =>
@@ -60,7 +61,7 @@ export async function similarActiveAfterForget(engine: BrainEngine, opts: {
       WHERE n.id = $1 AND n.source_id = $2
         AND c.expired_at IS NULL AND (c.valid_until IS NULL OR c.valid_until > now())
         AND c.embedding IS NOT NULL AND c.embedding_model = n.embedding_model
-        AND ($3::boolean = false OR c.visibility = 'world')
+        AND ($3::boolean = false OR c.visibility = 'world')${opts.excludePrivate ? ` AND ${privateProvenanceFilterFragment('c')}` : ''}
         AND (1 - (c.embedding <=> n.embedding)) >= $4
       ORDER BY c.embedding <=> n.embedding, c.id
       LIMIT $5`,

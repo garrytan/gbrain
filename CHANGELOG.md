@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.152.0] - 2026-10-10
+
+**Remote fact writes apply the same visibility filter as reads.**
+
+`forget` and `remember` called by a remote agent now apply the same visibility filter as remote fact reads. The trusted local CLI is unchanged, and nothing needs doing after you upgrade.
+
+### Itemized changes
+
+- Remote `forget` applies the same visibility filter as reads, through its trust guard, the withdrawal it records and the similar facts it lists.
+- Remote `remember` applies the same visibility filter in its duplicate checks and in `replaces`.
+
+### For contributors
+
+- `test/remote-fact-write-private-provenance.test.ts` covers the fix on PGLite, and on Postgres through `test/e2e/remote-fact-write-private-provenance-postgres.test.ts`.
+
 ## [0.60.151.0] - 2026-10-10
 
 **A visibility filter fix for remote fact reads.**
