@@ -23,6 +23,7 @@ import { AIConfigError, normalizeAIError } from '../ai/errors.ts';
 import { EMBEDDING_ZERO_NORM, isEmbeddingZeroNormError, type EmbeddingZeroNormError } from '../ai/embedding-guard.ts';
 import { isAIInvocationPolicyError, withAIInvocationPreflight } from '../ai/invocation-guard.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
+import type { ResolvedColumn } from '../types.ts';
 import { acquireWorktree, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { persistenceFileHash, transientDatabaseFailure } from './coordinator.ts';
 import { sha256 } from './digest.ts';
@@ -263,6 +264,15 @@ async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: 
   else await finishPage(engine, effect, snapshot, result);
 }
 
+/**
+ * The chunk model an embedding effect counts as complete under: the explicit
+ * model, else the legacy `embedding` column's signature without its trailing
+ * `:dimensions`, else the write column's own model.
+ */
+export function embeddingCompletionModel(column: Pick<ResolvedColumn, 'name' | 'embeddingModel'>, signature: string, model?: string): string | null | undefined {
+  return model ?? (column.name === 'embedding' ? signature.slice(0, signature.lastIndexOf(':')) : column.embeddingModel);
+}
+
 export async function readEmbeddingEffectProjection(engine: BrainEngine, effect: PersistenceEffect, snapshot: PageSnapshot,
   hostId: string, signature: string, model?: string) {
   return engine.transaction(async tx => {
@@ -278,7 +288,7 @@ export async function readEmbeddingEffectProjection(engine: BrainEngine, effect:
       p.embedding_signature=$2 AND cc.${quoteIdentifier(column.name)} IS NOT NULL AND cc.embedded_at IS NOT NULL
         AND cc.embedded_text_hash=md5(cc.chunk_text) AND cc.model IS NOT DISTINCT FROM $3 AS complete
       FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE p.id=$1`,
-    [snapshot.page.id, signature, model ?? (column.name === 'embedding' ? signature.slice(0, signature.lastIndexOf(':')) : column.embeddingModel)]);
+    [snapshot.page.id, signature, embeddingCompletionModel(column, signature, model)]);
     const complete = new Set(completion.filter(chunk => chunk.complete === true).map(chunk => chunk.id));
     const pending = prepared.chunks.filter(chunk => !complete.has(chunk.id));
     return { prepared, pending: pending.length && prepared.snapshot.page.contextual_retrieval_mode === 'per_chunk_synopsis' ? prepared.chunks : pending };

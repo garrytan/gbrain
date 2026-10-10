@@ -37,6 +37,7 @@ import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 const HOOK = '#!/bin/sh\n# gbrain brain-durability post-commit hook (v0.42.44+)\n';
 
@@ -145,6 +146,8 @@ const gitStates = async (engine: BrainEngine) => Object.fromEntries((await engin
 const PAGES = Number(process.env.GBRAIN_TEST_COALESCE_PAGES ?? 250);
 // Six full groups whose commits each take a second: on master the write waits out about six seconds of them.
 const BACKLOG = 600, COMMIT_SLEEP_S = 1;
+/** Two full Git groups and one settle pass: the mixed-backlog probe needs a commit in flight, not the full-group depth. */
+const MIXED_BACKLOG = 200;
 
 for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind})`, () => {
   if (kind === 'postgres') process.env.GBRAIN_TEST_COALESCE_PG ??= process.env.DATABASE_URL;
@@ -409,6 +412,51 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
         "SELECT state,blocked_reason,claim_phase FROM persistence_requests ORDER BY created_at DESC LIMIT 1");
       expect(row).toEqual({ state: 'queued', blocked_reason: 'writer_busy', claim_phase: null });
     } finally { await held.release(); await disposePersistenceConsumer(engine); }
+  }), 300_000);
+  // The no-op embedding settle (embedding-noop-settle.ts) under the same backlog: the drain also settles queued embedding
+  // effects whose chunks already carry current vectors, yielding between batches; the write still publishes within its
+  // wait, the settle never touches a Git row, and every effect still commits once.
+  test('a write admitted behind a Git backlog and a no-op embedding backlog publishes within the write wait', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    await bindSource(engine, 'default', repo);
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    harden(repo);
+    await pauseGitEffects(engine, () => seed(ctx('default'), MIXED_BACKLOG));
+    // Every seeded page is already embedded at the current signature, as `embed --stale` leaves an import.
+    const [{ type }] = await engine.executeRaw<{ type: string }>("SELECT format_type(atttypid, atttypmod) AS type FROM pg_attribute WHERE attrelid='content_chunks'::regclass AND attname='embedding'");
+    const dims = Number(/vector\((\d+)\)/.exec(type)![1]);
+    const model = 'openai:text-embedding-3-small';
+    configureGateway({ embedding_model: model, embedding_dimensions: dims, env: { OPENAI_API_KEY: 'sk-test-not-used' } });
+    try {
+      await engine.executeRaw(`UPDATE content_chunks SET embedding=$1::vector, embedded_at=now(), embedded_text_hash=md5(chunk_text), model=$2`,
+        [`[${new Array(dims).fill(0.1).join(',')}]`, model]);
+      await engine.executeRaw('UPDATE pages SET embedding_signature=$1', [`${model}:${dims}`]);
+      const noops = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM persistence_effects e JOIN pages p ON p.id=(e.data->>'page_id')::int
+        WHERE e.kind='embedding' AND e.state='queued' AND p.text_projection_revision=p.knowledge_revision AND p.knowledge_revision=e.revision`);
+      expect(Number(noops[0]!.n)).toBeGreaterThanOrEqual(MIXED_BACKLOG);
+      await effectSql(engine, "UPDATE persistence_effects SET next_attempt_at=now() WHERE kind='embedding' AND state='queued'");
+      const real = Bun.which('git')!;
+      const committing = join(home, 'committing');
+      const stub = stubGit(home, `case " $* " in *" commit "*) touch '${committing}'; sleep ${COMMIT_SLEEP_S};; esac\nexec '${real}' "$@"`);
+      await withEnv({ PATH: `${stub}:${process.env.PATH}` }, async () => {
+        await release(engine);
+        startPersistenceConsumer(engine, { engine: engine.kind, embedding_disabled: true } as never);
+        for (let i = 0; i < 200 && !existsSync(committing); i++) await Bun.sleep(25);
+        expect(existsSync(committing)).toBe(true);
+        const started = performance.now();
+        const result = await submitPageMutation(ctx('default'), { operation: 'put_page', waitMs: 5000,
+          params: { slug: 'notes/behind-both-backlogs', request_id: randomUUID(), content: pageContent(9998) } });
+        expect(result.status).not.toBe('pending');
+        expect(performance.now() - started).toBeLessThan(5000);
+        await disposePersistenceConsumer(engine);
+      });
+      await release(engine);
+      while ((await gitStates(engine)).queued) { await release(engine); await pass(engine); }
+      expect(await gitStates(engine)).toEqual({ committed: MIXED_BACKLOG + 1 });
+      const embedding = await engine.executeRaw<{ state: string; attempts: number; n: number }>(
+        "SELECT state, attempts, count(*)::int AS n FROM persistence_effects WHERE kind='embedding' AND data->>'slug' LIKE 'notes/page-%' GROUP BY 1,2");
+      expect(embedding.map(r => ({ state: r.state, attempts: Number(r.attempts), n: Number(r.n) }))).toEqual([{ state: 'committed', attempts: 1, n: MIXED_BACKLOG }]);
+    } finally { resetGateway(); }
   }), 300_000);
   // Wave 7: the coalesced claim hoists its worktree-wide conditions into one InitPlan. This is the claim's
   // predicate before that change, row by row; every state below must claim exactly the rows it selects.

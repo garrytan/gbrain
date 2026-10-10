@@ -10,17 +10,30 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.154.0] - 2026-10-10
+## [0.60.156.0] - 2026-10-10
+
+**`gbrain setup claude-code` gives Claude Code memory in one command.** It finds or creates your brain, wires the MCP server and the read-context hooks, and checks that they answer. A second run changes nothing, and `--remove` takes out only what setup wrote.
+
+### What you get
+
+- **One command after install.** `bun install -g github:garrytan/gbrain`, then `gbrain setup claude-code`. With no brain configured it creates a keyless local one (`gbrain init --pglite --no-embedding`). It then writes the stdio MCP entry to `~/.claude.json` and the `SessionStart` and `UserPromptSubmit` hooks to `~/.claude/settings.json`, and runs the same stdio smoke as `gbrain doctor --only harness_wiring`.
+- **Target first.** Before any write, setup prints the brain, source, launcher, MCP surface and registration owner it chose. `--dry-run` stops there; `--json` prints one document.
+- **Three separate decisions.** Wiring scope (`--scope user|project`, `--no-hooks`), automatic capture (`--capture` adds the `Stop` and `SessionEnd` hooks) and provider use (`--providers`). Capture and providers are off unless you accept them. An existing `memory.auto_writeback: off` or `GBRAIN_HOOKS=0` wins over a flag.
+- **Owned by hash.** A connection receipt beside `~/.claude.json` records the exact hash of each entry setup wrote. An entry you edited afterwards is kept and reported, never overwritten or removed. An interrupted run resumes without duplicating anything. Two installs on one machine each remove only their own entries.
+- **Refuses instead of guessing.** A hosted brain is never shadowed by a new local one (`setup_hosted_connection`). A live PGLite server, an MCP entry setup did not write, another install's receipt or an existing `bootstrap harness` wiring refuses with `setup_owner_conflict` and the exact next step. `codex`, `openclaw` and `hermes` print their per-harness guide (`setup_harness_unsupported`). `gbrain errors <code>` explains each.
+- **Honest states.** Setup reports `configured`, `connection-verified` and `native-pending` separately; it never claims that memory reaches a fresh session on its own until that is observed.
+
+### `recall` ranks saved facts by a question
 
 **`recall` can rank saved facts by a question.** Pass `question` and recall returns the facts most relevant to it, each with a `relevance` score, instead of the newest ones. Facts below the match threshold are left out, so an empty list means nothing saved matches.
 
 Calls without `question` behave as before and return the newest facts; every response now says which order it used in `facts_order`. A call that passes only `query` carries a `recall_hint` notice naming `question` and the exact retry call. `gbrain recall --question "<q>"` works from the CLI, locally or against a remote brain. Ranking uses the same read policy as every other recall: the trust floor, quarantine and rederive hiding, remote world-only facts and the private-page filter all apply. Restart a resident `gbrain serve` after upgrading so agents see the new parameter.
 
-## To take advantage of v0.60.154.0
+## To take advantage of v0.60.156.0
 
 `gbrain upgrade` applies migration v233 automatically. If `gbrain doctor` warns about a partial migration, run `gbrain apply-migrations --yes`, then restart a resident `gbrain serve`.
 
-### Itemized changes
+### Recall changes
 
 - **`recall` `question`** (`facts/question-recall.ts`, `ops/facts.ts`). Up to 2,000 characters; refused with `supersessions` or `include_expired`, with the corrected call in the error. Works with `entity`, `session_id`, `since`, `grep` and every other fact filter, which apply before ranking. The question is embedded once through the gateway's query-embedding cache, so a `query` of the same text in the same process costs no second provider call. Without an embedding provider, or with embeddings turned off, facts rank by word match and `facts_degraded.reason` says so; facts without an embedding are counted in `facts_degraded.unembedded`, with a `facts_unembedded` notice whose fix previews `gbrain embed --stale --facts` before any paid run.
 - **Admission rule** (`recall.question_admission`). `reserve` (default) keeps a fact at cosine 0.5 or a third of the question's words; `facts_arm` uses the stricter facts-arm rule.
@@ -31,7 +44,43 @@ Calls without `question` behave as before and return the newest facts; every res
 
 ### For contributors
 
+- `writeClaudeHooksAt` and `removeClaudeHooksAt` accept an opt-in `ownedEntryHashes` set (`hookEntryHash`: sha256 over type, command and timeout). With it, a marker match alone never replaces or removes an entry, and edited entries come back in `preserved`. Existing callers are unchanged.
+- `src/core/setup/capabilities.ts` is the versioned harness × transport capability table that setup reads.
+- Guide: `docs/guides/setup.md`. Refusals: `docs/guides/repair.md#setup-refusals`.
 - `test/recall-question.test.ts` covers ranking, the parameter contract, the read policy (local, remote and private-sourced facts), the degraded paths, `recall_hint` and the embedding cache on PGLite, and on Postgres through `test/e2e/recall-question-postgres.test.ts`. `test/fact-relevance.test.ts` pins the scorer; `test/recall-question-cli.test.ts` the CLI.
+
+## [0.60.155.0] - 2026-10-10
+
+**The Postgres E2E test for filtered HNSW recall under iterative scan no longer fails at random. It averages four index builds instead of trusting one.** Product code is unchanged.
+
+`test/e2e/hnsw-iterative-scan-recall-postgres.test.ts` builds a deliberately sparse HNSW index (m 4, ef_construction 8, 20k vectors) and asserts that default recall stays at or above 0.6. pgvector draws each element's graph level from the server's own unseeded random generator, so every build is a different graph. One build failed on CI with 0.5825.
+
+| measure (local pg16, pgvector 0.8.7) | one build | mean of four builds |
+|---|---|---|
+| default recall: mean / sd / min (200 builds) | 0.714 / 0.037 / 0.629 | 0.714 / 0.018 / 0.674 (50 groups) |
+| forced probe: runs failing at a 0.67 bar, 30 fresh runs each | 3 / 30 | 0 / 30 |
+
+Both bounds are unchanged (default ≥ 0.6, default − strict ≥ 0.1). The test takes about 5 s instead of 3 s.
+
+## [0.60.154.0] - 2026-10-10
+
+**`gbrain serve` answers while a large effects backlog drains.** A big import followed by `gbrain embed --stale` left tens of thousands of queued page embedding effects whose chunks already had current vectors. The serve consumer ran each one through a claim, a guard, a projection read and a completion, and PGLite resolves its queries as one microtask chain, so stdin waited for the whole drain: on a 47k-page brain the first tool call took 432 to 489 s. It now answers in about 2 s, and the same backlog settles in about 18 s.
+
+Nothing needs doing after you upgrade. A drain longer than 5 s prints one progress line on serve's stderr.
+
+### Itemized changes
+
+- **No-op embedding effects settle in bulk** (`src/core/persistence/embedding-noop-settle.ts`). The serve drain first settles queued page embedding effects that have nothing left to embed, one statement per window of 200. An effect settles there only if the effect runner would find nothing to embed: never attempted, claimable by this host, its source unchanged, its page live and sealed at the effect's revision, and every chunk carrying a vector for the current signature, write column and model. The row ends exactly as the runner's own completion leaves it. Everything else, including any effect the settle passes over, still runs through the runner.
+- **A per-process cursor** keeps a backlog that cannot settle (stale vectors, an unconfigured provider) from being rescanned on every drain: on a 40k stale backlog the first sweep takes about 2 s and every later drain costs one indexed read.
+- **The drain yields to the event loop** between settle windows and between effect batches, never inside a Git group or while a worktree lock is held.
+- **The PGLite checkpoint guard reuses a WAL probe for up to 50 ms** while the reading leaves a full window of headroom at a bound well above the measured peak WAL rate, so a run of small writes no longer probes once per statement.
+- **Progress line.** `[persistence] phase=effects_drain state=running|done settled_noop_embeddings=… ran=… elapsed_s=…` on serve's stderr (never on CLI output), and `status()` reports the drain in progress.
+
+### For contributors
+
+- `test/persistence-drain-latency.serial.test.ts` is the forced probe: a tool call every 50 ms while 8,000 no-op effects drain must answer, and the event loop must not stall, within 2,000 ms (master: no call answers during the drain, worst gap 30.9 s).
+- `test/persistence-embedding-noop-settle.test.ts` (PGLite and Postgres) covers a mixed queue, Git rows untouched, row and request parity with the runner, a crash inside the settle (fault point `effect:embedding:settle`), guard refusals, the cursor, numeric id order and the runner fallback for passed effects.
+- `test/pglite-checkpoint-guard.test.ts` covers the probe reuse window, including WAL crossing the threshold inside it; `test/persistence-git-coalescing-5530.slow.test.ts` adds a write behind a Git backlog and a no-op embedding backlog.
 
 ## [0.60.153.0] - 2026-10-10
 
