@@ -283,10 +283,14 @@ export function confidenceRank(level: RetrievalConfidence): number {
 // boost and the stamped raw cosine.
 // ---------------------------------------------------------------------------
 
-/** `search.reranker.gate`: off (no grade) or shadow (grade + stamp `meta.rerank_gate`, still rerank). */
-export type RerankGateMode = 'off' | 'shadow';
+/**
+ * `search.reranker.gate`: off (no grade), shadow (grade + stamp
+ * `meta.rerank_gate`, still rerank) or on (a `would_skip` grade skips the
+ * cross-encoder).
+ */
+export type RerankGateMode = 'off' | 'shadow' | 'on';
 
-export const RERANK_GATE_MODES: ReadonlyArray<RerankGateMode> = Object.freeze(['off', 'shadow']);
+export const RERANK_GATE_MODES: ReadonlyArray<RerankGateMode> = Object.freeze(['off', 'shadow', 'on']);
 
 export const DEFAULT_RERANK_GATE: RerankGateMode = 'off';
 

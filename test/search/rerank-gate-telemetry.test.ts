@@ -35,6 +35,7 @@ const gapMiss: Gate = { mode: 'shadow', eligible: true, grade: 'not_strong', rea
 const titleOnly: Gate = { mode: 'shadow', eligible: true, grade: 'strong', reason: 'exact_lookup', candidates: 3, would_skip: false, skip_blocked: 'shadow_only_reason', provider_called: true };
 const noKey: Gate = { ...strongVector, provider_called: false };
 const off: Gate = { mode: 'shadow', eligible: false, ineligible_reason: 'reranker_off', candidates: 4, would_skip: false, provider_called: false };
+const gatedSkip: Gate = { ...strongVector, mode: 'on', skipped: true, provider_called: false };
 
 async function flushFrom(engine: BrainEngine, metas: HybridSearchMeta[]): Promise<void> {
   _resetTelemetryWriterForTest();
@@ -74,6 +75,7 @@ for (const backend of testBackends()) {
         graded: 5,
         would_skip: 3,
         would_skip_rate: 3 / 5,
+        skipped: 0,
         provider_calls: 4,
         by_reason: { high_vector_match: 3, gap_below_min: 1, exact_lookup: 1 },
         ineligible: { reranker_off: 1 },
@@ -90,7 +92,14 @@ for (const backend of testBackends()) {
     test('a gate-off window reads an empty section', async () => {
       await flushFrom(engine, [meta(), meta()]);
       const stats = await readSearchStats(engine, { days: 1 });
-      expect(stats.rerank_gate).toEqual({ eligible: 0, graded: 0, would_skip: 0, would_skip_rate: 0, provider_calls: 0, by_reason: {}, ineligible: {} });
+      expect(stats.rerank_gate).toEqual({ eligible: 0, graded: 0, would_skip: 0, would_skip_rate: 0, skipped: 0, provider_calls: 0, by_reason: {}, ineligible: {} });
+    });
+
+    test('gate on: a skip counts as would_skip and skipped with no provider call', async () => {
+      await flushFrom(engine, [meta(gatedSkip), meta(gatedSkip), meta({ ...gapMiss, mode: 'on' })]);
+      const stats = await readSearchStats(engine, { days: 1 });
+      expect(stats.total_calls).toBe(3);
+      expect(stats.rerank_gate).toMatchObject({ graded: 3, would_skip: 2, skipped: 2, provider_calls: 1 });
     });
   });
 }

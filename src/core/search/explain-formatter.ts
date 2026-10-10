@@ -155,6 +155,7 @@ export function formatDegradedSummary(degraded: HybridSearchMeta['degraded'] | u
  */
 export function formatRerankGateSummary(gate: HybridSearchMeta['rerank_gate'] | undefined): string | null {
   if (!gate) return null;
+  if (gate.skipped) return `rerank skipped (gate: ${gate.reason})`;
   if (!gate.eligible) return `rerank gate (${gate.mode}): not graded (${gate.ineligible_reason})`;
   const signal = [
     gate.top_cosine !== undefined ? `cosine ${fmt(gate.top_cosine)}` : null,

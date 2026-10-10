@@ -141,8 +141,15 @@ Several of the knobs deserve a sentence:
   records the grade in the response's `rerank_gate` metadata, on the
   `--explain` header and in `gbrain search stats`, and still reranks: results
   are identical to `off`. Use it to see how often the reranker is paying for
-  an answer retrieval already found. The floor and δ are part of the cache
-  key. **Say to your agent:** *"Show me how often my searches would not need
+  an answer retrieval already found. `on` skips the cross-encoder when the
+  grade is a strong vector match (title, alias and exact-lookup strengths stay
+  shadow-only until they are measured on a corpus that has them, and the gate
+  never skips while the System One rerank slot is on): results keep their
+  fused order, cut to the reranker's own output size, the relational rerank
+  pin does not fire, and `rerank_gate.skipped` says so. A skip is a deliberate
+  optimization, so it is not listed in `degraded`; `--explain` prints
+  "rerank skipped (gate: high_vector_match)". It stays off until the eval
+  shows no loss. The floor and δ are part of the cache key. **Say to your agent:** *"Show me how often my searches would not need
   the reranker"* (no skill backs this; your agent runs
   `gbrain config set search.reranker.gate shadow`, later
   `gbrain search stats`, and `gbrain config set search.reranker.gate off`

@@ -147,6 +147,7 @@ describe('parse contracts', () => {
   test('gate literals only, any case; everything else is unset', () => {
     expect(normalizeRerankGate(' Shadow ')).toBe('shadow');
     expect(normalizeRerankGate('off')).toBe('off');
+    expect(normalizeRerankGate('ON')).toBe('on');
     for (const v of ['', 'true', 'yes', 1, null, undefined, {}]) expect(normalizeRerankGate(v)).toBeUndefined();
   });
   test('δ is a number in [0, 1]', () => {

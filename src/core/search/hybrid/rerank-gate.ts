@@ -43,6 +43,8 @@ export interface RerankGateMeta {
   would_skip: boolean;
   /** Why a strong grade would not skip: a shadow-only reason (A57) or the System One rerank slot. */
   skip_blocked?: 'shadow_only_reason' | 'decide_rerank_slot';
+  /** `on` only: the gate skipped the cross-encoder (a deliberate skip, never in `degraded[]`). */
+  skipped?: true;
   /** A reranker provider call was made for this request. */
   provider_called: boolean;
 }

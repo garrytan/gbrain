@@ -35,6 +35,7 @@ describe('rerank gate knobs', () => {
 
   test('config parse: recognized values set the override, anything else falls through', () => {
     expect(loadOverridesFromConfig({ 'search.reranker.gate': 'SHADOW' }).reranker_gate).toBe('shadow');
+    expect(loadOverridesFromConfig({ 'search.reranker.gate': 'on' }).reranker_gate).toBe('on');
     expect(loadOverridesFromConfig({ 'search.reranker.gate': 'maybe' }).reranker_gate).toBeUndefined();
     expect(loadOverridesFromConfig({ 'search.reranker.gate_min_gap': '0' }).reranker_gate_min_gap).toBe(0);
     expect(loadOverridesFromConfig({ 'search.reranker.gate_min_gap': '2' }).reranker_gate_min_gap).toBeUndefined();
@@ -50,9 +51,10 @@ describe('rerank gate knobs', () => {
   test('knobsHash changes with the gate, δ and the floor; explicit defaults hash as the default', () => {
     const base = knobsHash(resolveSearchMode({ mode: 'balanced' }));
     const shadow = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { reranker_gate: 'shadow' } }));
+    const on = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { reranker_gate: 'on' } }));
     const gap = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { reranker_gate_min_gap: 0 } }));
     const floor = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { evidence_cosine_floor: 0.75 } }));
-    expect(new Set([base, shadow, gap, floor]).size).toBe(4);
+    expect(new Set([base, shadow, on, gap, floor]).size).toBe(5);
     expect(knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { reranker_gate: 'off', reranker_gate_min_gap: 0.05, evidence_cosine_floor: 0.8 } }))).toBe(base);
   });
 });
@@ -70,5 +72,7 @@ describe('rerank gate --explain line', () => {
       .toBe('rerank gate (shadow): strong alias_hit — would rerank (shadow_only_reason) (3 candidates)');
     expect(formatRerankGateSummary({ mode: 'shadow', eligible: false, ineligible_reason: 'egress_denied', candidates: 3, would_skip: false, provider_called: false }))
       .toBe('rerank gate (shadow): not graded (egress_denied)');
+    expect(formatRerankGateSummary({ mode: 'on', eligible: true, grade: 'strong', reason: 'high_vector_match', top_cosine: 0.91, gap: 0.12, candidates: 9, would_skip: true, skipped: true, provider_called: false }))
+      .toBe('rerank skipped (gate: high_vector_match)');
   });
 });

@@ -15,7 +15,7 @@ import { type PostFusionOpts, RRF_K, cosineReScore, resolveWalkDedupCap, rrfFusi
 import { type RelationalEvidenceSlotDecision, ensureRelationalEvidenceSlot } from '../relational-recall.ts';
 import { type RelationalRerankPinDecision, pinRelationalRows } from '../relational-rerank-pin.ts';
 import { applyFeedbackStage } from '../feedback-boost.ts';
-import { type RerankFailedReason, type RerankPassThroughReason, type RerankSkipReason, applyReranker } from '../rerank.ts';
+import { type RerankFailedReason, type RerankPassThroughReason, type RerankSkipReason, applyReranker, sliceTopNOut } from '../rerank.ts';
 import type { RerankMeta } from '../../ai/gateway.ts';
 import { applyEvidenceGate, recordRerankReceipts, startRerankShadow } from '../decide-stage.ts';
 import { rerankEgressDenied } from '../decide-retrieval.ts';
@@ -289,8 +289,14 @@ export async function rerankAndPin(
   // W3 rerank gate (no-op under `off`): grades a read-only view of `deduped`
   // and reads the identity tiers without applying them, alongside the
   // reranker call. The reranker's input is unchanged.
+  // Under `on` the grade comes first: a `would_skip` grade (never with the
+  // System One rerank slot on) skips the provider call and keeps fused order
+  // through the reranker's own topNOut slice.
   const gatePending = prepareRerankGate(req, { deduped, rerankerOpts, egressDenied, exactLookupOpts, multimodal });
-  const reranked = rerankerOpts.enabled && !egressDenied
+  const gateSkip = resolvedMode.reranker_gate === 'on' && (await gatePending).meta?.would_skip === true;
+  const reranked = gateSkip
+    ? sliceTopNOut(deduped, rerankerOpts.topNOut)
+    : rerankerOpts.enabled && !egressDenied
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),
         ...(s1?.effective === 'on' ? { timeoutMs: Math.max(1, Math.min(rerankerOpts.timeoutMs ?? resolvedMode.reranker_timeout_ms, req.decide!.budget.remaining())) } : {}),
@@ -305,12 +311,15 @@ export async function rerankAndPin(
       })
     : deduped;
   const gate = await gatePending;
-  const rerankGate: RerankGateMeta | undefined = gate.meta?.eligible
+  const rerankGate: RerankGateMeta | undefined = gateSkip
+    ? { ...gate.meta!, skipped: true }
+    : gate.meta?.eligible
     ? { ...gate.meta, provider_called: s1Failure !== 'no_key' }
     : gate.meta;
+  const rerankerRan = !gateSkip && reranked !== deduped;
   if (s1 && rerankerOpts.enabled) recordRerankReceipts(req.decide, query, reranked.slice(0, rerankerOpts.topNIn).filter((r) => s1Failure !== undefined || r.rerank_score !== undefined), s1Meta, s1Failure);
   if (s1Shadow) await s1Shadow(reranked);
-  const ordered = await applyFeedbackStage(engine, reranked, { reranked: reranked !== deduped });
+  const ordered = await applyFeedbackStage(engine, reranked, { reranked: rerankerRan });
 
   // Ranker wave (R1 receipt) — relational-arm rows bypass reranker DEMOTION:
   // re-pinned above the reranked text rows in fused order, bounded by
@@ -319,7 +328,7 @@ export async function rerankAndPin(
   // order already carries the arm) and never for image modality (the arm is
   // not fused there). Contract + tie policy: relational-rerank-pin.ts.
   let relationalRerankPin: RelationalRerankPinDecision | undefined;
-  const rerankPinned = reranked !== deduped && effectiveModality !== 'image'
+  const rerankPinned = rerankerRan && effectiveModality !== 'image'
     ? pinRelationalRows(ordered, relationalList, { max: resolvedMode.relational_rerank_pin, fusedOrder: deduped, onPin: (d) => { relationalRerankPin = d; } })
     : ordered;
   return { rerankPinned, relationalRerankPin, rerankGate, identityLookups: gate.lookups };

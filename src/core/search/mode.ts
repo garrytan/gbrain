@@ -214,9 +214,9 @@ export interface ModeBundle {
   /**
    * W3 — confidence-gated reranking (crag.ts `gradePreRerank`). `off` never
    * grades; `shadow` grades the deduped candidates before the cross-encoder,
-   * stamps `meta.rerank_gate` and still reranks (results identical to `off`).
-   * `off` in every bundle. Override: per-call HybridSearchOpts.rerankGate →
-   * `search.reranker.gate` → bundle. knobsHash part `rrg=`.
+   * stamps `meta.rerank_gate` and still reranks (results identical to `off`);
+   * `on` skips the cross-encoder on a `would_skip` grade (`skipped: true`).
+   * Off in every bundle; per-call rerankGate → config → bundle; `rrg=`.
    */
   reranker_gate: RerankGateMode;
   /**

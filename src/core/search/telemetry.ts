@@ -91,6 +91,7 @@ export function rerankGateCounters(gate: NonNullable<HybridSearchMeta['rerank_ga
   if (!gate.eligible) return [`ineligible:${gate.ineligible_reason ?? 'unknown'}`];
   const out = ['eligible', 'graded', `reason:${gate.reason ?? 'unknown'}`];
   if (gate.would_skip) out.push('would_skip');
+  if (gate.skipped) out.push('skipped');
   if (gate.provider_called) out.push('provider_calls');
   return out;
 }
@@ -497,6 +498,8 @@ export interface RerankGateStats {
   would_skip: number;
   /** would_skip / graded (0 when nothing was graded). */
   would_skip_rate: number;
+  /** `on` only: searches where the gate skipped the cross-encoder. */
+  skipped: number;
   provider_calls: number;
   /** Graded searches by grade reason (strong and not-strong reasons). */
   by_reason: Record<string, number>;
@@ -505,7 +508,7 @@ export interface RerankGateStats {
 }
 
 function emptyRerankGateStats(): RerankGateStats {
-  return { eligible: 0, graded: 0, would_skip: 0, would_skip_rate: 0, provider_calls: 0, by_reason: {}, ineligible: {} };
+  return { eligible: 0, graded: 0, would_skip: 0, would_skip_rate: 0, skipped: 0, provider_calls: 0, by_reason: {}, ineligible: {} };
 }
 
 /** Fold one reserved rerank-gate row into the section. */
@@ -516,7 +519,7 @@ function addRerankGateRow(stats: RerankGateStats, counter: string, count: number
   } else if (counter.startsWith('ineligible:')) {
     const k = counter.slice('ineligible:'.length);
     stats.ineligible[k] = (stats.ineligible[k] ?? 0) + count;
-  } else if (counter === 'eligible' || counter === 'graded' || counter === 'would_skip' || counter === 'provider_calls') {
+  } else if (counter === 'eligible' || counter === 'graded' || counter === 'would_skip' || counter === 'skipped' || counter === 'provider_calls') {
     stats[counter] += count;
   }
 }

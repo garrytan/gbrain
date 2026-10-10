@@ -255,8 +255,10 @@ export async function applyReranker(
   if (rerankMeta) {
     try { opts.onMeta?.(rerankMeta); } catch { /* caller hook must never break search */ }
   }
-  const combined = [...reorderedHead, ...tail];
-  return opts.topNOut !== null && opts.topNOut > 0
-    ? combined.slice(0, opts.topNOut)
-    : combined;
+  return sliceTopNOut([...reorderedHead, ...tail], opts.topNOut);
+}
+
+/** The reranker's output slice; the rerank gate's skip applies the same one. */
+export function sliceTopNOut(results: SearchResult[], topNOut: number | null): SearchResult[] {
+  return topNOut !== null && topNOut > 0 ? results.slice(0, topNOut) : results;
 }

@@ -39,7 +39,7 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   // v0.46.15 retrieval wave knobs
   evidence_cosine_floor: 'Cosine floor for evidence high_vector_match; also decides the rerank gate grade (0..1)',
   // W3 confidence-gated reranking
-  reranker_gate: 'Confidence-gated reranking: off, or shadow (grade before the reranker, stamp meta.rerank_gate, still rerank)',
+  reranker_gate: 'Confidence-gated reranking: off; shadow (grade before the reranker, stamp meta.rerank_gate, still rerank); on (a strong high_vector_match grade skips the reranker)',
   reranker_gate_min_gap: 'Rerank gate δ: cosine margin rank-1 needs over the best other page to count as a strong vector match (0..1, 0.05 default)',
   autocut_min_top: 'Weak-top floor — autocut no-ops when the top score is below this (0 disables)',
   // v0.36 cross-modal knobs (D3 registry)
