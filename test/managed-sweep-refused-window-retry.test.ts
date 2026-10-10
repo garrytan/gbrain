@@ -17,6 +17,7 @@
  *
  * Runs on PGLite; also on Postgres when DATABASE_URL is set (testBackends).
  */
+import { spoolPath } from './helpers/corpus-spool.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -118,7 +119,7 @@ async function refusedWindow(engine: BrainEngine, dir: string, pages: Array<type
   const drift = (page: typeof COMPANY) => appendFileSync(fileOf(page), '\nA local edit nobody imported.\n');
   const repair = (page: typeof COMPANY) => writeFileSync(fileOf(page), pristine.get(page.slug)!);
   for (const page of drifted) drift(page);
-  const sessionFile = join(corpusDir, 'example-session.txt');
+  const sessionFile = spoolPath(corpusDir, 'example-session.txt', sourceId);
   writeFileSync(sessionFile, transcript());
   const logs: string[] = [];
   const quiet = () => waitFor(async () => (await engine.executeRaw<{ n: number }>(

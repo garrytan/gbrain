@@ -14,7 +14,7 @@
  * `accepted` replays the strict parser on the same region, so a row is
  * accepted exactly when `parseFactsFence` / `parseTakesFence` would return it.
  */
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, factsHeaderLayout, factsRowProblem, type FactsFenceColumn } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../takes-fence.ts';
 import { indexOfOutsideCode, scanMarkdownCode, type MarkdownCodeMap } from '../fence-scan.ts';
 import { isSeparatorRow } from '../fence-shared.ts';
@@ -300,8 +300,10 @@ function setHeader(fence: RawFence, header: RawRow): void {
     seen.add(column);
     return column;
   });
-  // A header shorter than the narrowest row the parser reads leaves whole columns absent.
-  fence.needsRewrite = !fence.strictHeader || !canonicalOrder(kind, fence.columns) || fence.columns.length < MIN_CELLS[kind];
+  // A header shorter than the narrowest row the parser reads leaves whole columns absent;
+  // a facts header cell with no canonical name (or a repeated one) is never read by position (#6385).
+  fence.needsRewrite = !fence.strictHeader || !canonicalOrder(kind, fence.columns) || fence.columns.length < MIN_CELLS[kind]
+    || (kind === 'facts' && fence.columns.some(c => c === null));
 }
 
 /** The header puts every column the strict parser reads by position at its canonical position. */
@@ -350,6 +352,8 @@ function rowShape(fence: RawFence, row: RawRow): RawRow['shape'] {
     // Facts rows of 14 cells are the typed layout even under a narrow header.
     const layoutMax = kind === 'facts' && row.cells.length === 14 ? 14 : Math.max(headerLen, BASE_WIDTH[kind]);
     const allValid = [...row.byColumn].every(([column, cell]) => cellValid(kind, column, cell.text));
+    // A facts cell past the canonical layout has no column to mean (#6385).
+    if (kind === 'facts' && row.extra.some(cell => cell.text.trim())) return 'extra_cells';
     return row.cells.length > layoutMax && !allValid ? 'extra_cells' : 'ok';
   }
   if (row.cells.length > headerLen) return 'extra_cells';
@@ -357,8 +361,8 @@ function rowShape(fence: RawFence, row: RawRow): RawRow['shape'] {
   return missing.every(c => TOLERATED_TRAILING[kind].has(c)) ? 'ok' : 'short_row';
 }
 
-/** Cells the strict parsers reject a row for, with their positions (takes holders only warn). */
-const FACTS_CHECKED: ReadonlyArray<[string, number]> = [['kind', 2], ['visibility', 4], ['notability', 5], ['confidence', 3], ['claim_value', 11]];
+/** Cells the strict parsers reject a row for (takes holders only warn); facts by header column (#6385), takes by position. */
+const FACTS_CHECKED: readonly FactsFenceColumn[] = ['kind', 'visibility', 'notability', 'confidence', 'claim_value', 'attributed_to'];
 const TAKES_CHECKED: ReadonlyArray<[string, number]> = [['kind', 2], ['weight', 4]];
 
 /** Replay the strict parser over the region: which rows it returns. */
@@ -367,14 +371,33 @@ function markAccepted(fence: RawFence, pipeLines: RawRow[]): void {
   const { kind } = fence;
   const seen = new Set<number>();
   let sawHeader = false;
+  let layout: FactsFenceColumn[] = [];
+  let named = 0;
   for (const row of pipeLines) {
-    if (!sawHeader) { sawHeader = strictHeaderCells(row); continue; }
+    if (!sawHeader) {
+      sawHeader = strictHeaderCells(row);
+      if (sawHeader && kind === 'facts') {
+        const header = factsHeaderLayout(row.cells.map(c => c.text));
+        if ('problem' in header) return;
+        ({ layout, named } = header);
+      }
+      continue;
+    }
     const texts = row.cells.map(c => c.text);
-    if (isSeparatorRow(texts) || texts.length < MIN_CELLS[kind]) continue;
+    if (isSeparatorRow(texts)) continue;
+    if (kind === 'facts') {
+      if (factsRowProblem(layout, named, texts)) continue;
+      const cell = (column: FactsFenceColumn) => texts[layout.indexOf(column)] ?? '';
+      const rowNum = parseRowNum(cell('#'));
+      if (rowNum === null || seen.has(rowNum)) continue;
+      seen.add(rowNum);
+      row.accepted = FACTS_CHECKED.every(column => cellValid('facts', column, cell(column)));
+      continue;
+    }
+    if (texts.length < MIN_CELLS[kind]) continue;
     const rowNum = parseRowNum(texts[0]!);
     if (rowNum === null || seen.has(rowNum)) continue;
     seen.add(rowNum);
-    const checked = kind === 'facts' ? FACTS_CHECKED : TAKES_CHECKED;
-    row.accepted = checked.every(([column, at]) => cellValid(kind, column, texts[at] ?? ''));
+    row.accepted = TAKES_CHECKED.every(([column, at]) => cellValid(kind, column, texts[at] ?? ''));
   }
 }

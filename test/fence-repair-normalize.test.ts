@@ -300,6 +300,27 @@ describe('header rules', () => {
     expectRepaired(r);
   });
 
+  test('#6385: a reordered, respelled 15-column header with attributed_to is rewritten to the attributed header, every cell kept', () => {
+    const body = [FB, '| Claim | # | Kind | Confidence | Visibility | Notability | Valid From | Valid Until | Source | Context | Claim Metric | Claim Value | Claim Unit | Claim Period | Attributed To |',
+      '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+      '| Xi said | 3 | fact | 0.7 | private | low | 2026-05-01 |  | chat | ctx | mrr | 50k | USD | monthly | user |',
+      '| Xi plain | 4 | event | 1.0 | world | high | 2026-05-02 |  | call |  |  |  |  |  |  |', FE].join('\n');
+    const r = run(body);
+    expect(classes(r)).toEqual(['header_alias']);
+    expect(r.page.compiled_truth).toContain('| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period | attributed_to |');
+    expect(r.page.compiled_truth).toContain('| 3 | Xi said | fact | 0.7 | private | low | 2026-05-01 |  | chat | ctx | mrr | 50k | USD | monthly | user |');
+    const parsed = parseFactsFence(r.page.compiled_truth);
+    expect(parsed.facts.map(f => [f.rowNum, f.claim, f.attributedTo, f.claimValue])).toEqual([[3, 'Xi said', 'user', 50_000], [4, 'Xi plain', undefined, undefined]]);
+    expectRepaired(r);
+  });
+
+  test('#6385: an `event_type` column is never mapped to attributed_to; it stays header_unmapped', () => {
+    const header = '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period | event_type |';
+    const r = run([FB, header, '| 1 | Omicron launch | event | 1.0 | private | high | 2026-01-01 |  | fixture |  |  |  |  |  | user |', FE].join('\n'));
+    expect(reasons(r)).toEqual(['header_unmapped']);
+    expect(r.page.compiled_truth).toContain(header);
+  });
+
   test('column_default fills required facts columns absent from the whole header', () => {
     const body = [FB, '| # | claim | kind | source |', '|---|---|---|---|', '| 1 | Lambda two | fact | call |', FE].join('\n');
     const r = run(body);

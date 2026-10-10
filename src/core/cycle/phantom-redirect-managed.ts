@@ -45,7 +45,11 @@ export async function redirectManagedPhantom(engine: BrainEngine, page: Page, ca
 
   const [dbMax] = await engine.executeRaw<{ n: number | string | null }>(
     'SELECT MAX(row_num) AS n FROM facts WHERE source_id = $1 AND source_markdown_slug = $2', [sourceId, canonical]);
-  const merged = mergePhantomFenceRows(target.page.compiled_truth, parseFactsFence(page.compiled_truth ?? '').facts, Number(dbMax?.n ?? 0));
+  // #6385 R12: a fence that parses with warnings would lose its skipped rows, the phantom's with the deleted page and the canonical's in the re-render.
+  const phantomFence = parseFactsFence(page.compiled_truth ?? '');
+  if (phantomFence.warnings.length > 0) return drift('phantom facts fence does not parse cleanly');
+  if (parseFactsFence(target.page.compiled_truth).warnings.length > 0) return drift('canonical facts fence does not parse cleanly');
+  const merged = mergePhantomFenceRows(target.page.compiled_truth, phantomFence.facts, Number(dbMax?.n ?? 0));
   if (merged.body !== null && parseFactsFence(merged.body).warnings.length > 0) return drift('rendered fence failed re-parse');
   const outcome = await submitMaintenanceIntent(engine, authority, canonical, {
     kind: 'managed_maintenance_phantom_merge', expected_revision: target.revision,

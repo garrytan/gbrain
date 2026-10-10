@@ -136,3 +136,22 @@ describe('surrogate-safe document truncation (#5316)', () => {
     expect(prompt).toContain('chars truncated for synopsis budget');
   });
 });
+
+function thinkingRoute(answerText: string) {
+  return async (o: ChatOpts) => ({
+    text: o.thinking === 'off' ? answerText : '',
+    blocks: [],
+    stopReason: (o.thinking === 'off' ? 'end' : 'length') as 'end' | 'length',
+    usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+    model: 'anthropic:claude-haiku-5-5',
+    providerId: 'anthropic',
+  });
+}
+
+describe('thinking route (#6342)', () => {
+  test('the synopsis call turns thinking off, so a reasoning model keeps its synopsis', async () => {
+    __setChatTransportForTests(thinkingRoute('A one-sentence synopsis about the series A.'));
+    const r = await generatePerChunkSynopsis(baseArgs);
+    expect(r).toMatchObject({ kind: 'success', synopsis: 'A one-sentence synopsis about the series A.' });
+  });
+});
