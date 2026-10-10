@@ -82,37 +82,52 @@ export async function runRobotPhase(o: RobotOptions) {
   const started = performance.now();
   const runs: RobotRun[] = [];
   const log = o.log ?? (line => process.stderr.write(`[crash-robot] ${o.engine}: ${line}\n`));
-  async function fresh(name: string): Promise<{ root: string; dataDir: string; databaseUrl?: string; directUrl?: string }> {
+  async function fresh(name: string): Promise<{ root: string; dataDir: string; databaseUrl?: string; directUrl?: string; database?: string }> {
     const root = join(o.scratch, `robot-${name}-${randomUUID().slice(0, 8)}`); mkdirSync(root, { recursive: true });
     if (!o.admin) return { root, dataDir: join(root, 'data') };
     const database = `gbrain_persistence_test_${randomUUID().replaceAll('-', '')}`;
     await o.admin.unsafe(`CREATE DATABASE ${database}`); o.databases.push(database);
     const direct = new URL(o.databaseUrl!); direct.pathname = `/${database}`;
     const pooled = o.pooledUrl ? new URL(o.pooledUrl) : null; if (pooled) pooled.pathname = `/${database}`;
-    return { root, dataDir: join(root, 'data'), databaseUrl: (pooled ?? direct).toString(), directUrl: direct.toString() };
+    return { root, dataDir: join(root, 'data'), databaseUrl: (pooled ?? direct).toString(), directUrl: direct.toString(), database };
+  }
+  // A transaction-mode pooler keeps every server connection a run opened in
+  // that run's per-database pool until its own idle timeout (PgBouncer: 600 s,
+  // the length of a full robot budget), so a run's database is released the
+  // moment the run passes: DROP ... WITH (FORCE) ends those backends. A
+  // failing run keeps its database for the retained-fixture metadata.
+  async function release(database: string | undefined) {
+    if (!database || !o.admin) return;
+    await o.admin.unsafe(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    const index = o.databases.indexOf(database); if (index >= 0) o.databases.splice(index, 1);
   }
   const environment: Record<string, string> = o.pooledUrl ? { GBRAIN_PREPARE: 'false' } : {};
   async function execute(schedule: Schedule, role: 'count' | 'run', extra: Partial<RobotConfig> = {}): Promise<RobotRun & { counts?: Record<string, number> }> {
     const at = performance.now();
-    const place = await fresh(`${schedule.label}-${role}`);
+    const { database, ...place } = await fresh(`${schedule.label}-${role}`);
     const config: RobotConfig = { kind: o.engine, ...place, schedule, worktrees: o.worktrees ?? 2, statePath: join(place.root, 'state.json'), ...extra };
     const path = join(place.root, 'robot.json'); writeFileSync(path, JSON.stringify(config), { mode: 0o600 });
     const base = { schedule: schedule.label, seed: schedule.seed, length: schedule.ops.length, ...(extra.fault ? { fault: extra.fault } : {}),
       ...(extra.process ? { process: extra.process } : {}), ...(o.keep?.has(schedule.label) ? { ops: schedule.ops.map(d => d.id) } : {}) };
     const child = o.spawn(path, o.home, 'robot', [role], environment); o.track(child);
-    if (role === 'run' && extra.fault) {
-      const reached = await Promise.race([child.event('fault', 600_000).then(e => ({ fault: e })), child.event('done', 600_000).then(e => ({ done: e }))]);
-      if ('done' in reached) {
-        const result = reached.done.result as RobotOutcome;
-        return { ...base, crashed: false, violations: result.violations, deferred: result.deferred, trace: result.trace, duration_ms: performance.now() - at };
+    const outcome = async (): Promise<RobotRun & { counts?: Record<string, number> }> => {
+      if (role === 'run' && extra.fault) {
+        const reached = await Promise.race([child.event('fault', 600_000).then(e => ({ fault: e })), child.event('done', 600_000).then(e => ({ done: e }))]);
+        if ('done' in reached) {
+          const result = reached.done.result as RobotOutcome;
+          return { ...base, crashed: false, violations: result.violations, deferred: result.deferred, trace: result.trace, duration_ms: performance.now() - at };
+        }
+        await child.kill();
+        const recovered = o.spawn(path, o.home, 'robot', ['recover'], environment); o.track(recovered);
+        const result = (await recovered.done()).result as RobotOutcome;
+        return { ...base, crashed: true, violations: result.violations, deferred: result.deferred, trace: result.trace, duration_ms: performance.now() - at };
       }
-      await child.kill();
-      const recovered = o.spawn(path, o.home, 'robot', ['recover'], environment); o.track(recovered);
-      const result = (await recovered.done()).result as RobotOutcome;
-      return { ...base, crashed: true, violations: result.violations, deferred: result.deferred, trace: result.trace, duration_ms: performance.now() - at };
-    }
-    const result = (await child.done()).result as RobotOutcome;
-    return { ...base, crashed: false, violations: result.violations, deferred: result.deferred, trace: result.trace, counts: result.counts, duration_ms: performance.now() - at };
+      const result = (await child.done()).result as RobotOutcome;
+      return { ...base, crashed: false, violations: result.violations, deferred: result.deferred, trace: result.trace, counts: result.counts, duration_ms: performance.now() - at };
+    };
+    const run = await outcome();
+    if (!run.violations.length) await release(database);
+    return run;
   }
   const record = (run: RobotRun) => {
     runs.push(run);

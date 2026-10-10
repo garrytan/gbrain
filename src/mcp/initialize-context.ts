@@ -7,8 +7,8 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
-import type { AuthInfo, Operation } from '../core/operations.ts';
-import { opAllowedForBoundClient } from '../core/operations.ts';
+import type { AuthInfo, OperationMeta } from '../core/ops/contract.ts';
+import { opAllowedForBoundClient } from '../core/ops/context.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import { configReadiness, probedReadiness, readinessHttpView, readinessTail, type ReadinessCache, type ReadinessEntry } from '../core/readiness.ts';
 import { isEngineDegraded } from '../core/degraded-marker.ts';
@@ -37,7 +37,7 @@ export async function instructionReadiness(
 /** HTTP (OAuth and legacy bearer): the same filters tools/list applies, publish gates read on initialize. */
 export async function httpInstructionTools(
   engine: BrainEngine, config: GBrainConfig | null | undefined,
-  opts: { ops: readonly Operation[]; surface: 'verbs' | 'starter' | 'full'; auth: AuthInfo; allowedOps?: ReadonlySet<string>; cache?: ReadinessCache },
+  opts: { ops: readonly OperationMeta[]; surface: 'verbs' | 'starter' | 'full'; auth: AuthInfo; allowedOps?: ReadonlySet<string>; cache?: ReadinessCache },
 ): Promise<InstructionTools> {
   const gateDisabled = await disabledOpsForPublishGates(engine, config ?? undefined).catch(() => new Set(opts.ops.map(o => o.name)));
   const publishGates = publishGatesFromDisabled(opts.ops, gateDisabled);

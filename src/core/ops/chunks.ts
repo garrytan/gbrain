@@ -6,6 +6,8 @@
  * '../operations.ts' here (cycle).
  */
 
+import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
+import { stampPageTrust } from '../eligibility/stamp.ts';
 import type { Operation } from './contract.ts';
 import { readPolicyOpts } from './context.ts';
 import { federatedSearchScope, parseSourceIdParam } from './context.ts';
@@ -46,6 +48,7 @@ const get_chunks: Operation = {
   description: 'Return a page\'s indexed content chunks (the units search ranks). Use when debugging why search did or did not match a page. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose content chunks to return.' },
+    min_trust: MIN_TRUST_PARAM,
   },
   handler: async (ctx, p) => {
     // #2555: route through the canonical scope ladder (federated array >
@@ -54,7 +57,11 @@ const get_chunks: Operation = {
     const scope = await readPolicyOpts(ctx);
     // #4352 remediation: a `visibility: private` page's chunks read exactly
     // like a missing page's ([]) for untrusted callers — no existence oracle.
-    return ctx.engine.getChunks(p.slug as string, scope);
+    const chunks = await ctx.engine.getChunks(p.slug as string, scope);
+    // #5575: a chunk's tier is its page's (lowered by a fence trust marker); rows below the floor read as missing.
+    const { floor } = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
+    return (await stampPageTrust(ctx.engine, chunks.map(c => ({ ...c, slug: p.slug as string })), floor))
+      .map(({ slug: _slug, ...chunk }) => chunk);
   },
   scope: 'read',
 };

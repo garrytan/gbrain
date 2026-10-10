@@ -107,6 +107,7 @@ import { transcriptsOperations } from './ops/transcripts.ts';
 import { connectorsOperations } from './ops/connectors.ts';
 import { sourcesOperations } from './ops/sources.ts';
 import { factsOperations } from './ops/facts.ts';
+import { purgeOperations } from './ops/purge.ts';
 import { codeIntelOperations } from './ops/code-intel.ts';
 import { embeddingMigrationOperations } from './ops/embedding-migration.ts';
 import { imageOperations } from './ops/image.ts';
@@ -121,6 +122,7 @@ import { noticesOperations } from './ops/notices.ts';
 import { pageEditOperations } from './ops/page-edit.ts';
 import { pageBatchOperations } from './ops/page-batch.ts';
 import { feedbackOperations } from './ops/feedback.ts';
+import { trustOperations } from './ops/trust.ts';
 
 // parseTtlParam moved to ops/facts.ts with the facts cluster; the `remember`
 // verb (verbs.ts) loads it from THIS module at runtime — re-exported so every
@@ -153,8 +155,8 @@ export const operations: Operation[] = [
   // Timeline (add_timeline_entry, get_timeline) — ops/timeline.ts
   ...timelineOperations,
   // Admin (get_stats, get_health, run_doctor, get_versions, revert_version
-  // + get_brain_identity) — ops/admin.ts; get_write_attribution — ops/attribution.ts
-  ...adminOperations, ...attributionOperations,
+  // + get_brain_identity) — ops/admin.ts; get_write_attribution — ops/attribution.ts; confirm_memory — ops/trust.ts
+  ...adminOperations, ...attributionOperations, ...trustOperations,
   // PR1: skill catalog over MCP (list_skills, get_skill, list_brain_skillpack,
   // advisor) + v0.41.19.0 get_status_snapshot — ops/skills-catalog.ts
   ...skillsCatalogOperations,
@@ -204,7 +206,7 @@ export const operations: Operation[] = [
   ...entityIdentityOperations,
   // v0.31: hot memory (extract_facts, recall, context_pack, delta,
   // forget_fact) — ops/facts.ts
-  ...factsOperations,
+  ...factsOperations, ...purgeOperations,
   // v0.32.6: contradiction probe MCP surface (M3) — ops/insights.ts
   find_contradictions,
   // v0.33: expertise + relationship-proximity routing — ops/insights.ts
@@ -302,7 +304,7 @@ const OP_AREAS: Record<string, string> = {
   takes_list: 'takes', takes_search: 'takes', think: 'takes',
   takes_scorecard: 'takes', takes_calibration: 'takes',
   // hot memory (facts)
-  extract_facts: 'memory', forget_fact: 'memory',
+  extract_facts: 'memory', forget_fact: 'memory', confirm_memory: 'memory',
   // entity extraction lane
   extract_entities: 'entities', extraction_pending: 'entities',
   extraction_review: 'entities',

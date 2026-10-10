@@ -53,6 +53,7 @@ Capture a quick note into the brain — the "just remember this" write. Auto-der
 | `expected_revision` | string | Revision returned by the page read. Required when replacing an existing page unless force is true. Omit both for create-only writes. Carry the read's `source_id` with it: if this revision is the current revision of the same slug in another source you can read, the `revision_conflict` refusal names that source and its fix re-reads the page there. |
 | `force` | boolean | Explicitly overwrite the current revision. Mutually exclusive with expected_revision; does not bypass authorization or the empty-content guard. |
 | `request_id` | string | Optional caller-generated UUID for this write. Reuse the same UUID and original arguments to recover its outcome after a timeout; a different intent requires a new UUID. |
+| `content_origin` | string (`user_said`, `tool_output`, `inferred`) | Where the content came from. `tool_output` (web page, email, file or other tool text) stores the write as external, untrusted; `user_said` and `inferred` store it as written by an agent. Advertised on the verbs and full surfaces only; a starter client that passes it is still honored. |
 | `who` | string | For event captures, comma-separated entity slugs. |
 | `what` | string | For event captures, the event description. |
 | `where` | string | For event captures, the location. |
@@ -276,6 +277,7 @@ Replace a complete canonical Markdown page. Read get_page with include_content:t
 | `expected_revision` | string | Revision returned by the page read. Required when replacing an existing page unless force is true. Omit both for create-only writes. |
 | `force` | boolean | Explicitly overwrite the current revision. Mutually exclusive with expected_revision; does not bypass authorization or the empty-content guard. |
 | `request_id` | string | Optional caller-generated UUID for this write. Reuse the same UUID and original arguments to recover its outcome after a timeout; a different intent requires a new UUID. |
+| `content_origin` | string (`user_said`, `tool_output`, `inferred`) | Where the content came from. `tool_output` (web page, email, file or other tool text) stores the write as external, untrusted; `user_said` and `inferred` store it as written by an agent. Advertised on the verbs and full surfaces only; a starter client that passes it is still honored. |
 | `slug` (required) | string | Page slug |
 | `content` (required) | string | Complete markdown content with YAML frontmatter. REPLACES the entire page; this is not a partial edit. Read the canonical page first with `get_page include_content:true` before modifying it. |
 | `allow_empty` | boolean | Allow overwriting an existing non-empty page with empty/whitespace-only content (default: false). Without it, put_page rejects the empty overwrite — the empty-stdin failure class. |
@@ -349,6 +351,7 @@ MEMORY VERB (v1): save one fact to durable agent memory — the protocol write v
 | `expected_revision` | string | Revision returned by the page read. Required when replacing an existing page unless force is true. Omit both for create-only writes. |
 | `force` | boolean | Explicitly overwrite the current revision. Mutually exclusive with expected_revision; does not bypass authorization or the empty-content guard. |
 | `request_id` | string | Optional caller-generated UUID for this write. Reuse the same UUID and original arguments to recover its outcome after a timeout; a different intent requires a new UUID. |
+| `content_origin` | string (`user_said`, `tool_output`, `inferred`) | Where the content came from. `tool_output` (web page, email, file or other tool text) stores the write as external, untrusted; `user_said` and `inferred` store it as written by an agent. Advertised on the verbs and full surfaces only; a starter client that passes it is still honored. |
 | `fact` (required) | string | The fact to remember, one claim per call. |
 | `provenance` (required) | string | Where this fact came from (REQUIRED, free text, max 500 chars). Examples: "conversation 2026-06-12", "user said in chat", "import: meeting-notes.md". |
 | `ttl` | string | Optional expiry: duration shorthand ("30d", "12h", "45m") or absolute ISO 8601 timestamp ("2026-07-12T00:00:00Z"). NOT ISO-8601 durations ("P30D" is rejected). Omit = never expires. |

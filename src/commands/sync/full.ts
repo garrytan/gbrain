@@ -23,7 +23,7 @@ import {
   DEFAULT_SOURCE_ID,
   RENAME_SENTINEL_PREFIX,
 } from '../../core/sync.ts';
-import { CHUNKER_VERSION } from '../../core/chunkers/code.ts';
+import { chunkerStamp } from '../../core/chunkers/code.ts';
 import { autoConcurrency } from '../../core/sync-concurrency.ts';
 import { slog, serr } from '../../core/console-prefix.ts';
 import { newestCommitMs } from '../../core/source-health.ts';
@@ -160,7 +160,7 @@ export async function performFullSync(
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(gitContextRoot), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
-    await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await writeChunkerVersion(engine, opts.sourceId, chunkerStamp());
   };
 
   const fullGate = await applySyncFailureGate({

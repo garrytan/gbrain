@@ -75,9 +75,9 @@ const GATE_TEXT = {
   b: 'Every claim cell is unchanged (struck claims included).',
   c: 'Every row number that was valid and unique still names the same claim.',
   d: 'No row becomes more visible: `private` never turns `world`.',
-  e: 'No row is added or dropped, and every row of the fence stays inside it.',
+  e: 'No row is added or dropped, and every row of the fence stays inside it; under `merge_fences` the only rows dropped are the exact duplicates its mapping names.',
   f: 'A cell valid in its column keeps its text; a misaligned cell may only move, and text changes only through a named rule.',
-  g: 'Text the privacy boundary hid before the repair stays hidden after it.',
+  g: 'Text the privacy boundary hid before the repair stays hidden after it, except the trailing lines a `close_fence_trailing` fix shows (admitted only on a private page or under the user\'s approval).',
 } satisfies Record<GateLetter, string>;
 
 const TIER_TEXT: Record<Exclude<FenceTier, 'deterministic'>, string> = {
@@ -185,7 +185,9 @@ function synonymLines(table: Readonly<Record<string, string>>): string {
 function normalizedTable(): string {
   const brainWords = [...BRAIN_ALIASES].filter(word => word !== 'brain');
   const text = {
+    merge_fences: 'A section with more than one fence of a kind becomes one fence when every fence has both markers, the same canonical header and nothing but table lines inside: the later fences\' rows are appended to the first in document order, a later row whose cells (every column but `#`) equal a kept row\'s as written is dropped, a number that now collides is renumbered (see [row numbers](#row-numbers)) and a `superseded by #N` reference follows its own fence\'s row N, and the later markers, tables and a repeated section heading above them are removed. Anything else stays `repeated_marker` and a person merges the fences.',
     close_fence: 'A fence with no end marker gets one directly after its table, when nothing but blank lines follows the last row up to the end of the section.',
+    close_fence_trailing: 'A fence with no end marker whose table is followed by page text gets the end marker directly after its last row, so the text that followed becomes visible, when every trailing line is prose (no `|`, no fence marker; a line with a `|` only after the repair model read the tail as prose) and either the page is private (its body is never shown to remote readers, so nothing new is disclosed) or the user approved those exact lines through the hash-bound apply the preview prints. A world-visible page with no approval is `tail_exposure_approval`; a tail the model read as rows, or a marker mention, is `unclosed_ambiguous_tail` and a person closes the fence.',
     marker_form: 'Two-dash takes markers (`<!-- gbrain:takes:begin -->`) directly above a takes table become the three-dash markers. Two-dash facts markers are not a fence and are left alone.',
     stray_empty_cell: 'A row with more cells than its header (with no header: than the narrow layout, or 14 facts cells) loses empty cells, only when exactly one choice of empty cells to remove leaves every checked column (`#`, kind, confidence, visibility, notability, `claim_value`; takes kind, holder, weight) valid. Otherwise the row is `extra_cells` and a person fixes it.',
     renumber: 'A row number that is zero, negative, not a number or a duplicate gets a new number (see [row numbers](#row-numbers)).',

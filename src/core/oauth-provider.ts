@@ -54,6 +54,7 @@ import { NO_SOURCES } from './source-id.ts';
 export { assertValidSlugPrefixes } from './grants/encoding.ts';
 
 import type { SqlQuery, SqlValue } from './sql-query.ts';
+import { storedMinTrust } from './trust/tier.ts';
 export type { SqlQuery, SqlValue };
 
 export interface AgentClientBindings {
@@ -897,6 +898,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // WP4: per-client surface + operator-lock marker (amendment 19).
         ...(rowSurface !== undefined ? { surface: rowSurface } : {}),
         ...(rowSurfaceSetBy !== undefined ? { surfaceSetBy: rowSurfaceSetBy } : {}),
+        // #5575 (CEO-18): the client's read floor; current_grant is the whole row, so no projection rung needs it.
+        ...(storedMinTrust(currentGrant.min_trust) ? { minTrust: storedMinTrust(currentGrant.min_trust) } : {}),
       } as CoreAuthInfo as SdkAuthInfo;
     }
 
@@ -936,6 +939,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // floor, the one case that may widen unqualified reads.
         ...authSourcesFromGrant(grant),
         takesHoldersAllowList: grant.takesHolders ?? undefined,
+        ...(storedMinTrust(legacyRows[0].min_trust) ? { minTrust: storedMinTrust(legacyRows[0].min_trust) } : {}),
       } as CoreAuthInfo as SdkAuthInfo;
     }
 

@@ -57,7 +57,7 @@ async function authorize(engine: BrainEngine, sourceId: unknown, slug: unknown) 
 function assertPreimages(artifact: ReconcileArtifact, state: ReconcileState): void {
   assertReconcilePins(artifact.preconditions, state.pins);
   const canonical = (snapshot: typeof state.snapshot) => ({ page: reconcileCanonical(snapshot.page, snapshot.tags), revision: snapshot.revision,
-    sourceIncarnation: snapshot.sourceIncarnation, withdrawals: snapshot.withdrawals,
+    sourceIncarnation: snapshot.sourceIncarnation, withdrawals: snapshot.withdrawals, global_purges: snapshot.globalPurges ?? null,
     provenance: Object.fromEntries(['id', 'slug', 'source_id', 'source_path', 'source_kind', 'source_uri', 'ingested_via', 'ingested_at',
       'knowledge_revision', 'deleted_at'].map(key => [key, snapshot.page[key as keyof typeof snapshot.page]])) });
   if (artifact.preimages.file_base64 !== state.raw.toString('base64') || digest(canonical(artifact.preimages.database)) !== digest(canonical(state.snapshot)) ||

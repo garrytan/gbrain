@@ -69,6 +69,9 @@ op	loops_mute	no_canonical_write	Loop suppression rows.
 op	mute_notice	no_canonical_write	Notice mute list in <GBRAIN_HOME>/notices/muted.json; no brain table or canonical file.
 op	loops_unmute	no_canonical_write	Loop suppression rows.
 op	rate_answer	no_canonical_write	Writes only retrieval_* feedback tables (answer ratings and learned weights), never a guarded canonical table or file.
+op	purge_fact	coordinator	submitPurgeFactMutation admits a journaled write and deletes the purged rows under withCoordinatedWrite (trusted local CLI only).
+op	unpurge_page	no_canonical_write	Deletes only purge tombstone rows (page_purges, fact_purges, take_purges); restores no canonical row (trusted local CLI only).
+op	confirm_memory	coordinator	applyOwnerAction raises the row to user_confirmed through the owner action path (journaled owner page mutation or withCoordinatedWrite on a managed brain).
 cli	src/commands/enrich.ts	coordinator	gbrain enrich preflights maintenance authority, then publishMaintenancePage per page.
 cli	src/commands/extract-conversation-facts.ts	coordinator	Bulk conversation facts publish in batches of pages as receipted managed_maintenance_conversation_facts requests after a maintenance preflight.
 cli	src/commands/pages.ts	coordinator	gbrain pages purge-deleted runs purgeDeletedPagesCoordinated.

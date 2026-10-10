@@ -12,11 +12,14 @@ import { prepareManagedSyncMutation, type SyncIntent } from './sync-prepare.ts';
 import { startClaimPhase } from './claim-phase.ts';
 import { inspectUnchanged, screeningRequest, type NoopKernelWaiver } from './noop-kernel.ts';
 import { validateSyncAuthority, type SyncAuthority } from './sync-authority.ts';
-import { readSyncFile } from './sync-discovery.ts';
+import { readSyncFile, syncRawHash } from './sync-discovery.ts';
+import { getWorktreeBinding } from './ownership.ts';
 import { assertSyncPageOrigin, syncOriginScope } from './sync-origin.ts';
 import { faultPoint } from './fault-points.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { REVISION_BACKFILL_PENDING } from '../page-state/types.ts';
+import { withScreeningPaths } from './screening-paths.ts';
+import { withBoundedReadSession } from './bounded-reads.ts';
 
 export interface WaiverCursor { sourceId: string; incarnation: string; root: string; gitRoot: string; slugMode: 'git-root' | 'source-root';
   binding: { worktree_id: string }; authority: SyncAuthority; runId: string; index: number }
@@ -134,6 +137,10 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
 export async function screenWaiver(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal,
   frozen?: { snapshot: PageSnapshot | null }): Promise<NoopWaiver | null> {
   if (!noopWaiversEnabled() || pending.pageId === null) return null;
+  return withScreeningPaths(() => screenWaiverEntry(engine, cursor, pending, config, signal, frozen));
+}
+async function screenWaiverEntry(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal,
+  frozen?: { snapshot: PageSnapshot | null }): Promise<NoopWaiver | null> {
   const intent = pending.intent;
   if (intent.kind === 'managed_sync_delete') {
     if (intent.unownedDeletion || intent.renameFrom || intent.rawHash !== null || typeof intent.path !== 'string' || typeof intent.sourcePath !== 'string') return null;
@@ -178,6 +185,9 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
         completed_keys->0->'index' AS index,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE`, [key]);
       if (held?.run_id !== cursor.runId || Number(held.index) !== cursor.index || held.request_id != null) return { cursor: await reread(tx), waived: 0 };
       await faultPoint('sync:mid_waiver_run', { sourceId: cursor.sourceId });
+      // The run's screens may span many entries: an owner change since the first one sends the run back to the per-entry path.
+      const binding = await getWorktreeBinding(tx, cursor.sourceId);
+      if (!binding || String(binding.owner_epoch) !== run[0]!.pending.intent.ownerEpoch) return null;
       const pages = await tx.executeRaw<{ id: number | string; slug: string; deleted: boolean; knowledge_revision: string | number | null }>(
         'SELECT id,slug,deleted_at IS NOT NULL AS deleted,knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])', [cursor.sourceId, run.map(entry => entry.pending.slug)]);
       const bySlug = new Map(pages.map(page => [page.slug, page]));
@@ -195,6 +205,7 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
         if (!page || Number(page.id) !== pending.pageId || revision !== pending.intent.expected_revision) break;
         if (waived.kind === 'delete' ? !page.deleted || readSyncFile(cursor.root, pending.intent.path!) !== null : page.deleted) break;
         if ((checks[2 * i] as unknown[]).length || checks[2 * i + 1] !== true) break;
+        if (waived.kind === 'import' && syncRawHash(cursor.root, pending.intent.path!) !== pending.intent.rawHash) break;
         valid++;
       }
       if (!valid) return null;
@@ -243,7 +254,9 @@ export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCur
       worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent, request_id: pending.requestId });
     // #6278 (1.4): the clock carries the budget, so the preparation's lock-prone reads end on the server at it (boundedReads).
     const budgetMs = await syncPreparationBudgetMs(engine);
-    const prepared = await raceSyncBudget(prepareManagedSyncMutation(engine, row, config, startClaimPhase(Date.now(), undefined, budgetMs)), budgetMs, signal);
+    // GBRA-75 wave 9: the screen's bounded reads share one transaction (withBoundedReadSession), each still bounded on the server.
+    const prepared = await withBoundedReadSession(engine, session =>
+      raceSyncBudget(prepareManagedSyncMutation(session, row, config, startClaimPhase(Date.now(), undefined, budgetMs), { unsaved: true }), budgetMs, signal));
     if (prepared.file || prepared.target === 'skill_bundle') return null;
     const file = { root: cursor.root, path: join(cursor.root, intent.path), content: intent.content };
     const inspected = await inspectUnchanged(engine, { prepared: { ...prepared, target: 'page', file }, snapshot, sourcePath: intent.sourcePath, databaseOnly: false,

@@ -514,7 +514,7 @@ export async function runReindex(engine: BrainEngine, args: string[], runOpts: R
   reporter.finish();
   if (stopped) return reportBudgetStop(engine, stopped, { pending, type, json: !!opts.json, reindexed, skipped, failed, workers });
 
-  if (reindexed > 0) await refreshProjectionStatistics(engine);
+  if (reindexed > 0) await refreshProjectionStatistics(engine, reindexed);
   const pendingAfter = await countPending(engine, type, !!opts.noEmbed);
   if (failed > 0) setCliExitVerdict(1);
 
@@ -550,7 +550,7 @@ export async function runReindex(engine: BrainEngine, args: string[], runOpts: R
  * kept (a rerun continues with the rest); exit 1 with the spend and the rerun.
  */
 async function reportBudgetStop(engine: BrainEngine, e: BudgetExhausted, r: { pending: number; type: string | null; json: boolean; reindexed: number; skipped: number; failed: number; workers?: number }): Promise<ReindexResult> {
-  if (r.reindexed > 0) await refreshProjectionStatistics(engine);
+  if (r.reindexed > 0) await refreshProjectionStatistics(engine, r.reindexed);
   const pendingAfter = await countPending(engine, r.type, false);
   setCliExitVerdict(1);
   const message = `stopped at the $${e.cap.toFixed(2)} cost cap after spending $${e.spent.toFixed(4)} (${e.message}). ${pendingAfter} page(s) still pending, and pages re-chunked after the cap wait for gbrain embed --stale; ask the user before running again with a higher --max-usd.`;
@@ -597,7 +597,7 @@ async function reindexManaged(engine: BrainEngine, opts: ReindexOpts, type: stri
     if (run.stopped) stopped.push(run.stopped.message);
     unsupported += Object.values(run.residuals).reduce((sum, count) => sum + count, 0);
   }
-  if (pending > 0) await refreshProjectionStatistics(engine);
+  if (pending > 0) await refreshProjectionStatistics(engine, pending);
   const pendingAfter = await countPending(engine, type, !!opts.noEmbed);
   const reindexed = Math.max(0, pending - pendingAfter);
   if (stopped.length) setCliExitVerdict(1);

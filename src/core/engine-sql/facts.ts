@@ -26,6 +26,8 @@ import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
+import { storedTrustTier } from '../trust/tier.ts';
 
 export type EmbeddingCast = '::vector' | '::halfvec';
 
@@ -46,6 +48,11 @@ async function embeddingCast(exec: SqlExecutor, probe: ResolveEmbeddingCast | un
  * silently misses matches outside the newest-N window on high-cardinality
  * entities. Parity with the pglite engine's `_listFacts`.
  */
+/** #5575: the read-eligibility predicate for list reads that pass a policy (eligibility/sql.ts). */
+function eligibilityClause(opts: FactListOpts | undefined) {
+  return opts?.eligibility ? sqlFragment` AND ${trustedSql(projectionEligibleSql('facts', 'facts', opts.eligibility))}` : sqlFragment``;
+}
+
 function grepPattern(opts: FactListOpts | undefined): string | null {
   return (opts?.grep && opts.grep.trim()) ? '%' + escapeLikePattern(opts.grep.trim()) + '%' : null;
 }
@@ -358,7 +365,7 @@ export async function listFactsByEntity(
         ${kinds ? sqlFragment`AND kind = ANY(${kinds}::text[])` : sqlFragment``}
         ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}
         ${excludeAuditRows ? sqlFragment`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}
-        ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}
+        ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}
       ORDER BY valid_from DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `)).rows;
@@ -393,7 +400,7 @@ export async function listFactsSince(
         ${kinds ? sqlFragment`AND kind = ANY(${kinds}::text[])` : sqlFragment``}
         ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}
         ${excludeAuditRows ? sqlFragment`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}
-        ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}
+        ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}
       ORDER BY ${eventTime ? sqlFragment`COALESCE(valid_from, created_at)` : sqlFragment`created_at`} DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `)).rows;
@@ -432,7 +439,7 @@ export async function listFactsKeyset(
     WHERE source_id = ${source_id}
       ${afterCondition}
       ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
-      ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}
+      ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${eligibilityClause(opts)}
     ORDER BY created_at ASC, id ASC
     LIMIT ${limit}
   `)).rows;
@@ -462,7 +469,7 @@ export async function listFactsBySession(
         ${kinds ? sqlFragment`AND kind = ANY(${kinds}::text[])` : sqlFragment``}
         ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}
         ${excludeAuditRows ? sqlFragment`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}
-        ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}
+        ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}
       ORDER BY created_at DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `)).rows;
@@ -472,7 +479,7 @@ export async function listFactsBySession(
 export async function listSupersessions(
   exec: LegacyUnscopedRead,
     source_id: string,
-    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[] },
+    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[]; eligibility?: import('../engine.ts').FactListOpts['eligibility'] },
   ): Promise<FactRow[]> {
     const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
     const since = opts?.since ?? null;
@@ -488,7 +495,7 @@ export async function listSupersessions(
       WHERE source_id = ${source_id}
         AND superseded_by IS NOT NULL
         ${since ? sqlFragment`AND COALESCE(expired_at, valid_until) >= ${since}` : sqlFragment``}
-        ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}
+        ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${opts?.eligibility ? sqlFragment` AND ${trustedSql(projectionEligibleSql('facts', 'facts', opts.eligibility))}` : sqlFragment``}
       ORDER BY COALESCE(expired_at, valid_until) DESC, id DESC
       LIMIT ${limit}
     `)).rows;
@@ -703,6 +710,13 @@ interface FactRowSqlShape {
   fact_fingerprint?: string | null;
   created_at_iso?: string | null;
   attributed_to?: FactAttribution | null;
+  trust_tier?: string | null;
+  write_origin?: unknown;
+}
+
+function originRecord(value: unknown): Record<string, unknown> | null {
+  const parsed = typeof value === 'string' ? (() => { try { return JSON.parse(value) as unknown; } catch { return null; } })() : value;
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
 }
 
 /**
@@ -757,6 +771,8 @@ function rowToFact(raw: FactRowSqlShape): FactRow {
     ...(row.fact_fingerprint ? { fact_fingerprint: row.fact_fingerprint } : {}),
     ...(row.created_at_iso ? { created_at_iso: row.created_at_iso } : {}),
     ...(row.attributed_to ? { attributed_to: row.attributed_to } : {}),
+    ...(row.trust_tier ? { trust_tier: storedTrustTier(row.trust_tier) } : {}),
+    ...(row.write_origin !== undefined ? { write_origin: originRecord(row.write_origin) } : {}),
   };
 }
 

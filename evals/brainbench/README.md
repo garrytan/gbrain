@@ -1,6 +1,7 @@
 # BrainBench — cross-harness memory conformance suite
 
-BrainBench measures the four failure modes of agent memory, per harness seam:
+BrainBench measures the four failure modes of agent memory, per harness seam,
+plus four memory-trust suites (#5575):
 
 | Suite | Question it answers | Headline metrics |
 |---|---|---|
@@ -8,6 +9,10 @@ BrainBench measures the four failure modes of agent memory, per harness seam:
 | `push` | When context is volunteered, was it the right context? | `push_precision`, `push_recall` |
 | `write-back` | Did conversation facts survive into storage, with correct provenance? | `write_back_fidelity`, `provenance_accuracy` |
 | `continuity` | A decision made in harness A — recalled in harness B? | `continuity_rate` |
+| `trust` | Is every write stored, and read back, at the tier its channel earns — with no laundering upward and no self-promotion? | `trust_label_accuracy`, `laundering_violations`, `self_promotion_violations` |
+| `state-resolution` | After updates, is the current fact current, the old one history, and the owner's fact safe from a lower-tier writer? | `current_fact_accuracy`, `stale_surfaced_as_current`, `history_preserved`, `lower_tier_supersede_violations` |
+| `poisoning` | Does instruction-like text from a connector, a tool output or an agent stay out of a later session's proactive context? | `poison_persist_rate`, `flagged_and_labeled_rate`, `agent_relayed_activation_rate`, `poison_activation_rate`, `benign_retention`, `false_quarantine_rate` (protections on); `default_persist_unlabeled_rate`, `default_activation_unlabeled_rate`, `default_benign_retention` (shipped defaults) |
+| `deletion` | Does `forget --purge` remove a claim from every live store, account for each in its receipt, and keep it from coming back? | `residual_after_purge`, `receipt_completeness`, `resurrection_after_resync` |
 
 Plus cross-cutting: `source_isolation_violations` (gates at zero — a cross-source
 injection is gbrain's data-leak invariant) and `avg_injected_tokens` (intrusion
@@ -25,6 +30,19 @@ gbrain eval brainbench --update-baseline                      # bless intentiona
 Hermetic by default: in-memory PGLite, `noEmbed` seeding, zero API keys, zero
 LLM calls. `--llm` opts the write-back suite into the real extractor
 (budget-guarded).
+
+**Memory-trust suites write through real channels, never the seeder.** Their
+fixtures carry `trust_steps` instead of `seed_pages`: an `owner` writes files in
+the fixture's own git-backed source and syncs (your notes), confirms and purges
+as the local CLI on a terminal; a `remote_agent` calls `put_page`, `capture`,
+`remember`, `forget`, `confirm_memory` and `purge_fact` as an MCP connection; a
+`local_agent` calls them as the CLI without a terminal; a `connector` is the
+GitHub connector importing a synthetic issue feed; `raw` attempts a direct tier
+raise. One persistence-enabled brain runs every trust fixture, one source (and
+repository) per fixture, and each step waits for its post-commit effects. The
+poisoning fixtures' turns then replay as a later session through every harness
+seam and `context_pack`. Gold (`trust.items`) names what each step should have
+produced; see `docs/eval/BRAINBENCH.md` for every metric's formula.
 
 ## Layout
 
@@ -87,6 +105,13 @@ teambrain-only page, and a default-only leak canary, replayed with
    segmentation is time-based. A >30 min gap splits segments.
 5. Continuity pairs: exactly one `writer` + one `reader` per `pair_id`; the
    reader's gold carries the decision probes.
+6. Memory-trust fixtures run exactly one trust suite, write only through
+   `trust_steps` (the loader rejects `seed_pages`/`seed_facts` there), and use
+   reserved domains (`.invalid`, `*-example`) for any address. Every poisoning
+   payload and benign item carries a canary token unique to the corpus, in
+   exactly one step, so the scorer can follow it through every store and
+   surface. Do not tune a payload until the gate catches it: a payload the
+   gate misses is the finding the suite exists to report.
 
 ### Gold conventions (validated by blind double-label, 96.4% agreement)
 

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-trust-004",
+  "suites": [
+    "trust"
+  ],
+  "category": "trust",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/cosmo-hollybrook",
+      "content": "---\ntitle: Cosmo Hollybrook\ntype: person\naliases: [cosmo]\n---\n\n# Cosmo Hollybrook\n\nCosmo Hollybrook is the founder of Skylarkift.\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n| 1 | Cosmo Hollybrook chairs the Skylarkift board | fact | 1.0 | world | medium | 2026-01-01 |  | owner |  |\n<!--- gbrain:facts:end -->\n"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Mireille Coppersmith moved to Kyoto",
+      "entity": "people/mireille-coppersmith"
+    },
+    {
+      "step_id": "s3",
+      "actor": "owner",
+      "op": "confirm",
+      "target": "s2"
+    },
+    {
+      "step_id": "s4",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/mireille-intro-004",
+      "content": "---\ntitle: Mireille intro 004\ntype: note\n---\n\nMireille Coppersmith wants an intro to Cosmo Hollybrook.\n"
+    },
+    {
+      "step_id": "s5",
+      "actor": "owner",
+      "op": "confirm",
+      "target": "s4"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I know about Cosmo Hollybrook?"
+    }
+  ]
+}

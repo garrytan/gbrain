@@ -153,7 +153,7 @@ function batchReceipt(ctx: OperationContext, batchId: string, sourceId: string, 
  * all of them or none. Pages whose stored authority differs (for example one
  * page is database-only) are admitted as separate groups inside it.
  */
-async function admitBatch(ctx: OperationContext, batchId: string, admissions: WriteAdmission[]): Promise<WriteRequest[]> {
+export async function admitBatch(ctx: OperationContext, batchId: string, admissions: WriteAdmission[]): Promise<WriteRequest[]> {
   const groups = new Map<string, number[]>();
   admissions.forEach((admission, index) => {
     const key = digest(admission.authority);

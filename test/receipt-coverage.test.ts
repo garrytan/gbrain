@@ -31,6 +31,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
   'src/core/persistence/coordinator.ts': { sites: 1, receipted: 'the publication of an admitted request: every maintenance intent (conversation facts, fence reconcile, deleted-page expiry, takes reextract, take reprojection) applies here' },
   'src/core/persistence/group-publish.ts': { sites: 1, receipted: 'the grouped publication of admitted requests; each member is the attributed actor' },
   'src/core/persistence/memory-mutations.ts': { sites: 1, receipted: 'forget/withdraw: admitWriteInTransaction admits the request in the same transaction' },
+  'src/core/facts/purge.ts': { sites: 1, receipted: 'purge_fact: admitWriteInTransaction admits the request and completeWrite records its terminal receipt in the same transaction' },
   'src/core/shared-skills/publication.ts': { sites: 1, receipted: 'shared-skill revision pruning inside an admitted skill publication' },
   'src/core/persistence/source-lifecycle.ts': { sites: 1, receipted: 'source add/claim/remove under a persistence_topology_changes receipt' },
   'src/core/persistence/topology-recovery.ts': { sites: 1, receipted: 'topology recovery under its persistence_topology_changes receipt' },
@@ -40,6 +41,9 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
   'src/core/repair/timeline-comments.ts': { sites: 1, tables: ['timeline_entries'], todo: 'TODO(receipts): gbrain repair timeline-comments row cleanup should publish per page as a maintenance intent' },
   'src/core/mentions/pass.ts': { sites: 1, tables: ['page_aliases'], todo: 'TODO(receipts): derived alias rows should publish per page as a maintenance intent' },
   'src/core/bootstrap/verify.ts': { sites: 1, tables: ['facts'], todo: 'TODO(receipts): bootstrap verify deletes its own probe facts without a request; publish the cleanup as a maintenance intent' },
+  'src/core/trust/owner-actions.ts': { sites: 1, tables: ['facts'], todo: 'TODO(receipts): the owner release of a held fact inserts it in withCoordinatedWrite as maintenance without a request; publish the release as an owner request' },
+  'src/core/trust/page-handlers.ts': { sites: 1, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): owner tier decisions (confirm/lower) change only trust_tier/write_origin in withCoordinatedWrite as maintenance without a request; publish them as owner requests' },
+  'src/core/trust/backfill.ts': { sites: 1, tables: ['pages', 'facts', 'takes', 'timeline_entries'], todo: 'TODO(receipts): gbrain trust backfill classifies legacy trust_tier/write_origin (no content column) as attributed coordinated maintenance without a request; publish each batch as a maintenance intent' },
   'src/core/cycle/concept-publication.ts': { sites: 1, tables: [], other: 'concept provenance links (links is not a guarded table)' },
   'src/core/persistence/links-maintenance.ts': { sites: 1, tables: [], other: 'derived links and the pages attendance-blocked stamp (a physical column the guard exempts)' },
   'src/core/persistence/database-write.ts': { sites: 1, tables: [], other: 'manual links and chronicle ontology observations (unguarded tables)' },
@@ -50,7 +54,7 @@ const RECEIPT_COVERAGE: Record<string, Coverage> = {
 };
 
 /** Facts/takes writers allowed without a receipt this wave, each with its TODO above. */
-const RECEIPT_EXCEPTIONS = new Set(['src/core/bootstrap/verify.ts']);
+const RECEIPT_EXCEPTIONS = new Set(['src/core/bootstrap/verify.ts', 'src/core/trust/backfill.ts', 'src/core/trust/owner-actions.ts', 'src/core/trust/page-handlers.ts']);
 
 const ROOT = join(import.meta.dir, '..');
 

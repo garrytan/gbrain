@@ -56,6 +56,8 @@ ALLOWED=(
   "src/core/minions/tools/brain-allowlist.ts"   # subagent registry; has its own opt-in allowlist (separate from localOnly)
   "src/commands/capture.ts"                     # local CLI tool; not network-exposed
   "src/commands/recall.ts"                      # local CLI delegates forget through the frozen operation before acquiring an engine
+  "src/commands/forget-purge.ts"                # local CLI runs the cliOnly purge_fact op as the trusted owner (remote: false) or over the 0600 owner socket
+  "src/commands/pages-purges.ts"                # local CLI runs the cliOnly list_page_purges / unpurge_page ops as the trusted owner (remote: false)
   "src/commands/takes-mutation.ts"              # local CLI adapter; trusted execution or authenticated persistence IPC only
   "src/core/persistence/administration.ts"      # trusted-admin grant diagnostics; does not expose an operation transport
   "src/core/persistence/provider.ts"            # authenticated local registrations; shared dispatch enforces localOnly and the immutable trust lane

@@ -929,6 +929,77 @@ writing it, and install the staged-content pre-commit hook with
 `gbrain frontmatter install-hook` (the user's decision: it writes into their
 repository). See the `frontmatter-guard` skill.
 
+<a id="content-lane"></a>
+#### The content-repair lane (#6377)
+
+The walkthrough above is the interpretive path: frontmatter fixes change what
+a file says, so each one is approved by hash. Holds about a file's *content*
+(`invalid_fence`, and `frontmatter_slug_conflict` once its lane kind ships)
+take a different path and clear with no one acting. The content-repair lane
+(`src/core/repair/content-lane.ts`) is the ordered list of repair kinds that
+clear them, today `fences`, run under one paid-model allowance and one
+deadline: what the first kind spends on the model is gone for the next, and
+every kind keeps its own census, owner checks, caps, daily ledger
+(`fences.repair.max_usd_per_page`, `fences.repair.max_usd_per_day`, shared by
+the whole lane), attempt memo and validation gates. It runs from three places:
+
+- The maintenance run: `fence_repair` runs the `fences` kind right after
+  `sync`, and `content_repair` runs every other lane kind right after it, both
+  gated on `fences.repair.enabled`, so a hold the sync just wrote is repaired
+  before the extract phases read the page.
+- `gbrain sync unblock --source <source> --apply` runs the lane on exactly the
+  held paths now, one bounded apply, then schedules the re-screen and prints
+  the sync. Each path reports `repaired`, `held`, `needs_human` or `skipped`
+  with its reason code, receipt and next step; `--no-llm` keeps to the free
+  tiers and `--no-repair` restores the refuse-only behaviour
+  ([runbook](sync-unblock-runbook.md)).
+- By hand:
+
+```bash
+gbrain repair content --source <source>                                    # preview: every lane kind, read-only, no model call; one hash per kind
+gbrain repair content --source <source> --apply --expect <hash>[,<hash>]   # the apply command the preview prints: exactly those sets
+gbrain repair content --source <source> --only <path> --apply              # one file, each kind's current plan
+```
+
+The preview plans every kind before anything is written and prints each
+kind's own hash and the apply command; there is no combined hash, and a wrong
+hash count refuses (`invalid_params`) before any kind runs. `--max-usd <n>` is
+the lane's allowance for the run; `--no-llm` keeps every kind to its free
+tiers. `--apply` alone applies each kind's current plan as `gbrain repair
+<kind> --apply` does, each file bound to the bytes the plan read
+(`changed_since_read`).
+
+**What a repair proves.** Every repair is one coordinated write. On a managed
+source the file is rewritten, imported, its hold cleared and the commit queued
+through the Git effect, whose subject is `gbrain: repair fence in <path>
+(<classes>)` and whose trailer `gbrain-repair: <hold_code> <tier> <confidence>`
+names what was repaired, which tier decided it and how sure the rule was. The
+receipt the write carries (location-only: mode, tier, classes, rows, columns,
+`before_sha256`, `after_sha256`, `committed: effect | commit_step |
+not_in_git`, and for a merge the merged fence occurrences, never a cell) is
+parsed before it reaches a commit message, so nothing forged lands there.
+`git revert` of that one commit restores the bytes; the hold then re-screens.
+A legacy source is backed up under `~/.gbrain/backups/` and prints the commit
+step with the same `-m` pair.
+
+**What the model decides, and what it never does.** The deterministic tiers
+run first and the model sees only the cases they mark ambiguous: the trailing
+lines after an unclosed fence on a world-visible page (prose, rows or unsure)
+and a slug conflict whose two pages might be the same thing (`remove_slug`,
+`merge_into <canonical>` or `needs_human`). The model chooses among coded
+answers; every byte written comes from a rule and passes the gates. Merges are
+**recommended, not executed**: a `merge_into` answer becomes a `needs_human`
+hold naming the canonical page ([`merge_recommended`](write-refusals.md#merge_recommended)),
+and a world-page close that would expose text waits for the hash-bound
+approval ([`tail_exposure_approval`](write-refusals.md#tail_exposure_approval)).
+`gbrain sync status --source <source> --json` lists each such hold with its
+paragraph in `human_reason`; `fences.repair.llm false` turns the model tier
+off for the whole lane.
+
+**Say to your agent:** *"Sync is holding a few files over their tables or
+slugs. Repair what gbrain can by itself and tell me what it wants me to
+decide."*
+
 <a id="frontmatter"></a>
 ### Frontmatter
 
@@ -1061,7 +1132,7 @@ exists). An older gbrain blocked the source on the first fence it refused.
    +1 added, ~0 modified, -0 soft-deleted (recoverable 72h), R0 renamed
    Held companies/acme-example.md: invalid_fence (no_header) in the facts fence (body), at line 6; its page is missing until the file imports. Next: gbrain repair fences --source notes --only companies/acme-example.md, then gbrain repair fences --source notes --only companies/acme-example.md --apply (docs/guides/write-refusals.md#fence-no_header)
    Held projects/widget-launch.md: invalid_fence (holder_unresolved) in the takes fence (body), row 1, column who, at line 9; its page is missing until the file imports. Next: gbrain repair fences --source notes --only projects/widget-launch.md, then gbrain repair fences --source notes --only projects/widget-launch.md --apply (docs/guides/write-refusals.md#fence-holder_unresolved)
-   2 file(s) held this run, 2 held in source notes; they do not block sync. Inspect them with 'gbrain sources status notes'; then nothing repairs the fence holds by itself (no maintenance run is active), so preview the fence repairs with gbrain repair fences --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, and prints the apply command with --expect <hash>), then run the apply command it prints. Preview the repair: gbrain repair fences --source notes
+   2 file(s) held this run, 2 held in source notes; they do not block sync. Inspect them with 'gbrain sources status notes'; then nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with gbrain repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints. Preview the repair: gbrain repair content --source notes
    Converted 1 failed request(s) of the blocked cursor in place: <id>.
    Normalized fences in 1 file(s) (kind_map x1, close_fence x1). 1 file(s) under meetings/ had a malformed facts or takes fence that sync rewrote losslessly and committed (claims and existing row numbers unchanged); whatever writes them emits fences gbrain has to repair. Write facts with `remember` and takes with `takes_add` (or emit the canonical columns) so rows never need normalizing. Re-read a normalized page before editing it.
    ```

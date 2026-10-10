@@ -18,8 +18,7 @@ export const WRITE_ERROR_CODES = [
   'connector_account_changed', 'connector_intent_outdated', 'checkpoint_validation_timeout',
   'invalid_connector_text', 'connector_holds_exhausted', 'connector_fence_below_timeline',
   'core_budget_exceeded', 'core_mark_owner_only', 'core_remote_edit_refused', 'core_delete_owner_only',
-  'timeline_rows_would_be_removed', 'preparation_stalled',
-  'timeline_rows_would_be_removed',
+  'timeline_rows_would_be_removed', 'purged_content', 'preparation_stalled',
   'fence_unrenderable',
   'write_outcome_unknown',
 ] as const;

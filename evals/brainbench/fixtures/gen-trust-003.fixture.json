@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-trust-003",
+  "suites": [
+    "trust"
+  ],
+  "category": "trust",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Calliope Saltmarsh closed the Tidecraft Systems seed round",
+      "entity": "people/calliope-saltmarsh"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "confirm",
+      "target": "s1"
+    },
+    {
+      "step_id": "s3",
+      "actor": "local_agent",
+      "op": "confirm",
+      "target": "s1"
+    },
+    {
+      "step_id": "s4",
+      "actor": "raw",
+      "op": "raise_tier",
+      "target": "s1"
+    },
+    {
+      "step_id": "s5",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/calliope-board-003",
+      "content": "---\ntitle: Calliope board prep 003\ntype: note\n---\n\nCalliope Saltmarsh wants the board deck by Austin time.\n"
+    },
+    {
+      "step_id": "s6",
+      "actor": "remote_agent",
+      "op": "confirm",
+      "target": "s5"
+    },
+    {
+      "step_id": "s7",
+      "actor": "raw",
+      "op": "raise_tier",
+      "target": "s5"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I know about Calliope Saltmarsh?"
+    }
+  ]
+}

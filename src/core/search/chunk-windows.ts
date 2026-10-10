@@ -12,6 +12,7 @@
  * sealed pages and anchor the hits in that text.
  */
 import type { PageReadScope } from '../types.ts';
+import type { FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 
 export interface ChunkWindowRequest {
   page_id: number;
@@ -47,6 +48,8 @@ export interface ChunkWindowPage {
   chunks: ChunkWindowChunk[];
   /** True when the row cap stopped before every requested row was read. */
   row_limited: boolean;
+  /** #5575 ENG-1: the page's fence overlay, attached by evidence delivery before it builds the page document. */
+  fenceOverlay?: FenceChunkOverlay;
 }
 
 export interface ChunkWindowOpts extends PageReadScope {

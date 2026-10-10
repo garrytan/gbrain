@@ -130,14 +130,19 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   files through `put_page`/`capture` or a YAML serializer and check generated
   content with `gbrain frontmatter validate --stdin --path <p>`. Walkthrough:
   [held files](docs/guides/repair.md#held-files). A hold with code
-  `invalid_fence` is a facts or takes table, not frontmatter, and clears
-  automatically on the next maintenance run. `gbrain repair fences --source <id>`
-  previews the repair and its printed apply command runs it now, with no
-  extra consent; a `manual` reason needs the edit the hold names (read the
-  page with `gbrain get --source <id> -- <slug>`, edit only that fence,
-  commit, `gbrain sync --source <id> --no-pull`). Raising spend
+  `invalid_fence` or `frontmatter_slug_conflict` is about the file's content,
+  not its YAML, and the content-repair lane clears it by itself: the next
+  maintenance run repairs what it can, `gbrain sync unblock --source <id>
+  --apply` does it now with a receipt per file, and
+  `gbrain repair content --source <id>` previews every lane kind (its printed
+  apply command runs with no extra consent). A hold the lane marks
+  `needs_human` (a manual fence edit, a recommended page merge, an exposed
+  tail on a world page) is listed in `gbrain sync status --source <id> --json`
+  with its paragraph: relay it, make or approve the edit it names, commit,
+  `gbrain sync --source <id> --no-pull`. Raising spend
   (`fences.repair.max_usd_per_day`, `fences.repair.llm true`) is the user's
-  call ([fence holds](docs/guides/write-refusals.md#invalid_fence)). A hold
+  call ([the lane](docs/guides/repair.md#content-lane),
+  [fence holds](docs/guides/write-refusals.md#invalid_fence)). A hold
   with code `preparation_stalled` (or a managed catch-up that stops
   `preparation_abandoned` / `preparation_systemic`, or a write receipt with that
   code) means the write owner stalled, not the file: no repair applies. Run

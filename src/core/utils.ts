@@ -91,6 +91,11 @@ export const HASH_EPHEMERAL_FRONTMATTER_KEYS: readonly string[] = [
   // (paraphrases defeat content_hash_duplicates). The marker is re-derived
   // deterministically from the body, so dropping it from the hash is safe.
   ATOMS_SCAN_HASH_KEY,
+  // #5575 CEO-21: the lower-only `trust_tier` marker a below-owner write-through stamps. It labels the
+  // content, it is not content: page purge tombstones match (source_id, content_hash) with or without it,
+  // and an agent stamping it onto identical content is no content change. (The tier trigger still treats
+  // it as content: trust/schema.ts TRUST_EPHEMERAL_FRONTMATTER_KEYS excludes it.)
+  'trust_tier',
 ];
 
 /**

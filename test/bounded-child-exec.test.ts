@@ -104,10 +104,11 @@ test('bounded execution stops a running child on abort and at its deadline', asy
 
 test('a stopped child gets SIGTERM first so it can remove its lockfile, then SIGKILL after the grace period', async () => {
   const lock = join(dir, 'index.lock');
-  const script = `touch '${lock}'; trap "rm -f '${lock}'; exit 143" TERM; while :; do sleep 0.05; done`;
+  const script = `trap "rm -f '${lock}'; exit 143" TERM; touch '${lock}'; while :; do sleep 0.05; done`;
   const abort = new AbortController();
   const running = execFileBounded('sh', ['-c', script], { timeout: 60_000, signal: abort.signal });
-  await Bun.sleep(200);
+  // The lock appears once the child's trap is installed; on a loaded runner that can take longer than any fixed sleep.
+  for (const deadline = performance.now() + 10_000; !(await Bun.file(lock).exists()) && performance.now() < deadline;) await Bun.sleep(20);
   expect(await Bun.file(lock).exists()).toBe(true);
   abort.abort();
   expect((await running).error).toMatchObject({ code: 'ABORT_ERR', killed: true });

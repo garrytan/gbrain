@@ -7,6 +7,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import {
   configureGateway,
   resetGateway,
@@ -216,5 +217,29 @@ describe('hybridSearch cross-modal routing (Phase 1 integration)', () => {
     const results = await hybridSearch(engine, 'show me photos', { crossModal: 'image', limit: 5 });
     expect(Array.isArray(results)).toBe(true);
     // Did NOT throw; fell back successfully.
+  });
+
+  test('an inferred image intent on a text-only install stays a text query: keyword arm, expansion and no failed arm', async () => {
+    // The shipped default: voyage-4 text embeddings, no multimodal model. Before the fix
+    // the regex routed "a photo of ..." to the image arm, which skipped the keyword arm and
+    // expansion, then failed the multimodal embed and reported vector_arm_failed.
+    configureGateway({ embedding_model: 'voyage:voyage-4', embedding_dimensions: 1024, env: { VOYAGE_API_KEY: 'voyage-test-key' } });
+    fetchHandler = async (url) => {
+      if (url.includes('multimodalembeddings')) throw new Error('the multimodal endpoint must not be called on a text-only install');
+      return new Response(JSON.stringify({ data: [{ embedding: Array.from({ length: 1024 }, () => 0.1), index: 0 }], model: 'voyage-4' }), { status: 200 });
+    };
+    await engine.putPage('trips/half-dome', { type: 'note', title: 'Yosemite trip', compiled_truth: 'A photo of Half Dome during sunset for the contest.' });
+    await installFixtureChunks(engine, 'trips/half-dome', [{ chunk_index: 0, chunk_text: 'A photo of Half Dome during sunset for the contest.', chunk_source: 'compiled_truth' }]);
+    let meta: any;
+    const results = await hybridSearch(engine, 'A photo of Half Dome during sunset', { limit: 5, onMeta: m => { meta = m; } });
+    expect(results.map(r => r.slug)).toContain('trips/half-dome');
+    expect((meta?.degraded ?? []).map((d: any) => d.stage)).not.toContain('vector_arm_failed');
+    expect(fetchUrlsSeen.some(u => u.includes('multimodalembeddings'))).toBe(false);
+  });
+
+  test('the same inferred image intent still routes to the image arm when a multimodal model is configured', async () => {
+    configureBoth();
+    await hybridSearch(engine, 'A photo of Half Dome during sunset', { limit: 5 });
+    expect(fetchUrlsSeen.some(u => u.includes('multimodalembeddings'))).toBe(true);
   });
 });

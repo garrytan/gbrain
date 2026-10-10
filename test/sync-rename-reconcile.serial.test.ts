@@ -2273,7 +2273,7 @@ describe('#3583 review: GATE13 — chunker_version is acknowledged only by a com
   });
 
   test('a BLOCKED forced re-chunk keeps the version stale, so the retry actually re-runs', async () => {
-    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
+    const { chunkerStamp } = await import('../src/core/chunkers/code.ts');
     const { performSync } = await import('../src/commands/sync.ts');
     const goodAlpha = personMd('Alpha', 'Alpha is a person.');
     const repo = mkRepo({ 'people/alpha.md': goodAlpha });
@@ -2303,7 +2303,7 @@ describe('#3583 review: GATE13 — chunker_version is acknowledged only by a com
     const ackedVersion = await engine.executeRaw<{ chunker_version: string | null }>(
       `SELECT chunker_version FROM sources WHERE id = 'default'`,
     );
-    expect(ackedVersion[0]?.chunker_version).toBe(String(CHUNKER_VERSION));
+    expect(ackedVersion[0]?.chunker_version).toBe(chunkerStamp());
     expect(await engine.getPage('people/alpha')).not.toBeNull();
     await engine.setConfig('sync.holds', 'hold');
   });

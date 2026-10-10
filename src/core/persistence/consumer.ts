@@ -1,6 +1,6 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
-import { claimableWriteSql, foregroundPrioritySql, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, compactWriteReceipts, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues } from './journal.ts';
+import { claimableWriteSql, foregroundPrioritySql, claimGroupFollowers, claimNextLaneHead, claimNextWrite, independentGroup, publicationGroupKey, compactWriteReceipts, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues } from './journal.ts';
 import { finishPreparationStalled, finishUnpublishedFailure, preparationAbortReason, recoverPublication, type PreparedMutation } from './coordinator.ts';
 import { localHostId } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX, publishSingleWrite, singleWrite } from './group-publish.ts';
@@ -887,9 +887,10 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     if (order === 'wait') { await releaseUnpublishedClaim(this.statements, row, 'group_member_waiting'); return false; }
     if (order) { for (const done of order) this.settled(done); return true; }
     const group = publicationGroupKey(row);
-    if (!group || this.engine.kind !== 'postgres') return this.execute(row, root);
-    // #6007: a put_pages batch publishes in groups of at most PAGE_BATCH_GROUP_MAX pages.
-    const followers = await claimGroupFollowers(this.engine, row, group, group.startsWith('batch:') ? PAGE_BATCH_GROUP_MAX - 1 : 63);
+    // A managed import batch also groups on PGLite: its members share one transaction's guards there too.
+    if (!group || this.engine.kind !== 'postgres' && !group.startsWith('import:')) return this.execute(row, root);
+    // #6007: a put_pages or import batch publishes in groups of at most PAGE_BATCH_GROUP_MAX pages.
+    const followers = await claimGroupFollowers(this.engine, row, group, independentGroup(group) ? PAGE_BATCH_GROUP_MAX - 1 : 63);
     if (!followers.length && !lane) return this.execute(row, root);
     const rows = [row, ...followers];
     for (const member of rows) this.executing.add(member.id);

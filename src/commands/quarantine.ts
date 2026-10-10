@@ -1,7 +1,7 @@
 /**
  * gbrain quarantine — operator surface for the content-quality gate (issue #1699).
  *
- *   gbrain quarantine list [--json] [--include-flagged]
+ *   gbrain quarantine list [--json] [--include-flagged]   (also write-gate fact/take holds)
  *   gbrain quarantine clear <slug> [--force] [--no-embed] [--json]
  *   gbrain quarantine scan [--limit N] [--apply] [--no-embed] [--json]
  *
@@ -23,6 +23,7 @@ import { resolveCliWriteWaitMs } from '../core/persistence/write-wait.ts';
 import { QUARANTINE_OVERRIDE_KEY, quarantineOverrideFor } from '../core/quarantine-override.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 import type { PageType } from '../core/types.ts';
+import { listWriteGateHolds, type WriteGateHold } from '../core/write-gate-store.ts';
 
 export interface QuarantineRow {
   slug: string;
@@ -141,15 +142,28 @@ export async function collectQuarantineRows(
   return { rows, scanned, truncated };
 }
 
+/** One-line, inert preview of a held row's text for the owner's review. */
+function holdPreview(hold: WriteGateHold): string {
+  const text = String(hold.payload.fact ?? hold.payload.claim ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
 async function runList(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
   const includeFlagged = args.includes('--include-flagged');
   const { rows } = await collectQuarantineRows(engine, { includeFlagged });
+  // #5575: facts and takes the write gate held (never inserted); release or drop with gbrain trust release|drop <ref>.
+  const holds = await listWriteGateHolds(engine, { status: 'held', limit: 1000 });
 
   if (json) {
-    console.log(JSON.stringify({ schema_version: 1, count: rows.length, rows }, null, 2));
+    console.log(JSON.stringify({ schema_version: 1, count: rows.length, rows, hold_count: holds.length, holds }, null, 2));
     return;
   }
+  for (const h of holds) {
+    const src = h.source_id === 'default' ? '' : ` [${h.source_id}]`;
+    console.log(`  HELD    ${h.kind} ${h.ref}${src}${h.slug ? ` ${h.slug}` : ''}  reasons=${h.reason_families.join(',') || 'detector_error'}  tier=${h.tier}  at=${h.last_seen_at}\n          ${holdPreview(h)}`);
+  }
+  if (holds.length) console.log(`\n${holds.length} held fact/take row(s): review, then gbrain trust release <ref> or gbrain trust drop <ref>.\n`);
   if (rows.length === 0) {
     console.log(
       includeFlagged
@@ -384,11 +398,12 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
   }
 }
 
-export const QUARANTINE_HELP = `Usage: gbrain quarantine <list|clear|scan> [options]
+export const QUARANTINE_HELP = `Usage: gbrain quarantine <list|clear|scan|release|drop> [options]
 
   list [--json] [--include-flagged]
       Pages the content-quality gate hid as junk (quarantine), and with
       --include-flagged the searchable pages it flagged (content_flag).
+      Also lists facts and takes the write gate held for review (h<id>).
   clear <slug> [--source-id <id>] [--force] [--no-embed] [--json]
       Remove the markers and write the page again; the gate re-checks it.
       --force records that the page is not junk (quarantine_override, bound
@@ -397,6 +412,9 @@ export const QUARANTINE_HELP = `Usage: gbrain quarantine <list|clear|scan> [opti
   scan [--limit N] [--apply] [--no-embed] [--json]
       Re-check existing pages against the gate (preview by default).
       --apply re-imports them and is refused on a managed brain.
+  release <h<id>> | drop <h<id>>
+      Aliases of gbrain trust release|drop: release a held fact or take into
+      memory (asks you to type its ref), or drop it.
 
 One junk pattern that misfires brain-wide can be turned off with
 content_sanity.disabled_patterns.`;

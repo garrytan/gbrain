@@ -5,7 +5,6 @@ export { serveFailFastRequested, writeServeFailFastEnvelope } from '../core/serv
 import { isEngineDegraded as isEngineDegradedForServe } from '../core/degraded-marker.ts';
 import { startMcpServer, stdioRpcsInFlightCount, resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
-import { parseTokenTtl } from './auth.ts';
 import { RESIDENT_POOL_FLOOR } from '../core/pg-access-classify.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import { startFactsDrainScheduler, type FactsDrainScheduler, type FactsDrainSchedulerOpts } from '../core/facts/drain-scheduler.ts';
@@ -276,6 +275,8 @@ export async function runServe(
     const port = portIdx >= 0 ? parseInt(args[portIdx + 1]) || 3131 : 3131;
 
     const ttlIdx = args.indexOf('--token-ttl');
+    // auth.ts reaches the whole operations graph; only --http needs it.
+    const { parseTokenTtl } = await import('./auth.ts');
     const tokenTtl = ttlIdx >= 0 ? parseTokenTtl(args[ttlIdx + 1] ?? '', 'Omit the flag for the 3600-second default.') : 3600;
 
     // #1353: --enable-dcr-insecure opts into the consent-bypassing

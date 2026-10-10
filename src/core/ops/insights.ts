@@ -9,6 +9,9 @@
  * it). Never import from '../operations.ts' here (cycle).
  */
 
+import { MIN_TRUST_PARAM } from '../eligibility/policy.ts';
+import { proactiveEligibility } from '../eligibility/registry.ts';
+import { activationSuppressionNotice, suppressionSummary } from '../eligibility/activation.ts';
 import type { Operation } from './contract.ts';
 import { opError } from './contract.ts';
 import { invalidParam, paramUse } from './op-fix.ts';
@@ -49,6 +52,7 @@ const volunteer_context: Operation = {
         'appears here are not re-volunteered.',
     },
     max_pages: { type: 'number', description: 'Max pages to volunteer (default 3, hard cap 5).' },
+    min_trust: MIN_TRUST_PARAM,
     min_confidence: {
       type: 'number',
       description:
@@ -84,6 +88,7 @@ const volunteer_context: Operation = {
     const { loadConfig: loadCfgForArms } = await import('../config.ts');
     const { lexicalArmsEnabled } = await import('../context/reflex.ts');
     const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
+    const withheldKeys = new Set<string>();
     const pages = await volunteerContext(ctx.engine, turns, {
       sourceIds,
       priorContext: typeof p.prior_context === 'string' ? p.prior_context : undefined,
@@ -94,7 +99,13 @@ const volunteer_context: Operation = {
       lexicalArms: lexicalArmsEnabled(loadCfgForArms()),
       // N8-1: the same private-page gate remote search applies.
       excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
+      // #5575: token floor + min_trust + activation control (CEO-20, DX-10).
+      eligibility: await proactiveEligibility(ctx, 'volunteer', { minTrust: p.min_trust }),
+      onWithheld: keys => { for (const k of keys) withheldKeys.add(k); },
     });
+    const withheld = withheldKeys.size;
+    const notice = activationSuppressionNotice(withheld, 'volunteered context');
+    if (notice) ctx.emitNotice?.(notice);
 
     // Feedback-loop logging: fire-and-forget batched INSERT through the
     // volunteer-events sink (drained at exit). Never fails the op.
@@ -118,7 +129,8 @@ const volunteer_context: Operation = {
         /* telemetry only */
       }
     }
-    return { pages, count: pages.length, window_turns: turns.length };
+    const suppressed = suppressionSummary(withheld);
+    return { pages, count: pages.length, window_turns: turns.length, ...(suppressed ? { suppressed } : {}) };
   },
   cliHints: { name: 'volunteer-context', stdin: 'window' },
 };

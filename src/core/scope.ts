@@ -22,7 +22,7 @@
  * vs user-account-mgmt — neither implies the other).
  */
 
-export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self';
+export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self' | 'memory_confirm';
 
 export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'read',
@@ -34,6 +34,7 @@ export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'skill_editor',
   'skill_publisher',
   'skills_member_self',
+  'memory_confirm',
 ]);
 
 /**
@@ -43,6 +44,7 @@ export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
 export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
   'admin',
   'agent',
+  'memory_confirm',
   'read',
   'skill_editor',
   'skill_publisher',
@@ -70,6 +72,24 @@ export const DCR_REGISTRABLE_SCOPES: ReadonlySet<Scope> = new Set<Scope>(['read'
 const DCR_MACHINE_SCOPES: ReadonlySet<Scope> = new Set<Scope>(['read']);
 
 /**
+ * #5575 (CEO-6): scopes only the trusted local CLI may grant
+ * (`gbrain auth create --scopes ...,memory_confirm`, `auth register-client`,
+ * `auth rescope`). `memory_confirm` lets a connection confirm memory as the
+ * owner (raise a trust tier), so the admin HTTP API, the admin SPA, `gbrain mcp
+ * admin`, API-key minting and dynamic registration all refuse it, and no
+ * grant profile or grandfathered token carries it.
+ */
+export const LOCAL_CLI_ONLY_SCOPES: ReadonlySet<Scope> = new Set<Scope>(['memory_confirm']);
+
+/** null when no local-CLI-only scope is requested; otherwise the refusal message naming the local command. */
+export function localCliOnlyScopeViolation(requested: readonly string[]): string | null {
+  const over = [...new Set(requested.filter(s => LOCAL_CLI_ONLY_SCOPES.has(s as Scope)))];
+  if (over.length === 0) return null;
+  return `Scope "${over.join(' ')}" lets a connection confirm memory as the owner, so only the local CLI on the brain host can grant it: `
+    + '`gbrain auth create <name> --scopes read,write,memory_confirm` or `gbrain auth rescope --client <client_id> --scopes ...`.';
+}
+
+/**
  * null when the requested DCR scopes fit under the ceiling; otherwise the
  * `invalid_client_metadata` message naming the offending scopes + remedy.
  * Unknown scope strings are ignored here (filterAllowedScopes drops them);
@@ -79,6 +99,8 @@ export function dcrScopeViolation(requested: readonly string[], grantTypes: read
   if (requested.includes('agent')) {
     return 'agent scope requires an operator-approved grant with explicit delegation bindings; dynamic registration cannot grant it';
   }
+  const localOnly = localCliOnlyScopeViolation(requested);
+  if (localOnly) return localOnly;
   const machine = grantTypes.includes('client_credentials');
   const ceiling = machine ? DCR_MACHINE_SCOPES : DCR_REGISTRABLE_SCOPES;
   const over = [...new Set(requested.filter((s) => isScope(s) && !ceiling.has(s)))];
@@ -109,8 +131,8 @@ export function dcrScopeViolation(requested: readonly string[], grantTypes: read
  *    `dcrScopeViolation` — authorization_code is the DCR default and may hold
  *    both, so advertising `read` alone would under-describe it.
  *  - DCR disabled: every scope except operator-only `agent`, which also needs
- *    delegation bindings no OAuth request can carry. Operator-registered
- *    clients see the full set they may hold.
+ *    delegation bindings no OAuth request can carry, and the local-CLI-only
+ *    `memory_confirm`. Operator-registered clients see the full set they may hold.
  *
  * Narrowed discovery never narrows an operator-registered client: one that
  * omits `scope` at /authorize or /token receives its full registered set
@@ -120,7 +142,7 @@ export function dcrScopeViolation(requested: readonly string[], grantTypes: read
 export function scopesSupportedForDiscovery(opts: { enableDcr: boolean }): Scope[] {
   return opts.enableDcr
     ? ALLOWED_SCOPES_LIST.filter((s) => DCR_REGISTRABLE_SCOPES.has(s))
-    : ALLOWED_SCOPES_LIST.filter((s) => s !== 'agent');
+    : ALLOWED_SCOPES_LIST.filter((s) => s !== 'agent' && !LOCAL_CLI_ONLY_SCOPES.has(s));
 }
 
 /**
@@ -132,6 +154,10 @@ export function scopesSupportedForDiscovery(opts: { enableDcr: boolean }): Scope
  * token still needs to be re-registered with explicit bindings to submit
  * subagent jobs. This prevents existing admin clients from silently gaining
  * agent-dispatch capability on upgrade.
+ *
+ * #5575: `memory_confirm` (confirm memory as the owner) is a sibling too:
+ * admin never implies it, so grandfathered full-access tokens and admin
+ * clients cannot raise a trust tier.
  */
 const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
   admin: new Set(['admin', 'sources_admin', 'users_admin', 'write', 'read']),
@@ -143,6 +169,7 @@ const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
   skill_editor: new Set(['skill_editor']),
   skill_publisher: new Set(['skill_publisher']),
   skills_member_self: new Set(['skills_member_self']),
+  memory_confirm: new Set(['memory_confirm']),
 };
 
 /**
@@ -304,6 +331,9 @@ export function normalizeScopesInput(raw: unknown): string {
 
   // Validate against ALLOWED_SCOPES (throws InvalidScopeError on miss).
   assertAllowedScopes(deduped);
+  // Every caller of this normalizer is an admin HTTP surface (or its remote CLI), never the local CLI.
+  const localOnly = localCliOnlyScopeViolation(deduped);
+  if (localOnly) throw new Error(localOnly);
 
   return deduped.join(' ');
 }

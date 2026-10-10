@@ -975,7 +975,7 @@ describe('ops', () => {
   test('recall keeps legacy fields and packing, adding delivered/delivery only when on', async () => {
     const off = await op('recall').handler(ctxOf(), { query: 'narwhal', budget_tokens: 5000, return_unit: 'chunk' }) as Record<string, any>;
     expect(off.delivery).toBeUndefined();
-    expect(off.results.every((r: Record<string, unknown>) => Object.keys(r).join(',') === 'slug,title,chunk,evidence,create_safety,provenance')).toBe(true);
+    expect(off.results.every((r: Record<string, unknown>) => Object.keys(r).join(',') === 'slug,title,chunk,evidence,create_safety,provenance,trust_tier,origin')).toBe(true);
     const on = await op('recall').handler(ctxOf(), { query: 'narwhal', budget_tokens: 5000, return_unit: 'page' }) as Record<string, any>;
     expect(on.delivery.requested_unit).toBe('page');
     expect(on.results[0].delivered.unit).toBe('page');

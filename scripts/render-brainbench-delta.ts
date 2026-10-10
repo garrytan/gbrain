@@ -50,6 +50,10 @@ const HEADLINE: Record<string, string> = {
   push: 'push_recall',
   'write-back': 'write_back_fidelity',
   continuity: 'continuity_rate',
+  trust: 'trust_label_accuracy',
+  'state-resolution': 'current_fact_accuracy',
+  poisoning: 'poison_activation_rate',
+  deletion: 'residual_after_purge',
 };
 for (const c of result.cells) {
   const h = HEADLINE[c.suite];

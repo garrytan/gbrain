@@ -45,9 +45,14 @@ export function readArmsList(root: string): ArmsList {
   return parseArmsList(readFileSync(path, 'utf8'));
 }
 
-/** Per-file durations from GitHub job logs: each `##[group]<file>` line to the next group or endgroup. */
+/**
+ * Per-file durations from GitHub job logs: each `##[group]<file>` line to the
+ * next group or endgroup, the median across logs. The median balances shards
+ * on a typical run; one slow runner's outlier would otherwise set a file's
+ * weight (a max did, and pushed most of the slow suites into one shard).
+ */
 export function mineArmWeights(logs: string[]): Map<string, number> {
-  const weights = new Map<string, number>();
+  const samples = new Map<string, number[]>();
   for (const log of logs) {
     let open: { file: string; at: number } | undefined;
     for (const line of log.split('\n')) {
@@ -56,13 +61,17 @@ export function mineArmWeights(logs: string[]): Map<string, number> {
       const at = m ? Date.parse(m[1]!) : end ? Date.parse(end[1]!) : NaN;
       if (!Number.isFinite(at) || (!m && !open)) continue;
       if (open && (m || end)) {
-        weights.set(open.file, Math.max(weights.get(open.file) ?? 0, at - open.at));
+        samples.set(open.file, [...(samples.get(open.file) ?? []), at - open.at]);
         open = undefined;
       }
       if (m) open = { file: m[2]!, at };
     }
   }
-  return weights;
+  return new Map([...samples].map(([file, ms]) => {
+    const sorted = [...ms].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return [file, sorted.length % 2 ? sorted[mid]! : Math.round((sorted[mid - 1]! + sorted[mid]!) / 2)];
+  }));
 }
 
 function main(argv: string[]): number {

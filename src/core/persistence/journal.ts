@@ -13,6 +13,7 @@ import { PreadmitBrainChanged } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
 import { writerStamp } from './writer-versions.ts';
+import { intentCarriesContent, intentCarriesPurgedContent, PURGE_PRESENCE_COLUMNS } from './purged-intent.ts';
 import { claimPhaseStamp, startClaimPhase } from './claim-phase.ts';
 import { consumerIdentity } from './consumer-heartbeat.ts';
 import { publicFailureDetail } from './publication-failure.ts';
@@ -321,16 +322,24 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
  * is never claimed past an unfinished non-member, so the FIFO order holds.
  */
 /**
- * The publication group key of a request: a bulk sync's `intent.group`, or the
- * batch id of a `put_pages` child (`intent.page_batch.id`, #6007). Null when it
+ * The publication group key of a request: a bulk sync's `intent.group`, the
+ * batch id of a `put_pages` child (`intent.page_batch.id`, #6007), or the
+ * batch id of a managed file import (`intent.import_batch`). Null when it
  * publishes alone.
  */
 export function publicationGroupKey(row: Pick<WriteRequest, 'operation' | 'intent'>): string | null {
   if (typeof row.intent?.group === 'string') return `sync:${row.intent.group}`;
+  if (row.operation !== 'put_page') return null;
+  if (row.intent?.kind === 'managed_file_import') return typeof row.intent.import_batch === 'string' ? `import:${row.intent.import_batch}` : null;
   const batch = row.intent?.page_batch as { id?: unknown } | undefined;
-  return row.operation === 'put_page' && !row.intent?.kind && typeof batch?.id === 'string' ? `batch:${batch.id}` : null;
+  return !row.intent?.kind && typeof batch?.id === 'string' ? `batch:${batch.id}` : null;
+}
+/** Groups whose members are independent page writes: one member's failure never cancels the others. */
+export function independentGroup(key: string | null): boolean {
+  return key !== null && (key.startsWith('batch:') || key.startsWith('import:'));
 }
 const GROUP_KEY_SQL = `CASE WHEN intent ? 'group' THEN 'sync:'||(intent->>'group')
+  WHEN operation='put_page' AND intent->>'kind'='managed_file_import' AND jsonb_typeof(intent->'import_batch')='string' THEN 'import:'||(intent->>'import_batch')
   WHEN operation='put_page' AND NOT (intent ? 'kind') AND jsonb_typeof(intent->'page_batch'->'id')='string' THEN 'batch:'||(intent->'page_batch'->>'id') END`;
 export async function claimGroupFollowers(engine: BrainEngine, head: WriteRequest, group: string, max: number, leaseMs = 30_000): Promise<WriteRequest[]> {
   if (!head.worktree_id || max <= 0) return [];
@@ -458,6 +467,13 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
 }
 
 /**
+ * An unfinished row ahead of `r` on its root that `r` may not pass. The root (a worktree, or a
+ * database-only incarnation) is matched by the caller with columns the pending indexes cover,
+ * so each probe is an index range scan rather than a walk of every pending row.
+ */
+const EARLIER_HEAD = (earlier: string, r: string, priority: string, laneRoots: string) => `${earlier}.sequence<${r}.sequence
+        AND ${earlier}.state IN ('queued','running','recovering') AND NOT ${PASSES_QUEUED_SYNC(earlier, r, priority, laneRoots)}`;
+/**
  * The rows `claimNextWrite` may claim, over `persistence_requests r LEFT JOIN
  * persistence_worktrees w`, with $1 = host id and $2 = excluded root keys. An
  * unresolved head blocks its entire root. A worktree under a refresh fence
@@ -495,14 +511,14 @@ export const claimableWriteSql = (priority: string, laneRoots = "'{}'::text[]") 
         AND (NOT (mirror.data ? 'targets') OR mirror.data->'targets' @> jsonb_build_array(jsonb_build_object('slug',r.slug))))
       AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
-        WHERE COALESCE(earlier.worktree_id::text,'db:'||earlier.source_incarnation::text)
-              =COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)
-        AND earlier.sequence<r.sequence AND earlier.state IN ('queued','running','recovering')
-        AND NOT ${PASSES_QUEUED_SYNC('earlier', 'r', priority, laneRoots)})
+        WHERE r.worktree_id IS NOT NULL AND earlier.worktree_id=r.worktree_id AND ${EARLIER_HEAD('earlier', 'r', priority, laneRoots)})
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier
+        WHERE r.worktree_id IS NULL AND earlier.worktree_id IS NULL AND earlier.source_incarnation=r.source_incarnation
+        AND ${EARLIER_HEAD('earlier', 'r', priority, laneRoots)})
       AND NOT ((${priority}) AND ${SYNC_KIND('r')} AND EXISTS (SELECT 1 FROM persistence_requests ahead
         WHERE ahead.worktree_id=r.worktree_id AND ahead.sequence>r.sequence AND ahead.state IN ('running','recovering') AND NOT ${SYNC_KIND('ahead')}))`;
 /** With the switch on, a claimable foreground request is claimed before the sync rows it passes. */
-const CLAIM_ORDER = (priority: string) => `(${priority} AND NOT ${SYNC_KIND('r')}) DESC, r.sequence`;
+export const CLAIM_ORDER = (priority: string) => `(${priority} AND NOT ${SYNC_KIND('r')}) DESC, r.sequence`;
 /**
  * The `foreground_priority` switch as SQL, so a claim reads it in its own statement: the environment
  * override (a process constant) or, without one, the brain config row (on unless `0`/`false`).
@@ -617,8 +633,10 @@ export async function renewWriteClaim(engine: SqlEngine, id: string, token: stri
 }
 /** `charge` (#6278): a `preparation_deadline` release counts one preparation attempt; `claim_lost`, `consumer_stopping` and the rest never do. */
 export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: string, opts: { charge?: boolean } = {}): Promise<void> {
+  // An uncharged release ends a finished preparation: its claim phase would read as a preparation still waiting.
   await engine.executeRaw(`UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
-    blocked_reason=$3,updated_at=now(),preparation_attempts=preparation_attempts+CASE WHEN $4::boolean THEN 1 ELSE 0 END
+    blocked_reason=$3,updated_at=now(),preparation_attempts=preparation_attempts+CASE WHEN $4::boolean THEN 1 ELSE 0 END,
+    claim_phase=CASE WHEN $4::boolean THEN claim_phase END
     WHERE id=$1::uuid AND execution_token=$2::uuid
     AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason, opts.charge === true]);
 }
@@ -746,7 +764,8 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   // #6007: one statement sizes the queued effects, checks the terminal reservation, completes the row and
   // releases its outstanding counters; no row means the encoding exceeds the reservation and nothing changed.
   const resultBytes = jsonBytes(outcome) + jsonBytes(current.authority) + 1024 + Buffer.byteLength(error?.message ?? '') + (error?.detail ? jsonBytes(error.detail) : 0);
-  const [done] = await tx.executeRaw<WriteRequest>(`WITH effects AS (SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0) AS bytes
+  const probePurges = intentCarriesContent(current.intent);
+  const [terminal] = await tx.executeRaw<WriteRequest & { purge_has_facts?: boolean; purge_has_pages?: boolean }>(`WITH effects AS (SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0) AS bytes
       FROM persistence_effects WHERE request_id=$1::uuid),
     done AS (UPDATE persistence_requests SET state=$2,outcome=$3::text::jsonb,
       error_code=$4,error_message=$5,error_detail=COALESCE($8::text::jsonb,error_detail),completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
@@ -757,12 +776,22 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
       WHERE id=$1::uuid AND $9::bigint+(SELECT bytes FROM effects)<=terminal_reservation RETURNING *),
     released AS (UPDATE persistence_counters SET outstanding_count=outstanding_count-1,intent_bytes=intent_bytes-$11
       WHERE key=ANY($10::text[]) AND EXISTS (SELECT 1 FROM done))
-    SELECT * FROM done`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null, stamp.version, stamp.hostId,
+    SELECT done.*${probePurges ? `, ${PURGE_PRESENCE_COLUMNS}` : ''} FROM done`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null, stamp.version, stamp.hostId,
       error?.detail ? JSON.stringify(error.detail) : null, resultBytes, ['brain', principalKey(requestPrincipal(row))], Number(current.intent_bytes)]);
-  if (!done) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+  if (!terminal) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+  const { purge_has_facts: purgeFacts, purge_has_pages: purgePages, ...doneRow } = terminal;
+  const done = doneRow as WriteRequest;
+  // #5575: a terminal write whose stored intent carries purged content (refused by the purge guards, refused for another
+  // reason first, or committed as a no-op after the overlay dropped the purged rows) keeps no copy of it; replay answers
+  // from the stored outcome, and the intent bytes were released above.
+  if (error && PURGED_REFUSAL.test(`${error.code}: ${error.message}`) || probePurges && await intentCarriesPurgedContent(tx as BrainEngine, current, { facts: purgeFacts === true, pages: purgePages === true })) {
+    const [redacted] = await tx.executeRaw<WriteRequest>('UPDATE persistence_requests SET intent=NULL,compacted=true WHERE id=$1::uuid RETURNING *', [row.id]);
+    return redacted ?? done;
+  }
   // Recovery bytes remain reserved until physical cleanup has been verified.
   return done;
 }
+const PURGED_REFUSAL = /^purged_content:|which the owner purged; it was not imported\.$/;
 
 /**
  * `known` is the row a publication just completed, passed while it still
@@ -803,14 +832,24 @@ export async function markRecovering(engine: SqlEngine, row: WriteRequest, reaso
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
   [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null, failure?.detail ? JSON.stringify(failure.detail) : null]);
 }
+const PERSISTENCE_QUEUE_TABLES = ['persistence_requests', 'persistence_effects', 'persistence_counters', 'page_projection_jobs', 'page_write_guards'];
 /**
  * PGLite has no autovacuum. The resident owner reclaims queue churn and keeps
  * planner statistics current, so receipt lookups keep using the request-id
- * index and claims do not walk dead queue entries.
+ * index and claims do not walk dead queue entries. A queue table is vacuumed
+ * once its heap has grown more than 10% (and 8 pages) past the size its last
+ * VACUUM or ANALYZE recorded: PGLite keeps no dead-tuple counters across
+ * processes, and unreclaimed churn lands on new pages. Every short-lived CLI
+ * process otherwise vacuumed every queue on its first tick (0.6 s per one-page
+ * sync at 5k pages).
  */
 export async function vacuumPersistenceQueues(engine: BrainEngine): Promise<number> {
   if (engine.kind !== 'pglite') return 0;
-  await engine.executeRaw('VACUUM (ANALYZE) persistence_requests, persistence_effects, persistence_counters, page_projection_jobs, page_write_guards');
+  const grown = await engine.executeRaw<{ relname: string }>(
+    `SELECT c.relname FROM pg_class c WHERE c.relname = ANY($1::text[]) AND c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace
+       AND pg_relation_size(c.oid) / current_setting('block_size')::int > c.relpages * 1.1 + 8`, [PERSISTENCE_QUEUE_TABLES]);
+  const tables = PERSISTENCE_QUEUE_TABLES.filter(table => grown.some(row => row.relname === table));
+  if (tables.length) await engine.executeRaw(`VACUUM (ANALYZE) ${tables.join(', ')}`);
   const [requests] = await engine.executeRaw<{ rows: number }>("SELECT GREATEST(reltuples,0)::float8 AS rows FROM pg_class WHERE oid='persistence_requests'::regclass");
   return Number(requests?.rows ?? 0);
 }

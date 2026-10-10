@@ -10,6 +10,7 @@
  * outside engine.transaction() is its own outermost transaction and takes the
  * same guard (`writesWal`).
  */
+import type { PGlite } from '@electric-sql/pglite';
 import { GBrainError } from '../types.ts';
 
 export const CHECKPOINT_GUARD_MAX_BYTES = 256 * 1024 * 1024;
@@ -126,4 +127,20 @@ export class PgliteCheckpointGuard {
     this.warn(`[pglite] WAL checkpoint guard is unavailable (${error instanceof Error ? error.message : String(error)}); `
       + 'continuing without it. Large imports may stall; restart the command to resume if one does.');
   }
+}
+
+/**
+ * The handle `PGLiteEngine#engineSql` gives engine-sql outside engine.transaction():
+ * WAL-writing statements take `runStatement` and executor transactions take
+ * `runOutermost`, like the engine's own executeRaw and transaction(). Without it,
+ * engine-sql autocommit writes such as markPagesExtractedBatch never probed WAL and
+ * wedged once the automatic trigger was crossed (GBRA-69).
+ */
+export function guardedHandle(db: PGlite, guard: PgliteCheckpointGuard): Pick<PGlite, 'query' | 'transaction'> {
+  return {
+    query: ((sql: string, params?: unknown[]) => writesWal(sql)
+      ? guard.runStatement(q => db.query(q), () => db.query(sql, params))
+      : db.query(sql, params)) as PGlite['query'],
+    transaction: (fn => guard.runOutermost(q => db.query(q), () => db.transaction(fn))) as PGlite['transaction'],
+  };
 }

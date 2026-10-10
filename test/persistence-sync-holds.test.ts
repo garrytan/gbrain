@@ -16,7 +16,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
-import { GIT_HOLD_OP, SYNC_IMPORT_PROVENANCE_OP, readGitSourceHolds, requestGitHoldRetry } from '../src/core/persistence/sync-holds.ts';
+import { GIT_HOLD_OP, SYNC_IMPORT_PROVENANCE_OP, gitHoldItem, readGitSourceHolds, recordContentHoldRepair, requestGitHoldRetry } from '../src/core/persistence/sync-holds.ts';
 import { printSyncResult, type SyncOpts, type SyncResult } from '../src/commands/sync.ts';
 import { gitHoldStatusLines, readGitHoldStatuses } from '../src/core/persistence/connector-status.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -382,4 +382,40 @@ test('a hold an older reader wrote is re-screened by the next sync even though G
   const [hold] = await s.holds();
   expect(hold!.meta.recovery_version).toBeGreaterThan(0);
   expect(hold!.run_id).not.toBe(first.runId);
+}), 180_000);
+
+test('#6377: a slug-conflict hold carries the content-repair verdict only for the bytes it judged, keeps it across a re-screen of the same bytes, and drops it when the file changes', () => each(async engine => {
+  const s = await source(engine, { 'notes/slug.md': '---\ntitle: Slug\nslug: notes/elsewhere\n---\nBody.\n', 'notes/ok.md': note('Ok') });
+  await s.sync();
+  const [hold] = await s.holds();
+  expect(hold).toMatchObject({ code: 'frontmatter_slug_conflict' });
+  expect(gitHoldItem(hold!).fix.argv).toEqual(['gbrain', 'repair', 'content', '--source', s.id, '--only', 'notes/slug.md']);
+  expect(gitHoldItem(hold!).fix.why).toContain('The content-repair lane clears this itself on the next maintenance run');
+  const state = { action: 'merge_into' as const, reason: 'merge_recommended', canonical: 'notes/elsewhere', named: 'notes/elsewhere', model: 'anthropic:claude-opus-5-5', at: new Date().toISOString(), next_attempt_after: null };
+  // Conditional on the judged bytes and the code: other bytes or another path record nothing.
+  expect(await recordContentHoldRepair(engine, { sourceId: s.id, incarnation: hold!.incarnation, path: 'notes/slug.md', upstreamVersion: sha256('other bytes'), state })).toBe(false);
+  expect(await recordContentHoldRepair(engine, { sourceId: s.id, incarnation: hold!.incarnation, path: 'notes/ok.md', upstreamVersion: null, state })).toBe(false);
+  expect(await recordContentHoldRepair(engine, { sourceId: s.id, incarnation: hold!.incarnation, path: 'notes/slug.md', upstreamVersion: hold!.upstream_version, state })).toBe(true);
+  const judged = (await s.holds())[0]!;
+  expect(judged.meta.content_repair).toEqual(state);
+  expect(judged.observed_at).toBe(hold!.observed_at);
+  const item = gitHoldItem(judged);
+  expect(item).toMatchObject({ content_repair: state, docs: 'docs/guides/write-refusals.md#merge_recommended' });
+  expect(item.fix).toMatchObject({ actor: 'user', argv: ['gbrain', 'repair', 'content', '--source', s.id, '--only', 'notes/slug.md'] });
+  expect(item.fix.user_message).toContain('`notes/elsewhere`');
+  expect(item.fix.user_message).toContain('gbrain does not merge pages by itself yet');
+  // A re-screen of the same bytes (slug conflicts always re-screen) keeps the verdict, with or without a retry request.
+  s.write('notes/ok.md', note('Ok 2')); commit(s.root, 'touch ok');
+  await s.sync();
+  expect((await s.holds())[0]!.meta.content_repair).toEqual(state);
+  await requestGitHoldRetry(engine, s.id, hold!.incarnation, ['notes/slug.md']);
+  await s.sync();
+  expect((await s.holds())[0]!.meta).toMatchObject({ content_repair: state, attempts: 3 });
+  // Changed bytes under the same code drop it: the verdict was about other content.
+  s.write('notes/slug.md', '---\ntitle: Slug\nslug: notes/elsewhere\n---\nBody, edited.\n'); commit(s.root, 'edit slug file');
+  await s.sync();
+  const changed = (await s.holds())[0]!;
+  expect(changed.code).toBe('frontmatter_slug_conflict');
+  expect(changed.meta.content_repair).toBeUndefined();
+  expect(gitHoldItem(changed).docs).toBe('docs/guides/write-refusals.md#frontmatter_slug_conflict');
 }), 180_000);

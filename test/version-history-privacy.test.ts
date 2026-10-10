@@ -43,8 +43,9 @@ test('complete versions filter timeline and body fences remotely while local his
     await engine.addTag(slug, 'visible-tag', { sourceId });
     await engine.createVersion(slug, { sourceId });
     const stored = await engine.getVersions(slug, { sourceId });
-    // Trusted local history is the stored row plus who wrote and archived it (F1b, spec 2.7).
-    expect(await history(engine, slug, false)).toEqual(stored.map(version => ({ ...version,
+    // Trusted local history is the stored row plus who wrote and archived it (F1b, spec 2.7) and the
+    // snapshot's trust tier (#5575; an engine-level write carries no writer tier, so it is unknown).
+    expect(await history(engine, slug, false)).toEqual(stored.map(version => ({ ...version, trust_tier: 'unknown',
       written_by: expect.objectContaining({ origin: expect.any(String) }), archived_by: expect.objectContaining({ origin: expect.any(String) }) })));
     for (const remote of [true, undefined]) {
       const versions = await history(engine, slug, remote); expect(versions).toHaveLength(1);

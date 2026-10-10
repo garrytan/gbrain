@@ -29,7 +29,7 @@ import { join, relative, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { screenFenceCtx } from '../import-screen.ts';
-import { collectGitVisibleFiles } from '../git-visible-files.ts';
+import { collectGitVisibleFiles, knownOutsideGitRepo, noteGitFailure } from '../git-visible-files.ts';
 import { isFrontmatterScannablePath, walkDir } from '../brain-writer.ts';
 import { sha256 } from '../persistence/digest.ts';
 import { readGitSourceHolds, type GitHoldRecord } from '../persistence/sync-holds.ts';
@@ -159,7 +159,7 @@ async function scanPages(engine: Exec, source: CensusSource, progress: ScanProgr
     pages.pass ??= { lower: pages.watermark ?? await passHorizon(engine, opts.lateCommitGraceMs), next: await passHorizon(engine, opts.lateCommitGraceMs), after: null };
     const pass = pages.pass;
     const rows = await engine.executeRaw<PageRow>(`SELECT ${PAGE_COLUMNS} FROM pages WHERE source_id=$1 AND updated_at>=$2::timestamptz
-      AND ($3::timestamptz IS NULL OR (updated_at, id) > ($3::timestamptz, $4::int)) ORDER BY updated_at, id LIMIT $5`,
+      AND ($3::timestamptz IS NULL OR (updated_at, id) > ($3::timestamptz, $4::int)) ORDER BY pages.updated_at, pages.id LIMIT $5`,
     [source.id, pass.lower, pass.after?.at ?? null, pass.after?.id ?? 0, opts.batchSize]);
     await judgePages(engine, source, rows, opts.now().toISOString());
     if (rows.length) pass.after = { at: rows[rows.length - 1]!.updated_at, id: Number(rows[rows.length - 1]!.id) };
@@ -172,9 +172,11 @@ async function scanPages(engine: Exec, source: CensusSource, progress: ScanProgr
 }
 
 function git(root: string, args: string[]): string | null {
+  if (knownOutsideGitRepo(root)) return null;
   try {
-    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
+    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    noteGitFailure(root, error);
     return null;
   }
 }

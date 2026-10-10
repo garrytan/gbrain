@@ -495,12 +495,12 @@ export async function runPhaseSynthesizeConcepts(
       const publish = async (pageVisibility: Visibility): Promise<void> => {
         if (maintenance) {
           conceptRevision = await publishManagedConcept(engine, maintenance, conceptSlug, synthesized(pageVisibility), narrative,
-            conceptRevision, opts.brainDir);
+            conceptRevision, opts.brainDir, group.atomSlugs);
           return;
         }
         // #4416: target the cycle's resolved source, not the 'default' literal.
         baseline = await publishClassicConcept(engine, conceptSlug, opts.sourceId ?? 'default', synthesized(pageVisibility), narrative,
-          baseline, { writeThrough: conceptFiles !== null, importPage: (markdown) => importFromContent(engine, conceptSlug, markdown, {
+          baseline, { writeThrough: conceptFiles !== null, members: group.atomSlugs, importPage: (markdown) => importFromContent(engine, conceptSlug, markdown, {
             noEmbed: !isAvailable('embedding'), sourceId: opts.sourceId, preserveGateMarkers: true,
           }) });
       };

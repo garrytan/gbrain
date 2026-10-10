@@ -2,7 +2,8 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { viewedEngine } from '../persistence/switches.ts';
 import { fileURLToPath } from 'node:url';
 import { OperationError } from '../ops/contract.ts';
-import { isRelativeFileUri, resolveSourceLocalFilePath } from '../markdown.ts';
+import { isRelativeFileUri, resolveSourceLocalFilePath, sourceGitScope } from '../markdown.ts';
+import { screeningPath } from '../persistence/screening-paths.ts';
 import { localHostId } from '../persistence/identity.ts';
 import type { SqlEngine, WriteRequest } from '../persistence/model.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
@@ -73,7 +74,7 @@ export async function assertKnowledgePublicationAllowed(
   const roots = [...new Set(packs.flatMap(pack => [
     ...(pack.source_root ? [pack.source_root] : []),
     ...(pack.worktree_root !== null && pack.relative_path !== null ? [resolve(pack.worktree_root, pack.relative_path)] : []),
-  ]))].map(root => canonicalFilesystemPath(root));
+  ]))].map(root => screeningPath(`pack-root\0${root}`, () => canonicalFilesystemPath(root)));
   const paths = preparedFile ? [preparedFile.path] : [];
   const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid', [row.source_id, row.source_incarnation]);
   const sourceRoots = [...new Set([...(source?.local_path ? [source.local_path] : []), ...(preparedFile ? [preparedFile.root] : []),
@@ -86,7 +87,7 @@ export async function assertKnowledgePublicationAllowed(
     for (const alias of aliases) {
       if (alias.source_path) {
         paths.push(resolve(root, alias.source_path));
-        const recorded = resolveSourceLocalFilePath(root, alias.source_path, row.slug);
+        const recorded = resolveSourceLocalFilePath(root, alias.source_path, row.slug, undefined, screeningPath(`git-scope\0${root}`, () => sourceGitScope(root)));
         if (recorded) paths.push(recorded);
       }
       if (alias.source_uri?.startsWith('file:') && !isRelativeFileUri(alias.source_uri)) {

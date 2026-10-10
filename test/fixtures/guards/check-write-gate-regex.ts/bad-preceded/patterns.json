@@ -1,0 +1,10 @@
+[
+  {
+    "name": "ctx",
+    "source": "\\bto\\b",
+    "anchors": [
+      "to"
+    ],
+    "preceded": "\\bsend[^.]{0,80}"
+  }
+]

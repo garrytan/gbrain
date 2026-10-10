@@ -6,7 +6,7 @@
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -61,10 +61,10 @@ function recordClaims(e: BrainEngine): { claims: Map<string, number>; restore: (
   } as BrainEngine['executeRaw'];
   return { claims, restore: () => { e.executeRaw = execute; } };
 }
-function writer(source: string, slugs: string[], intervalMs = 0, go?: string, preparingHoldMs = 0) {
+function writer(source: string, slugs: string[], intervalMs = 0, go?: string, preparingHoldMs = 0, ready?: string) {
   const out = join(home, `worker-${randomUUID()}.json`);
   const child = Bun.spawn([process.execPath, join(import.meta.dir, 'fixtures', 'foreground-put-page-worker.ts')], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
-    env: { ...process.env, GBRAIN_HOME: home, WORKER_DATABASE_URL: databaseUrl, WORKER_SOURCE: source, WORKER_SLUGS: slugs.join(',') || '-', WORKER_INTERVAL_MS: String(intervalMs), WORKER_OUT: out, ...(go ? { WORKER_GO: go } : {}),
+    env: { ...process.env, GBRAIN_HOME: home, WORKER_DATABASE_URL: databaseUrl, WORKER_SOURCE: source, WORKER_SLUGS: slugs.join(',') || '-', WORKER_INTERVAL_MS: String(intervalMs), WORKER_OUT: out, ...(go ? { WORKER_GO: go } : {}), ...(ready ? { WORKER_READY: ready } : {}),
       ...(preparingHoldMs ? { WORKER_PREPARING_HOLD_MS: String(preparingHoldMs) } : {}) } });
   return async () => {
     const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
@@ -225,9 +225,15 @@ test('a stream of writes from another process still lets the drain publish a gro
   if (!engine) return;
   resetWriteSwitches();
   const e = engine, source = await fixture(e, 64);
+  // The writer process boots and connects before the drain starts, so the stream begins right after the first group
+  // commits instead of whenever a cold process gets going (by then a fast drain can have committed most of its groups).
+  const go = join(home, `go-${randomUUID()}`), ready = join(home, `ready-${randomUUID()}`);
+  const finish = writer(source, [], 0, go, 0, ready);
+  await until(async () => existsSync(ready));
   const drain = performSync(e, { sourceId: source, noPull: true, noEmbed: true, noExtract: true, drain: true, lanes: 2 });
   await until(async () => (await rows(e, source)).some(row => row.state === 'committed' && row.kind === 'managed_sync_import'));
-  const written = await writer(source, Array.from({ length: 12 }, (_, i) => `notes/stream-${i}`))();
+  writeFileSync(go, Array.from({ length: 12 }, (_, i) => `notes/stream-${i}`).join(','));
+  const written = await finish();
   const result = await drain;
   expect(written.map(write => write.state)).toEqual(written.map(() => 'committed'));
   expect(result.status).toBe('first_sync');

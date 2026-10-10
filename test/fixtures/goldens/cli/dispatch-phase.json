@@ -1907,6 +1907,23 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "trust": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [
+          {
+            "condition": "command === 'trust' && await (await import('../commands/trust.ts')).maybeDelegateTrust(loadConfig(), args)",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": []
+          }
+        ],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "upgrade": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

@@ -30,7 +30,8 @@
  * (`recordClaimSql`) before issuing it, so the claim stamp's `last_sql` names
  * the read a parked preparation is waiting on.
  */
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, ReservedConnection } from '../engine.ts';
+import { PoolCapacityError } from '../pool-budget.ts';
 import { recordClaimSql, type ClaimPhaseClock } from './claim-phase.ts';
 import { registerEngineView, viewedEngine } from './switches.ts';
 
@@ -80,4 +81,88 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } }), viewedEngine(engine));
+}
+
+/** How far a session statement's bound may differ from its own before the session sets `statement_timeout` again. */
+export const BOUNDED_SESSION_SLACK_MS = 25;
+/**
+ * GBRA-75 wave 9: runs `fn` with a view of `engine` whose bounded raw reads (`executeRaw` with `timeoutMs`, which
+ * `boundedReads` issues) share one transaction on one reserved ordinary-pool connection: `BEGIN` and
+ * `SET LOCAL statement_timeout` once, then each read, then `COMMIT` when `fn` settles, instead of a
+ * `BEGIN; SET LOCAL; read; COMMIT` per read. The bound stays per statement and server-side: before a read whose own
+ * bound differs from the one in force by more than BOUNDED_SESSION_SLACK_MS, the session sets it again in the same
+ * pipeline, so a statement waiting on a relation lock still ends on the server at its budget (within the slack).
+ * A read that fails ends the transaction (a rollback); reads the failure aborted (25P02) run again in a new one,
+ * so each read sees the outcome it would have alone. A read issued after `fn` settled, by a preparation the
+ * caller abandoned, takes the per-read path. Unbounded statements and everything else go to `engine`. On PGLite,
+ * or when the pool has no long-hold capacity left, `fn` gets `engine` itself; inside a session (a waiver run's,
+ * sync-run.ts `waiveRun`), `fn` joins it.
+ */
+export async function withBoundedReadSession<T>(engine: BrainEngine, fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
+  if (engine.kind !== 'postgres' || sessionViews.has(engine)) return fn(engine);
+  let started = false;
+  try {
+    return await engine.withReservedConnection(async conn => {
+      started = true;
+      const session = new BoundedReadSession(conn, engine);
+      try { return await fn(session.view); } finally { await session.close(); }
+    }, { route: 'ordinary' });
+  } catch (error) {
+    if (!started && error instanceof PoolCapacityError) return fn(engine);
+    throw error;
+  }
+}
+
+/** Views a session hands out: a screen run inside a waiver run's session joins it instead of opening its own. */
+const sessionViews = new WeakSet<object>();
+class BoundedReadSession {
+  readonly view: BrainEngine;
+  private open = false;
+  private closed = false;
+  private generation = 0;
+  private boundMs = 0;
+  constructor(private readonly conn: ReservedConnection, private readonly engine: BrainEngine) {
+    this.view = registerEngineView(new Proxy(engine, { get: (target, key) => {
+      if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
+        opts?.timeoutMs === undefined ? target.executeRaw(sql, params, opts) : this.run(sql, params, opts.timeoutMs, 0);
+      const value = Reflect.get(target, key, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } }), viewedEngine(engine));
+    sessionViews.add(this.view);
+  }
+
+  private async run<T>(sql: string, params: unknown[] | undefined, timeoutMs: number, retries: number): Promise<T[]> {
+    if (this.closed || retries > 2) return this.engine.executeRaw<T>(sql, params, { timeoutMs });
+    const ms = Math.max(1, Math.ceil(timeoutMs));
+    const generation = this.generation;
+    const steps: Promise<unknown>[] = [];
+    if (!this.open) {
+      this.open = true;
+      steps.push(this.conn.executeRaw('BEGIN'));
+      steps.push(this.conn.executeRaw(`SET LOCAL statement_timeout = ${ms}`));
+      this.boundMs = ms;
+    } else if (Math.abs(this.boundMs - ms) > BOUNDED_SESSION_SLACK_MS) {
+      steps.push(this.conn.executeRaw(`SET LOCAL statement_timeout = ${ms}`));
+      this.boundMs = ms;
+    }
+    const read = this.conn.executeRaw<T>(sql, params, { prepare: true });
+    const settled = await Promise.allSettled([...steps, read]);
+    const failed = settled.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+    if (!failed) return (settled[settled.length - 1] as PromiseFulfilledResult<T[]>).value;
+    if (this.generation === generation) {
+      this.generation++;
+      this.open = false;
+      void this.conn.executeRaw('ROLLBACK').catch(() => {});
+    }
+    if (isConnectionEnd(failed.reason)) this.closed = true;
+    else if ((failed.reason as { code?: unknown } | null)?.code === '25P02') return this.run(sql, params, timeoutMs, retries + 1);
+    throw failed.reason;
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    if (!this.open) return;
+    this.open = false;
+    await this.conn.executeRaw('COMMIT').catch(() => {});
+  }
 }

@@ -12,6 +12,18 @@
  *     dispatch on every MCP transport), and every hit revalidates the
  *     source's withdrawal-ledger watermark, so a forget committed by any
  *     process is never served from the cache.
+ *   - #5575 ENG-11: the key also folds the effective read eligibility (floor
+ *     and activation control), and every hit revalidates the brain's trust
+ *     policy generation (eligibility/generation.ts), read before the rows.
+ *     A tier change, quarantine transition, floor or `trust.%` config change
+ *     or purge in any process makes the next call rebuild. When the
+ *     generation cannot be read, or the rebuild fails, nothing is delivered;
+ *     a cached payload is never served in its place.
+ *   - Facts are read through the 'hot_memory' proactive eligibility (floor,
+ *     quarantined pages, needs_rederive in SQL; activation control by
+ *     eligibility/activation.ts after ranking), and each carries its
+ *     `trust_tier` and `origin`. The payload's `suppressed` field counts what
+ *     activation control withheld, never its content (DX-10).
  *   - Cap at top-K facts per response so the injection stays lean.
  *
  * Both stdio and HTTP MCP transports pass this hook into dispatchToolCall
@@ -22,6 +34,10 @@ import type { OperationContext } from './../operations.ts';
 import type { FactRow } from './../engine.ts';
 import { effectiveConfidence } from './decay.ts';
 import { collapseHotFacts } from './capture-dedup.ts';
+import { proactiveEligibility } from '../eligibility/registry.ts';
+import { partitionForActivation, suppressionSummary } from '../eligibility/activation.ts';
+import { trustFields } from '../eligibility/labels.ts';
+import { eligibilityCacheField, readTrustGeneration } from '../eligibility/generation.ts';
 
 const DEFAULT_TTL_MS = 30_000;
 const DEFAULT_TOP_K = 10;
@@ -40,6 +56,8 @@ interface CacheEntry {
   expiresAt: number;
   payload: Record<string, unknown> | undefined;
   withdrawals?: string;
+  /** The trust policy generation the payload was built under (ENG-11). */
+  trustGeneration?: string;
 }
 
 const _cache = new Map<string, CacheEntry>();
@@ -126,20 +144,31 @@ export async function getBrainHotMemoryMeta(
   // the same source id / tier / session must never share hot-memory payloads
   // — a cached entry from brain A served to brain B's caller is a cross-brain
   // fact leak through the cache, not through any query.
-  const cacheKey = `${engineCacheField(ctx.engine)}::${encodeCacheField(sourceId)}::${tier}::${encodeCacheField(sessionId ?? '_')}::${allowListHash}`;
-
   const ttl = Math.max(1000, opts.ttlMs ?? DEFAULT_TTL_MS);
   const topK = Math.max(1, Math.min(opts.topK ?? DEFAULT_TOP_K, 25));
 
-  // The watermark is read before the rows, so a build that raced a forget
-  // stores the older watermark and the next hit rebuilds.
+  // The watermark and the trust generation are read before the rows, so a
+  // build that raced a forget or a trust transition stores the older value
+  // and the next hit rebuilds. The eligibility is read after the generation:
+  // a `trust.%` config change bumps it.
   const generation = _generations.get(ctx.engine) ?? 0;
   const withdrawals = await withdrawalWatermark(ctx.engine, sourceId);
+  let trustGeneration: string;
+  let policy: Awaited<ReturnType<typeof proactiveEligibility>>;
+  try {
+    trustGeneration = await readTrustGeneration(ctx.engine);
+    policy = await proactiveEligibility(ctx, 'hot_memory');
+  } catch {
+    return undefined;
+  }
+  // The effective eligibility is part of the key: two connections with
+  // different floors never share an entry.
+  const cacheKey = `${engineCacheField(ctx.engine)}::${encodeCacheField(sourceId)}::${tier}::${encodeCacheField(sessionId ?? '_')}::${allowListHash}::${encodeCacheField(eligibilityCacheField(policy))}`;
 
   // Cache hit?
   const cached = _cache.get(cacheKey);
   if (cached) {
-    if (cached.expiresAt > Date.now() && cached.withdrawals === withdrawals) return cached.payload;
+    if (cached.expiresAt > Date.now() && cached.withdrawals === withdrawals && cached.trustGeneration === trustGeneration) return cached.payload;
     // Expired or withdrawn since: evict BEFORE the rebuild. If the rebuild
     // below throws (the caller's try/catch absorbs it), the dead entry must
     // not linger — with remote-influencable keys, lingering corpses defeat
@@ -147,24 +176,28 @@ export async function getBrainHotMemoryMeta(
     _cache.delete(cacheKey);
   }
   const store = (entry: CacheEntry) => {
-    if ((_generations.get(ctx.engine) ?? 0) === generation) cacheSet(cacheKey, { ...entry, withdrawals });
+    if ((_generations.get(ctx.engine) ?? 0) === generation) cacheSet(cacheKey, { ...entry, withdrawals, trustGeneration });
   };
 
   // Build a fresh payload. Visibility tier: remote → world-only;
   // local → all rows.
   const visibility = ctx.remote === false ? undefined : ['world'] as ('world' | 'private')[];
 
+  // Floor, quarantined pages and needs_rederive apply in SQL; activation
+  // control runs after ranking so the withheld count can be reported.
+  const eligibility = { ...policy, suppressFlagged: false };
+
   // #5888 V2: over-fetch so collapsing duplicates still fills topK.
   let fetched: FactRow[] = [];
   if (sessionId) {
     fetched = await ctx.engine.listFactsBySession(sourceId, sessionId, {
-      activeOnly: true, limit: topK * 3, visibility, fingerprint: true,
+      activeOnly: true, limit: topK * 3, visibility, fingerprint: true, eligibility,
     });
   }
   // If no session-scoped rows, fall back to recent across the source.
   if (fetched.length === 0) {
     fetched = await ctx.engine.listFactsSince(sourceId, new Date(Date.now() - 24 * 60 * 60 * 1000), {
-      activeOnly: true, limit: topK * 3, visibility, fingerprint: true,
+      activeOnly: true, limit: topK * 3, visibility, fingerprint: true, eligibility,
     });
   }
   if (fetched.length === 0) {
@@ -174,15 +207,24 @@ export async function getBrainHotMemoryMeta(
 
   // One representative per (fingerprint, entity) group, then sort by
   // effective confidence (decayed) before truncating.
-  let rows = await collapseHotFacts(ctx.engine, sourceId, fetched);
+  const collapsed = await collapseHotFacts(ctx.engine, sourceId, fetched);
   const now = new Date();
-  rows.sort((a, b) => effectiveConfidence(b, now) - effectiveConfidence(a, now));
-  rows = rows.slice(0, topK);
+  collapsed.sort((a, b) => effectiveConfidence(b, now) - effectiveConfidence(a, now));
+  const { kept, withheld } = await partitionForActivation(ctx.engine, collapsed, r => ({ table: 'facts', id: r.id }), policy);
+  const rows = kept.slice(0, topK).map(k => k.item);
+  // Under trust.agent_activation=allow (the default) a flagged fact stays in the block, labeled unconfirmed.
+  const unconfirmed = new Set(kept.filter(k => k.unconfirmed).map(k => k.item.id));
+  const suppressed = suppressionSummary(withheld);
+  if (rows.length === 0 && !suppressed) {
+    store({ expiresAt: Date.now() + ttl, payload: undefined });
+    return undefined;
+  }
 
   const payload = {
     brain_hot_memory: {
       source_id: sourceId,
       session_id: sessionId,
+      ...(suppressed ? { suppressed } : {}),
       facts: rows.map(r => ({
         id: r.id,
         fact: r.fact,
@@ -202,6 +244,8 @@ export async function getBrainHotMemoryMeta(
         context: r.context ?? null,
         confidence: Number(effectiveConfidence(r, now).toFixed(3)),
         ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}),
+        ...trustFields(r.trust_tier, r.write_origin),
+        ...(unconfirmed.has(r.id) ? { unconfirmed: true as const } : {}),
       })),
     },
   };
