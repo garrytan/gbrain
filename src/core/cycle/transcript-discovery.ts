@@ -16,7 +16,7 @@ import { join, basename, dirname, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { pruneDir } from '../sync.ts';
 import { realpathOrResolve, resolvedPrefixContained } from '../path-confine.ts';
-import { corpusFileSessionId } from '../context/corpus-segments.ts';
+import { CORPUS_SPOOL_SUBDIR, corpusFileSessionId } from '../context/corpus-segments.ts';
 import { withoutOffPeriodTurns } from '../context/capture-consent.ts';
 import { readSeatSidecar } from '../context/seat.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
@@ -307,7 +307,7 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
   for (const dir of dirs) {
     for (const filePath of listTextFiles(dir)) {
       const ext = filePath.endsWith('.md') ? '.md' : '.txt';
-      const baseName = basename(filePath, ext);
+      const baseName = transcriptBaseName(filePath, ext);
       const dateMatch = DATE_RE.exec(baseName);
       const inferredDate = dateMatch ? dateMatch[1] : null;
       if (!isInDateRange(inferredDate, opts)) continue;
@@ -387,7 +387,7 @@ export function readSingleTranscript(
   if (content.length < minChars) return null;
   if (isDreamOutput(content, bypass)) {
     const ext = filePath.endsWith('.md') ? '.md' : '.txt';
-      const baseName = basename(filePath, ext);
+      const baseName = transcriptBaseName(filePath, ext);
     process.stderr.write(`[dream] readSingleTranscript skipped ${baseName}: dream_generated marker (self-consumption guard)\n`);
     return null;
   }
@@ -399,7 +399,7 @@ export function readSingleTranscript(
     return null;
   }
   const ext = filePath.endsWith('.md') ? '.md' : '.txt';
-      const baseName = basename(filePath, ext);
+      const baseName = transcriptBaseName(filePath, ext);
   const dateMatch = DATE_RE.exec(baseName);
   const seat = transcriptSeat(filePath);
   return {
@@ -410,6 +410,16 @@ export function readSingleTranscript(
     inferredDate: dateMatch ? dateMatch[1] : null,
     ...(seat ? { seat } : {}),
   };
+}
+
+/**
+ * The topic-slug seed of a transcript file. #6268: a spool corpus file's name
+ * carries its session's source stamp (`<sid>.src-<id>.txt`); the seed drops
+ * it, so a session synthesizes under the same name it had before stamps.
+ */
+function transcriptBaseName(filePath: string, ext: '.md' | '.txt'): string {
+  const base = basename(filePath, ext);
+  return ext === '.txt' && basename(dirname(filePath)) === CORPUS_SPOOL_SUBDIR ? base.replace(/\.src-[a-z0-9_-]{1,40}$/, '') : base;
 }
 
 /**

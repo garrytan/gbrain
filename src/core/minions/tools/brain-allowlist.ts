@@ -279,6 +279,8 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
         // model instead of crashing inside the handler, and `since: ""` never
         // reaches a handler raw.
         const params = normalizeOptionalParams(op, raw);
+        // #6297: a subagent's full-content read returns the round-trip fields only, not the body twice.
+        if (op.name === 'get_page' && params.include_content === true) params.content_only = true;
         const validationError = validateParams(op, params);
         if (validationError) throw new Error(`${toolName}: ${validationError}`);
         const output = await op.handler(opCtx, params);

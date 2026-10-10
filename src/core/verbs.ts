@@ -68,7 +68,7 @@ const remember: Operation = {
     fact: { type: 'string', description: 'One claim.' },
     items: {
       type: 'array',
-      description: '≤20 facts: [{fact, provenance}]',
+      description: '≤20 of {fact,entity,provenance,kind,ttl,visibility}',
       items: { type: 'object' },
     },
     provenance: {

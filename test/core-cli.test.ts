@@ -165,6 +165,16 @@ describe('remember items[]', () => {
     expect(after).toBe(n);
   });
 
+  test('a non-UUID request_id refuses with invalid_params and writes no fact (#6280)', async () => {
+    const [{ n }] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts`);
+    const r = await call('remember', { request_id: 'not-a-uuid', provenance: 'user said', items: [{ fact: 'Drinks oolong' }] }, true);
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('invalid_params');
+    expect(r.text).toContain('request_id must be a UUID');
+    const [{ n: after }] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts`);
+    expect(after).toBe(n);
+  });
+
   test('provenance may be given per item instead of at the top level', async () => {
     const r = await call('remember', { items: [{ fact: 'Runs on Saturdays', provenance: 'user said' }, { fact: 'Uses Hoka shoes', provenance: 'user said' }] }, true);
     expect({ isError: r.isError, text: r.text }).toMatchObject({ isError: false });

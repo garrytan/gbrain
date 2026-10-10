@@ -710,10 +710,10 @@ export async function computeExtractAtomsBacklogCheck(
       return { name, status: 'warn', message: 'backlog query failed (could not count eligible pages)' };
     }
 
-    const { packDeclaresPhase } = await import('../../../core/cycle.ts');
+    const { resolvePackPhaseGate } = await import('../../../core/cycle.ts');
     const { extractAtomsPhaseStaleWarning } = await import('../../../core/cycle/extract-atoms-stamp.ts');
-    let declared = false;
-    try { declared = await packDeclaresPhase(engine, 'extract_atoms'); } catch { declared = false; }
+    const gate = await resolvePackPhaseGate(engine, 'extract_atoms').catch(() => ({ declared: false, consent_required: false }));
+    const declared = gate.declared && !gate.consent_required;
 
     if (backlog === 0) {
       return {
@@ -727,7 +727,7 @@ export async function computeExtractAtomsBacklogCheck(
     // it will grow forever without a signal. WARN with the drain command.
     if (!declared && backlog > 10) {
       const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog, opts.sourceIds);
-      const fix = buildExtractAtomsBacklogFixHint(backlogBySource);
+      const fix = gate.consent_required ? 'gbrain config set cycle.extract_atoms.enabled true' : buildExtractAtomsBacklogFixHint(backlogBySource);
       return {
         name, status: 'warn',
         message: `${backlog} pages eligible for atom extraction but the active pack does not run extract_atoms — backlog growing. Fix: ${fix}`,

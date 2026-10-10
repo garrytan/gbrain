@@ -66,7 +66,7 @@ describe('E-N1: session-end GC keeps un-ingested corpus files up to 3x retention
     const ceiling = aged('ancient-waiting.txt', 95, false);
     const fresh = aged('fresh-waiting.txt', 2, false);
     await sessionEnd();
-    expect(existsSync(join(corpus(), 'sess-new.txt'))).toBe(true);
+    expect(existsSync(join(corpus(), 'sourced', 'sess-new.src-_unresolved.txt'))).toBe(true); // #6268: the spool
     expect(existsSync(extracted)).toBe(false);
     expect(existsSync(waiting)).toBe(true);
     expect(existsSync(fresh)).toBe(true);

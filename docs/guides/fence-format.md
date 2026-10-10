@@ -34,7 +34,7 @@ A facts fence sits between `<!--- gbrain:facts:begin -->` and `<!--- gbrain:fact
 <a id="facts-columns"></a>
 ## Facts columns
 
-Facts cells are read by position.
+Facts cells are read by the column the header names, in any order. A header with a column that is not one of these names, a column named twice, or no column for a row that cannot be left off reads no rows: the fence is held until it is repaired (the repair maps the [header spellings](#header-spellings) and the order). A header in canonical order may be shorter than its rows: the cells after it keep their canonical position. A row may leave off only trailing columns marked below, and a cell past the last column must be empty.
 
 | Position | Column | Values | May be left off the row end | Default when the header lacks it | Meaning |
 | --- | --- | --- | --- | --- | --- |
@@ -52,6 +52,7 @@ Facts cells are read by position.
 | 12 | `claim_value` | a number, optionally with 1,234 separators or a k/M/B suffix | yes | - | Value of a typed claim. |
 | 13 | `claim_unit` | free text | yes | - | Unit (`USD`, `people`, ...), or empty. |
 | 14 | `claim_period` | free text | yes | - | Period (`monthly`, `annual`, ...), or empty. |
+| 15 | `attributed_to` | `user`, `assistant`, `other` | yes | - | Who asserted the claim, or empty. |
 
 <a id="facts-layouts"></a>
 - **Narrow, 10 cells** (what gbrain writes unless a row needs a wide column):
@@ -66,6 +67,13 @@ Facts cells are read by position.
   ```text
   | # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period |
   |---|-------|------|------------|------------|------------|------------|-------------|--------|---------|--------------|-------------|------------|--------------|
+  ```
+
+- **Attributed, 15 cells** (adds `attributed_to`; written when a row records who asserted it, and rows without it may stop at 14 cells):
+
+  ```text
+  | # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period | attributed_to |
+  |---|-------|------|------------|------------|------------|------------|-------------|--------|---------|--------------|-------------|------------|--------------|---------------|
   ```
 
 - **Shortest row, 9 cells:** the narrow row without `context`. A row that is short anywhere else is `short_row`.

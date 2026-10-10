@@ -22,7 +22,7 @@
  */
 import { extractRawRows, rowNumOf, type RawCell, type RawFence, type RawRow } from './raw-rows.ts';
 import { kindWord } from './rules.ts';
-import { BASE_WIDTH, cellValid, COLUMNS } from './schema.ts';
+import { BASE_WIDTH, cellValid, COLUMNS, WIDE_WIDTH } from './schema.ts';
 import { applyEdits, fenceBlocked, type Edit } from './structure.ts';
 import type { FenceFix, FenceKind, FenceSection } from './types.ts';
 
@@ -57,17 +57,17 @@ export function headerlessMisfit(fence: RawFence, row: RawRow): 'claim_split' | 
   const kindCell = row.cells[2]?.text.trim() ?? '';
   if (kindCell && !cellValid(kind, 'kind', kindCell) && !kindWord(kindCell)) return 'claim_split';
   const n = row.cells.length;
-  const fits = kind === 'facts' ? n <= BASE_WIDTH.facts || n === COLUMNS.facts.length : n <= BASE_WIDTH.takes;
+  const fits = kind === 'facts' ? n <= BASE_WIDTH.facts || n === WIDE_WIDTH.facts : n <= BASE_WIDTH.takes;
   return fits || row.cells.every((cell, j) => columnValid(fence, kind, j, cell.text)) ? null : 'extra_cells';
 }
 
 /** The widths a row may be cut back to: the header's layout, or with no header the narrow layout (facts 14 for a wider row). */
 function layoutWidths(fence: RawFence, row: RawRow): Set<number> {
   const kind = fence.kind;
-  if (!fence.header) return new Set([kind === 'facts' && row.cells.length > COLUMNS.facts.length ? COLUMNS.facts.length : BASE_WIDTH[kind]]);
+  if (!fence.header) return new Set([kind === 'facts' && row.cells.length > WIDE_WIDTH.facts ? WIDE_WIDTH.facts : BASE_WIDTH[kind]]);
   const headerLen = fence.columns.length;
   const widths = new Set([Math.max(headerLen, BASE_WIDTH[kind])]);
-  if (kind === 'facts' && headerLen < COLUMNS.facts.length && row.cells.length > COLUMNS.facts.length) widths.add(COLUMNS.facts.length);
+  if (kind === 'facts' && headerLen < WIDE_WIDTH.facts && row.cells.length > WIDE_WIDTH.facts) widths.add(WIDE_WIDTH.facts);
   return widths;
 }
 

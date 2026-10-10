@@ -232,7 +232,7 @@ describe('durable revocation: a capture under off never extracts later', () => {
   test('off then on with the worker stopped: the off-period transcript is never extracted', async () => {
     await setMode('off');
     await sessionEnd('sess-r1', ['we picked the blue deployment window', 'noted']);
-    expect(existsSync(join(corpusDir, 'sess-r1.txt'))).toBe(true);
+    expect(existsSync(join(corpusDir, 'sourced', 'sess-r1.src-_unresolved.txt'))).toBe(true); // #6268: the hook writes the spool
     await setMode('salient');
     await sweep();
     expect(prompts.length).toBe(0);
