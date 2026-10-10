@@ -21,6 +21,8 @@ import { mergePhantomFenceRows, phantomHasResidue, tryRedirectPhantom } from '..
 import { redirectManagedPhantom } from '../src/core/cycle/phantom-redirect-managed.ts';
 import { writeFactsToFence, type FenceInputFact } from '../src/core/facts/fence-write.ts';
 import { writeSingleFact } from '../src/core/facts/write-single.ts';
+import { runFactsPipeline } from '../src/core/facts/backstop.ts';
+import { __setChatTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { operations } from '../src/core/operations.ts';
 import { OperationError, type OperationContext } from '../src/core/ops/contract.ts';
@@ -129,7 +131,23 @@ describe('classic file writers keep the bytes, the stored facts and the row numb
     await engine.putPage(slug, { type: 'person', title: 'Alice', compiled_truth: '# Alice', timeline: '', frontmatter: {} });
     writeMd(slug, MALFORMED);
     await expect(writeSingleFact(engine, 'default', { fact: 'Alice lives in Paris', entity: slug, provenance: 'manual', visibility: 'world' }))
-      .rejects.toThrow(/facts fence write failed for people\/alice-example/);
+      .rejects.toMatchObject({ canonicalCode: 'invalid_fence', reason: 'target_fence_malformed' });
+    expect(readFileSync(file(slug), 'utf8')).toBe(MALFORMED);
+    expect(await factRows(slug)).toEqual([]);
+  }));
+
+  test('the facts backstop counts a group held on a fence that does not parse (fence_refused)', () => withEnv({ GBRAIN_HOME: brainDir }, async () => {
+    const slug = 'people/alice-example';
+    await engine.putPage(slug, { type: 'person', title: 'Alice', compiled_truth: '# Alice', timeline: '', frontmatter: {} });
+    writeMd(slug, MALFORMED);
+    const text = JSON.stringify({ facts: [{ fact: 'Alice lives in Paris', kind: 'fact', entity: slug, confidence: 1, notability: 'medium' }] });
+    __setChatTransportForTests(async () => ({ text, blocks: [], stopReason: 'end',
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' }));
+    try {
+      const r = await runFactsPipeline('Alice said she lives in Paris now.', { engine, sourceId: 'default', sessionId: 'fence-refused', source: 'mcp:extract_facts' });
+      expect(r.fence_refused).toBe(1);
+      expect(r.inserted).toBe(0);
+    } finally { __setChatTransportForTests(null); resetGateway(); }
     expect(readFileSync(file(slug), 'utf8')).toBe(MALFORMED);
     expect(await factRows(slug)).toEqual([]);
   }));
