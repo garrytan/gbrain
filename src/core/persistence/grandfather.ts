@@ -1,3 +1,4 @@
+import { withTrustKeep } from './context.ts';
 import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -120,9 +121,10 @@ export async function prepareGrandfatherMutation(engine: BrainEngine, row: Write
   }
   return { observedRevision: snapshot.revision, file, ...databaseOnlyPublication(row, file), deferEmbedding: true, apply: async tx => {
     await tx.createVersion(row.slug, { sourceId: row.source_id });
-    const updated = await tx.executeRaw(`UPDATE pages SET frontmatter=jsonb_set(COALESCE(frontmatter,'{}'::jsonb),'{validate}','false'::jsonb),content_hash=$4
+    // A mechanical validate:false stamp authors nothing: the page keeps its trust tier (#5575).
+    const updated = await withTrustKeep(tx, ['pages'], () => tx.executeRaw(`UPDATE pages SET frontmatter=jsonb_set(COALESCE(frontmatter,'{}'::jsonb),'{validate}','false'::jsonb),content_hash=$4
       WHERE id=$1 AND source_id=$2 AND knowledge_revision=$3::uuid AND NOT(COALESCE(frontmatter,'{}'::jsonb)?'validate') RETURNING id`,
-    [row.page_id, row.source_id, snapshot.revision, hash]);
+    [row.page_id, row.source_id, snapshot.revision, hash]));
     if (updated.length !== 1) {
       throw opError('revision_conflict', 'The validation decision changed before publication.',
         `${row.slug} in ${row.source_id} changed while it was being grandfathered, so the transaction rolled back; the next migration run re-plans from current pages.`);

@@ -131,6 +131,7 @@
         "./commands/pricing.ts"
       ],
       "quarantine": [
+        "./commands/trust.ts",
         "./commands/quarantine.ts"
       ],
       "recall": [
@@ -199,6 +200,12 @@
       ],
       "transcripts": [
         "./commands/transcripts.ts"
+      ],
+      "trust": [
+        "./commands/trust-claim.ts",
+        "./core/eligibility/explain.ts",
+        "./core/eligibility/scan.ts",
+        "./core/trust/backfill.ts"
       ],
       "waiting": [
         "./commands/loops.ts"

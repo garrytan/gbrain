@@ -38,7 +38,7 @@ mock.module('../../src/core/think/index.ts', () => ({
 
 const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
 const { operationsByName } = await import('../../src/core/operations.ts');
-const { formatResult, captureRetrievalMeta, resetRetrievalMetaForTests } = await import('../../src/cli.ts');
+const { formatResult, captureRetrievalMeta, resetRetrievalMetaForTests } = await import('../../src/cli/main.ts');
 const { getCliOptions, setCliOptions, _resetCliOptionsForTest } = await import('../../src/core/cli-options.ts');
 const { resetPgliteState } = await import('../helpers/reset-pglite.ts');
 const { installFixtureChunks } = await import('../helpers/page-projection.ts');

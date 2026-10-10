@@ -14,6 +14,11 @@
  *   link whose origin page is private, in rows or counts.
  * - With `entity_identity.union` on, links to the page's identity co-members
  *   count as links to the page.
+ * - #5575: a quarantined referrer is left out (rows and counts) unless an
+ *   authorized `include_quarantined` read asked; the caller's eligibility
+ *   (floor, activation control on proactive reads) applies before LIMIT; each
+ *   row carries its page's `trust_tier` + `origin` (+ `unconfirmed` when
+ *   flagged), which text renderers label the preview with.
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -23,6 +28,10 @@ import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
 import { redactFindings } from '../secret-scan.ts';
 import { typeAliasPairs, type PackTypes } from './policy.ts';
+import { quarantineFilterFragment, isQuarantined } from '../quarantine.ts';
+import { activationSuppressedSql, pageEligibleSql } from '../eligibility/sql.ts';
+import { trustFields, type TrustFields } from '../eligibility/labels.ts';
+import type { ReadEligibility } from '../eligibility/policy.ts';
 
 export const PREVIEW_CHARS = 160;
 export const GROUP_ROW_CAP = 10;
@@ -30,7 +39,7 @@ export const CARD_ROW_CAP = 50;
 export const PAGE_DEFAULT_LIMIT = 50;
 export const PAGE_MAX_LIMIT = 500;
 
-export interface ReferenceRow {
+export interface ReferenceRow extends TrustFields {
   slug: string;
   source_id: string;
   title: string;
@@ -41,6 +50,8 @@ export interface ReferenceRow {
   date_source: string;
   /** First 160 characters of body text, private fences stripped and secrets redacted. Not evidence: fetch the page. */
   preview: string;
+  /** Only on an authorized include_quarantined read: the referrer is quarantined; its preview renders as external data. */
+  quarantined?: true;
 }
 
 export interface ReferrerScope {
@@ -53,6 +64,10 @@ export interface ReferrerScope {
   pack: PackTypes | null;
   /** Visibility kept in previews (world only for untrusted callers). */
   keepVisibility: ('private' | 'world')[];
+  /** #5575: the caller's read eligibility: rows below the floor, or flagged under activation control, are left out. */
+  eligibility?: ReadEligibility;
+  /** An authorized include_quarantined read keeps quarantined referrers; every other read leaves them out. */
+  includeQuarantined?: boolean;
 }
 
 interface RawRow { id: number; slug: string; source_id: string; type: string | null; canonical_type: string;
@@ -83,6 +98,7 @@ function referrersCte(scope: ReferrerScope): string {
   const targetPriv = scope.excludePrivate ? ` AND ${privatePagesFilterFragment('t')}` : '';
   const linkPriv = scope.excludePrivate ? ` AND ${privateLinkOriginFilterFragment('l')}` : '';
   const pagePriv = scope.excludePrivate ? ` AND ${privatePagesFilterFragmentFast('f')}` : '';
+  const pageTrust = ` AND ${pageEligibleSql('f', scope.eligibility)}${scope.includeQuarantined ? '' : ` AND ${quarantineFilterFragment('f')}`}`;
   return `WITH tgt AS MATERIALIZED (
       SELECT t.id FROM pages t JOIN unnest($1::text[], $2::text[]) AS k(s, g) ON t.source_id = k.s AND t.slug = k.g
        WHERE t.deleted_at IS NULL${targetPriv}
@@ -97,7 +113,7 @@ function referrersCte(scope: ReferrerScope): string {
         FROM pages f
        WHERE f.id IN (SELECT id FROM refs)
          AND f.deleted_at IS NULL AND f.source_id = ANY($3::text[])
-         AND f.id NOT IN (SELECT id FROM tgt)${pagePriv}
+         AND f.id NOT IN (SELECT id FROM tgt)${pagePriv}${pageTrust}
     )`;
 }
 
@@ -115,15 +131,20 @@ function preview(body: string | null, keep: ('private' | 'world')[]): string {
 
 async function hydrate(engine: BrainEngine, rows: RawRow[], keep: ('private' | 'world')[]): Promise<ReferenceRow[]> {
   if (!rows.length) return [];
-  const pages = new Map((await engine.executeRaw<{ id: number; title: string | null; body: string | null; date_source: string }>(
+  const pages = new Map((await engine.executeRaw<{ id: number; title: string | null; body: string | null; date_source: string;
+    trust_tier: string; write_origin: unknown; flagged: boolean; frontmatter: Record<string, unknown> | null }>(
     `SELECT id, title, left(compiled_truth, 4000) AS body,
-            CASE WHEN effective_date IS NULL THEN 'updated_at' ELSE COALESCE(effective_date_source, 'effective_date') END AS date_source
+            CASE WHEN effective_date IS NULL THEN 'updated_at' ELSE COALESCE(effective_date_source, 'effective_date') END AS date_source,
+            trust_tier, write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged, frontmatter
        FROM pages WHERE id = ANY($1::int[])`, [rows.map(r => r.id)])).map(r => [Number(r.id), r]));
   return rows.map(r => {
     const page = pages.get(Number(r.id));
+    const fields = page ? trustFields(page.trust_tier, page.write_origin) : { trust_tier: 'unknown' as const, origin: 'unrecorded' };
     return {
       slug: r.slug, source_id: r.source_id, title: page?.title ?? r.slug, type: r.type || null, canonical_type: r.canonical_type,
-      date: r.d, date_source: page?.date_source ?? 'updated_at', preview: preview(page?.body ?? null, keep),
+      date: r.d, date_source: page?.date_source ?? 'updated_at', preview: preview(page?.body ?? null, keep), ...fields,
+      ...(page?.flagged === true ? { unconfirmed: true as const } : {}),
+      ...(isQuarantined(page?.frontmatter) ? { quarantined: true as const } : {}),
     };
   });
 }

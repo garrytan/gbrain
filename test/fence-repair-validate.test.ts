@@ -105,7 +105,16 @@ describe('one adversarial repair per gate', () => {
   test('(g) protection_loosened: closing a fence before trailing prose would publish the prose', () => {
     const before = page([FB, FH, ROW2, '', 'TRAILING-NOTE stays private'].join('\n'));
     const after = page([FB, FH, ROW2, FE, '', 'TRAILING-NOTE stays private'].join('\n'));
-    expect(check(before, after)).toMatchObject({ ok: false, gate: 'g', reason: 'protection_loosened' });
+    expect(check(before, after, { pageVisibility: 'world' })).toMatchObject({ ok: false, gate: 'g', reason: 'protection_loosened' });
+    expect(validateFenceRepair(before, after, { pageVisibility: 'private', tier: 'llm', issues: [] })).toMatchObject({ ok: false, gate: 'g' });
+  });
+
+  test('(g) admits exactly the tail a close_fence_trailing fix shows, and nothing else (#6377)', () => {
+    const before = page([FB, FH, ROW2, '', 'TRAILING-NOTE becomes visible'].join('\n'));
+    const after = page([FB, FH, ROW2, FE, '', 'TRAILING-NOTE becomes visible'].join('\n'));
+    expect(check(before, after)).toEqual({ ok: true });
+    const more = page([FB, FH, ROW2, FE, '', 'TRAILING-NOTE becomes visible', 'ANOTHER line nobody approved'].join('\n'));
+    expect(check(before, more)).toMatchObject({ ok: false, gate: 'g', reason: 'protection_loosened' });
   });
 
   test('failures are location-only', () => {

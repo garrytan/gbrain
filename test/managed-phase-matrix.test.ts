@@ -145,6 +145,15 @@ const MATRIX: Record<CyclePhase, Entry> = {
       expect(result.details).toMatchObject({ mode: 'apply', repaired: 0, stopped_reason: null, llm_usd: 0 });
     },
   },
+  content_repair: {
+    // #6377: the lane minus `fences` (today the `slug-conflicts` kind) runs as a trusted apply on the managed brain; with no
+    // slug-conflict hold seeded it must finish without a refusal or a stop and report the kind's (empty) result.
+    seed: async ({ engine, sourceId }) => put(engine, sourceId, 'people/alice-example', page('person', 'Alice', 'A person with no holds.')),
+    assert: async ({ result }) => {
+      expect(result.status).toBe('ok');
+      expect(result.details).toMatchObject({ mode: 'apply', kinds: ['slug-conflicts'] });
+    },
+  },
   synthesize: {
     seed: async ({ engine, sourceId, root }) => {
       await put(engine, sourceId, 'people/example', page('note', 'Example', 'Example evidence.'));

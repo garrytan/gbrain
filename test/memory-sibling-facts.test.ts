@@ -91,6 +91,23 @@ describe('facts about an entity with identity siblings', () => {
     }
   });
 
+  test('context_pack newer mentions (#6362) and sibling facts on the card both hold for a sibling entity', async () => {
+    await put('accounts/widget-co', 'account', 'Account sheet: Widget Co', 'Account: Widget Co. Nickname used by the team: Copper Fox.');
+    await put('crm/widget-co', 'crm', 'CRM record: Widget Co', 'Account code: WGCO. Billing contact: Dana Example.');
+    await engine.executeRaw(`UPDATE pages SET effective_date = '2026-08-01' WHERE slug IN ('accounts/widget-co', 'crm/widget-co')`);
+    await call('put_page', { slug: 'inbox/2026-09-20-widget', content: '---\ntitle: "Widget Co renewal"\ntype: note\ndate: "2026-09-20"\n---\nFrom: Dana Example\n\nWidget Co asks to move the renewal to November.\n' });
+    await sweep(engine);
+    await call('remember', { fact: 'Lior Example is the procurement lead at Widget Co.', entity: 'accounts/widget-co', provenance: 'team update' });
+    await call('remember', { fact: 'Correction: Lena Example is now the procurement lead at Widget Co.', entity: 'crm/widget-co', provenance: 'team correction' });
+    const packed = (await call('context_pack', { entities: 'WGCO' })).json.cards[0];
+    expect(packed.slug).toBe('crm/widget-co');
+    expect(packed.newer_mentions.rows.map((r: { slug: string }) => r.slug)).toEqual(['inbox/2026-09-20-widget']);
+    const card = (await call('entity', { name: 'WGCO' })).json.card;
+    expect(card.active_fact_count).toBe(2);
+    expect(card.recent_facts.map((f: { fact: string }) => f.fact)[0]).toContain('Lena Example');
+    expect(card.recent_facts.some((f: { entity_slug?: string }) => f.entity_slug === 'accounts/widget-co')).toBe(true);
+  });
+
   test('search names the entity: its saved facts come first, then the facts of an entity they point to', async () => {
     await siblings();
     await put('crm/kite-co', 'crm', 'CRM record: Kite Co', 'Account code: KTCO.');

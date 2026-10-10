@@ -710,6 +710,7 @@
         "  --adaptive-return          true for one answer (fewer rows, never empty); omit for breadth.",
         "  --autocut                  Default on (never empty); false: full top-K for breadth.",
         "  --relational               Relationship-graph arm (default on).",
+        "  --min-trust                Lowest trust tier to return (the connection floor still applies).",
         "  --explain                  Per-row score_details.",
         "  --explain-target           Expected page (slug or source:slug): why it is missing."
       ]

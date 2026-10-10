@@ -44,6 +44,8 @@ export interface PageWithdrawal {
   visibility: 'private' | 'world';
   fact_hash: string;
   withdrawn_at: string;
+  /** A purge tombstone (fact_purges): the overlay drops the row instead of striking it. */
+  purged?: boolean;
 }
 export interface PageSnapshot {
   page: Page;

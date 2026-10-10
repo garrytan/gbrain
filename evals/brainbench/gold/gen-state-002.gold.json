@@ -1,0 +1,20 @@
+{
+  "fixture_id": "gen-state-002",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "guarded",
+        "step": "s1",
+        "claim": "Ronan Pellwarden lives in Osaka"
+      },
+      {
+        "item_id": "i2",
+        "check": "current",
+        "step": "s1",
+        "claim": "Ronan Pellwarden lives in Osaka"
+      }
+    ]
+  }
+}

@@ -168,10 +168,12 @@ Subcommands:
                        committed in the last 10 minutes, each hold and the
                        last error with class / safe_actions / needs_human,
                        and the next action (for an operator agent's loop).
-  gbrain sync unblock --source <id> [--apply] [--json]
+  gbrain sync unblock --source <id> [--apply] [--no-llm] [--no-repair] [--json]
                        Performs the safe action for every hold (re-screens a
                        held file whose edit is now committed, retries a
-                       stalled preparation) and refuses the rest by name.
+                       stalled preparation, repairs a content hold through
+                       the content-repair lane with a hash-bound apply and
+                       a receipt per file) and refuses the rest by name.
                        Runbook: docs/guides/sync-unblock-runbook.md
 
 See also:

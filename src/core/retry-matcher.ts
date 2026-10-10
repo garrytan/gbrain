@@ -151,6 +151,19 @@ export function isRetryableConnError(err: unknown): boolean {
 }
 
 /**
+ * #6355: did the database session go away under a statement that was already sent? Narrower than
+ * `isRetryableConnError` (no auth or startup races): the connection-class SQLSTATEs, postgres.js's own
+ * connection codes, the server's admin/crash shutdown codes (`pg_terminate_backend`, a failover) and the
+ * socket errnos. Such an error says nothing about whether the statement's transaction committed, so a
+ * caller that sent a write must re-read its retained request id instead of inferring rollback.
+ */
+export function isConnectionLoss(err: unknown): boolean {
+  const code = getCode(err);
+  if (code && (/^08/.test(code) || ['CONNECTION_CLOSED', 'CONNECTION_ENDED', 'CONNECTION_DESTROYED', '57P01', '57P02', '57P03'].includes(code))) return true;
+  return /\b(ECONNRESET|ECONNABORTED|ETIMEDOUT|EPIPE)\b|Connection terminated unexpectedly|server closed the connection|connection.*closed|terminating connection due to administrator command/i.test(getMessage(err));
+}
+
+/**
  * issue #1685 (CODEX #8): is this error specifically a POOLER REAP — postgres.js's
  * library-level `CONNECTION_ENDED` code (the transaction-mode pooler dropping an
  * idle socket between ticks)? Narrower than `isRetryableConnError`, which also

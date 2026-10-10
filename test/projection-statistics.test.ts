@@ -69,6 +69,36 @@ describe('current projection planner estimates', () => {
   });
 });
 
+describe('projection statistics refresh after a write pass', () => {
+  const planRows = async (db: PGlite) => (await db.query<{ 'QUERY PLAN': Array<{ Plan: { 'Plan Rows': number } }> }>(
+    `EXPLAIN (FORMAT JSON) SELECT * FROM pages p WHERE ${currentTextProjectionFilter('p')}`)).rows[0]['QUERY PLAN'][0].Plan['Plan Rows'];
+
+  test('a pass below 50 + 10% of pages keeps collected statistics; a larger pass or uncollected statistics refresh', async () => {
+    const db = new PGlite();
+    try {
+      const engine = fixtureEngine(db);
+      await db.exec(`CREATE TABLE pages (id integer PRIMARY KEY, text_projection_revision uuid, knowledge_revision uuid);
+        INSERT INTO pages SELECT i, '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001' FROM generate_series(1, 10000) i;`);
+      await db.exec(PROJECTION_STATISTICS_SQL);
+      expect(await planRows(db)).toBe(10000);
+      await db.query('UPDATE pages SET text_projection_revision = NULL WHERE id <= 999');
+      const stale = await planRows(db);
+      expect(stale).toBeGreaterThan(9001);
+      expect(await refreshProjectionStatistics(engine, 999)).toBe(true);
+      expect(await planRows(db)).toBe(stale);
+      expect(await refreshProjectionStatistics(engine, 1049)).toBe(true);
+      expect(await planRows(db)).toBe(stale);
+      expect(await refreshProjectionStatistics(engine, 1050)).toBe(true);
+      expect(await planRows(db)).toBe(9001);
+      await db.exec(`DROP STATISTICS pages_text_projection_current_stats;
+        CREATE STATISTICS pages_text_projection_current_stats ON ((text_projection_revision = knowledge_revision)) FROM pages;`);
+      await expect(verifyProjectionStatistics(engine)).rejects.toThrow('not been collected');
+      expect(await refreshProjectionStatistics(engine, 1)).toBe(true);
+      await verifyProjectionStatistics(engine);
+    } finally { await db.close(); }
+  }, 30_000);
+});
+
 describe('projection statistics migration postconditions', () => {
   test('empty initialization and later population both collect valid statistics', async () => {
     const db = new PGlite();

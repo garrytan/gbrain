@@ -90,7 +90,7 @@ boundary, and it does not make every side effect prefix-clean:
   with an availability note. Other brain-wide read ops (`get_recent_salience`,
   `find_anomalies`, and `sources_list`/`sources_status`) honor the federated
   grant; `sources_status` answers `not_found` for an out-of-grant ID.
-- **Reads touch `last_retrieved_at`** on the pages they return, including
+- **Reads touch `last_retrieved_at`** (in `page_retrievals`) on the pages they return, including
   pages in read-only sources. Freshness/usage signals are therefore
   writable-by-reading; nothing else about the page is.
 - **`POST /ingest` writes land in the calling client's granted source.** The

@@ -308,6 +308,18 @@ links that copy as if `replaces` named it: `status: superseded`,
 and `status_text` says there is nothing to forget. When `replaces` would refuse
 (for example `replaces_cross_page`), the fact is saved as a new one instead.
 
+#### remember content_origin (additive)
+
+`content_origin` (string: `user_said`, `tool_output` or `inferred`): where the
+fact's text came from. `tool_output` (a web page, email, file or other tool's
+text) stores the fact as `external_untrusted`; `user_said` and `inferred` store
+it at the agent tier (`agent_written`), so `user_said` never confers owner
+authority. Any other value is `invalid_params` listing the accepted values.
+Optional, and safety never depends on it. Like `replaces`, it is advertised on
+the verbs and full surfaces but left out of the starter surface's schema (to
+keep that tool list inside its size budget); a starter client that passes it
+is still honored. `put_page` and `capture` take the same parameter.
+
 #### remember entity attribution fields (additive)
 
 Optional response fields; clients must ignore any they do not know.
@@ -534,6 +546,14 @@ same claim is active on entity-linked facts (same source and visibility),
 forgetting the unlinked fact is refused with `invalid_params`, message prefix
 `claim_linked:`, naming those facts, and nothing changes. The `suggestion`
 says to keep them, or to forget them first to withdraw the claim everywhere.
+
+#### forget and purge (additive note)
+
+`forget` keeps this contract: it expires, never deletes. Removing a claim's
+text from live stores is a separate owner-only operation, `purge_fact` (CLI:
+`gbrain forget <id> --purge` on the brain host), which is not a memory verb and
+is never callable over MCP; a remote call gets `trusted_local_only` with the
+command for the user. See [expire versus purge](../guides/memory-boundaries.md#purge).
 
 #### forget similar_active and semantic_review (additive)
 

@@ -225,6 +225,13 @@ export interface ContextPackRequest {
    * the OpenClaw assemble lane. An older serve ignores it and assembles.
    */
   coreOnly?: boolean;
+  /**
+   * #5575 ENG-11 (additive, coreOnly companion): the trust cache identity of
+   * the client's memoized core block. When the serve's current identity
+   * matches, it answers `coreTrust.unchanged` without assembling. An older
+   * serve ignores it and returns the full block without an identity.
+   */
+  coreIdentity?: string;
 }
 
 export type IpcRequest =

@@ -16,6 +16,8 @@ import type { OperationError } from '../ops/contract.ts';
 import { protectedRegions } from '../fence-scan.ts';
 import { FENCE_ROWS_MAX, fenceOperationError, scanCanonicalFences } from '../fence-repair/refusal.ts';
 import type { FenceSection } from '../fence-repair/types.ts';
+import { guardFenceRows } from '../trust/fence-guard.ts';
+import { loadWriteGateConfig } from '../trust/gate-outcomes.ts';
 
 const FENCE_PAIRS=[{begin:FACTS_FENCE_BEGIN,end:FACTS_FENCE_END},{begin:TAKES_FENCE_BEGIN,end:TAKES_FENCE_END}];
 
@@ -172,10 +174,12 @@ function storedTimeline(engine: BrainEngine, pageId: number): Promise<StoredTime
  * Timeline tuples the coordinator projects from a canonical page body that
  * have no stored row on the page under the same normalized key. Insert-only
  * callers (managed `extract --stale`) add exactly these, so a stored row that
- * differs only by whitespace is not duplicated.
+ * differs only by whitespace is not duplicated. `storedRows` is the caller's
+ * own read of the page's non-event rows (a batched walk).
  */
-export async function unrecordedCanonicalTimeline(engine: BrainEngine, pageId: number, body: CanonicalBody, slug: string): Promise<ExtractedTimelineEntry[]> {
-  const stored = new Set((await storedTimeline(engine, pageId)).map(row => timelineKey(row)));
+export async function unrecordedCanonicalTimeline(engine: BrainEngine, pageId: number, body: CanonicalBody, slug: string,
+  storedRows?: ReadonlyArray<Pick<StoredTimelineRow, 'date' | 'source' | 'summary'>>): Promise<ExtractedTimelineEntry[]> {
+  const stored = new Set((storedRows ?? await storedTimeline(engine, pageId)).map(row => timelineKey(row)));
   return [...canonicalTimeline(body, slug)].filter(([key]) => !stored.has(key)).map(([, entry]) => entry);
 }
 
@@ -417,18 +421,18 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       await pipelined(tx, timelineRows);
       return { timelineRowsRemoved: removedSummary(removedDates) };
     }
+    // #5575: rows more trusted than the writer are never expired by it, and new rows pass the write gate (trust/fence-guard.ts).
     // The timeline rows are independent of the fact and take rows, so they ride in the first pipeline.
-    if (factRows.length) {
-      await pipelined(tx, [expireFacts, ...timelineRows]);
-      await tx.insertFacts(factRows, { source_id: sourceId }); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction
-      await pipelined(tx, [...factFields, checkTakes, dropTakes]);
-    } else await pipelined(tx, [expireFacts, checkTakes, dropTakes, ...timelineRows]);
+    const guard = await guardFenceRows(tx, { sourceId, slug, incoming, rows: factRows, cfg: loadWriteGateConfig }, () => pipelined(tx, [expireFacts, ...timelineRows]));
+    if (guard.rows.length) await tx.insertFacts(guard.rows, { source_id: sourceId }); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction
+    const contested = await guard.finish(tx);
+    await pipelined(tx, [...factFields, checkTakes, dropTakes]);
     if (takes.length) {
       await tx.addTakesBatch(takes.map(t => takesPreparation.toCanonicalBatchInput(id, t)));
       await pipelined(tx, resolveTakes);
     }
-    return { timelineRowsRemoved: removedSummary(removedDates) };
+    return { timelineRowsRemoved: removedSummary(removedDates), ...(contested.length ? { contested } : {}) };
   };
 }
 
-export interface CanonicalProjectionResult { timelineRowsRemoved: TimelineRowsRemoved | null }
+export interface CanonicalProjectionResult { timelineRowsRemoved: TimelineRowsRemoved | null; /** #5575 A5: trust proposals the guarded fence re-projection filed. */ contested?: string[] }

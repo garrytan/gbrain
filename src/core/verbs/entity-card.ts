@@ -22,12 +22,18 @@
 
 import { annotateTemporalRow, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, type TemporalAnnotation } from '../link-validity.ts';
 import type { BrainEngine, FactRow } from '../engine.ts';
+import type { TrustTier } from '../trust/tier.ts';
+import type { ReadEligibility } from '../eligibility/policy.ts';
+import { trustFields } from '../eligibility/labels.ts';
+import { isQuarantined } from '../quarantine.ts';
+import { loadPageTrust } from '../eligibility/stamp.ts';
 import { loadRelationshipNotes, relationshipNoteKey } from '../link-relationship-notes.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { slugify } from '../entities/resolve.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
 import { stampEvidence, markKeywordHits } from '../search/evidence.ts';
 import type { Link, SearchResult } from '../types.ts';
+import type { NewerMentions } from '../mentions/newer-mentions.ts';
 import { loadLinkableTypes } from '../mentions/policy.ts';
 import { readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
 import { encodeCursor, readReferrerGroups, PAGE_DEFAULT_LIMIT, type ReferenceRow } from '../mentions/referrers.ts';
@@ -67,6 +73,9 @@ export interface EntityOpenThread {
   counterparty?: string | null;
   status?: string;
   loop_id?: number;
+  /** #5575 A6 (additive): the trust tier and short origin of the fact or timeline row behind the thread. */
+  trust_tier?: TrustTier;
+  origin?: string;
 }
 
 export interface EntityCard {
@@ -96,6 +105,8 @@ export interface EntityCard {
    * a relationship that ended. Absent when there is nothing to say.
    */
   relationship_note?: string;
+  /** Pages dated after this page that mention it, newest first, bounded. `context_pack` cards only (mentions/newer-mentions.ts). */
+  newer_mentions?: NewerMentions;
   /** Distinct pages with any inbound link (every link source, mentions included). `entity` verb only. */
   referenced_by_count?: number;
   /** Those pages grouped by pack-canonical type, newest first; capped per group and per card. `entity` verb only. */
@@ -112,6 +123,13 @@ export interface EntityCard {
   identity_excerpt_omitted?: string[];
   /** What `aka` covers and which names to search before a history or as-of answer. `entity` verb only. */
   alias_guidance?: CardIdentity['alias_guidance'];
+  /** #5575 A6 (additive): the entity page's trust tier and short write origin. */
+  trust_tier?: TrustTier;
+  origin?: string;
+  /** #5575 ENG-15 (additive): the page is quarantined; renderers wrap its summary as external data. */
+  quarantined?: true;
+  /** #5575 CEO-20 (additive): the entity page carries an unconfirmed instruction-family write-gate flag. */
+  unconfirmed?: true;
 }
 
 export interface ReferenceGroupView {
@@ -145,6 +163,20 @@ export interface EntityCardOpts {
   includeReferences?: boolean;
   /** The serving surface ceiling; on `verbs` a continuation names the starter surface. */
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
+  /**
+   * #5575 (ENG-8, CEO-20): the eligibility for the card's facts and timeline
+   * rows. Always hides quarantined-page projections and rows awaiting
+   * re-derivation; a proactive caller (context_pack, delta) passes its floor
+   * and activation control.
+   */
+  eligibility?: ReadEligibility;
+  /**
+   * #5575 (ENG-8, ENG-15): leave out a page the content-quality gate
+   * quarantined, as if it did not exist (no suggestion names it). Proactive
+   * callers always pass it unless an authorized `include_quarantined` asked;
+   * the entity verb passes it for remote callers, like get_page.
+   */
+  omitQuarantined?: boolean;
 }
 
 interface CardPageRow {
@@ -216,7 +248,8 @@ export async function buildEntityCard(
   let rows: CardPageRow[] = [];
   try {
     rows = await engine.executeRaw<CardPageRow>(
-      `SELECT slug, source_id, title, type, frontmatter, compiled_truth, updated_at, last_retrieved_at
+      `SELECT slug, source_id, title, type, frontmatter, compiled_truth, updated_at,
+              GREATEST(last_retrieved_at, (SELECT r.last_retrieved_at FROM page_retrievals r WHERE r.page_id = pages.id)) AS last_retrieved_at
          FROM pages
         WHERE deleted_at IS NULL
           AND source_id = $1
@@ -240,7 +273,8 @@ export async function buildEntityCard(
   if (missing.length) {
     try {
       const extra = await engine.executeRaw<CardPageRow>(
-        `SELECT slug, source_id, title, type, frontmatter, compiled_truth, updated_at, last_retrieved_at
+        `SELECT slug, source_id, title, type, frontmatter, compiled_truth, updated_at,
+              GREATEST(last_retrieved_at, (SELECT r.last_retrieved_at FROM page_retrievals r WHERE r.page_id = pages.id)) AS last_retrieved_at
            FROM pages
           WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])${privatePredicate}`,
         [sourceId, missing],
@@ -268,6 +302,11 @@ export async function buildEntityCard(
         : 0)
       || lastTouchedMs(b.row) - lastTouchedMs(a.row));
 
+  if (opts.omitQuarantined && candidates.some(c => isQuarantined(c.row.frontmatter))) {
+    const live = candidates.filter(c => !isQuarantined(c.row.frontmatter));
+    if (live.length === 0) return { found: false, suggestions: [] };
+    candidates.splice(0, candidates.length, ...live);
+  }
   if (candidates.length === 0) {
     return {
       found: false, suggestions: await nearMissSuggestions(engine, sourceId, trimmed, excludePrivate),
@@ -283,7 +322,7 @@ export async function buildEntityCard(
     create_safety: 'exists',
   }));
 
-  const card = await assembleCard(engine, sourceId, best.row, opts.remote, excludePrivate);
+  const card = await assembleCard(engine, sourceId, best.row, opts.remote, excludePrivate, opts.eligibility ?? {});
   if (opts.includeReferences) {
     Object.assign(card, await cardReferences(engine, sourceId, best.row, opts, excludePrivate, entityTypes),
       await readCardIdentity(engine, sourceId, best.row, { excludePrivate, surfaceCeiling: opts.surfaceCeiling, aka: card.aka }));
@@ -311,7 +350,7 @@ async function cardReferences(engine: BrainEngine, sourceId: string, row: CardPa
   try {
     const { pack } = await loadLinkableTypes(engine, sourceId);
     const { total, groups } = await readReferrerGroups(engine, { slug: row.slug, sourceId, referrerSources: [sourceId], excludePrivate, pack,
-      keepVisibility: opts.remote ? ['world'] : ['private', 'world'] });
+      keepVisibility: opts.remote ? ['world'] : ['private', 'world'], eligibility: opts.eligibility });
     let coverage = await readMentionCoverage(engine, [sourceId]);
     if (coverage.state !== 'disabled' && !entityTypes.has(row.type ?? '')) coverage = { ...coverage, state: 'type_not_linkable', degraded: true };
     const referenced_by = groups.map((g): ReferenceGroupView => {
@@ -334,6 +373,7 @@ async function assembleCard(
   row: CardPageRow,
   remote: boolean,
   excludePrivate: boolean,
+  eligibility: ReadEligibility,
 ): Promise<EntityCard> {
   const pageSlug = row.slug;
   const visibility = remote ? (['world'] as ('private' | 'world')[]) : undefined;
@@ -392,11 +432,12 @@ async function assembleCard(
       )
       .then(rs => Number(rs[0]?.n ?? 0))
       .catch(() => 0),
-    engine.getTimeline(pageSlug, { limit: 5, sourceId, excludePrivate }).catch(() => []),
+    engine.getTimeline(pageSlug, { limit: 5, sourceId, excludePrivate, eligibility }).catch(() => []),
     Promise.all(factSlugs.map(slug => engine.listFactsByEntity(sourceId, slug, {
       activeOnly: true,
       limit: FACT_FETCH_CAP,
       ...(visibility ? { visibility } : {}),
+      eligibility,
     })))
       .then(lists => lists.flat().sort((a, b) => factTime(b) - factTime(a)).slice(0, FACT_FETCH_CAP))
       .catch(() => [] as FactRow[]),
@@ -490,7 +531,7 @@ async function assembleCard(
     if (openThreads.length >= OPEN_THREADS_CAP) break;
     if (f.kind !== 'commitment') continue;
     if (f.id !== undefined && loopFactIds.has(f.id)) continue; // already surfaced via its loop
-    openThreads.push({ kind: 'commitment', text: f.fact, date: f.valid_from?.toISOString() ?? null });
+    openThreads.push({ kind: 'commitment', text: f.fact, date: f.valid_from?.toISOString() ?? null, ...trustFields(f.trust_tier, f.write_origin) });
   }
   if (openThreads.length < OPEN_THREADS_CAP) {
     const cutoff = Date.now() - OPEN_THREAD_TIMELINE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -501,13 +542,17 @@ async function assembleCard(
       const date = toIso(t.date);
       const ts = date === null ? NaN : Date.parse(date);
       if (!Number.isFinite(ts) || ts < cutoff) continue;
-      openThreads.push({ kind: 'recent_event', text: t.summary, date });
+      const raw = t as unknown as { trust_tier?: unknown; write_origin?: unknown };
+      openThreads.push({ kind: 'recent_event', text: t.summary, date, ...trustFields(raw.trust_tier, raw.write_origin) });
       if (openThreads.length >= OPEN_THREADS_CAP) break;
     }
   }
 
+  const pageTrust = (await loadPageTrust(engine, [{ source_id: sourceId, slug: pageSlug }]).catch(() => null))?.byKey.get(`${sourceId}\u0000${pageSlug}`);
   return {
     entity: { slug: pageSlug, title: row.title ?? pageSlug, type: row.type ?? null },
+    ...(pageTrust ?? { trust_tier: 'unknown' as const, origin: 'unrecorded' }),
+    ...(isQuarantined(row.frontmatter) ? { quarantined: true as const } : {}),
     aka,
     // v0.45.7: summary widens in lockstep with the card's fact visibility —
     // remote (world-only) keeps ['world']; a local include_private card widens.

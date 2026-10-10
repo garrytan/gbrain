@@ -1815,14 +1815,19 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   files through `put_page`/`capture` or a YAML serializer and check generated
   content with `gbrain frontmatter validate --stdin --path <p>`. Walkthrough:
   [held files](docs/guides/repair.md#held-files). A hold with code
-  `invalid_fence` is a facts or takes table, not frontmatter, and clears
-  automatically on the next maintenance run. `gbrain repair fences --source <id>`
-  previews the repair and its printed apply command runs it now, with no
-  extra consent; a `manual` reason needs the edit the hold names (read the
-  page with `gbrain get --source <id> -- <slug>`, edit only that fence,
-  commit, `gbrain sync --source <id> --no-pull`). Raising spend
+  `invalid_fence` or `frontmatter_slug_conflict` is about the file's content,
+  not its YAML, and the content-repair lane clears it by itself: the next
+  maintenance run repairs what it can, `gbrain sync unblock --source <id>
+  --apply` does it now with a receipt per file, and
+  `gbrain repair content --source <id>` previews every lane kind (its printed
+  apply command runs with no extra consent). A hold the lane marks
+  `needs_human` (a manual fence edit, a recommended page merge, an exposed
+  tail on a world page) is listed in `gbrain sync status --source <id> --json`
+  with its paragraph: relay it, make or approve the edit it names, commit,
+  `gbrain sync --source <id> --no-pull`. Raising spend
   (`fences.repair.max_usd_per_day`, `fences.repair.llm true`) is the user's
-  call ([fence holds](docs/guides/write-refusals.md#invalid_fence)). A hold
+  call ([the lane](docs/guides/repair.md#content-lane),
+  [fence holds](docs/guides/write-refusals.md#invalid_fence)). A hold
   with code `preparation_stalled` (or a managed catch-up that stops
   `preparation_abandoned` / `preparation_systemic`, or a write receipt with that
   code) means the write owner stalled, not the file: no repair applies. Run
@@ -5229,6 +5234,40 @@ the object is absent. Highly selective queries may correctly choose an exact
 plan. The [retrieval guide](architecture/RETRIEVAL.md#named-thing-retrieval-per-page-pool--title--alias--evidence)
 describes bounded candidate recovery and incomplete-result metadata.
 
+On Postgres the same refresh also analyzes the page columns every search
+filter reads (`deleted_at`, `source_id`, `type`, `slug`) and
+`content_chunks(model, modality, page_id)`, and an embed drain that embedded
+anything analyzes those chunk columns once at its end (each ANALYZE bounded by
+a 30 s statement and 2 s lock timeout). Without those statistics the vector
+candidate statement sorts every eligible chunk instead of walking the HNSW
+index, and at 1M chunks and above that sort runs past the 8 s vector budget,
+so hybrid search falls back to keyword-only results until autovacuum
+analyzes the tables. If a refresh is skipped (a lock, or a role that does not
+own the tables), run `ANALYZE content_chunks(model, modality, page_id)` and
+`ANALYZE pages` as the table owner.
+
+### Vector index sizing
+
+The chunk HNSW index stores each vector beside its graph links, so at 1,024
+dimensions it takes about 7.6 GiB per million chunks as `vector` (about
+9.8 GiB for a 1.28M-chunk brain) and a third of that as `halfvec`. The
+deferred ANN build (`gbrain migrate embeddings`, `gbrain reindex --vectors`)
+runs `CREATE INDEX CONCURRENTLY` with the server's `maintenance_work_mem`.
+When the graph does not fit, pgvector logs `hnsw graph no longer fits into
+maintenance_work_mem` and the build slows several-fold: 4.3x at 250k chunks
+with 256 MB. Before a large build, raise it on the brain host to the index
+size plus about 10% (Supabase: `supabase postgres-config update --config
+maintenance_work_mem=12GB --project-ref <ref> --experimental`, which reloads
+without a restart; self-hosted: `ALTER SYSTEM SET maintenance_work_mem =
+'12GB'` and `SELECT pg_reload_conf()`), and give it
+`max_parallel_maintenance_workers` of about half the cores: a 1M-chunk build
+took 103 s on 16 vCPU with 12 GB and 8 workers. Measured, not shipped:
+`halfvec` gives the same recall with an index a third the size, and
+`ef_construction` 128 adds about 0.02 to 0.03 unfiltered recall@10 for about
+25% more build time. Both need a migration or a rebuild, so the defaults stay
+(m 16, ef_construction 64, `vector`). Measurements and method:
+[`docs/eval/hnsw-scale-bench.md`](eval/hnsw-scale-bench.md).
+
 ### Opt-in RLS source-scope binding (`GBRAIN_RLS_SCOPE_BINDING`)
 
 Defense-in-depth layer for Postgres deployments that want the database itself
@@ -6700,13 +6739,25 @@ gbrain sync unblock --source <id> --apply --json # when committed_last_10m is 0 
 gbrain sync <next.argv...>                       # the sync unblock (or status) names: the cursor's own options
 ```
 
+**Say to your agent:** *"Repair the files sync held and get the catch-up
+moving again; ask me only about the ones gbrain will not decide by itself."*
+
 1. Read `status`. `cursor` is where the run stands (`index/total`, the
    `pinned_target` commit, `last_advance_at`); `committed_last_10m` is the
    signal that data is moving (a live process with a flat cursor is not
    progress). `holds` and `last_error` each carry the triple below.
 2. If `needs_human` is false and nothing committed in the last ten minutes,
    run `unblock --apply`: it performs the safe action for every hold that has
-   one, refuses the rest by name, and prints the sync to run.
+   one, refuses the rest by name, and prints the sync to run. For a content
+   hold (`invalid_fence`; `frontmatter_slug_conflict` once its lane kind
+   ships) the safe action is `repair`: unblock runs the content-repair lane
+   (`gbrain repair content`, the same kinds the maintenance run uses) on
+   exactly those paths as one bounded apply under the `fences.repair` caps,
+   each file bound to the bytes the plan read, and reports every path as
+   `repaired`, `held`, `needs_human` or `skipped` with the reason code, the
+   location-only receipt (mode, tier, classes, commit state) and the next
+   step. `--no-llm` keeps the repairs to their free tiers; `--no-repair`
+   refuses every repair-class hold instead, as releases before #6377 did.
 3. Run that sync. It re-screens the scheduled files, imports each one that now
    passes and holds again what still fails; the rest of the source is never
    blocked. With `--retry-failed` a cursor an older release left blocked on a
@@ -6714,9 +6765,13 @@ gbrain sync <next.argv...>                       # the sync unblock (or status) 
 4. If `needs_human` is true, stop looping and page a person with the slug and
    `human_reason` from `status` (`next.user_message` is written for relay).
 
-`unblock` is idempotent, writes no page, clears no hold and drops nothing:
-refusing is the only way it leaves a file out, and each refusal names the file,
-why, and its fix.
+`unblock` is idempotent and drops nothing: the only pages it writes are the
+hash-bound repairs it prints a receipt for, the only holds it clears are the
+ones those repairs import, and refusing is the only way it leaves a file out.
+Each refusal names the file, why, and its fix. A hold whose stored repair
+state says a person decides (a manual fence reason, a gate rejection, a paid
+wait on a setting only the user changes, a recommended page merge) is listed
+`needs_human` and never retried until the file changes.
 
 ## The triple
 
@@ -6735,7 +6790,12 @@ Every hold and error has three fields, from one table
 - `needs_human`: a person has to choose or act before it clears;
   `human_reason` says what. A page held three times with the same code
   (`attempts`) is `needs_human` whatever its code says: it keeps moving under
-  the sync.
+  the sync. A repair-class hold is `needs_human` when its stored repair state
+  says so: a fence hold the lane marked `manual` (a manual-only reason, a gate
+  rejection, a model answer the run does not retry) or `paid` (spend only the
+  user raises), and a slug-conflict hold the lane decided a person must settle
+  ([`merge_recommended`](write-refusals.md#merge_recommended),
+  [`content_repair_needs_human`](write-refusals.md#content_repair_needs_human)).
 
 ## Decision table
 
@@ -6795,8 +6855,15 @@ it and kept going; the receipt lists the hold (`held`, `held_count`) and
 - `preparation_stalled`: the write owner, not the file, stalled;
   `gbrain sources writer status --source <id> --json` names the step.
   `unblock --apply` schedules the re-screen.
-- The repair codes (`invalid_fence`, `invalid_frontmatter`, …) have their own
-  previews: [held files](write-refusals.md#held-files-and-content-refusals).
+- `invalid_fence` and `frontmatter_slug_conflict`: the content-repair lane
+  clears them. `unblock --apply` runs it on the held paths now; the maintenance
+  run's `fence_repair` and `content_repair` phases run it by themselves;
+  `gbrain repair content --source <id>` previews it. A hold the lane will not
+  decide is `needs_human` with the paragraph in `human_reason`
+  ([held files](repair.md#held-files)).
+- The other repair codes (`invalid_frontmatter`, `rename_held`) stay
+  consent-gated: unblock refuses them with the frontmatter repair preview to
+  run ([held files](write-refusals.md#held-files-and-content-refusals)).
 - `revision_conflict`, `page_identity_changed`, `pinned_git_worktree_conflict`
   as a `last_error` come from a run on an older release; this release holds
   them. Rerun with `--retry-failed`: the stopped entry converts in place, the
@@ -7846,8 +7913,9 @@ some-transcript-feed | gbrain watch --json
 gbrain volunteer-context --stats
 ```
 
-Stats are **approximate** by design: "used" means `pages.last_retrieved_at >
-volunteered_at` — the 5-minute last-retrieved throttle causes false negatives
+Stats are **approximate** by design: "used" means the page's last retrieval
+(`page_retrievals.last_retrieved_at`, or the legacy `pages.last_retrieved_at`) >
+`volunteered_at` — the 5-minute last-retrieved throttle causes false negatives
 and unrelated reads of the same page cause false positives. Use the per-arm
 precision to tune `min_confidence`, not as an exact metric.
 
@@ -8476,6 +8544,18 @@ links that copy as if `replaces` named it: `status: superseded`,
 and `status_text` says there is nothing to forget. When `replaces` would refuse
 (for example `replaces_cross_page`), the fact is saved as a new one instead.
 
+#### remember content_origin (additive)
+
+`content_origin` (string: `user_said`, `tool_output` or `inferred`): where the
+fact's text came from. `tool_output` (a web page, email, file or other tool's
+text) stores the fact as `external_untrusted`; `user_said` and `inferred` store
+it at the agent tier (`agent_written`), so `user_said` never confers owner
+authority. Any other value is `invalid_params` listing the accepted values.
+Optional, and safety never depends on it. Like `replaces`, it is advertised on
+the verbs and full surfaces but left out of the starter surface's schema (to
+keep that tool list inside its size budget); a starter client that passes it
+is still honored. `put_page` and `capture` take the same parameter.
+
 #### remember entity attribution fields (additive)
 
 Optional response fields; clients must ignore any they do not know.
@@ -8702,6 +8782,14 @@ same claim is active on entity-linked facts (same source and visibility),
 forgetting the unlinked fact is refused with `invalid_params`, message prefix
 `claim_linked:`, naming those facts, and nothing changes. The `suggestion`
 says to keep them, or to forget them first to withdraw the claim everywhere.
+
+#### forget and purge (additive note)
+
+`forget` keeps this contract: it expires, never deletes. Removing a claim's
+text from live stores is a separate owner-only operation, `purge_fact` (CLI:
+`gbrain forget <id> --purge` on the brain host), which is not a memory verb and
+is never callable over MCP; a remote call gets `trusted_local_only` with the
+command for the user. See [expire versus purge](../guides/memory-boundaries.md#purge).
 
 #### forget similar_active and semantic_review (additive)
 

@@ -453,6 +453,10 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     remaining = 0
     incomings = null
     clearImmediate(nextWriteTimer)
+    // GBrain (#6355): bytes still waiting for the cleared immediate belonged to this socket. Left in place, the next
+    // connection's StartupMessage is appended to them and never scheduled for writing (the timer handle is not
+    // null), so the connection sits open until CONNECT_TIMEOUT and every statement bound to it fails.
+    chunk = nextWriteTimer = null
     socket.removeListener('data', data)
     socket.removeListener('connect', connected)
     idleTimer.cancel()
@@ -467,10 +471,18 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
         ? cancelReject(cancelError || Errors.connection('CONNECTION_CLOSED', options))
         : cancelResolve()
 
-    if (initial)
+    if (initial) {
+      // GBrain (#6355): a connection that died during startup (its backend terminated under the array-types fetch)
+      // leaves that internal query and the error it saw behind. The fresh connection must not deliver the stale
+      // error to the caller's query at its first ReadyForQuery, and the internal query settles here instead of
+      // rejecting with nobody to hear it.
+      query && query !== initial && queryError(query, Errors.connection('CONNECTION_CLOSED', options, socket))
+      query = results = errorResponse = null
       return reconnect()
+    }
 
     !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
+    query = null
     closedTime = performance.now()
     hadError && options.shared.retries++
     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
@@ -795,14 +807,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
 
   async function fetchArrayTypes() {
     needsTypes = false
-    const types = await new Query([`
-      select b.oid, b.typarray
-      from pg_catalog.pg_type a
-      left join pg_catalog.pg_type b on b.oid = a.typelem
-      where a.typcategory = 'A'
-      group by b.oid, b.typarray
-      order by b.oid
-    `], [], execute)
+    let types
+    try {
+      types = await new Query([`
+        select b.oid, b.typarray
+        from pg_catalog.pg_type a
+        left join pg_catalog.pg_type b on b.oid = a.typelem
+        where a.typcategory = 'A'
+        group by b.oid, b.typarray
+        order by b.oid
+      `], [], execute)
+    } catch (error) {
+      // GBrain (#6355): the fetch failed or its connection closed; errored() has already told the caller's query, and
+      // connected() re-arms the fetch for the next connection. Nothing awaits this promise, so it must not reject.
+      return
+    }
     types.forEach(({ oid, typarray }) => addArrayType(oid, typarray))
   }
 

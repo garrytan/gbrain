@@ -52,8 +52,9 @@ some-transcript-feed | gbrain watch --json
 gbrain volunteer-context --stats
 ```
 
-Stats are **approximate** by design: "used" means `pages.last_retrieved_at >
-volunteered_at` — the 5-minute last-retrieved throttle causes false negatives
+Stats are **approximate** by design: "used" means the page's last retrieval
+(`page_retrievals.last_retrieved_at`, or the legacy `pages.last_retrieved_at`) >
+`volunteered_at` — the 5-minute last-retrieved throttle causes false negatives
 and unrelated reads of the same page cause false positives. Use the per-arm
 precision to tune `min_confidence`, not as an exact metric.
 

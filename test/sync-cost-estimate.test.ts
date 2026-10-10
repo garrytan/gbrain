@@ -4,7 +4,7 @@
  * The inline cost estimator now MIRRORS EXECUTION (delta, not full-tree
  * ceiling) so the gate's dollar figure stops being a ~400x phantom on a busy
  * brain. Real temp git repos, no PGLite. estimateInlineNewTokens is exported
- * from commands/sync.ts; CHUNKER_VERSION is the live chunker version.
+ * from commands/sync.ts; chunkerStamp() is the live chunker stamp (version plus grammar revisions).
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
@@ -12,9 +12,9 @@ import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { estimateInlineNewTokens } from '../src/commands/sync.ts';
-import { CHUNKER_VERSION } from '../src/core/chunkers/code.ts';
+import { chunkerStamp } from '../src/core/chunkers/code.ts';
 
-const CURRENT = String(CHUNKER_VERSION);
+const CURRENT = chunkerStamp();
 let repo: string;
 
 function commitAll(msg: string): string {

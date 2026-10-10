@@ -16,7 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, t
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { parseOpArgs } from '../src/cli.ts';
+import { parseOpArgs } from '../src/cli/main.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';

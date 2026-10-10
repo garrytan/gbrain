@@ -120,7 +120,7 @@ describe('R4 — cross-platform stdin via fd 0 (PR #1325 regression pin)', () =>
     const root = join(import.meta.dir ?? '.', '..', '..', 'src');
     // test-reads-source-ok[structural]: the R4 regression pins the absence of the /dev/stdin read in the CLI shim (moved there by A5).
     const src = readFileSync(join(root, 'core', 'interaction.ts'), 'utf-8');
-    expect(readFileSync(join(root, 'cli.ts'), 'utf-8')).not.toMatch(/readFileSync\(\s*['"]\/dev\/stdin['"]/);
+    expect(readFileSync(join(root, 'cli', 'main.ts'), 'utf-8')).not.toMatch(/readFileSync\(\s*['"]\/dev\/stdin['"]/);
 
     // The exact pattern the PR replaced. If anyone reintroduces it, R4 fires.
     // Look for `'/dev/stdin'` with surrounding quote so we don't false-fire
@@ -141,7 +141,7 @@ describe('R4 — cross-platform stdin via fd 0 (PR #1325 regression pin)', () =>
     // the surrounding shape of the parseOpArgs stdin-reading branch hasn't
     // drifted (existence of the branch + 5MB cap), since the branch itself
     // is what was modified by PR #1325.
-    const path = join(import.meta.dir ?? '.', '..', '..', 'src', 'cli.ts');
+    const path = join(import.meta.dir ?? '.', '..', '..', 'src', 'cli', 'main.ts');
     const src = readFileSync(path, 'utf-8');
 
     // Stdin reading branch still exists in parseOpArgs.

@@ -55,12 +55,13 @@ import { readGitSourceHolds, recordFenceHoldRepair } from '../persistence/sync-h
 import { attemptStore } from '../fence-repair/attempts.ts';
 import { listFenceCandidates, runFenceCensus, type FenceCandidate } from '../fence-repair/census.ts';
 import { fenceRepairLlmEnabled, readFenceRepairCaps } from '../fence-repair/config.ts';
+import { mergedReceipt } from '../fence-repair/merge.ts';
 import { FENCE_REASONS } from '../fence-repair/reasons.ts';
-import { FENCE_REPAIR_ACTOR } from '../fence-repair/receipt.ts';
+import { FENCE_REPAIR_ACTOR, type MergedFenceReceipt } from '../fence-repair/receipt.ts';
 import { checkoutFileExists, loadFenceSource, pageSha, readFenceTarget, spliceFileSections, writeFenceRepair, type FenceRepairMode, type FenceSource, type FenceTarget } from '../fence-repair/repair-io.ts';
 import type { OwnerRefusal } from '../persistence/owner-refusal.ts';
 import { repairBusy, repairBusyMessage } from '../persistence/repair-busy.ts';
-import { analyzeFences, attemptCandidate, runTier3, tier3Estimate, tier3Memo, type FenceAnalysis } from '../fence-repair/repair-tiers.ts';
+import { analyzeFences, attemptCandidate, runTier3, tier3Estimate, tier3Memo, type AnalyzeOpts, type FenceAnalysis } from '../fence-repair/repair-tiers.ts';
 import type { FenceFix, FenceIssue, FencePage, FenceReason, FenceTier, GateLetter } from '../fence-repair/types.ts';
 import { lineDiff } from './frontmatter.ts';
 import type { RepairHandler, RepairItem, RepairItemOutcome, RepairListing, RepairPlan, RepairPlanOptions, RepairResult, RepairScope } from './core.ts';
@@ -232,6 +233,13 @@ function ownerReason(owner: OwnerRefusal): FenceReason {
 const previewFix = (sourceId: string, path: string | null, slug: string): Action => ({ argv: ['gbrain', 'repair', 'fences', '--source', sourceId, ...(path ? ['--only', path] : ['--slug', slug])],
   consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews this fence repair again from the bytes as they are now; nothing is written.' });
 
+
+/** The hash a preview of this selection prints when it finds nothing to repair. */
+async function emptyPlanHash(engine: BrainEngine, scope: RepairScope, selection: Selection): Promise<string> {
+  const sourcesRows = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  return previewHash({ kind: 'fences-v1', brain_id: scope.brain_id, sources: sourcesRows, selection, items: [] });
+}
+
 export const fencesRepair: RepairHandler = {
   kind: 'fences',
   outcomeItemsLimit: 1000,
@@ -240,6 +248,8 @@ export const fencesRepair: RepairHandler = {
       slugs: [...(opts?.slugs ?? [])].sort(), no_llm: opts?.noLlm === true };
     const preview = previewArgv(scope, selection);
     if (opts?.apply && opts.expect) {
+      // #6377: a preview that found nothing saved no set; its hash still binds "nothing to apply" (the content lane passes one hash per kind).
+      if (opts.expect === await emptyPlanHash(engine, scope, selection)) return { items: [], preview_hash: opts.expect, residuals: {}, llm: { usd: 0, cap_remaining_usd: null } };
       const approved = await loadApprovedSet<ApprovedSetItem>(engine, { command: 'fences', hash: opts.expect, previewCommand: shellQuote(preview) });
       if (approved.items.some(entry => digestOf(entry.selection) !== digestOf(selection))) throw previewChangedError(opts.expect, shellQuote(preview));
       const items = approved.items.map(({ selection: _chosen, ...entry }, index) => item(entry, index, opts.expect!, index === approved.items.length - 1, false));
@@ -287,7 +297,7 @@ export const fencesRepair: RepairHandler = {
         continue;
       }
       const target = read.target;
-      const analysis = await analyzeFences(engine, target, { pageId: target.snapshot?.page.id ?? null });
+      const analysis = await analyzeFences(engine, target, await analysisOpts(engine, target, src, { apply: opts?.apply === true, expect: opts?.expect, model: s.model }));
       if (analysis.status === 'clean') { residuals.already_clean = (residuals.already_clean ?? 0) + 1; continue; }
       if (analysis.status === 'manual') {
         await keep({ item: name, reason: analysis.reason, tier: 'manual', resolution: analysis.resolution, ...(analysis.gate ? { gate: analysis.gate } : {}), ...(analysis.rows ? { rows: analysis.rows } : {}) });
@@ -321,7 +331,7 @@ export const fencesRepair: RepairHandler = {
           continue;
         }
       }
-      const estimate = tier3Estimate(analysis.requests, { model, overrides: s.overrides, capSource: s.capSource });
+      const estimate = tier3Estimate(analysis.requests, { model, overrides: s.overrides, capSource: s.capSource }, analysis.tails);
       if (!estimate.ok) {
         await llmHeld('no_pricing', `A spend cap is set but gbrain has no price for ${model}. ${estimate.guidance.lookup} Register it with: ${estimate.guidance.register_command}`);
         continue;
@@ -441,23 +451,40 @@ async function applyFence(ctx: OperationContext, entry: ApprovedFence, opts: App
   if (target.before !== entry.before || (target.snapshot?.revision ?? null) !== entry.revision && target.mode !== 'managed' && target.mode !== 'legacy') {
     return skipped(moved, `${entry.path ?? entry.slug} changed since it was ${opts.expect ? 'previewed' : 'read'}; preview again with gbrain repair fences --source ${src.id}.`);
   }
-  const analysis = await analyzeFences(engine, target, { pageId: target.snapshot?.page.id ?? null });
+  const runModel = (await settings(engine, { noLlm: opts.noLlm })).model;
+  const analysisFor = (tailProse?: ReadonlySet<string>) => analysisOpts(engine, target, src, { apply: true, expect: opts.expect ?? null, model: runModel })
+    .then(base => analyzeFences(engine, target, tailProse ? { ...base, tailProse } : base));
+  const analysis = await analysisFor();
   if (analysis.status === 'clean') return skipped('already_clean', `${entry.path ?? entry.slug} no longer has a malformed fence.`);
   if (analysis.status === 'manual') return heldOutcome(analysis.reason, analysis.resolution, { ...(analysis.gate ? { gate: analysis.gate } : {}), ...(analysis.rows ? { rows: analysis.rows } : {}) });
   if (analysis.status === 'proposal') {
     const bytes = afterBytes(target, analysis.after);
     if (opts.expect && bytes?.sha !== entry.after) return skipped('changed_since_preview', `The repair of ${entry.path ?? entry.slug} differs from the preview; preview again.`);
-    return write(ctx, src, target, analysis.after, { tier: analysis.tier, classes: classesOf(analysis.fixes), ...fixLocation(analysis.fixes, []), model: null, cost: 0 }, opts, heldOutcome);
+    return write(ctx, src, target, analysis.after, { tier: analysis.tier, classes: classesOf(analysis.fixes), ...fixLocation(analysis.fixes, []), model: null, cost: 0, merged: mergedReceipt(target.page, analysis.fixes) }, opts, heldOutcome);
   }
-  return tier3(ctx, src, target, analysis, entry, opts, heldOutcome);
+  return tier3(ctx, src, target, analysis, entry, opts, heldOutcome, analysisFor);
+}
+
+/**
+ * #6377: how a run may treat an unclosed fence with trailing text. An explicit preview, and an apply bound to one
+ * (`--expect`), carry the user's approval to show the tail of a world-visible page; a bare apply (the cycle,
+ * `sync unblock`) never does. A memo that recorded the classifier's prose verdict (`tail_exposure_approval`) lets the
+ * approved run close without asking the model again.
+ */
+async function analysisOpts(engine: BrainEngine, target: FenceTarget, src: FenceSource, run: { apply: boolean; expect?: string | null; model: string | null }): Promise<AnalyzeOpts> {
+  const approve = !run.apply || !!run.expect;
+  const base: AnalyzeOpts = { pageId: target.snapshot?.page.id ?? null, ...(approve ? { approveTailExposure: true } : {}) };
+  if (!approve || !run.model) return base;
+  const memo = await attemptStore(engine).read(attemptCandidate(target, src.incarnation)).catch(() => null);
+  return memo && memo.memo === tier3Memo(target, run.model) && memo.state === 'rejected' && memo.reason === 'tail_exposure_approval' ? { ...base, tailProse: new Set(['*']) } : base;
 }
 
 type HeldFn = (reason: string, message: string, extra?: { gate?: GateLetter; rows?: number[]; next?: string | null; tier?: FenceTier }) => Promise<RepairItemOutcome>;
 
 async function write(ctx: OperationContext, src: FenceSource, target: FenceTarget, after: FencePage,
-  r: { tier: RepairTier; classes: string[]; rows: number[]; columns: string[]; model: string | null; cost: number | null }, opts: ApplyOptions, held: HeldFn): Promise<RepairItemOutcome> {
-  const outcome = await writeFenceRepair(ctx, src, target, after, { actor: FENCE_REPAIR_ACTOR, tier: r.tier, classes: r.classes, rows: r.rows, columns: r.columns, model: r.model, cost_usd: r.cost },
-    { embed: opts.embed });
+  r: { tier: RepairTier; classes: string[]; rows: number[]; columns: string[]; model: string | null; cost: number | null; merged?: MergedFenceReceipt[] | undefined }, opts: ApplyOptions, held: HeldFn): Promise<RepairItemOutcome> {
+  const outcome = await writeFenceRepair(ctx, src, target, after, { actor: FENCE_REPAIR_ACTOR, tier: r.tier, classes: r.classes, rows: r.rows, columns: r.columns, model: r.model, cost_usd: r.cost,
+    ...(r.merged ? { merged: r.merged } : {}) }, { embed: opts.embed });
   if (!outcome.ok) {
     if (outcome.reason === 'changed_since_read') return { applied: false, outcome: 'skipped', reason: 'changed_since_read', detail: { path: target.path, slug: target.slug, mode: target.mode, message: outcome.message } };
     if (outcome.reason === 'sync_in_progress') {
@@ -469,7 +496,8 @@ async function write(ctx: OperationContext, src: FenceSource, target: FenceTarge
   return { applied: true, outcome: 'repaired', detail: { tier: r.tier, classes: r.classes.join(', '), slug: target.slug, ...outcome.detail }, ...(r.cost ? { llm_usd: r.cost } : {}) };
 }
 
-async function tier3(ctx: OperationContext, src: FenceSource, target: FenceTarget, analysis: Extract<FenceAnalysis, { status: 'llm' }>, entry: ApprovedFence, opts: ApplyOptions, held: HeldFn): Promise<RepairItemOutcome> {
+async function tier3(ctx: OperationContext, src: FenceSource, target: FenceTarget, analysis: Extract<FenceAnalysis, { status: 'llm' }>, entry: ApprovedFence, opts: ApplyOptions, held: HeldFn,
+  reanalyze: (tailProse: ReadonlySet<string>) => Promise<FenceAnalysis>): Promise<RepairItemOutcome> {
   const engine = ctx.engine;
   const s = await settings(engine, { noLlm: opts.noLlm, ...(opts.allowanceUsd !== undefined ? { maxLlmUsd: opts.allowanceUsd } : {}) });
   const rows = fixLocation(analysis.fixes, analysis.residual).rows;
@@ -480,7 +508,7 @@ async function tier3(ctx: OperationContext, src: FenceSource, target: FenceTarge
   const now = () => new Date();
   const timeoutMs = Math.max(5_000, Math.min(CALL_TIMEOUT_MS(), opts.deadline !== undefined ? opts.deadline - Date.now() : Infinity));
   const result = await runTier3(target, analysis, src.incarnation, { ledger: dailyLedger(engine, FENCE_REPAIR_LEDGER), store: attemptStore(engine), model, overrides: s.overrides,
-    capSource: s.capSource, perPageUsd: s.perPageUsd, perDayUsd: s.perDayUsd, ...(opts.allowanceUsd !== undefined ? { allowanceUsd: opts.allowanceUsd } : {}), timeoutMs, now });
+    capSource: s.capSource, perPageUsd: s.perPageUsd, perDayUsd: s.perDayUsd, ...(opts.allowanceUsd !== undefined ? { allowanceUsd: opts.allowanceUsd } : {}), timeoutMs, now, reanalyze });
   if (!result.ok) {
     if (result.reason === 'claimed_elsewhere') return { applied: false, outcome: 'skipped', reason: 'claimed_elsewhere', detail: { path: target.path, slug: target.slug, message: result.message } };
     const next = result.reason === 'budget_exhausted' ? result.resetsAt ?? nextUtcMidnight(new Date()) : null;
@@ -499,8 +527,8 @@ async function tier3(ctx: OperationContext, src: FenceSource, target: FenceTarge
       inputs: [{ name: 'usd', how: 'The new daily cap in USD the user agrees to; it must exceed what is already spent today.' }],
       verify: { argv: ['gbrain', 'doctor', '--only', 'fence_integrity', '--json'] } } } };
   }
-  const written = await write(ctx, src, target, result.after, { tier: 'llm', classes: classesOf(analysis.fixes, result.cleared), ...fixLocation(analysis.fixes, analysis.residual), model, cost: result.spentUsd },
-    opts, held);
+  const written = await write(ctx, src, target, result.after, { tier: 'llm', classes: classesOf(analysis.fixes, result.cleared), ...fixLocation(analysis.fixes, analysis.residual), model, cost: result.spentUsd,
+    merged: mergedReceipt(target.page, analysis.fixes) }, opts, held);
   const store = attemptStore(engine);
   if (written.applied) await store.publish(result.claim);
   else if (written.reason === 'changed_since_read' || written.reason === 'sync_in_progress') await store.transient(result.claim, written.reason);

@@ -180,7 +180,16 @@ The maintenance run's `fence_repair` phase and `gbrain repair fences --apply`
 send a malformed facts or takes fence that only a rewrite can realign to the
 repair model. Only the fence header and the rows it must realign leave the
 machine, never valid rows or the rest of the page. Every other fence repair
-is free.
+is free. The same caps and the same daily ledger govern the rest of the
+content-repair lane (#6377): the tail classifier (an unclosed fence whose
+trailing lines hold a pipe; the fence region and those lines leave the
+machine) and the slug-conflict judgment (`content_repair` phase,
+`gbrain repair slug-conflicts`; both pages' frontmatter, headings, first 60
+lines and the lines mentioning the other slug leave the machine). The model
+chooses among coded answers and writes no text. `models.content_repair`
+overrides the slug-conflict model; unset, it follows `models.fence_repair`,
+then the content-repair eval's measured list (`anthropic:claude-opus-5-5`,
+`openai:gpt-6.1-sol`, `anthropic:claude-sonnet-5-5`, first with a key).
 
 - **Model.** `models.fence_repair` when set (any model, priced or not, always
   runs). Unset, the first model the fence-repair eval measured as accurate

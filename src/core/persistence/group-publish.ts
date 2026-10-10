@@ -39,13 +39,13 @@ import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwners
 import { awaitLaneBegin, awaitLaneTurn, LaneAbort, laneApplyBegin, laneClaimed, laneFinished, lanePolicy, stepDownLanes, type LaneState } from './sync-lanes.ts';
 import { cancelRows, windowPredecessor } from './sync-window.ts';
 import { clearResolvedRecoveries, completeWrite, ENSURE_COUNTERS_SQL, getWriteRequestById, LOCK_COUNTERS_SQL, markDispatched, markRecovering, prepareRecoveries,
-  foregroundPriority, publicationGroupKey, reclaimReleasedWrite, releaseUnpublishedClaim, renewGroupClaims } from './journal.ts';
+  foregroundPriority, independentGroup, publicationGroupKey, reclaimReleasedWrite, releaseUnpublishedClaim, renewGroupClaims } from './journal.ts';
 import { principalKey, requestPrincipal, type FileRecoveryRecord, type WriteRequest } from './model.ts';
 import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
 import { claimPhaseStamp, enterClaimPhase, startClaimPhase, type ClaimPhaseClock } from './claim-phase.ts';
 import { DEFAULT_PREPARATION_POLICY, preparationBudgetMs, startPreparation, type PreparationPolicy, type PreparationRun } from './preparation-budget.ts';
 import { setMemberAttribution, withCoordinatedWrite } from './context.ts';
-import { requestAttribution } from './attribution.ts';
+import { publicationAttribution } from './attribution.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects, queuesMentionLinks, reconcileFinishedBatch } from './effect-journal.ts';
 import { assertUnboundPublication, classifyUnboundPage } from './unbound-source.ts';
@@ -67,7 +67,7 @@ import { faultPoint, type PublicationBoundary } from './fault-points.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { writeSwitchOn } from './switches.ts';
 
-/** A `put_pages` group publishes at most this many pages per transaction, so one commit stays a few seconds long. */
+/** A `put_pages` or managed import group publishes at most this many pages per transaction, so one commit stays a few seconds long. */
 export const PAGE_BATCH_GROUP_MAX = 8;
 
 function syncMember(row: WriteRequest): boolean {
@@ -84,7 +84,7 @@ export function singleWrite(row: Pick<WriteRequest, 'operation' | 'intent'>): bo
 export function groupable(row: WriteRequest, prepared: PreparedMutation): boolean {
   if ((row.target_kind ?? 'page') !== 'page' || prepared.target === 'skill_bundle' || prepared.sourceExclusive || prepared.exclusiveSources?.length) return false;
   if (syncMember(row)) return !prepared.file && typeof prepared.validate === 'function';
-  return publicationGroupKey(row)?.startsWith('batch:') === true || singleWrite(row);
+  return independentGroup(publicationGroupKey(row)) || singleWrite(row);
 }
 
 const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
@@ -283,7 +283,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
         let effects: (() => Promise<void>) | null = null;
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i]!, member = prepared[i]!, file = recorded.get(i), sync = syncMember(row), previous = effects;
-          // A group of one is already attributed to its only member by the coordinated write.
+          // A group of one is already attributed to its only member (and its declared trust) by the coordinated write.
           const attribute = rows.length > 1;
           // #5984: a member's checks and reads are pipelined and run in their usual order, so the first failing one is reported.
           // A sync member validates alongside (read-only checks); a member that publishes a file sets its attribution after the file.
@@ -298,7 +298,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
               return snapshot;
             },
             async () => { if (sync) await member.validate?.(tx); },
-            async () => { if (!file && attribute) await setMemberAttribution(tx, requestAttribution(row)); },
+            async () => { if (!file && attribute) await setMemberAttribution(tx, publicationAttribution(row, member.trust)); },
           ]) as [unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>];
           if (!sync) await member.validate?.(tx);
           if (file) {
@@ -306,7 +306,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
             await seam('before_publication', row);
             await withFilesystemPublication([file.record.root], async () => publishPersistenceFile(member.file!, file.record.staging?.publication?.path));
             await seam('after_publication', row);
-            if (attribute) await setMemberAttribution(tx, requestAttribution(row));
+            if (attribute) await setMemberAttribution(tx, publicationAttribution(row, member.trust));
           }
           member.postimage = undefined;
           const outcome = await member.apply(tx, snapshot);
@@ -321,7 +321,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
           outcomes.push(outcome);
         }
         await effects?.();
-      }, requestAttribution(head));
+      }, publicationAttribution(head, prepared[0]!.trust));
       // #5984 lanes: applied concurrently, committed in manifest order.
       if (lane) { timed.apply?.turn(); await faultPoint('lane:applied', { requestId: head.request_id, sourceId: head.source_id, operation: head.operation }); await awaitLaneTurn(tx, lane, rows); timed.apply?.turned(); }
       const done = await completeGroup(tx, rows, outcomes);
@@ -542,15 +542,15 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
     return (await renewGroupClaims(engine, live.map(([row]) => row), 30_000, signal, live.map(([, i]) => stampOf(i)))).size === live.length;
   }, run.lease ?? DEFAULT_CLAIM_LEASE_TIMING, () => { for (const prep of inFlight.values()) prep.abort({ code: 'claim_lost' }); });
   if (run.lane) laneClaimed(run.lane, rows);
-  // A put_pages batch is independent page writes: one page's failure never cancels its siblings.
-  const independent = publicationGroupKey(rows[0]!)?.startsWith('batch:') === true;
+  // A put_pages batch or a managed import batch is independent page writes: one page's failure never cancels its siblings.
+  const independent = independentGroup(publicationGroupKey(rows[0]!));
   const prepared: MemberOutcome[] = new Array(rows.length);
   // The first member whose deadline passed in an ordered group: nothing after it is dispatched or published this pass.
   let cut: number | null = null;
   const abandon = (i: number, work: Promise<unknown>) => run.leftRunning?.(work, true, { row: rows[i]!, clock: clocks[i]! });
   try {
     const reads = preparationReads(engine);
-    // A put_pages group prepares all of its (at most PAGE_BATCH_GROUP_MAX) pages at once.
+    // A put_pages or import group prepares all of its (at most PAGE_BATCH_GROUP_MAX) pages at once.
     const width = independent ? PAGE_BATCH_GROUP_MAX : 4;
     const preparing = (async () => {
       for (let start = 0; start < rows.length && (independent || cut === null); start += width) {

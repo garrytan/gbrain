@@ -17,8 +17,25 @@ export async function overlayCanonicalBodies(query: ReadQuery, body: string, tim
     timeline: overlayWithdrawalBody(timeline, normalized.timeline ?? '', withdrawals) };
 }
 
-/** One MVCC statement binds content, tags, identity and withdrawals to one revision. */
+/**
+ * One MVCC statement binds content, tags, identity and withdrawals to one revision.
+ *
+ * An alias-resolving read first runs the exact-slug statement: an exact match
+ * outranks every alias match, so a hit is the row the alias statement would
+ * pick. Only a miss runs the alias statement, whose `slug = $1 OR EXISTS
+ * (alias)` disjunction scans the source's pages (23-80 ms at 50k pages, under
+ * 1 ms for the exact lookup). An ambiguity check counts alias matches too, so
+ * it always runs the alias statement.
+ */
 export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
+  if (opts?.resolveAlias === true && opts.requireUnambiguous !== true) {
+    const exact = await readSnapshotStatement(query, slug, { ...opts, resolveAlias: false });
+    if (exact) return exact;
+  }
+  return readSnapshotStatement(query, slug, opts);
+}
+
+async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
   const params: unknown[] = [slug];
   // Alias resolution is part of the statement text, not a parameter, so a
   // cached plan for an exact-slug read keeps using the slug index.
@@ -47,7 +64,11 @@ export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: Pa
     COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
       ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
         FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug)
-        ${opts?.excludePrivate ? "AND visibility='world'" : ''} GROUP BY visibility,fact_hash) w), '[]'::jsonb) AS snapshot_withdrawals,
+        ${opts?.excludePrivate ? "AND visibility='world'" : ''} GROUP BY visibility,fact_hash) w), '[]'::jsonb)
+      || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true)
+        ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
+          FROM fact_purges WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug)
+          ${opts?.excludePrivate ? "AND visibility='world'" : ''} GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals,
     (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body,
     (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)

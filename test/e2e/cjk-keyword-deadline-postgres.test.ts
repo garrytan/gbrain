@@ -33,7 +33,13 @@ describe.skipIf(!RUN)('CJK keyword arm on Postgres', () => {
     await seed('cjk-a', 'cjka/p-', 20_000, 8, `${'팀 좌석을 업그레이드하는 방법과 좌석 수 관리, '.repeat(40)}`);
     await engine.executeRaw('ANALYZE content_chunks');
   }, 600_000);
-  afterAll(async () => { await teardownDB(); }, 120_000);
+  // The 160,002 seeded chunks carry no embedding: left in the shared slot database they fill every later file's
+  // stale-chunk scans (listStaleChunks batches by page id, so a later page lands past the batch).
+  afterAll(async () => {
+    await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('cjk-a', 'cjk-b')`);
+    await engine.executeRaw(`DELETE FROM sources WHERE id IN ('cjk-a', 'cjk-b')`);
+    await teardownDB();
+  }, 120_000);
 
   test('OR fallback: terms in different documents found only with the hybrid flag; direct callers keep strict AND', async () => {
     expect(await engine.searchKeyword('席位 升级', { sourceId: 'cjk-b' })).toEqual([]);

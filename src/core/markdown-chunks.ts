@@ -1,4 +1,5 @@
 import type { ChunkInput } from './types.ts';
+import type { BrainEngine } from './engine.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, detectCodeLanguage } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
@@ -7,6 +8,8 @@ import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
 import { isEmbedSkipped } from './embed-skip.ts';
 import { isQuarantined } from './quarantine.ts';
 import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
+import { estimateEmbedTokens } from './chunkers/token-estimate.ts';
+import { fenceTrustMarker, loadFenceChunkOverlay, markFenceChunk, splitFenceOverlay, type FenceChunkOverlay } from './eligibility/fence-overlay.ts';
 
 /** Recognized fence tags select the existing code grammar; unknown tags stay prose. */
 const FENCE_TAG_TO_PSEUDO_PATH: Record<string, string> = {
@@ -103,32 +106,57 @@ async function extractFencedChunks(
 
 
 /**
+ * Truth then timeline prose chunks through a fence overlay, plus the
+ * overlay's low-tier facts-fence rows as trailing chunks, each piece led by
+ * the fence trust marker naming the row tier (#5575 ENG-1). `fenced` slots
+ * the recognized code-fence chunks of the overlaid truth before them.
+ */
+async function overlaidChunks(page: { compiled_truth: string; timeline?: string | null }, maxTokens: number,
+  overlay: FenceChunkOverlay | undefined, fenced?: (truth: string, start: number) => Promise<ChunkInput[]>): Promise<ChunkInput[]> {
+  const chunks: ChunkInput[] = [];
+  const truth = splitFenceOverlay(page.compiled_truth, overlay);
+  const timeline = splitFenceOverlay(page.timeline ?? '', overlay);
+  for (const [text, source] of [[truth.main, 'compiled_truth'], [timeline.main, 'timeline']] as const) {
+    if (!text.trim()) continue;
+    for (const c of chunkText(text, { maxTokens })) chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: source });
+  }
+  if (fenced && truth.main.trim()) chunks.push(...await fenced(truth.main, chunks.length));
+  for (const { tier, unconfirmed, body } of [...truth.lowTier, ...timeline.lowTier]) {
+    const room = Math.max(1, maxTokens - estimateEmbedTokens(fenceTrustMarker(tier, unconfirmed)) - 1);
+    for (const c of chunkText(body, { maxTokens: room })) {
+      chunks.push({ chunk_index: chunks.length, chunk_text: markFenceChunk(tier, c.text, unconfirmed), chunk_source: 'compiled_truth' });
+    }
+  }
+  return chunks;
+}
+
+/**
  * Provider-free Markdown projection shared by canonical imports and DB-only
  * rebuilds. The caller owns content/disposition policy and the token limit;
  * chunkers enforce the full-body privacy boundary before splitting. Order and
  * metadata match the importer: truth, timeline, then recognized truth fences.
+ * A fence overlay (loadFenceChunkOverlay) leaves held and purged fence rows
+ * out and moves rows below the page tier into trailing marked chunks; without
+ * one the output is unchanged.
  */
 export async function prepareMarkdownChunks(page: {
   compiled_truth: string;
   timeline?: string;
   frontmatter?: Record<string, unknown> | null;
-}, maxChunkTokens?: number): Promise<ChunkInput[]> {
+}, maxChunkTokens?: number, overlay?: FenceChunkOverlay): Promise<ChunkInput[]> {
   // Both dispositions intentionally have no live chunks, including code.
   if (isEmbedSkipped(page.frontmatter) || isQuarantined(page.frontmatter)) return [];
-  const chunks: ChunkInput[] = [];
-  const chunkOpts = { maxTokens: maxChunkTokens ?? resolveMaxChunkTokens() };
-  if (page.compiled_truth.trim()) {
-    for (const c of chunkText(page.compiled_truth, chunkOpts)) {
-      chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
-    }
-  }
-  if (page.timeline?.trim()) {
-    for (const c of chunkText(page.timeline, chunkOpts)) {
-      chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'timeline' });
-    }
-  }
-  if (page.compiled_truth.trim()) {
-    chunks.push(...await extractFencedChunks(page.compiled_truth, chunks.length));
-  }
-  return chunks;
+  return overlaidChunks(page, maxChunkTokens ?? resolveMaxChunkTokens(), overlay, extractFencedChunks);
+}
+
+/** Truth and timeline prose only (no code-fence chunks), through the overlay: embed's chunkless-page rebuilds. */
+export function prepareProseChunks(page: { compiled_truth: string; timeline?: string | null }, maxChunkTokens: number,
+  overlay?: FenceChunkOverlay): Promise<ChunkInput[]> {
+  return overlaidChunks(page, maxChunkTokens, overlay);
+}
+
+/** The importer's projection of one page: its fence overlay read in one query, then prepareMarkdownChunks. */
+export async function prepareFenceAwareMarkdownChunks(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string,
+  page: Parameters<typeof prepareMarkdownChunks>[0]): Promise<ChunkInput[]> {
+  return prepareMarkdownChunks(page, undefined, await loadFenceChunkOverlay(engine, { sourceId, slug, compiled_truth: page.compiled_truth, timeline: page.timeline }));
 }

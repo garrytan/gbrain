@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-state-005",
+  "suites": [
+    "state-resolution"
+  ],
+  "category": "state-resolution",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Saoirse Oakhurst is the CEO of Driftspark Works",
+      "entity": "people/saoirse-oakhurst"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Saoirse Oakhurst is the COO of Driftspark Works",
+      "entity": "people/saoirse-oakhurst",
+      "target": "s1"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Where is Saoirse Oakhurst now and what is their role?"
+    }
+  ]
+}

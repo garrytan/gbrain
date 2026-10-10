@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { validateCommandFlags } from '../src/cli.ts';
+import { validateCommandFlags } from '../src/cli/main.ts';
 
 const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-local-writer-dry-run-')));
 afterAll(() => rmSync(home, { recursive: true, force: true }));

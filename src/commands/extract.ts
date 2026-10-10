@@ -50,7 +50,9 @@ import { resolveCandidateSources, resolveLinkFallbackDefault, loadLinkPageMetada
 import { collectWantedLinks, isWantedPagesEnabled } from '../core/wanted-links.ts';
 import { readLineGrammarSettings, statedRelationTypes } from '../core/line-grammar.ts';
 import { effectiveLinkExtractorWatermark, linkExtractorWatermarkFor } from '../core/link-extraction-watermark.ts';
-import { replaceDerivedLinksUnlessSettingsChanged, settingsChangedSkipLine } from '../core/derived-links.ts';
+import { replaceDerivedLinksBatchOrReplay, replaceDerivedLinksUnlessSettingsChanged, settingsChangedSkipLine, type DerivedLinkBatchItem } from '../core/derived-links.ts';
+import { pageSnapshotKey, readPageSnapshotsBatch } from '../core/page-snapshot-batch.ts';
+import type { PageSnapshot } from '../core/page-state/types.ts';
 export { reconcileSourceLinks, type SourceLinkReconciliationResult } from '../core/link-reconciliation.ts';
 export { extractMarkdownLinks } from '../core/link-extraction.ts';
 import {
@@ -70,6 +72,7 @@ import { PageRegexBudget } from '../core/schema-pack/redos-guard.ts';
 export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { extractTimelineFromContent, pruneTimelineOrphans, retractRemovedTimelineEntries, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
+import { addProjectedTimelineBatch, addProjectedTimelineEntry } from '../core/trust/timeline-projection.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { pathToSlug, slugifyPath, slugifySegment, pruneDir, isSyncable } from '../core/sync.ts';
@@ -245,7 +248,6 @@ export interface ExtractedLink {
   origin_slug?: string;
   origin_field?: string;
 }
-
 
 interface ExtractResult {
   links_created: number;
@@ -1377,7 +1379,7 @@ async function extractForSlugs(
     const snapshot = timelineBatch.slice();
     timelineBatch.length = 0;
     try {
-      timelineCreated += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_inc' });
+      timelineCreated += await addProjectedTimelineBatch(engine, snapshot, { auditSite: 'extract.timeline_inc' });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
@@ -1583,7 +1585,7 @@ async function extractTimelineFromDir(
     const snapshot = batch.slice();
     batch.length = 0;
     try {
-      created += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_fs' });
+      created += await addProjectedTimelineBatch(engine, snapshot, { auditSite: 'extract.timeline_fs' });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
@@ -1763,7 +1765,7 @@ export async function extractTimelineForSlugs(
       await retractRemovedTimelineEntries(engine, slug, opts?.sourceId ?? 'default', content);
       processed.push(slug);
       for (const entry of entries) {
-        try { await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback for timeline entries
+        try { await addProjectedTimelineEntry(engine, entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ }
       }
     } catch (e) { errors.push({ slug, error: e instanceof Error ? e.message : String(e) }); }
   }
@@ -1891,8 +1893,32 @@ async function extractLinksFromDB(
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
 
-  for (const { slug, source_id } of walkRefs) {
-    const snapshot = await engine.readPageSnapshot(slug, { sourceId: source_id });
+  // Pages are read and their links published BATCH_SIZE at a time (one
+  // snapshot statement, one write transaction); a failed batch is replayed
+  // page by page, so each page's outcome is the unbatched one.
+  const pendingWrites: Array<{ slug: string; source_id: string; item: DerivedLinkBatchItem }> = [];
+  async function flushLinkWrites() {
+    const writes = pendingWrites.splice(0);
+    const results = await replaceDerivedLinksBatchOrReplay(engine, writes.map(write => write.item), item => {
+      if (jsonMode) process.stderr.write(JSON.stringify({ event: 'batch_error', size: item.links.length, code: 'graph_write_failed' }) + '\n');
+    });
+    writes.forEach(({ slug, source_id }, i) => {
+      const written = results[i];
+      if (written) { created += written.created; processed++; processedRefs.push({ slug, source_id }); } else skippedSettingsChanged++;
+      progress.tick(1);
+    });
+  }
+  let snapshotBatch = { start: 0, covered: 0, snapshots: new Map<string, PageSnapshot>() };
+  let wantedPages = false;
+
+  for (const [index, { slug, source_id }] of walkRefs.entries()) {
+    if (index >= snapshotBatch.start + snapshotBatch.covered) {
+      await flushLinkWrites();
+      snapshotBatch = { start: index, ...await readPageSnapshotsBatch(engine, walkRefs.slice(index, index + BATCH_SIZE)
+        .map(ref => ({ slug: ref.slug, sourceId: ref.source_id }))) };
+      wantedPages = !dryRun && await isWantedPagesEnabled(engine);
+    }
+    const snapshot = snapshotBatch.snapshots.get(pageSnapshotKey(source_id, slug)) ?? null;
     if (!snapshot || isQuarantined(snapshot.page.frontmatter)) continue;
     const page = snapshot.page;
     if (typeFilter && page.type !== typeFilter) continue;
@@ -1959,25 +1985,24 @@ async function extractLinksFromDB(
     }
     if (!dryRun) {
       try {
-        const wanted = await isWantedPagesEnabled(engine) ? collectWantedLinks({ candidates: extracted.candidates,
+        const wanted = wantedPages ? collectWantedLinks({ candidates: extracted.candidates,
           frontmatterUnresolved: includeFrontmatter ? extracted.unresolved : [], originSourceId: source_id,
           crossSourceAllowed: federatedSourceIds.has(source_id) || crossSource, resolve: c => resolveCandidateSources(c, slug, source_id,
             allSlugs, slugToSources, federatedSourceIds.has(source_id), { crossSource, defaultSourceId: linkDefaultSourceId }) }) : [];
-        const written = await replaceDerivedLinksUnlessSettingsChanged(engine, { slug, sourceId: source_id, expectedRevision: snapshot.revision,
-          sourceIncarnation: snapshot.sourceIncarnation }, batch, { includeFrontmatter, lineGrammar: grammar,
+        pendingWrites.push({ slug, source_id, item: { origin: { slug, sourceId: source_id, expectedRevision: snapshot.revision,
+          sourceIncarnation: snapshot.sourceIncarnation }, links: batch, opts: { includeFrontmatter, lineGrammar: grammar,
           wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] : ['body'], rows: wanted },
-          expectedEndpoints: capturedLinkEndpoints(batch, targetMetadata) });
-        if (!written) { skippedSettingsChanged++; progress.tick(1); continue; }
-        created += written.created;
+          expectedEndpoints: capturedLinkEndpoints(batch, targetMetadata) } } });
       } catch (error) {
         if (jsonMode) process.stderr.write(JSON.stringify({ event: 'batch_error', size: batch.length, code: 'graph_write_failed' }) + '\n');
         throw error;
       }
+      continue;
     }
     processed++;
-    if (!dryRun) processedRefs.push({ slug, source_id });
     progress.tick(1);
   }
+  await flushLinkWrites();
   // v0.42.7 (#1696): stamp the extraction watermark for every page we
   // processed (incl. zero-link pages — they WERE extracted). Chunked so the
   // unnest UPDATE stays bounded on big brains. Best-effort (stampExtracted
@@ -2162,7 +2187,7 @@ export async function extractStaleFromDB(
     const attendanceBlocked: Array<{ slug: string; source_id: string; revision: string }> = [];
     const flushBatch = async () => {
       for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
-        timelineCreated += await engine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
+        timelineCreated += await addProjectedTimelineBatch(engine, timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
       }
       // Stamp LAST, directly (not the swallowing stampExtracted) so a stamp
       // failure surfaces instead of looping forever.

@@ -21,7 +21,7 @@ import type { PageKey, PageSnapshot, PageSnapshotOptions } from '../page-state/t
 import { assertPageRevision } from '../page-state/types.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { Chunk, ChunkInput, ChunklessPageRow, ResolvedColumn, StaleChunkRow } from '../types.ts';
-import { rowToChunk, tryParseEmbedding, validateSlug } from '../utils.ts';
+import { rowToChunk, validateSlug } from '../utils.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import {
   normalizeEngineColumn,
@@ -665,26 +665,21 @@ export async function deleteChunks(exec: SqlExecutor, slug: string, opts?: { sou
   }
 
 /**
- * `tryParseEmbedding`'s result for every input, with a native fast path for
- * well-formed pgvector text. Both drivers return the vector as its text
- * literal; PGLite master decoded it with `JSON.parse`, Postgres master with
- * `tryParseEmbedding` (split + `Number`, about twice as slow per 1024-d row on
- * the hybrid rescoring path). JSON's number grammar is a subset of
- * `Number()`'s with the same values, so an all-finite numeric array decodes
- * identically; anything else (malformed, non-finite, not an array) takes
- * `tryParseEmbedding` and keeps its skip-and-warn contract.
- * `test/engine-sql-chunks.test.ts` pins the equivalence.
+ * Decodes pgvector's binary send format (`vector_send`): int16 dimensions,
+ * int16 unused, then big-endian float4 values. Both drivers return the bytea
+ * as a Uint8Array (postgres.js a Buffer). The float4 values are the stored
+ * ones, bit for bit the Float32Array the text literal parses to
+ * (`test/engine-sql-chunks.test.ts` pins it on a real engine); a malformed
+ * value decodes to null and the row is skipped.
  */
-export function decodeEmbedding(value: unknown): Float32Array | null {
-  if (typeof value === 'string') {
-    try {
-      const parsed: unknown = JSON.parse(value);
-      if (Array.isArray(parsed) && parsed.every((n) => typeof n === 'number' && Number.isFinite(n))) return Float32Array.from(parsed as number[]);
-    } catch {
-      // Not JSON: tryParseEmbedding decides (corrupt rows skip with one warning).
-    }
-  }
-  return tryParseEmbedding(value);
+export function decodeVectorSend(value: unknown): Float32Array | null {
+  if (!(value instanceof Uint8Array) || value.byteLength < 4) return null;
+  const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
+  const dimensions = view.getInt16(0);
+  if (value.byteLength !== 4 + 4 * dimensions) return null;
+  const embedding = new Float32Array(dimensions);
+  for (let i = 0; i < dimensions; i++) embedding[i] = view.getFloat32(4 + 4 * i);
+  return embedding;
 }
 
 export async function getEmbeddingsByChunkIds(exec: LegacyUnscopedRead, ids: number[], column: string): Promise<Map<number, Float32Array>> {
@@ -698,15 +693,18 @@ export async function getEmbeddingsByChunkIds(exec: LegacyUnscopedRead, ids: num
     if (!COLUMN_NAME_REGEX.test(column)) {
       throw new EmbeddingColumnNotRegisteredError(column, []);
     }
+    // Binary transfer (`vector_send`, halfvec cast exactly to vector): the
+    // text literal cost about 3x more in vector_out formatting, wire bytes and
+    // parsing than the TOAST read itself, for the same float4 values.
     const quotedCol = trustedSql(quoteIdentifier(column));
     const { text, params } = renderFragment(sqlFragment`
-      SELECT cc.id, cc.${quotedCol} AS embedding FROM content_chunks cc JOIN pages p ON p.id=cc.page_id
+      SELECT cc.id, vector_send(cc.${quotedCol}::vector) AS embedding FROM content_chunks cc JOIN pages p ON p.id=cc.page_id
       WHERE cc.id = ANY(${ids}::int[]) AND cc.${quotedCol} IS NOT NULL AND ${trustedSql(currentTextProjectionFilter('p'))}
     `);
     const { rows } = await exec.unsafe(text, params);
     const result = new Map<number, Float32Array>();
     for (const row of rows) {
-      const embedding = decodeEmbedding(row.embedding);
+      const embedding = decodeVectorSend(row.embedding);
       if (embedding) result.set(row.id as number, embedding);
     }
     return result;

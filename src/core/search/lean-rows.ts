@@ -14,8 +14,8 @@
  *   - safety and provenance markers whenever present: injection_suspected,
  *     injection_p, unverified, content_flag, status, superseded, superseded_by,
  *     message_id, thread_id, source_subject, matched_alias (the other name the
- *     alias fan-out searched); `provenance` only as `generated` (a
- *     machine-written page); modality when not text; stale
+ *     alias fan-out searched); trust_tier and origin (#5575); `provenance`
+ *     only as `generated` (a machine-written page); modality when not text; stale
  *     only when set (true, or the held-file object from #5988);
  *   - `delivered: { truncated: true }` whenever evidence delivery truncated;
  *   - `evidence_omitted` on a keyword-mode row whose text did not fit.
@@ -34,6 +34,8 @@ const KEPT_FIELDS: ReadonlySet<string> = new Set([
   'message_id', 'thread_id', 'source_subject', 'relational', 'matched_alias',
   // `match: "keyword"`: an enumerated page whose text did not fit the evidence budget.
   'evidence_omitted',
+  // #5575 A6: every row says how much it deserves influence.
+  'trust_tier', 'origin', 'unconfirmed',
   // Present only when the caller asked for `explain: true`.
   'score_details',
 ]);

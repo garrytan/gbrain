@@ -30,6 +30,7 @@ import type { BrainEngine } from '../engine.ts';
 import { stripGapsSection, type ThinkResult } from './index.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { resolveTakesRepoDir, addTakeToPage, TakesWriteError } from '../takes-write.ts';
+import { deriveTrust, derivedMaintenanceTransaction } from '../trust/taint.ts';
 
 /** Max claim length for a fence cell — one readable line, not an essay. */
 export const TAKE_CLAIM_MAX_CHARS = 300;
@@ -85,7 +86,7 @@ export function claimFromAnswer(answer: string): string | null {
  */
 export async function persistTakeFromSynthesis(
   engine: BrainEngine,
-  result: Pick<ThinkResult, 'answer' | 'synthesisOk'>,
+  result: Pick<ThinkResult, 'answer' | 'synthesisOk' | 'taint_refs'>,
   opts: { anchor: string; sourceId?: string; lockTimeoutMs?: number },
 ): Promise<PersistTakeResult> {
   const warnings: string[] = [];
@@ -115,6 +116,8 @@ export async function persistTakeFromSynthesis(
     configValue: await engine.getConfig('emotional_weight.user_holder'),
   });
 
+  // #5575 I2: the take restates the synthesis, so it carries the tier of everything in the synthesis prompt.
+  const derivation = await deriveTrust(engine, result.taint_refs ?? [], { channel: 'derive:think' });
   try {
     const { rowNum, mirror } = await addTakeToPage(
       {
@@ -122,12 +125,17 @@ export async function persistTakeFromSynthesis(
         slug: opts.anchor,
         brainDir,
         sourceId: opts.sourceId,
+        trust: derivation.trust,
         ...(opts.lockTimeoutMs !== undefined ? { lockTimeoutMs: opts.lockTimeoutMs } : {}),
       },
       { claim, kind: 'take', holder, source: 'think' },
     );
     if (mirror.mirror_warning) {
       warnings.push(`TAKE_DB_MIRROR_WARNING: ${mirror.mirror_warning}`);
+    } else {
+      await derivedMaintenanceTransaction(engine, derivation, async tx => ({ result: undefined, rows: (await tx.executeRaw<{ id: number }>(
+        'SELECT k.id FROM takes k JOIN pages p ON p.id=k.page_id WHERE p.source_id=$1 AND p.slug=$2 AND k.row_num=$3',
+        [opts.sourceId ?? 'default', opts.anchor, rowNum])).map(take => ({ table: 'takes' as const, id: Number(take.id), sourceId: opts.sourceId ?? 'default' })) }));
     }
     return { take_row: rowNum, path: mirror.path, warnings };
   } catch (e) {

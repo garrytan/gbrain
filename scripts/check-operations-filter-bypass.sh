@@ -48,7 +48,7 @@ ALLOWED=(
   "src/core/shared-skills/tool-access.ts"       # skill usability intersects locality, scopes, snapshots, source fences, surface and publication gates
   "src/mcp/skill-resources.ts"                  # resources map only catalog reads through equivalent scope/snapshot/surface/gate checks and shared dispatch
   "src/core/harness/capabilities.ts"            # introspection applies !op.localOnly plus effective surface, scope, fence, snapshot and publish-gate filters
-  "src/cli.ts"                                  # local CLI; user owns the machine, no trust boundary
+  "src/cli/main.ts"                             # local CLI dispatcher (loaded by src/cli.ts); user owns the machine, no trust boundary
   "src/mcp/dispatch.ts"                         # shared dispatch; sets ctx.remote from caller, handlers self-gate
   "src/mcp/server.ts"                           # stdio MCP; local-trusted (binary on user's box)
   "src/mcp/http-transport.ts"                   # superseded by serve-http.ts; kept for back-compat tests
@@ -56,6 +56,8 @@ ALLOWED=(
   "src/core/minions/tools/brain-allowlist.ts"   # subagent registry; has its own opt-in allowlist (separate from localOnly)
   "src/commands/capture.ts"                     # local CLI tool; not network-exposed
   "src/commands/recall.ts"                      # local CLI delegates forget through the frozen operation before acquiring an engine
+  "src/commands/forget-purge.ts"                # local CLI runs the cliOnly purge_fact op as the trusted owner (remote: false) or over the 0600 owner socket
+  "src/commands/pages-purges.ts"                # local CLI runs the cliOnly list_page_purges / unpurge_page ops as the trusted owner (remote: false)
   "src/commands/takes-mutation.ts"              # local CLI adapter; trusted execution or authenticated persistence IPC only
   "src/core/persistence/administration.ts"      # trusted-admin grant diagnostics; does not expose an operation transport
   "src/core/persistence/provider.ts"            # authenticated local registrations; shared dispatch enforces localOnly and the immutable trust lane

@@ -1008,8 +1008,8 @@ describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
   beforeEach(async () => {
     const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
       await import('../src/core/git-head.ts');
-    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
-    currentChunkerVersion = String(CHUNKER_VERSION);
+    const { chunkerStamp } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = chunkerStamp();
     _setGitHeadProbeForTests(null);
     _setGitCleanProbeForTests(null);
   });
@@ -1260,8 +1260,8 @@ describe('v0.41.32.0 — commit-relative staleness', () => {
   beforeEach(async () => {
     const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
       await import('../src/core/git-head.ts');
-    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
-    currentChunkerVersion = String(CHUNKER_VERSION);
+    const { chunkerStamp } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = chunkerStamp();
     _setGitHeadProbeForTests(null);
     _setGitCleanProbeForTests(null);
   });
@@ -1931,8 +1931,8 @@ describe('sync_freshness — clone-unavailable content-lag fallback', () => {
   beforeEach(async () => {
     const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
       await import('../src/core/git-head.ts');
-    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
-    currentChunkerVersion = String(CHUNKER_VERSION);
+    const { chunkerStamp } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = chunkerStamp();
     _setGitHeadProbeForTests(null);
     _setGitCleanProbeForTests(null);
   });

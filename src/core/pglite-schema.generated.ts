@@ -133,8 +133,20 @@ CREATE INDEX IF NOT EXISTS idx_pages_slug_basename ON pages (source_id, (regexp_
 CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
   ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
-CREATE INDEX IF NOT EXISTS pages_last_retrieved_at_idx
-  ON pages (last_retrieved_at);
+CREATE TABLE IF NOT EXISTS page_retrievals (
+  page_id           INTEGER PRIMARY KEY,
+  last_retrieved_at TIMESTAMPTZ NOT NULL
+);
+CREATE OR REPLACE FUNCTION gbrain_forget_page_retrievals() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$\$
+BEGIN
+  DELETE FROM page_retrievals r USING gbrain_deleted_pages d WHERE r.page_id = d.id;
+  RETURN NULL;
+END \$\$;
+DROP TRIGGER IF EXISTS pages_forget_retrievals ON pages;
+CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON pages
+  REFERENCING OLD TABLE AS gbrain_deleted_pages
+  FOR EACH STATEMENT EXECUTE FUNCTION gbrain_forget_page_retrievals();
 CREATE INDEX IF NOT EXISTS pages_links_extracted_at_idx
   ON pages (source_id, links_extracted_at);
 CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
@@ -1307,8 +1319,10 @@ CREATE INDEX IF NOT EXISTS persistence_requests_sync_run_open
   ON persistence_requests(worktree_id,(intent->>'runId')) WHERE state<>'committed' AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete');
 CREATE INDEX IF NOT EXISTS persistence_requests_sync_run_committed
   ON persistence_requests(source_id,(intent->>'runId'),(intent->>'index')) WHERE state='committed' AND intent ? 'runId';
-CREATE INDEX IF NOT EXISTS persistence_requests_committed_watermark
-  ON persistence_requests(worktree_id,completed_at DESC) WHERE state='committed';
+CREATE INDEX IF NOT EXISTS persistence_requests_sync_watermark
+  ON persistence_requests(worktree_id,source_incarnation,completed_at DESC) WHERE state='committed' AND COALESCE(intent->>'kind','') LIKE 'managed_sync_%';
+CREATE INDEX IF NOT EXISTS persistence_requests_compactable
+  ON persistence_requests(completed_at) WHERE recovery IS NULL AND NOT compacted AND state IN ('committed','conflict','failed','cancelled');
 CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC);
 CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,
@@ -1351,7 +1365,9 @@ BEGIN
   IF TG_TABLE_NAME='pages' AND TG_OP='UPDATE' THEN
     IF (NEW.source_id,NEW.slug,NEW.type,NEW.page_kind,NEW.title,NEW.compiled_truth,NEW.timeline,NEW.frontmatter,NEW.deleted_at,NEW.knowledge_revision)
       IS NOT DISTINCT FROM
-       (OLD.source_id,OLD.slug,OLD.type,OLD.page_kind,OLD.title,OLD.compiled_truth,OLD.timeline,OLD.frontmatter,OLD.deleted_at,OLD.knowledge_revision) THEN RETURN NEW; END IF;
+       (OLD.source_id,OLD.slug,OLD.type,OLD.page_kind,OLD.title,OLD.compiled_truth,OLD.timeline,OLD.frontmatter,OLD.deleted_at,OLD.knowledge_revision)
+      -- The trust tier is guarded content (trust/schema.ts); read by key so brains before the column keep working.
+      AND row_data->'trust_tier' IS NOT DISTINCT FROM old_data->'trust_tier' THEN RETURN NEW; END IF;
   ELSIF TG_TABLE_NAME='sources' THEN
     IF TG_OP='UPDATE' AND (NEW.id,NEW.incarnation,NEW.local_path,NEW.archived)
       IS NOT DISTINCT FROM (OLD.id,OLD.incarnation,OLD.local_path,OLD.archived) THEN
@@ -1372,10 +1388,11 @@ BEGIN
     END IF;
     IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
   ELSIF TG_TABLE_NAME IN ('facts','takes') AND TG_OP='UPDATE' THEN
-    row_data := row_data - ARRAY['embedding_model','embedded_text_hash'] - ARRAY['write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id','last_written_at'];
-    old_data := old_data - ARRAY['embedding_model','embedded_text_hash'] - ARRAY['write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id','last_written_at'];
-    -- Embedding completion, retrieval telemetry and write attribution
-    -- (attribution-schema.ts; a journal backfill fills it) are physical projections.
+    row_data := row_data - ARRAY['embedding_model','embedded_text_hash','write_origin'] - ARRAY['write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id','last_written_at'];
+    old_data := old_data - ARRAY['embedding_model','embedded_text_hash','write_origin'] - ARRAY['write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id','last_written_at'];
+    -- Embedding completion, retrieval telemetry, write attribution
+    -- (attribution-schema.ts; a journal backfill fills it) and the write origin
+    -- record are physical projections. The trust tier is not: it stays guarded.
     IF (row_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at'])
       = (old_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at']) THEN RETURN NEW; END IF;
   END IF;
@@ -2070,6 +2087,128 @@ CREATE INDEX IF NOT EXISTS core_edit_notices_pending_idx ON core_edit_notices (s
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
     ALTER TABLE core_edit_notices ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
+-- The purge guards (facts, takes, pages triggers) are installed by the memory_purge migration.
+CREATE TABLE IF NOT EXISTS fact_purges (
+  source_id   TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  visibility  TEXT NOT NULL CHECK (visibility IN ('private','world')),
+  subject     TEXT NOT NULL DEFAULT '*',
+  fact_hash   TEXT NOT NULL,
+  request_id  UUID,
+  actor       TEXT,
+  reason      TEXT,
+  purged_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, visibility, subject, fact_hash)
+);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE fact_purges ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+CREATE TABLE IF NOT EXISTS take_purges (
+  source_id   TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  subject     TEXT NOT NULL DEFAULT '*',
+  claim_hash  TEXT NOT NULL,
+  request_id  UUID,
+  purged_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, subject, claim_hash)
+);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE take_purges ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+CREATE TABLE IF NOT EXISTS page_purges (
+  source_id    TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  content_hash TEXT NOT NULL,
+  slug         TEXT NOT NULL,
+  request_id   UUID,
+  purged_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, content_hash)
+);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE page_purges ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+CREATE TABLE IF NOT EXISTS derivation_inputs (
+  derived_table TEXT NOT NULL,
+  derived_id    TEXT NOT NULL,
+  input_table   TEXT NOT NULL,
+  input_id      TEXT NOT NULL,
+  source_id     TEXT REFERENCES sources(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (derived_table, derived_id, input_table, input_id)
+);
+CREATE INDEX IF NOT EXISTS idx_derivation_inputs_input ON derivation_inputs (input_table, input_id);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE derivation_inputs ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+CREATE TABLE IF NOT EXISTS needs_rederive (
+  derived_table TEXT NOT NULL,
+  derived_id    TEXT NOT NULL,
+  source_id     TEXT REFERENCES sources(id) ON DELETE CASCADE,
+  request_id    UUID,
+  reason        TEXT NOT NULL,
+  marked_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (derived_table, derived_id)
+);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE needs_rederive ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
+-- #5575 blocking write gate: verdict receipts and held facts/takes.
+CREATE TABLE IF NOT EXISTS write_gate_receipts (
+  id               BIGSERIAL PRIMARY KEY,
+  target_table     TEXT NOT NULL CHECK (target_table IN ('pages','facts','takes','timeline_entries','write_gate_holds')),
+  target_id        TEXT NOT NULL,
+  source_id        TEXT,
+  content_hash     TEXT NOT NULL,
+  tier             TEXT NOT NULL,
+  detector_version INTEGER NOT NULL,
+  verdict          TEXT NOT NULL CHECK (verdict IN ('flag','quarantine')),
+  reason_families  TEXT[] NOT NULL DEFAULT '{}',
+  reasons          TEXT[] NOT NULL DEFAULT '{}',
+  detector_error   BOOLEAN NOT NULL DEFAULT false,
+  request_id       TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_receipts_target_idx ON write_gate_receipts (target_table, target_id, content_hash, detector_version);
+CREATE INDEX IF NOT EXISTS write_gate_receipts_seen_idx ON write_gate_receipts (last_seen_at);
+CREATE TABLE IF NOT EXISTS write_gate_holds (
+  id               BIGSERIAL PRIMARY KEY,
+  kind             TEXT NOT NULL CHECK (kind IN ('fact','take')),
+  source_id        TEXT NOT NULL,
+  slug             TEXT NOT NULL DEFAULT '',
+  fingerprint      TEXT NOT NULL,
+  detector_version INTEGER NOT NULL,
+  tier             TEXT NOT NULL,
+  reason_families  TEXT[] NOT NULL DEFAULT '{}',
+  reasons          TEXT[] NOT NULL DEFAULT '{}',
+  detector_error   BOOLEAN NOT NULL DEFAULT false,
+  payload          JSONB NOT NULL,
+  write_origin     JSONB,
+  request_id       TEXT,
+  status           TEXT NOT NULL DEFAULT 'held' CHECK (status IN ('held','released','dropped')),
+  seen_count       INTEGER NOT NULL DEFAULT 1,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at       TIMESTAMPTZ,
+  decided_by       TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version);
+CREATE INDEX IF NOT EXISTS write_gate_holds_status_idx ON write_gate_holds (status, source_id, id);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE write_gate_receipts ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE write_gate_holds ENABLE ROW LEVEL SECURITY;
   END IF;
 END \$rls\$;
 

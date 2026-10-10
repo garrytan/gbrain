@@ -1,0 +1,101 @@
+{
+  "golden": {
+    "afterFirst": {
+      "extract_requests": {
+        "rows": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "facts": {
+        "rows": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "link_relationships": {
+        "rows": 136,
+        "sha256": "393f60423b8b08070af353b1009cf6f196549188e88d46b9da71bd9eb6ec38dc"
+      },
+      "link_transitions": {
+        "rows": 8,
+        "sha256": "feac8f234bd36003f0982af6fd41ada4b59f6eb8d0e4385289d4fa06ce899255"
+      },
+      "links": {
+        "rows": 613,
+        "sha256": "e5574e1644d5688ac084ff5a11511d4e3f9d0d4cd7790addfa408942fba118ca"
+      },
+      "pages": {
+        "rows": 225,
+        "sha256": "0da3bcbfe226af0c98403618f91cd341fc1e53de8001b2a3ce7d4a96751dc70c"
+      },
+      "tags": {
+        "rows": 1,
+        "sha256": "a434b780ac89394fc00ef3eda220e530225f65b3be98c0c8efcdf930c1be8fd5"
+      },
+      "timeline_entries": {
+        "rows": 198,
+        "sha256": "6ff1b450d65f319d5edb69764ea9e77a5a96e47d4dc85ab209dc035fa148844f"
+      },
+      "wanted_links": {
+        "rows": 24,
+        "sha256": "eb7a473a72827b9be947cfad0b4d028f695f08285a59f7628475e92b0d917f76"
+      }
+    },
+    "afterSecond": {
+      "extract_requests": {
+        "rows": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "facts": {
+        "rows": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "link_relationships": {
+        "rows": 136,
+        "sha256": "82323cef7c8325ca6a76906613163916a6b05475373b96e458a80e669e0bfc67"
+      },
+      "link_transitions": {
+        "rows": 8,
+        "sha256": "feac8f234bd36003f0982af6fd41ada4b59f6eb8d0e4385289d4fa06ce899255"
+      },
+      "links": {
+        "rows": 602,
+        "sha256": "c2da06a1ee2d0b634f4b2c67e5f3523828e8d33321f9ee769ca089aea6742aca"
+      },
+      "pages": {
+        "rows": 225,
+        "sha256": "2b40409816e9bce9fad4f9e4e9d034e28e391dba316e84054301eda547bf3023"
+      },
+      "tags": {
+        "rows": 1,
+        "sha256": "a434b780ac89394fc00ef3eda220e530225f65b3be98c0c8efcdf930c1be8fd5"
+      },
+      "timeline_entries": {
+        "rows": 217,
+        "sha256": "ed46d6ec785d238c785b9ccf0b17a1a5b5f3c3bc5ceddf025a85e497f35e3125"
+      },
+      "wanted_links": {
+        "rows": 24,
+        "sha256": "fc161886a205ab56e552784d27684f8963d0ab2f88fcd401d7d27f9f7a771e85"
+      }
+    },
+    "first": {
+      "exitCode": 0,
+      "result": {
+        "links_created": 612,
+        "pages_processed": 224,
+        "skipped_cross_source": 0,
+        "skipped_missing_target": 24,
+        "timeline_entries_created": 198
+      }
+    },
+    "second": {
+      "exitCode": 0,
+      "result": {
+        "links_created": 601,
+        "pages_processed": 224,
+        "skipped_cross_source": 0,
+        "skipped_missing_target": 24,
+        "timeline_entries_created": 19
+      }
+    }
+  },
+  "normalizer": "extract-db-batch-rows-v1"
+}

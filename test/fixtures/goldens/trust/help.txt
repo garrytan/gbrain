@@ -1,0 +1,49 @@
+Usage: gbrain trust <review|confirm|release|drop|revert|explain|allow|disable|backfill|scan> [options]
+  review [--from <source>] [--kind <kind>] [--since <7d|date>] [--json]
+      Everything waiting for you: trust proposals (tp<id>), pages an agent edit lowered, unconfirmed standing
+      preferences (f<id>), held writes (h<id>) and your allow rules (a<id>), grouped by day and page, each with
+      its exact commands.
+  review --accept-all (--from <source> | --kind <kind> | --since <when>)...
+      Accept every listed item matching the filters (at least one filter) after one typed confirmation.
+  confirm <f<id>|t<id>|p:<source>/<slug>|tp<id>|h<id>> [--source <id>]
+      Mark it "confirmed by you" (accepts a proposal; releases a held write). Asks you to type its token.
+  release <h<id>>          Release a held write into memory as "confirmed by you" (asks for its token).
+  drop <tp<id>|h<id>>      Dismiss a proposal, or drop a held write. Nothing gains trust.
+  revert <tp<id>|p:<source>/<slug>> [--version <id>] [--source <id>]
+      Restore the page version before an agent edit (or the version you name) with its own tier.
+  explain <ref|phrase> [--source <id>]
+      Tier, origin (including what a derived row came from), write-gate receipts, pending decisions and where
+      the row is used.
+  allow --source <id> [--uri-prefix <prefix>] [--reason-family <family>] [--reason <text>]
+  allow --remove <a<id>>
+      Stop holding instruction-like content from a source (matches the server-stamped source URI, never
+      frontmatter). Listed in review; adding one asks for its token.
+  disable --all [--undo]
+      Kill switch: write_gate.external_mode=off, write_gate.agent_mode=off, trust.agent_activation=allow.
+      --undo restores what disable replaced. Local only; asks for its token.
+  Refs: f<id> fact, t<id> take, h<id> held write, tp<id> trust proposal, a<id> allow rule, p:<source>/<slug> page
+  (a bare slug works when it lives in one source, or with --source). --yes never confirms; these commands need
+  you at a terminal on the brain host.
+
+Usage: gbrain trust backfill [--dry-run] [--resume] [--batch-size N] [--json]
+  Classifies rows written before trust tiers (facts, takes, timeline entries, pages) from deterministic signals:
+  connector sources, page source_kind, transcript/extraction/dream provenance, facts and takes source tags, and
+  the journaled request that wrote the row. Rows with no signal stay "unverified origin"; nothing becomes
+  "confirmed by you". --dry-run is read-only (no migrations, no writes) and works before the trust migration;
+  it reports the projected count per table and tier. --resume continues an interrupted run.
+
+Usage: gbrain trust scan [--batch-size N] [--json]
+  Runs the write gate's deterministic detector over agent-written and lower rows written before the gate,
+  recording a receipt for each instruction-like row, so it reads as flagged (and, under trust.agent_activation
+  suppress, stays out of proactive context) until you confirm it (gbrain trust review). Changes no row;
+  resumable (rerun to continue); a detector upgrade rescans.
+  Nothing runs it for you: an agent asks you first. Claim your own sources first (gbrain trust claim-sources)
+  so your older notes are not treated as unverified.
+
+Usage: gbrain trust claim-sources [--dry-run] [--source <id>]... [--resume] [--batch-size N] [--json]
+  Claim your own sources once, after upgrading: each source shows its local path or remote, page count and
+  the trust mix now and after claiming, and you type its id to claim it. A claimed source syncs as "your notes"
+  and its rows from before trust tiers move from "unverified origin" to "your notes", except rows that say
+  they were captured, clipped, imported, extracted or written by an agent (they keep their lower tier).
+  Nothing becomes "confirmed by you". Connector sources (Google, GitHub) cannot be claimed. --dry-run lists
+  without writing; --resume finishes an interrupted claim. Needs you at a terminal; --yes never claims.

@@ -92,7 +92,10 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   bounded loop (×4 per step, at most 3 escalations). SQL candidate limits and
   offsets are independent of `ef_search`; supported pgvector versions use
   `relaxed_order` iterative scans with bounded visits (`ef_search` is still
-  sized to the candidate pool). Relaxed order keeps a closer candidate the
+  sized to the candidate pool; each pooled attempt may visit 20,000 index
+  tuples, so a source or visibility filter covering a tenth of the brain fills
+  its candidate window instead of stopping at the first few hundred eligible
+  chunks). Relaxed order keeps a closer candidate the
   scan finds after farther ones, which strict order drops, so a selective
   source or visibility filter fills more of its true neighbours; output order
   never reaches callers because the inner `ORDER BY distance` and the pooled

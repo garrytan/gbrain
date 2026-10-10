@@ -277,13 +277,30 @@ CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 -- stays low. Don't add a regular `(deleted_at)` index without measuring.
 CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
   ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
--- v0.37.0: full B-tree index on last_retrieved_at supports LSD's stale-page
--- query `WHERE last_retrieved_at IS NULL OR last_retrieved_at < NOW() -
--- INTERVAL '90 days'`. Postgres handles NULL in B-tree indexes (sorted to
--- one end) so one index covers both branches. A partial WHERE NOT NULL
--- would miss the NULL branch that LSD prioritizes (codex round 2 #6).
-CREATE INDEX IF NOT EXISTS pages_last_retrieved_at_idx
-  ON pages (last_retrieved_at);
+-- Retrieval telemetry (src/core/last-retrieved.ts, migration v224): when a
+-- user-facing read last surfaced a page, written at most once per page per 5
+-- minutes. Kept off `pages` so the per-read upsert is a HOT update of a narrow
+-- row: an UPDATE of pages fires its triggers, rewrites a wide tuple with an
+-- entry in every pages index and advances page_generation_clock_seq, which
+-- expires the query-cache bookmark. Readers take GREATEST of this and the
+-- legacy pages.last_retrieved_at column (copied here by v224; v224 also drops
+-- its unused index). No foreign key: its KEY SHARE lock would dirty the pages
+-- row on every bump; the statement trigger below removes rows of hard-deleted
+-- pages instead.
+CREATE TABLE IF NOT EXISTS page_retrievals (
+  page_id           INTEGER PRIMARY KEY,
+  last_retrieved_at TIMESTAMPTZ NOT NULL
+);
+CREATE OR REPLACE FUNCTION gbrain_forget_page_retrievals() RETURNS trigger
+  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+BEGIN
+  DELETE FROM page_retrievals r USING gbrain_deleted_pages d WHERE r.page_id = d.id;
+  RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS pages_forget_retrievals ON pages;
+CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON pages
+  REFERENCING OLD TABLE AS gbrain_deleted_pages
+  FOR EACH STATEMENT EXECUTE FUNCTION gbrain_forget_page_retrievals();
 -- v0.42.7 (migration v112): composite B-tree backing `extract --stale` and the
 -- `links_extraction_lag` doctor check. source_id leads so source-scoped staleness
 -- scans (`extract --stale --source X`, `gbrain doctor --source X`) are indexed;
@@ -2071,7 +2088,9 @@ BEGIN
   IF TG_TABLE_NAME='pages' AND TG_OP='UPDATE' THEN
     IF (NEW.source_id,NEW.slug,NEW.type,NEW.page_kind,NEW.title,NEW.compiled_truth,NEW.timeline,NEW.frontmatter,NEW.deleted_at,NEW.knowledge_revision)
       IS NOT DISTINCT FROM
-       (OLD.source_id,OLD.slug,OLD.type,OLD.page_kind,OLD.title,OLD.compiled_truth,OLD.timeline,OLD.frontmatter,OLD.deleted_at,OLD.knowledge_revision) THEN RETURN NEW; END IF;
+       (OLD.source_id,OLD.slug,OLD.type,OLD.page_kind,OLD.title,OLD.compiled_truth,OLD.timeline,OLD.frontmatter,OLD.deleted_at,OLD.knowledge_revision)
+      -- The trust tier is guarded content (trust/schema.ts); read by key so brains before the column keep working.
+      AND row_data->'trust_tier' IS NOT DISTINCT FROM old_data->'trust_tier' THEN RETURN NEW; END IF;
   ELSIF TG_TABLE_NAME='sources' THEN
     IF TG_OP='UPDATE' AND (NEW.id,NEW.incarnation,NEW.local_path,NEW.archived)
       IS NOT DISTINCT FROM (OLD.id,OLD.incarnation,OLD.local_path,OLD.archived) THEN
@@ -2092,10 +2111,11 @@ BEGIN
     END IF;
     IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
   ELSIF TG_TABLE_NAME IN ('facts','takes') AND TG_OP='UPDATE' THEN
-    row_data := row_data - ARRAY['embedding_model','embedded_text_hash'] - ARRAY['write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id','last_written_at'];
-    old_data := old_data - ARRAY['embedding_model','embedded_text_hash'] - ARRAY['write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id','last_written_at'];
-    -- Embedding completion, retrieval telemetry and write attribution
-    -- (attribution-schema.ts; a journal backfill fills it) are physical projections.
+    row_data := row_data - ARRAY['embedding_model','embedded_text_hash','write_origin'] - ARRAY['write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id','last_written_at'];
+    old_data := old_data - ARRAY['embedding_model','embedded_text_hash','write_origin'] - ARRAY['write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id','last_written_at'];
+    -- Embedding completion, retrieval telemetry, write attribution
+    -- (attribution-schema.ts; a journal backfill fills it) and the write origin
+    -- record are physical projections. The trust tier is not: it stays guarded.
     IF (row_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at'])
       = (old_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at']) THEN RETURN NEW; END IF;
   END IF;
@@ -2811,6 +2831,132 @@ DO $rls$ BEGIN
   END IF;
 END $rls$;
 -- END GENERATED from src/core/core-memory-schema.ts (CORE_EDIT_NOTICES_SCHEMA_SQL)
+
+-- The purge guards (facts, takes, pages triggers) are installed by the memory_purge migration.
+-- BEGIN GENERATED from src/core/facts/purge-schema.ts (MEMORY_PURGE_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS fact_purges (
+  source_id   TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  visibility  TEXT NOT NULL CHECK (visibility IN ('private','world')),
+  subject     TEXT NOT NULL DEFAULT '*',
+  fact_hash   TEXT NOT NULL,
+  request_id  UUID,
+  actor       TEXT,
+  reason      TEXT,
+  purged_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, visibility, subject, fact_hash)
+);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE fact_purges ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+CREATE TABLE IF NOT EXISTS take_purges (
+  source_id   TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  subject     TEXT NOT NULL DEFAULT '*',
+  claim_hash  TEXT NOT NULL,
+  request_id  UUID,
+  purged_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, subject, claim_hash)
+);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE take_purges ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+CREATE TABLE IF NOT EXISTS page_purges (
+  source_id    TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  content_hash TEXT NOT NULL,
+  slug         TEXT NOT NULL,
+  request_id   UUID,
+  purged_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, content_hash)
+);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE page_purges ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+CREATE TABLE IF NOT EXISTS derivation_inputs (
+  derived_table TEXT NOT NULL,
+  derived_id    TEXT NOT NULL,
+  input_table   TEXT NOT NULL,
+  input_id      TEXT NOT NULL,
+  source_id     TEXT REFERENCES sources(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (derived_table, derived_id, input_table, input_id)
+);
+CREATE INDEX IF NOT EXISTS idx_derivation_inputs_input ON derivation_inputs (input_table, input_id);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE derivation_inputs ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+CREATE TABLE IF NOT EXISTS needs_rederive (
+  derived_table TEXT NOT NULL,
+  derived_id    TEXT NOT NULL,
+  source_id     TEXT REFERENCES sources(id) ON DELETE CASCADE,
+  request_id    UUID,
+  reason        TEXT NOT NULL,
+  marked_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (derived_table, derived_id)
+);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE needs_rederive ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+-- END GENERATED from src/core/facts/purge-schema.ts (MEMORY_PURGE_SCHEMA_SQL)
+
+-- #5575 blocking write gate: verdict receipts and held facts/takes.
+-- BEGIN GENERATED from src/core/write-gate-schema.ts (WRITE_GATE_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS write_gate_receipts (
+  id               BIGSERIAL PRIMARY KEY,
+  target_table     TEXT NOT NULL CHECK (target_table IN ('pages','facts','takes','timeline_entries','write_gate_holds')),
+  target_id        TEXT NOT NULL,
+  source_id        TEXT,
+  content_hash     TEXT NOT NULL,
+  tier             TEXT NOT NULL,
+  detector_version INTEGER NOT NULL,
+  verdict          TEXT NOT NULL CHECK (verdict IN ('flag','quarantine')),
+  reason_families  TEXT[] NOT NULL DEFAULT '{}',
+  reasons          TEXT[] NOT NULL DEFAULT '{}',
+  detector_error   BOOLEAN NOT NULL DEFAULT false,
+  request_id       TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_receipts_target_idx ON write_gate_receipts (target_table, target_id, content_hash, detector_version);
+CREATE INDEX IF NOT EXISTS write_gate_receipts_seen_idx ON write_gate_receipts (last_seen_at);
+CREATE TABLE IF NOT EXISTS write_gate_holds (
+  id               BIGSERIAL PRIMARY KEY,
+  kind             TEXT NOT NULL CHECK (kind IN ('fact','take')),
+  source_id        TEXT NOT NULL,
+  slug             TEXT NOT NULL DEFAULT '',
+  fingerprint      TEXT NOT NULL,
+  detector_version INTEGER NOT NULL,
+  tier             TEXT NOT NULL,
+  reason_families  TEXT[] NOT NULL DEFAULT '{}',
+  reasons          TEXT[] NOT NULL DEFAULT '{}',
+  detector_error   BOOLEAN NOT NULL DEFAULT false,
+  payload          JSONB NOT NULL,
+  write_origin     JSONB,
+  request_id       TEXT,
+  status           TEXT NOT NULL DEFAULT 'held' CHECK (status IN ('held','released','dropped')),
+  seen_count       INTEGER NOT NULL DEFAULT 1,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at       TIMESTAMPTZ,
+  decided_by       TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version);
+CREATE INDEX IF NOT EXISTS write_gate_holds_status_idx ON write_gate_holds (status, source_id, id);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE write_gate_receipts ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE write_gate_holds ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+-- END GENERATED from src/core/write-gate-schema.ts (WRITE_GATE_SCHEMA_SQL)
 
 -- #5255/#5176 (O-DX-8): last upstream observation per source, recorded by sync
 -- from the checkout's Git state (upstream ref, its last fetch/push time, commits

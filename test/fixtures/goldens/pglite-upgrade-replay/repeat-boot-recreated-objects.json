@@ -6,6 +6,7 @@
     "trg:pages.bump_page_generation_clock_trg",
     "trg:pages.bump_page_generation_trg",
     "trg:pages.managed_writer_guard",
+    "trg:pages.pages_forget_retrievals",
     "trg:pages.pages_knowledge_revision",
     "trg:pages.pages_projection_queue",
     "trg:pages.trg_pages_search_vector",

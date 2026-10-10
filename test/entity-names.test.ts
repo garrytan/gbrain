@@ -73,6 +73,14 @@ describe('entity names[]', () => {
     expect((await call({ names: ['Secret Co'] }, false)).body.results[0]).toMatchObject({ found: true, slug: 'crm/secret-co' });
   });
 
+  test('a quarantined page is a miss for a remote caller and found locally, like the single-name card (#5575)', async () => {
+    await accounts();
+    await engine.executeRaw(`UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"quarantine":{"reason":"junk_pattern","detail":"test","assessed_at":"2026-10-07T00:00:00Z"}}'::jsonb WHERE slug = 'crm/kite-co'`);
+    expect((await call({ names: ['KTCO', 'WGCO'] })).body.results.map((r: { found: boolean }) => r.found)).toEqual([false, true]);
+    expect((await call({ name: 'Kite Co' })).body.found).toBe(false);
+    expect((await call({ names: ['Kite Co'] }, false)).body.results[0]).toMatchObject({ found: true, slug: 'crm/kite-co' });
+  });
+
   test('the lead drops headings and private fences, redacts secrets and is bounded', () => {
     const body = '# Heading\n\nFirst line.\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | Private note | fact | 1.0 | private | medium | 2026-01-01 |  | test |  |\n<!--- gbrain:facts:end -->\n\nSecond line. ' + 'x'.repeat(400);
     const lead = pageLead(body);

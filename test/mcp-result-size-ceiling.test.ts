@@ -31,8 +31,11 @@ import { withEnv } from './helpers/with-env.ts';
  * search 2754 -> 3129 (2980) and query 2540 -> 2916 (2777): Cat 40 Hard F4,
  * lean rows keep effective_date_source and a line labels each row's date by
  * its source (document, event or fallback date, never contractual validity).
+ * Master merge (#5575 trust labels on every row, which raised master's own
+ * ceilings 2540 -> 2756): search 3129 -> 3408 (3245 measured), query
+ * 2916 -> 3195 (3042).
  */
-const CEILINGS = { search: 3129, query: 2916 };
+const CEILINGS = { search: 3408, query: 3195 };
 /**
  * The keyless fixture also gets the operator contract's degraded_recall
  * notice (F3) on every HTTP call. It is bounded on its own so the ceilings

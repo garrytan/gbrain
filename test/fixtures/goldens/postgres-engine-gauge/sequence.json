@@ -128,9 +128,9 @@
         "prepare": null,
         "tracked": {
           "direct": 1,
-          "raw": 3,
+          "raw": 2,
           "reserved": 1,
-          "tx": 1
+          "tx": 2
         }
       },
       "step": "+ getBacklinkCounts in flight (executeRaw-backed, counted raw)"

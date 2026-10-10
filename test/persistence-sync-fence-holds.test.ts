@@ -118,7 +118,7 @@ test('a malformed fence among clean files: the sync finishes, holds that file wi
   expect(result.held![0]!.fix.argv).toEqual(preview);
   expect(result.held![0]!.fix.then?.argv).toEqual([...preview, '--apply']);
   expect(result.held![0]).toMatchObject({ line: 9, fence: { tier: 'resolver', auto_retry: false, next_attempt_after: null, classes: ['holder_unresolved'] } });
-  expect(result.holds_fix!.argv).toEqual(['gbrain', 'repair', 'fences', '--source', s.id]);
+  expect(result.holds_fix!.argv).toEqual(['gbrain', 'repair', 'content', '--source', s.id]); // #6377: the source-level step is the content lane
   for (const text of [JSON.stringify(result.held), result.holds_fix!.why]) expect(text).not.toContain('repair frontmatter');
   const text = printed(result);
   expect(text).toContain('Held people/malformed.md: invalid_fence (holder_unresolved) in the takes fence (body), row 1, column who, at line 9');
@@ -130,14 +130,14 @@ test('a malformed fence among clean files: the sync finishes, holds that file wi
   const rows = await engine.executeRaw<{ completed_keys: unknown }>("SELECT completed_keys FROM op_checkpoints WHERE op LIKE 'sync-hold%' AND fingerprint LIKE $1", [`${s.id}:%`]);
   for (const blob of [JSON.stringify(rows), JSON.stringify(result), text, lines, JSON.stringify(status)]) expectNoSecrets(blob);
   expect(lines).toContain(`gbrain repair fences --source ${s.id} --only people/malformed.md`);
-  // Doctor routes a fence-only source to the fence repair preview, never to frontmatter repair.
+  // Doctor routes a fence-only source to the content lane's preview (#6377), never to frontmatter repair.
   const doctor = await gitHeldFilesCheck(engine, [s.id]);
-  expect(doctor).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'repair', 'fences', '--source', s.id] }, details: { fences: 1, auto_repair: { active: false } } });
-  expect(doctor.message).toContain(`gbrain repair fences --source ${s.id}`);
+  expect(doctor).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'repair', 'content', '--source', s.id] }, details: { fences: 1, auto_repair: { active: false } } });
+  expect(doctor.message).toContain(`gbrain repair content --source ${s.id}`);
   expect(doctor.message).not.toContain('repair frontmatter');
-  // retry-held names the fence repair preview for what still refuses.
+  // retry-held names the content lane's preview for what still refuses.
   const retry = (await retryHeld(engine, s.id, { dryRun: false })).next_action;
-  expect(retry).toContain(`gbrain repair fences --source ${s.id}`);
+  expect(retry).toContain(`gbrain repair content --source ${s.id}`);
   expect(retry).not.toContain('repair frontmatter');
 
   s.write('people/malformed.md', takesPage('Malformed', take(1, 'Synthetic take', 'world'))); commit(s.root, 'fix the holder');
