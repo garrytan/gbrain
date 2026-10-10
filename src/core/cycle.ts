@@ -58,7 +58,6 @@ import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/p
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
 import { anyAbortSignal } from './abort-signals.ts';
-import { skipNoBrainDir } from './cycle/phase-skips.ts';
 import { maybeRefreshPlannerStats } from './planner-stats.ts';
 
 export { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
@@ -1873,6 +1872,12 @@ const REPAIR_LANE_PHASES = ['fence_repair', 'content_repair'] as const;
 async function runRepairLanePhase(phase: typeof REPAIR_LANE_PHASES[number], engine: BrainEngine | null,
   opts: { dryRun: boolean; signal?: AbortSignal; deadlineAtMs: number | null }): Promise<PhaseResult> {
   return phase === 'fence_repair' ? (await import('./cycle/fence-repair.ts')).runFenceRepairPhase(engine, opts) : (await import('./cycle/content-repair.ts')).runContentRepairPhase(engine, opts);
+}
+
+/** Skip result for a filesystem phase when the brain has no on-disk checkout. */
+function skipNoBrainDir(phase: CyclePhase): PhaseResult {
+  return { phase, status: 'skipped', duration_ms: 0, summary: 'requires a local brain directory; this brain has no on-disk checkout '
+    + '(postgres/remote engine); pass --dir <path> to run filesystem phases', details: { reason: 'no_brain_dir' } };
 }
 
 /**
