@@ -73,13 +73,7 @@ export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: Pa
 
 async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
   const params: unknown[] = [slug];
-  // Alias resolution is part of the statement text, not a parameter, so a
-  // cached plan for an exact-slug read keeps using the slug index.
-  const where = [opts?.resolveAlias === true ? `(p.slug=$1 OR (
-    ${opts?.preserveExactIdentity ? 'NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.source_id=p.source_id AND exact_page.slug=$1) AND' : ''}
-    EXISTS (SELECT 1 FROM slug_aliases a
-    WHERE a.alias_slug=$1 AND a.source_id=p.source_id AND a.canonical_slug=p.slug
-      AND EXISTS (SELECT 1 FROM sources alias_source WHERE alias_source.id=a.source_id ${opts?.includeDeleted ? '' : 'AND NOT alias_source.archived'}))))` : 'p.slug=$1'];
+  const where: string[] = [];
   if (opts?.sourceIds?.length) {
     params.push(opts.sourceIds);
     where.push(`p.source_id=ANY($${params.length}::text[])`);
@@ -90,9 +84,21 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
   if (!opts?.includeDeleted) where.push('p.deleted_at IS NULL');
   if (opts?.excludePrivate) where.push(privatePagesFilterFragment('p'));
   if (opts?.requireLiveSource) where.push('EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)');
+  const filter = where.length ? ` AND ${where.join(' AND ')}` : '';
+  // A slug OR correlated alias predicate scans every readable page. Separate
+  // indexable candidates while retaining one MVCC statement for the whole read.
+  // The branches are disjoint, so ambiguity counts pages, not matching paths.
+  const candidates = `SELECT p.* FROM pages p WHERE p.slug=$1${filter}${opts?.resolveAlias === true ? `
+    UNION ALL
+    SELECT p.* FROM slug_aliases a
+      JOIN pages p ON p.source_id=a.source_id AND p.slug=a.canonical_slug
+      JOIN sources alias_source ON alias_source.id=a.source_id
+    WHERE a.alias_slug=$1 AND p.slug<>$1${opts?.includeDeleted ? '' : ' AND NOT alias_source.archived'}
+      ${opts?.preserveExactIdentity ? 'AND NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.source_id=p.source_id AND exact_page.slug=$1)' : ''}${filter}` : ''}`;
+  const selection = opts?.resolveAlias === true ? `(${candidates}) p` : `pages p WHERE p.slug=$1${filter}`;
   params.push(opts?.sourceIds?.[0] ?? 'default');
   const rows = await query<Record<string, unknown>>(`WITH chosen AS (
-    SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM pages p WHERE ${where.join(' AND ')}
+    SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM ${selection}
     ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id ASC LIMIT 1
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
