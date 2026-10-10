@@ -364,7 +364,8 @@ export async function writeFactsToFence(
 
       // 1. Read existing body or stub-create.
       let body: string;
-      if (existsSync(filePath)) {
+      const fromFile = existsSync(filePath);
+      if (fromFile) {
         body = readFileSync(filePath, 'utf-8');
       } else {
         // Stub-creation guard, two arms:
@@ -417,6 +418,23 @@ export async function writeFactsToFence(
               ? `[facts] refusing to stub-create unprefixed entity page slug=${target.slug} — routing to legacy DB-only path. Provide a directory prefix (people/, companies/, etc.) to opt into fence writes.`
               : `[facts] refusing to stub-create entity page slug=${target.slug} from a fallback-resolved reference (no live page verified) — routing to legacy DB-only path.`,
           );
+          return { inserted: 0, ids: [], stubGuardBlocked: true, ...withdrawnSkipped };
+        }
+        // #6398: no file is not no page. A DB-only page (a row with no file, a
+        // row whose recorded source_path file vanished, or a tombstoned row)
+        // takes the DB-only route: a stub here would be mirrored over the DB
+        // body and timeline, or resurrect a deleted page. An unreadable row
+        // writes nothing.
+        let live: Awaited<ReturnType<BrainEngine['getPage']>>;
+        try {
+          live = await engine.getPage(target.slug, { sourceId: target.sourceId, includeDeleted: true });
+        } catch (err) {
+          console.warn(`[facts.fence] FACTS_PAGE_READ_FAILED: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; nothing written`);
+          return { inserted: 0, ids: [], fenceWriteFailed: true, ...withdrawnSkipped };
+        }
+        if (live) {
+          logStubGuardEvent({ slug: target.slug, source_id: target.sourceId, fact_count: facts.length, reason: 'db_only_page' });
+          console.warn(`[facts] page ${target.slug} (source ${target.sourceId}) has no file${live.deleted_at ? ' and is deleted' : ''} — routing facts to the legacy DB-only path instead of creating a stub that would overwrite it.`);
           return { inserted: 0, ids: [], stubGuardBlocked: true, ...withdrawnSkipped };
         }
         // Stub-create the parent directory if it doesn't exist.
@@ -527,10 +545,11 @@ export async function writeFactsToFence(
       // blind to the new row forever. Never persist an EMPTY hash: a row
       // that had none gets a row-shaped hash of its pre-mirror content,
       // which the rewritten file can't match. Best-effort: the file is
-      // already committed; a stub page with no DB row is created by sync.
+      // already committed; a stub page with no DB row is created by sync, and
+      // only a body read from a real file is mirrored (#6398).
       try {
         const reparsed = parseMarkdown(tmpBody, `${target.slug}.md`);
-        const existing = await engine.getPage(target.slug, { sourceId: target.sourceId });
+        const existing = fromFile ? await engine.getPage(target.slug, { sourceId: target.sourceId }) : null;
         if (existing) {
           // #5575 ENG-1: the appended rows carry their own tier; the page keeps its tier.
           await maintenanceTransaction(engine, tx => withPageTierKept(tx, target, () => tx.refreshPageBody(target.slug, target.sourceId,
