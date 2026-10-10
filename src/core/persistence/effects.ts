@@ -30,8 +30,9 @@ import { prepareFileTarget } from './page-prepare.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
 import { advanceEffectCursor, claimCoalescedGitEffects, claimPersistenceEffect, completeEffect, failEffect, parkEffect, renewPersistenceEffectClaim, requeueEffect, retryEffect, singleFileGitEffect } from './effect-journal.ts';
 import { guardEffectSource, recoverEffectPublication, reserveEffectRecovery } from './effect-recovery.ts';
-import { commitGitTargets, publishGitEffect, pushGitRoot } from './effect-git.ts';
+import { commitGitTargets, DURABILITY_NOT_ENABLED, publishGitEffect, pushGitRoot } from './effect-git.ts';
 import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
+import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
 import { dispatchFactsBackstopEffect } from './effect-facts.ts';
 import { runLinksEffect } from './effect-links.ts';
 import { PARK_AFTER_FAILURES, type EffectRecovery, type GitCommitNote, type PersistenceEffect, type SkippedTarget } from './effect-model.ts';
@@ -48,6 +49,9 @@ const embeddingsFix = (): Action => readFix('Reports whether this brain has a us
   { argv: ['gbrain', 'doctor', '--only', 'embeddings', '--json'] });
 const writerBusy = (effect: Pick<PersistenceEffect, 'source_id'>) => opError('writer_busy', 'The canonical worktree is busy.',
   `Another write holds source ${effect.source_id}'s canonical worktree. The committed write is unaffected and the effect worker tries this effect again shortly; nothing needs resubmitting.`,
+  { fix: effectStatusFix(effect) });
+const ownerUnavailable = (effect: PersistenceEffect) => opError('owner_unavailable', 'The canonical effect owner is unavailable.',
+  `This host does not hold source ${effect.source_id}'s canonical worktree, so its ${effect.kind} effect waits for the owner. Check which host owns the source; the effect runs there.`,
   { fix: effectStatusFix(effect) });
 const recoveryFirst = (effect: Pick<PersistenceEffect, 'source_id'>) => opError('recovery_required', 'Canonical publication recovery must finish first.',
   `An earlier publication in source ${effect.source_id}'s worktree is still being recovered, so this effect waits; the worker resumes it once recovery completes. Inspect the owner rather than resubmitting writes.`,
@@ -210,8 +214,8 @@ async function singleFileGitTarget(engine: BrainEngine, effect: PersistenceEffec
 
 /** The commit metadata a single-file Git effect's preparer recorded, if any. */
 function gitCommitNote(effect: PersistenceEffect): GitCommitNote | undefined {
-  const { commit_subject: subject, commit_line: line } = effect.data;
-  return typeof subject === 'string' && typeof line === 'string' ? { subject, line } : undefined;
+  const { commit_subject: subject, commit_line: line, commit_trailer: trailer } = effect.data;
+  return typeof subject === 'string' && typeof line === 'string' ? { subject, line, ...(typeof trailer === 'string' ? { trailer } : {}) } : undefined;
 }
 
 async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: WorktreeBinding | null, opts: EffectWorkerOptions,
@@ -254,7 +258,7 @@ async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: 
     await finishPage(engine, effect, snapshot, { git: 'skipped', reason: 'db_only' });
     return;
   }
-  const result = await publishGitEffect(root, relative(root, path).split(sep).join('/'), opts.signal, hardened);
+  const result = await publishGitEffect(root, relative(root, path).split(sep).join('/'), opts.signal, hardened, gitCommitNote(effect));
   if (result.reason === 'durability_not_enabled') await completeEffect(engine, effect, result);
   else await finishPage(engine, effect, snapshot, result);
 }
@@ -506,9 +510,7 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
     const recordOnly = effect.kind === 'git' && hardened === false && !targetedWithdrawalEffect(effect) && !effect.data.source_scan;
     try {
       if (effect.worktree_id && !['embedding', 'facts-backstop', 'links'].includes(effect.kind)) {
-        if (!binding) throw opError('owner_unavailable', 'The canonical effect owner is unavailable.',
-          `This host does not hold source ${effect.source_id}'s canonical worktree, so its ${effect.kind} effect waits for the owner. Check which host owns the source; the effect runs there.`,
-          { fix: effectStatusFix(effect) });
+        if (!binding) throw ownerUnavailable(effect);
         lock = await acquireWorktree(binding, 0, undefined, engine);
         if (!lock) throw writerBusy(effect);
         if (recordOnly) { await lock.release(); lock = null; }
@@ -549,14 +551,20 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
   const deferred: { effects: PersistenceEffect[]; binding: WorktreeBinding; hardened: Promise<DurabilityProbe> }[] = [];
   const unpushed = new Map<string, { binding: WorktreeBinding; items: { effect: PersistenceEffect; git: string; target?: string }[] }>();
   const commitGroup = async (effects: PersistenceEffect[], binding: WorktreeBinding & { local_path: string }) => {
-    // A short group yields to publications still queued for its worktree, so a
-    // serial producer (the grandfather step) publishes ahead and its Git work
-    // arrives as one group. Each yield is a claim, so attempts bound the delay.
-    if (effects.length < GIT_GROUP_SIZE && effects.every(effect => effect.attempts <= GIT_YIELD_ATTEMPTS)) {
+    // A group yields to publications still queued for its worktree: a serial
+    // producer (the grandfather step) publishes ahead and its Git work arrives
+    // as one group, and a write admitted behind a backlog of full groups takes
+    // the worktree lock between groups instead of after the whole backlog.
+    // Each yield is a claim, so attempts bound the delay under a steady stream of writes.
+    if (effects.every(effect => effect.attempts <= GIT_YIELD_ATTEMPTS)) {
       const [pending] = await engine.executeRaw<{ pending: boolean }>(`SELECT EXISTS(SELECT 1 FROM persistence_requests
         WHERE worktree_id=$1::uuid AND state IN ('queued','running')) AS pending`, [effects[0]!.worktree_id]);
       if (pending?.pending) {
-        for (const effect of effects) await retryEffect(engine, effect, 'publication_pending', GIT_YIELD_MS);
+        await engine.executeRaw(`UPDATE persistence_effects e SET state='queued',execution_token=NULL,claim_expires_at=NULL,error_code='publication_pending',
+          next_attempt_at=now()+($2::double precision*interval '1 millisecond'),updated_at=now()
+          FROM jsonb_to_recordset($1::text::jsonb) AS t(id bigint,token uuid)
+          WHERE e.id=t.id AND e.execution_token=t.token AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
+        [JSON.stringify(effects.map(effect => ({ id: String(effect.id), token: effect.execution_token }))), GIT_YIELD_MS]);
         return;
       }
     }
@@ -601,6 +609,57 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
       for (const { effect, attempt } of targets) await recordFailure(engine, effect, error, opts.signal, attempt.target);
     } finally { await lock.release(); }
   };
+  // A group of single-file Git effects in a root without the durability hook
+  // runs no git command: each effect only records its outcome. The group takes
+  // each root's lock once, guards each source incarnation once, validates every
+  // path as before and records the plain outcomes in one statement, instead of
+  // a lock, a guard transaction and an update per effect.
+  const recordGroup = async (effects: PersistenceEffect[], first: WorktreeBinding) => {
+    const bindings = new Map<string, WorktreeBinding | null>([[effects[0]!.source_id, first]]);
+    const roots = new Map<string, unknown>();
+    const guards = new Map<string, unknown>();
+    const mirrors = new Map<string, boolean>();
+    const recorded: PersistenceEffect[] = [];
+    for (const effect of effects) {
+      const attempt: EffectAttempt = {};
+      try {
+        let binding = bindings.get(effect.source_id);
+        if (binding === undefined) bindings.set(effect.source_id, binding = await getWorktreeBinding(engine, effect.source_id, opts.hostId));
+        if (!binding) throw ownerUnavailable(effect);
+        const root = binding.local_path ?? '';
+        if (!roots.has(root)) {
+          const lock = await acquireWorktree(binding, 0, undefined, engine).catch(error => ({ error }));
+          if (lock && 'release' in lock) await lock.release();
+          roots.set(root, lock ? 'error' in lock ? lock.error : null : writerBusy(effect));
+        }
+        if (roots.get(root)) throw roots.get(root);
+        const key = `${effect.source_id}\0${effect.source_incarnation}`;
+        if (!guards.has(key)) guards.set(key, await engine.transaction(async tx => {
+          await guardEffectSource(tx, effect, opts.hostId);
+          const blocked = await tx.executeRaw('SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [effect.worktree_id]);
+          if (blocked.length) throw recoveryFirst(effect);
+          return null;
+        }).catch(error => error ?? new Error('effect guard failed')));
+        if (guards.get(key)) throw guards.get(key);
+        if (!binding.local_path) { await completeEffect(engine, effect, { git: 'skipped', reason: 'no_repo_configured' }); continue; }
+        if (!mirrors.has(effect.source_id)) mirrors.set(effect.source_id, await sourceMirrorReadOnly(engine, effect.source_id));
+        if (mirrors.get(effect.source_id)) { await completeEffect(engine, effect, { git: 'skipped', reason: 'mirror_read_only' }); continue; }
+        if (await singleFileGitTarget(engine, effect, { ...binding, local_path: binding.local_path }, attempt) !== null) recorded.push(effect);
+      } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target); }
+    }
+    if (!recorded.length) return;
+    try {
+      for (const effect of recorded) await faultPoint(EFFECT_FAULT_POINTS.git, { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
+      await engine.executeRaw(`UPDATE persistence_effects e SET
+        state=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'failed' ELSE 'committed' END,
+        error_code=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'targets_parked' END,
+        data=e.data-'retry_slugs'-'target_failures'-'failing_target',execution_token=NULL,claim_expires_at=NULL,
+        outcome=$2::text::jsonb,updated_at=now()
+        FROM jsonb_to_recordset($1::text::jsonb) AS t(id bigint,token uuid)
+        WHERE e.id=t.id AND e.execution_token=t.token AND e.recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
+      [JSON.stringify(recorded.map(effect => ({ id: String(effect.id), token: effect.execution_token }))), JSON.stringify(DURABILITY_NOT_ENABLED)]);
+    } catch (error) { for (const effect of recorded) await recordFailure(engine, effect, error, opts.signal); }
+  };
   // A deferred effect that requeues itself (a page walk advancing its cursor,
   // or work unblocked by an earlier effect) is claimable again after the flush.
   for (;;) {
@@ -629,6 +688,7 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
       }
       const durable = probe.durable;
       if (durable && singleFileGitEffect(effects[0]!)) await commitGroup(effects, { ...binding, local_path: binding.local_path! });
+      else if (singleFileGitEffect(effects[0]!) && effects[0]!.worktree_id) await recordGroup(effects, binding);
       // Coalesced siblings run with their own source's binding (sources can share a worktree).
       else for (const effect of effects) {
         let own: WorktreeBinding | null;

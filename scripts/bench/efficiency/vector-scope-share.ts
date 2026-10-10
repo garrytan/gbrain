@@ -3,7 +3,7 @@
  * Vector search latency and recall per source scope, against an existing
  * brain. Opt-in, never run in CI, not shipped in the CLI; reads only.
  *
- *   bun scripts/bench/vector-scope-share.ts <postgres-url | pglite-dir> <scope>... \
+ *   bun scripts/bench/efficiency/vector-scope-share.ts <postgres-url | pglite-dir> <scope>... \
  *     [--queries 25] [--limit 20] [--remote] [--window] [--json]
  *
  * A scope is a source id, several joined with `+`, or `all` (unscoped). Query
@@ -16,10 +16,10 @@
  * candidate), the share of pages the scope holds per planner statistics, and
  * underfilled exits. `--remote` adds the private-page rule (`excludePrivate`).
  */
-import { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, sourceScope, type PageSourceStats } from '../../src/core/search/vector-statement.ts';
-import type { SearchOpts } from '../../src/core/types.ts';
+import { PostgresEngine } from '../../../src/core/postgres-engine.ts';
+import { PGLiteEngine } from '../../../src/core/pglite-engine.ts';
+import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, sourceScope, type PageSourceStats } from '../../../src/core/search/vector-statement.ts';
+import type { SearchOpts } from '../../../src/core/types.ts';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(`--${name}`);
@@ -30,7 +30,7 @@ const option = (name: string, fallback: number) => {
 const positional = args.filter((arg, i) => !arg.startsWith('--') && !['--queries', '--limit'].includes(args[i - 1] ?? ''));
 const [target, ...scopes] = positional;
 if (!target || scopes.length === 0) {
-  console.error('usage: bun scripts/bench/vector-scope-share.ts <postgres-url | pglite-dir> <scope>... [--queries N] [--limit N] [--remote] [--window] [--json]');
+  console.error('usage: bun scripts/bench/efficiency/vector-scope-share.ts <postgres-url | pglite-dir> <scope>... [--queries N] [--limit N] [--remote] [--window] [--json]');
   process.exit(2);
 }
 const queries = option('queries', 25);
@@ -73,8 +73,9 @@ for (const scope of scopes) {
     total += truth.size;
     hit += results[k]!.filter(id => truth.has(id)).length;
   }
+  const routed = await (engine as unknown as { vectorScope: (o: SearchOpts) => Promise<{ chunks?: number } | undefined> }).vectorScope(opts);
   rows.push({
-    scope, share: scope === 'all' ? 1 : +(sourceScope(stats, opts)?.share ?? NaN).toFixed(4), n: ms.length,
+    scope, share: scope === 'all' ? 1 : +(sourceScope(stats, opts)?.share ?? NaN).toFixed(4), chunks: routed?.chunks === undefined ? null : Math.round(routed.chunks), n: ms.length,
     p50_ms: percentile(ms, 0.5), p95_ms: percentile(ms, 0.95),
     results: +(results.reduce((sum, r) => sum + r.length, 0) / results.length).toFixed(1),
     recall: +(hit / Math.max(1, total)).toFixed(3), underfilled,

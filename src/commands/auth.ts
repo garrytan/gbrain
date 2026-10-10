@@ -24,6 +24,8 @@ import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { assertAllowedScopes } from '../core/scope.ts';
+import { isTrustTier, TRUST_TIERS, type TrustTier } from '../core/trust/tier.ts';
+import { setMinTrust, setTokenMinTrust } from '../core/trust/min-trust.ts';
 import { generateToken, isUndefinedColumnError, isUndefinedTableError } from '../core/utils.ts';
 import { TOKEN_ID_RE, insertUnifiedToken } from '../core/token-mint.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
@@ -71,8 +73,8 @@ async function withConfiguredSql<T>(
   }
 }
 
-async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[] } = {}) {
-  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write]'); process.exit(1); }
+async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier } = {}) {
+  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--min-trust <tier>]'); process.exit(1); }
   // #4043 least-privilege: validate scopes at mint time — the verify path
   // treats a filtered-empty scopes array as DENY, so a typo must fail loudly
   // here, never silently brick (or widen) the token.
@@ -99,14 +101,16 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       // permissions JSONB mirror older binaries read). Scopes land in the
       // original-schema scopes TEXT[] column; omitted → NULL → the historical
       // grandfathered full-access grant.
-      await insertUnifiedToken(engine, {
+      const [row] = await insertUnifiedToken(engine, {
         name, tokenHash: hash, ...(opts.scopes !== undefined ? { scopes: opts.scopes } : {}),
         grant: { sources: { kind: 'default' }, takesHolders, allowedOperations: null },
       });
+      // #5575 (CEO-18): the read floor; the CLI is the only writer of it.
+      if (opts.minTrust) await setTokenMinTrust(engine, row!.id, opts.minTrust);
       const scopeLine = opts.scopes !== undefined
         ? `scopes=${JSON.stringify(opts.scopes)}`
         : 'scopes=full access (grandfathered — pass --scopes read,write to narrow)';
-      console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}):\n`);
+      console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}${opts.minTrust ? `, min_trust=${opts.minTrust}` : ''}):\n`);
       console.log(`  ${token}\n`);
       console.log('Save this token — it will not be shown again.');
       console.log(`Revoke with: gbrain auth revoke "${name}" (or gbrain auth revoke --id <id> from auth list)`);
@@ -118,6 +122,26 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
     } else {
       console.error('Error:', e.message);
     }
+    process.exit(1);
+  }
+}
+
+/** `auth set-min-trust <client|token> <tier|none>` (#5575, CEO-18): local-only, the one way to change a read floor. */
+async function setMinTrustCmd(rest: string[]) {
+  const [target, value] = rest.filter(a => !a.startsWith('--'));
+  if (!target || !value || (value !== 'none' && !isTrustTier(value))) {
+    console.error(`Usage: auth set-min-trust <client_id|token id|token name> <${TRUST_TIERS.join('|')}|none>`);
+    process.exit(1);
+  }
+  try {
+    await withConfiguredSql(async (_sql, engine) => {
+      const change = await setMinTrust(engine, target, value === 'none' ? null : value as TrustTier);
+      if (rest.includes('--json')) { console.log(JSON.stringify(change)); return; }
+      console.log(`${change.kind === 'oauth_client' ? 'OAuth client' : 'Token'} "${change.name}" (${change.id}): min_trust ${change.before ?? 'none'} -> ${change.after ?? 'none'}.`);
+      console.log('Applies on its next request: reads never return rows below this tier, whatever min_trust the client asks for.');
+    });
+  } catch (e: any) {
+    console.error('Error:', e.message);
     process.exit(1);
   }
 }
@@ -1157,7 +1181,7 @@ async function clientsCmd(args: string[]) {
  * register-client #3990 normalization precedent). Validation against the
  * allowed scope set happens in create() so the error path exits cleanly.
  */
-export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; error?: string } {
+export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; error?: string } {
   const takesIdx = rest.indexOf('--takes-holders');
   const takesValue = takesIdx >= 0 ? rest[takesIdx + 1] : undefined;
   // Fail closed on a missing/flag-like value: `--scopes` as the last arg
@@ -1177,8 +1201,13 @@ export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolder
   const scopes = scopesValue !== undefined
     ? scopesValue.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
     : undefined;
-  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue);
-  return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}) };
+  const minIdx = rest.indexOf('--min-trust');
+  const minValue = minIdx >= 0 ? rest[minIdx + 1] : undefined;
+  if (minIdx >= 0 && !isTrustTier(minValue)) {
+    return { name: '', error: `the min-trust flag requires a tier: ${TRUST_TIERS.join(', ')}` };
+  }
+  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue && a !== minValue);
+  return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}), ...(isTrustTier(minValue) ? { minTrust: minValue } : {}) };
 }
 
 const AUTH_USAGE = `GBrain Token Management
@@ -1191,7 +1220,7 @@ Admin dashboard login (running HTTP server):
   This does not create an MCP bearer token. See docs/mcp/DEPLOY.md.
 
 Usage:
-  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write]
+  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--min-trust <tier>]
                                                           Create a legacy bearer token. v0.28: --takes-holders
                                                           sets the per-token allow-list for the takes.holder
                                                           field (default: ["world"]). MCP-bound calls to
@@ -1199,6 +1228,12 @@ Usage:
                                                           --scopes narrows the token to the listed op scopes
                                                           (comma or space separated; omit = full access,
                                                           grandfathered).
+                                                          --min-trust sets the token's read floor: reads never
+                                                          return rows below that trust tier (${TRUST_TIERS.join(', ')});
+                                                          memory_confirm in --scopes lets the token confirm
+                                                          memory as you (local CLI only; never via admin API)
+  gbrain auth set-min-trust <client|token> <tier|none>    Set or clear the read floor of an OAuth client (id)
+                                                          or legacy token (id or name). Local CLI only.
   gbrain auth list                                         List all tokens (id, scopes, usage)
   gbrain auth revoke <name>                                Revoke a legacy token (ALL active rows with that name)
   gbrain auth revoke --id <uuid>                           Revoke exactly one token by id (names are not unique)
@@ -1306,9 +1341,10 @@ export async function runAuth(args: string[]): Promise<void> {
         console.error(`Error: ${parsed.error}`);
         process.exit(1);
       }
-      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes });
+      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes, minTrust: parsed.minTrust });
       return;
     }
+    case 'set-min-trust': await setMinTrustCmd(rest); return;
     case 'list': await list(); return;
     case 'revoke': {
       if (rest[0] === '--id') { await revokeById(rest[1] || ''); return; }

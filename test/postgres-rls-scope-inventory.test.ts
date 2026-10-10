@@ -21,8 +21,9 @@
  * naming `withScopedReadTransaction` = 1 definition + 22 call sites, in 21
  * methods (searchVector had 2); evidence delivery's getChunkWindows adds one,
  * and #5824 moves searchVector's ANN-attempt call into runVectorAttempt
- * (shared with explainVectorSearch): 23 call sites, 23 methods. The golden
- * pins the exact numbers.
+ * (shared with explainVectorSearch): 23 call sites, 23 methods. GBRA-67's
+ * readPageSnapshotsBatch (the batched extract / derived-link snapshot read)
+ * adds one: 24 call sites, 24 methods. The golden pins the exact numbers.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -124,6 +125,7 @@ const SCOPED_THROUGH_NON_THIS_CALLEE: Record<string, string> = {
   putPage: 'expectedRevision variant calls tx.readPageSnapshot on the transaction clone',
   createVersion: 'page-state/versions.ts createPageVersion calls tx.readPageSnapshot',
   replaceDerivedLinks: 'derived-links.ts replaceDerivedLinks reads the origin via readPageSnapshot',
+  replaceDerivedLinksBatch: 'derived-links.ts replaceDerivedLinksBatch reads the origins via tx.readPageSnapshotsBatch',
 };
 
 const INVENTORY_NORMALIZER = defineNormalizer<{ ast: Record<string, AstMember>; runtime: Record<string, RuntimeObservation> }>(
@@ -150,8 +152,8 @@ describe('EO4 RLS scope inventory (master)', () => {
     const scoping = astScoping(capture.ast);
 
     const callSites = Object.values(capture.ast).reduce((a, m) => a + m.directCallSites, 0);
-    expect(callSites).toBe(23);
-    expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(23);
+    expect(callSites).toBe(24);
+    expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(24);
 
     const byMethod = new Map<string, RuntimeObservation[]>();
     for (const [key, obs] of Object.entries(capture.runtime)) {

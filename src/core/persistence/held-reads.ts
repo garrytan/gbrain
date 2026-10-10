@@ -21,8 +21,8 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import { ALL_SOURCES } from '../source-id.ts';
-import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, fenceAutoRepairFor, gitHoldDocs, gitHoldFix, holdRepairSteps, type GitHoldCode, type GitHoldReason, type GitHoldRecord, type HoldRepairRoute } from './sync-holds.ts';
-import { fenceHoldLocation, fenceHoldRelay, fencePreviewArgv, type FenceAutoRepair, type FenceHoldLocation } from '../fence-repair/hold-fix.ts';
+import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, contentRepairArgv, fenceAutoRepairFor, gitHoldDocs, gitHoldFix, holdRepairSteps, type GitHoldCode, type GitHoldReason, type GitHoldRecord, type HoldRepairRoute } from './sync-holds.ts';
+import { fenceHoldLocation, fenceHoldRelay, type FenceAutoRepair, type FenceHoldLocation } from '../fence-repair/hold-fix.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -128,14 +128,14 @@ export function coverageRoute(source: HeldCoverage): HoldRepairRoute {
  */
 export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; route?: HoldRepairRoute }>, why: string): Action {
   const frontmatter = sources.filter(source => !source.route || source.route.others > 0).map(source => `'gbrain repair frontmatter --source ${source.source_id}'`);
-  const fences = sources.filter(source => source.route && source.route.fences > 0).map(source => `'${fencePreviewArgv(source.source_id).join(' ')}'`);
+  const fences = sources.filter(source => source.route && (source.route.fences > 0 || (source.route.slug_conflicts ?? 0) > 0)).map(source => `'${contentRepairArgv(source.source_id).join(' ')}'`);
   const concurrent = sources.filter(source => source.route?.concurrent).map(source => source.source_id);
   const stalled = sources.filter(source => source.route?.stalled).map(source => source.source_id);
   const dirty = sources.filter(source => source.route?.dirty).map(source => source.source_id);
   const first = sources[0]!;
   const parts = [
     ...(frontmatter.length ? [`Please run ${frontmatter.join(', ')} on the brain host to preview the fixes, then apply them.`] : []),
-    ...(fences.length ? [`Some held files have a facts or takes table gbrain could not import. The brain host's maintenance run repairs most of these by itself when it is running; `
+    ...(fences.length ? [`Some held files have a facts or takes table, or a slug line naming another page, that gbrain could not import. The brain host's maintenance run repairs most of these by itself when it is running; `
       + `to see each one's state and repair the rest now, run ${fences.join(', ')} on the brain host (a read-only preview that prints the apply command).`] : []),
     ...(concurrent.length ? [`Some notes changed in their files while an agent saved a different version to the brain, so both were kept: on the brain host run ${concurrent.map(id => `'gbrain sources status ${id}'`).join(', ')} and reconcile each named note with 'gbrain sources reconcile <source> <slug> --preview'.`] : []),
     ...(stalled.length ? [`Some files are held because the brain's write owner could not finish preparing them (the files themselves are fine): on the brain host run ${stalled.map(id => `'gbrain sources writer status --source ${id} --json'`).join(', ')} to see what the owner was stuck on, fix that or upgrade gbrain, then 'gbrain sources retry-held <source>' and the same sync.`] : []),
@@ -148,7 +148,8 @@ export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; rout
 /** The route of one hold record. */
 export function recordRoute(record: Pick<GitHoldRecord, 'code'>): HoldRepairRoute {
   return record.code === 'invalid_fence' ? { fences: 1, others: 0 } : record.code === 'concurrent_write' ? { fences: 0, others: 0, concurrent: 1 }
-    : record.code === 'preparation_stalled' ? { fences: 0, others: 0, stalled: 1 } : record.code === 'worktree_dirty' ? { fences: 0, others: 0, dirty: 1 } : { fences: 0, others: 1 };
+    : record.code === 'preparation_stalled' ? { fences: 0, others: 0, stalled: 1 } : record.code === 'worktree_dirty' ? { fences: 0, others: 0, dirty: 1 }
+      : record.code === 'frontmatter_slug_conflict' ? { fences: 0, others: 0, slug_conflicts: 1 } : { fences: 0, others: 1 };
 }
 
 /**

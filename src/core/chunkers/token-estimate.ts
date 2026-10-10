@@ -105,6 +105,7 @@ const PRETOKEN_MEMO_MAX_ENTRIES = 50_000;
 const PRETOKEN_MEMO_MAX_CHARS = 64;
 const pretokenCounts = new Map<string, number>();
 let pieceCounting = true;
+let byteBound = true;
 
 /**
  * Same count as encodeCount: segments and pre-tokens go through
@@ -165,6 +166,10 @@ export const __testing = {
   setPieceCounting(on: boolean): void {
     pieceCounting = on;
   },
+  /** false makes fitsEmbedTokens never vouch, so every cap decision counts (the reference path). */
+  setByteBound(on: boolean): void {
+    byteBound = on;
+  },
 };
 
 const CJK_CHARS_G = new RegExp(`[${CJK_SLUG_CHARS}]`, 'g');
@@ -186,6 +191,18 @@ export function estimateEmbedTokens(text: string): number {
   const cjk = (text.match(CJK_CHARS_G) || []).length;
   if (cjk === 0) return estimateTokens(text);
   return Math.max(estimateTokens(text), weightedTokens(text, cjk));
+}
+
+/**
+ * True when `text` provably fits `maxTokens` under estimateEmbedTokens without
+ * counting: its UTF-8 byte length is an upper bound on both halves. cl100k is
+ * a byte-level BPE, so every token covers at least one byte (the len/4
+ * fallback is smaller still), and the weighted form charges at most 1 per
+ * UTF-16 unit while every unit encodes to at least one byte. A typical CJK
+ * chunk (~350 chars, ~1 KB) fits without touching the encoder.
+ */
+export function fitsEmbedTokens(text: string, maxTokens: number): boolean {
+  return byteBound && (text.length * 3 <= maxTokens || Buffer.byteLength(text, 'utf8') <= maxTokens);
 }
 
 /** The per-char-class overestimate half of estimateEmbedTokens. Linear (two

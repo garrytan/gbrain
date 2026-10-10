@@ -40,8 +40,8 @@
  * window.
  *
  * `scopeScanSql` serves a source scope under SCOPE_SCAN_MAX_SHARE of pages
- * whose estimated chunk count (`scope.chunks`, the share times
- * `content_chunks` reltuples) is at most SCOPE_SCAN_MAX_CHUNKS: an exact
+ * whose estimated chunk count (`scope.chunks`, SCOPE_CHUNKS_SQL's sampled
+ * count) is at most SCOPE_SCAN_MAX_CHUNKS: an exact
  * distance scan over the scope's chunks with every filter applied, ordering
  * only chunk ids (`+ 0` keeps the index out), then the window joins back for
  * its columns. The eligible page ids come first as `= ANY(ARRAY(...))`, so
@@ -116,12 +116,18 @@ export const INDEX_WALK_MIN_SCOPE_SHARE = 0.04;
 
 /**
  * Source scopes under SCOPE_SCAN_MAX_SHARE of pages get the exact scope scan
- * up to SCOPE_SCAN_MAX_CHUNKS (estimated): first when at most
+ * up to SCOPE_SCAN_MAX_CHUNKS (counted, SCOPE_CHUNKS_SQL): first when at most
  * SCOPE_SCAN_FIRST_MAX_CHUNKS, otherwise after the walk comes back short.
+ * The scan costs about 5 µs per scope chunk (75k chunks: 340 ms, 157k:
+ * 760 ms on a 50k-page brain), so the 120k cap keeps the fallback near
+ * 600 ms, under the joined statement's 820 ms on a clustered 75k-chunk scope
+ * and well inside the attempt's 2 s budget. The cap was 60k when the count
+ * was the page share of chunk reltuples, which put that 75k-chunk scope at
+ * 39k.
  */
 export const SCOPE_SCAN_MAX_SHARE = 0.3;
 export const SCOPE_SCAN_FIRST_MAX_CHUNKS = 25_000;
-export const SCOPE_SCAN_MAX_CHUNKS = 60_000;
+export const SCOPE_SCAN_MAX_CHUNKS = 120_000;
 
 /** Walk overfetch for a scope holding `share` of pages: the window keeps about INDEX_WALK_OVERFETCH in-scope rows per slot. */
 export function indexWalkOverfetch(share: number | undefined): number {
@@ -146,42 +152,104 @@ export interface PageSourceStats {
 
 export interface VectorScope {
   share: number;
-  /** Estimated chunks in the scope (share times `content_chunks` reltuples), absent without chunk statistics. */
+  /**
+   * Estimated chunks in the scope: SCOPE_CHUNKS_SQL's count for a scope under
+   * SCOPE_SCAN_MAX_SHARE, else the share times `content_chunks` reltuples;
+   * absent without either.
+   */
   chunks?: number;
+}
+
+/** Pages of a source scope whose chunks SCOPE_CHUNKS_SQL counts; a smaller scope has every page counted. */
+export const SCOPE_CHUNK_SAMPLE_PAGES = 400;
+
+/**
+ * Chunks in a source scope (`$1`, source ids): its live pages, and the chunks
+ * of a hash-stride sample of about SCOPE_CHUNK_SAMPLE_PAGES of them through
+ * `idx_chunks_page`. Page share alone undercounts a source of long pages (a
+ * sessions-like source holds 9.4 chunks per page against a brain average of
+ * 5), which sent a 74k-chunk scope down the path sized for 39k. The sample is
+ * deterministic (`hashint4`, so interleaved page ids do not alias a stride)
+ * and costs one pass over the scope's page ids plus ~400 index probes.
+ */
+export const SCOPE_CHUNKS_SQL = `WITH scope_pages AS MATERIALIZED (
+    SELECT id FROM pages WHERE source_id = ANY($1::text[]) AND deleted_at IS NULL),
+  total AS (SELECT count(*)::int AS pages FROM scope_pages),
+  sample AS (SELECT id FROM scope_pages, total WHERE hashint4(id) % GREATEST(1, total.pages / ${SCOPE_CHUNK_SAMPLE_PAGES}) = 0)
+  SELECT (SELECT pages FROM total) AS pages, (SELECT count(*)::int FROM sample) AS sampled,
+    (SELECT count(*)::int FROM content_chunks WHERE page_id = ANY(ARRAY(SELECT id FROM sample))) AS sample_chunks`;
+
+export interface ScopeChunkCount {
+  pages: number;
+  sampled: number;
+  sample_chunks: number;
 }
 
 /** Share of pages the source scope holds, or undefined without a scope or statistics. */
 export function sourceScopeShare(stats: PageSourceStats | undefined, opts?: SearchOpts): number | undefined {
-  const scope = opts?.sourceIds?.length ? opts.sourceIds : opts?.sourceId ? [opts.sourceId] : undefined;
+  const scope = scopeSourceIds(opts);
   if (!scope || !stats) return undefined;
   const sources = stats.sources ?? [];
   const freqs = (stats.freqs ?? []).map(Number);
   const distinct = Number(stats.n_distinct) < 0 ? -Number(stats.n_distinct) * Number(stats.reltuples) : Number(stats.n_distinct);
   const unlisted = Math.max(0, 1 - Number(stats.null_frac) - freqs.reduce((sum, freq) => sum + freq, 0)) / Math.max(1, distinct - sources.length);
-  return [...new Set(scope)].reduce((sum, id) => sum + (sources.includes(id) ? freqs[sources.indexOf(id)]! : unlisted), 0);
+  return scope.reduce((sum, id) => sum + (sources.includes(id) ? freqs[sources.indexOf(id)]! : unlisted), 0);
 }
 
-/** Share of pages and estimated chunks the source scope holds, or undefined without a scope or statistics. */
-export function sourceScope(stats: PageSourceStats | undefined, opts?: SearchOpts): VectorScope | undefined {
+function scopeSourceIds(opts?: SearchOpts): string[] | undefined {
+  const scope = opts?.sourceIds?.length ? opts.sourceIds : opts?.sourceId ? [opts.sourceId] : undefined;
+  return scope && [...new Set(scope)];
+}
+
+/**
+ * Share of pages and estimated chunks the source scope holds, or undefined
+ * without a scope or statistics. A SCOPE_CHUNKS_SQL count, when given and
+ * sampled, replaces the share-of-reltuples chunk estimate.
+ */
+export function sourceScope(stats: PageSourceStats | undefined, opts?: SearchOpts, counted?: ScopeChunkCount): VectorScope | undefined {
   const share = sourceScopeShare(stats, opts);
   if (share === undefined) return undefined;
+  const sampled = Number(counted?.sampled ?? 0);
+  if (sampled > 0) return { share, chunks: Math.round((Number(counted!.pages) * Number(counted!.sample_chunks)) / sampled) };
   const chunks = Number(stats?.chunk_reltuples ?? -1);
   return chunks > 0 ? { share, chunks: share * chunks } : { share };
 }
 
 /**
- * The engines' scope lookup: PAGE_SOURCE_STATS_SQL through `load`, at most
- * once a minute and only for source-scoped searches. The estimate only picks
- * the walk, the scope scan or the joined statement, each of which falls back
- * to the joined statement when it comes back short, so stale or missing
- * statistics cost speed at most.
+ * The engines' scope lookup, only for source-scoped searches:
+ * PAGE_SOURCE_STATS_SQL through `load` at most once a minute, and for a scope
+ * under SCOPE_SCAN_MAX_SHARE of pages (the only scopes whose chunk count picks
+ * a path) SCOPE_CHUNKS_SQL through `count`, refreshed at most once a minute
+ * per scope. The count never blocks a search: until a scope's first count
+ * lands, and while a refresh runs, the search routes on the last count or the
+ * share estimate. (`count` runs on the engine's own pool, so a search inside
+ * a caller's transaction on a one-connection pool would otherwise wait on
+ * itself.) The estimate only picks the walk, the scope scan or the joined
+ * statement, each of which falls back to the joined statement when it comes
+ * back short, so stale or missing statistics, or a failed count, cost speed
+ * at most.
  */
-export function vectorScopeLoader(load: () => Promise<PageSourceStats[]>): (opts?: SearchOpts) => Promise<VectorScope | undefined> {
+export function vectorScopeLoader(
+  load: () => Promise<PageSourceStats[]>,
+  count?: (sourceIds: string[]) => Promise<ScopeChunkCount[]>,
+): (opts?: SearchOpts) => Promise<VectorScope | undefined> {
   let cached: { at: number; stats: Promise<PageSourceStats | undefined> } | undefined;
+  const counts = new Map<string, { at: number; value?: ScopeChunkCount }>();
   return async opts => {
-    if (!opts?.sourceIds?.length && !opts?.sourceId) return undefined;
+    const ids = scopeSourceIds(opts);
+    if (!ids) return undefined;
     if (!cached || performance.now() - cached.at > 60_000) cached = { at: performance.now(), stats: load().then(rows => rows[0], () => undefined) };
-    return sourceScope(await cached.stats, opts);
+    const stats = await cached.stats;
+    const share = sourceScopeShare(stats, opts);
+    if (!count || share === undefined || share >= SCOPE_SCAN_MAX_SHARE) return sourceScope(stats, opts);
+    const key = [...ids].sort().join('\u0000');
+    const entry = counts.get(key);
+    if (!entry || performance.now() - entry.at > 60_000) {
+      const next: { at: number; value?: ScopeChunkCount } = { at: performance.now(), value: entry?.value };
+      counts.set(key, next);
+      count(ids).then(rows => { if (rows[0]) next.value = rows[0]; }, () => { /* keep the last count or the share estimate */ });
+    }
+    return sourceScope(stats, opts, counts.get(key)!.value);
   };
 }
 

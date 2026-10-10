@@ -502,7 +502,7 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 122/122 public tables",
+          "message": "RLS enabled on 132/132 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -514,7 +514,7 @@
         },
         {
           "category": "meta",
-          "message": "1009 column(s) verified against live schema",
+          "message": "1072 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1743,6 +1743,7 @@
             ],
             "engine": "postgres",
             "fix": "gbrain repair planner-stats --apply",
+            "missing_search_statistics": [],
             "stale": []
           },
           "message": "Planner statistics are fresh on 6 hot tables.",
@@ -1778,6 +1779,111 @@
           },
           "message": "Every page has its revision; the page revision backfill is complete.",
           "name": "revision_backfill",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "backfill": {
+              "completed_at": "<ts>",
+              "interrupted": false
+            },
+            "by_tier": {
+              "agent_written": 0,
+              "external_untrusted": 0,
+              "operator_curated": 0,
+              "tool_observed": 0,
+              "unknown": 0,
+              "user_confirmed": 0
+            },
+            "derived": {
+              "external_pct": 0,
+              "external_untrusted": 0,
+              "rows": 0
+            },
+            "rows": 0,
+            "tables": [
+              {
+                "by_tier": {
+                  "agent_written": 0,
+                  "external_untrusted": 0,
+                  "operator_curated": 0,
+                  "tool_observed": 0,
+                  "unknown": 0,
+                  "user_confirmed": 0
+                },
+                "rows": 0,
+                "table": "pages"
+              },
+              {
+                "by_tier": {
+                  "agent_written": 0,
+                  "external_untrusted": 0,
+                  "operator_curated": 0,
+                  "tool_observed": 0,
+                  "unknown": 0,
+                  "user_confirmed": 0
+                },
+                "rows": 0,
+                "table": "facts"
+              },
+              {
+                "by_tier": {
+                  "agent_written": 0,
+                  "external_untrusted": 0,
+                  "operator_curated": 0,
+                  "tool_observed": 0,
+                  "unknown": 0,
+                  "user_confirmed": 0
+                },
+                "rows": 0,
+                "table": "takes"
+              },
+              {
+                "by_tier": {
+                  "agent_written": 0,
+                  "external_untrusted": 0,
+                  "operator_curated": 0,
+                  "tool_observed": 0,
+                  "unknown": 0,
+                  "user_confirmed": 0
+                },
+                "rows": 0,
+                "table": "timeline_entries"
+              }
+            ],
+            "unknown_pct": 0
+          },
+          "message": "No facts, takes, timeline entries or pages yet.",
+          "name": "trust_tiers",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "completed_at": null,
+            "detector_version": 2,
+            "total_unscanned": 0,
+            "unscanned": {
+              "facts": 0,
+              "pages": 0,
+              "takes": 0,
+              "timeline_entries": 0
+            }
+          },
+          "message": "Every agent-written or lower row has been scanned by the current write-gate detector; flagged rows carry their flag, and proactive surfaces withhold them when trust.agent_activation is suppress.",
+          "name": "trust_scan",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "legacy_unknown": 0,
+            "pending": [],
+            "unclaimed": []
+          },
+          "message": "No unclaimed source holds rows from before trust tiers.",
+          "name": "trust_sources_unclaimed",
           "status": "ok"
         },
         {
@@ -2052,7 +2158,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 13,
+              "global": 14,
               "mixed": 2,
               "source": 12
             },
@@ -2061,6 +2167,7 @@
               "calibration_profile": "global",
               "chronicle": "global",
               "consolidate": "source",
+              "content_repair": "global",
               "conversation_facts_backfill": "source",
               "drift": "global",
               "edge_contradictions": "global",
@@ -2086,7 +2193,7 @@
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 13 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 14 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },

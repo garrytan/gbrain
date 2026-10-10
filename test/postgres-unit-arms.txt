@@ -41,6 +41,7 @@ test/grandfather-managed.test.ts
 test/harness-skills-epoch.test.ts
 test/held-read-signals.test.ts
 test/import-frontmatter-key-order-5158.test.ts
+test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
 test/lane-apply-pipelining.test.ts
 test/link-preparation-shared-index.test.ts
@@ -69,9 +70,11 @@ test/owner-refusal.test.ts
 test/pack-relation-direction-engine.test.ts
 test/page-embedding-install-batch.test.ts
 test/page-state-engine.test.ts
+test/persistence-bounded-read-session.test.ts
 test/persistence-commit-durability.test.ts
 test/persistence-deactivate.test.ts
 test/persistence-diagnostics.test.ts
+test/persistence-edit-embedding-reuse.test.ts
 test/persistence-file-import.test.ts
 test/persistence-git-subdir-origin.test.ts
 test/persistence-graph-publication.test.ts
@@ -88,11 +91,14 @@ test/persistence-preactivation-claim.test.ts
 test/persistence-reconcile-git-dirty-6138.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
+test/persistence-skip-cost.test.ts
 test/persistence-sync-cursor-options.test.ts
 test/persistence-sync-fence-holds.test.ts
 test/persistence-sync-holds.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
+test/purge-fact.test.ts
+test/purge-global-marker.test.ts
 test/remediation-manual-only.test.ts
 test/repair-embedding-effects.test.ts
 test/repair-failed-writes-drift-w411.test.ts
@@ -113,7 +119,11 @@ test/sync-frontmatter-slug-conflict.test.ts
 test/sync-group-member-order.test.ts
 test/sync-legacy-holds.test.ts
 test/sync-waiver-budget.test.ts
+test/sync-waiver-run-imports.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
+test/trust-channel-writes.test.ts
+test/trust-guarded-supersession.test.ts
+test/trust-owner-actions.test.ts
 test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts
 test/writer-status-owner-backends.test.ts

@@ -17,7 +17,9 @@ BEGIN
   IF TG_TABLE_NAME='pages' AND TG_OP='UPDATE' THEN
     IF (NEW.source_id,NEW.slug,NEW.type,NEW.page_kind,NEW.title,NEW.compiled_truth,NEW.timeline,NEW.frontmatter,NEW.deleted_at,NEW.knowledge_revision)
       IS NOT DISTINCT FROM
-       (OLD.source_id,OLD.slug,OLD.type,OLD.page_kind,OLD.title,OLD.compiled_truth,OLD.timeline,OLD.frontmatter,OLD.deleted_at,OLD.knowledge_revision) THEN RETURN NEW; END IF;
+       (OLD.source_id,OLD.slug,OLD.type,OLD.page_kind,OLD.title,OLD.compiled_truth,OLD.timeline,OLD.frontmatter,OLD.deleted_at,OLD.knowledge_revision)
+      -- The trust tier is guarded content (trust/schema.ts); read by key so brains before the column keep working.
+      AND row_data->'trust_tier' IS NOT DISTINCT FROM old_data->'trust_tier' THEN RETURN NEW; END IF;
   ELSIF TG_TABLE_NAME='sources' THEN
     IF TG_OP='UPDATE' AND (NEW.id,NEW.incarnation,NEW.local_path,NEW.archived)
       IS NOT DISTINCT FROM (OLD.id,OLD.incarnation,OLD.local_path,OLD.archived) THEN
@@ -38,10 +40,11 @@ BEGIN
     END IF;
     IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
   ELSIF TG_TABLE_NAME IN ('facts','takes') AND TG_OP='UPDATE' THEN
-    row_data := row_data - ARRAY['embedding_model','embedded_text_hash'] - ${ROW_ATTRIBUTION_KEYS};
-    old_data := old_data - ARRAY['embedding_model','embedded_text_hash'] - ${ROW_ATTRIBUTION_KEYS};
-    -- Embedding completion, retrieval telemetry and write attribution
-    -- (attribution-schema.ts; a journal backfill fills it) are physical projections.
+    row_data := row_data - ARRAY['embedding_model','embedded_text_hash','write_origin'] - ${ROW_ATTRIBUTION_KEYS};
+    old_data := old_data - ARRAY['embedding_model','embedded_text_hash','write_origin'] - ${ROW_ATTRIBUTION_KEYS};
+    -- Embedding completion, retrieval telemetry, write attribution
+    -- (attribution-schema.ts; a journal backfill fills it) and the write origin
+    -- record are physical projections. The trust tier is not: it stays guarded.
     IF (row_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at'])
       = (old_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at']) THEN RETURN NEW; END IF;
   END IF;

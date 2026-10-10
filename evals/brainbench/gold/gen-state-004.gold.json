@@ -1,0 +1,18 @@
+{
+  "fixture_id": "gen-state-004",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "guarded",
+        "step": "s1"
+      },
+      {
+        "item_id": "i2",
+        "check": "current",
+        "step": "s1"
+      }
+    ]
+  }
+}

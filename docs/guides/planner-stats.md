@@ -47,6 +47,20 @@ when a table is over the same threshold and neither ANALYZE nor autoanalyze ran
 in the last hour; the repair runs each ANALYZE with a 60 s statement and 2 s
 lock timeout.
 
+Postgres can also lose the statistics outright: `pg_upgrade` carries none and
+resets the modification counters, so autovacuum never collects them again
+until 10% of a table changes. Without the page columns search filters read,
+search plans as nested loops over every page (50-60 s per search at 5,000
+pages instead of 0.5 s). gbrain guards this two ways, both through the same
+refresh as import and sync (`ANALYZE pages(...)` and
+`ANALYZE content_chunks(model, modality, page_id)`, 30 s bounded):
+
+- The first search of each process checks in the background and collects them
+  when the database role owns the tables. The search does not wait for it.
+- `planner_stats_stale` warns with the absent columns, and
+  `gbrain repair planner-stats --apply` collects them (run it as the table
+  owner when the brain's role is not).
+
 ## Settings and opt-out
 
 | Setting | Default | Effect |

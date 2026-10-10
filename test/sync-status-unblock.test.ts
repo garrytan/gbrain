@@ -4,6 +4,15 @@
  * `gbrain sync unblock --apply` performs the safe action for each hold that has
  * one and refuses the rest by name. The classifier table and the runbook are
  * pinned to each other in `test/sync-runbook-table.test.ts`. Synthetic content.
+ *
+ * #6377 (T4): `unblock --apply` repairs an `invalid_fence` hold through the
+ * `fences` kind of the content-repair lane on exactly that path, reports the
+ * structured per-path outcome with its location-only receipt, schedules the
+ * re-screen and prints the sync; a hold whose stored state needs a person (a
+ * manual fence reason) is listed and never retried, and `sync status` says so;
+ * `--no-llm` keeps the model-tier file held; `--no-repair` refuses every
+ * repair-class hold as before. Sentinel claim text must never reach a hold,
+ * an outcome, a receipt or a printed line.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -18,7 +27,8 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncStatus, unblockSync } from '../src/core/persistence/sync-status.ts';
 import { classifySyncFault, HOLD_ATTEMPTS_NEEDS_HUMAN, SYNC_FAULT_TABLE } from '../src/core/persistence/sync-fault-class.ts';
-import { readGitHoldRetryPaths, readGitHold } from '../src/core/persistence/sync-holds.ts';
+import { readGitHoldRetryPaths, readGitHold, readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
+import { runSyncUnblock } from '../src/commands/sync/operator.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -144,3 +154,108 @@ test('status reports an older release\'s recorded failure as a retryable page fa
   expect(converted).toMatchObject({ status: 'synced', held: [{ path: 'b.md', code: 'worktree_dirty' }] });
   expect((await readSyncStatus(engine, f.id)).last_error).toBeNull();
 }), 120_000);
+
+// #6377: fence fixtures (as test/repair-fences.test.ts builds them). Sentinel strings must never leave a file.
+const CLAIM = 'Sentinelclaimub77 ships quarterly', HOLDER = 'Alice Example', MCLAIM = 'Sentinelmanualub77 opens an office';
+const FB = '<!--- gbrain:facts:begin -->', FBE = '<!--- gbrain:facts:end -->';
+const FH = '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|';
+const T = '<!--- gbrain:takes:begin -->', TE = '<!--- gbrain:takes:end -->';
+const TH = '| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|';
+const md = (title: string, body: string) => `---\ntitle: ${title}\n---\nA synthetic page.\n\n${body}`;
+/** Tier 2: a display-name holder, resolved against people/alice-example. */
+const holder = () => `${T}\n${TH}\n| 1 | Synthetic take | take | ${HOLDER} | 0.7 | 2026-01 | chat |\n${TE}\n`;
+/** Manual: a visibility word with no mapping. */
+const manual = () => `${FB}\n${FH}\n| 1 | ${MCLAIM} | fact | 0.9 | sideways | high | 2026-01-01 |  | chat | ctx |\n${FBE}\n`;
+/** Tier 3: rows but no header. */
+const noHeader = () => `${FB}\n| 1 | ${CLAIM} | fact | 0.9 | private | high | 2026-01-01 |  | chat | ctx |\n${FBE}\n`;
+const expectNoSecrets = (value: unknown) => { const text = typeof value === 'string' ? value : JSON.stringify(value); for (const secret of ['Sentinelclaimub77', 'Sentinelmanualub77', HOLDER]) expect(text).not.toContain(secret); };
+
+async function printed(run: () => Promise<void>): Promise<string> {
+  const out: string[] = [];
+  const log = console.log;
+  console.log = (...parts: unknown[]) => { out.push(parts.join(' ')); };
+  try { await run(); } finally { console.log = log; }
+  return out.join('\n');
+}
+
+test('#6377: unblock --apply repairs an invalid_fence hold through the fences kind, lists structured outcomes, schedules the re-screen and prints the sync; a manual hold is listed, not retried; --no-llm and --no-repair', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_FENCE_REPAIR_SCAN_MS: '60000', OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined, VOYAGE_API_KEY: undefined }, async () => {
+  const f = await fixture({ 'a.md': note('Alpha one.') });
+  mkdirSync(join(f.root, 'people'));
+  writeFileSync(join(f.root, 'people/alice-example.md'), md('Alice Example', 'A synthetic person.\n'));
+  commit(f.root, 'a person page');
+  expect((await performManagedSync(engine, f.opts)).status).toBe('first_sync');
+  writeFileSync(join(f.root, 'people/holder.md'), md('Holder', holder()));
+  writeFileSync(join(f.root, 'people/manual.md'), md('Manual', manual()));
+  writeFileSync(join(f.root, 'people/model.md'), md('Model', noHeader()));
+  commit(f.root, 'three malformed fences');
+  const synced = await performManagedSync(engine, f.opts);
+  expect(synced.held?.map(hold => [hold.path, hold.code, hold.reason]).sort()).toEqual([['people/holder.md', 'invalid_fence', 'holder_unresolved'], ['people/manual.md', 'invalid_fence', 'enum_unmapped'], ['people/model.md', 'invalid_fence', 'no_header']]);
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [f.id]);
+
+  // status: the manual hold needs a person and says why; the other two are actionable, and next is the unblock apply naming the repairs.
+  const status = await readSyncStatus(engine, f.id);
+  const byPath = new Map(status.holds.map(hold => [hold.path, hold]));
+  expect(byPath.get('people/manual.md')).toMatchObject({ code: 'invalid_fence', class: 'page', safe_actions: ['none'], needs_human: true });
+  expect(byPath.get('people/manual.md')!.human_reason).toContain('enum_unmapped');
+  expect(byPath.get('people/holder.md')).toMatchObject({ safe_actions: ['repair'], needs_human: false });
+  expect(byPath.get('people/model.md')).toMatchObject({ safe_actions: ['repair'], needs_human: false });
+  expect(status.needs_human).toBe(true);
+  expectNoSecrets(status);
+
+  // --no-repair: every repair-class hold is refused by name, as before #6377.
+  const refuseOnly = await unblockSync(engine, f.id, { apply: true, noRepair: true });
+  expect(refuseOnly.applied).toEqual([]);
+  expect(refuseOnly.refused.map(entry => [entry.path, entry.needs_human]).sort()).toEqual([['people/holder.md', false], ['people/manual.md', true], ['people/model.md', false]]);
+  expect(refuseOnly.refused.find(entry => entry.path === 'people/holder.md')!.reason).toContain('not something unblock performs');
+  expect(await readGitHoldRetryPaths(engine, f.id, source.incarnation)).toEqual([]);
+
+  // Preview: the two actionable holds would be repaired, the manual one is listed with its state; nothing is written.
+  const preview = await unblockSync(engine, f.id, { apply: false });
+  expect(preview.applied.map(entry => [entry.path, entry.action, entry.action === 'repair' ? entry.repair.outcome : null]).sort()).toEqual([['people/holder.md', 'repair', 'skipped'], ['people/model.md', 'repair', 'skipped']]);
+  expect(preview.refused.map(entry => [entry.path, entry.needs_human])).toEqual([['people/manual.md', true]]);
+  expect(preview.refused[0]!.reason).toContain('enum_unmapped');
+  expect(preview.next).toMatchObject({ argv: ['gbrain', 'sync', 'unblock', '--source', f.id, '--apply', '--json'] });
+  expect(preview.next!.why).toContain('hash-bound repairs');
+  expect(await readGitHold(engine, f.id, source.incarnation, 'people/holder.md')).not.toBeNull();
+
+  // --no-llm apply: the resolver repairs the holder file (receipt, re-screen scheduled, the sync printed); the model-tier file stays held llm_disabled; the manual one is listed, not retried.
+  const applied = await unblockSync(engine, f.id, { apply: true, noLlm: true });
+  const repaired = applied.applied.find(entry => entry.path === 'people/holder.md');
+  expect(repaired).toMatchObject({ code: 'invalid_fence', action: 'repair', repair: { kind: 'fences', outcome: 'repaired', tier: 'resolver', receipt: { mode: 'managed', path: 'people/holder.md', tier: 'resolver', classes: 'holder_verified', hold_cleared: true, committed: 'queued' } } });
+  expect(repaired!.action === 'repair' && repaired!.repair.next).toMatchObject({ argv: ['gbrain', 'sync', '--source', f.id, '--no-pull', '--no-embed', '--no-extract'] });
+  const model = applied.applied.find(entry => entry.path === 'people/model.md');
+  // The model-tier file was kept out of the plan (--no-llm); the kind recorded llm_disabled on its hold, and its next step is the hold's own paid fix.
+  expect(model).toMatchObject({ action: 'repair', repair: { kind: 'fences', outcome: 'held', reason: 'llm_disabled', next: { argv: ['gbrain', 'config', 'set', 'fences.repair.llm', 'true'], consent: ['paid'] } } });
+  expect(applied.refused.map(entry => entry.path)).toEqual(['people/manual.md']);
+  expect(applied.next).toMatchObject({ argv: ['gbrain', 'sync', '--source', f.id, '--no-pull', '--no-embed', '--no-extract'] });
+  expect(applied.next!.why).toContain('1 repaired by the content-repair lane');
+  expect(await readGitHoldRetryPaths(engine, f.id, source.incarnation)).toEqual(['people/holder.md']);
+  expect(readFileSync(join(f.root, 'people/holder.md'), 'utf8')).toContain('people/alice-example');
+  expectNoSecrets(applied);
+  const holdsAfter = (await readGitSourceHolds(engine, { sourceIds: [f.id] }))[0]!.holds;
+  expect(holdsAfter.find(hold => hold.path === 'people/model.md')?.meta.fence_repair?.reason).toBe('llm_disabled');
+  expect(holdsAfter.find(hold => hold.path === 'people/manual.md')?.meta.fence_repair).toBeUndefined();
+  expectNoSecrets(holdsAfter);
+
+  // The printed sync imports the repaired file; the hold set is the manual one and the model-tier one.
+  const after = await performManagedSync(engine, f.opts);
+  expect(after.status).toBe('synced');
+  expect(await readGitHold(engine, f.id, source.incarnation, 'people/holder.md')).toBeNull();
+  expect((await readSyncStatus(engine, f.id)).holds.map(hold => hold.path).sort()).toEqual(['people/manual.md', 'people/model.md']);
+
+  // Idempotent: the second apply finds the model-tier hold in its recorded paid state (llm_disabled) and lists it beside the manual one; nothing is retried.
+  const text = await printed(() => runSyncUnblock(engine, ['--source', f.id, '--apply', '--no-llm']));
+  expect(text).toContain('0 held file(s) scheduled for a re-screen, 2 refused');
+  expect(text).toContain('people/manual.md: invalid_fence refused');
+  expect(text).toContain('people/model.md: invalid_fence refused');
+  expect(text).toContain('llm_disabled');
+  expect(text).toContain('NEEDS HUMAN');
+  expectNoSecrets(text);
+  expect(await readGitHoldRetryPaths(engine, f.id, source.incarnation)).toEqual([]);
+  // --json renders each refusal's fix with its next verb (the paid setting asks the user).
+  const json = JSON.parse(await printed(() => runSyncUnblock(engine, ['--source', f.id, '--no-llm', '--json']))) as { applied: unknown[]; refused: Array<{ path: string; fix: { next: string } }> };
+  expect(json.applied).toEqual([]);
+  expect(json.refused.find(entry => entry.path === 'people/model.md')?.fix.next).toBe('ask_user');
+  expect(json.refused.find(entry => entry.path === 'people/manual.md')?.fix.next).toBe('run');
+  expectNoSecrets(json);
+}), 180_000);

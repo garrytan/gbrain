@@ -12,7 +12,7 @@ import { probeSourceGitState } from '../../../core/git-head.ts';
 // this pure comparator (no git subprocess on the HTTP MCP doctor path).
 import { lagFromContentMs, loadSyncFreshnessSources, resolveStalenessCeilingSeconds } from '../../../core/source-health.ts';
 import { resolveEnvNumber, resolveHoursEnv, warnOnceForEnv } from '../../../core/env-number.ts';
-import { CHUNKER_VERSION } from '../../../core/chunkers/code.ts';
+import { chunkerStamp } from '../../../core/chunkers/code.ts';
 import { effectiveLinkExtractorWatermark, smallBrainBacklogNote } from '../../../core/link-extraction-watermark.ts';
 import { previewMentionPass } from '../../../core/mentions/stale.ts';
 import { isUndefinedColumnError } from '../../../core/utils.ts';
@@ -1235,8 +1235,8 @@ export async function checkSyncFreshness(
     // v0.41.27.0: D7 narrowed predicate. The CHUNKER_VERSION caller-side
     // check mirrors sync.ts:1057's chunker-version gate so doctor agrees
     // with sync on "is there work to do?". `sources.chunker_version` is
-    // a TEXT column storing String(CHUNKER_VERSION).
-    const currentChunkerVersion = String(CHUNKER_VERSION);
+    // a TEXT column storing chunkerStamp().
+    const currentChunkerVersion = chunkerStamp();
 
     const issues: string[] = [];
     let ownedContent = new Set<string>();

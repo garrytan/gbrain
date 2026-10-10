@@ -1,11 +1,11 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations } from '../core/operations.ts';
+import { OPERATION_MANIFEST } from '../core/operation-manifest.generated.ts';
 import { opAllowedForBoundClient } from '../core/ops/context.ts';
 import { operationScopesAllowed } from '../core/scope.ts';
 import { loadConfig } from '../core/config.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
-import { dispatchToolCall, type DispatchOpts } from './dispatch.ts';
+import type { DispatchOpts } from './dispatch.ts';
 import type { SharedSkillList, SharedSkillDetail } from '../core/shared-skills/model.ts';
 
 export const SKILLS_RESOURCE_URI = 'gbrain://skills';
@@ -21,7 +21,7 @@ export function sharedSkillResourceUri(qualifiedId: string, revision: string, pa
 
 export function createSkillResources(engine: BrainEngine, context: () => Promise<DispatchOpts>): SkillResources {
   async function permitted(name: string, opts: DispatchOpts): Promise<boolean> {
-    const op = operations.find(candidate => candidate.name === name);
+    const op = OPERATION_MANIFEST.find(candidate => candidate.name === name);
     if (!op || (opts.allowedOps && !opts.allowedOps.has(name))) return false;
     if (opts.remote === false) return true;
     if (op.localOnly || !opAllowedForBoundClient(opts.auth, op)) return false;
@@ -30,6 +30,7 @@ export function createSkillResources(engine: BrainEngine, context: () => Promise
   }
   async function call<T>(name: string, params: Record<string, unknown>, opts: DispatchOpts): Promise<T> {
     if (!await permitted(name, opts)) throw new McpError(ErrorCode.InvalidParams, 'Unknown or unavailable skill resource');
+    const { dispatchToolCall } = await import('./dispatch.ts');
     const result = await dispatchToolCall(engine, name, params, opts);
     const body = JSON.parse(result.content[0].text);
     if (result.isError) throw new McpError(ErrorCode.InternalError, 'Skill resource could not be read', { error: body.error });

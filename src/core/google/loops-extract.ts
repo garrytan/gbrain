@@ -29,6 +29,10 @@ import { managedFactWritePreflight } from '../facts/managed-fact-write.ts';
 import { loadSuppressions, upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
 import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
 import { bareAddress, type GmailMessageMeta, type GmailThreadData } from './types.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { deriveTrust } from '../trust/taint.ts';
+import { applyGateDecision, derivedGateConfig, derivedGateInput } from '../trust/derived-gate.ts';
+import { decideFactWrite } from '../write-gate-store.ts';
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
 /**
@@ -414,6 +418,10 @@ export async function runLoopsExtract(
 
   const loopIds: number[] = [];
   const messageDate = typeof fm.date === 'string' ? fm.date : new Date().toISOString();
+  // #5575 I2/B3: the model read only this email page, so its commitment facts carry the page's tier
+  // (a connector page is external_untrusted) and pass the write gate at that tier.
+  const derivation = await deriveTrust(engine, [{ table: 'pages', id: page.id }], { channel: 'derive:loops' });
+  const gateCfg = await derivedGateConfig(engine);
 
   for (const c of extraction.commitments) {
     const loopType: LoopType =
@@ -423,17 +431,24 @@ export async function runLoopsExtract(
     // Projection 1 — facts row (fence-first, deduped/superseding).
     let factId: number | null = null;
     try {
-      const { writeSingleFact } = await import('../facts/write-single.ts');
-      const result = await writeSingleFact(engine, payload.sourceId, {
+      const fact = {
         fact: c.text,
         provenance: `email thread "${(page.title ?? '').slice(0, 80)}" (${payload.slug})`,
-        kind: 'commitment',
+        kind: 'commitment' as const,
         entity: counterpartyRef,
-        visibility: 'private',
+        visibility: 'private' as const,
         validUntil: c.due_iso ? new Date(`${c.due_iso}T23:59:59Z`) : null,
         confidence: 0.85,
-      });
-      factId = result.id;
+      };
+      const gate = decideFactWrite({ fact: fact.fact, source: fact.provenance },
+        { sourceId: payload.sourceId, slug: counterpartyRef, payload: fact, input: derivedGateInput(derivation.trust), cfg: gateCfg });
+      if (gate.action !== 'insert') {
+        // A held or rejected commitment writes no fact; the loop row below still records it for the owner.
+        await maintenanceTransaction(engine, tx => applyGateDecision(tx, gate, { table: 'facts', sourceId: payload.sourceId }, async () => null));
+      } else {
+        const { writeSingleFact } = await import('../facts/write-single.ts');
+        factId = (await writeSingleFact(engine, payload.sourceId, { ...fact, derivation, gate })).id;
+      }
     } catch (err) {
       // The loop row still lands; the facts projection is best-effort, but its
       // failure is logged. Slug, source and a bounded error only: the

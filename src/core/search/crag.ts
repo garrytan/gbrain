@@ -173,31 +173,35 @@ export function gradeRetrievalConfidence(
   if (results.length === 0) return { level: 'weak', reason: 'zero_results' };
   const top = results[0];
   const floor = typeof opts.minTopScore === 'number' ? opts.minTopScore : DEFAULT_CRAG_MIN_TOP;
+  // Calibrated cross-encoder score of rank 1 when the reranker ran (System One rubric levels are not calibrated).
+  // Every grade carries it, including the identity tiers that decide before it: a verbatim quote grades
+  // `high_vector_match`, and a reader of `top_rerank_score` must still see that the reranker ran.
+  const reranked = typeof top.rerank_score === 'number' && Number.isFinite(top.rerank_score) && top.rerank_score_kind !== 'rubric';
+  const rerankScore = reranked ? { top_rerank_score: top.rerank_score! } : {};
 
   // Identity-tier signals win outright — retrieval FOUND the named thing.
   if (top.exact_lookup !== undefined) {
-    return { level: 'strong', reason: 'exact_lookup', top_evidence: top.evidence };
+    return { level: 'strong', reason: 'exact_lookup', top_evidence: top.evidence, ...rerankScore };
   }
   if (top.alias_hit === true || top.evidence === 'alias_hit') {
-    return { level: 'strong', reason: 'alias_hit', top_evidence: top.evidence };
+    return { level: 'strong', reason: 'alias_hit', top_evidence: top.evidence, ...rerankScore };
   }
   if (top.evidence === 'exact_title_match') {
-    return { level: 'strong', reason: 'exact_title_match', top_evidence: top.evidence };
+    return { level: 'strong', reason: 'exact_title_match', top_evidence: top.evidence, ...rerankScore };
   }
   if (top.evidence === 'high_vector_match') {
-    return { level: 'strong', reason: 'high_vector_match', top_evidence: top.evidence };
+    return { level: 'strong', reason: 'high_vector_match', top_evidence: top.evidence, ...rerankScore };
   }
 
   // System One S3 (only stamped when the slot acted): the top kept candidate cleared the evidence threshold.
   if (!opts.ignoreDecideEvidence && top.decide_evidence?.clears) {
-    return { level: 'strong', reason: 'decide_evidence', top_evidence: top.evidence };
+    return { level: 'strong', reason: 'decide_evidence', top_evidence: top.evidence, ...rerankScore };
   }
 
-  // Calibrated cross-encoder signal when the reranker ran (System One rubric levels are not calibrated).
-  if (typeof top.rerank_score === 'number' && Number.isFinite(top.rerank_score) && top.rerank_score_kind !== 'rubric') {
-    return top.rerank_score >= floor
-      ? { level: 'strong', reason: 'rerank_top', top_evidence: top.evidence, top_rerank_score: top.rerank_score }
-      : { level: 'weak', reason: 'rerank_top_below_floor', top_evidence: top.evidence, top_rerank_score: top.rerank_score };
+  if (reranked) {
+    return top.rerank_score! >= floor
+      ? { level: 'strong', reason: 'rerank_top', top_evidence: top.evidence, ...rerankScore }
+      : { level: 'weak', reason: 'rerank_top_below_floor', top_evidence: top.evidence, ...rerankScore };
   }
 
   // No reranker: fall back to the T4 evidence contract. An OR-relaxed

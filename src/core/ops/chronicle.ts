@@ -208,8 +208,16 @@ const ontology_propose: Operation = {
     });
     // A managed brain commits the observation as a coordinated database-only
     // write serialized on the entity's page key; unmanaged brains write directly.
-    const managed = await coordinatedDatabaseWrite(ctx, 'ontology_propose', entitySlug, [entitySlug], merge);
-    return managed ? managed.value : merge(ctx.engine, ctx.sourceId);
+    // #5575: an agent observation never closes a more trusted stint; it is stored contested for the owner (A5).
+    const { ontologyWriteTrust, contestOntologySupersession } = await import('../trust/supersede-handlers.ts');
+    const { maintenanceTransaction } = await import('../persistence/attribution.ts');
+    const trust = ontologyWriteTrust(ctx);
+    const guarded = async (engine: typeof ctx.engine, sourceId: string | undefined) => {
+      const result = await merge(engine, sourceId);
+      return { ...result, ...await contestOntologySupersession(engine, sourceId ?? 'default', entitySlug, String(p.dimension), result) };
+    };
+    const managed = await coordinatedDatabaseWrite(ctx, 'ontology_propose', entitySlug, [entitySlug], guarded, trust);
+    return managed ? managed.value : maintenanceTransaction(ctx.engine, tx => guarded(tx, ctx.sourceId), trust);
   },
   cliHints: { name: 'ontology-add', positional: ['entity', 'dimension', 'value'] },
 };

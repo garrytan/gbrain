@@ -237,6 +237,9 @@ describe('lock order', () => {
       const clean = lockOrderReport();
       expect(clean.violations.slice(before)).toEqual([]);
       expect(clean.publications_reading_brain_for_share).toBeGreaterThan(0);
+      // The request row is locked by one statement per publication: the `publication_started` stamp takes the lock
+      // (two statements, a bare FOR UPDATE and then the stamp, is the shape before v0.60.142.0).
+      expect(clean.publication_row_lock_statements_max).toBe(1);
       await world.engine.transaction(async tx => {
         await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR SHARE', ['robot-0']);
         await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');

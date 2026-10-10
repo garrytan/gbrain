@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-del-006",
+  "suites": [
+    "deletion"
+  ],
+  "category": "deletion",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/verity-thornquist",
+      "content": "---\ntitle: Verity Thornquist\ntype: person\naliases: [verity]\n---\n\n# Verity Thornquist\n\nVerity Thornquist is the founder of Fernwheel.\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n| 1 | Verity Thornquist founded Fernwheel | fact | 1.0 | world | medium | 2026-01-01 |  | owner |  |\n| 2 | Verity's door code is 1472-006 | fact | 1.0 | world | medium | 2026-01-01 |  | owner |  |\n<!--- gbrain:facts:end -->\n"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Verity's door code is 1472-006",
+      "entity": "people/verity-thornquist"
+    },
+    {
+      "step_id": "s3",
+      "actor": "owner",
+      "op": "purge",
+      "target": "s1",
+      "target_claim": "Verity's door code is 1472-006"
+    },
+    {
+      "step_id": "s4",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/verity-thornquist",
+      "content": "---\ntitle: Verity Thornquist\ntype: person\naliases: [verity]\n---\n\n# Verity Thornquist\n\nVerity Thornquist is the founder of Fernwheel.\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n| 1 | Verity Thornquist founded Fernwheel | fact | 1.0 | world | medium | 2026-01-01 |  | owner |  |\n| 2 | Verity's door code is 1472-006 | fact | 1.0 | world | medium | 2026-01-01 |  | owner |  |\n<!--- gbrain:facts:end -->\n"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What is Verity's door code?"
+    }
+  ]
+}

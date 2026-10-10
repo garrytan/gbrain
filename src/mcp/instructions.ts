@@ -155,9 +155,10 @@ export function resolveMcpInstructions(
  * handshake instead of at server construction. The constructor's static
  * value stays the fallback when `compute` throws. Relies on the SDK Server's
  * initialize handler reading `_instructions` (pinned by
- * test/mcp-initialize-instructions.test.ts).
+ * test/mcp-initialize-instructions.test.ts). `onAnswered` runs once the
+ * response is written (stdio serve starts its deferred boot there).
  */
-export function installInstructionsResolver(server: Server, compute: () => Promise<string>): void {
+export function installInstructionsResolver(server: Server, compute: () => Promise<string>, onAnswered?: () => void): void {
   const s = server as unknown as {
     _instructions?: string;
     _oninitialize(request: unknown): Promise<unknown>;
@@ -167,6 +168,8 @@ export function installInstructionsResolver(server: Server, compute: () => Promi
   s.removeRequestHandler('initialize');
   server.setRequestHandler(InitializeRequestSchema, async (request) => {
     try { s._instructions = await compute(); } catch { /* keep the constructor value */ }
+    // setImmediate fires after the SDK has written this response.
+    if (onAnswered) setImmediate(onAnswered);
     return s._oninitialize(request) as never;
   });
 }

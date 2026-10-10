@@ -10,7 +10,8 @@ test/agent-injection-http-view.serial.test.ts	global-state	global-state: binds l
 test/agent-install-backup.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; spyOn fs.renameSync, PGLiteEngine.prototype.connect, console.log
 test/agent-install-follow-setup.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/agent-journey-recovery.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
-test/agent-journey-tier2.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
+test/agent-journey-tier2-json.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll (seedTimelineFinding in test/helpers/agent-journey-tier2.ts); ~60 real CLI subprocesses on one PGLite brain
+test/agent-journey-tier2.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll (seedTimelineFinding in test/helpers/agent-journey-tier2.ts); live gbrain serve over MCP stdio
 test/agent-journey-upgrade.serial.test.ts	global-state	global-state: binds local servers/ports
 test/agent-journey.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/agent-operator-gate-fixes.serial.test.ts	global-state	global-state: binds local servers/ports
@@ -56,6 +57,7 @@ test/brain-durability-hook.serial.test.ts	exclusive	exclusive: hardenBrainRepo({
 test/brain-flag-routing.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/brain-registry.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/brain-repo-durability.serial.test.ts	exclusive	exclusive: hardenBrainRepo's own scaffolding commit fires the just-installed post-commit hook (background push) which races the synchronous push-probe on the same bare remote ("cannot lock ref" → needs_attention non-empty). The race is intra-call; pooled CPU contention widens the window past what the assertions tolerate (observed on a 4-vCPU CI runner, never locally). Sequential lane restores master-era timing until the probe learns to retry ref-lock contention.
+test/brainbench-trust-mutations.serial.test.ts	global-state	global-state: the BrainBench trust brain sets process.env GBRAIN_HOME and BRAINBENCH_CONNECTOR_TOKEN for its run (src/eval/brainbench/trust-scenario.ts) and the detector probe swaps the write gate's module-level detector
 test/brainstorm/checkpoint.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/brainstorm/unpriced-chat-model.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests, __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; R1: mutates process.env (GBRAIN_HOME, GBRAIN_AUDIT_DIR)
 test/capture-consent-gate.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME); also real PGLite engines and the module-global harvest queue
@@ -358,6 +360,7 @@ test/think-extractive.serial.test.ts	global-state	global-state: process-wide tes
 test/think-gather-adaptive-return.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
 test/think-gather-autocut.serial.test.ts	R2	R2: mock.module(../src/core/search/hybrid.ts) replaces modules for every file in the process
 test/think-temporal-window.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests
+test/trust-smoke.serial.test.ts	global-state	global-state: the memory-trust smoke runs on the BrainBench trust brain, which sets process.env GBRAIN_HOME and BRAINBENCH_CONNECTOR_TOKEN for its run (src/eval/brainbench/trust-scenario.ts)
 test/unified-multimodal.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway
 test/unsupported-embedding-identity.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; process-wide test seams __setEmbedTransportForTests, __setRerankTransportForTests; configureGateway changes the process-wide AI gateway
 test/upgrade-bun-link-arc.serial.test.ts	global-state	global-state: patches process stdout/stderr/console

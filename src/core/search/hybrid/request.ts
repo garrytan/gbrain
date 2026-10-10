@@ -176,7 +176,12 @@ export async function resolveHybridRequest(
   // System One S2: an above-threshold intent replaces the regex one before
   // weights, detail and search options are derived (regex is the fallback).
   const decide = decidePending ? await decidePending : undefined;
-  const suggestions = decide ? await applySearchIntent(decide, query, regexSuggestions).catch(() => regexSuggestions) : regexSuggestions;
+  const intended = decide ? await applySearchIntent(decide, query, regexSuggestions).catch(() => regexSuggestions) : regexSuggestions;
+  // An inferred image intent needs a multimodal embedding model; without one
+  // the image arm cannot run, so the query stays a text query (keyword arm and
+  // expansion included). An explicit `crossModal` still routes as asked.
+  const suggestions = intended.suggestedModality !== 'text' && (await import('../../ai/multimodal-model.ts')).multimodalEmbeddingModel() === null
+    ? { ...intended, suggestedModality: 'text' as const } : intended;
   const intentWeightingOn = resolvedMode.intentWeighting;
   const intentWeights = intentWeightingOn
     ? weightsForIntent(suggestions.intent)
@@ -233,6 +238,10 @@ export async function resolveHybridRequest(
     // hybrid hot path.
     excludePrivate: opts?.excludePrivate,
     requireSafeChunks: opts?.requireSafeChunks,
+    // #5575 — the read floor and proactive activation control, same leak
+    // class: dropping them would return rows below a connection's floor.
+    minTrust: opts?.minTrust,
+    suppressFlagged: opts?.suppressFlagged,
     // v0.36 (D11): pass the pre-validated descriptor into the engine so
     // it never has to read config. Engines normalize string-or-descriptor
     // via normalizeEngineColumn; the descriptor path is the strict one.

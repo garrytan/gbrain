@@ -1002,12 +1002,30 @@
       "searchKeyword": {
         "cjk": [
           {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          },
+          {
             "paramCount": 0,
             "via": "tagged"
           },
           {
             "paramCount": 0,
             "via": "tagged"
+          },
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
           },
           {
             "paramCount": 8,
@@ -1020,12 +1038,30 @@
         ],
         "cjk+sourceIds+detailLow": [
           {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          },
+          {
             "paramCount": 0,
             "via": "tagged"
           },
           {
             "paramCount": 0,
             "via": "tagged"
+          },
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
           },
           {
             "paramCount": 10,
@@ -2237,7 +2273,6 @@
           {
             "paramCount": 3,
             "unsafeOptions": {
-              "cancelFence": false,
               "prepare": true,
               "simple": false
             },
@@ -3273,6 +3308,18 @@
           }
         ],
         "sourceId": [
+          {
+            "paramCount": 3,
+            "unsafeOptions": {
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readPageSnapshotsBatch": {
+        "default": [
           {
             "paramCount": 3,
             "unsafeOptions": {

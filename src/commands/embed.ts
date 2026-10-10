@@ -1,17 +1,18 @@
-import { sanitizeRemoteBody } from '../core/remote-body.ts';
+import { prepareProseChunks } from '../core/markdown-chunks.ts';
+import type { FenceChunkOverlay } from '../core/eligibility/fence-overlay.ts';
 import { prepareEmbeddingProjections, countArchivedEmbeddingWork, reportBlockedProjections } from '../core/embedding-readiness.ts';
 import { embedStaleFacts, type EmbedFactsResult } from '../core/embed-facts.ts';
 import { embedTakesForStaleDrain, type EmbedTakesResult } from '../core/embed-takes.ts';
 import { parseFactEmbedArgs } from './embed-facts-delegate.ts';
 import { readProjectionSnapshot, installPageProjection, installPageEmbeddings, PageProjectionConflictError, retryProjectionConflict } from '../core/page-state/projections.ts';
 import { projectionConflictLine } from '../core/agent-output.ts';
+import { withChunkStatisticsRefresh } from '../core/search/projection-statistics.ts';
 import { PageRevisionConflictError } from '../core/page-state/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { currentEmbeddingSignature } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { carryChunkMetadata, probeEmbedder, resolveProvenanceStamp, stampIfPageProvenanceComplete } from '../core/embed-stale.ts';
 import type { StaleImageSweepResult } from '../core/embed-stale-images.ts';
-import { chunkText } from '../core/chunkers/recursive.ts';
 import { resolveMaxChunkTokens } from '../core/embedding-input-limit.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from '../core/embed-oversize-heal.ts';
 import {
@@ -715,7 +716,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     let drainError: { err: unknown } | undefined;
     const drain = (async () => {
       try {
-        await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, {
+        await withChunkStatisticsRefresh(engine, () => !opts.dryRun && result.embedded > 0 && !isAborted(drainSignal), () => embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, {
           batchSize: opts.batchSize,
           priority: opts.priority,
           catchUp: opts.catchUp,
@@ -724,7 +725,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
           quiet: opts.quiet,
           includeNullSignature: opts.includeNullSignature,
           assertOwned: opts.assertOwned,
-        }, drainSignal);
+        }, drainSignal));
         if (opts.stale && !isAborted(drainSignal)) await embedTakesForStaleDrain(engine, {
           dryRun: !!opts.dryRun, signal: drainSignal, sourceId: opts.sourceId, assertOwned: opts.assertOwned, quiet: opts.quiet,
           takes: opts.takes, onProgress: (_done, _total, embedded) => { takesEmbedded = embedded; },
@@ -1042,19 +1043,8 @@ async function embedPage(
   // embedded — but we never write chunks or call the embedding model.
   let chunks = page.text_projection_revision === snapshot.revision ? origin.chunks : [];
   if (chunks.length === 0) {
-    const inputs: ChunkInput[] = [];
-    // #4530: respect the active embedding model's per-input token limit.
-    const chunkOpts = { maxTokens: origin.maxChunkTokens };
-    if (page.compiled_truth.trim()) {
-      for (const c of chunkText(sanitizeRemoteBody(page.compiled_truth), chunkOpts)) {
-        inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
-      }
-    }
-    if (page.timeline.trim()) {
-      for (const c of chunkText(sanitizeRemoteBody(page.timeline), chunkOpts)) {
-        inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
-      }
-    }
+    // #4530: the active embedding model's per-input token limit; #5575 ENG-1: the page's fence overlay.
+    const inputs = await prepareProseChunks(page, origin.maxChunkTokens, origin.fenceOverlay);
 
     if (dryRun) {
       // Count what chunking WOULD produce, without writing.
@@ -1473,22 +1463,9 @@ async function healChunklessPages(
   let pagesHealed = 0;
   let budgetExceeded = false;
 
-  const buildInputs = (compiledTruth: string, timeline: string, maxTokens = resolveMaxChunkTokens()): ChunkInput[] => {
-    const inputs: ChunkInput[] = [];
-    // #4530: respect the active embedding model's per-input token limit.
-    const chunkOpts = { maxTokens };
-    if (compiledTruth.trim()) {
-      for (const c of chunkText(sanitizeRemoteBody(compiledTruth), chunkOpts)) {
-        inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
-      }
-    }
-    if (timeline.trim()) {
-      for (const c of chunkText(sanitizeRemoteBody(timeline), chunkOpts)) {
-        inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
-      }
-    }
-    return inputs;
-  };
+  // #4530: the active embedding model's per-input token limit; #5575 ENG-1: the page's fence overlay.
+  const buildInputs = (page: { compiled_truth: string; timeline: string }, maxTokens = resolveMaxChunkTokens(), overlay?: FenceChunkOverlay) =>
+    prepareProseChunks(page, maxTokens, overlay);
   // BUDGET_MS === null means catch-up: no wall-clock cap on this sweep,
   // mirroring the main stale loop's own --catch-up handling below.
   const overBudget = (): boolean => BUDGET_MS != null && Date.now() - startedAt > BUDGET_MS;
@@ -1514,7 +1491,7 @@ async function healChunklessPages(
           // dryRun never writes, so there's no live-refetch race to close —
           // chunk the listed snapshot directly (matches embedPage's own
           // dry-run, which chunks whatever getPage returned at call time).
-          const inputs = buildInputs(page.compiled_truth, page.timeline);
+          const inputs = await buildInputs(page);
           // Whitespace-only content (SQL prefilter is `<> ''`, not
           // trim-aware) chunks to nothing — matches embedPage's contract.
           if (inputs.length === 0) continue;
@@ -1527,7 +1504,7 @@ async function healChunklessPages(
 
         const prepared = await observed(activePacer, () => readProjectionSnapshot(engine, page.slug, page.source_id, { allowUnsealed: true, requireLiveSource: true }));
         if (!prepared || prepared.chunks.length > 0) continue;
-        const inputs = buildInputs(prepared.snapshot.page.compiled_truth, prepared.snapshot.page.timeline, prepared.maxChunkTokens);
+        const inputs = await buildInputs(prepared.snapshot.page, prepared.maxChunkTokens, prepared.fenceOverlay);
         if (inputs.length === 0) continue;
 
         await observed(activePacer, () => engine.transaction(async tx => {

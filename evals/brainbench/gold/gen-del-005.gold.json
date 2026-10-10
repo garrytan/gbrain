@@ -1,0 +1,14 @@
+{
+  "fixture_id": "gen-del-005",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "purged",
+        "step": "s3",
+        "probe": "Halcyon's door code is 4553-005"
+      }
+    ]
+  }
+}

@@ -1206,7 +1206,7 @@ export async function runImport(
     }
   }
 
-  if (imported > 0 && !opts.managedBookmark) await refreshProjectionStatistics(engine);
+  if (imported > 0 && !opts.managedBookmark) await refreshProjectionStatistics(engine, imported);
   return {
     imported, skipped, errors, chunksCreated, failures,
     ...(resealSummary ? { resealed: resealSummary } : {}), ...fenceTally.fields(),

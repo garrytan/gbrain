@@ -113,7 +113,8 @@ type CallOpts = { remote?: boolean; transport?: 'stdio' | 'http' };
 // Trust-pin tests pass 'http' / undefined explicitly.
 /** Remote callers get lean rows (C1): the fixture row minus its page_id diagnostic. */
 function leanResults(): unknown[] {
-  return nextResults.map(r => { const { page_id: _p, ...lean } = r as Record<string, unknown>; return lean; });
+  // The search op labels every hit with its trust tier and origin (#5575 A6); the stub rows carry neither, so unknown/unrecorded.
+  return nextResults.map(r => { const { page_id: _p, ...lean } = r as Record<string, unknown>; return { ...lean, trust_tier: 'unknown', origin: 'unrecorded' }; });
 }
 
 async function callSearch(opts: CallOpts = {}) {
@@ -251,7 +252,7 @@ describe('maybeAttachBackupNotice (stdio aggregate block)', () => {
     saveBackupStatus(warnStatus());
     const out = await callSearch({ remote: false, transport: 'stdio' });
     expect(out.content.length).toBe(1);
-    expect(JSON.parse(out.content[0].text)).toEqual(nextResults);
+    expect(JSON.parse(out.content[0].text)).toEqual(nextResults.map(r => ({ ...(r as Record<string, unknown>), trust_tier: 'unknown', origin: 'unrecorded' })));
   });
 
   test('hourly latch: an ok-cache consult blinds a warn cache written moments later, until reset', async () => {

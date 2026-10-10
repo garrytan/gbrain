@@ -27,6 +27,7 @@ import { isImageFilePath, resolveSlugForPath } from '../sync.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { VERSION } from '../../version.ts';
 import { sha256 } from './digest.ts';
+import { readPagePurgeTombstones } from './page-purge.ts';
 import { readSyncContent, readSyncFile, syncGitPath, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
 import { PINNED_WINDOW, readBlobContents, readPinnedBlob, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { screenSyncImport, type SyncImportScreenInput } from './sync-prepare.ts';
@@ -143,6 +144,14 @@ export function managedImageHold(entry: SyncEntry, content: string | null, blob:
     message: `${entry.path} is an image, which managed sync does not import yet; the rest of the source synced.` }, content, blob);
 }
 
+const purgeTombstonesByRun = new WeakMap<SyncScreenRun, Promise<Map<string, string>>>();
+/** #5575: one tombstone read per sync run; a run screens one source. */
+function runPurgeTombstones(engine: BrainEngine, run: SyncScreenRun, sourceId: string): Promise<Map<string, string>> {
+  let read = purgeTombstonesByRun.get(run);
+  if (!read) { read = readPagePurgeTombstones(engine, sourceId); purgeTombstonesByRun.set(run, read); }
+  return read;
+}
+
 export interface FrozenImportScreen {
   cursor: Pick<SyncDiscovery, 'sourceId' | 'incarnation' | 'root'>;
   entry: SyncEntry; slug: string; pageId: number | null; snapshot: Snapshot;
@@ -173,7 +182,8 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
   const moved = entry.renameFrom && entry.renameFrom.slug !== slug ? entry.renameFrom : undefined;
   const base = moved ? await engine.readPageSnapshot(moved.slug, { sourceId: input.cursor.sourceId, includeDeleted: true }) : snapshot;
   const screenInput: SyncImportScreenInput = { content, rawHash: input.rawHash, lineEndingOnly: input.lineEndingOnly, slug, sourcePath: entry.sourcePath, path: entry.path,
-    root: input.cursor.root, snapshot, base, renamed: !!moved, activePack: run.activePack, sanity: run.sanity };
+    root: input.cursor.root, snapshot, base, renamed: !!moved, activePack: run.activePack, sanity: run.sanity,
+    purgedPages: await runPurgeTombstones(engine, run, input.cursor.sourceId) };
   let { screen } = screenSyncImport(screenInput);
   // #6188: a fence Tier 1 rewrites is admitted (publication writes the normalized file back); with fences.normalize=false it is held.
   if (screenNormalized(screen) && !await run.normalize()) ({ screen } = screenSyncImport({ ...screenInput, normalize: false }));

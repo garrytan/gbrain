@@ -7,7 +7,8 @@
  * (the preparers read only the database and the local canonical root, so this
  * runs on the connector or import host), then asks the kernel. An item is
  * skipped only when:
- *   - the prepared mutation is a no-op and observed the snapshot revision,
+ *   - the prepared mutation is a no-op and observed the snapshot revision, and the
+ *     page still holds that revision when the kernel reads it,
  *   - no projection work is pending (safe-chunk re-seal, text projection behind
  *     the knowledge revision, an embedded page with no contextual mode, or
  *     unembedded chunks when the publication would queue embedding),
@@ -76,6 +77,8 @@ export async function inspectUnchanged(engine: Pick<BrainEngine, 'executeRaw'>, 
       EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding IS NULL) AS unembedded
     FROM pages p WHERE p.id=$1 AND p.deleted_at IS NULL`, [snapshot.page.id]);
   if (!page) return result('page_missing');
+  // The page's current revision, read after the preparer ran: a write that landed since the snapshot was read is admitted.
+  if (page.knowledge_revision != null && page.knowledge_revision !== snapshot.revision) return result('revision_moved');
   const waived: NoopKernelWaiver[] = [];
   const modePending = page.mode_pending === true;
   if (modePending && input.waive?.includes('contextual_mode')) waived.push('contextual_mode');

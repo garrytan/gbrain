@@ -21,6 +21,7 @@ import type { WriteAuthority, WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
 import { writeAtomPageState } from '../cycle/extract-atoms-page-state.ts';
 import { effectiveVisibility } from '../search/private-visibility.ts';
+import { declareDerivation, deriveTrust, lowerToDerivedTier, recordTaintEdges } from '../trust/taint.ts';
 
 export interface AtomOrigin {
   kind: 'page' | 'transcript';
@@ -504,10 +505,19 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
     } };
   }
   await authorizeWrite(engine, row.authority, 'put_page', row.slug);
-  const prepared = await preparePageMutation(engine, { ...row, operation: 'put_page' }, config, undefined, undefined, { allowMissingFile: true });
-  return { ...prepared, additionalPageKeys, validate: async tx => { await validate(tx); await authorizeWrite(tx, row.authority, 'put_page', row.slug); await prepared.validate?.(tx); }, apply: async tx => {
+  // #5575 I2: the extractor read only the origin (a page, or a transcript file of the user's own sessions); the page write carries the declaration.
+  const derivation = await deriveTrust(engine, p.origin.kind === 'page' && p.origin.pageId !== null ? [{ table: 'pages', id: p.origin.pageId }] : [],
+    { channel: 'derive:atoms', requestId: row.id });
+  const prepared = await preparePageMutation(engine, { ...row, operation: 'put_page', intent: { ...p, derivation: declareDerivation(derivation.trust, derivation.inputs) } },
+    config, undefined, undefined, { allowMissingFile: true });
+  return { ...prepared, trust: derivation.trust, additionalPageKeys, validate: async tx => { await validate(tx); await authorizeWrite(tx, row.authority, 'put_page', row.slug); await prepared.validate?.(tx); }, apply: async tx => {
     const result = await prepared.apply(tx);
     if (p.links?.length) await tx.addLinksBatch(p.links, { auditSite: 'cycle.extract_atoms.provenance' });
+    const [atom] = await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [row.source_id, row.slug]);
+    if (atom) {
+      await lowerToDerivedTier(tx, 'pages', [Number(atom.id)], derivation.trust);
+      await recordTaintEdges(tx, { table: 'pages', id: Number(atom.id), sourceId: row.source_id }, derivation.inputs);
+    }
     return { ...result, atom_run_key: p.runKey, atom_kind: p.kind };
   } };
 }

@@ -16,7 +16,7 @@
  * `fetch`), plus the checkpoint-validation statement timeout that PGLite cannot
  * raise. Wall time per journey is printed for the PR body, not asserted.
  */
-import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -49,6 +49,7 @@ const { engines, source, home } = fixture;
 const env = fixture.env;
 beforeAll(fixture.setup, 120_000);
 afterAll(fixture.teardown);
+afterEach(() => __setEmbedTransportForTests(null));
 
 class CliExit extends Error { constructor(readonly code: number) { super(`process.exit(${code})`); } }
 
@@ -202,6 +203,7 @@ test('journey (b): orphan-bindings, from the doctor finding to a clear finding, 
 }), 240_000);
 
 test('journey (b): connector-fences, from the sync refusal to a sync that carries the fence, in four commands', async () => withEnv(env, async () => {
+  embedStub();
   const fence = '<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n'
     + '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n'
     + '| 1 | Ships weekly | fact | 1.0 | world | high | 2026-01-01 |  | remember |  |\n<!--- gbrain:facts:end -->';

@@ -10,9 +10,18 @@
  * warns only when neither ANALYZE nor autoanalyze ran in the last hour. Both
  * name each table and the fix. Reports even when `planner.auto_analyze` is
  * off.
+ *
+ * Postgres also reports the search statistics `missingSearchStatistics`
+ * finds absent (projection-statistics.ts, the test the write-pass skip and the
+ * search guard use): after pg_upgrade or a deleted pg_statistic autovacuum
+ * never collects them, and search plans as nested loops (50-60 s at 5,000
+ * pages). The fix runs the same refresh through `gbrain repair planner-stats
+ * --apply`; a role that may not ANALYZE gets it as a host-operator step.
  */
 import { plannerAutoAnalyzeEnabled, PLANNER_STATS_REPAIR_COMMAND, readPlannerTableStates } from '../../../core/planner-stats.ts';
+import { canAnalyzePages, missingSearchStatistics } from '../../../core/search/projection-statistics.ts';
 import type { Check } from '../../doctor.ts';
+import { doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 async function runPlannerStats(ctx: DoctorContext): Promise<Check[]> {
@@ -28,9 +37,21 @@ async function runPlannerStats(ctx: DoctorContext): Promise<Check[]> {
     }
     const autoAnalyze = engine.kind === 'pglite' ? await plannerAutoAnalyzeEnabled(engine) : null;
     const stale = tables.filter(t => t.stale);
-    const details = { engine: engine.kind, auto_analyze: autoAnalyze, checked: tables.map(t => t.table), stale, fix: PLANNER_STATS_REPAIR_COMMAND };
-    if (stale.length === 0) {
+    const missing = await missingSearchStatistics(engine);
+    const details = { engine: engine.kind, auto_analyze: autoAnalyze, checked: tables.map(t => t.table), stale, missing_search_statistics: missing, fix: PLANNER_STATS_REPAIR_COMMAND };
+    if (stale.length === 0 && missing.length === 0) {
       checks.push({ name: 'planner_stats_stale', status: 'ok', message: `Planner statistics are fresh on ${tables.length} hot tables.`, details });
+      return checks;
+    }
+    if (missing.length > 0) {
+      const owner = await canAnalyzePages(engine);
+      const why = `Search's planner statistics are absent (${missing.join(', ')}), so search plans as nested loops over every page: `
+        + 'at 5,000 pages a search took 50-60 s instead of 0.5 s. Autovacuum does not restore them after pg_upgrade or a deleted pg_statistic.';
+      const listed = stale.map(t => `${t.table} (${t.pending} rows changed since ANALYZE, threshold ${Math.round(t.threshold)})`).join(', ');
+      checks.push({ name: 'planner_stats_stale', status: 'warn',
+        message: `${why}${listed ? ` Also stale: ${listed}.` : ''} Fix on the brain host: ${PLANNER_STATS_REPAIR_COMMAND}${owner ? '' : ' as the table owner'}.`, details,
+        fix: { argv: PLANNER_STATS_REPAIR_COMMAND.split(' '), consent: [], actor: owner ? 'agent' : 'host_admin', why,
+          verify: doctorVerify('planner_stats_stale'), requires_exclusive: false } });
       return checks;
     }
     const listed = stale.map(t => `${t.table} (${t.pending} rows changed since ANALYZE, threshold ${Math.round(t.threshold)}${t.has_stats ? '' : ', no statistics'})`).join(', ');

@@ -6,6 +6,7 @@ import type { GetVersionsOpts, PageVersionRows } from './page-state/version-type
 import { assertPageRevision } from './page-state/types.ts';
 import { lockUnheldPageKeys, withHeldPageKeys, type HeldPageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
+import { readPageSnapshotsBatch } from './page-snapshot-batch.ts';
 import { createPageVersion } from './page-state/versions.ts';
 import { moveSlugBindings, recordRenameAlias } from './page-state/rename-alias.ts';
 import { composablePostgresTransaction, transactionMemo } from './page-state/transactions.ts';
@@ -49,7 +50,7 @@ import { driverPoolStats, type DriverPoolStats } from './postgres-engine/pool-st
 import {
   valueHash,
   normalizeDimension,
-  isNovelDimension, isBackdatedObservation,
+  isNovelDimension, isBackdatedObservation, ONTOLOGY_SUPERSEDE_GUARD,
 } from './chronicle/ontology.ts';
 import { logDbDisconnect } from './audit/db-disconnect-audit.ts';
 import { logPoolRecovery } from './audit/pool-recovery-audit.ts';
@@ -64,9 +65,10 @@ import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from
 import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, supportsHnswIterativeScan } from './vector-index.ts';
-import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt } from './search/vector-pool.ts';
-import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SET_STATEMENT_TIMEOUT_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, type PageSourceStats, type VectorSearchStatement } from './search/vector-statement.ts';
+import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt, POOL_MAX_SCAN_TUPLES } from './search/vector-pool.ts';
+import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, SET_STATEMENT_TIMEOUT_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement } from './search/vector-statement.ts';
 import { withVectorSettings } from './search/vector-settings.ts';
+import { guardSearchStatistics } from './search/projection-statistics.ts';
 import {
   vectorCastSuffix,
   resolveActiveEmbeddingColumnFromEngine,
@@ -106,7 +108,7 @@ import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
@@ -179,7 +181,7 @@ export function getPostgresSchema(
 
 export class PostgresEngine implements BrainEngine {
   private vectorIterativeScan?: Promise<boolean>;
-  private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL));
+  private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), ids => this.executeRaw<ScopeChunkCount>(SCOPE_CHUNKS_SQL, [ids]));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   readonly kind = 'postgres' as const;
@@ -351,6 +353,11 @@ export class PostgresEngine implements BrainEngine {
       if (this.rlsScopeBindingEnabled) await tx`SELECT set_config('app.scopes', ${previous[0]?.scopes ?? ''}, true)`;
       return result;
     });
+  }
+
+  /** An unscoped read in its own transaction with JIT off (search-settings.ts); a savepoint inside a caller's transaction. */
+  private jitOffRead<T>(callback: (tx: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
+    return this.transaction(engine => withSearchJitOff((engine as PostgresEngine).sql, this._pageTransaction, () => callback((engine as PostgresEngine).sql)));
   }
 
   // Lifecycle
@@ -675,16 +682,16 @@ export class PostgresEngine implements BrainEngine {
         async executeRaw<R = Record<string, unknown>>(
           query: string,
           params?: unknown[],
-          opts?: { signal?: AbortSignal },
+          opts?: { signal?: AbortSignal; prepare?: boolean },
         ): Promise<R[]> {
-          // ReservedConnection.executeRaw doesn't wire AbortSignal today
-          // (the only use site is migrations + cycle-lock writes that don't
-          // want cancellation). Signature matches the interface so callers
-          // that pass opts don't typecheck-break; opts.signal is ignored.
+          // ReservedConnection.executeRaw doesn't wire AbortSignal today (migrations and cycle-lock writes
+          // don't want cancellation); opts.signal is ignored. GBRA-75 w9: `prepare` names a parameterized
+          // statement (bounded read sessions); postgres.js ANDs it with the connection option, as runUnsafe does.
+          // Without it the statement stays unnamed, as before.
           void opts;
           const rows = params === undefined
             ? await reserved.unsafe(query)
-            : await reserved.unsafe(query, params as Parameters<typeof reserved.unsafe>[1]);
+            : await reserved.unsafe(query, params as Parameters<typeof reserved.unsafe>[1], { prepare: opts?.prepare === true });
           return rows as unknown as R[];
         },
       };
@@ -737,6 +744,12 @@ export class PostgresEngine implements BrainEngine {
     return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx =>
       readCanonicalPageSnapshot(async (query, params) => Array.from(await tx.unsafe(query, params as never, { prepare: true })) as never, slug, opts),
     opts?.resolveAlias && opts.excludePrivate ? { alwaysTransaction: true, jitOff: true } : undefined);
+  }
+
+  async readPageSnapshotsBatch(refs: ReadonlyArray<{ slug: string; sourceId: string }>, opts?: { maxBytes?: number }) {
+    const sourceIds = [...new Set(refs.map(ref => ref.sourceId))];
+    return this.withScopedReadTransaction(sourceIds.length ? sourceIds : undefined, undefined, tx =>
+      readPageSnapshotsBatch(async (query, params) => Array.from(await tx.unsafe(query, params as never, { prepare: true })) as never, refs, opts));
   }
 
   async lockPageKeys(keys: readonly PageKey[]): Promise<void> {
@@ -932,6 +945,7 @@ export class PostgresEngine implements BrainEngine {
   // list_pages etc. see zero breaking changes. A2 two-pass (Layer 7)
   // consumes searchKeywordChunks for the raw chunk-grain primitive.
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
+    guardSearchStatistics(this, this._pageTransaction);
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const type = opts?.type;
@@ -975,7 +989,7 @@ export class PostgresEngine implements BrainEngine {
       });
     }
 
-    const params: unknown[] = [query];
+    const params: unknown[] = [collapseWebsearchDashRuns(query)];
     let typeClause = '';
     if (type) {
       params.push(type);
@@ -1103,7 +1117,7 @@ export class PostgresEngine implements BrainEngine {
         const previous = relaxed ? await tx`SHOW enable_seqscan` : [];
         if (relaxed) await tx`SET LOCAL enable_seqscan = off`;
         const boundParams = [...params];
-        boundParams[0] = queryText;
+        boundParams[0] = collapseWebsearchDashRuns(queryText);
         const rows = await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
         if (relaxed) await tx`SELECT set_config('enable_seqscan', ${previous[0].enable_seqscan}, true)`;
         return rows;
@@ -1190,7 +1204,7 @@ export class PostgresEngine implements BrainEngine {
       });
     }
 
-    const params: unknown[] = [query];
+    const params: unknown[] = [collapseWebsearchDashRuns(query)];
     let typeClause = '';
     if (type) {
       params.push(type);
@@ -1314,6 +1328,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
+    guardSearchStatistics(this, this._pageTransaction);
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     if (opts?.limit && opts.limit > searchLimitCap()) {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
@@ -1356,7 +1371,7 @@ export class PostgresEngine implements BrainEngine {
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const stmt = buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope: await this.vectorScope(opts) });
     const iterative = await this.vectorIterativeScanSupported();
-    const attempt = { innerLimit: stmt.innerLimit, maxScanTuples: Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch), remainingMs: 8_000, exact: false, indexWalk: !!stmt.indexWalkSql, scopeScan: !stmt.indexWalkSql && !!stmt.scopeScanSql };
+    const attempt = { innerLimit: stmt.innerLimit, maxScanTuples: stmt.indexWalkSql || stmt.scopeScanSql ? Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch) : POOL_MAX_SCAN_TUPLES, remainingMs: 8_000, exact: false, indexWalk: !!stmt.indexWalkSql, scopeScan: !stmt.indexWalkSql && !!stmt.scopeScanSql };
     const [row] = await this.runVectorAttempt(stmt, attempt, iterative, opts, (tx, sql, bound) => tx.unsafe(`EXPLAIN (FORMAT JSON) ${sql}`, bound));
     const plan = row?.['QUERY PLAN'];
     return (Array.isArray(plan) ? plan[0] : plan) as Record<string, unknown>;
@@ -1477,13 +1492,13 @@ export class PostgresEngine implements BrainEngine {
   // Chunks SQL lives once in ./engine-sql/chunks.ts (refactor wave 1, W1-extended).
   // The engine keeps the retry + transaction wrapper, the RLS scope
   // transaction and the source-scope / active-column resolution.
-  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number } & BatchOpts): Promise<void> {
+  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true } & BatchOpts): Promise<void> {
     if (this._chunkWritesInTransaction) return this._upsertChunksOnce(slug, chunks, opts);
     return this.batchRetry(opts?.auditSite ?? 'upsertChunks', opts?.signal,
       () => this.transaction(tx => (tx as PostgresEngine)._upsertChunksOnce(slug, chunks, opts)), chunks.length);
   }
 
-  private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number }): Promise<void> {
+  private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true }): Promise<void> {
     return chunksImpl.upsertChunksOnce(this.engineSql, {
       lockPageKeys: (keys) => this.lockPageKeys(keys),
       readPageSnapshot: (pageSlug, snapshotOpts) => this.readPageSnapshot(pageSlug, snapshotOpts),
@@ -1690,7 +1705,9 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getBacklinkCounts(pageIds: number[], opts?: PageReadScope): Promise<Map<number, number>> {
-    return readBacklinkCounts(this.executeRaw.bind(this), pageIds, opts);
+    // JIT off (search-settings.ts): ~370 expanded-query ids cross jit_above_cost; at 50k compiling was ~140 of ~170 ms.
+    return !pageIds.length ? new Map() : this.jitOffRead(tx => readBacklinkCounts(async (query, params) =>
+      Array.from(await tx.unsafe(query, params as never, { prepare: true })) as never, pageIds, opts));
   }
 
   async getAdjacencyBoosts(pageIds: number[], opts?: PageReadScope): Promise<Map<number, import('./types.ts').AdjacencyRow>> {
@@ -1841,9 +1858,9 @@ export class PostgresEngine implements BrainEngine {
         || new Date(validFrom).getTime() >= new Date(current.valid_from).getTime();
       if (forward) {
         // Close the prior row's valid window at the new fact's valid_from (or now()).
-        await sql`UPDATE facts SET valid_until = COALESCE(${validFrom}::timestamptz, now()), superseded_by = ${newId}
-                   WHERE id = ${current.id} AND valid_until IS NULL`;
-        supersededId = Number(current.id);
+        const closed = await sql`UPDATE facts SET valid_until = COALESCE(${validFrom}::timestamptz, now()), superseded_by = ${newId}
+                   WHERE id = ${current.id} AND valid_until IS NULL${sql.unsafe(ONTOLOGY_SUPERSEDE_GUARD)} RETURNING id`;
+        supersededId = closed.length ? Number(current.id) : null;
       }
     }
     return { action: supersededId ? 'superseded_prior' : 'inserted', factId: newId, supersededId };
@@ -2192,7 +2209,7 @@ export class PostgresEngine implements BrainEngine {
 
   async listSupersessions(
     source_id: string,
-    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[] },
+    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[]; eligibility?: import('./engine.ts').FactListOpts['eligibility'] },
   ): Promise<FactRow[]> {
     return factsImpl.listSupersessions(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, opts);
   }
@@ -2306,13 +2323,13 @@ export class PostgresEngine implements BrainEngine {
     return takesImpl.listTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), opts);
   }
 
-  async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {}): Promise<TakeHit[]> {
+  async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: import('./eligibility/policy.ts').ReadEligibility } = {}): Promise<TakeHit[]> {
     return takesImpl.searchTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), query, opts);
   }
 
   async searchTakesVector(
     embedding: Float32Array,
-    opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {},
+    opts: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: import('./eligibility/policy.ts').ReadEligibility } = {},
   ): Promise<TakeHit[]> {
     return takesImpl.searchTakesVector(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), embedding, opts);
   }
@@ -2443,7 +2460,9 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getHealth(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainHealth> {
-    return healthImpl.getHealth(unscopedExecutor(this.engineSql, 'health: unscoped on master (EO4 inventory)'), opts, {
+    // Each statement in its own JIT-off transaction (at 50k two spent ~0.5 of ~0.56 s compiling); the deps stay on the pool.
+    const exec: SqlExecutor = { ...this.engineSql, run: (fragment, runOpts) => this.jitOffRead(tx => this.engineSqlOn(tx).run(fragment, runOpts)) };
+    return healthImpl.getHealth(unscopedExecutor(exec, 'health: unscoped on master (EO4 inventory)'), opts, {
       embeddingColumn: async () => (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name,
       countStalePagesForExtraction: (o) => this.countStalePagesForExtraction(o),
       getConfig: (key) => this.getConfig(key),

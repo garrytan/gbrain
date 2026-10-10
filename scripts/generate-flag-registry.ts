@@ -52,8 +52,9 @@ const EXTRA_FLAGS: Record<string, string[]> = {
   embed: ['--pace', '--pace-max-concurrency'],
   // sync shares the same pace surface via env/config plus CLI passthrough.
   sync: ['--pace', '--pace-max-concurrency'],
-  // Deferred persistence routing reaches runForget in recall.ts two levels deep.
-  forget: ['--reason', '--request-id'],
+  // Deferred persistence routing reaches runForget in recall.ts two levels deep;
+  // `forget --purge` hands off from there to src/commands/forget-purge.ts.
+  forget: ['--reason', '--request-id', '--purge', '--dry-run', '--yes', '--match', '--status', '--vacuum', '--all-subjects'],
 };
 
 /**
@@ -66,6 +67,9 @@ const DELEGATED_MODULES: Record<string, string[]> = {
   // runPersistenceAdminCli (#5595), and `auth rescope-client|rescope-token` to
   // parseRescopeGrantArgs; both parse --dry-run themselves.
   auth: ['src/commands/persistence-admin.ts', 'src/core/grants/cli.ts'],
+  // `forget --purge` (and forget --help) hand the argv to runForgetPurge, which
+  // parses --dry-run itself; a plain forget refuses --dry-run (recall.ts).
+  forget: ['src/commands/forget-purge.ts'],
 };
 
 /**

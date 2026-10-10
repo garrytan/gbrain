@@ -30,7 +30,7 @@ shape for it.
 
 | Key | Producer | Contents |
 |-----|----------|----------|
-| `brain_hot_memory` | serve-http `metaHook` (`getBrainHotMemoryMeta`) | Hot-memory facts relevant to the call |
+| `brain_hot_memory` | serve-http `metaHook` (`getBrainHotMemoryMeta`) | Hot-memory facts relevant to the call; each fact carries `trust_tier` and `origin`, and `suppressed` (`{withheld, review}`, present only when non-zero) counts unconfirmed agent-written facts activation control withheld, never their content |
 | `retrieval` | `search`/`query` op handlers | `returned_count`, `retrieved_count`, `vector_enabled`, `expansion_applied`, `cache`, `token_budget`, `degraded[]` (closed stage vocabulary), `hint` (non-contractual prose), `rows` (`"lean"` or `"full"`: the row shape of content[0]; reported for remote callers and whenever `fields` is passed) |
 | `warnings` | dispatch strict-params warn mode | `[{code: 'unknown_param', param, suggestion?}]` |
 | `pagination` | `list_pages` op handler | `truncated` (more rows match), `limit` (effective), `clamped_from?` (the caller's limit when capped), `next?` (params for the following page: `{sort, updated_after, updated_after_slug}` under `updated_asc`, else `{offset}`). The model-visible counterpart is the `listing_truncated` notice block (kind `info`, never deduped), whose `fix.mcp` is the next-page call. |

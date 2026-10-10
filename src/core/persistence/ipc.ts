@@ -24,7 +24,15 @@ export const PERSISTENCE_IPC_OPERATIONS = [
   'get_skill_policy', 'set_skill_policy', 'get_skill_retention', 'prune_skill_revisions',
   'retain_skill_revision', 'import_skill_proposal',
   'add_tag', 'remove_tag', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove', 'takes_rebuild',
+  'purge_fact', 'list_page_purges', 'unpurge_page',
 ] as const;
+/**
+ * Owner-only operations the resident owner runs for its verified local CLI
+ * registration alone (never for a stdio or HTTP MCP session it also hosts),
+ * whatever the writer grant's scopes. The CLI asks for the user's typed
+ * confirmation before it sends one; the handler re-checks that binding.
+ */
+export const LOCAL_CLI_OWNER_OPERATIONS: ReadonlySet<string> = new Set(['purge_fact', 'list_page_purges', 'unpurge_page']);
 export type PersistenceIpcOperation = typeof PERSISTENCE_IPC_OPERATIONS[number];
 const OPERATIONS = new Set<string>(PERSISTENCE_IPC_OPERATIONS);
 const MUTATIONS = new Set<string>([

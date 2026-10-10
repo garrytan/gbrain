@@ -135,11 +135,12 @@ describe('claim-aware no-progress window', () => {
     test('a lapsed head a consumer here can reclaim gets exactly one extra window, then drain_stalled / owner_missing; without one it stops at once', async () => {
       let reclaimable = true;
       const probe = probeWith(claim({ lapsed: true, step_age_ms: 5_000 }), 'same', { reclaimableHere: async () => reclaimable });
-      const passesAt: number[] = [];
-      const extended = await runDrain({ pass: async () => { passesAt.push(Date.now()); return pending(2); }, probe, pauseMs: 1, stallMs: 40 });
+      const startedAt = Date.now();
+      const extended = await runDrain({ pass: async () => pending(2), probe, pauseMs: 1, stallMs: 40 });
+      const endedAt = Date.now();
       expect(extended.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', stall: { cause: 'owner_missing' } });
-      // Two windows of 40 ms (three passes each at least), not one.
-      expect(passesAt[passesAt.length - 1]! - passesAt[0]!).toBeGreaterThanOrEqual(80);
+      // Two windows of 40 ms (three passes each at least), not one. Each window runs from the probe after a pass, so the bound is on the drain's wall time, not on pass timestamps.
+      expect(endedAt - startedAt).toBeGreaterThanOrEqual(80);
       expect(extended.drain!.passes).toBeGreaterThanOrEqual(6);
       reclaimable = false;
       const at = Date.now();

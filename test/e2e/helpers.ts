@@ -14,6 +14,8 @@ import * as db from '../../src/core/db.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
+import { TRUST_BACKFILL_COMPLETED_KEY } from '../../src/core/trust/schema.ts';
+import { WRITE_GATE_SCAN_BASELINE_KEY } from '../../src/core/write-gate-schema.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 import { runSchemaTransition } from '../../src/core/embedding-migration.ts';
 import { buildDeferredAnnIndexes } from '../../src/core/embedding-ann-build.ts';
@@ -116,7 +118,10 @@ export async function setupDB(options: { replayMigrations?: boolean } = {}): Pro
     }
   }
 
-  await conn.unsafe(options.replayMigrations ? 'TRUNCATE config' : "DELETE FROM config WHERE key <> 'version'");
+  // A warm reset keeps what the migrations seeded on the empty brain: the version and the trust bookkeeping
+  // (v226 backfill completion, v227 scan baseline), both still true of the emptied tables.
+  if (options.replayMigrations) await conn.unsafe('TRUNCATE config');
+  else await conn.unsafe('DELETE FROM config WHERE key <> ALL($1::text[])', [['version', TRUST_BACKFILL_COMPLETED_KEY, WRITE_GATE_SCAN_BASELINE_KEY]]);
 
   // Re-seed config (initSchema inserts default config rows)
   await conn.unsafe(`

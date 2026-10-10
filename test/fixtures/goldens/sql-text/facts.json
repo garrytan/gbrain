@@ -840,8 +840,8 @@
               "number",
               "number"
             ],
-            "sql": "UPDATE facts SET valid_until = COALESCE($1::timestamptz, now()), superseded_by = $2 WHERE id = $3 AND valid_until IS NULL",
-            "textSha256": "cbb0942b8d8cc9ff5e4b86319c2b55b5c652dc2663d25c4bd9bcccc1bcf9e09c"
+            "sql": "UPDATE facts SET valid_until = COALESCE($1::timestamptz, now()), superseded_by = $2 WHERE id = $3 AND valid_until IS NULL AND (CASE trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= (CASE COALESCE(NULLIF(current_setting('gbrain.write_trust_tier', true), ''), 'unknown') WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) RETURNING id",
+            "textSha256": "4218a76afc44d5d7726c406411a296b2610a7a0cdab505911e0af63de082e291"
           }
         ]
       },

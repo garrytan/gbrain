@@ -76,6 +76,8 @@ CHECKS=(
   "check:orphan-modules"
   # agent contract v1 (A2): generated docs/guides/error-codes.md matches the registry
   "check:error-codes"
+  # #5575 ENG-16: write-gate detector patterns are bounded and window-safe
+  "check:write-gate-regex"
   # agent contract v1 scanner (B9): shrink-only per-rule baselines
   "check:agent-contract"
   # No-op placeholder assertions (expect(true).toBe(true) and friends) in

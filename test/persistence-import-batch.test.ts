@@ -273,3 +273,26 @@ test('a batch admission whose COMMIT acknowledgment is lost replays its admitted
     expect(await recorded('always')).toEqual(admitted);
   }
 }), 300_000);
+
+test('an unchanged re-import screens its files with one read of each batch-shared value', async () => withEnv(env, async () => {
+  for (const [, brain] of pairs) {
+    const sourceId = `screen-${randomUUID().slice(0, 8)}`;
+    const root = await managedSource(brain.engine, sourceId, brain.label);
+    const files = write(root, Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`notes/screen-${i}.md`, page(`Screen ${i}`)])));
+    expect((await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true })).every(r => r.status === 'fulfilled' && r.value.status === 'imported')).toBe(true);
+    const counted = new Map<string, number>();
+    const original = brain.engine.executeRaw;
+    brain.engine.executeRaw = async function(this: BrainEngine, sql, params, opts) {
+      const flat = sql.replace(/\s+/g, ' ').trim();
+      for (const key of ['FROM persistence_local_writers', 'FROM shared_skill_packs', "profile='company-brain'", 'FROM sources s LEFT JOIN persistence_source_bindings'])
+        if (flat.includes(key)) counted.set(key, (counted.get(key) ?? 0) + 1);
+      return original.call(this, sql, params, opts);
+    } as BrainEngine['executeRaw'];
+    let again: PromiseSettledResult<unknown>[];
+    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally { brain.engine.executeRaw = original; }
+    expect(again.map(r => r.status === 'fulfilled' && (r.value as { status: string }).status)).toEqual(files.map(() => 'skipped'));
+    // A per-file screen would read each of these at least once per file (12 here).
+    for (const key of counted.keys()) expect({ key, perBatch: counted.get(key)! <= 4 }).toEqual({ key, perBatch: true });
+    expect(counted.size).toBe(4);
+  }
+}), 300_000);

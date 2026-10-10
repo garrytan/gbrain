@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-trust-005",
+  "suites": [
+    "trust"
+  ],
+  "category": "trust",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/stellan-frostholm",
+      "content": "---\ntitle: Stellan Frostholm\ntype: person\naliases: [stellan]\n---\n\nStellan Frostholm is the founder of Umbergale Labs.\n"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/stellan-sync-005",
+      "content": "---\ntitle: Stellan sync notes 005\ntype: note\n---\n\nStellan Frostholm walked through the Umbergale Labs roadmap.\n"
+    },
+    {
+      "step_id": "s3",
+      "actor": "local_agent",
+      "op": "put_page",
+      "slug": "notes/imogen-call-005",
+      "content": "---\ntitle: Imogen call notes 005\ntype: note\n---\n\nImogen Corvalen asked about hiring plans.\n"
+    },
+    {
+      "step_id": "s4",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/stellan-clipping-005",
+      "content": "---\ntitle: Stellan press clipping 005\ntype: note\n---\n\nUmbergale Labs opened an office in Oslo.\n",
+      "content_origin": "tool_output"
+    },
+    {
+      "step_id": "s5",
+      "actor": "connector",
+      "op": "capture",
+      "slug": "inbox/stellan-mail-005",
+      "content": "# Stellan mail 005\n\nStellan Frostholm shared the quarterly numbers for Umbergale Labs."
+    },
+    {
+      "step_id": "s6",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Imogen Corvalen is based in Oslo",
+      "entity": "people/imogen-corvalen"
+    },
+    {
+      "step_id": "s7",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Imogen Corvalen spoke at a Oslo meetup",
+      "entity": "people/imogen-corvalen",
+      "content_origin": "tool_output"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I know about Stellan Frostholm?"
+    }
+  ],
+  "holdout": true
+}

@@ -3,6 +3,7 @@ import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page } from '../types.ts';
+import { ownerGateInput, ownerImportTrust } from '../trust/channel.ts';
 import { importCodeFile, importFromContent, importImageFile, isImageFilePath, MAX_FILE_SIZE, MAX_IMAGE_BYTES, verifyPageReadable } from '../import-file.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { applyInference } from '../frontmatter-inference.ts';
@@ -14,16 +15,18 @@ import { fenceWhere } from '../fence-repair/refusal.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { assertPageRevision } from '../page-state/types.ts';
-import { sealPageTextProjection } from '../page-state/projections.ts';
+import { sealImportedPage, sealPageTextProjection } from '../page-state/projections.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { localHostId } from './identity.ts';
 import { sha256 } from './digest.ts';
+import { screeningPath } from './screening-paths.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { prepareCanonicalProjections } from './canonical-projections.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
+import type { PageSnapshot } from '../page-state/types.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 
@@ -62,6 +65,7 @@ function managedImportRefusal(refusal: ContentRefusal, sourcePath: string): Oper
     ? `In ${sourcePath}, remove the frontmatter slug or set it to the path-derived slug (the path decides the slug), or move the file to the path that matches its slug, then import again.`
     : refusal.code === 'file_too_large' ? `${sourcePath} is over the import size limit and was not imported. Split it into smaller files or leave it out of the import.`
     : refusal.code === 'content_rejected' ? `Remove the matched junk from ${sourcePath}, then import it again.`
+    : refusal.code === 'write_gate_rejected' ? `The write gate refuses ${sourcePath} (external instruction-like content under write_gate.external_mode=reject); tell the user, the decision is theirs.`
     : `Fix line ${refusal.line ?? '?'} of ${sourcePath}${refusal.key ? ` (key "${refusal.key}")` : ''}: one line per key with its whole value quoted. Run gbrain frontmatter validate on the file to see every problem, then import it again.`;
   return contentRefusalError(refusal, suggestion, { legacy_error: 'invalid_params' });
 }
@@ -110,7 +114,7 @@ export async function assertImportPaths(engine: BrainEngine, sourceId: string, r
     const roots = [source.local_path, source.worktree_path && source.relative_path !== null ? join(source.worktree_path, source.relative_path) : null];
     for (const candidate of roots) {
       if (!candidate) continue;
-      const other = existsSync(candidate) ? realpathSync(candidate) : resolve(candidate);
+      const other = screeningPath(`source-root\0${candidate}`, () => existsSync(candidate) ? realpathSync(candidate) : resolve(candidate));
       for (const path of [input, target]) {
         const rel = relative(other, path);
         if (rel === '' || !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)) {
@@ -124,7 +128,15 @@ export async function assertImportPaths(engine: BrainEngine, sourceId: string, r
   }
 }
 
-export async function prepareManagedImportMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
+/**
+ * `screen`: the no-op screen of an unadmitted request (import-mutations.ts), whose caller just checked the
+ * paths and read the input bytes and page snapshot it passes. The preparer then skips its own first path check,
+ * the input re-normalization and the snapshot re-read: `validate` re-runs every path and byte check last, and the
+ * no-op kernel re-checks the page revision, so a skip still rests on all of them; anything else is admitted
+ * and prepared again in full by its publication.
+ */
+export async function prepareManagedImportMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig,
+  screen?: { snapshot: PageSnapshot | null }): Promise<PreparedMutation> {
   const p = row.intent as ManagedImportIntent | null;
   if (row.authority.remote || row.principal_kind !== 'local_cli') throw trustedCliRequired('Filesystem import requires a trusted local CLI writer.');
   if (!p || p.kind !== 'managed_file_import' || typeof p.content !== 'string' || typeof p.inputPath !== 'string' || typeof p.sourcePath !== 'string') {
@@ -158,13 +170,13 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
       `The canonical copy of ${p.sourcePath} in source ${row.source_id} changed after import request ${row.request_id} was accepted, so it was not overwritten. Review that file, then import again if the import should still replace it.`,
       { fix: reimportFix(p.inputPath, row.source_id) });
   };
-  await checkPaths(engine);
-  const normalized = managedImportContent(p.sourcePath, readImportBytes(p.inputPath), p.activePack);
+  if (!screen) await checkPaths(engine);
+  const normalized = screen ? { slug: row.slug, content: p.content } : managedImportContent(p.sourcePath, readImportBytes(p.inputPath), p.activePack);
   if (normalized.slug !== row.slug || normalized.content !== p.content) throw opError('source_changed', 'The frozen file identity no longer matches the import.',
     `${p.sourcePath} now normalizes to different content or slug than import request ${row.request_id} accepted for ${row.slug}, so it published nothing. Import it again to publish the current file.`,
     { fix: reimportFix(p.inputPath, row.source_id) });
   const source = { sourceId: row.source_id };
-  const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
+  const snapshot = screen ? screen.snapshot : await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
   assertPageRevision(snapshot, p.expected_revision ? { expectedRevision: p.expected_revision } : {});
   if ((snapshot?.page.id ?? null) !== row.page_id || snapshot?.page.source_path && snapshot.page.source_path !== p.sourcePath) {
     throw opError('page_identity_changed', 'The imported path no longer names the accepted page.',
@@ -181,7 +193,7 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
     ? await importImageFile(engine, p.inputPath, p.sourcePath, { ...source, noEmbed: p.noEmbed, bytes: imageBytes, prepare })
     : code
     ? await importCodeFile(engine, p.sourcePath, p.content, { ...source, noEmbed: true, prepare })
-    : await importFromContent(engine, row.slug, p.content, { ...source, noEmbed: true, remote: false, preserveGateMarkers: true, prepare, fences: 'coordinated',
+    : await importFromContent(engine, row.slug, p.content, { ...source, noEmbed: true, remote: false, preserveGateMarkers: true, prepare, fences: 'coordinated', writeGate: await ownerGateInput(engine, row, parseMarkdown(p.content, row.slug).frontmatter, p.sourcePath),
       coordinated: true, existingSnapshot: snapshot, activePack: p.activePack, sourcePath: p.sourcePath, filename: basename(p.sourcePath, '.md'), allowEmptyOverwrite: true });
   if (!prepared && result.refusal?.code === 'invalid_fence') throw managedImportRefusal(result.refusal, p.sourcePath);
   if (!prepared) throw opError('invalid_params', result.error ?? 'The file could not be prepared.',
@@ -200,10 +212,10 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
   } as Page, tags));
   const project = code || image ? undefined : await prepareCanonicalProjections(engine, ready.parsedPage!, row.slug, row.source_id, snapshot, 'file');
   const mutation: PreparedMutation = { observedRevision: ready.observedRevision, noop: ready.noop && p.targetHash === sha256(rendered),
-    deferEmbedding: image || p.noEmbed, validate: async tx => { await checkPaths(tx); await ready.validate(tx); },
+    trust: await ownerImportTrust(engine, row, ready.parsedPage?.frontmatter, p.sourcePath), deferEmbedding: image || p.noEmbed, validate: async tx => { await checkPaths(tx); await ready.validate(tx); },
     file: { root, path, content: rendered, expectedBeforeHash: p.targetHash },
     apply: async tx => {
-      await ready.apply(tx);
+      const applied = await ready.apply(tx);
       await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
       if (project) {
         // The coordinator proved the base revision under its page guard (importFromContent `coordinated`); this is the
@@ -214,7 +226,8 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
         if (!ready.noop) {
           await verifyPageReadable(tx, row.slug, ready.contentHash!, row.source_id, 'importFromContent', live?.page ?? null);
           await project(tx, final?.page.id);
-          if (live) await sealPageTextProjection(tx, row.slug, row.source_id, live);
+          if (applied?.chunkerSeal !== undefined) await sealImportedPage(tx, row.slug, row.source_id, live, applied.chunkerSeal, applied.pageId);
+          else if (live) await sealPageTextProjection(tx, row.slug, row.source_id, live);
         }
         mutation.postimage = final;
       } else if (!ready.noop && !image) await sealPageTextProjection(tx, row.slug, row.source_id);

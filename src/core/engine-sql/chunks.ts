@@ -65,7 +65,7 @@ export async function upsertChunksOnce(
   guards: ChunkPageGuards,
   slug: string,
   chunks: ChunkInput[],
-  opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number },
+  opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true },
 ): Promise<void> {
     const memo = guards.memo ?? (<T>(_key: string, read: () => Promise<T>) => read());
     // Normalize the same way putPage does — pages.slug is stored lowercased,
@@ -317,7 +317,7 @@ export async function upsertChunksOnce(
            WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN now()
            ELSE content_chunks.embedding_pending_since
          END`);
-    if (sealed === undefined) { await exec.query(text, params); return; }
+    if (sealed === undefined || opts?.deferSeal) { await exec.query(text, params); return; }
     const [{ rows }] = await pipelined({ kind: exec.dialect }, [sealPage, () => exec.query(text, params)]) as [{ rows: Array<{ id: number }> }];
     if (rows.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
     if (Number(rows[0]!.id) !== Number(sealed)) throw new Error(`Page ${slug} (source=${sourceId}) is not the page this transaction wrote`);

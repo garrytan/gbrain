@@ -14,6 +14,7 @@ const REVIEWED: Record<string, string> = {
   'src/core/cycle/extract-takes.ts': 'projects takes only; a reserved number has no take, so rebuild prunes its stale index row',
   'src/core/cycle/grade-takes.ts': 'looks up live fence rows by number; a reserved number is not a gradeable take',
   'src/core/extract-takes-from-pages.ts': 'dedupes held claims against live takes only',
+  'src/core/facts/purge-overlay.ts': 're-renders through renderTakesFence with the fence\'s reservations plus the purged rows\' numbers, so a purged number is never reused (like takes remove)',
   'src/core/fence-repair/content.ts': 'reads warnings only (clean or not)',
   'src/core/fence-repair/import-step.ts': 'hidden rows feed allocation, which nextFreeRowNum already bases on every raw fence row',
   'src/core/fence-repair/page-checks.ts': 'a reserved number used twice in one fence is a parser collision warning',

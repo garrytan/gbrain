@@ -33,7 +33,8 @@ import { resolveBrainId as resolveBrainIdForDbMarker } from '../core/brain-resol
 import type { GBrainConfig } from '../core/config.ts';
 import type { AIGatewayConfig } from '../core/ai/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError } from '../core/operations.ts';
+import { OperationError, type OperationMeta } from '../core/ops/contract.ts';
+import { OPERATION_MANIFEST, cliOps } from './op-manifest.ts';
 import { resolveSourceIdEngineFree } from '../core/source-resolver.ts';
 import { installCliRoutingFor } from './fix-routing-provider.ts';
 import { formatVolunteeredPage } from '../core/context/volunteer.ts';
@@ -85,15 +86,6 @@ function dbMarkerBrainId(): string | undefined {
     return resolveBrainIdForDbMarker(getCliOptions().brain ?? null);
   } catch {
     return undefined;
-  }
-}
-
-// Build CLI name -> operation lookup
-const cliOps = new Map<string, Operation>();
-for (const op of operations) {
-  const name = op.cliHints?.name;
-  if (name && !op.cliHints?.hidden) {
-    cliOps.set(name, op);
   }
 }
 
@@ -160,7 +152,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   // D3: post-connect records whose handler answers --help before the engine; run through the table.
   advisor: true, anomalies: true, feedback: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
   founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
-  brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true,
+  brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true,
 };
 
 /** Returns true when the command's own help was printed. */
@@ -182,12 +174,12 @@ async function printSelfHelpWithoutEngine(command: string, args: string[]): Prom
 // load — a silent route-shadow is worse than a loud boot failure. CLI_ONLY is
 // derived from the command table (src/cli/command-table.ts), so the check runs
 // over every table record. Exported for the table test's collision case.
-export function buildCliAliases(
-  ops: readonly Operation[],
-  primary: ReadonlyMap<string, Operation>,
+export function buildCliAliases<T extends OperationMeta>(
+  ops: readonly T[],
+  primary: ReadonlyMap<string, OperationMeta>,
   cliOnly: ReadonlySet<string>,
-): Map<string, Operation> {
-  const aliases = new Map<string, Operation>();
+): Map<string, T> {
+  const aliases = new Map<string, T>();
   for (const op of ops) {
     if (op.cliHints?.hidden) continue;
     for (const alias of op.cliHints?.aliases ?? []) {
@@ -203,7 +195,7 @@ export function buildCliAliases(
   return aliases;
 }
 
-export const cliAliases = buildCliAliases(operations, cliOps, CLI_ONLY);
+export const cliAliases = buildCliAliases(OPERATION_MANIFEST, cliOps, CLI_ONLY);
 
 /**
  * Emit the self-upgrade marker on the hot path. CACHE-READ-ONLY: a statSync +
@@ -410,6 +402,10 @@ async function main() {
   const strictRefusal = helpRequested ? null : strictArgsRefusal(command, subArgs);
   if (strictRefusal) exitCliError(strictRefusal, command);
 
+  // A command that opens the local PGLite brain compiles its WASM off the main thread while its modules load (connect awaits the same promise).
+  const prewarm = (cliOps.has(command) || cliAliases.has(command) || findCliCommand(command)?.phase === 'post-connect') && loadConfig();
+  if (prewarm && prewarm.engine === 'pglite' && prewarm.database_path) void import('../core/pglite-embedded-assets.ts').then(m => m.getEmbeddedPgliteOptions()).catch(() => {});
+
   // T5 — `gbrain search modes|stats|tune` is the read-only config dashboard,
   // NOT a free-text search for the literal word "modes". Free-text
   // `gbrain search "<query>"` falls through to the cheap-hybrid `search` op
@@ -523,8 +519,9 @@ async function main() {
  */
 async function runSharedOperation(command: string, subArgs: string[], cliOpts: CliOptions): Promise<void> {
   // Shared operations (fall through to aliases, e.g. link-add -> add_link)
-  const op = cliOps.get(command) ?? cliAliases.get(command);
-  if (!op) exitCliError(usageError(`Unknown command: ${command}`, 'Run `gbrain --help` for available commands.', { code: 'unknown_command' }), command);
+  const meta = cliOps.get(command) ?? cliAliases.get(command);
+  if (!meta) exitCliError(usageError(`Unknown command: ${command}`, 'Run `gbrain --help` for available commands.', { code: 'unknown_command' }), command);
+  const op = (await import('../core/operations.ts')).operations.find(o => o.name === meta.name)!;
 
   // v0.31.1 (Issue #734, CDX-1): parse CLI args BEFORE engine connect so
   // the routing seam below can decide local-vs-remote without paying a
@@ -1317,7 +1314,7 @@ export function findUnknownFlag(args: string[], legal: ReadonlySet<string>): str
 }
 
 /** Op lane: mirrors parseOpArgs so flag VALUES starting with '--' are skipped. */
-export function findUnknownOpFlag(op: Operation, args: string[]): string | null {
+export function findUnknownOpFlag(op: OperationMeta, args: string[]): string | null {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--') break;
@@ -1916,11 +1913,11 @@ function refuseThinClient(command: string, mcpUrl: string): never {
     }), command);
 }
 
-/** The refused invocation's subcommand word (id-shaped only, per A1 argv safety), for the host-side fix. */
+/** The refused invocation's subcommand word and, for `trust`, its typed ref (id-shaped only, per A1 argv safety), for the host-side fix. */
 function thinRefusalSubcommand(command: string): string[] {
   const argv = process.argv.slice(2);
-  const next = argv[argv.indexOf(command) + 1] ?? '';
-  return argv.includes(command) && /^[a-z][a-z0-9-]*$/.test(next) ? [next] : [];
+  const [next = '', ref = ''] = argv.slice(argv.indexOf(command) + 1); // #5575: `trust <verb> <ref>` keeps its typed ref (f12, tp7, p:source/slug)
+  return argv.includes(command) && /^[a-z][a-z0-9-]*$/.test(next) ? [next, ...(command === 'trust' && /^(?:(?:f|t|h|e|a|tp)\d{1,18}|p:[a-z0-9_-]{1,64}\/[a-z0-9][a-z0-9/_.-]{0,200})$/.test(ref) ? [ref] : [])] : [];
 }
 
 const THIN_CLIENT_BRAIN_FLAG_MESSAGE = '--brain is not supported on a thin-client install: the remote server is a single brain.';
@@ -2470,6 +2467,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   if (command === 'reindex-code') {
     if (await (await import('../commands/reindex-code-delegate.ts')).maybeDelegateReindexCode(loadConfig(), args)) return null;
   }
+  if (command === 'trust' && await (await import('../commands/trust.ts')).maybeDelegateTrust(loadConfig(), args)) return null;
   if (command === 'extract' && args.includes('--stale') && !hasHelpFlag(args) && await (await import('../commands/extract-stale-delegate.ts')).maybeDelegateExtractStale(loadConfig(), args)) return null;
 
   if (command === 'embed' && args.includes('--facts')) {
@@ -2937,7 +2935,7 @@ const OP_HELP_EXAMPLES: Record<string, string[]> = {
   ],
 };
 
-export function printOpHelp(op: Operation, invokedName?: string) {
+export function printOpHelp(op: OperationMeta, invokedName?: string) {
   const positional = (op.cliHints?.positional || []).map(p => `<${p}>`).join(' ');
   // v114 (#1941): when invoked via an alias (e.g. `gbrain link-add --help`),
   // show the alias the user typed, not the primary op name.

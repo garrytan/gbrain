@@ -22,7 +22,10 @@ export type GateLetter = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g';
 
 /** The class each applied fix carries in receipts, holds and previews. */
 export type FixClass =
+  | 'merge_fences'
   | 'close_fence'
+  /** #6377: the end marker inserted after the last row of a fence that trailing page text followed. */
+  | 'close_fence_trailing'
   | 'marker_form'
   | 'stray_empty_cell'
   | 'renumber'
@@ -36,12 +39,14 @@ export type FixClass =
 
 /** Every fence reason; `FENCE_REASONS` (reasons.ts) holds one entry per code. */
 export type FenceReason =
-  // Screen residual, Tier 3.
-  | 'header_unmapped' | 'no_header' | 'row_before_header' | 'short_row'
+  // Screen residual, Tier 3 (`unclosed_trailing_content`: the tail classifier, #6377).
+  | 'header_unmapped' | 'no_header' | 'row_before_header' | 'short_row' | 'unclosed_trailing_content'
   // Screen residual, Tier 2 then manual.
   | 'holder_unresolved'
   // Screen residual, manual only.
-  | 'extra_cells' | 'claim_split' | 'missing_begin' | 'split_rows' | 'unclosed_trailing_content' | 'marker_near_miss' | 'repeated_marker'
+  | 'extra_cells' | 'claim_split' | 'missing_begin' | 'split_rows' | 'marker_near_miss' | 'repeated_marker' | 'unclosed_ambiguous_tail'
+  // Screen residual, the user's hash-bound approval (#6377): closing the fence would show its trailing lines to readers of a world-visible page.
+  | 'tail_exposure_approval'
   | 'takes_in_facts' | 'superseded_ambiguous' | 'enum_unmapped' | 'weight_missing' | 'holder_missing'
   | 'confidence_out_of_range' | 'claim_value_invalid' | 'takes_kind_unsupported'
   // Preparation and publication.
@@ -98,6 +103,14 @@ export interface FenceCtx {
   takesPackKinds?: readonly string[];
   /** Row numbers of rows hidden from a remote caller; never renumbered or reallocated. */
   hiddenRows?: ReadonlySet<number>;
+  /**
+   * #6377: the caller holds the user's hash-bound approval to close an unclosed fence ahead of trailing text on a
+   * world-visible page (the lines become visible to the page's readers). Private pages never need it: closing
+   * shows nothing to anyone new. Unattended runs never set it.
+   */
+  approveTailExposure?: boolean;
+  /** #6377: fences (`<section>:<kind>`) whose trailing lines the tail classifier judged prose, so the close may run although a tail line holds a pipe. */
+  tailProse?: ReadonlySet<string>;
 }
 
 /** The two canonical body sections. Callers pass their full page type and get it back. */

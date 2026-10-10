@@ -154,6 +154,8 @@ export function legacyRefusal(result: Pick<ImportResult, 'status' | 'error' | 'r
   if (result.refusal) return result.refusal.code === 'invalid_fence' ? null : result.refusal;
   const error = result.error ?? '';
   if (/^Content rejected by sanity gate: /.test(error)) return { code: 'content_rejected', message: error };
+  if (/^purged_content: /.test(error)) return { code: 'purged_content', message: error };
+  if (/^Refused by the write gate: /.test(error)) return { code: 'write_gate_rejected', message: error };
   const typed = isContentRefusal('invalid_params', error) ? contentRefusalFromReceipt('invalid_params', error) : null;
   if (!typed || typed.code === 'invalid_fence') return null;
   const { suggestion: _suggestion, ...refusal } = typed;

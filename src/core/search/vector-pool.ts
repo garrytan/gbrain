@@ -53,6 +53,21 @@ export async function searchIndexWalk(
   return null;
 }
 
+/**
+ * `hnsw.max_scan_tuples` for every pooled attempt: pgvector's own default.
+ * A filtered pooled attempt asks for `innerLimit` eligible chunks and is
+ * accepted once they cover `limit` pages, so its scan budget decides how far
+ * it can reach. At 2,000 tuples a 10% source or visibility filter found about
+ * 200 eligible chunks: enough pages to be accepted, too shallow to hold the
+ * true neighbours. At 20,000 the window fills down to about 1% selectivity
+ * at limit 50: 10%-filter recall@50 rose from 0.52-0.63 to 0.96-0.99 on 1M and
+ * 2M synthetic chunks and from 0.77 to 0.97 on 1M voyage-4 chunks under a
+ * random filter, for 16 to 36 ms more p50 (docs/eval/hnsw-scale-bench.md).
+ * An unfiltered scan stops at its LIMIT long before either budget, so only
+ * filtered searches pay for the deeper visit.
+ */
+export const POOL_MAX_SCAN_TUPLES = 20_000;
+
 export function remainingVectorBudget(deadline: number): number {
   const remaining = Math.floor(deadline - performance.now());
   if (remaining <= 0) throw Object.assign(new Error('Vector candidate deadline exhausted'), { code: '57014' });
@@ -80,7 +95,7 @@ export async function searchVectorPool(
   try {
     for (;;) {
       if (remaining() === 0) { reason = 'deadline'; break; }
-      batch = await run({ innerLimit, maxScanTuples: Math.min(2_000 * 4 ** escalations, 20_000), remainingMs: remaining(), exact: false });
+      batch = await run({ innerLimit, maxScanTuples: POOL_MAX_SCAN_TUPLES, remainingMs: remaining(), exact: false });
       if (batch.rows.length >= limit) return batch.rows;
       if (batch.candidatePool < innerLimit) {
         if (!indexed) return batch.rows;
@@ -93,7 +108,7 @@ export async function searchVectorPool(
     }
     if (engine === 'postgres' && indexed && remaining() > 0) {
       exactFallback = true;
-      batch = await run({ innerLimit, maxScanTuples: 20_000, remainingMs: remaining(), exact: true });
+      batch = await run({ innerLimit, maxScanTuples: POOL_MAX_SCAN_TUPLES, remainingMs: remaining(), exact: true });
       if (batch.rows.length >= limit || batch.exhausted) return batch.rows;
       reason = remaining() === 0 ? 'deadline' : 'candidate_budget';
     }

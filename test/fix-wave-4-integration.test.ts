@@ -211,7 +211,7 @@ test('X6: deactivate carries a held connector item into classic state (wave 5): 
 test('X11: the remediation run reaches every new repair kind, runs the free ones under --max-usd 0 and clears their doctor findings', async () => withEnv(env, async () => {
   for (const engine of engines) {
     expect(AUTO_REPAIR_REGISTRY.map(spec => spec.kind)).toEqual(['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints',
-      'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'fences']);
+      'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'fences', 'slug-conflicts']);
     // Pending work for Lane A (a dropped index) and Lane D (an orphan binding of a removed source).
     await engine.executeRaw('DROP INDEX IF EXISTS persistence_requests_sync_run_open');
     await withPersistenceOff(engine, async () => {
