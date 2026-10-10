@@ -61,6 +61,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       ? await (await import('../../core/persistence/sync-drain.ts')).drainManagedSync(engine, opts, true)
       : await (await import('../../core/persistence/sync-run.ts')).performManagedSync(engine, opts);
     if (!opts.dryRun) await recordUpstreamObservation(engine, opts.sourceId ?? 'default', opts.repoPath);
+    if (!opts.dryRun && ['synced', 'first_sync', 'up_to_date'].includes(result.status)) await clearSettledFailures(engine, opts.sourceId ?? 'default');
     return result;
   }
   const filesystemRoot = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
@@ -103,4 +104,13 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     }
     throw err;
   }
+}
+
+/** #6288: a successful managed sync clears this source's recorded failures its imported commit already settles; best effort. */
+async function clearSettledFailures(engine: BrainEngine, sourceId: string): Promise<void> {
+  try {
+    const { clearSettledManagedSyncFailures, readManagedSyncImported } = await import('../../core/persistence/sync-failures.ts');
+    const imported = await readManagedSyncImported(engine, sourceId);
+    if (imported) await clearSettledManagedSyncFailures(engine, imported);
+  } catch { }
 }

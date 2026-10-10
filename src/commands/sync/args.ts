@@ -87,6 +87,10 @@ Options:
   --skip-failed        Legacy sync only: acknowledge previously-recorded
                        sync failures so the bookmark can advance. Held files
                        never need it; managed sync refuses it.
+  --acknowledge-managed <request_id|path>
+                       Managed sync, owner host only: remove a recorded
+                       failure (for example a --full run's) that the imported
+                       commit already settles; refuses anything still unsynced.
   --retry-failed       Re-attempt previously-failed files; clear on success.
                        Not needed for held files, which re-screen on the next
                        sync when they change (or with 'gbrain sources

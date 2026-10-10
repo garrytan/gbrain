@@ -73,7 +73,7 @@ test('sync status turns a cancelled knock-on into the retry sync prints, not a h
   expect(status.needs_human).toBe(false);
   const [failure] = await readManagedSyncFailures(engine, [f.id]);
   const printed = managedSyncRetryCommand(failure!).split(' ');
-  expect([...status.next!.argv].sort()).toEqual([...printed].sort());
+  expect([...status.next!.argv!].sort()).toEqual([...printed].sort());
 }), 120_000);
 
 test('a resume refused for conflicting cursor options leaves the recorded failure untouched', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
