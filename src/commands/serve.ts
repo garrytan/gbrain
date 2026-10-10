@@ -298,6 +298,10 @@ export async function runServe(
     // it on for debug visibility. Loud startup warning fires in serve-http.ts
     // when set so the posture change is visible in stderr.
     const logFullParams = args.includes('--log-full-params');
+    // --log-read-params: for read operations only, log the declared params
+    // (PII-scrubbed) and the slugs / fact ids returned; writes stay redacted.
+    // See src/mcp/read-log.ts.
+    const logReadParams = args.includes('--log-read-params');
 
     // v0.34.1 (#864, D11): `--bind HOST` lets operators choose the network
     // interface to listen on. When unset, runServeHttp defaults to 127.0.0.1
@@ -353,7 +357,7 @@ export async function runServe(
     const corpusDrain = (opts.armCorpusDrain ?? armCorpusDrain)(engine, { sourceId: process.env.GBRAIN_SOURCE || undefined });
 
     try {
-      await runHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface, adoptServer: opts.adoptServer });
+      await runHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, logReadParams, bind, suppressBootstrapToken, printAdminToken, surface, adoptServer: opts.adoptServer });
     } finally {
       stallWatchdog?.dispose();
       corpusDrain?.cancel();
