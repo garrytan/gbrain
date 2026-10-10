@@ -212,10 +212,22 @@ function emitYamlScalar(s: string): string {
   // Quote if the string would otherwise be misread (numbers, booleans,
   // null, leading whitespace, contains special YAML chars, or is empty).
   if (s === '') return '""';
-  if (/^(true|false|null|~|-?\d+(\.\d+)?)$/i.test(s)) return JSON.stringify(s);
-  if (/[:#&*!|>'"%@`{}\[\],\n]/.test(s)) return JSON.stringify(s);
-  if (/^\s|\s$/.test(s)) return JSON.stringify(s);
+  if (/^(true|false|null|~|-?\d+(\.\d+)?)$/i.test(s) ||
+      /[:#&*!|>'"%@`{}\[\],\n]/.test(s) ||
+      /^\s|\s$/.test(s)) {
+    return quoteYamlScalar(s);
+  }
   return s;
+}
+
+function quoteYamlScalar(s: string): string {
+  // Single quotes round-trip through parseYamlMini: everything is literal
+  // except `''`. Backslashes must stay single (#6432). Control characters
+  // cannot be written inside a single-quoted line, so they keep the
+  // double-quoted form.
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(s)) return JSON.stringify(s);
+  return `'${s.replace(/'/g, "''")}'`;
 }
 
 function emitYamlArray(arr: unknown[], indent: number): string {
