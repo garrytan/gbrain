@@ -66,23 +66,43 @@ export async function backfillChunkVectors(engine: BrainEngine, opts: VectorBack
  * only, never across the TypeScript sanitize), sanitizes the timeline exactly
  * as the seal does, then writes `search_vector` guarded by the knowledge
  * revision it read: a page edited in between is skipped, and its own seal
- * indexes it under the current trigger. Returns rows read.
+ * indexes it under the current trigger. The timeline is the seal's input: a
+ * page with a database withdrawal or purge (its own or source-wide) is read
+ * through `readPageSnapshot`, whose timeline carries that overlay, so a
+ * withdrawn fact never returns to the vector; other pages' raw timeline is
+ * already their effective one. Returns rows read.
  */
 export async function backfillPageVectors(engine: BrainEngine, opts: VectorBackfillOpts): Promise<number> {
   let cursor = await savedCursor(engine, opts.checkpoint);
   let total = 0;
   for (;;) {
-    const rows = await engine.executeRaw<{ id: number; timeline: string | null; knowledge_revision: string }>(`
+    const rows = await engine.executeRaw<{ id: number; slug: string; source_id: string; timeline: string | null; knowledge_revision: string; withdrawn: boolean }>(`
       UPDATE pages SET id = id
       WHERE id IN (${batchIds('pages', cursor, opts.where)})
-      RETURNING id, timeline, knowledge_revision::text AS knowledge_revision
+      RETURNING id, slug, source_id, timeline, knowledge_revision::text AS knowledge_revision,
+        (EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = pages.source_id AND (w.subject = '*' OR w.subject = pages.slug))
+          OR EXISTS (SELECT 1 FROM fact_purges x WHERE x.source_id = pages.source_id AND (x.subject = '*' OR x.subject = pages.slug))) AS withdrawn
     `);
     if (rows.length === 0) break;
+    const ids: number[] = [];
+    const timelines: string[] = [];
+    const revisions: string[] = [];
+    for (const r of rows) {
+      let timeline = r.timeline ?? '';
+      if (r.withdrawn) {
+        const snapshot = await engine.readPageSnapshot(r.slug, { sourceId: r.source_id, includeDeleted: true });
+        if (!snapshot) continue;
+        timeline = snapshot.page.timeline ?? '';
+      }
+      ids.push(Number(r.id));
+      timelines.push(sanitizeRemoteBody(timeline));
+      revisions.push(r.knowledge_revision);
+    }
     await engine.executeRaw(`
       UPDATE pages p SET search_vector = ${pageSearchVectorSql('p.title', 'v.timeline', opts.lang)}
       FROM unnest($1::int[], $2::text[], $3::uuid[]) AS v(id, timeline, revision)
       WHERE p.id = v.id AND p.knowledge_revision = v.revision
-    `, [rows.map(r => Number(r.id)), rows.map(r => sanitizeRemoteBody(r.timeline ?? '')), rows.map(r => r.knowledge_revision)]);
+    `, [ids, timelines, revisions]);
     total += rows.length;
     opts.tick?.(rows.length);
     cursor = rows.reduce((m, r) => Math.max(m, Number(r.id)), cursor);

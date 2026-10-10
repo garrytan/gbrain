@@ -187,6 +187,25 @@ describe('#6202: the owner picks a self-registered client\'s source at its first
     expect(await clientRow(racing)).toMatchObject({ source_id: 'default', grant_revision: 0 });
   });
 
+  for (const explicit of [false, true]) {
+    test(`an unchanged source archived after review fails 409 and keeps eligibility (${explicit ? 'explicit' : 'omitted'} choice)`, async () => {
+      await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('kept-example', 'kept-example') ON CONFLICT (id) DO NOTHING`);
+      const clientId = await registerDcr();
+      await engine.executeRaw(`UPDATE oauth_clients SET source_id = 'kept-example', federated_read = '{kept-example}' WHERE client_id = $1`, [clientId]);
+      const id = await beginFor(clientId);
+      await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = 'kept-example'`);
+      try {
+        await expect(dcrProvider.grants.decide(id, true, explicit ? { sourceId: 'kept-example' } : undefined))
+          .rejects.toMatchObject({ status: 409, code: 'client_policy_changed' });
+        expect(await clientRow(clientId)).toMatchObject({ source_id: 'kept-example', grant_revision: 0 });
+        expect(await audits(clientId)).toEqual([]);
+        expect(await codes(clientId)).toHaveLength(0);
+      } finally {
+        await engine.executeRaw(`UPDATE sources SET archived = false WHERE id = 'kept-example'`);
+      }
+    });
+  }
+
   test('a pre-migration DCR row (no marker) keeps read-only consent', async () => {
     const clientId = await registerDcr();
     await engine.executeRaw('UPDATE oauth_clients SET registered_via = NULL WHERE client_id = $1', [clientId]);

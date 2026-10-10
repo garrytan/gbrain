@@ -163,8 +163,9 @@ export async function clientHoldsAuthorization(db: GrantDatabase, clientId: stri
  * the revision moves 0 → 1 with an `action='consent'` audit row even when the
  * source is unchanged, so the client is never offered the choice again and a
  * second pending request fails its policy check. A new `sourceId` lands in
- * `source_id` + `federated_read` and is validated against active sources;
- * nothing else in the grant changes.
+ * `source_id` + `federated_read`; nothing else in the grant changes. The
+ * final grant is validated on every first consent, and its source is
+ * share-locked and must be active, changed or not.
  */
 export async function recordFirstConsentInTransaction(db: GrantDatabase, clientId: string, sourceId: string | undefined, actor: string): Promise<GrantMutationResult> {
   const sql = query(db);
@@ -175,10 +176,13 @@ export async function recordFirstConsentInTransaction(db: GrantDatabase, clientI
   if (before.revision !== 0) throw new GrantError('grant_conflict', `Grant changed (expected revision 0, current ${before.revision}); review a fresh request`);
   if (await clientHoldsAuthorization(sql, clientId)) throw new GrantError('grant_conflict', 'The client already holds an authorization; review a fresh request');
   const after: ClientGrant = { ...before, revision: 1 };
-  if (sourceId !== undefined && sourceId !== before.sourceId) {
-    Object.assign(after, { sourceId, federatedRead: [sourceId], sourcesNone: false });
-    validateClientGrant(after, await grantValidationContext(db));
+  if (sourceId !== undefined && sourceId !== before.sourceId) Object.assign(after, { sourceId, federatedRead: [sourceId], sourcesNone: false });
+  // Share-lock the final source through commit, so it cannot be archived between this check and the code insert.
+  if (after.sourceId != null) {
+    const [source] = await sql`SELECT archived FROM sources WHERE id = ${after.sourceId} FOR SHARE`;
+    if (!source || source.archived === true) throw new GrantError('invalid_grant', `Source "${after.sourceId}" is not active; review a fresh request`);
   }
+  validateClientGrant(after, await grantValidationContext(db));
   await persistGrant(sql, before, after, actor, 'consent');
   return { before, after, revision: 1, dryRun: false };
 }
