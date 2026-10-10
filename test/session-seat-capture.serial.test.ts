@@ -45,7 +45,8 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-const corpus = () => join(tmp, '.gbrain', 'transcripts', 'corpus');
+// #6268: session files and their seat live in the corpus spool; no GBRAIN_SOURCE or serve here, so stamps are unresolved.
+const corpus = () => join(tmp, '.gbrain', 'transcripts', 'corpus', 'sourced');
 const sidecar = (sid: string) => join(corpus(), `${sid}.seat.json`);
 const readSeat = (sid: string) => JSON.parse(readFileSync(sidecar(sid), 'utf8')) as Record<string, unknown>;
 const expectedHomeSeat = (dir: string) =>
@@ -80,9 +81,9 @@ describe('seat sidecar on session capture (#4618)', () => {
     const transcript = seedTranscript(tmp, 's.jsonl', [userLine('a question'), assistantLine('an answer')]);
     // A directory squatting on the corpus filename makes the corpus rename
     // fail: whatever exists afterwards was written BEFORE the rename.
-    mkdirSync(join(corpus(), 'sess-order.txt'), { recursive: true });
+    mkdirSync(join(corpus(), 'sess-order.src-_unresolved.txt'), { recursive: true });
     await sessionEnd('sess-order', tmp, transcript);
-    expect(statSync(join(corpus(), 'sess-order.txt')).isDirectory()).toBe(true);
+    expect(statSync(join(corpus(), 'sess-order.src-_unresolved.txt')).isDirectory()).toBe(true);
     expect(existsSync(sidecar('sess-order'))).toBe(true);
     expect(statSync(sidecar('sess-order')).mode & 0o777).toBe(0o600);
     expect(readSeat('sess-order')).toMatchObject({
@@ -92,7 +93,7 @@ describe('seat sidecar on session capture (#4618)', () => {
     // The ordinary path: corpus file and sidecar side by side, label lowercased.
     process.env.GBRAIN_SEAT = 'Alice-Desk';
     await sessionEnd('sess-env', tmp, seedTranscript(tmp, 't.jsonl', [userLine('another question')]));
-    expect(existsSync(join(corpus(), 'sess-env.txt'))).toBe(true);
+    expect(existsSync(join(corpus(), 'sess-env.src-_unresolved.txt'))).toBe(true);
     expect(readSeat('sess-env')).toMatchObject({ seat: 'alice-desk', seat_source: 'env' });
   });
 
@@ -124,7 +125,7 @@ describe('seat sidecar on session capture (#4618)', () => {
   test('GBRAIN_SEAT=off is the opt-out: the corpus is captured with no seat sidecar', async () => {
     process.env.GBRAIN_SEAT = 'off';
     await sessionEnd('sess-off', tmp, seedTranscript(tmp, 'off.jsonl', [userLine('no seat please')]));
-    expect(existsSync(join(corpus(), 'sess-off.txt'))).toBe(true);
+    expect(existsSync(join(corpus(), 'sess-off.src-_unresolved.txt'))).toBe(true);
     expect(existsSync(sidecar('sess-off'))).toBe(false);
     expect((await lastHeartbeat())?.reason ?? '').not.toMatch(/^seat_/);
   });
@@ -137,7 +138,7 @@ describe('seat sidecar on session capture (#4618)', () => {
     await sessionEnd('sess-moved', homeB, seedTranscript(homeB, 'm.jsonl', [userLine('started at desk A'), assistantLine('resumed at desk B')]));
     expect(readFileSync(sidecar('sess-moved'), 'utf8')).toBe(before);
     expect(readSeat('sess-moved').seat).toBe(expectedHomeSeat(homeA));
-    expect(readFileSync(join(corpus(), 'sess-moved.txt'), 'utf8')).toContain('resumed at desk B');
+    expect(readFileSync(join(corpus(), 'sess-moved.src-_unresolved.txt'), 'utf8')).toContain('resumed at desk B');
     const hb = await lastHeartbeat();
     expect(hb?.reason).toBe('seat_conflict');
     expect(hb?.hint).toContain('first seat is kept');
@@ -197,7 +198,7 @@ describe('seat sidecar on session capture (#4618)', () => {
       write: () => {}, transcriptRoot: join(tmp, 'projects'),
       stdin: JSON.stringify({ session_id: 'sess-wb', transcript_path: transcript }),
     })).toBe(0);
-    expect(readdirSync(corpus()).filter((f) => /^sess-wb\.wb-[0-9a-f]{24}\.txt$/.test(f))).toHaveLength(1);
+    expect(readdirSync(corpus()).filter((f) => /^sess-wb\.wb-[0-9a-f]{24}\.src-_unresolved\.txt$/.test(f))).toHaveLength(1);
     expect(readSeat('sess-wb')).toMatchObject({ seat: 'alice-desk', seat_source: 'env' });
   });
 

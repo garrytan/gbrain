@@ -42,7 +42,8 @@ afterEach(() => {
 });
 
 const home = () => join(tmp, '.gbrain');
-const corpus = () => join(home(), 'transcripts', 'corpus');
+// #6268: turn files land in the corpus spool; without GBRAIN_SOURCE or a serve the stamp is unresolved.
+const corpus = () => join(home(), 'transcripts', 'corpus', 'sourced');
 
 function writeConfig(opts: { writeback?: string; dataDir?: string }): string {
   mkdirSync(home(), { recursive: true });
@@ -188,7 +189,7 @@ describe('hook stop — ambient writeback banking', () => {
       ...io, transcriptRoot: t.root,
       stdin: JSON.stringify({ session_id: 's-wb', transcript_path: t.path }),
     })).toBe(0);
-    const file = readdirSync(corpus()).find((f) => /^s-wb\.wb-[0-9a-f]{24}\.txt$/.test(f));
+    const file = readdirSync(corpus()).find((f) => /^s-wb\.wb-[0-9a-f]{24}\.src-_unresolved\.txt$/.test(f));
     expect(file).toBeDefined();
     expect(await Bun.file(join(corpus(), file!)).text()).toBe(prompt + '\n');
   });
@@ -201,7 +202,7 @@ describe('hook stop — ambient writeback banking', () => {
       ...io, transcriptRoot: t.root,
       stdin: JSON.stringify({ session_id: 's-wb', transcript_path: t.path }),
     })).toBe(0);
-    const file = readdirSync(corpus()).find((f) => /^s-wb\.wb-[0-9a-f]{24}\.txt$/.test(f));
+    const file = readdirSync(corpus()).find((f) => /^s-wb\.wb-[0-9a-f]{24}\.src-_unresolved\.txt$/.test(f));
     expect(file).toBeDefined();
     expect(await Bun.file(join(corpus(), file!)).text()).toBe(prompt + '\n');
   });
@@ -223,7 +224,7 @@ describe('hook stop — ambient writeback banking', () => {
     });
     expect(code).toBe(0);
     // The durable artifact exists — the user turn WAS found and banked.
-    const files = readdirSync(corpus()).filter((f) => /^s-wb\.wb-[0-9a-f]{24}\.txt$/.test(f));
+    const files = readdirSync(corpus()).filter((f) => /^s-wb\.wb-[0-9a-f]{24}\.src-_unresolved\.txt$/.test(f));
     expect(files.length).toBe(1);
     const hb = await wbHeartbeats();
     expect(hb.length).toBe(1);
@@ -246,7 +247,7 @@ describe('hook stop — ambient writeback banking', () => {
       stdin: JSON.stringify({ session_id: 's-wb', transcript_path: t.path }),
     });
     expect(code).toBe(0);
-    const files = readdirSync(corpus()).filter((f) => /^s-wb\.wb-[0-9a-f]{24}\.txt$/.test(f));
+    const files = readdirSync(corpus()).filter((f) => /^s-wb\.wb-[0-9a-f]{24}\.src-_unresolved\.txt$/.test(f));
     expect(files.length).toBe(1);
     const hb = await wbHeartbeats();
     expect(hb[0].reason).toBe('no_serve');

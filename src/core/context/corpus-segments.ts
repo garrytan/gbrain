@@ -30,7 +30,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { WindowTurn } from './entity-salience.ts';
 import { toCorpusText, type ToolCallRecord } from '../transcripts/claude-code-jsonl.ts';
@@ -69,8 +69,55 @@ export function segmentHash(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex').slice(0, SEGMENT_HASH_LEN);
 }
 
-export function segmentFileName(sessionId: string, hash: string): string {
-  return `${safeIdComponent(sessionId)}.seg-${hash.replace(/[^0-9a-f]/g, '')}.txt`;
+/**
+ * #6268 (R14): the spool subdirectory every source-stamped corpus file lives
+ * in. A pre-stamp sweeper reads only the corpus dir's top level and files any
+ * non-writeback `.txt` there under its own pass source, so a stamped file it
+ * could see would be misfiled; inside this subdirectory it sees nothing.
+ * Top-level files are the legacy (unstamped) corpus. No leading dot: dream
+ * synthesis walks into it exactly as it walked the top level.
+ */
+export const CORPUS_SPOOL_SUBDIR = 'sourced';
+
+/**
+ * The stamp of a file whose writer could not resolve the session's source.
+ * Underscores are never valid in a source id (`SOURCE_ID_RE`), so no real
+ * source can be named this.
+ */
+export const CORPUS_UNRESOLVED_STAMP = '_unresolved';
+
+const SOURCE_STAMP_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+
+/** A valid corpus source stamp: a source id or the unresolved marker. */
+export function isCorpusSourceStamp(stamp: unknown): stamp is string {
+  return typeof stamp === 'string' && (stamp === CORPUS_UNRESOLVED_STAMP || SOURCE_STAMP_RE.test(stamp));
+}
+
+export function corpusSpoolDir(corpusDir: string): string {
+  return join(corpusDir, CORPUS_SPOOL_SUBDIR);
+}
+
+/** The spool dir, created 0700. Throws on fs failure. */
+export function ensureCorpusSpoolDir(corpusDir: string): string {
+  const dir = corpusSpoolDir(corpusDir);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+}
+
+function stampPart(stamp: string | null | undefined): string {
+  if (stamp === undefined || stamp === null) return '';
+  if (!isCorpusSourceStamp(stamp)) throw new Error(`invalid corpus source stamp ${JSON.stringify(stamp)}`);
+  return `.src-${stamp}`;
+}
+
+/** `<sessionId>.seg-<hash>[.src-<stamp>].txt`; spool writers always pass the stamp. */
+export function segmentFileName(sessionId: string, hash: string, stamp?: string | null): string {
+  return `${safeIdComponent(sessionId)}.seg-${hash.replace(/[^0-9a-f]/g, '')}${stampPart(stamp)}.txt`;
+}
+
+/** The session-end corpus file: `<sessionId>[.src-<stamp>].txt`. */
+export function sessionCorpusFileName(sessionId: string, stamp?: string | null): string {
+  return `${safeIdComponent(sessionId)}${stampPart(stamp)}.txt`;
 }
 
 export function ledgerFileName(sessionId: string): string {
@@ -84,6 +131,14 @@ export const SEAT_SIDECAR_SUFFIX = '.seat.json';
 
 export function seatFileName(sessionId: string): string {
   return `${safeIdComponent(sessionId)}${SEAT_SIDECAR_SUFFIX}`;
+}
+
+/** #6268: the per-session source record in the spool (context/corpus-source.ts owns its content and lock). */
+export const SESSION_SOURCE_SUFFIX = '.source.json';
+export const SESSION_SOURCE_LOCK_SUFFIX = '.source.lock';
+
+export function sessionSourceFileName(sessionId: string): string {
+  return `${safeIdComponent(sessionId)}${SESSION_SOURCE_SUFFIX}`;
 }
 
 /** A seat sidecar written ahead of its corpus file is never reaped inside
@@ -112,9 +167,26 @@ export const CORPUS_PROGRESS_LOCK_SUFFIX = '.progress.lock';
  */
 export function parseSegmentFileName(
   name: string,
-): { sessionId: string; hash: string } | null {
-  const m = /^(.+)\.seg-([0-9a-f]{12,64})\.txt$/.exec(name);
-  return m ? { sessionId: m[1], hash: m[2] } : null;
+): { sessionId: string; hash: string; stamp?: string } | null {
+  const m = /^(.+)\.seg-([0-9a-f]{12,64})(?:\.src-([a-z0-9_-]{1,40}))?\.txt$/.exec(name);
+  if (!m) return null;
+  return { sessionId: m[1], hash: m[2], ...(m[3] && isCorpusSourceStamp(m[3]) ? { stamp: m[3] } : {}) };
+}
+
+/** `{sessionId, stamp}` of a stamped session-end file; null for any other name. */
+export function parseSessionCorpusFileName(name: string): { sessionId: string; stamp: string } | null {
+  if (parseSegmentFileName(name) || parseWbFileName(name)) return null;
+  const m = /^(.+)\.src-([a-z0-9_-]{1,40})\.txt$/.exec(name);
+  return m && isCorpusSourceStamp(m[2]) ? { sessionId: m[1], stamp: m[2] } : null;
+}
+
+/**
+ * The source stamp a corpus file NAME carries (any kind), or null. A spool
+ * file without one is malformed; at the top level only the legacy
+ * writeback grammar ever carried a stamp.
+ */
+export function corpusFileStamp(name: string): string | null {
+  return parseSegmentFileName(name)?.stamp ?? parseWbFileName(name)?.sourceId ?? parseSessionCorpusFileName(name)?.stamp ?? null;
 }
 
 /**
@@ -212,9 +284,10 @@ export function writeSegment(
   dir: string,
   sessionId: string,
   text: string,
+  stamp?: string | null,
 ): { file: string; hash: string; existed: boolean } {
   const hash = segmentHash(text);
-  const file = join(dir, segmentFileName(sessionId, hash));
+  const file = join(dir, segmentFileName(sessionId, hash, stamp));
   if (existsSync(file)) return { file, hash, existed: true };
   const tmp = `${file}.tmp-${process.pid}`;
   writeFileSync(tmp, text, { mode: 0o600 });
@@ -323,21 +396,21 @@ export function readOpenclawBoundaryTail(
 
 /**
  * Ambient-writeback turn files (WP4) — the Stop-hook backstop's siblings of
- * checkpoint segments. `<sessionId>.wb-<hash24>[.src-<sourceId>].txt` where
+ * checkpoint segments. `<sessionId>.wb-<hash24>[.src-<stamp>].txt` where
  * the hash is the GATE's normalized-turn hash (turn identity, computed in
  * writeback-gate.ts) — a re-fired Stop hook for the same turn re-derives the
  * same name and short-circuits (requirement 9's deterministic idempotency,
- * embedding-free). The optional `.src-` segment banks the session's
- * GBRAIN_SOURCE so the SWEEP fallback files the turn into the same source
- * the prompt-time IPC lane would have (source-isolation invariant —
- * adversarial review, this wave); omitted for the default source, keeping
- * default-flow names byte-identical. They end `.txt` ON PURPOSE: the sweep's
+ * embedding-free). The `.src-` segment banks the session's source so the
+ * SWEEP fallback files the turn into the same source the prompt-time IPC
+ * lane would have (source-isolation invariant). #6268: spool writers stamp
+ * every file, `default` included; a top-level name without one is a legacy
+ * file written before stamps (old writers omitted `default` and an unset
+ * GBRAIN_SOURCE alike, so it proves nothing). They end `.txt` ON PURPOSE: the sweep's
  * corpus pass is the free backstop when serve/IPC is down (the sweep applies
  * the writeback gate before extracting them — OV2-11).
  */
-export function wbFileName(sessionId: string, hash24: string, sourceId?: string | null): string {
-  const src = sourceId && sourceId !== 'default' ? `.src-${safeIdComponent(sourceId)}` : '';
-  return `${safeIdComponent(sessionId)}.wb-${hash24.replace(/[^0-9a-f]/g, '')}${src}.txt`;
+export function wbFileName(sessionId: string, hash24: string, stamp?: string | null): string {
+  return `${safeIdComponent(sessionId)}.wb-${hash24.replace(/[^0-9a-f]/g, '')}${stampPart(stamp)}.txt`;
 }
 
 /** `{sessionId, hash, sourceId?}` when `name` is a writeback turn file, else
@@ -354,7 +427,8 @@ export function parseWbFileName(name: string): { sessionId: string; hash: string
  * classify gbrain's own claude-cli sessions (#5413) across every form.
  */
 export function corpusFileSessionId(name: string): string {
-  return parseSegmentFileName(name)?.sessionId ?? parseWbFileName(name)?.sessionId ?? name.replace(/\.txt$/, '');
+  return parseSegmentFileName(name)?.sessionId ?? parseWbFileName(name)?.sessionId
+    ?? parseSessionCorpusFileName(name)?.sessionId ?? name.replace(/\.txt$/, '');
 }
 
 /**
@@ -394,10 +468,10 @@ export async function bankWritebackTurn(
   sessionId: string,
   normalizedTurn: string,
   hash24: string,
-  sourceId?: string | null,
+  stamp?: string | null,
 ): Promise<{ status: 'wb_banked' | 'wb_dup' | 'wb_scan_unavailable' | 'wb_empty' | `wb_${string}`; flushCorpusFile?: string }> {
   try {
-    const name = wbFileName(sessionId, hash24, sourceId);
+    const name = wbFileName(sessionId, hash24, stamp);
     const file = join(dir, name);
     if (existsSync(file) || existsSync(file + '.ingested')) return { status: 'wb_dup', flushCorpusFile: name };
     let redacted: string;
@@ -436,6 +510,8 @@ export async function bankCompactSegment(
     remainingMs: () => number; minScanMs: number; minWriteMs: number; maxTurns?: number;
     /** #6091: runs before the segment is renamed into place (capture-time consent record); a throw banks nothing. */
     beforeWrite?: (file: string, text: string) => void;
+    /** #6268: the session's source stamp (spool writers always pass one). */
+    stamp?: string | null;
   },
 ): Promise<{ segment: string; flushCorpusFile?: string; hash?: string; ordinal?: number }> {
   try {
@@ -448,12 +524,12 @@ export async function bankCompactSegment(
     if (!rendered) return { segment: 'scan_unavailable' };
     if (!rendered.text.trim()) return { segment: 'empty_window' };
     if (opts.remainingMs() < opts.minWriteMs) return { segment: 'deadline_write' };
-    opts.beforeWrite?.(join(dir, segmentFileName(sessionId, segmentHash(rendered.text))), rendered.text);
-    const w = writeSegment(dir, sessionId, rendered.text);
+    opts.beforeWrite?.(join(dir, segmentFileName(sessionId, segmentHash(rendered.text), opts.stamp)), rendered.text);
+    const w = writeSegment(dir, sessionId, rendered.text, opts.stamp);
     const ordinal = appendSegmentLedger(dir, sessionId, w.hash);
     return {
       segment: w.existed ? 'segment_dup' : 'segment_banked',
-      flushCorpusFile: segmentFileName(sessionId, w.hash),
+      flushCorpusFile: segmentFileName(sessionId, w.hash, opts.stamp),
       hash: w.hash,
       ordinal,
     };
@@ -583,10 +659,15 @@ export function gcCorpusArtifacts(
     for (const name of names) {
       const p = join(dir, name);
       try {
-        if (name.endsWith(SEAT_SIDECAR_SUFFIX)) {
-          if (!liveSessions.has(name.slice(0, -SEAT_SIDECAR_SUFFIX.length)) && statSync(p).mtimeMs < Date.now() - SEAT_ORPHAN_GRACE_MS) {
+        const perSession = [SEAT_SIDECAR_SUFFIX, SESSION_SOURCE_SUFFIX].find((suffix) => name.endsWith(suffix));
+        if (perSession) {
+          if (!liveSessions.has(name.slice(0, -perSession.length)) && statSync(p).mtimeMs < Date.now() - SEAT_ORPHAN_GRACE_MS) {
             rmSync(p, { force: true });
           }
+          continue;
+        }
+        if (name.endsWith(SESSION_SOURCE_LOCK_SUFFIX)) {
+          if (statSync(p).mtimeMs < Date.now() - SEAT_ORPHAN_GRACE_MS) rmSync(p, { force: true });
           continue;
         }
         const offAt = name.endsWith('.json') ? name.lastIndexOf(CAPTURE_OFF_INFIX) : -1;

@@ -883,8 +883,9 @@ export function createGBrainContextEngine(ctx: {
           // silently eats that session's next delta window. With bankOnly the
           // old serve takes the banking arm (no assembly, no cursor advance,
           // and with no window/entities in this request, no banking either).
+          const source = await sessionSourceFor(cfg, sessionId);
           const res = await ipc.requestContextPack(ipc.resolveSocketPath(cfg.database_path), {
-            secret, sessionId, manifestOnly: true, bankOnly: true,
+            secret, sessionId, manifestOnly: true, bankOnly: true, ...(source ? { sourceId: source } : {}),
           });
           if (res === ipc.IPC_UNAVAILABLE || !('ok' in res) || !res.ok || !res.block) return null;
           // Old-serve capability probe: a response WITHOUT the checkpointLinks
@@ -898,7 +899,7 @@ export function createGBrainContextEngine(ctx: {
         const pg = await getDirectPostgresEngine(cfg);
         if (!pg) return null;
         const { resolveSourceId } = await import('./source-resolver.ts');
-        const sourceId = await resolveSourceId(pg, null, workspaceDir);
+        const sourceId = (await sessionSourceFor(cfg, sessionId)) ?? await resolveSourceId(pg, null, workspaceDir);
         const ss = await import('./context/session-state.ts');
         return await ss.getCheckpointManifest(pg, sourceId, null, sessionId);
       } catch {
@@ -979,10 +980,15 @@ export function createGBrainContextEngine(ctx: {
     // Spool FIRST (durability is engine-independent; the sweep is the backstop).
     const { loadConfig } = await import('./config.ts');
     const cfg = loadConfig();
-    const dir = await engineCorpusDir(cfg);
+    // #6268: the session's frozen source rides in the segment NAME, inside the spool.
+    const root = await engineCorpusDir(cfg);
+    const dir = segs.ensureCorpusSpoolDir(root);
+    const { stamp } = await (await import('./context/corpus-source.ts')).openSessionSource(root, sessionId, { cwd: workspaceDir, harness: 'openclaw' });
+    const source = stamp !== segs.CORPUS_UNRESOLVED_STAMP ? stamp : undefined;
+    const segName = (hash: string) => segs.segmentFileName(sessionId, hash, stamp);
     await recordOpenclawSeat(dir, sessionId, sessionFile);
-    (await import('./context/capture-consent.ts')).recordCaptureIfOff(cfg, `${dir}/${segs.segmentFileName(sessionId, segs.segmentHash(rendered.text))}`, rendered.text);
-    const w = segs.writeSegment(dir, sessionId, rendered.text);
+    (await import('./context/capture-consent.ts')).recordCaptureIfOff(cfg, `${dir}/${segName(segs.segmentHash(rendered.text))}`, rendered.text, source);
+    const w = segs.writeSegment(dir, sessionId, rendered.text, stamp);
     const ordinal = segs.appendSegmentLedger(dir, sessionId, w.hash);
     const memo = checkpointMemo.get(sessionId) ?? { links: [], polls: 0, expectSeg: null, settled: false };
     memo.expectSeg = w.hash;
@@ -1028,7 +1034,7 @@ export function createGBrainContextEngine(ctx: {
         await hb.recordAndRelayReceipt({
           session_id: sessionId,
           harness: 'openclaw',
-          corpus_path: `${dir}/${segs.segmentFileName(sessionId, w.hash)}`,
+          corpus_path: `${dir}/${segName(w.hash)}`,
           content_hash: w.hash,
           turn_count: windowTurns.length,
           workspace_root: workspaceDir,
@@ -1062,7 +1068,8 @@ export function createGBrainContextEngine(ctx: {
         window: windowTurns.slice(-COMPACT_BANK_WINDOW_TURNS),
         bankOnly: true,
         trigger: 'compact-bank',
-        flushCorpusFile: segs.segmentFileName(sessionId, w.hash),
+        flushCorpusFile: segName(w.hash),
+        ...(source ? { sourceId: source } : {}),
       });
       if (res === ipc.IPC_UNAVAILABLE) return { status: 'banked', reason: 'ipc_unavailable' };
       return { status: 'banked' };
@@ -1074,7 +1081,7 @@ export function createGBrainContextEngine(ctx: {
     const pg = await getDirectPostgresEngine(cfg);
     if (!pg) return { status: 'banked', reason: 'no_engine' };
     const sweep = await import('./sweep.ts');
-    const fullPath = `${dir}/${segs.segmentFileName(sessionId, w.hash)}`;
+    const fullPath = `${dir}/${segName(w.hash)}`;
     const claimPath = fullPath + sweep.CORPUS_CLAIM_SUFFIX;
     if (!(await sweep.acquireCorpusClaim(claimPath))) return { status: 'banked', reason: 'claimed_elsewhere' };
     try {
@@ -1092,8 +1099,10 @@ export function createGBrainContextEngine(ctx: {
       if (!(await extractionAvailableForEngine(pg))) return { status: 'banked', reason: 'keyless' };
       const { isFactsExtractionEnabled } = await import('./facts/extract.ts');
       if (!(await isFactsExtractionEnabled(pg))) return { status: 'banked', reason: 'extraction_disabled' };
-      const { resolveSourceId } = await import('./source-resolver.ts');
-      const sourceId = await resolveSourceId(pg, null, workspaceDir);
+      // #6268: the segment's stamp, or (unresolved) the brain's chain for this workspace, frozen into the session record.
+      const fileSource = await (await import('./context/corpus-source.ts')).resolveCorpusFileSource(pg, root, segName(w.hash), 'spool');
+      if (!fileSource.ok) return { status: 'banked', reason: fileSource.reason };
+      const sourceId = fileSource.sourceId;
       if (deadlineHit()) return { status: 'banked', reason: 'deadline' };
       const { runFactsPipeline } = await import('./facts/backstop.ts');
       const abort = new AbortController();
@@ -1152,6 +1161,13 @@ export function createGBrainContextEngine(ctx: {
       const { rmSync: rms } = await import('node:fs');
       try { rms(claimPath, { force: true }); } catch { /* best effort */ }
     }
+  }
+
+  /** #6268: the session's frozen corpus source, or undefined while unresolved / unknown. */
+  async function sessionSourceFor(cfg: { dream?: { synthesize?: Record<string, unknown> } } | null, sessionId: string): Promise<string | undefined> {
+    const { corpusSpoolDir } = await import('./context/corpus-segments.ts');
+    const { readSessionSource } = await import('./context/corpus-source.ts');
+    return readSessionSource(corpusSpoolDir(await engineCorpusDir(cfg)), sessionId)?.source_id ?? undefined;
   }
 
   /** Corpus dir from FILE config (hook.ts parity — no engine required). */

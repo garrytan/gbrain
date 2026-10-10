@@ -146,7 +146,7 @@ describe('#5163 hook lane: the SessionEnd parser keeps the typed turn', () => {
       harness: 'codex',
       stdin: JSON.stringify({ session_id: 'r-154', transcript_path: rollout, cwd: join(tmp, 'ws') }),
     })).toBe(0);
-    const corpus = join(tmp, '.gbrain', 'transcripts', 'corpus', 'r-154.txt');
+    const corpus = join(tmp, '.gbrain', 'transcripts', 'corpus', 'sourced', 'r-154.src-_unresolved.txt');
     expect(existsSync(corpus)).toBe(true);
     const text = readFileSync(corpus, 'utf8');
     expect(text).toContain('[user]');
@@ -198,7 +198,7 @@ describe('E-N4: assistant turns with no user turn are flagged, never silent', ()
     })).toBe(0);
     const hb = (await readHeartbeatTail(1))[0]!;
     expect(hb).toMatchObject({ event: 'session-end', outcome: 'degraded', reason: 'no_user_turns' });
-    expect(existsSync(join(tmp, '.gbrain', 'transcripts', 'corpus', 'r-ao.txt'))).toBe(true);
+    expect(existsSync(join(tmp, '.gbrain', 'transcripts', 'corpus', 'sourced', 'r-ao.src-_unresolved.txt'))).toBe(true);
   });
 
   describe('ingest', () => {

@@ -26,7 +26,8 @@ import {
   upsertSessionContextState,
 } from '../core/context/session-state.ts';
 import { scheduleCheckpointHarvest, type HarvestAck } from '../core/context/checkpoint-harvest.ts';
-import { parseWbFileName } from '../core/context/corpus-segments.ts';
+import { corpusSpoolDir, parseWbFileName } from '../core/context/corpus-segments.ts';
+import { freezeSessionSource, resolveCorpusFileSource } from '../core/context/corpus-source.ts';
 import { loadCoreBlock } from '../core/core-memory.ts';
 import { coreTrustIdentity } from '../core/context/openclaw-core.ts';
 import type { TurnContextResult } from '../core/context/turn-context.ts';
@@ -86,9 +87,13 @@ export function makeContextPackIpcHandler(
       const core = await coreForSession(engine, sessionSource);
       return { ...base, ...(core ? { core } : {}), ...(core && identity !== null ? { coreTrust: { identity, unchanged: false } } : {}) };
     }
+    // #6268: the transport's bound-source check [CX2-10] already refuses a
+    // foreign sourceId; the handler refuses too (direct callers), never
+    // rerouting a session's manifest, state or harvest to another source.
+    if (sessionSource !== defaultSource) throw new Error('source_mismatch');
     if (req.manifestOnly === true) {
       const links = sessionId
-        ? await getCheckpointManifest(engine, defaultSource, null, sessionId)
+        ? await getCheckpointManifest(engine, sessionSource, null, sessionId)
         : [];
       return {
         text: '', pointers: [], factsCount: 0, mode: 'pack' as const,
@@ -106,8 +111,14 @@ export function makeContextPackIpcHandler(
         fromWindow = extractCandidatesFromWindow(req.window).map((c) => c.query);
       }
     } catch { /* extraction is best-effort */ }
+    // #6268: an unpinned session (no sourceId) resolves to this serve's own
+    // binding; an UNRESOLVED corpus record it already wrote is frozen to it,
+    // so its unresolved-stamped files follow the source this lane serves.
+    if (sessionId && !req.sourceId) {
+      try { freezeSessionSource(await serveCorpusDir(engine), sessionId, sessionSource, 'serve', { onlyExisting: true }); } catch { /* best effort */ }
+    }
     const state = sessionId
-      ? await getSessionContextState(engine, defaultSource, null, sessionId)
+      ? await getSessionContextState(engine, sessionSource, null, sessionId)
       : null;
     const banked = state?.standing_entities ?? [];
     const entities = Array.from(new Set([...fromReq, ...fromWindow, ...banked]));
@@ -116,7 +127,7 @@ export function makeContextPackIpcHandler(
       // PreCompact banking: persist the standing set for the post-compaction
       // SessionStart; no assembly, empty block.
       if (sessionId && entities.length) {
-        await upsertSessionContextState(engine, defaultSource, null, sessionId, {
+        await upsertSessionContextState(engine, sessionSource, null, sessionId, {
           standingEntities: entities.slice(0, PUSH_PACK_MAX_ENTITIES * 2),
         });
       }
@@ -133,8 +144,18 @@ export function makeContextPackIpcHandler(
           checkpointFlush = { status: 'skipped', reason: 'no_session' };
         } else {
           const dir = await serveCorpusDir(engine);
-          if (!existsSync(join(dir, base))) {
+          // #6268: stamped files live in the spool; a pre-stamp hook flushes a top-level name.
+          const spool = corpusSpoolDir(dir);
+          const location = existsSync(join(spool, base)) ? 'spool' as const : existsSync(join(dir, base)) ? 'legacy' as const : null;
+          const fileSource = location ? await resolveCorpusFileSource(engine, dir, base, location).catch(() => null) : null;
+          if (!location) {
             checkpointFlush = { status: 'skipped', reason: 'not_found' };
+          } else if (!fileSource || !fileSource.ok) {
+            checkpointFlush = { status: 'skipped', reason: fileSource ? fileSource.reason : 'corpus_source_error' };
+          } else if (fileSource.sourceId !== sessionSource) {
+            // Refuse, never reroute: this serve harvests only its own source;
+            // the sweep files the segment under its stamped source.
+            checkpointFlush = { status: 'skipped', reason: 'source_mismatch' };
           } else {
             // Ambient-writeback turn files ride the SAME bank lane with a
             // basename-derived lane tag (WP4): `.wb-<hash>` files get the
@@ -145,7 +166,8 @@ export function makeContextPackIpcHandler(
             // compact lane, past the writeback gate.
             const lane = parseWbFileName(base) !== null ? ('writeback' as const) : ('compact' as const);
             checkpointFlush = scheduleCheckpointHarvest({
-              engine, sourceId: defaultSource, sessionId, corpusDir: dir, file: base, lane,
+              engine, sourceId: fileSource.sourceId, sourceIncarnation: fileSource.incarnation, sessionId,
+              corpusDir: location === 'spool' ? spool : dir, file: base, lane,
             });
           }
         }
@@ -157,7 +179,7 @@ export function makeContextPackIpcHandler(
     }
 
     const result = await assembleContextPack(engine, {
-      sourceId: defaultSource,
+      sourceId: sessionSource,
       entities,
       sessionId: sessionId ?? undefined,
       since: state?.last_wake_at ?? undefined,
@@ -168,7 +190,7 @@ export function makeContextPackIpcHandler(
       // post-compaction SessionStart renders them (fail-open []; links that
       // missed this pack surface on the next boundary — at-least-once).
       ...(sessionId
-        ? { checkpointLinks: (await getCheckpointManifest(engine, defaultSource, null, sessionId)) ?? [] }
+        ? { checkpointLinks: (await getCheckpointManifest(engine, sessionSource, null, sessionId)) ?? [] }
         : {}),
     });
     const core = typeof req.trigger === 'string' && req.trigger.startsWith('session-start') ? await coreForSession(engine, sessionSource) : null;
@@ -181,7 +203,7 @@ export function makeContextPackIpcHandler(
       // known at-most-once edge of the push path; the pull `delta` verb is
       // the lossless channel.) The cursor upsert is monotonic (GREATEST), so
       // an interleaved delta advance is never rewound.
-      await upsertSessionContextState(engine, defaultSource, null, sessionId, {
+      await upsertSessionContextState(engine, sessionSource, null, sessionId, {
         standingEntities: entities.slice(0, PUSH_PACK_MAX_ENTITIES * 2),
         ...(result.degradedReason ? {} : { lastWakeAt: new Date().toISOString() }),
       });
