@@ -68,7 +68,7 @@ const remember: Operation = {
     fact: { type: 'string', description: 'One claim.' },
     items: {
       type: 'array',
-      description: '≤20 facts: [{fact, provenance}]',
+      description: '≤20 of {fact,entity,provenance,kind,ttl,visibility}',
       items: { type: 'object' },
     },
     provenance: {
@@ -78,7 +78,7 @@ const remember: Operation = {
     },
     ttl: {
       type: 'string',
-      description: '"30d", "12h" or ISO 8601 time; omit = never.',
+      description: '"30d", "12h" or ISO 8601; omit = never.',
     },
     entity: {
       type: 'string',
@@ -95,7 +95,7 @@ const remember: Operation = {
     visibility: {
       type: 'string',
       enum: ['world', 'private'],
-      description: 'world (default) or private (local CLI only).',
+      description: 'world (default) or private (local CLI).',
     },
     replaces: { type: 'string', description: 'fact_id this fact replaces (same entity).', fullSurfaceOnly: true },
   },
