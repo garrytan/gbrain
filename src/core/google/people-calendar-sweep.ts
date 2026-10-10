@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, unlistedCalendarPages } from './calendar-window.ts';
+import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, staleCalendarPages } from './calendar-window.ts';
 import { CalendarClient, GoogleCursorExpiredError, PeopleClient } from './google-clients.ts';
 import { calendarRelPath, personSlugFromContact, renderCalendarEventPage, renderPersonPage } from './google-render.ts';
 import { DEFAULT_CALENDAR_ID, type CalendarEventData, type GoogleSourceState } from './types.ts';
@@ -145,7 +145,7 @@ export async function sweepCalendar(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
 ): Promise<void> {
-  const range = new CalendarSyncWindow(Date.now(), deps.cfg.historyDays);
+  const range = new CalendarSyncWindow(Date.now(), deps.cfg.historyDays, deps.cfg.futureDays ?? CALENDAR_HORIZON_DAYS);
   const list = (query: { syncToken: string } | { timeMinIso: string; timeMaxIso: string }) =>
     calendar.listEvents(deps.cfg.account, { calendarId: deps.cfg.calendarId, ...query, ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
   // The stored token is bound to the calendar it was minted for (legacy state
@@ -189,7 +189,7 @@ export async function sweepCalendar(
   }
   if (wholeWindow || catchUpFrom !== null) state.calendar_horizon_ms = range.ceilMs;
   if (tally.outside > 0) {
-    deps.log(`[google] calendar: ${tally.outside} listed event(s) outside the sync window (${deps.cfg.historyDays} days back, ${CALENDAR_HORIZON_DAYS} ahead) were not imported`);
+    deps.log(`[google] calendar: ${tally.outside} listed event(s) outside the sync window (${deps.cfg.historyDays} days back, ${range.futureDays} ahead) were not imported`);
   }
   if (deps.opts.full) await reconcileCalendarWindow(deps, new Set(result.events.map(ev => ev.id)), range, summary);
 }
@@ -221,8 +221,10 @@ async function applyCalendarList(deps: GoogleSyncDeps, events: CalendarEventData
 /**
  * `--full`: delete the sweep's calendar pages whose event starts inside the
  * listed window but that the complete list no longer names (cancelled or
- * deleted upstream). Nothing before the floor qualifies. More than 200 at
- * once needs GBRAIN_ALLOW_MASS_RECONCILE, and a refusal marks the run partial.
+ * deleted upstream), and the sweep's pages whose event starts at or past the
+ * horizon (#5442: a windowed list never names those). Nothing before the
+ * floor qualifies. More than 200 at once needs GBRAIN_ALLOW_MASS_RECONCILE,
+ * and a refusal aborts the whole cleanup and marks the run partial.
  */
 async function reconcileCalendarWindow(deps: GoogleSyncDeps, listedIds: ReadonlySet<string>, range: CalendarSyncWindow,
   summary: GoogleSyncSummary): Promise<void> {
@@ -231,7 +233,7 @@ async function reconcileCalendarWindow(deps: GoogleSyncDeps, listedIds: Readonly
       WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'calendar/%' AND frontmatter->>'event_id' IS NOT NULL`,
     [deps.sourceId],
   );
-  const gone = unlistedCalendarPages(pages, listedIds, range).flatMap(page => page.source_path === null ? [] : [page.source_path]);
+  const gone = staleCalendarPages(pages, listedIds, range).flatMap(page => page.source_path === null ? [] : [page.source_path]);
   if (gone.length === 0) return;
   const { massReconcileAllowed } = await import('../../commands/sync.ts');
   if (gone.length > 200 && !massReconcileAllowed()) {

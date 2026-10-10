@@ -1,5 +1,6 @@
 /** Parse a Google connector source's `sources.config`. Dependency-light so migrations and the connector identity can import it. */
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID, type GoogleService, type GoogleSourceConfig } from './types.ts';
+import { CALENDAR_FUTURE_DAYS_MAX } from './calendar-window.ts';
 
 export function parseGoogleSourceConfig(
   config: Record<string, unknown>,
@@ -20,6 +21,13 @@ export function parseGoogleSourceConfig(
     config.g_history_days > 0
       ? Math.min(3650, Math.floor(config.g_history_days))
       : 90;
+  const futureDays =
+    typeof config.g_future_days === 'number' &&
+    Number.isFinite(config.g_future_days) &&
+    config.g_future_days >= 1 &&
+    config.g_future_days <= CALENDAR_FUTURE_DAYS_MAX
+      ? Math.floor(config.g_future_days)
+      : undefined;
   const calendarId =
     typeof config.g_calendar_id === 'string' && config.g_calendar_id.trim().length > 0
       ? config.g_calendar_id.trim()
@@ -32,6 +40,7 @@ export function parseGoogleSourceConfig(
     account,
     services: services.length > 0 ? services : [...ALL_GOOGLE_SERVICES],
     historyDays,
+    ...(futureDays !== undefined ? { futureDays } : {}),
     calendarId,
     dir,
     access,

@@ -130,7 +130,8 @@ the brain until you remove them — they are not reconciled automatically.
 ## Calendar window
 
 Calendar pages cover events from `--history-days` ago up to 60 days from
-now, and each sweep applies that range on its own. That matters for
+now (`--future-days`, the `g_future_days` config key, 1..3650, moves that
+horizon per source), and each sweep applies that range on its own. That matters for
 incremental syncs: after any edit to a recurring series, Google sends back
 the series' instances for years before and after, and only those inside the
 range are kept. Because the 60-day edge moves forward daily, the sweep also
@@ -141,12 +142,14 @@ the range keep their pages.
 
 `gbrain sync --source <id> --full` re-lists the whole window and removes the
 pages of events that start inside it but are no longer listed (cancelled or
-deleted since). It never removes a page whose event starts before the window,
-so shrinking `--history-days` keeps your history. More than 200 removals in
-one run are refused and the run is reported partial; if that many are
-genuinely gone, run it once with `GBRAIN_ALLOW_MASS_RECONCILE=1`. Pages a
-source wrote beyond the horizon before the window existed are not removed
-automatically.
+deleted since), and the pages this source wrote for events that start at or
+past the horizon (instances a series edit imported years ahead before the
+window existed, or under a wider `g_future_days`). It never removes a page
+whose event starts before the window, so shrinking `--history-days` keeps
+your history, and it never touches a calendar page you wrote by hand. More
+than 200 removals in one run are refused, nothing is removed, and the run is
+reported partial; if that many are genuinely gone, run it once with
+`GBRAIN_ALLOW_MASS_RECONCILE=1`.
 
 **Say to your agent:** *"re-sync my calendar from scratch"* (your agent runs
 `gbrain sync --source <id> --full`).

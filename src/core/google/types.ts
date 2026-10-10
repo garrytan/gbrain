@@ -20,6 +20,13 @@ export interface GoogleSourceConfig {
   services: GoogleService[];
   /** Backfill/reconcile window in days (default 90). */
   historyDays: number;
+  /**
+   * How far ahead calendar pages are kept, in days (`g_future_days`, 1..3650).
+   * Present only when the source sets it, so an unset knob leaves every
+   * existing source's connector identity unchanged; the sweep falls back to
+   * CALENDAR_HORIZON_DAYS.
+   */
+  futureDays?: number;
   /** Calendar swept by this source (default DEFAULT_CALENDAR_ID). One calendar per
    *  source so each keeps its own sync token — point a second source at a
    *  secondary calendar id to ingest it too. */

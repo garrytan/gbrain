@@ -1227,10 +1227,55 @@ describe('calendar window (#5442)', () => {
       const result = await sweep(dir, fx, vault, { full: true }, 'calendar');
 
       expect(result.status).not.toBe('partial');
-      expect(result.deleted).toBe(2);
+      // P4.2 (#5442, contract change): a sweep page past the horizon is now reconciled too,
+      // so `far_evt` goes with the two unlisted in-window pages; history and hand-written stay.
+      expect(result.deleted).toBe(3);
       expect([...(await calendarPages()).keys()].sort()).toEqual(
-        ['calendar/seeded/hand-written', 'far_evt', 'history_evt', 'still_listed'].sort(),
+        ['calendar/seeded/hand-written', 'history_evt', 'still_listed'].sort(),
       );
+    });
+  });
+
+  test('--full removes sweep pages that start at or past the horizon and keeps pages inside it (#5442)', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [meeting('soon', 30), meeting('inside_59', 59)];
+      expect((await sweep(dir, fx, vault, {}, 'calendar')).added).toBe(2);
+      await seedMeetingPage('calendar/seeded/overflow-400', 'overflow_400', 400);
+      await seedMeetingPage('calendar/seeded/overflow-at-ceiling', 'overflow_60', 60);
+      await seedMeetingPage('calendar/seeded/hand-far', null, 400);
+
+      const result = await sweep(dir, fx, vault, { full: true }, 'calendar');
+
+      expect(result.status).not.toBe('partial');
+      expect(result.deleted).toBe(2);
+      expect([...(await calendarPages()).keys()].sort()).toEqual(['calendar/seeded/hand-far', 'inside_59', 'soon'].sort());
+    });
+  });
+
+  test('--full with g_future_days widens the horizon: pages inside the wider window stay (#5442)', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [meeting('soon', 30), meeting('day_120', 120)];
+      expect((await sweep(dir, fx, vault, {}, 'calendar', { cfg: { g_future_days: 180 } })).added).toBe(2);
+      await seedMeetingPage('calendar/seeded/day-400', 'day_400', 400);
+
+      const result = await sweep(dir, fx, vault, { full: true }, 'calendar', { cfg: { g_future_days: 180 } });
+
+      expect(result.deleted).toBe(1);
+      expect([...(await calendarPages()).keys()].sort()).toEqual(['day_120', 'soon']);
+      const listed = calendarQueries(fx).find((q) => q.has('timeMax'))!;
+      expect(near(Date.parse(listed.get('timeMax')!), NOW_MS + 180 * DAY)).toBe(true);
+    });
+  });
+
+  test('--full refuses more than 200 past-horizon deletions through the mass-delete guard and reports partial (#5442)', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      for (let i = 0; i < 201; i++) await seedMeetingPage(`calendar/seeded/future-${i}`, `future_${i}`, 365 + i);
+
+      const { result: refused, err } = await capturedStderr(() => sweep(dir, fx, vault, { full: true }, 'calendar'));
+      expect(refused.status).toBe('partial');
+      expect(refused.deleted).toBe(0);
+      expect(err).toContain('mass-delete guard refused 201 deletes for source gsrc');
+      expect((await calendarPages()).size).toBe(201);
     });
   });
 
