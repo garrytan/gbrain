@@ -1918,6 +1918,13 @@
         ]
       },
       {
+        "kind": "variable",
+        "name": "__clearQueryEmbedCacheForTests",
+        "signature": [
+          "() => void"
+        ]
+      },
+      {
         "kind": "function",
         "name": "__getShrinkStateForTests",
         "signature": [
