@@ -1482,7 +1482,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
       // waits for them), is transient admission back-pressure, not a sync failure to record. #6340: neither is a lost
       // database connection or a statement timeout: the cursor and its frozen manifest stay, and the next pass resumes them.
       if (!['permission_denied', 'worktree_refreshing', 'refresh_recovery_required'].includes(code) && !isWriteCapacityWait(error)
-        && !isRetryableConnError(error) && !isStatementTimeoutError(error)) {
+        && !isRetryableConnError(error) && !isStatementTimeoutError(error) && !(code === 'invalid_params' && phase === 'resume')) {
         const [stored] = cursor ? [] : await engine.executeRaw<{ completed_keys: [CursorHeader] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [OP, key]);
         const failedCursor = cursor ?? stored?.completed_keys?.[0];
         const { failure } = await recordManagedSyncFailure(engine, { source_id: context.sourceId, source_incarnation: context.incarnation, path: cursor?.entries[cursor.index]?.path ?? failedCursor?.pending?.intent.path ?? `<${phase}>`, code,
