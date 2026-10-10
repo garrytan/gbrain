@@ -414,6 +414,7 @@
         "RerankError",
         "THINKING_MODEL_MAX_OUTPUT_TOKENS",
         "VoyageResponseTooLargeError",
+        "__clearQueryEmbedCacheForTests",
         "__getShrinkStateForTests",
         "__setChatTransportForTests",
         "__setDecideTransportForTests",
