@@ -1,5 +1,5 @@
 /**
- * Facts arm for `query` (`search.query_facts_arm`, default off; gates in
+ * Facts arm for `query` (`search.query_facts_arm`, default on; gates in
  * docs/eval/decisions/query-facts-arm/). A correction saved with `remember`
  * lives in the facts table, which page search never ranks, so the stale page
  * text answers instead. With the key on, `query` adds the active facts that
