@@ -73,7 +73,7 @@ describe('writeCodexHooks', () => {
     expect(readHooks().hooks!.SessionEnd!).toHaveLength(1);
     const cfg = readFileSync(configPath, 'utf8');
     expect(cfg.match(/gbrain:codex-hooks-trust \(managed/g)).toHaveLength(1);
-    expect(cfg.match(/trusted_hash/g)).toHaveLength(1);
+    expect(cfg.match(/trusted_hash/g)).toHaveLength(3); // one per CODEX_HOOK_EVENTS event
   });
 
   test('foreign SessionEnd groups keep their positions (ours appends LAST, key index shifts to match)', () => {
@@ -240,5 +240,91 @@ describe('removeCodexHooks description hygiene', () => {
     expect(res.removed).toBe(true);
     expect(res.notes.join(' ')).toContain('shifted');
     expect(readHooks().hooks!.SessionEnd![0]!.hooks[0]!.command).toBe('user-tool --own');
+  });
+});
+
+describe('context events: SessionStart + UserPromptSubmit (#5941)', () => {
+  test('fresh write wires all three events, each with its own trust entry and event-scoped hash', () => {
+    const res = writeCodexHooks({ gbrainBin: BIN, hooksPath, configPath });
+    expect(res.ok).toBe(true);
+    const doc = readHooks();
+    const start = doc.hooks!.SessionStart![0]!.hooks[0]!;
+    const prompt = doc.hooks!.UserPromptSubmit![0]!.hooks[0]!;
+    expect(start.command).toBe(`${BIN} hook session-start --harness codex`);
+    expect(prompt.command).toBe(`${BIN} hook user-prompt --harness codex`);
+    expect(start.timeout).toBe(15);
+    expect(prompt.timeout).toBe(15);
+    // Same [OV2] posture as SessionEnd: no baked source, and no
+    // GBRAIN_HOOK_LANE (that lane's defer guard reads .claude/ settings).
+    for (const h of [start, prompt]) {
+      expect(h.command).not.toContain('GBRAIN_SOURCE');
+      expect(h.command).not.toContain('GBRAIN_HOOK_LANE');
+    }
+    const cfg = readFileSync(configPath, 'utf8');
+    expect(cfg).toContain(`[hooks.state.${JSON.stringify(`${hooksPath}:session_start:0:0`)}]`);
+    expect(cfg).toContain(`[hooks.state.${JSON.stringify(`${hooksPath}:user_prompt_submit:0:0`)}]`);
+    expect(cfg).toContain(`trusted_hash = ${JSON.stringify(codexTrustHash(start.command, 'SessionStart'))}`);
+    expect(cfg).toContain(`trusted_hash = ${JSON.stringify(codexTrustHash(prompt.command, 'UserPromptSubmit'))}`);
+    expect(cfg.match(/trusted_hash/g)).toHaveLength(3);
+    expect(cfg.match(/gbrain:codex-hooks-trust \(managed/g)).toHaveLength(1);
+  });
+
+  test('the hash is event-scoped: the same command hashes differently per event', () => {
+    const cmd = 'golden-fixed-command --x';
+    const hashes = new Set([codexTrustHash(cmd), codexTrustHash(cmd, 'SessionStart'), codexTrustHash(cmd, 'UserPromptSubmit')]);
+    expect(hashes.size).toBe(3);
+    expect(codexTrustHash(cmd, 'SessionEnd')).toBe(codexTrustHash(cmd));
+  });
+
+  test('golden vectors: snake_case event_name + 15s timeout identity', () => {
+    // Recipe checked against live codex 0.159.3 trust entries for
+    // hand-wired SessionStart/UserPromptSubmit hooks (equal hashes).
+    expect(codexTrustHash('golden-fixed-command --x', 'SessionStart')).toBe(
+      'sha256:4e1ac2cd7ff1b6de02faaf371e0ffb4ee9a77783efd9f48babcf8edce19abeb6',
+    );
+    expect(codexTrustHash('golden-fixed-command --x', 'UserPromptSubmit')).toBe(
+      'sha256:1bbf1783dd0b72af3dd86c657545384c5a269820e98727cf006712bfbce3337f',
+    );
+  });
+
+  test('re-run replaces each event group in place; a foreign group before ours keeps its index', () => {
+    const foreign = { hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'other-tool', timeout: 5 }] }] } };
+    writeFileSync(hooksPath, JSON.stringify(foreign));
+    writeCodexHooks({ gbrainBin: BIN, hooksPath, configPath });
+    const res = writeCodexHooks({ gbrainBin: BIN, hooksPath, configPath });
+    expect(res.ok).toBe(true);
+    const ups = readHooks().hooks!.UserPromptSubmit!;
+    expect(ups).toHaveLength(2);
+    expect(ups[0]!.hooks[0]!.command).toBe('other-tool');
+    expect(ups[1]!.hooks[0]!.command).toContain('hook user-prompt --harness codex');
+    expect(readFileSync(configPath, 'utf8')).toContain(`:user_prompt_submit:1:0`);
+    expect(readHooks().hooks!.SessionStart!).toHaveLength(1);
+  });
+
+  test('remove strips all three of ours; foreign context groups survive', () => {
+    const foreign = { hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'other-start', timeout: 5 }] }] } };
+    writeFileSync(hooksPath, JSON.stringify(foreign));
+    writeCodexHooks({ gbrainBin: BIN, hooksPath, configPath });
+    const res = removeCodexHooks({ hooksPath, configPath });
+    expect(res.removed).toBe(true);
+    const doc = readHooks();
+    expect(doc.hooks!.SessionStart!.map((g) => g.hooks[0]!.command)).toEqual(['other-start']);
+    expect(doc.hooks!.UserPromptSubmit).toBeUndefined();
+    expect(doc.hooks!.SessionEnd).toBeUndefined();
+    expect(readFileSync(configPath, 'utf8')).not.toContain('trusted_hash');
+  });
+});
+
+describe('legacy SessionEnd-only description (pre-#5941 installs)', () => {
+  const LEGACY =
+    'gbrain session-end capture — the SessionEnd entry whose command mentions "gbrain" is managed by `gbrain bootstrap` (re-runs rewrite it; `gbrain bootstrap uninstall` deletes it)';
+
+  test('a re-run upgrades the legacy description; removal deletes it', () => {
+    writeFileSync(hooksPath, JSON.stringify({ description: LEGACY, hooks: {} }));
+    writeCodexHooks({ gbrainBin: BIN, hooksPath, configPath });
+    expect(readHooks().description).toContain('UserPromptSubmit');
+    writeFileSync(hooksPath, JSON.stringify({ description: LEGACY, hooks: {} }));
+    removeCodexHooks({ hooksPath, configPath });
+    expect(readHooks().description).toBeUndefined();
   });
 });

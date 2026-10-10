@@ -455,8 +455,8 @@ describe('bootstrap lifecycle (serial e2e)', () => {
       // Codex door: MCP registered via `codex mcp add` (user-global, env
       // binding [G1]) — and since the Memorable wave, a consent-gated
       // SessionEnd hook pair (hooks.json + config.toml trust block) lands in
-      // CODEX_HOME too, so the receipt reads mcp+hooks. Per-turn context
-      // stays the pull protocol (codex hooks are SessionEnd-only).
+      // CODEX_HOME too, so the receipt reads mcp+hooks. Since #5941 the
+      // same writer also wires SessionStart/UserPromptSubmit context.
       const gbrainBin = join(shimDir, 'gbrain');
       const { result: hooksCode, out: hooksOut } = await captureStdout(() =>
         runBootstrap(['hooks', '--workspace', ws2, '--harness', 'codex', '--gbrain-bin', gbrainBin], {

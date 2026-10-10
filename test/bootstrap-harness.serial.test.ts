@@ -319,6 +319,8 @@ describe('full apply', () => {
     // config.toml (never the ambient global), trust entry in the same toml.
     const hooksJson = readFileSync(join(dirname(f.codexConfig), 'hooks.json'), 'utf8');
     expect(hooksJson).toContain('hook session-end --harness codex');
+    expect(hooksJson).toContain('hook session-start --harness codex');
+    expect(hooksJson).toContain('hook user-prompt --harness codex');
     expect(hooksJson).not.toContain('GBRAIN_SOURCE');
     expect(toml).toContain('gbrain:codex-hooks-trust');
     expect(toml).toContain('trusted_hash');
@@ -523,7 +525,10 @@ describe('--remove', () => {
     // of our entry, or the description-only cleanup deleted it).
     const hooksAfterPath = join(dirname(f.codexConfig), 'hooks.json');
     if (existsSync(hooksAfterPath)) {
-      expect(readFileSync(hooksAfterPath, 'utf8')).not.toContain('hook session-end --harness codex');
+      const hooksAfter = readFileSync(hooksAfterPath, 'utf8');
+      expect(hooksAfter).not.toContain('hook session-end --harness codex');
+      expect(hooksAfter).not.toContain('hook session-start --harness codex');
+      expect(hooksAfter).not.toContain('hook user-prompt --harness codex');
     }
   });
 

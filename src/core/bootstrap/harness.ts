@@ -1549,15 +1549,15 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       confirm(t);
       d.log(
         `Codex wired: [mcp_servers.${flags.name}] with inline bearer token in ${t.path} (0600). ` +
-          'Per-turn context on codex is MCP tools + the pull protocol. ' +
+          'Per-turn context on codex rides the SessionStart/UserPromptSubmit hooks below (MCP tools + the pull protocol when hooks are off). ' +
           '[X9] If codex cannot see the server, some builds gate HTTP MCP behind ' +
           'experimental_use_rmcp_client = true in the same config — add it above the managed block.',
       );
-      // Codex SessionEnd capture (v1: session-end only): user-global
-      // hooks.json + its config.toml trust entry via the ONE writer
+      // Codex SessionEnd capture + SessionStart/UserPromptSubmit context (#5941):
+      // user-global hooks.json + config.toml trust entries via the ONE writer
       // (codex-hooks.ts) — idempotent, so a workspace-lane bootstrap and this
-      // harness lane converge on the same entry. No GBRAIN_SOURCE in the
-      // command (machine-global file; session-end resolves from the payload).
+      // harness lane converge on the same entries. No GBRAIN_SOURCE in the
+      // commands (machine-global file; the hooks resolve from the payload).
       if (!flags.noHooks) {
         const hooksBin = flags.gbrainBin ?? d.gbrainBin;
         if (!hooksBin) {
@@ -1566,7 +1566,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
           // Paths derive from THIS TARGET's config.toml (CODEX_HOME-resolved
           // upstream, test-injectable) — never the ambient global default.
           const hr = writeCodexHooks({ gbrainBin: hooksBin, configPath: t.path!, hooksPath: join(dirname(t.path!), 'hooks.json') });
-          if (hr.ok) d.log(`Codex SessionEnd hook wired: ${hr.hooksPath} + trust entry in ${hr.configPath}.`);
+          if (hr.ok) d.log(`Codex SessionEnd + SessionStart + UserPromptSubmit hooks wired: ${hr.hooksPath} + trust entries in ${hr.configPath}.`);
           else for (const note of hr.notes) d.logError(note);
         }
       }
@@ -2169,7 +2169,7 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
             : `no managed block in ${codexPath} — counted as removed.`,
         );
         const hr = removeCodexHooks({ configPath: codexPath, hooksPath: join(dirname(codexPath), 'hooks.json') });
-        if (hr.removed) d.log(`Codex SessionEnd hook + trust entry removed (${hr.hooksPath}).`);
+        if (hr.removed) d.log(`Codex hooks + trust entries removed (${hr.hooksPath}).`);
         for (const note of hr.notes) d.logError(note);
       } else if (t.host === 'opencode') {
         const ocPath = t.path ?? d.opencodeConfig;

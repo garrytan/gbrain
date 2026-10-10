@@ -110,7 +110,8 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       'remove` rewrites config.toml wholesale and drops comments, so the ' +
       'stdio lane (runHooks) must never manage a name the harness block ' +
       'owns, and vice versa. Codex 0.147.0 also ships a real hook system ' +
-      '(hooks.json; PreToolUse…SessionEnd) — gbrain wires SessionEnd only ' +
+      '(hooks.json; PreToolUse…SessionEnd) — gbrain wires SessionEnd, ' +
+      'SessionStart and UserPromptSubmit (#5941) ' +
       '(CODEX_HAS_HOOKS=true; codex-hooks.ts owns the two-file write incl. ' +
       'the config.toml trust entry, see CODEX_HOOKS_SPEC_TARGET there). ' +
       'Some codex builds gate HTTP MCP servers behind ' +
@@ -428,17 +429,18 @@ export function codexAgentsOverridePath(): string {
   return join(codexHome(), 'AGENTS.override.md');
 }
 
-/** Codex hook events gbrain wires (v1: session-end capture only — a
- * SessionStart greeting lane is a filed follow-up). */
-export const CODEX_HOOK_EVENTS = ['SessionEnd'] as const;
+/** Codex hook events gbrain wires: SessionEnd capture plus the
+ * SessionStart/UserPromptSubmit context lane (#5941). Codex >= 0.147.0
+ * declares all three. */
+export const CODEX_HOOK_EVENTS = ['SessionEnd', 'SessionStart', 'UserPromptSubmit'] as const;
 
 /**
  * Whether gbrain WIRES codex hooks. True as of the Memorable wave: bootstrap
- * writes a SessionEnd entry into hooks.json plus its config.toml trust-state
- * entry (codex-hooks.ts — the 0.147.0 trust gate makes an untrusted entry
- * silently inert). SESSION-END CAPTURE ONLY: per-turn context on codex
- * remains the pull-protocol AGENTS.md gates (plan D5); a SessionStart lane
- * is a filed follow-up.
+ * writes one entry per CODEX_HOOK_EVENTS event into hooks.json plus its
+ * config.toml trust-state entry (codex-hooks.ts — the 0.147.0 trust gate
+ * makes an untrusted entry silently inert). SessionEnd captures the session;
+ * SessionStart/UserPromptSubmit inject brain context (#5941). The AGENTS.md
+ * pull protocol stays the fallback when hooks are declined.
  */
 export const CODEX_HAS_HOOKS = true;
 
