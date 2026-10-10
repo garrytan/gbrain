@@ -518,6 +518,8 @@ export interface OperationContext {
    * allow-list equal to the stored delegated prefixes.
    */
   replayAuthority?: WriteAuthority;
+  /** Opaque engine/job-bound CLI delegation; set by the accepted handler only. */
+  localSubagent?: import('../minions/local-subagent.ts').LocalSubagentCapability;
   /**
    * #4216 — defer chunk embeddings on put_page writes: importFromContent runs
    * noEmbed and the standing embed machinery (embed phase / phase-end

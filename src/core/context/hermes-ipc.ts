@@ -23,7 +23,7 @@ export interface HermesStatusRequest { kind: 'hermes_status'; protocol: 2; secre
 export interface HermesAbortRequest { kind: 'hermes_abort'; protocol: 2; secret: string; jobId: string; }
 export interface HermesStartResponse { ok: boolean; protocol: 2; jobId?: string; error?: string; }
 export interface HermesWireReport extends HermesMaintenanceReport {
-  wire_omitted: { files: number; touched_slugs: number; missing_slugs: number; cycle_detail_fields: number };
+  wire_omitted: { files: number; touched_slugs: number; missing_slugs: number; cycle_detail_fields: number; reaped_lock_ids?: number };
 }
 export interface HermesStatusResponse {
   ok: boolean; protocol: 2; error?: string;
@@ -61,6 +61,11 @@ export function validateDelegatedHermesOptions(raw: unknown):
 /** Keep counters truthful while bounding the local status frame. */
 export function hermesReportForWire(report: HermesMaintenanceReport): HermesWireReport {
   const ingest = report.ingest;
+  // Keep identifiers exact: omit overlong values rather than publishing a
+  // truncated ID that could identify a different lock. The total stays truthful.
+  const lockIds = report.lock_reap?.reapedIds.filter(id => id.length <= 256).slice(0, 100) ?? [];
+  const lockReap = report.lock_reap ? { ...report.lock_reap, reapedIds: lockIds,
+    ...(report.lock_reap.error ? { error: report.lock_reap.error.slice(0, 1000) } : {}) } : report.lock_reap;
   let cycleDetailFields = 0;
   const cycle = report.cycle ? { ...report.cycle, phases: report.cycle.phases.map(phase => {
     const details: Record<string, unknown> = {};
@@ -71,10 +76,11 @@ export function hermesReportForWire(report: HermesMaintenanceReport): HermesWire
     }
     return { ...phase, summary: phase.summary.slice(0, 1000), details };
   }) } : null;
-  return { ...report, reasons: report.reasons.map(r => r.slice(0, 1000)),
+  return { ...report, ...(lockReap !== undefined ? { lock_reap: lockReap } : {}), reasons: report.reasons.map(r => r.slice(0, 1000)),
     cycle,
     ingest: ingest ? { ...ingest, files: [], slugsTouched: ingest.slugsTouched.slice(0, 100) } : null,
     validation: { ...report.validation, missing: report.validation.missing.slice(0, 100) },
     wire_omitted: { files: ingest?.files.length ?? 0, touched_slugs: Math.max(0, (ingest?.slugsTouched.length ?? 0) - 100),
-      missing_slugs: Math.max(0, report.validation.missing.length - 100), cycle_detail_fields: cycleDetailFields } };
+      missing_slugs: Math.max(0, report.validation.missing.length - 100), cycle_detail_fields: cycleDetailFields,
+      ...(report.lock_reap ? { reaped_lock_ids: report.lock_reap.reapedIds.length - lockIds.length } : {}) } };
 }

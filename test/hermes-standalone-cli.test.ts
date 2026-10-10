@@ -32,6 +32,7 @@ test('standalone CLI imports default Hermes sessions into isolated PGLite and re
   expect(result).toMatchObject({ exitCode: 0 });
   const receipt = JSON.parse(result.stdout);
   expect(receipt).toMatchObject({ status: 'ok', source_id: sourceId,
+    lock_reap: { reaped: 0, reapedIds: [] },
     ingest: { sessionsSeen: 2, sessionsImported: 2 }, validation: { checked: 2, missing: [] } });
   expect(receipt.ingest.slugsTouched).toHaveLength(2);
   expect(result.stderr).not.toContain('sessionSources must contain at least one source');

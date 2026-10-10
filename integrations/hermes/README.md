@@ -212,3 +212,47 @@ The catalog directory installs the memory provider. Use the canonical
 `gbrain connect` flow as well to install the full native MCP connection and shared
 skillpack; the provider alone does not establish skill distribution or prove
 that a skill was activated in a fresh Hermes conversation.
+
+### Admission checks and risk disclosure
+
+The `marketplace-validation` job runs the official pinned Hermes validator with
+`--install-deps` in a disposable CI runtime. Run that command in a disposable
+Hermes checkout locally as well: dependency preparation can replace the selected
+Hermes environment, so it is not a read-only check of a live installation.
+
+The provider sends retrieval queries, configured standing entities and session
+identifiers to the configured GBrain MCP endpoint. Before-turn retrieval sends
+the current user query even when capture is off. Explicit memory tools send
+their arguments; opted-in capture additionally sends paired user/assistant turn
+text for storage.
+Remote endpoints require HTTPS; loopback HTTP is allowed for local deployments.
+Redirects are refused, so a redirected endpoint cannot receive the bearer token.
+The token comes from this profile's Hermes secret scope, not another client's
+credential store. Explicit setup uses Hermes's configuration API. The provider
+does not spawn shell commands, install a scheduler, update its own source, or
+rebind Hermes core. Separate transcript-import and maintenance CLI commands are
+explicit operator actions, not background behavior silently installed by the
+provider.
+
+The admission scanner reports a `context_exfil` caution in the README's soft
+context-budget explanation. It is retained for human review, not hidden or
+allowlisted: the real data flow to the configured server is disclosed above.
+General capability declarations remain empty because the seven memory tools
+belong to the registered MemoryProvider, not the general tool registry.
+
+### Prior art and acknowledgments
+
+This integration addresses the requirements documented in
+[GBrain issue #6216](https://github.com/garrytan/gbrain/issues/6216), including
+per-profile secret scopes and context-preserving background work. Credit to
+[@praggybuilds](https://github.com/praggybuilds) for reporting those requirements
+and publishing the community
+[`hermes-gbrain-pointer`](https://github.com/praggybuilds/hermes-gbrain-pointer)
+provider ([catalog submission](https://github.com/NousResearch/hermes-agent/pull/134204)).
+That prior implementation is acknowledged as relevant prior art; this draft does
+not claim to originate the idea of a Hermes-native GBrain memory provider.
+Code-reuse and license attribution are separate from this requirements credit.
+The [bounded provenance review](PROVENANCE.md) found no substantial distinctive
+source reuse in the compared files; it does not establish independent authorship
+or an exhaustive absence of reuse. Any later copied or adapted source must
+retain its applicable notices and identify its origin.

@@ -4,8 +4,9 @@ import { mintLegacyToken, revokeLegacyTokenById } from '../../src/core/token-min
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { createInterface } from 'node:readline';
 
+const dataDir = process.env.GBRAIN_HERMES_FIXTURE_DATA_DIR;
 const engine = new PGLiteEngine();
-await engine.connect({});
+await engine.connect(dataDir ? { engine: 'pglite', database_path: dataDir } : {});
 await engine.initSchema();
 const server = await startServeHttp(engine);
 const token = await legacyToken(engine, ['read', 'write', 'admin']);
@@ -14,7 +15,8 @@ const readOnlyToken = await (await import('../../src/core/token-mint.ts')).mintL
   allowedOperations: ['recall', 'context_pack', 'delta'], takesHolders: ['world'],
 });
 
-// Synthetic-only fixtures; remote private visibility stays enforced as shipped.
+// Synthetic-only fixtures; do not reseed durable rows when reopening after restart.
+if (!process.env.GBRAIN_HERMES_FIXTURE_REOPEN) {
 await callTool(server.base, token, 'put_page', {
   slug: 'hermes-acceptance/world-synthetic', title: 'Synthetic world fixture',
   content: `---
@@ -33,18 +35,21 @@ visibility: private
 
 HERMES_PRIVATE_FIXTURE_9813`, type: 'note',
 });
+}
 const sourceTokens = [];
 for (const sourceId of ['hermes-profile-a', 'hermes-profile-b']) {
-  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1) ON CONFLICT (id) DO NOTHING', [sourceId]);
   const minted = await mintLegacyToken(engine, {
     name: sourceId, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [sourceId],
   });
   const marker = sourceId === 'hermes-profile-a' ? 'amber telescope orchard' : 'violet compass meadow';
+  if (!process.env.GBRAIN_HERMES_FIXTURE_REOPEN) {
   const result = await callTool(server.base, minted.token, 'put_page', {
     source_id: sourceId, slug: 'notes/profile-fixture',
     content: `---\ntitle: Synthetic profile fixture\nvisibility: world\n---\n\n${marker}`,
   });
   if (result.isError) throw new Error('Synthetic source fixture could not be written');
+  }
   sourceTokens.push({ sourceId, token: minted.token, id: minted.id, marker });
 }
 process.stdout.write(JSON.stringify({ url: server.mcpUrl, token, readOnlyToken: readOnlyToken.token, sourceTokens }) + '\n');

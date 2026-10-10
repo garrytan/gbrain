@@ -487,6 +487,8 @@ export interface CycleReport {
 }
 
 export interface CycleOpts {
+  /** Explicit trusted producer for this request; never inferred from ambient CLI ALS. */
+  localSubagentSubmit?: import('./cycle/synthesize.ts').SynthesizePhaseOpts['localSubagentSubmit'];
   /** If true, no writes to filesystem or DB. All phases honor this. */
   dryRun?: boolean;
   /** Defaults to ALL_PHASES. Pass a subset for --phase lint etc. */
@@ -2283,6 +2285,7 @@ export async function runCycle(
           // the cycle lock (pre-fix these sites passed the raw — in production
           // always-undefined — hook, so long phases never refreshed).
           yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase, onStolen),
+          localSubagentSubmit: opts.localSubagentSubmit,
           inputFile: opts.synthInputFile,
           date: opts.synthDate,
           cycleDate,

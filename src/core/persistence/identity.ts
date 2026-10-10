@@ -15,6 +15,11 @@ import { acquireNativeLock } from './native-lock.ts';
 export interface LocalRegistration { id: string; credential: string; lane: 'cli' | 'stdio'; }
 export interface LocalGrant { sourceIds: string[]; operations: string[] | null; scopes: string[]; slugPrefixes: string[] | null; }
 export interface VerifiedLocalWriter { principal: Principal; grant: LocalGrant; remote: boolean; }
+const verifiedEngines = new WeakMap<VerifiedLocalWriter, SqlEngine>();
+export function verifiedLocalWriterFor(engine: SqlEngine): VerifiedLocalWriter | undefined {
+  const writer = currentVerifiedLocalWriter();
+  return writer && verifiedEngines.get(writer) === engine ? writer : undefined;
+}
 const verifiedLocalWriter = new AsyncLocalStorage<VerifiedLocalWriter>();
 export function currentVerifiedLocalWriter(): VerifiedLocalWriter | undefined { return verifiedLocalWriter.getStore(); }
 /** Only the server's credential verifier enters this context; wire data cannot set trust. */
@@ -202,7 +207,13 @@ export async function verifyLocalWriter(engine: SqlEngine, local: LocalRegistrat
       `Local ${local.lane} writer registration ${local.id} is missing from this brain's database, revoked, or holds a different credential, so this caller is not authorized and nothing ran. Review it with the command in fix; replacing a revoked registration (gbrain auth local-writer register ${local.lane} --replace with the complete intended grant) is the user's decision.`,
       { fix: registrationsFix() });
   }
-  return { principal: { kind: row.lane === 'cli' ? 'local_cli' : 'local_stdio', id: local.id }, grant: row.grant_ceiling, remote: row.lane !== 'cli' };
+  const grant = structuredClone(row.grant_ceiling);
+  Object.freeze(grant.sourceIds); Object.freeze(grant.scopes);
+  if (grant.operations) Object.freeze(grant.operations);
+  if (grant.slugPrefixes) Object.freeze(grant.slugPrefixes);
+  const writer: VerifiedLocalWriter = Object.freeze({ principal: Object.freeze({ kind: row.lane === 'cli' ? 'local_cli' as const : 'local_stdio' as const, id: local.id }), grant: Object.freeze(grant), remote: row.lane !== 'cli' });
+  verifiedEngines.set(writer, engine);
+  return writer;
 }
 export async function revokeLocalWriter(engine: BrainEngine, id: string): Promise<boolean> {
   const rows = await engine.executeRaw('UPDATE persistence_local_writers SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1::uuid RETURNING id', [id]);

@@ -35,6 +35,7 @@ function fixture() {
   } as TranscriptsIngestResult;
   let cycleStatus: CycleReport['status'] = 'ok';
   const dependencies: HermesMaintenanceDependencies = {
+    reapLocks: async () => ({ reaped: 0, reapedIds: [] }),
     currentVerifiedLocalWriter: () => undefined,
     ingest: async (eng, opts) => {
       calls.push({ kind: 'ingest', engine: eng, options: opts });
@@ -62,6 +63,31 @@ test('explicit import defaults to no paid cycle and validates exact source on th
   assert.equal(f.calls[0].options.embed, false);
   assert.equal(f.calls[0].options.limit, 100);
   assert.deepEqual(report.validation.missing, []);
+});
+
+test('lock reaping is independent of enrichment and its failure is visible', async () => {
+  const f = fixture();
+  let reapCalls = 0;
+  f.dependencies.reapLocks = async engine => {
+    assert.equal(engine, f.engine);
+    reapCalls++;
+    throw new Error('synthetic reap failure');
+  };
+  const report = await runHermesMaintenance(f.engine, f.options, f.dependencies);
+  assert.equal(reapCalls, 1);
+  assert.equal(report.status, 'partial');
+  assert.ok(report.reasons.includes('lock_reap_failed'));
+  assert.match(report.lock_reap?.error ?? '', /synthetic reap failure/);
+  assert.equal(f.calls.length, 1);
+});
+
+test('successful independent reaper is represented in the import-only receipt', async () => {
+  const f = fixture();
+  f.dependencies.reapLocks = async () => ({ reaped: 2, reapedIds: ['gbrain-cycle', 'gbrain-sync:sample'] });
+  const report = await runHermesMaintenance(f.engine, f.options, f.dependencies);
+  assert.deepEqual(report.lock_reap, { reaped: 2, reapedIds: ['gbrain-cycle', 'gbrain-sync:sample'] });
+  assert.equal(report.status, 'ok');
+  assert.equal(f.calls.length, 1);
 });
 
 test('enrichment uses configured synthesis and bounded shared cycle without changing config', async () => {
@@ -111,6 +137,49 @@ test('an empty store cannot become a successful zero-input nightly receipt', asy
   assert.equal(f.calls.length, 1);
 });
 
+test('a filtered clean import leaves pending-input discovery to the canonical synthesis phase', async () => {
+  const f = fixture();
+  f.result.sessionsImported = 0;
+  f.result.slugsTouched = [];
+  f.configs.set('dream.synthesize.enabled', 'true');
+  f.configs.set('dream.synthesize.conversation_pages', 'true');
+  const report = await runHermesMaintenance(f.engine, { ...f.options, enrich: true, brainDir: '/synthetic/brain' }, f.dependencies);
+  assert.equal(report.status, 'partial');
+  assert.ok(report.reasons.includes('no_matching_input'));
+  const cycle = f.calls.find(call => call.kind === 'cycle');
+  assert.ok(cycle, 'pending work must not be stranded by a no-change import');
+  assert.deepEqual(cycle.options.phases, ['synthesize', 'facts_drain']);
+});
+
+test('unchanged retries resume synthesis after import-only or deferred enrichment', async () => {
+  for (const firstMode of ['import-only', 'lock-deferred', 'budget-deferred']) {
+    const f = fixture();
+    f.configs.set('dream.synthesize.enabled', 'true');
+    f.configs.set('dream.synthesize.conversation_pages', 'true');
+    let firstCycle = true;
+    f.dependencies.cycle = async (engine, options) => {
+      f.calls.push({ kind: 'cycle', engine, options });
+      if (firstCycle && firstMode !== 'import-only') {
+        firstCycle = false;
+        return cycleReport('skipped', [], firstMode === 'lock-deferred' ? 'cycle_already_running' : 'insufficient_cycle_budget');
+      }
+      return cycleReport('ok', []);
+    };
+    const options = { ...f.options, brainDir: '/synthetic/brain' };
+    const first = await runHermesMaintenance(f.engine, { ...options, enrich: firstMode !== 'import-only' }, f.dependencies);
+    assert.equal(first.status, firstMode === 'import-only' ? 'ok' : 'partial');
+    f.result.sessionsImported = 0;
+    f.result.pages.imported = 0;
+    f.result.pages.skipped = 1;
+    const resumed = await runHermesMaintenance(f.engine, { ...options, enrich: true }, f.dependencies);
+    assert.equal(resumed.status, 'ok');
+    const lastCycle = f.calls.filter(call => call.kind === 'cycle').at(-1)!;
+    assert.deepEqual(lastCycle.options.phases, ['synthesize', 'facts_drain'], firstMode);
+    assert.equal(lastCycle.options.sourceId, 'example-source');
+    assert.ok(lastCycle.options.deadlineAtMs > Date.now());
+  }
+});
+
 test('cycle lock skip and remaining jobs are incomplete receipts', async () => {
   const f = fixture();
   f.setCycleStatus('skipped');
@@ -158,6 +227,21 @@ test('abort and wrong-engine context start no import or provider work', async ()
   assert.equal(report.status, 'failed');
   assert.equal(f.calls.length, 0);
   await assert.rejects(runHermesMaintenance(f.engine, { ...f.options, context: { remote: false, engine: {} } as OperationContext }, f.dependencies), /same engine/);
+});
+
+test('abort during ingestion is propagated and prevents the drain cycle', async () => {
+  const f = fixture();
+  const controller = new AbortController();
+  f.dependencies.ingest = async (_engine, opts) => {
+    assert.ok(opts.signal instanceof AbortSignal);
+    controller.abort(new Error('operator cancelled during import'));
+    return f.result;
+  };
+  const report = await runHermesMaintenance(f.engine, { ...f.options, enrich: true, signal: controller.signal }, f.dependencies);
+  assert.equal(report.status, 'partial');
+  assert.ok(report.reasons.includes('deadline_or_abort'));
+  assert.equal(report.cycle, null);
+  assert.equal(report.validation.checked, 0);
 });
 
 test('a disabled facts drain is reported as skipped enrichment', async () => {
@@ -220,8 +304,11 @@ test('source-limited enrichment refuses before import or brain-wide cycle', asyn
 test('source-limited import-only preserves its exact destination and authenticated context', async () => {
   const f = fixture();
   f.context.auth = { token: '', clientId: 'synthetic-cli', scopes: ['read', 'write'], sourceId: 'example-source', allowedSources: ['example-source'] };
+  f.dependencies.reapLocks = async () => { throw new Error('must not invoke a brain-wide reaper'); };
   const report = await runHermesMaintenance(f.engine, f.options, f.dependencies);
-  assert.equal(report.status, 'ok');
+  assert.equal(report.status, 'partial');
+  assert.ok(report.reasons.includes('lock_reap_requires_unrestricted_writer'));
+  assert.deepEqual(report.lock_reap, { reaped: 0, reapedIds: [], skipped: 'requires_unrestricted_writer' });
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].options.sourceId, 'example-source');
   assert.equal(f.calls[0].options.context, f.context);

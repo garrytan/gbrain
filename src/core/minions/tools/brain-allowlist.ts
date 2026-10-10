@@ -22,6 +22,7 @@
  * level; repeats re-derive the same embedding over identical content.
  */
 
+import { checkLocalSubagentTool, localSubagentReadAuth, type LocalSubagentCapability } from '../local-subagent.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { operations } from '../../operations.ts';
@@ -133,6 +134,7 @@ function namespacedPutPageSchema(
 /** Args required to build the registry for a given subagent job. */
 export interface BuildBrainToolsOpts {
   subagentId: number;
+  localSubagent?: LocalSubagentCapability;
   engine: BrainEngine;
   config: GBrainConfig;
   /**
@@ -180,6 +182,7 @@ interface OpContextDeps {
   engine: BrainEngine;
   config: GBrainConfig;
   subagentId: number;
+  localSubagent?: LocalSubagentCapability;
   jobId: number;
   signal?: AbortSignal;
   brainId?: string;
@@ -206,7 +209,9 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     // fences or requiring direct read/write scopes for agent-only grants.
     ...(deps.delegatedAuth ? { auth: { token: '', ...deps.delegatedAuth,
       principal: { kind: 'oauth_client' as const, id: deps.delegatedAuth.clientId } } } : {}),
+    ...(deps.localSubagent ? { auth: localSubagentReadAuth(deps.engine, deps.localSubagent) } : {}),
     jobId: deps.jobId,
+    localSubagent: deps.localSubagent,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
     brainId: deps.brainId,
@@ -263,6 +268,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           engine: ctx.engine,
           config: opts.config,
           subagentId: opts.subagentId,
+          localSubagent: opts.localSubagent,
           jobId: ctx.jobId,
           signal: ctx.signal,
           brainId: opts.brainId,
@@ -281,6 +287,10 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
         const params = normalizeOptionalParams(op, raw);
         const validationError = validateParams(op, params);
         if (validationError) throw new Error(`${toolName}: ${validationError}`);
+        if (opts.localSubagent) {
+          if (params.source_id !== undefined && params.source_id !== opts.sourceId) throw new Error('Local subagent source override exceeds its accepted grant');
+          await checkLocalSubagentTool(opCtx, op.name);
+        }
         const output = await op.handler(opCtx, params);
         const rejection = op.name === 'put_page' ? putPageRejection(output) : null;
         if (rejection) throw new Error(rejection);

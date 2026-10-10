@@ -7,6 +7,7 @@ import { NO_SOURCES } from '../source-id.ts';
 import { hasScope } from '../scope.ts';
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
 import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
+import { localSubagentWrite, assertLocalSubagentReceipt } from '../minions/local-subagent.ts';
 import { readLocalWriter, currentVerifiedLocalWriter, verifyLocalWriter, type LocalGrant } from './identity.ts';
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWrites } from './page-visibility.ts';
@@ -45,6 +46,16 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
   if (ctx.replayAuthority) return replayedAuthority(ctx.engine, ctx.replayAuthority, operation, sourceId, sourceIncarnation, slug);
   if (ctx.auth?.sourceId === NO_SOURCES || sourceId === NO_SOURCES) throw noSourceGrantError(operation, ctx.auth);
   if (ctx.auth?.fenceProjectionDegraded || ctx.auth?.grantProjectionDegraded) deny('The grant projection is incomplete.');
+  if (ctx.localSubagent) {
+    const accepted = await localSubagentWrite(ctx, operation, sourceId, sourceIncarnation);
+    const a: WriteAuthority = { version: 1, principal: accepted.principal, remote: true, sourceId, sourceIncarnation,
+      scopes: [...accepted.grant.parent.scopes], operations: [...accepted.grant.allowedOperations], slugPrefixes: accepted.grant.parent.slugPrefixes,
+      excludePrivate: await excludesPrivateWrites(ctx.engine, true), autoLinkTrusted: false, takesHolders: ['world'],
+      restrictedNamespace: true, delegatedPrefixes: [...accepted.grant.allowedSlugPrefixes], localSubagent: accepted };
+    await authorizeWrite(ctx.engine, a, operation, slug);
+    if (!skillWrite(operation)) await authorizePageVisibility(ctx.engine, a, slug);
+    return a;
+  }
   let principal: Principal;
   let localGrant: LocalGrant | undefined;
   if (ctx.auth?.principal) principal = { ...ctx.auth.principal };
@@ -120,6 +131,7 @@ async function replayedAuthority(engine: SqlEngine, stored: WriteAuthority, oper
 /** Caller holds source guards first. FOR SHARE serializes publication against revocation. */
 export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, operation: string, slug: string, lock = false): Promise<void> {
   if (a.version !== 1 || !a.principal || !a.sourceId || !a.sourceIncarnation) deny('Missing durable write authority.');
+  if (a.localSubagent && a.principal.kind !== 'local_cli') deny('Local subagent delegation cannot change principal.');
   assertSkillWriteScopes(a.scopes, operation, a.remote);
   if (!hasScope(a.scopes, a.delegated ? 'agent' : 'write') || !operationAllowed(a.operations, operation) || !prefixAllowed(a.slugPrefixes, slug)) deny('The operation exceeds its original accepted grant.');
   if ((a.delegated || a.restrictedNamespace) && (!a.delegatedPrefixes?.length || !matchesSlugAllowList(slug, a.delegatedPrefixes))) deny('The target exceeds the accepted delegated namespace.');
@@ -154,7 +166,8 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     // #5984: one local-writer read per transaction; a FOR SHARE read also answers a plain one.
     const [row] = await localWriterRow(engine, a.principal.id, lock);
     const lane = a.principal.kind === 'local_cli' ? 'cli' : 'stdio';
-    if (!row || row.revoked_at != null || row.lane !== lane || a.remote !== (lane === 'stdio')) deny('The local writer is revoked or its trust lane changed.');
+    if (a.localSubagent) await assertLocalSubagentReceipt(engine, a, operation, slug, lock);
+    if (!row || row.revoked_at != null || row.lane !== lane || a.remote !== (lane === 'stdio') && !a.localSubagent) deny('The local writer is revoked or its trust lane changed.');
     const g = row.grant_ceiling;
     assertSkillWriteScopes(g?.scopes ?? [], operation, a.remote);
     if (!g || !strings(g.sourceIds) || !(g.sourceIds.includes('*') || g.sourceIds.includes(a.sourceId)) ||
@@ -241,7 +254,8 @@ function onceReads(engine: BrainEngine): BrainEngine {
 }
 export async function ownRequestAccessible(ctx: OperationContext, row: WriteRequest): Promise<boolean> {
   try {
-    const engine = onceReads(ctx.engine);
+    // The local-subagent capability is bound to its original engine object, so it never reads through the memoizing view.
+    const engine = ctx.localSubagent ? ctx.engine : onceReads(ctx.engine);
     const auth = await submissionAuthority({ ...ctx, engine }, row.operation, row.source_id, row.source_incarnation, row.slug);
     if (auth.principal.kind !== row.principal_kind || auth.principal.id !== row.principal_id) return false;
     await authorizeStoredRequest(engine, row);

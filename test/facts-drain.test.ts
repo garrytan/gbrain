@@ -21,6 +21,9 @@ import {
   FACTS_DRAIN_STATE_KEY, __resetFactsDrainNoticesForTests, readFactsDrainState, readFactsDrainStatus, runFactsDrain, takeFactsDrainNotice,
   validateFactsDrainConfigValue,
 } from '../src/core/facts/drain.ts';
+import { runPhaseFactsDrain } from '../src/core/cycle/facts-drain.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { DEGRADED_STATE } from '../src/core/degraded-marker.ts';
 
 let engine: PGLiteEngine;
 const KEYS = { ANTHROPIC_API_KEY: 'sk-test-drain', OPENAI_API_KEY: 'sk-test-drain' };
@@ -86,6 +89,93 @@ const isolated = <T>(env: Record<string, string | undefined>, fn: () => Promise<
 };
 
 describe('runFactsDrain', () => {
+  test('an unavailable backend never certifies an empty queue', async () => {
+    const degraded = { kind: 'pglite', [DEGRADED_STATE]: () => true } as unknown as BrainEngine;
+    const phase = await runPhaseFactsDrain(degraded, { dryRun: false });
+    expect(phase.status).toBe('skipped');
+    expect(phase.summary).not.toContain('no queued');
+    const failed = { kind: 'pglite', getConfig: async () => { throw new Error('synthetic storage unavailable'); } } as unknown as BrainEngine;
+    const errorPhase = await runPhaseFactsDrain(failed, { dryRun: false });
+    expect(errorPhase.status).toBe('warn');
+    expect(errorPhase.summary).toContain('? facts-absorb job(s) remain');
+  });
+
+  test('future-delayed facts work is reported as incomplete, not clean', async () => isolated(KEYS, async () => {
+    await seed(1);
+    await engine.executeRaw("UPDATE minion_jobs SET status='delayed', delay_until=now() + interval '1 hour' WHERE name='facts-absorb'");
+    const phase = await runPhaseFactsDrain(engine, { dryRun: false });
+    expect(phase.status).toBe('warn');
+    expect(phase.details).toMatchObject({ outcome: 'idle', backlog_after: 0, delayed_after: 1, remaining_after: 1 });
+    expect((await jobRows())[0].status).toBe('delayed');
+  }));
+
+  test('a live active lease remains reported as incomplete and is not stolen', async () => isolated(KEYS, async () => {
+    await seed(1);
+    const queue = new MinionQueue(engine);
+    const lease = await queue.claim('other-owner', 3_600_000, 'default', ['facts-absorb']);
+    expect(lease).not.toBeNull();
+    const phase = await runPhaseFactsDrain(engine, { dryRun: false });
+    expect(phase.status).toBe('warn');
+    expect(phase.details).toMatchObject({ outcome: 'idle', backlog_after: 0, active_after: 1, remaining_after: 1 });
+    expect(await engine.executeRaw<{ status: string; lock_token: string }>("SELECT status,lock_token FROM minion_jobs WHERE name='facts-absorb'")).toEqual([{ status: 'active', lock_token: 'other-owner' }]);
+  }));
+
+  test('waiting work can drain while delayed work remains and phase warns', async () => isolated(KEYS, async () => {
+    await seed(2);
+    await engine.executeRaw("UPDATE minion_jobs SET status='delayed', delay_until=now() + interval '1 hour' WHERE id=(SELECT max(id) FROM minion_jobs WHERE name='facts-absorb')");
+    __setChatTransportForTests(async () => factsReply('x'));
+    const phase = await runPhaseFactsDrain(engine, { dryRun: false });
+    expect(phase.status).toBe('warn');
+    expect(phase.details).toMatchObject({ outcome: 'drained', completed: 1, backlog_after: 0, delayed_after: 1, remaining_after: 1 });
+  }));
+
+  test('paused and waiting-children facts work is not reported as complete', async () => isolated(KEYS, async () => {
+    await seed(2);
+    const parents = await engine.executeRaw<{ id: number }>("SELECT id FROM minion_jobs WHERE name='facts-absorb' ORDER BY id");
+    await engine.executeRaw("UPDATE minion_jobs SET status='paused' WHERE id=$1", [parents[0].id]);
+    // An actual live child is required; an orphan waiting-children row is correctly promoted by the queue.
+    await new MinionQueue(engine).add('facts-absorb', { slug: 'notes/blocked-child', sourceId: 'default' },
+      { parent_job_id: parents[1].id, delay: 3_600_000 });
+    let calls = 0;
+    __setChatTransportForTests(async () => { calls++; throw new Error('no model call is expected for non-runnable jobs'); });
+    const phase = await runPhaseFactsDrain(engine, { dryRun: false });
+    expect(phase.status).toBe('warn');
+    expect(phase.details).toMatchObject({ outcome: 'idle', paused_after: 1, waiting_children_after: 1, delayed_after: 1, remaining_after: 3 });
+    expect(calls).toBe(0);
+    expect((await jobRows()).map(j => j.status).sort()).toEqual(['delayed', 'paused', 'waiting-children']);
+  }));
+
+  test('failed final queue read reports unknown instead of stale pre-processing counts', async () => isolated(KEYS, async () => {
+    await seed(1);
+    __setChatTransportForTests(async () => factsReply('x'));
+    let reads = 0;
+    const failing = new Proxy(engine, {
+      get(target, property) {
+        if (property === 'executeRaw') return async (sql: string, args?: unknown[]) => {
+          if (sql.startsWith('SELECT status, count(*)::int AS n FROM minion_jobs') && ++reads === 2) {
+            throw new Error('synthetic final queue read failure');
+          }
+          return target.executeRaw(sql, args);
+        };
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const phase = await runPhaseFactsDrain(failing, { dryRun: false });
+    expect(phase.status).toBe('warn');
+    expect(phase.details.completed).toBe(1);
+    expect(phase.details.remaining_after).toBeUndefined();
+    expect(phase.details.backlog_after).toBeNull();
+    expect(phase.summary).toContain('? facts-absorb job(s) remain');
+    expect((await jobRows()).map(job => job.status)).toEqual(['completed']);
+  }));
+
+  test('a genuinely empty facts queue remains clean', async () => isolated(KEYS, async () => {
+    const phase = await runPhaseFactsDrain(engine, { dryRun: false });
+    expect(phase.status).toBe('ok');
+    expect(phase.details).toMatchObject({ outcome: 'idle', remaining_after: 0, waiting_after: 0, delayed_after: 0, active_after: 0 });
+  }));
+
   test('extracts every queued page with zero commands; before the drain they sit waiting', () => isolated(KEYS, async () => {
     await seed(3);
     expect((await jobRows()).map(j => j.status)).toEqual(['waiting', 'waiting', 'waiting']);
@@ -150,6 +240,7 @@ describe('runFactsDrain', () => {
         completed: 50, failed: 0, deferred: 0, facts_inserted: 50, spent_usd: 5, unpriced_calls: 0, backlog_before: 60, backlog_after: 10, model: MODEL }] }));
     const r = await run([]);
     expect(r.outcome).toBe('daily_budget_exhausted');
+    expect(r.remaining_after).toBe(2);
     expect((await jobRows()).map(j => j.attempts_started)).toEqual([0, 0]);
     expect(r.error?.fix?.argv).toEqual(['gbrain', 'config', 'set', 'facts.drain_daily_budget_usd', '10.00']);
   }));
@@ -160,6 +251,7 @@ describe('runFactsDrain', () => {
     const logs: string[] = [];
     const first = await run(logs);
     expect(first.outcome).toBe('no_key');
+    expect(first.remaining_after).toBe(2);
     expect(first.error).toMatchObject({ code: 'facts_drain_deferred', reason: 'no_key', fix: { argv: ['gbrain', 'providers', 'list'], actor: 'user' } });
     expect(logs.filter(l => l.includes('facts_drain_deferred'))).toHaveLength(1);
     expect(takeFactsDrainNotice()).toMatchObject({ code: 'facts_drain_deferred', kind: 'degraded' });

@@ -9,7 +9,9 @@
  */
 
 import { APPLICATION_AUTHORITY, LEGACY_AUTHORITY_COLUMN, assertNoUnreviewedJobs, authorizeJobExecution, currentSubmissionAuthority, parseSubmissionAuthority, type SubmissionAuthority } from './submission-authority.ts';
+import { localSubagentAdmission, assertLocalSubagentLive }  from './local-subagent.ts';
 import type { BrainEngine } from '../engine.ts';
+import { opError } from '../ops/contract.ts';
 import type {
   MinionJob, MinionJobInput, MinionJobStatus, InboxMessage, TokenUpdate,
   MinionQueueOpts, ChildDoneMessage, ChildOutcome, Attachment, AttachmentInput,
@@ -223,8 +225,10 @@ export class MinionQueue {
     // canonical form. Without the trim-before-check, `queue.add(' shell ', ...)`
     // would evade the guard and insert a job literally named 'shell'.
     if (currentSubmissionAuthority() && currentSubmissionAuthority()!.kind !== 'application') throw new Error('Remote jobs cannot submit descendant jobs');
-    const authority = parseSubmissionAuthority(trusted?.submissionAuthority ?? APPLICATION_AUTHORITY);
-    if (!authority) throw new Error('Unsupported submission authority');
+    const localAdmission = localSubagentAdmission(this.engine, trusted);
+    const authority = localAdmission ?? parseSubmissionAuthority(trusted?.submissionAuthority ?? APPLICATION_AUTHORITY);
+    if (!authority || authority.kind === 'local_subagent' && !localAdmission) throw new Error('Unsupported submission authority');
+    if (localAdmission) data = structuredClone(data ?? {});
     const delegatedClientId = authority.kind === 'remote_agent' ? authority.principal.id : trusted?.delegatedClientId;
     if (authority.kind === 'remote_agent' && trusted?.delegatedClientId !== undefined && trusted.delegatedClientId !== delegatedClientId) {
       throw new Error('Delegated submission identity differs from its authority');
@@ -340,6 +344,7 @@ export class MinionQueue {
     let coalesceAudit: CoalesceAuditEvent | null = null;
 
     const result = await this.engine.transaction(async (tx) => {
+      if (authority.kind === 'local_subagent') await assertLocalSubagentLive(tx, authority, true);
       // Client lock spans grant validation, capacity check and insertion.
       const delegatedLimit = await lockDelegatedSubmission(tx, delegatedClientId, jobName, data);
       // 1. Idempotency fast path — if a row already exists for this key, return it
@@ -658,6 +663,11 @@ export class MinionQueue {
       if ('coalesced' in outcome) return outcome.coalesced;
 
       const child = rowToMinionJob(outcome.inserted);
+      if (authority.kind === 'local_subagent') {
+        const bound = { ...authority, acceptedJobId: child.id };
+        await tx.executeRaw('UPDATE minion_jobs SET submission_authority=$2::text::jsonb WHERE id=$1', [child.id, JSON.stringify(bound)]);
+        child.submission_authority = bound;
+      }
 
       // 4. Flip parent to waiting-children if this is a fresh child insert.
       //    Only transition from non-terminal, non-already-waiting-children states.
@@ -2334,6 +2344,12 @@ export class MinionQueue {
     const source = await this.getJob(id);
     if (!source) return null;
     if (!['completed', 'failed', 'dead'].includes(source.status)) return null;
+    // A local_subagent ceiling is an admission-only capability minted by the verified owner for one accepted job.
+    // A stored descriptor is never an admission token, so replay refuses before it authorizes or inserts anything.
+    if (source.submission_authority?.kind === 'local_subagent') {
+      throw opError('permission_denied', `Job ${id} is a local subagent job; its owner-minted authority cannot be replayed from the stored job.`,
+        'Nothing was submitted. Rerun the original owner-authorized `gbrain hermes maintain` request (same --source and budget flags) from the verified local CLI so fresh bounded authority is minted; do not replay or edit the stored job.');
+    }
     const authority = await authorizeJobExecution(this.engine, source);
     if (authority.kind !== 'application' && dataOverrides && Object.keys(dataOverrides).length) throw new Error('Remote job replay cannot override accepted data; submit a new job');
 
