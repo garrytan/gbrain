@@ -48,6 +48,7 @@ import { activationSuppressionNotice, suppressionSummary } from '../eligibility/
 import { stampPageTrust, stampRowTrust } from '../eligibility/stamp.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
+import { parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
 
 // ============================================================
 // v0.31 — Hot memory ops: extract_facts / recall / forget_fact
@@ -199,6 +200,26 @@ function packingArm<T>(candidates: T[], kept: T[], cost: (item: T) => number) {
   return { candidates: candidates.length, kept: kept.length, dropped: candidates.length - kept.length, used: kept.reduce((sum, r) => sum + cost(r), 0) };
 }
 
+/** recall's budget_packing meta: only policy-supplied calls carry it. */
+function recallBudgetPacking<F extends { fact: string }>(policy: unknown, queryText: string | null, budgetTokens: number | null,
+  arms: { rows: F[]; packedFacts: F[]; searchResults: SearchResult[]; packedResults: SearchResult[] }) {
+  if (policy !== 'facts_first' && policy !== 'query_first') return undefined;
+  const queryFirst = policy === 'query_first' && queryText !== null && budgetTokens !== null;
+  const { rows, packedFacts, searchResults, packedResults } = arms;
+  return {
+    policy: queryFirst ? 'query_first' : 'facts_first',
+    applied: budgetTokens !== null && (queryFirst || (policy === 'facts_first' && budgetTokens > 0)),
+    reason: policy === 'query_first' && !queryText ? 'no_query'
+      : budgetTokens === null ? 'no_positive_finite_budget'
+        : budgetTokens === 0 ? 'budget_below_one'
+          : rows.length + searchResults.length === 0 ? 'no_candidates'
+            : packedFacts.length + packedResults.length === 0 ? 'first_items_exceed_budget'
+              : 'packed',
+    facts: packingArm(rows, packedFacts, r => estimateTokens(r.fact)),
+    results: packingArm(searchResults, packedResults, resultTokens),
+  };
+}
+
 /**
  * recall's evidence plan: budget_tokens budgets the delivered blocks before
  * recall's own packing. Without return_unit, budget_tokens or budget_policy
@@ -218,9 +239,10 @@ const recall: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
-  description: 'MEMORY VERB (v1): read saved facts by entity, since or session_id; `query` also searches pages. Remote callers see world facts only. One card: entity; reasoning: synthesize.',
+  description: 'MEMORY VERB (v1): read saved facts by entity, since or session_id, newest first, or ranked by `question`; `query` also searches pages. Remote callers see world facts only. One card: entity; reasoning: synthesize.',
   params: {
     entity: { type: 'string', description: 'Entity slug; its facts, newest first.' },
+    question: { type: 'string', description: 'Rank saved facts by relevance to this question instead of recency; does not search pages. Max 2000 chars.' },
     query: { type: 'string', description: 'Also search pages (results[]).' },
     budget_tokens: { type: 'number', description: 'Token budget; facts pack first.' },
     budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'facts_first (default) or query_first.' },
@@ -332,8 +354,10 @@ const recall: Operation = {
         'Pass an ISO 8601 datetime (e.g. "2026-08-11T00:00:00Z"), Unix epoch millis, or a duration such as "8 hours ago" / "2d".',
       );
     }
+    const question = parseQuestionParam(p);
     const entityParam = typeof p.entity === 'string' && p.entity.length > 0 ? (p.entity as string) : null;
     const sessionParam = typeof p.session_id === 'string' && p.session_id.length > 0 ? (p.session_id as string) : null;
+    let ranking: QuestionRecall | null = null;
     // Shared per-source opts for the fact-list arms (visibility, grep and the
     // audit exclusion all filter at the ENGINE level, before each source's
     // LIMIT, so a hidden newest row never consumes a slot).
@@ -345,7 +369,12 @@ const recall: Operation = {
       excludeAuditRows: true, eligibility,
     };
 
-    if (p.supersessions === true) {
+    if (question !== null) {
+      ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep,
+        scope: { sourceIds: factSources, remote: ctx.remote !== false, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged } });
+      ({ rows, ambiguousEntity } = ranking);
+      for (const notice of questionRecallNotices(ranking)) ctx.emitNotice?.(notice);
+    } else if (p.supersessions === true) {
       // Visibility filters at the ENGINE level (before each source's LIMIT),
       // same as the sibling fact-list arms — a post-merge filter would let a
       // private newest row consume a limit slot and hide an older world row.
@@ -443,6 +472,7 @@ const recall: Operation = {
         ? Math.floor(p.budget_tokens)
         : null;
 
+    if (queryText && question === null && !entityParam && !sessionParam && !since && p.supersessions !== true) ctx.emitNotice?.(recallHintNotice(p, queryText));
     let searchResults: SearchResult[] = [];
     let searchDegraded: string | undefined;
     let delivery: DeliveryMeta | undefined;
@@ -511,20 +541,7 @@ const recall: Operation = {
       droppedCount = factsPack.meta.dropped + resultsPack.meta.dropped;
     }
 
-    const budgetPacking = p.budget_policy === 'facts_first' || p.budget_policy === 'query_first'
-      ? {
-          policy: queryFirst ? 'query_first' : 'facts_first',
-          applied: budgetTokens !== null && (queryFirst || (p.budget_policy === 'facts_first' && budgetTokens > 0)),
-          reason: p.budget_policy === 'query_first' && !queryText ? 'no_query'
-            : budgetTokens === null ? 'no_positive_finite_budget'
-              : budgetTokens === 0 ? 'budget_below_one'
-                : rows.length + searchResults.length === 0 ? 'no_candidates'
-                  : packedFacts.length + packedResults.length === 0 ? 'first_items_exceed_budget'
-                    : 'packed',
-          facts: packingArm(rows, packedFacts, r => estimateTokens(r.fact)),
-          results: packingArm(searchResults, packedResults, resultTokens),
-        }
-      : undefined;
+    const budgetPacking = recallBudgetPacking(p.budget_policy, queryText, budgetTokens, { rows, packedFacts, searchResults, packedResults });
 
     return {
       facts: await withFactDateHeaders(ctx.engine, await stampRowTrust(ctx.engine, 'facts', packedFacts.map(r => ({ // #5575 A6: + trust_tier, origin, unconfirmed
@@ -557,8 +574,11 @@ const recall: Operation = {
         // is the protocol name for the stored source attribution.
         fact_id: String(r.id),
         provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}),
+        ...(ranking ? { relevance: ranking.relevance.get(r.id) } : {}),
       })), f => f.id)),
       total: packedFacts.length,
+      facts_order: ranking ? 'relevance' : 'newest',
+      ...(ranking?.degraded ? { facts_degraded: ranking.degraded } : {}),
       ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
       ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),
       // MEMORY_VERBS v1 envelope (G1B superset — additive on every response).
@@ -589,25 +609,7 @@ const recall: Operation = {
   },
 };
 
-type EntityCandidate = { source_id: string; entity_slug: string };
 const AMBIGUOUS_ENTITY_SUGGESTION = 'These are different entities in different sources. Pass source_id to read one, or link them with entity_identity_link if they are the same.';
-
-/**
- * The identity key is (source_id, slug): an entity name resolved in several
- * granted sources names different entities unless an entity-identity group
- * links their pages. Merging them would hand the caller a stranger's facts,
- * so federated recall refuses unlinked namesakes and names the candidates.
- * Returns null when the per-source fact lists are one entity.
- */
-async function unlinkedNamesakes(engine: BrainEngine, lists: FactRow[][]): Promise<EntityCandidate[] | null> {
-  const candidates = [...new Map(lists.flat().map((r): [string, EntityCandidate] =>
-    [`${r.source_id}:${r.entity_slug}`, { source_id: r.source_id, entity_slug: r.entity_slug as string }])).values()];
-  if (candidates.length < 2) return null;
-  const { identityIdsForPages } = await import('../entity-identity.ts');
-  const ids = await identityIdsForPages(engine, candidates.map(c => ({ sourceId: c.source_id, slug: c.entity_slug })));
-  const groups = new Set(candidates.map(c => ids.get(`${c.source_id}:${c.entity_slug}`) ?? null));
-  return groups.size === 1 && !groups.has(null) ? null : candidates;
-}
 
 /** Parse an `entities` param (comma-string or array) to a trimmed name list. */
 function parseEntityList(v: unknown): string[] {

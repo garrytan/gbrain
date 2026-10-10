@@ -731,7 +731,7 @@ export async function getFactsHealth(exec: LegacyUnscopedRead, source_id: string
  * either a string ("[0.1,...]") or already-parsed array depending on type
  * codec — we handle both.
  */
-interface FactRowSqlShape {
+export interface FactRowSqlShape {
   id: number | bigint;
   source_id: string;
   entity_slug: string | null;
@@ -775,7 +775,7 @@ const normalizeFactRow = compileRowNormalizer<FactRowSqlShape>({
   consolidated_at: 'date', embedded_at: 'date', created_at: 'date',
 });
 
-function rowToFact(raw: FactRowSqlShape): FactRow {
+export function rowToFact(raw: FactRowSqlShape): FactRow {
   const row = normalizeFactRow(raw as unknown as Record<string, unknown>);
   let embedding: Float32Array | null = null;
   if (row.embedding != null) {

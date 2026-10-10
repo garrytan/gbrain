@@ -1,8 +1,8 @@
 /**
- * Facts arm for `query` (`search.query_facts_arm`, default off; gates in
+ * Facts arm for `query` (`search.query_facts_arm`, default on; gates in
  * docs/eval/decisions/query-facts-arm/). A correction saved with `remember`
  * lives in the facts table, which page search never ranks, so the stale page
- * text answers instead. With the key on, `query` adds the active facts that
+ * text answers instead. Unless the key is off, `query` adds the active facts that
  * match the question as rows of their own, inside the caller's row count and
  * token budget, and stamps a page row `superseded_claim` when a newer active
  * fact covers the same entity and typed claim slot as a fact taken from that
@@ -11,24 +11,22 @@
  * Matching: query terms against the fact text and entity (at least half of
  * the content terms), cosine against the query embedding hybrid search
  * already computed (no extra model call; skipped when there is none), and the
- * facts of the one entity page the query names. Matches are ordered newest
+ * facts of the one entity page the query names (in that page's source); the
+ * candidate pool is fact-relevance.ts's. Matches are ordered newest
  * valid_from first. Read policy is recall's: source scope, active rows only,
  * audit rows excluded, and world-visible facts with non-private provenance
  * for remote callers.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
-import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
-import { getFtsLanguage } from '../fts-language.ts';
-import { getEmbeddingModel } from '../ai/gateway.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from './private-visibility.ts';
-import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
-import { namedEntity } from './entity-anchor.ts';
+import { resolveExcludePrivatePages } from './private-visibility.ts';
+import { admitted, collectFactCandidates, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
 import { factDateHeader } from './evidence-date.ts';
-import { projectionEligibleSql } from '../eligibility/sql.ts';
 import type { TrustTier } from '../trust/tier.ts';
+
+export { queryTerms } from './fact-relevance.ts';
 
 export const QUERY_FACTS_ARM_KEY = 'search.query_facts_arm';
 /** Fact rows added per query at most. */
@@ -45,11 +43,6 @@ export const TEMPORAL_RESERVE_SHARE = 0.15;
 export const MAX_RESERVE_ROWS = 20;
 /** Share of the caller's row count reserved facts may take (at least one row). */
 export const TEMPORAL_RESERVE_ROW_SHARE = 0.3;
-const RESERVE_COSINE_MIN = 0.5;
-const RESERVE_TERM_SHARE_MIN = 0.34;
-const DATED_BONUS = 0.1;
-/** valid_from this far from created_at means the writer supplied the date. */
-const DATED_MIN_MS = 24 * 60 * 60 * 1000;
 const MONTHS = 'january|february|march|april|may|june|july|august|september|october|november|december';
 const TEMPORAL_CUE = new RegExp(`\\b(when|before|after|since|until|till|during|ago|earlier|later|earliest|latest|first|last|previous|next|dates?|day|week|month|year|order|sequence|${MONTHS})\\b`
   + `|\\bhow (long|many (days|weeks|months|years))\\b|\\bwhat time\\b|\\b\\d{4}-\\d{2}-\\d{2}\\b`, 'i');
@@ -59,87 +52,27 @@ export function hasTemporalCue(query: string): boolean {
   return TEMPORAL_CUE.test(query);
 }
 
-const STOPWORDS = new Set(['the', 'and', 'for', 'who', 'what', 'when', 'where', 'which', 'with', 'from', 'that', 'this', 'are', 'was', 'were', 'our', 'your', 'their',
-  'now', 'current', 'currently', 'should', 'does', 'did', 'has', 'have', 'how', 'any', 'all', 'about', 'into', 'its', 'next', 'use', 'uses', 'tell']);
-
 export interface FactsArmScope {
   sourceId?: string; sourceIds?: string[]; remote: boolean;
   /** #5575 read floor and activation control, applied in the candidate SQL like every retrieval arm. */
   minTrust?: TrustTier; suppressFlagged?: boolean;
 }
 
-interface FactCandidate {
-  id: number; fact: string; kind: string; entity_slug: string | null; source_id: string; source: string;
-  valid_from: Date | string; valid_until: Date | string | null; created_at?: Date | string | null; claim_metric: string | null; claim_period: string | null;
-}
+type FactCandidate = PoolCandidate;
 
-export function queryTerms(query: string): string[] {
-  return [...new Set(query.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'-]+/gu) ?? [])].filter(t => t.length >= 3 && !STOPWORDS.has(t)).slice(0, 12);
+async function poolScope(engine: BrainEngine, scope: FactsArmScope): Promise<FactPoolScope> {
+  return { ...scope, excludePrivate: await resolveExcludePrivatePages(engine, scope.remote) };
 }
 
 const day = (v: Date | string | null) => (v ? new Date(v).toISOString().slice(0, 10) : null);
 
-type ScoredCandidate = FactCandidate & { similarity?: number; matched: number; terms: number; entity: boolean };
-
-/**
- * Active facts near `query` under the caller's read policy: the keyword
- * matches (with how many query terms each holds), the `cosineLimit` nearest by
- * the query embedding (with their similarity), and the named entity's newest
- * `entityLimit` facts.
- */
-async function collectFactCandidates(engine: BrainEngine, query: string, scope: FactsArmScope, queryEmbedding: Float32Array | null | undefined,
-  limits: { cosine: number; entity: number }): Promise<ScoredCandidate[]> {
-  const terms = queryTerms(query);
-  const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'];
-  const params: unknown[] = [sources, [...AUDIT_ROW_SOURCES]];
-  const excludePrivate = await resolveExcludePrivatePages(engine, scope.remote);
-  const base = `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
-    AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[]) AND ${quarantinedProvenanceFilterFragment('f')}
-    ${scope.remote ? `AND f.visibility = 'world'` : ''} ${excludePrivate ? `AND ${privateProvenanceFilterFragment('f')}` : ''}
-    AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust, suppressFlagged: scope.suppressFlagged })}`;
-  const cols = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period';
-  const found = new Map<number, ScoredCandidate>();
-  const add = (r: FactCandidate & { haystack?: string; similarity?: number }, entity = false) => {
-    const prev = found.get(Number(r.id));
-    const haystack = r.haystack ?? `${r.fact} ${r.entity_slug ?? ''}`.toLowerCase();
-    found.set(Number(r.id), { ...r, similarity: r.similarity !== undefined ? Number(r.similarity) : prev?.similarity,
-      matched: terms.filter(t => haystack.includes(t)).length, terms: terms.length, entity: entity || !!prev?.entity });
-  };
-  if (terms.length) {
-    const rows = await engine.executeRaw<FactCandidate & { haystack: string }>(
-      `WITH q AS (SELECT NULLIF(replace(plainto_tsquery($3::regconfig, $4)::text, ' & ', ' | '), '')::tsquery AS q)
-       SELECT ${cols}, lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) AS haystack
-       FROM facts f, q WHERE ${base} AND q.q IS NOT NULL
-         AND to_tsvector($3::regconfig, f.fact || ' ' || replace(COALESCE(f.entity_slug, ''), '-', ' ')) @@ q.q
-       ORDER BY ts_rank_cd(to_tsvector($3::regconfig, f.fact || ' ' || replace(COALESCE(f.entity_slug, ''), '-', ' ')), q.q) DESC, f.valid_from DESC
-       LIMIT 50`, [...params, getFtsLanguage(), terms.join(' ')]);
-    for (const r of rows) add(r);
-  }
-  if (queryEmbedding && queryEmbedding.length) {
-    const model = getEmbeddingModel();
-    const lit = `[${Array.from(queryEmbedding).join(',')}]`;
-    const rows = await engine.executeRaw<FactCandidate & { similarity: number }>(
-      `SELECT ${cols}, 1 - (f.embedding <=> $3::vector) AS similarity FROM facts f
-       WHERE ${base} AND f.embedding IS NOT NULL AND f.embedding_model = $4 AND f.embedded_text_hash = md5(f.fact)
-         AND vector_dims(f.embedding) = $5
-       ORDER BY f.embedding <=> $3::vector LIMIT ${limits.cosine}`, [...params, lit, model, queryEmbedding.length]).catch(() => []);
-    for (const r of rows) add(r);
-  }
-  const entity = await namedEntity(engine, query, { sourceIds: sources, excludePrivate }).catch(() => null);
-  if (entity) {
-    const rows = await engine.executeRaw<FactCandidate>(
-      `SELECT ${cols} FROM facts f WHERE ${base} AND f.entity_slug = $3 ORDER BY f.valid_from DESC, f.id DESC LIMIT ${limits.entity}`,
-      [...params, entity.slug]);
-    for (const r of rows) add(r, true);
-  }
-  return [...found.values()];
-}
-
 /** The active facts that match `query`, newest valid_from first (at most MAX_FACT_ROWS). */
 export async function matchQueryFacts(engine: BrainEngine, query: string, scope: FactsArmScope, queryEmbedding?: Float32Array | null): Promise<FactCandidate[]> {
-  const candidates = await collectFactCandidates(engine, query, scope, queryEmbedding, { cosine: 10, entity: MAX_FACT_ROWS });
+  const { candidates } = await collectFactCandidates(engine, query, await poolScope(engine, scope), queryEmbedding, { depth: { keyword: 50, cosine: 10, entity: MAX_FACT_ROWS } });
+  const terms = queryTerms(query);
+  const matched = (c: FactCandidate) => { const haystack = `${c.fact} ${c.entity_slug ?? ''}`.toLowerCase(); return terms.filter(t => haystack.includes(t)).length; };
   return candidates
-    .filter(c => c.entity || (c.similarity ?? -1) >= FACT_COSINE_MIN || (c.terms > 0 && c.matched >= Math.max(Math.min(2, c.terms), Math.ceil(c.terms * TERM_SHARE_MIN))))
+    .filter(c => c.entity || (c.similarity ?? -1) >= FACT_COSINE_MIN || (terms.length > 0 && matched(c) >= Math.max(Math.min(2, terms.length), Math.ceil(terms.length * TERM_SHARE_MIN))))
     .sort((a, b) => new Date(b.valid_from).getTime() - new Date(a.valid_from).getTime() || Number(b.id) - Number(a.id))
     .slice(0, MAX_FACT_ROWS);
 }
@@ -241,12 +174,11 @@ export async function applyFactsArm(engine: BrainEngine, query: string, results:
   }
 }
 
-const isDated = (f: FactCandidate) => !!f.created_at && Math.abs(new Date(f.valid_from).getTime() - new Date(f.created_at).getTime()) > DATED_MIN_MS;
-
 /**
  * Temporal fact reserve: for a query with a temporal cue and a token budget,
- * the facts that best match the question (cosine + term share, +0.1 when the
- * fact carries a real date) take up to TEMPORAL_RESERVE_SHARE of the budget and
+ * the facts that best match the question (the shared scorer in
+ * fact-relevance.ts: cosine + term share, +0.1 when the fact carries a real
+ * date, admitted by the reserve rule) take up to TEMPORAL_RESERVE_SHARE of the budget and
  * TEMPORAL_RESERVE_ROW_SHARE of the row count (1 to MAX_RESERVE_ROWS rows), rendered with their date header and ordered oldest
  * first after the pages. The row count never grows (a fact takes a free row,
  * else the lowest page row) and pages fill the rest of the budget. No match or
@@ -254,12 +186,9 @@ const isDated = (f: FactCandidate) => !!f.created_at && Math.abs(new Date(f.vali
  */
 export async function applyTemporalFactReserve(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts & { budget: number }): Promise<SearchResult[]> {
   try {
-    const candidates = await collectFactCandidates(engine, query, opts, opts.queryEmbedding, { cosine: 50, entity: MAX_RESERVE_ROWS });
-    const scored = candidates
-      .map(c => ({ c, share: c.terms ? c.matched / c.terms : 0, cos: c.similarity ?? 0 }))
-      .filter(x => x.cos >= RESERVE_COSINE_MIN || x.share >= RESERVE_TERM_SHARE_MIN)
-      .map(x => ({ c: x.c, score: x.cos + x.share + (isDated(x.c) ? DATED_BONUS : 0) }))
-      .sort((a, b) => b.score - a.score || Number(b.c.id) - Number(a.c.id));
+    const { candidates } = await collectFactCandidates(engine, query, await poolScope(engine, opts), opts.queryEmbedding,
+      { depth: { keyword: 50, cosine: 50, entity: MAX_RESERVE_ROWS }, cosineForAll: true });
+    const scored = scoreFactCandidates(query, candidates).filter(s => admitted(s, 'reserve')).map(s => ({ c: s.candidate }));
     if (!scored.length) return results;
     const rowCap = Math.max(results.length, (await opts.rowCap?.().catch(() => 0)) ?? 0);
     const pageSlugs = await readableEntityPages(engine, scored.map(x => x.c), opts.readScope).catch(() => new Set<string>());
