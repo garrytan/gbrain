@@ -56,7 +56,7 @@ import { handleToolCall } from '../src/mcp/server.ts';
 import { ALL_SOURCES } from '../src/core/source-id.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { capture } from './helpers/wave-scenarios.ts';
-import { createConnectorFixture, options, json, googleConfig, githubConfig, issueFixture, githubFetch, contact, withGoogleAccount } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, githubConfig, issueFixture, githubFetch, contact, withGoogleAccount, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
 import { parseGitHubSourceConfig, runGitHubSync } from '../src/core/github-source.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 
@@ -111,7 +111,7 @@ test('check 1 (S1): a cycle stamp mid-sweep while connector pages are pending; t
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     const stamp = async () => { const now = new Date().toISOString(); await engine.updateSourceConfig(f.id, { last_source_cycle_at: now, last_full_cycle_at: now }); };
     const fetcher = people(() => [contact('first', 'First Example'), contact('second', 'Second Example')], { onList: stamp });
-    try { await google(engine, f, fetcher); } catch { /* the sweep stops on its wait budget with writes pending */ }
+    try { await withPausedOwnerBudget(() => google(engine, f, fetcher)); } catch { /* the sweep stops on its wait budget with writes pending */ }
     const pending = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' LIKE '%import' AND state='queued'", [f.id]);
     expect(pending.length).toBe(2);
     await stamp();
