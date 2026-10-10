@@ -274,6 +274,7 @@
     },
     "readPageSnapshot#default": {},
     "readPageSnapshot#sourceId": {},
+    "readPageSnapshotsBatch#default": {},
     "refreshPageBody#default": {},
     "removeLink#default": {},
     "removeLink#linkSource": {},
@@ -291,7 +292,7 @@
       "tx": 1
     },
     "replaceDerivedLinksBatch#default": {
-      "raw": 13,
+      "raw": 12,
       "tx": 1
     },
     "resolveSlugWithAlias#default": {},

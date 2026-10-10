@@ -80,7 +80,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'vectorIterativeScanSupported': OOS.helper,
 
   // pages
-  'getPage': 'pages', 'readPageSnapshot': 'pages', 'lockPageKeys': 'pages', 'findDuplicatePage': 'pages',
+  'getPage': 'pages', 'readPageSnapshot': 'pages', 'readPageSnapshotsBatch': 'pages', 'lockPageKeys': 'pages', 'findDuplicatePage': 'pages',
   'putPage': 'pages', 'deletePage': 'pages', 'deletePages': 'pages', 'resolveSlugsByPaths': 'pages',
   'softDeletePage': 'pages', 'softDeletePages': 'pages', 'restorePage': 'pages', 'purgeDeletedPages': 'pages',
   'refreshPageBody': 'pages', 'updatePageContextualRetrievalState': 'pages', 'listPages': 'pages',
@@ -275,6 +275,9 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('readPageSnapshot', [
     ['default', (e) => e.readPageSnapshot(SLUG)],
     ['sourceId', (e) => e.readPageSnapshot(SLUG, { sourceId: SRC })],
+  ]),
+  ...variants('readPageSnapshotsBatch', [
+    ['default', (e) => e.readPageSnapshotsBatch([{ slug: SLUG, sourceId: SRC }, { slug: SLUG2, sourceId: SRC }])],
   ]),
   ...variants('lockPageKeys', [
     ['default', (e) => e.transaction((tx: any) => tx.lockPageKeys([{ sourceId: SRC, slug: SLUG }]))],

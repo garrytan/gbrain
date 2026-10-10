@@ -51,7 +51,7 @@ import { collectWantedLinks, isWantedPagesEnabled } from '../core/wanted-links.t
 import { readLineGrammarSettings, statedRelationTypes } from '../core/line-grammar.ts';
 import { effectiveLinkExtractorWatermark, linkExtractorWatermarkFor } from '../core/link-extraction-watermark.ts';
 import { replaceDerivedLinksBatchOrReplay, replaceDerivedLinksUnlessSettingsChanged, settingsChangedSkipLine, type DerivedLinkBatchItem } from '../core/derived-links.ts';
-import { pageSnapshotKey, readPageSnapshotsBatch } from '../core/page-snapshot-batch.ts';
+import { pageSnapshotKey } from '../core/page-snapshot-batch.ts';
 import type { PageSnapshot } from '../core/page-state/types.ts';
 export { reconcileSourceLinks, type SourceLinkReconciliationResult } from '../core/link-reconciliation.ts';
 export { extractMarkdownLinks } from '../core/link-extraction.ts';
@@ -1916,7 +1916,7 @@ async function extractLinksFromDB(
     if (index >= snapshotBatch.start + snapshotBatch.covered) {
       await flushLinkWrites();
       await plannerTick(index);
-      snapshotBatch = { start: index, ...await readPageSnapshotsBatch(engine, walkRefs.slice(index, index + BATCH_SIZE)
+      snapshotBatch = { start: index, ...await engine.readPageSnapshotsBatch(walkRefs.slice(index, index + BATCH_SIZE)
         .map(ref => ({ slug: ref.slug, sourceId: ref.source_id }))) };
       wantedPages = !dryRun && await isWantedPagesEnabled(engine);
     }

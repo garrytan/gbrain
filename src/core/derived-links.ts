@@ -2,7 +2,7 @@ import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import { assertPageRevision, type PageSnapshot } from './page-state/types.ts';
 import { pipelined } from './page-state/transactions.ts';
 import { executeRawJsonb } from './sql-query.ts';
-import { pageSnapshotKey, readPageSnapshotsBatch } from './page-snapshot-batch.ts';
+import { pageSnapshotKey } from './page-snapshot-batch.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
 import { replaceWantedLinks, type WantedLinksReplacement } from './wanted-links-store.ts';
 import { applyTemporalEvidence, relationshipKeysForOrigin } from './link-temporal-apply.ts';
@@ -165,7 +165,7 @@ export async function replaceDerivedLinksBatch(
       const generation = await lockedExtractionGeneration(tx);
       if (prepared.some(item => item.opts.lineGrammar && item.opts.lineGrammar.generation !== generation)) throw new DerivedLinkSettingsChangedError();
     }
-    const { snapshots } = await readPageSnapshotsBatch(tx, prepared.filter(item => item.origin.snapshot === undefined)
+    const { snapshots } = await tx.readPageSnapshotsBatch(prepared.filter(item => item.origin.snapshot === undefined)
       .map(item => ({ slug: item.origin.slug, sourceId: item.origin.sourceId })), { maxBytes: Number.MAX_SAFE_INTEGER });
     const results: Array<{ created: number; removed: number }> = [];
     for (const { origin, producers, rows, opts } of prepared) {

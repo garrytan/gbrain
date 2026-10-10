@@ -10,6 +10,26 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.145.0] - 2026-10-10
+
+**Bulk DB extraction no longer sees purged facts. `gbrain extract --source db` and the batched derived-link write read snapshots with `readPageSnapshotsBatch`, which never read `fact_purges`. A fence row purged for the page, or purged source-wide with a `'*'` tombstone, stayed in the batched body that links and timeline were extracted from, although `get_page` and every per-page read hid it. The batch now applies the same purges and `'*'` purge marker as `readPageSnapshot`, and under `GBRAIN_RLS_SCOPE_BINDING=1` it runs scoped to the batch's sources.**
+
+Efficiency follow-up (GBRA-67, from GBRA-69's report). Measured on the same 4-vCPU AMD EPYC / 16 GiB machine, Postgres 16 + pgvector 0.8.7, synthetic brains (5k = 5,001 pages, 50k = 50,010 pages), warm, 3 rounds x N=40 (get_page) or 2 rounds x N=25 (batches).
+
+| Path | Engine, brain | Before | After |
+|---|---|---|---|
+| get_page snapshot statement, mean | Postgres 5k | 0.52-0.67 ms (unguarded fingerprints) | 0.19-0.30 ms |
+| get_page snapshot statement, mean | Postgres 50k | 0.62-0.69 ms (unguarded fingerprints) | 0.15-0.20 ms |
+| get_page MCP call, p50 | Postgres 5k / 50k | 8.7-11.8 / 7.9-9.0 ms | 10.0-17.4 / 7.1-8.7 ms (within run-to-run noise) |
+| `readPageSnapshotsBatch`, 100 refs, p50 | Postgres 5k / 50k | 7.9-8.3 / 8.7 ms | 9.3-9.4 / 9.5-9.6 ms |
+
+The get_page rows measure the fingerprint guard that shipped in v0.60.141.0 (GBRA-75 wave 7), against master with only that guard reverted; this release does not change `snapshot.ts`. The statement saves 0.4-0.5 ms per read, which is smaller than the MCP call's run-to-run noise on synthetic bodies. The batch costs about 1 ms more per 100 pages for the two purge lookups it was missing.
+
+### Itemized changes
+
+- **Purge-correct batched snapshots** (`src/core/page-snapshot-batch.ts`). The batch statement now reads page-subject `fact_purges` rows and the source's `'*'` purge marker, resolves `'*'` tombstones per overlaid fence through `resolveGlobalPurges`, and computes line fingerprints under the same guard as `snapshot.ts`. `test/page-snapshot-batch.test.ts` and its Postgres arm pin batch == per-page read with both purge kinds; on master the batch returned the purged rows and no purge withdrawals.
+- **RLS-scoped batch read** (`engine.readPageSnapshotsBatch`). The batched read is now an engine member. Postgres runs it through `withScopedReadTransaction` with the refs' sources, so `replaceDerivedLinksBatch`, `extract --source db` and the timeline DB walk bind `app.scopes` under `GBRAIN_RLS_SCOPE_BINDING=1`. With the flag off it stays on the caller's lane (no new pool hold). The RLS inventory golden records `replaceDerivedLinksBatch` as scoped and 24 scoped call sites.
+
 ## [0.60.144.0] - 2026-10-10
 
 **A managed import writes about 12% less WAL on Postgres (200 → 176 KB per page at 50,000 pages) and spends 3-13% less time executing SQL, with the same rows: each imported, synced or put page is sealed by one closing write instead of two, the import's crash checkpoint no longer stores the page text, and the write claim looks up its root's earlier rows by index.**

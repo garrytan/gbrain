@@ -36,7 +36,7 @@ import { importAnalyzeEveryPages, maybeRefreshPlannerStats } from '../core/plann
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { filterRefsSince } from './extract.ts';
 import { isQuarantined } from '../core/quarantine.ts';
-import { pageSnapshotKey, readPageSnapshotsBatch } from '../core/page-snapshot-batch.ts';
+import { pageSnapshotKey } from '../core/page-snapshot-batch.ts';
 import type { PageSnapshot } from '../core/page-state/types.ts';
 
 const BATCH_SIZE = 100;
@@ -236,7 +236,7 @@ interface TimelineReadBatch {
 
 async function readTimelineBatch(engine: BrainEngine, refs: ReadonlyArray<{ slug: string; source_id: string }>, start: number,
   withStoredRows: boolean): Promise<TimelineReadBatch> {
-  const { snapshots, covered } = await readPageSnapshotsBatch(engine, refs.slice(start, start + BATCH_SIZE)
+  const { snapshots, covered } = await engine.readPageSnapshotsBatch(refs.slice(start, start + BATCH_SIZE)
     .map(ref => ({ slug: ref.slug, sourceId: ref.source_id })));
   const stored = new Map<number, StoredTimelineRows[]>();
   const pageIds = [...snapshots.values()].map(snapshot => Number(snapshot.page.id));

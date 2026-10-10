@@ -2460,6 +2460,19 @@
           "src-a"
         ]
       },
+      "readPageSnapshotsBatch#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "src-a"
+        ]
+      },
       "refreshPageBody#default": {
         "flagOffLanes": [
           "pool"
@@ -2558,12 +2571,14 @@
           "tx>sp"
         ],
         "flagOffOpensTransaction": true,
-        "flagOn": "unscoped",
+        "flagOn": "scoped",
         "flagOnLanes": [
           "tx",
           "tx>sp"
         ],
-        "flagOnScopes": []
+        "flagOnScopes": [
+          "src-a"
+        ]
       },
       "resolveSlugWithAlias#default": {
         "flagOffLanes": [
@@ -3352,7 +3367,7 @@
       }
     },
     "static": {
-      "callSites": 23,
+      "callSites": 24,
       "directMethods": {
         "_searchKeywordCJK": 1,
         "countChunklessPagesWithContent": 1,
@@ -3372,6 +3387,7 @@
         "listStaleChunks": 1,
         "listStalePagesForExtraction": 1,
         "readPageSnapshot": 1,
+        "readPageSnapshotsBatch": 1,
         "runVectorAttempt": 1,
         "searchKeyword": 1,
         "searchKeywordChunks": 1,
@@ -3511,6 +3527,7 @@
         "putPage": "none",
         "putRawData": "none",
         "readPageSnapshot": "direct",
+        "readPageSnapshotsBatch": "direct",
         "reconnect": "none",
         "refreshPageBody": "none",
         "registerBeforeDisconnect": "none",
