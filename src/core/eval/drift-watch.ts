@@ -77,6 +77,13 @@ export function resolveGbrainSourceRoot(moduleUrl: string = import.meta.url): st
 }
 
 /**
+ * A working-tree diff at least this slow refreshes the index afterwards. Slowness there means racily-clean entries
+ * (a fresh clone or a just-pulled checkout), which git re-hashes on every diff until the index is rewritten; a
+ * settled checkout diffs fast and skips the refresh.
+ */
+export const RACY_DIFF_MS = 75;
+
+/**
  * Return repo-relative paths that have changed in the working tree since
  * the given commit (or HEAD if no commit). Returns `null` when the probe
  * itself failed (repo root missing, git unavailable, not a work tree,
@@ -85,19 +92,27 @@ export function resolveGbrainSourceRoot(moduleUrl: string = import.meta.url): st
  * `commitSha` is a full or short SHA. When omitted, compares HEAD against
  * working tree (uncommitted changes only).
  */
-export function filesDriftedSince(repoRoot: string, commitSha?: string): string[] | null {
+export function filesDriftedSince(repoRoot: string, commitSha?: string, racyDiffMs = RACY_DIFF_MS): string[] | null {
   if (!existsSync(repoRoot)) return null;
   try {
     const range = commitSha ? `${commitSha}..HEAD` : 'HEAD';
     const args = commitSha
       ? ['diff', '--name-only', range]
       : ['diff', '--name-only', 'HEAD'];
+    const startedAt = Date.now();
     const out = execSync(`git ${args.join(' ')}`, {
       cwd: repoRoot,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 5000,
     });
+    if (!commitSha && Date.now() - startedAt >= racyDiffMs) {
+      try {
+        execSync('git update-index -q --refresh', { cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 });
+      } catch {
+        /* a held index.lock or read-only checkout keeps the index as it was */
+      }
+    }
     return out
       .split('\n')
       .map(s => s.trim())

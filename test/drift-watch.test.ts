@@ -4,7 +4,7 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -117,6 +117,46 @@ describe('filesDriftedSince + watchedFilesDrifted probe failure is distinguishab
     for (const p of out ?? []) {
       expect(matchesWatchPattern(p)).toBe(true);
     }
+  });
+});
+
+describe('filesDriftedSince refreshes a racy index after a slow diff', () => {
+  function committedRepoWithRacyIndex(): string {
+    const repo = scratchRepoWithStagedSearchFile();
+    execSync('git -c user.email=t@example.com -c user.name=t -c commit.gpgsign=false commit -q -m add', { cwd: repo, stdio: 'pipe' });
+    const past = new Date(Date.now() - 3_600_000);
+    utimesSync(join(repo, '.git', 'index'), past, past);
+    return repo;
+  }
+  const indexMtime = (repo: string) => statSync(join(repo, '.git', 'index')).mtimeMs;
+
+  test('a slow diff rewrites the index and keeps the answer', () => {
+    const repo = committedRepoWithRacyIndex();
+    const before = indexMtime(repo);
+    expect(filesDriftedSince(repo, undefined, 0)).toEqual([]);
+    expect(indexMtime(repo)).toBeGreaterThan(before);
+  });
+
+  test('a fast diff leaves the index alone', () => {
+    const repo = committedRepoWithRacyIndex();
+    const before = indexMtime(repo);
+    expect(filesDriftedSince(repo, undefined, 60_000)).toEqual([]);
+    expect(indexMtime(repo)).toBe(before);
+  });
+
+  test('a commit range never refreshes', () => {
+    const repo = committedRepoWithRacyIndex();
+    const before = indexMtime(repo);
+    expect(filesDriftedSince(repo, 'HEAD~1', 0)).toEqual(['src/core/search/hybrid.ts']);
+    expect(indexMtime(repo)).toBe(before);
+  });
+
+  test('a held index.lock leaves the answer unchanged', () => {
+    const repo = committedRepoWithRacyIndex();
+    writeFileSync(join(repo, '.git', 'index.lock'), '');
+    expect(filesDriftedSince(repo, undefined, 0)).toEqual([]);
+    writeFileSync(join(repo, 'src/core/search/hybrid.ts'), 'export const x = 1;\n');
+    expect(filesDriftedSince(repo, undefined, 0)).toEqual(['src/core/search/hybrid.ts']);
   });
 });
 

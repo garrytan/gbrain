@@ -6,7 +6,6 @@
  * helpers below from here.
  */
 import { affectsRecall } from '../core/types.ts';
-import { deliveryVersionSkewWarning } from '../core/search/evidence-delivery.ts';
 import { installSigchldHandler } from '../core/zombie-reap.ts';
 installSigchldHandler();
 
@@ -35,6 +34,7 @@ import type { AIGatewayConfig } from '../core/ai/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { OperationError, type OperationMeta } from '../core/ops/contract.ts';
 import { OPERATION_MANIFEST, cliOps } from './op-manifest.ts';
+import { loadOperation } from '../core/operation-load.ts';
 import { resolveSourceIdEngineFree } from '../core/source-resolver.ts';
 import { installCliRoutingFor } from './fix-routing-provider.ts';
 import { formatVolunteeredPage } from '../core/context/volunteer.ts';
@@ -56,7 +56,7 @@ import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
 import { conceptNudge } from '../core/search/query-intent.ts';
 import { redactRetrievalOutput } from '../core/search/output-redaction.ts';
 import type { CliOptions } from '../core/cli-options.ts';
-import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta } from '../core/mcp-client.ts';
+import { RemoteMcpError, extractResponseMeta } from '../core/remote-mcp-error.ts';
 import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './source-scope.ts';
 import { maybePromptForUpgrade } from '../core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
@@ -522,7 +522,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   // Shared operations (fall through to aliases, e.g. link-add -> add_link)
   const meta = cliOps.get(command) ?? cliAliases.get(command);
   if (!meta) exitCliError(usageError(`Unknown command: ${command}`, 'Run `gbrain --help` for available commands.', { code: 'unknown_command' }), command);
-  const op = (await import('../core/operations.ts')).operations.find(o => o.name === meta.name)!;
+  const op = (await loadOperation(meta.name))!;
 
   // v0.31.1 (Issue #734, CDX-1): parse CLI args BEFORE engine connect so
   // the routing seam below can decide local-vs-remote without paying a
@@ -787,6 +787,7 @@ async function runThinClientRouted(
   await printIdentityBannerBestEffort(cfg, cliOpts, sigintController.signal);
 
   try {
+    const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
     const raw = await callRemoteTool(cfg, op.name, params, {
       timeoutMs,
       signal: sigintController.signal,
@@ -799,7 +800,7 @@ async function runThinClientRouted(
     checkHostHonoredParams(op, params, raw);
     const result = unpackToolResult(raw);
     hintAmbientNarrowing(op, params, result, ambientScope);
-    const skew = deliveryVersionSkewWarning(op.name, params, envelopeMeta?.retrieval as Record<string, unknown> | undefined, result);
+    const skew = (await import('../core/search/evidence-delivery.ts')).deliveryVersionSkewWarning(op.name, params, envelopeMeta?.retrieval as Record<string, unknown> | undefined, result);
     if (skew) process.stderr.write(skew + '\n');
     const output = formatResult(op.name, result, params);
     // Awaited delivery (#3423) — same contract as the local-engine path.
@@ -942,6 +943,7 @@ async function fetchIdentity(
   signal: AbortSignal,
 ): Promise<BrainIdentity> {
   // 2s timeout for the banner fetch — must not delay the underlying command.
+  const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
   const raw = await callRemoteTool(cfg, 'get_brain_identity', {}, {
     timeoutMs: 2000,
     signal,
