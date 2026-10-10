@@ -112,23 +112,36 @@ for (const kind of testBackends()) {
       return { row, binding, prepared: await preparePageMutation(engine, row, context().config) };
     }
     for (const boundary of ['before_publication', 'after_publication', 'before_commit'] as const) {
-      test(`a publish held at ${boundary} past the ceiling is reported overdue and stuck, never settled early; released, it commits once`, async () => withEnv({ GBRAIN_HOME: home }, async () => {
+      test(`a publish held at ${boundary} past the ceiling is reported overdue and stuck, never settled early; released, it commits once (on Postgres after the aborted attempt is requeued)`, async () => withEnv({ GBRAIN_HOME: home }, async () => {
         const slug = `notes/held-${boundary.replaceAll('_', '-')}`;
         const { row, prepared } = await claimedPut(slug);
         let open!: () => void;
         const barrier = new Promise<void>(resolve => { open = resolve; });
+        let reached!: () => void;
+        const atBarrier = new Promise<void>(resolve => { reached = resolve; });
         const events: string[] = [];
-        const work = boundPublication(() => publishMutation(engine, row, prepared, localHostId(), { boundary: async name => { if (name === boundary) await barrier; } }),
-          { ceilingMs: 30, graceMs: 30, settleMs: 30, onOverdue: () => events.push('overdue'), onStuck: () => events.push('stuck') });
+        // The ceiling leaves the publish time to reach its barrier, so the abort always lands on a body parked there.
+        const work = boundPublication(() => publishMutation(engine, row, prepared, localHostId(), { boundary: async name => { if (name === boundary) { reached(); await barrier; } } }),
+          { ceilingMs: 1500, graceMs: 30, settleMs: 30, onOverdue: () => events.push('overdue'), onStuck: () => events.push('stuck') });
         let settled = false;
         void work.then(() => { settled = true; }, () => { settled = true; });
-        await tick(150);
+        await atBarrier;
+        expect(events).toEqual([]);
+        await tick(1700);
         expect(events).toEqual(['overdue', 'stuck']);
         expect(settled).toBe(false);
         // PGLite has one connection, held by the open publish transaction: a read there would wait behind it.
         if (kind === 'postgres') expect((await getWriteRequestById(engine, row.id))?.state).toBe('running');
         open();
-        const done = await work;
+        let done = await work;
+        if (kind === 'postgres') {
+          // The signal discarded the transaction's connection: nothing committed, and the claim went back to the queue.
+          expect(done.state).toBe('queued');
+          expect(await engine.getPage(slug, { sourceId: 'default' })).toBeNull();
+          const again = (await claimNextWrite(engine, localHostId()))!;
+          expect(again.id).toBe(row.id);
+          done = await publishMutation(engine, again, await preparePageMutation(engine, again, context().config), localHostId());
+        }
         expect(done.state).toBe('committed');
         const [count] = await engine.executeRaw<{ n: number | string }>("SELECT count(*) AS n FROM persistence_requests WHERE id=$1::uuid AND state='committed'", [row.id]);
         expect(Number(count!.n)).toBe(1);

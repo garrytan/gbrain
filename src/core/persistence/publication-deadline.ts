@@ -9,12 +9,12 @@
  *   transaction-scoped, so they hold behind a transaction pooler that drops startup parameters.
  * - `boundPublication` never settles before the publish does, so nothing releases or reports a request or group while
  *   its transaction can still commit. At the ceiling it marks the publication overdue (the claim stamp reads
- *   `waiting_on: publication_deadline`); a grace later it aborts the publication's signal, which reaches the transaction
- *   only on an engine whose `transaction(fn, { signal })` accepts one (GBRA-76's primitive; ignored until then); if the
- *   publish still has not settled shortly after, the owner reports `restart_required`. The root stays held: restarting
+ *   `waiting_on: publication_deadline`); a grace later it aborts the publication's signal, passed to `transaction(fn, { signal })`:
+ *   on Postgres that discards the transaction's connection and the publish rejects with an AbortError (nothing commits);
+ *   if the publish still has not settled shortly after, the owner reports `restart_required`. The root stays held: restarting
  *   the owner process is the only honest recovery, never a promised reclaim.
- * - On PGLite nothing below the publish can be cancelled: the ceiling only marks the publication overdue and, past the
- *   grace, `restart_required`.
+ * - On PGLite a running transaction cannot be cancelled (the signal is checked only before BEGIN): the ceiling only marks
+ *   the publication overdue and, past the grace, `restart_required`.
  *
  * The wave 9 yield between groups is outside any one `boundPublication` call, so it never counts against a group.
  */
@@ -57,11 +57,25 @@ export async function bindPublicationTimeouts(tx: BrainEngine): Promise<void> {
   await tx.executeRaw("SELECT set_config('idle_in_transaction_session_timeout',$1,true)", [`${publicationIdleTimeoutMs()}ms`]);
 }
 
-/** `engine.transaction`, passing the current publication's signal on as `{ signal }` (an engine without the option ignores it). */
-export function publicationTransaction<T>(engine: BrainEngine, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+/**
+ * `engine.transaction`, passing the current publication's signal on as `{ signal }`. An aborted transaction rejects
+ * while its body may still be parked, so a rejection waits for the body to settle first: nothing (recovery included)
+ * acts on the publication while the body can still rename a file.
+ */
+export async function publicationTransaction<T>(engine: BrainEngine, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
   const signal = signals.getStore();
-  const run = engine.transaction as (this: BrainEngine, fn: (tx: BrainEngine) => Promise<T>, opts?: { signal?: AbortSignal }) => Promise<T>;
-  return run.call(engine, fn, signal ? { signal } : undefined);
+  if (!signal) return engine.transaction(fn);
+  let body: Promise<unknown> = Promise.resolve();
+  try {
+    return await engine.transaction(tx => { const run = fn(tx); body = run; return run; }, { signal });
+  } catch (error) {
+    await body.then(() => undefined, () => undefined);
+    const closed = (error as { cause?: { code?: unknown } })?.cause?.code;
+    // The deadline discarded the connection: report it as the closed connection it is, which callers already retry.
+    if (!signal.aborted || typeof closed !== 'string') throw error;
+    throw Object.assign(new Error(`publication_deadline: the publish transaction passed the ceiling and its connection was discarded (${closed})`),
+      { name: 'PublicationDeadlineError', code: closed, cause: error });
+  }
 }
 
 export interface PublicationBound {
