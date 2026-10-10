@@ -178,6 +178,10 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: `gbrain connect --help` prints its own usage (flags + examples) from runConnect; route
   // around the generic one-line short-circuit.
   { name: 'connect', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/connect.ts') },
+  // D8: `gbrain setup <harness>` orchestrates init + harness wiring. Engine-free (a new brain is
+  // created by the `gbrain init` child it runs); thinClient 'none' because it resolves a hosted
+  // target itself and refuses with setup_hosted_connection instead of creating a local brain.
+  { name: 'setup', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', load: () => import('./commands/setup.ts') },
   // CLI_ONLY: Agent-bootstrap family (ENG-2 three-touchpoint rule): `bootstrap` + `hook` are
   // ENGINE-FREE (dispatched in handleCliOnly before the connectEngine terminator) and must NEVER
   // enter THIN_CLIENT_REFUSED_COMMANDS. `sweep` is the trusted local sweep entry [CX2-5] and needs

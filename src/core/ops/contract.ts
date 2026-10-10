@@ -755,8 +755,8 @@ export interface Operation {
    * ARE NON-CONTRACTUAL: they exist so an agent can scan ~20 groups instead
    * of ~100 flat names; renaming/regrouping is never a breaking change.
    * Required (by the CI walker in test/mcp-tool-defs.test.ts) on every
-   * non-localOnly op; populated centrally via OP_AREAS at the bottom of
-   * this file.
+   * non-localOnly op; populated centrally via OP_AREAS in
+   * src/core/operation-load.ts.
    */
   area?: string;
   /**

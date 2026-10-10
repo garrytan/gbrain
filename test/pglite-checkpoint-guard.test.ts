@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { CHECKPOINT_GUARD_MAX_BYTES, PgliteCheckpointGuard, checkpointGuardThreshold, writesWal } from '../src/core/pglite-engine/checkpoint-guard.ts';
+import { CHECKPOINT_GUARD_MAX_BYTES, CHECKPOINT_PROBE_REUSE_MS, PGLITE_WAL_BYTES_PER_SECOND_BOUND, PgliteCheckpointGuard, checkpointGuardThreshold, writesWal } from '../src/core/pglite-engine/checkpoint-guard.ts';
 import { GBrainError } from '../src/core/types.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -26,7 +26,7 @@ function install(engine: PGLiteEngine, opts: { threshold?: number; fail?: RegExp
   }, message => opts.warnings?.push(message));
   if (opts.threshold !== undefined) (guard as unknown as { threshold: number }).threshold = opts.threshold;
   inner._checkpointGuard = guard;
-  return { checkpoints: () => calls.filter(sql => sql === 'CHECKPOINT').length, calls };
+  return { checkpoints: () => calls.filter(sql => sql === 'CHECKPOINT').length, calls, guard };
 }
 
 describe('checkpoint guard threshold', () => {
@@ -108,6 +108,48 @@ describe('PGLite outermost transaction guard', () => {
     expect(String(refused.message)).toContain('gbrain pglite-repair');
     expect(entered).toBe(false);
     expect(await engine.executeRaw('SELECT id FROM guard_probe WHERE id=7')).toEqual([]);
+  });
+});
+
+describe('probe reuse window', () => {
+  let engine: PGLiteEngine;
+  const probes = (calls: string[]) => calls.filter(sql => sql.includes('pg_control_checkpoint')).length;
+  const reuseBudget = PGLITE_WAL_BYTES_PER_SECOND_BOUND * CHECKPOINT_PROBE_REUSE_MS / 1000;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.executeRaw('CREATE TABLE guard_reuse (id int PRIMARY KEY, v text)');
+  });
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('a run of small writes inside the window reads the WAL position once', async () => {
+    await engine.executeRaw('CHECKPOINT');
+    const spy = install(engine, { threshold: CHECKPOINT_GUARD_MAX_BYTES });
+    const start = Date.now();
+    for (let i = 0; i < 5; i++) await engine.transaction(async tx => { await tx.executeRaw('INSERT INTO guard_reuse VALUES ($1, $2)', [i, 'x']); });
+    if (Date.now() - start < CHECKPOINT_PROBE_REUSE_MS) expect(probes(spy.calls)).toBe(1);
+    expect(spy.checkpoints()).toBe(0);
+  });
+
+  test('a reading within one window of the threshold is never reused', async () => {
+    await engine.executeRaw('CHECKPOINT');
+    // Any reading is within a full window's budget of this threshold, so every write probes.
+    const spy = install(engine, { threshold: reuseBudget });
+    for (let i = 10; i < 13; i++) await engine.transaction(async tx => { await tx.executeRaw('INSERT INTO guard_reuse VALUES ($1, $2)', [i, 'x']); });
+    expect(probes(spy.calls)).toBe(3);
+  });
+
+  test('WAL that crosses the threshold inside a reused window checkpoints on the first probe after it', async () => {
+    await engine.executeRaw('CHECKPOINT');
+    const spy = install(engine, { threshold: CHECKPOINT_GUARD_MAX_BYTES });
+    await engine.transaction(async tx => { await tx.executeRaw("INSERT INTO guard_reuse VALUES (20, 'first')"); });
+    expect(probes(spy.calls)).toBe(1);
+    // Forced: the WAL now sits past the threshold (as if a window's writes crossed it); the reused probe still says it is far.
+    (spy.guard as unknown as { threshold: number }).threshold = 1;
+    await Bun.sleep(CHECKPOINT_PROBE_REUSE_MS + 10);
+    await engine.transaction(async tx => { await tx.executeRaw("INSERT INTO guard_reuse VALUES (21, 'after the window')"); });
+    expect(probes(spy.calls)).toBe(2);
+    expect(spy.checkpoints()).toBe(1);
   });
 });
 

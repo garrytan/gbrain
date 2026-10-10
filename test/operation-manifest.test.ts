@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { OPERATION_MANIFEST_PATH, renderOperationManifest } from '../scripts/build-operation-manifest.ts';
+import { OPERATION_LOADERS_PATH, OPERATION_MANIFEST_PATH, renderOperationLoaders, renderOperationManifest } from '../scripts/build-operation-manifest.ts';
 import { OPERATION_MANIFEST } from '../src/core/operation-manifest.generated.ts';
 import { operations } from '../src/core/operations.ts';
 
@@ -17,6 +17,10 @@ const REPO_ROOT = resolve(import.meta.dir, '..');
 describe('operation manifest', () => {
   test('committed file matches a fresh render (run `bun run build:operation-manifest`)', () => {
     expect(readFileSync(OPERATION_MANIFEST_PATH, 'utf-8')).toBe(renderOperationManifest());
+  });
+
+  test('committed loader table matches a fresh render (run `bun run build:operation-manifest`)', async () => {
+    expect(readFileSync(OPERATION_LOADERS_PATH, 'utf-8')).toBe(await renderOperationLoaders());
   });
 
   test('every operation minus its handler, same order, same key order', () => {

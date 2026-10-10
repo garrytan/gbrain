@@ -76,6 +76,10 @@ export const ERROR_CATALOGUE = {
   sync_drain_preparation_systemic: { code: 'preparation_systemic', docs: 'docs/guides/write-refusals.md#preparation_systemic' },
   sync_drain_write_capacity: { code: 'queue_capacity', docs: 'docs/guides/write-refusals.md#drain-write-capacity' },
   sync_drain_connection_lost: { code: 'connection_lost', docs: 'docs/guides/write-refusals.md#drain-connection-lost' },
+  // D8 `gbrain setup <harness>` (src/commands/setup.ts).
+  setup_harness_unsupported: { code: 'setup_harness_unsupported', docs: 'docs/guides/repair.md#setup-harness-unsupported' },
+  setup_owner_conflict: { code: 'setup_owner_conflict', docs: 'docs/guides/repair.md#setup-owner-conflict' },
+  setup_hosted_connection: { code: 'setup_hosted_connection', docs: 'docs/guides/repair.md#setup-hosted-connection' },
 } as const satisfies Record<string, CatalogueEntry>;
 
 export type CatalogueName = keyof typeof ERROR_CATALOGUE;

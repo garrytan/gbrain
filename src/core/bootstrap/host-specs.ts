@@ -248,6 +248,14 @@ export const GBRAIN_HOOK_MARKER_VALUE = 'bootstrap-v1';
 export const GBRAIN_HARNESS_MARKER_VALUE = 'bootstrap-harness-v1';
 
 /**
+ * Marker VALUE for `gbrain setup` installs. Advisory only: setup owns an
+ * entry by the exact hash its connection receipt recorded
+ * (hooks.ts hookEntryHash), so an edited marked entry is never replaced or
+ * removed, and two installs on one machine each keep their own entries.
+ */
+export const GBRAIN_SETUP_MARKER_VALUE = 'setup-v1';
+
+/**
  * User-scope Claude Code settings file (harness-mode hook + permissions
  * target). Resolution mirrors Claude Code itself: CLAUDE_CONFIG_DIR (its
  * documented config-dir override, which the real-claude e2e harness sets)

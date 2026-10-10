@@ -63,7 +63,8 @@ gbrain serve --surface full   # full operation catalog (what registrations pin; 
 ```
 
 Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio.
-No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
+On Claude Code, `gbrain setup claude-code` writes and verifies this registration
+for you ([setup guide](../guides/setup.md)). No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
 `--surface full` serves every operation. For a client that cannot hold the full
 catalog, `--surface verbs` exposes exactly the seven-verb memory protocol
 (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`,

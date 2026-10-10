@@ -16,6 +16,8 @@ import { publicationConcurrency } from './pool-capacity.ts';
 import { claimedHeadOrder } from './sync-window.ts';
 import { laneClaim, laneOf, laneRoots, laneTask } from './sync-lanes.ts';
 import { runPersistenceEffects } from './effects.ts';
+import { settleNoopEmbeddingEffects, type NoopSettleCursor } from './embedding-noop-settle.ts';
+import { currentEmbeddingSignature } from '../embedding.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { isWriteErrorCode } from './types.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
@@ -42,6 +44,10 @@ export interface AbandonedPreparation { request_id: string; operation: string; s
 export const ABANDONED_STOP_GRACE_MS = 5_000;
 /** #6278: abandoned preparations past the ceiling this process tolerates before it stops claiming and reports `restart_required`. */
 export const DEFAULT_ZOMBIE_CAP = 1;
+/** An effects drain running this long names itself on stderr (serve), then again at this cadence. */
+const DRAIN_NOTICE_AFTER_MS = 5_000;
+const DRAIN_NOTICE_EVERY_MS = 10_000;
+const yieldToEventLoop = () => new Promise<void>(resolve => setImmediate(resolve));
 /** When this process started; on PGLite no claim written earlier can belong to a live owner. */
 const PROCESS_STARTED_AT = new Date(performance.timeOrigin);
 /** #5801: the phase a connection checkout belongs to, carried through its async chain. */
@@ -168,6 +174,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
   private rootRetryAfter = new Map<string, number>();
   private projectionWorker: Promise<unknown> | undefined;
   private effectsWorker: Promise<void> | undefined;
+  private draining: { since: number; settled: number; ran: number; noticedAt: number } | undefined;
+  private settleCursor: NoopSettleCursor | undefined;
   private topologyWorker: Promise<unknown> | undefined;
   private maintenanceWorker: Promise<unknown> | undefined;
   private nextMaintenance = 0;
@@ -207,7 +215,9 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       /** #6278 test seam: pins budgets, ceiling, attempt limit or the switch over the brain's config. */
       preparationBudgets?: Partial<EffectivePreparationPolicy>;
       /** #6278: abandoned preparations past the ceiling before this process stops claiming (default DEFAULT_ZOMBIE_CAP). */
-      zombieCap?: number } = {}) {
+      zombieCap?: number;
+      /** Write the long-drain progress line on stderr (serve; never a CLI command that may print --json). */
+      drainNotice?: boolean } = {}) {
     this.hostId = opts.hostId ?? localHostId();
     this.statements = consumerStatementEngine(engine);
   }
@@ -603,11 +613,42 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     });
     this.active.add(task);
   }
-  /** Effects keep pace with publication: full batches continue without waiting for the next tick. */
+  /**
+   * Effects keep pace with publication: full batches continue without waiting for the next tick. No-op embedding
+   * effects settle in bulk first. Each batch yields to the event loop, so a long drain never holds requests back
+   * (PGLite queries resolve as one microtask chain that would otherwise starve stdin).
+   */
   private async drainEffects(): Promise<void> {
     const limit = 20;
-    while (!this.stopping && await runPersistenceEffects(this.engine, this.config,
-      { hostId: this.hostId, limit, signal: this.abort.signal }) >= limit);
+    const signature = currentEmbeddingSignature();
+    const drain = this.draining = { since: Date.now(), settled: 0, ran: 0, noticedAt: 0 };
+    try {
+      for (let done = !signature; !done && !this.stopping;) {
+        const pass = await settleNoopEmbeddingEffects(this.engine, this.hostId, signature!, this.settleCursor);
+        this.settleCursor = pass.cursor;
+        done = pass.done;
+        drain.settled += pass.settled;
+        this.drainNotice(drain);
+        if (!done) await yieldToEventLoop();
+      }
+      for (let ran = limit; ran >= limit && !this.stopping;) {
+        ran = await runPersistenceEffects(this.engine, this.config, { hostId: this.hostId, limit, signal: this.abort.signal });
+        drain.ran += ran;
+        this.drainNotice(drain);
+        if (ran >= limit) await yieldToEventLoop();
+      }
+    } finally {
+      this.draining = undefined;
+      if (drain.noticedAt) this.drainNotice(drain, true);
+    }
+  }
+  /** A drain past DRAIN_NOTICE_AFTER_MS names itself on stderr every DRAIN_NOTICE_EVERY_MS, and once when it ends (serve only). */
+  private drainNotice(drain: NonNullable<PersistenceConsumer['draining']>, done = false): void {
+    const now = Date.now();
+    if (!this.opts.drainNotice || (!done && (now - drain.since < DRAIN_NOTICE_AFTER_MS || now - drain.noticedAt < DRAIN_NOTICE_EVERY_MS))) return;
+    drain.noticedAt = now;
+    process.stderr.write(`[persistence] phase=effects_drain state=${done ? 'done' : 'running'} settled_noop_embeddings=${drain.settled} ran=${drain.ran}`
+      + ` elapsed_s=${Math.round((now - drain.since) / 1000)}; requests are served while it drains; status: gbrain sources writer status --json\n`);
   }
   foregroundCompletions(worktreeId: string): number { return this.foregroundCounts.get(worktreeId) ?? 0; }
   /** CEO-A7: this process holds the claim, so its outcome reaches waiters through `onSettled` without a read. */
@@ -622,6 +663,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
   /** #6278: abandoned preparations past the ceiling have reached this process's cap; it claims nothing more until it restarts. */
   restartRequired(): boolean { return this.zombies.size >= (this.opts.zombieCap ?? DEFAULT_ZOMBIE_CAP); }
   status() {
+    const drain = this.draining;
     const { deadlines, syncMs, maintenanceMs, ceilingMs, maxAttempts } = this.policy;
     return { accepting: !this.stopping, active_preparations: this.active.size, active_worktrees: this.activeRoots.size,
       sampled_at: new Date().toISOString(), observation_scope: 'current_process_reset_on_restart',
@@ -633,6 +675,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       abandoned_preparations: this.abandoned.size,
       outlived_ceiling: [...this.zombies.values()].map(value => ({ ...value })),
       restart_required: this.restartRequired(),
+      // The effects drain in progress: since when, no-op embedding effects settled in bulk, effects run.
+      ...(drain ? { draining: { since: new Date(drain.since).toISOString(), settled_noop_embeddings: drain.settled, ran: drain.ran } } : {}),
       // #6317: which connection this consumer's statements take, and whether the ordinary pool is a transaction-mode pooler.
       connection: consumerConnectionRoute(this.engine),
       ...(this.lastError ? { last_error: { ...this.lastError } } : {}) };

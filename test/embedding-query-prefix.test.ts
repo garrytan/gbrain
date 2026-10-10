@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { configureGateway, resetGateway, embed, embedQuery, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, embed, embedQuery, __setEmbedTransportForTests, __clearQueryEmbedCacheForTests } from '../src/core/ai/gateway.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { hybridSearchCached } from '../src/core/search/hybrid.ts';
 import { knobsHash, resolveSearchMode } from '../src/core/search/mode.ts';
@@ -94,6 +94,7 @@ describe('search reads the selected brain prefix per request', () => {
     await brainA.setConfig('embedding_query_prefix', 'query: ');
     await hybridSearchCached(brainA, 'widget roadmap');
     await brainA.unsetConfig('embedding_query_prefix');
+    __clearQueryEmbedCacheForTests();
     await hybridSearchCached(brainA, 'widget roadmap');
     expect(seen).toEqual(['widget roadmap', 'query: widget roadmap', 'widget roadmap']);
   });

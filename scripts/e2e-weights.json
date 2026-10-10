@@ -311,7 +311,7 @@
   "test/e2e/persistence-consumers-postgres.test.ts": 2310,
   "test/e2e/persistence-deactivate-race.test.ts": 11700,
   "test/e2e/persistence-embedding-effects.test.ts": 38980,
-  "test/e2e/persistence-git-coalescing-5530-postgres.test.ts": 56700,
+  "test/e2e/persistence-git-coalescing-5530-postgres.test.ts": 100000,
   "test/e2e/persistence-group-deadline-postgres.test.ts": 9520,
   "test/e2e/persistence-http-liveness.test.ts": 45200,
   "test/e2e/persistence-idle-pool.test.ts": 91570,
