@@ -28,6 +28,7 @@ import type { BrainEngine } from '../engine.ts';
 import { managedFactWritePreflight } from '../facts/managed-fact-write.ts';
 import { loadSuppressions, upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
 import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
+import { hasBulkCategory } from './gmail-categories.ts';
 import { bareAddress, type GmailMessageMeta, type GmailThreadData } from './types.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { deriveTrust } from '../trust/taint.ts';
@@ -64,8 +65,7 @@ export const LOOPS_EXTRACT_WINDOW_DAYS = 30;
 const LOOPS_EXTRACT_MAX_TOKENS = 2048;
 const LOOPS_EXTRACT_RETRY_MAX_TOKENS = 8192;
 
-/** Gmail categories that are bulk by construction. */
-const BULK_CATEGORY_LABELS = ['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS'];
+export { BULK_CATEGORY_LABELS } from './gmail-categories.ts';
 
 export interface ExtractEligibility {
   eligible: boolean;
@@ -136,7 +136,7 @@ export function loopExtractionEligibility(
   if (substantive.some(ownerWrote)) return { eligible: true, reason: 'owner_participated' };
 
   // Bulk by Gmail's own classification, and the owner never joined in.
-  if (BULK_CATEGORY_LABELS.some((l) => labels.has(l))) {
+  if (hasBulkCategory(labels)) {
     return { eligible: false, reason: 'bulk_category' };
   }
 

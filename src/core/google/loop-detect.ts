@@ -43,6 +43,7 @@ import {
   type SuppressionSet,
 } from '../loops/loops-store.ts';
 import { isCalendarSystemMail, isNoiseSender } from './google-render.ts';
+import { hasBulkCategory } from './gmail-categories.ts';
 import type { GmailMessageMeta, GmailThreadData } from './types.ts';
 
 export const INBOUND_GRACE_HOURS = 24;
@@ -192,6 +193,13 @@ export function detectThreadLoop(
     // ── Last word is theirs: do I owe a reply? ──
     // List mail never owes a reply.
     if (last.listUnsubscribe) return { open: [], close };
+    // #5103: bulk by Gmail's own classification (promotions, social, forums)
+    // owes no reply either, unless the owner wrote a substantive message in
+    // the thread — the same rule the extraction lane applies. CATEGORY_UPDATES
+    // is not bulk here: invoices and document requests live there.
+    if (hasBulkCategory(messages.flatMap((m) => m.labelIds)) && !substantive.some((m) => isMine(m, myAddresses))) {
+      return { open: [], close };
+    }
     // CC-only (or bcc/list delivery with no To: match) does not owe a reply.
     const inTo = last.to.some((a) => myAddresses.has(a));
     if (!inTo) return { open: [], close };

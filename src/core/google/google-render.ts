@@ -30,9 +30,16 @@ const NOISE_SENDER_SUBSTRINGS = [
   'do-not-reply',
 ];
 
+/**
+ * Fixed Google system addresses that carry no human obligation (#5103: the
+ * Meet notes digest). Matched by EQUALITY, never as a substring, so a
+ * lookalike address on another domain is still treated as a person.
+ */
+const GOOGLE_SYSTEM_SENDERS: ReadonlySet<string> = new Set(['gemini-notes@google.com']);
+
 export function isNoiseSender(fromAddress: string): boolean {
   const f = fromAddress.toLowerCase();
-  return NOISE_SENDER_SUBSTRINGS.some((p) => f.includes(p));
+  return GOOGLE_SYSTEM_SENDERS.has(f) || NOISE_SENDER_SUBSTRINGS.some((p) => f.includes(p));
 }
 
 /**

@@ -38,9 +38,14 @@ zero LLM, free, always on). For every synced Gmail thread:
 
 Precision rules (pinned by a labeled fixture corpus in
 `test/google-loop-detect.test.ts` — every false-positive class gets a
-fixture before its fix): noise senders (noreply/notifications), list mail
-(`List-Unsubscribe`), CC-only delivery, FYI/forwards without a question,
-self-threads, and muted senders/threads never open loops. Sent-mail
+fixture before its fix): noise senders (noreply/notifications, and Google's
+own system addresses such as the Meet notes digest, matched by exact address
+only), list mail (`List-Unsubscribe`), Gmail's bulk categories
+(`CATEGORY_PROMOTIONS` / `CATEGORY_SOCIAL` / `CATEGORY_FORUMS`, unless you
+wrote a substantive message in the thread; `CATEGORY_UPDATES` is not bulk),
+CC-only delivery, FYI/forwards without a question, self-threads, and muted
+senders/threads never open loops. None of these gates closes a loop: only a
+turn flip does. Sent-mail
 ingestion is what makes "unanswered" honest — your own replies are the
 negative filter.
 
@@ -103,7 +108,7 @@ calls nor crowds real correspondence out of the sweep:
 | `SPAM` / `TRASH` | no — whoever wrote them |
 | a substantive message the account owner wrote (`SENT` label or a known owner address; a calendar RSVP or other noise does not count) | **yes, overriding every rule below** |
 | pure noise senders / pure calendar notices | no |
-| `CATEGORY_PROMOTIONS` / `CATEGORY_SOCIAL` / `CATEGORY_FORUMS` | no, unless the owner joined in |
+| `CATEGORY_PROMOTIONS` / `CATEGORY_SOCIAL` / `CATEGORY_FORUMS` (one shared list, `gmail-categories.ts`, applied by both lanes) | no, unless the owner joined in |
 | `List-Unsubscribe` bulk | no, unless the owner joined in |
 | `CATEGORY_UPDATES` | **yes** — invoices, contracts and document requests live there |
 | ordinary human correspondence | yes |

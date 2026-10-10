@@ -157,6 +157,13 @@ describe('isNoiseSender', () => {
     expect(isNoiseSender('alice@example.com')).toBe(false);
     expect(isNoiseSender('replies-welcome@example.com')).toBe(false);
   });
+
+  test('#5103: Google system senders match by exact address, never by substring', () => {
+    expect(isNoiseSender('gemini-notes@google.com')).toBe(true);
+    expect(isNoiseSender('Gemini-Notes@Google.com')).toBe(true);
+    expect(isNoiseSender('gemini-notes@google.com.evil.example')).toBe(false);
+    expect(isNoiseSender('not-gemini-notes@google.com')).toBe(false);
+  });
 });
 
 describe('isCalendarSystemMail', () => {
