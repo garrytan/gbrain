@@ -3,6 +3,8 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionHandler } from '../types.ts';
+import { fetchSource } from '../../sources-load.ts';
+import { isSyncDisabledConfig } from '../../sync-policy.ts';
 import { resolveJobPull } from './job-pull.ts';
 
 export function makeSyncHandler(engine: BrainEngine): MinionHandler {
@@ -63,6 +65,15 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
     // aborts only the worker's shutdown signal, so the sync and its git pull stop on either signal.
     const { composeAbortSignals } = await import('../../sync-reconcile.ts');
     const signal = composeAbortSignals(job.signal, job.shutdownSignal);
+    if (job.data.embed_reason === 'autopilot_freshness' && sourceId) {
+      // #4399: recheck queued automatic work; explicit jobs remain runnable.
+      // Unreadable source metadata preserves the existing sync attempt.
+      const source = await fetchSource(engine, sourceId).catch(() => null);
+      if (isSyncDisabledConfig(source?.config)) {
+        console.error(`[sync] skipped: automatic sync disabled for ${sourceId}.`);
+        return { skipped: true, reason: 'sync_disabled', source_id: sourceId };
+      }
+    }
     let result;
     try {
       result = await performSync(engine, {
