@@ -21,6 +21,8 @@ import { importFromContent, importImageFile } from '../src/core/import-file.ts';
 import { run as runEmbedCli } from '../src/cli/commands/embed.ts';
 import { runEmbed } from '../src/commands/embed.ts';
 import { requireEmbedBackfillConsent } from '../src/core/embed-consent.ts';
+import { noteEmbedCostStop } from '../src/core/embed-cost-cap.ts';
+import { BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { BUDGET_STOP_EXIT_CODE } from '../src/core/exit-codes.ts';
 import { runSources } from '../src/commands/sources.ts';
@@ -84,6 +86,9 @@ describe('embed --max-usd is metered', () => {
     expect(result).toMatchObject({ reason: 'cost_cap', budget_reason: 'cost', cap_usd: 0.1, failures: 0, embedded: 1, failure_samples: [],
       resume_command: `gbrain embed --slugs ${SLUGS.join(' ')}` });
     expect(calls).toBe(1);
+    const quoted = { reason: 'x' } as { reason?: string; resume_command?: string };
+    noteEmbedCostStop(quoted, new BudgetExhausted('cap', { reason: 'cost', spent: 0.2, cap: 0.1 }), ['--slugs', 'notes/$(id)', '--max-usd', '0.1', '--yes']);
+    expect(quoted.resume_command).toBe("gbrain embed --slugs 'notes/$(id)'");
   });
 
   test('--stale with multi-chunk pages: one provider call, then a clean stop (no per-chunk fan-out, no failures)', async () => {
