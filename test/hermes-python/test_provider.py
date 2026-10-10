@@ -327,6 +327,21 @@ class ContractTests(unittest.TestCase):
             self.assertIn("unavailable", p.prefetch("work"))
             self.assertEqual(len(self.server.calls), count)
 
+    def test_first_delta_does_not_depend_on_host_uptime(self):
+        from unittest.mock import patch
+        CONFIGS[str(self.home)]["memory"]["gbrain"]["heartbeat_seconds"] = 300
+        self.server.payloads["delta"] = {"protocol_version": 1, "text": "cold boot delta"}
+        with profile(self.home), patch("gbrain_hermes_contract.provider.time.monotonic", return_value=0.0) as clock:
+            p = self.provider()
+            self.assertIn("cold boot delta", p.prefetch("work"))
+            p.prefetch("work")
+            clock.return_value = 299.0
+            p.prefetch("work")
+            self.assertEqual(sum(name == "delta" for name, _ in self.server.ops()), 1)
+            clock.return_value = 300.0
+            p.prefetch("work")
+            self.assertEqual(sum(name == "delta" for name, _ in self.server.ops()), 2)
+
     def test_delta_is_per_session_and_degraded_notices_survive(self):
         CONFIGS[str(self.home)]["memory"]["gbrain"]["heartbeat_seconds"] = 300
         self.server.payloads["delta"] = {"protocol_version": 1, "text": "new page", "has_more": True, "degraded_reason": "facts", "notices": [{"code": "delta_incomplete", "fix": {"next": "wait"}}]}

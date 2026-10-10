@@ -4,7 +4,7 @@
  * ignoring either option leaks scheduled/pre-cutover turns. No new test-only
  * production seam: the native SQLite adapter, CLI parser and renderer run.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,6 +20,13 @@ import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builde
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 const dirs: string[] = [];
+let persistedEngine: PGLiteEngine;
+beforeAll(async () => {
+  persistedEngine = new PGLiteEngine();
+  await persistedEngine.connect({});
+  await persistedEngine.initSchema();
+}, 120_000);
+afterAll(async () => { if (persistedEngine) await persistedEngine.disconnect(); });
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 function fixture(): { path: string; patterns: string } {
   const dir = mkdtempSync(join(tmpdir(), 'hermes-cutover-')); dirs.push(dir);
@@ -92,38 +99,32 @@ describe('Hermes source and message cutover', () => {
 
   test('persists flattened cutoff provenance after strict redaction without replacing the full archive', async () => {
     const { path, patterns } = fixture();
-    const engine = new PGLiteEngine();
-    await engine.connect({});
-    try {
-      await engine.initSchema();
-      const full = await runTranscriptsIngest(engine, {
-        paths: [path], format: 'hermes', sourceId: 'default', userPatternsPath: patterns,
-      });
-      const archiveSlug = full.files[0].sessions[0].baseSlug;
-      const cutoff = '2026-08-05T08:00:05.000Z';
-      const cutover = await runTranscriptsIngest(engine, {
-        paths: [path], format: 'hermes', sourceId: 'default', messagesSinceIso: cutoff, userPatternsPath: patterns,
-      });
-      const cutoverSlug = cutover.files[0].sessions[0].baseSlug;
+    const engine = persistedEngine;
+    const full = await runTranscriptsIngest(engine, {
+      paths: [path], format: 'hermes', sourceId: 'default', userPatternsPath: patterns,
+    });
+    const archiveSlug = full.files[0].sessions[0].baseSlug;
+    const cutoff = '2026-08-05T08:00:05.000Z';
+    const cutover = await runTranscriptsIngest(engine, {
+      paths: [path], format: 'hermes', sourceId: 'default', messagesSinceIso: cutoff, userPatternsPath: patterns,
+    });
+    const cutoverSlug = cutover.files[0].sessions[0].baseSlug;
 
-      expect(cutoverSlug).not.toBe(archiveSlug);
-      expect(await engine.getPage(archiveSlug, { sourceId: 'default' })).not.toBeNull();
-      const page = await engine.getPage(cutoverSlug, { sourceId: 'default' });
-      expect(page).not.toBeNull();
-      expect(page!.compiled_truth).toContain('Launch checklist drafted');
-      expect(page!.compiled_truth).not.toContain('Draft the widget-co launch checklist');
+    expect(cutoverSlug).not.toBe(archiveSlug);
+    expect(await engine.getPage(archiveSlug, { sourceId: 'default' })).not.toBeNull();
+    const page = await engine.getPage(cutoverSlug, { sourceId: 'default' });
+    expect(page).not.toBeNull();
+    expect(page!.compiled_truth).toContain('Launch checklist drafted');
+    expect(page!.compiled_truth).not.toContain('Draft the widget-co launch checklist');
 
-      const raw = await engine.getRawData(cutoverSlug, 'transcript:hermes', { sourceId: 'default' });
-      expect(raw).toHaveLength(1);
-      expect(raw[0].data).toMatchObject({
-        source_session_id: 'hermes-fixture-1',
-        import_messages_since: cutoff,
-        import_semantics: 'strictly-after-v1',
-      });
-      expect(raw[0].data).not.toHaveProperty('import_view');
-    } finally {
-      await engine.disconnect();
-    }
+    const raw = await engine.getRawData(cutoverSlug, 'transcript:hermes', { sourceId: 'default' });
+    expect(raw).toHaveLength(1);
+    expect(raw[0].data).toMatchObject({
+      source_session_id: 'hermes-fixture-1',
+      import_messages_since: cutoff,
+      import_semantics: 'strictly-after-v1',
+    });
+    expect(raw[0].data).not.toHaveProperty('import_view');
   });
 
   test('invalid epoch values do not crash or invent timestamps', async () => {

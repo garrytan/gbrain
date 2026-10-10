@@ -19,6 +19,7 @@ const home = join(root, 'home');
 const databasePath = join(root, 'brain-db');
 const sourceId = `hermes-integ-${randomUUID().slice(0, 10)}`;
 let engine: PGLiteEngine;
+let competitor: PGLiteEngine;
 let registration: Awaited<ReturnType<typeof registerLocalWriter>>;
 let stateDb: string;
 
@@ -26,6 +27,7 @@ beforeAll(async () => {
   mkdirSync(home, { recursive: true });
   await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
     engine = new PGLiteEngine();
+    competitor = new PGLiteEngine();
     await engine.connect({ database_path: databasePath });
     await engine.initSchema();
     await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
@@ -35,6 +37,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  if (competitor) await competitor.disconnect().catch(() => {});
   if (engine) {
     await shutdownDelegatedHermesMaintenance(engine);
     await engine.disconnect();
@@ -86,7 +89,6 @@ test('an exact but empty Hermes selection remains non-success and performs no ne
 
 test('a second PGLite engine cannot compete with the resident owner on its datastore', async () => {
   await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
-    const competitor = new PGLiteEngine();
     try {
       await expect(competitor.connect({ database_path: databasePath })).rejects.toThrow();
     } finally {

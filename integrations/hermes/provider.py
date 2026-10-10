@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class _Session:
     pack_needed: bool = True
-    last_wake: float = 0.0
+    last_wake: float | None = None
     notices: list = field(default_factory=list)
 
 
@@ -204,7 +204,9 @@ class GBrainMemoryProvider(MemoryProvider):
             tools = self._client.tools()
             now = time.monotonic()
             cadence = self._settings.heartbeat_seconds
-            wake_needed = bool(cadence and now - state.last_wake >= cadence and "delta" in tools)
+            # A fresh process/VM can have a monotonic clock below one cadence.
+            # None distinguishes an unobserved wake from a real wake at zero.
+            wake_needed = bool(cadence and (state.last_wake is None or now - state.last_wake >= cadence) and "delta" in tools)
             active = int(state.pack_needed and "context_pack" in tools) + int(wake_needed) + int(not is_trivial_prompt(query))
             call_budget = max(64, self._settings.budget_tokens // max(1, active))
             if state.pack_needed:
