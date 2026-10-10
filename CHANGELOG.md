@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.142.0] - 2026-10-10
+
+**A file write's publication takes its request-row lock and its `publication_started` stamp in one statement instead of two. No behavior changes; one UPDATE fewer per published file.**
+
+GBRA-69's import profile (50k pages, Postgres 16) counted about six UPDATEs of each `persistence_requests` row per write. One of them was the `publication_started=true` stamp the publication transaction issued right after a bare `SELECT … FOR UPDATE` of the same row. The stamp now rides on the row lock: a file publication locks its request with `UPDATE … SET publication_started=true … RETURNING *`, which takes the same lock, in the same transaction, with the same visibility (the stamp still lives and dies with that transaction, as `control.ts` relies on), and the claim-token and state checks run on the returned row exactly as before. Database-only writes keep the bare `FOR UPDATE`; they never stamped.
+
+### Itemized changes
+
+- `src/core/persistence/coordinator.ts` (`publishMutation`): the request-row lock of a file publication is the stamping UPDATE; the separate stamp statement before `before_publication` is gone.
+- `scripts/persistence/lock-order.ts`: the crash robot's lock-order tracer recognises the stamping UPDATE as the publication's exclusive request-row lock (it previously keyed publications on the bare `FOR UPDATE`), and reports `publication_row_lock_statements_max`.
+- Tests: `test/persistence-crash-robot.test.ts` asserts one request-row lock statement per publication (two on the previous code). Statement budget (`test/e2e/persistence-statement-budget.test.ts`) measures publication at 42 statements on Postgres, under its 50 budget.
+
 ## [0.60.141.0] - 2026-10-10
 
 **Re-importing and syncing unchanged files is 2.4x faster, `gbrain extract` finishes on a 50,000-page PGLite brain (114 s instead of hanging), a PGLite `serve` with a git backlog answers its first tool call in 0.6 s instead of 4.3 s, and a Postgres brain that lost its planner statistics gets them back instead of taking a minute per search.**
