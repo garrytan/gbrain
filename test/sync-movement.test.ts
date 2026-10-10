@@ -32,7 +32,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { syncLockId, tryAcquireDbLock, type DbLockHandle } from '../src/core/db-lock.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { judgeMovement, readSourceMovement, startMovementWatch, formatSourceMovement } from '../src/core/persistence/sync-movement.ts';
+import { judgeMovement, readSourceMovement, startMovementWatch, formatSourceMovement, MOVEMENT_WATERMARK_SQL } from '../src/core/persistence/sync-movement.ts';
 import { movementReport, movementWindowMs, parseMovementArgs, runMovementCheck, MOVEMENT_SUPERVISOR_STEP } from '../src/commands/sources-writer-movement.ts';
 import { managedSyncMovementEntry } from '../src/commands/doctor/checks/managed-sync-movement.ts';
 import { deriveNext, cliRenderContext } from '../src/core/agent-output.ts';
@@ -128,6 +128,43 @@ describe('readSourceMovement (B4)', () => {
     await holdSummary(g, { count: 2, stalled: 2 }, ago(1_000));
     expect(await one(g)).toMatchObject({ movement_state: 'held', data_moving: true, holds: { count: 2, stalled: 2 } });
     await finish(f); await finish(g);
+  }), 60_000);
+});
+
+describe('movement watermark index', () => {
+  test('the watermark read returns the newest committed sync receipt of the incarnation, with and without persistence_requests_sync_watermark', () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const indexes = await engine.executeRaw<{ name: string }>(`SELECT indexname AS name FROM pg_indexes WHERE indexname IN ('persistence_requests_sync_watermark','persistence_requests_committed_watermark')`);
+    expect(indexes.map(r => r.name)).toEqual(['persistence_requests_sync_watermark']);
+    const f = await managedSource();
+    const read = async () => {
+      const [row] = await engine.executeRaw<{ last_commit_at: unknown; admitted: number | string }>(MOVEMENT_WATERMARK_SQL, [f.worktreeId, f.incarnation]);
+      return { last_commit_at: row!.last_commit_at === null ? null : new Date(row!.last_commit_at as string).toISOString(), admitted: Number(row!.admitted) };
+    };
+    const unindexed = () => engine.transaction(async tx => {
+      await tx.executeRaw('SET LOCAL enable_indexscan = off');
+      await tx.executeRaw('SET LOCAL enable_indexonlyscan = off');
+      await tx.executeRaw('SET LOCAL enable_bitmapscan = off');
+      const [row] = await tx.executeRaw<{ last_commit_at: unknown; admitted: number | string }>(MOVEMENT_WATERMARK_SQL, [f.worktreeId, f.incarnation]);
+      return { last_commit_at: row!.last_commit_at === null ? null : new Date(row!.last_commit_at as string).toISOString(), admitted: Number(row!.admitted) };
+    });
+    expect(await read()).toEqual({ last_commit_at: null, admitted: 0 });
+    for (let i = 0; i < 30; i++) await request(f, 'committed', { completedAt: ago(1_000 + i * 1_000), kind: 'managed_file_import' });
+    expect(await read()).toEqual(await unindexed());
+    expect((await read()).last_commit_at).toBeNull();
+    await request(f, 'committed', { completedAt: ago(90_000) });
+    const newest = await request(f, 'committed', { completedAt: ago(60_000), kind: 'managed_sync_delete' });
+    await request(f, 'committed', { completedAt: ago(30_000), kind: 'managed_sync_import' });
+    await request(f, 'queued', { kind: 'managed_sync_import' });
+    await request(f, 'queued', { kind: 'managed_file_import' });
+    await engine.executeRaw(`UPDATE persistence_requests SET source_incarnation=gen_random_uuid() WHERE worktree_id=$1::uuid AND completed_at > now()-interval '45 seconds' AND intent->>'kind'='managed_sync_import'`, [f.worktreeId]);
+    const expected = await unindexed();
+    expect(await read()).toEqual(expected);
+    expect(expected.admitted).toBe(1);
+    const [stamp] = await engine.executeRaw<{ at: string }>('SELECT completed_at AS at FROM persistence_requests WHERE request_id=$1::uuid', [newest]);
+    expect(expected.last_commit_at).toBe(new Date(stamp!.at).toISOString());
+    await engine.executeRaw(`UPDATE persistence_requests SET intent=NULL, compacted=true WHERE request_id=$1::uuid`, [newest]);
+    expect(await read()).toEqual(await unindexed());
+    expect(Date.parse((await read()).last_commit_at!)).toBeLessThan(Date.parse(stamp!.at));
   }), 60_000);
 });
 

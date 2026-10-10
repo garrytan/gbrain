@@ -1,0 +1,17 @@
+[
+  {
+    "name": "bounded",
+    "source": "\\bignore\\s{1,4}previous\\s{1,4}instructions",
+    "anchors": [
+      "ignore"
+    ]
+  },
+  {
+    "name": "ctx",
+    "source": "\\bto\\b",
+    "anchors": [
+      "to"
+    ],
+    "preceded": "\\bsend[^.]{0,80}$"
+  }
+]

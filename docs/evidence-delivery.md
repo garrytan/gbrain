@@ -30,11 +30,19 @@ conversation hit is byte-identical to earlier releases. `return_unit: "chunk"`
 (or `gbrain config set search.return_unit chunk`) turns the stage off
 entirely.
 
+A budget you pass under `auto` is a hard cap: everything delivered (titles,
+evidence text and every marker in it) fits inside it, on `query`, `search`,
+`recall`'s results and `assemble_evidence`. A call that passes no budget gets
+exactly what earlier releases returned. See [Explicit budgets](#explicit-budgets-the-cap).
+
 **Say to your agent:** *"Search my brain for what alice-example said about the
 launch date, and read the whole conversation, not just the snippet."*
 
 **Say to your agent:** *"Find every session where we discussed the acme-example
 renewal and give me the full sessions within about 6,000 tokens."*
+
+**Say to your agent:** *"What did we decide about the widget-co launch? Keep the
+evidence under 8,000 tokens."*
 
 ## Quick start
 
@@ -78,6 +86,9 @@ Per-call params on `search`, `query`, `recall`:
   `search.return_budget_default` (default 6,000). Remote callers are clamped to
   `search.return_budget_max_remote` (default 32,000); the clamp is reported in
   `delivery.budget_clamped` and `delivery.fallbacks`, never raised.
+- An explicit budget under `auto` (`return_unit: "auto"`, or `auto` from config
+  on `search`) is a hard cap, packed by `search.auto_packing` (see
+  [Explicit budgets](#explicit-budgets-the-cap)); it must be at least 32 tokens.
 - Legacy budget knobs keep their meaning: with `return_unit` omitted,
   `query`'s `token_budget` still prunes chunks (chunk mode), and `recall`'s
   `budget_tokens` / `budget_policy` still pack chunks (facts first), so any of
@@ -90,7 +101,7 @@ excerpts for every other page.
 
 Config keys: `search.return_unit`, `search.return_window`,
 `search.return_budget_default`, `search.return_budget_conversation`,
-`search.return_budget_max_remote`, `think.return_unit`. Kill switch:
+`search.return_budget_max_remote`, `search.auto_packing`, `think.return_unit`. Kill switch:
 `gbrain config set search.return_unit chunk` and
 `gbrain config set think.return_unit chunk` (or pass `return_unit: "chunk"`
 per call).
@@ -114,13 +125,71 @@ Pages the transcripts and connectors paths write carry both signals (type
 frontmatter is not read separately. Detection never looks at body text, so a
 curated note that happens to quote a dialogue stays on the chunk path.
 
-Conversation hits share the budget in rank order, after the unchanged chunks
-are paid for. Each conversation page first reserves its matching span, then
-the pages grow toward complete in rank order, so a lower-ranked session still
-keeps the part that matched. A conversation whose matching span no longer
-fits keeps its ranked chunks unchanged (reason `conversation_over_budget`), so
-`auto` never returns less than `chunk` would. `budget_used` exceeds
-`budget_tokens` only by such unchanged chunks.
+With no budget passed (the 24,000-token default), conversation hits share the
+budget in rank order, after the unchanged chunks are paid for. Each
+conversation page first reserves its matching span, then the pages grow toward
+complete in rank order, so a lower-ranked session still keeps the part that
+matched. A conversation whose matching span no longer fits keeps its ranked
+chunks unchanged (reason `conversation_over_budget`), so `auto` without an
+explicit budget never returns less than `chunk` would, and `budget_used`
+exceeds `budget_tokens` only by such unchanged chunks. An explicit budget
+changes this; see the next section.
+
+### Explicit budgets (the cap)
+
+When the caller passes a budget (`token_budget` on `query`, `search` and
+`assemble_evidence`, `budget_tokens` on `recall`) and the unit is `auto`, the
+budget is a hard cap on the delivered evidence: the recount of every result's
+title plus `chunk_text` (the evidence, its omission lines, cut markers and
+snippet markers) never exceeds it. JSON fields outside those two (`delivered`,
+spans, scores, the `delivery` meta) are not counted. The four operations share
+one rule:
+
+1. **Rank one first.** The best-ranked hit, note or conversation, is reserved
+   first. If it alone exceeds the budget it is cut at a piece boundary (a
+   line, or a 400-character run of a long line) and ends with the cut marker
+   `\n\n[…]`; it is never dropped.
+2. **Notes get a prefix.** The other non-conversation chunks, in rank order,
+   are kept while they fit; the first that does not fit and every one after
+   it are dropped (`budget_note`). A lower-ranked note never crowds out a
+   leading conversation.
+3. **No spill.** A conversation that does not fit is dropped (`budget_floor`,
+   or `breadth_cap` under `breadth_capped`), never appended outside the
+   budget as chunks.
+4. **The cap holds at the final boundary.** Secret redaction and an explicit
+   `snippet_chars` run before the last recount. A snippet's recovery marker is
+   paid from the row's own allocation (the body shrinks to make room, or the
+   marker is left out with fallback `snippet_marker_omitted` when even it does
+   not fit). A row that would still cross the budget is cut with the marker,
+   or dropped as `budget_recount`. `budget_used` is that recount.
+
+How conversations share what is left is `search.auto_packing`:
+
+| Value | Conversations |
+|---|---|
+| `cap_only` (default) | Every conversation's matching span first, in rank order, then pages grow toward complete in rank order: the no-budget order, with the four rules above. |
+| `breadth_capped` | Keeps the longest rank-order prefix of conversations whose title, matching span and target window (the `window` unit's neighbor chunks at `return_window`) all fit; the rest are dropped as `breadth_cap`. What is left grows those pages toward complete, in rank order. |
+| `depth_first` | Takes conversations in rank order, each whole if it fits what is left, else as much around its matching span as fits; one whose matching span no longer fits is skipped, and later ones are still tried. |
+| `off` | The no-budget behavior, even with an explicit budget (unchanged chunks paid first, conversations that do not fit spill as chunks, no minimum). |
+
+`gbrain config set search.auto_packing <value>` refuses any other value.
+`delivery.auto_packing` names the packing that ran; it is present only when
+the cap engaged. The packing reads nothing but the plan, so `think` (which
+passes no budget) and every call without a budget are byte-identical whatever
+it is set to.
+
+The smallest explicit `auto` budget is **32 tokens** (room for a cut marker, a
+shortened title and a non-empty body). A smaller budget fails with
+`invalid_params` naming the minimum, and so does a zero, negative or
+non-finite one when the call passes `return_unit: "auto"` (with the unit
+omitted such a budget still means no budget, as before). Above the minimum, a
+non-empty, readable hit list always returns non-empty evidence. A remote
+budget is clamped first (`search.return_budget_max_remote`), and the cap
+applies to the clamped value.
+
+`query`'s `token_budget` **without** `return_unit` still selects legacy chunk
+budgeting (and `recall`'s `budget_tokens` / `budget_policy` legacy packing),
+so a bare budget does not engage the cap.
 
 ### Precedence with `snippet_chars`
 
@@ -191,7 +260,8 @@ Response meta (`_meta.retrieval.delivery` over MCP; top-level `delivery` on
   "dropped": 1,                    // hits/pages not delivered
   "dropped_reasons": { "budget_floor": 1 },
   "fallbacks": ["budget_clamped"], // distinct non-fatal problem codes, never silent
-  "budget_clamped": { "requested": 50000, "max": 32000 }
+  "budget_clamped": { "requested": 50000, "max": 32000 },
+  "auto_packing": "cap_only"       // explicit auto budgets only: the packing that ran
 }
 ```
 
@@ -215,7 +285,11 @@ delivered text and each result gains `delivered`.
 | `budget_clamped` | A remote budget above the max was clamped. | Clamped budget. |
 | `tokenizer_heuristic` | cl100k unavailable; char/4 heuristic used. | Counts from the heuristic. |
 | drop `not_readable` | The page is no longer readable by this caller (deleted, private, grant revoked, quarantined, archived source, source outside scope). | Result removed. Never falls back to cached text. |
-| drop `budget_floor` | Not even the block's matching span fits the remaining budget. | Result removed (rank one is instead cut to fit). Under `auto` nothing is dropped for budget: the conversation keeps its ranked chunks. |
+| `snippet_marker_omitted` | Under an explicit `auto` budget, a row's allocation could not hold the snippet recovery marker. | Capped block without the marker, `truncated: true`. |
+| drop `budget_floor` | Not even the block's matching span fits the remaining budget. | Result removed (rank one is instead cut to fit). Under `auto` without an explicit budget nothing is dropped for budget: the conversation keeps its ranked chunks. |
+| drop `budget_note` | Explicit `auto` budget: a non-conversation chunk after rank one did not fit, or came after one that did not. | Result removed. |
+| drop `breadth_cap` | `breadth_capped`: the conversation is past the prefix whose target windows fit. | Result removed. |
+| drop `budget_recount` | Explicit `auto` budget: the final recount (after redaction and snippet markers) left no room for the row's title and a body. | Result removed. |
 
 ## Errors
 
@@ -224,6 +298,13 @@ An unknown `return_unit` or an out-of-range `return_window` fails with
 
 ```
 return_window must be an integer from 1 to 3 (got 7). Example: {"query": "launch date", "return_unit": "window", "return_window": 2}
+```
+
+An explicit `auto` budget below 32 tokens (or a zero, negative or non-finite
+one passed with `return_unit: "auto"`) fails with `invalid_params`, e.g.
+
+```
+token_budget must be at least 32 tokens under return_unit auto (got 10): an explicit budget is a hard cap, and a smaller one cannot hold a title, a cut marker and any evidence.
 ```
 
 A thin client talking to an older server that ignores `return_unit` prints one
@@ -305,7 +386,12 @@ warning naming the minimum server version.
    distance to the nearest hit piece, earlier position first on ties) until
    the unit is complete or the budget is spent. Selected pieces are emitted in
    document order; gaps become the omission line. The 60,000-character cap
-   applies the same selection.
+   applies the same selection. Under an explicit `auto` budget the order is
+   [Explicit budgets](#explicit-budgets-the-cap): rank one, the note prefix,
+   then the packing's conversation rule; `breadth_capped` prices each
+   conversation as title + matching span + its `window` candidates at
+   `return_window` (pieces in priority order, omission lines counted) and
+   keeps the longest prefix that fits.
 7. **Redact.** Blocks pass through the same secret redaction as every search
    response before spans and tokens are computed.
 
@@ -354,17 +440,25 @@ const out = await assembleEvidenceForHits(engine, {
   hits: [ { source_id: 'default', slug: 'chat/session-0412', chunk_id: 8812 }, /* rank order */ ],
   return_unit: 'page',        // chunk | window | section | page | auto (the product default)
   return_window: 1,           // optional
-  budget_tokens: 6000,        // optional; same default/clamp rules as query
+  budget_tokens: 6000,        // optional; same default/clamp rules as query (explicit: the cap under auto)
   detail: 'medium',           // optional, as query
   caller: { remote: false },  // optional; { remote: true, sourceIds: [...] } emulates a remote caller
+  auto_packing: 'breadth_capped', // optional, library only: wins over search.auto_packing for this call
 });
 // out.results  — the redacted result array (JSON-serializable), same objects the query op returns
 //                for these hits: { slug, source_id, page_id, title, type, chunk_id, chunk_index,
-//                chunk_source, chunk_text, delivered, ... }
+//                chunk_source, chunk_text, effective_date, effective_date_source, delivered, ... }
 // out.delivery — the delivery meta block
 // out.unresolved — hits that could not be resolved in the caller's scope (dropped)
 const fp = evidenceFingerprint(out.results); // sha256 hex
 ```
+
+Each result carries the page's `effective_date` (`YYYY-MM-DD`) and
+`effective_date_source` exactly as the live `query` row does, `null` for a
+page without a date, so a frozen delivery hands a reader the same dates.
+`auto_packing` exists only on the library call (never an MCP parameter), so an
+evaluation can compare packings on one frozen hit list without switching the
+brain's config between calls.
 
 `chunk_id: 0` addresses the page's first chunk (the synthetic rows exact-slug
 and alias hits carry). Hits outside the caller's scope, deleted pages and

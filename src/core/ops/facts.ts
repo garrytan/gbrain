@@ -38,6 +38,14 @@ import { parseTtlShorthand } from '../facts/ttl-parse.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import type { SearchResult } from '../types.ts';
 import type { BrainEngine, FactRow } from '../engine.ts';
+import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
+import { hasScope } from '../scope.ts';
+import { renderTrustedText } from '../eligibility/labels.ts';
+import { MEMORY_CONFIRM_SCOPE } from '../trust/confirm.ts';
+import { proactiveEligibility } from '../eligibility/registry.ts';
+import { activationSuppressionNotice, suppressionSummary } from '../eligibility/activation.ts';
+import { stampPageTrust, stampRowTrust } from '../eligibility/stamp.ts';
+import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 
 // ============================================================
@@ -225,6 +233,7 @@ const recall: Operation = {
     include_pending: { type: 'boolean', description: 'Add pending count.' },
     return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'Evidence unit for results[] (see search).' },
     return_window: { type: 'number', description: 'Window size 1-3.' },
+    min_trust: MIN_TRUST_PARAM,
   },
   scope: 'read',
   verb: true,
@@ -275,6 +284,7 @@ const recall: Operation = {
       ctx.remote === false
         ? undefined
         : ['world'] as ('private' | 'world')[];
+    const eligibility = await resolveReadEligibility(ctx, { minTrust: p.min_trust }); // #5575 floor + quarantine/rederive hiding
 
     type FactRows = Awaited<ReturnType<typeof ctx.engine.listFactsByEntity>>;
     type FactRowItem = FactRows[number];
@@ -329,7 +339,7 @@ const recall: Operation = {
       limit,
       visibility,
       grep: grep ?? undefined,
-      excludeAuditRows: true,
+      excludeAuditRows: true, eligibility,
     };
 
     if (p.supersessions === true) {
@@ -338,7 +348,7 @@ const recall: Operation = {
       // private newest row consume a limit slot and hide an older world row.
       rows = mergeNewest(
         await Promise.all(factSources.map(src =>
-          ctx.engine.listSupersessions(src, { since: since ?? undefined, limit, visibility }),
+          ctx.engine.listSupersessions(src, { since: since ?? undefined, limit, visibility, eligibility }),
         )),
         // v0.46 (#3014): matches the engine's ORDER BY COALESCE(expired_at,
         // valid_until) — ontology supersessions carry valid_until only.
@@ -440,7 +450,7 @@ const recall: Operation = {
       // like search/query/get_page/list_pages/resolve_slugs. sourceScopeOpts
       // alone pinned this arm to the scalar source, so a `federated: true`
       // source was invisible to recall while visible to every sibling read op.
-      const searchScope = federatedSearchScope(ctx, sourceIdParam);
+      const searchScope = { ...federatedSearchScope(ctx, sourceIdParam), ...(eligibility.floor ? { minTrust: eligibility.floor } : {}) };
       // #4352 — recall's page-search arm enforces `visibility: private` for
       // untrusted callers (matches the facts arms' world-only filter above).
       const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
@@ -462,6 +472,7 @@ const recall: Operation = {
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
       const applied = effectivePlan(evidencePlan, searchResults);
       if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
+      searchResults = await stampPageTrust(ctx.engine, searchResults, eligibility.floor);
     }
 
     // Pack what is delivered: results redacted for all; facts for remote only (localVerbatim).
@@ -515,7 +526,7 @@ const recall: Operation = {
       : undefined;
 
     return {
-      facts: packedFacts.map(r => ({
+      facts: await stampRowTrust(ctx.engine, 'facts', packedFacts.map(r => ({ // #5575 A6: + trust_tier, origin, unconfirmed
         id: r.id,
         fact: r.fact,
         kind: r.kind,
@@ -545,7 +556,7 @@ const recall: Operation = {
         // is the protocol name for the stored source attribution.
         fact_id: String(r.id),
         provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}),
-      })),
+      })), f => f.id),
       total: packedFacts.length,
       ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
       ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),
@@ -562,6 +573,7 @@ const recall: Operation = {
               provenance: r.slug,
               ...(r.delivered ? { delivered: r.delivered } : {}),
               ...(r.relational ? { relational: r.relational } : {}),
+              ...(r.trust_tier ? { trust_tier: r.trust_tier, origin: r.origin, ...(r.unconfirmed ? { unconfirmed: true } : {}) } : {}),
             })),
             ...(searchDegraded ? { search_degraded: searchDegraded } : {}),
             ...(searchDegraded ? {} : await searchAnswerFeedback(ctx, 'recall', packedResults)),
@@ -636,14 +648,17 @@ const context_pack: Operation = {
     since: { type: 'string', description: 'Only open-thread events after this ISO time.' },
     session_id: { type: 'string', description: 'Opaque session id.' },
     include_private: { type: 'boolean', description: 'Local trusted callers only.' },
+    min_trust: MIN_TRUST_PARAM,
+    include_quarantined: { type: 'boolean', description: 'Admin or memory_confirm: quarantined cards.', fullSurfaceOnly: true },
   },
   scope: 'read',
   verb: true,
   cliHints: { name: 'context-pack' },
   annotations: { title: 'context_pack (boundary bundle)', readOnlyHint: true },
   handler: async (ctx, p) => {
-    const { assembleContextPack, renderPack, isAfter, PACK_DEFAULT_MAX_ENTITIES, renderCardLine, renderThreadLine, renderFactLine, packHeaderCost } =
-      await import('../context/turn-context.ts');
+    const { assembleContextPack, renderPack, isAfter, PACK_DEFAULT_MAX_ENTITIES, renderCardLine, renderThreadLine, renderFactLine, packHeaderCost,
+      renderNewerMentionLines } = await import('../context/turn-context.ts');
+    const { NEWER_MENTIONS_HEADER } = await import('../mentions/newer-mentions.ts');
     const sourceId = ctx.sourceId ?? 'default';
     const rawSince = typeof p.since === 'string' && p.since.trim() ? p.since : undefined;
     if (rawSince !== undefined && !Number.isFinite(Date.parse(rawSince))) {
@@ -666,6 +681,8 @@ const context_pack: Operation = {
       typeof p.budget_tokens === 'number' && Number.isFinite(p.budget_tokens) && p.budget_tokens > 0
         ? Math.floor(p.budget_tokens)
         : null;
+    // #5575 (CEO-20, CEO-18): a proactive surface under the connection's floor.
+    const eligibility = await proactiveEligibility(ctx, 'context_pack', { minTrust: p.min_trust });
     const res = entities.length === 0
       ? { cards: [], facts: [], text: '', pointers: [], factsCount: 0 } as unknown as Awaited<ReturnType<typeof assembleContextPack>>
       : await assembleContextPack(ctx.engine, {
@@ -675,15 +692,21 @@ const context_pack: Operation = {
         sessionId: typeof p.session_id === 'string' ? p.session_id : undefined,
         includePrivate,
         maxEntities: PACK_DEFAULT_MAX_ENTITIES,
+        eligibility,
+        // #5575 ENG-15: same rule as get_page: quarantined cards only on an authorized explicit ask.
+        includeQuarantined: p.include_quarantined === true && (ctx.remote === false || hasScope(ctx.auth?.scopes ?? [], 'admin') || hasScope(ctx.auth?.scopes ?? [], MEMORY_CONFIRM_SCOPE)),
       });
     // Always-loaded core tier (core-memory.ts): owner-designated pages of
     // `default` plus this source, inside the caller's grant; it packs first.
     const { loadCoreBlock } = await import('../core-memory.ts');
     const allowed = ctx.auth?.allowedSources?.length ? ctx.auth.allowedSources : null;
-    const core = await loadCoreBlock(ctx.engine, { sessionSourceId: sourceId, allowedSources: allowed, excludePrivate: !includePrivate })
+    const core = await loadCoreBlock(ctx.engine, { sessionSourceId: sourceId, allowedSources: allowed, excludePrivate: !includePrivate, eligibility })
       .catch(() => null);
     const coreText = core?.text ?? '';
     const coreTokens = estimateTokens(coreText);
+    const withheld = (res.suppressed?.withheld ?? 0) + (core?.activation_withheld ?? 0);
+    const suppressionNotice = activationSuppressionNotice(withheld, 'this context pack');
+    if (suppressionNotice) ctx.emitNotice?.(suppressionNotice);
 
     // Pack, price and render the redacted presentation sets (one echo
     // dictionary); local callers get the delivered facts back raw below.
@@ -709,6 +732,14 @@ const context_pack: Operation = {
       const remaining = itemBudget - cardPack.meta.used;
       const factPack = remaining > 0 ? packToBudget(facts, (f) => lineCost(renderFactLine(f)), remaining) : dropAll(facts);
       facts = factPack.items;
+      // Newer mentions pack last, into what cards and facts left; a card whose block does not fit keeps its card line.
+      const mentionBudget = remaining - factPack.meta.used - lineCost('') - lineCost(NEWER_MENTIONS_HEADER);
+      const withMentions = cards.filter((c) => c.newer_mentions);
+      const mentionPack = mentionBudget > 0
+        ? packToBudget(withMentions, (c) => renderNewerMentionLines(c).reduce((n, l) => n + lineCost(l), 0), mentionBudget)
+        : dropAll(withMentions);
+      const keptMentions = new Set(mentionPack.items);
+      cards = cards.map((c) => (c.newer_mentions && !keptMentions.has(c) ? { ...c, newer_mentions: undefined } : c));
       droppedCount = cardPack.meta.dropped + factPack.meta.dropped;
     }
     const open_threads = cards.flatMap(threadsOf);
@@ -727,11 +758,15 @@ const context_pack: Operation = {
         slug: c.entity.slug,
         title: c.entity.title,
         type: c.entity.type,
-        summary: c.summary,
+        summary: c.quarantined && c.summary ? renderTrustedText(c.summary, { trust_tier: 'external_untrusted', origin: 'quarantined' }) : c.summary,
         open_threads: c.open_threads,
         edges: c.edges,
         backlink_count: c.backlink_count,
         ...(c.relationship_note ? { relationship_note: c.relationship_note } : {}),
+        ...(c.trust_tier ? { trust_tier: c.trust_tier, origin: c.origin } : {}),
+        ...(c.quarantined ? { quarantined: true } : {}),
+        ...(c.unconfirmed ? { unconfirmed: true } : {}),
+        ...(c.newer_mentions ? { newer_mentions: c.newer_mentions } : {}),
       })),
       open_threads,
       facts: (ctx.remote === false ? rawFacts.slice(0, facts.length) : facts).map((f) => ({
@@ -745,8 +780,10 @@ const context_pack: Operation = {
         // #6146: recall's v1 names, so a packed fact traces back to its record.
         fact_id: String(f.id),
         provenance: f.provenance,
+        ...(f.trust_tier ? { trust_tier: f.trust_tier, origin: f.origin } : {}),
       })),
       text,
+      ...(withheld ? { suppressed: suppressionSummary(withheld) } : {}),
       ...(core && core.enabled ? { core: { text: core.text, chars_used: core.chars_used, chars_limit: core.chars_limit, pages: core.pages,
         truncated: core.truncated, revision: core.revision } } : {}),
       ...(res.degradedReason ? { degraded_reason: res.degradedReason } : {}),
@@ -771,6 +808,7 @@ const delta: Operation = {
     budget_tokens: { type: 'number', description: 'Token budget; pages pack first.' },
     session_id: { type: 'string', description: 'Session id; keeps a cursor.' },
     include_private: { type: 'boolean', description: 'Local trusted callers only.' },
+    min_trust: MIN_TRUST_PARAM,
   },
   scope: 'read',
   verb: true,
@@ -903,6 +941,7 @@ const delta: Operation = {
       sessionId: sessionId ?? undefined,
       includePrivate,
       maxEntities: PACK_DEFAULT_MAX_ENTITIES,
+      eligibility: await resolveReadEligibility(ctx, { minTrust: p.min_trust }),
     });
 
     // Pages arrive OLDEST first by (updated_at, slug), facts OLDEST first by
@@ -1047,6 +1086,7 @@ const delta: Operation = {
         // #6146: recall's v1 names, so a packed fact traces back to its record.
         fact_id: String(f.id),
         provenance: f.provenance,
+        ...(f.trust_tier ? { trust_tier: f.trust_tier, origin: f.origin } : {}),
       })),
       threads,
       text,
@@ -1266,7 +1306,7 @@ async function recallKeywordOnlyReason(ctx: OperationContext): Promise<string | 
  */
 async function keylessRecallRows(
   ctx: OperationContext, queryText: string, limit: number, excludePrivate: boolean,
-  searchScope: { sourceId?: string; sourceIds?: string[] },
+  searchScope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier },
 ): Promise<SearchResult[]> {
   if (await keylessChainQuestion(ctx, queryText)) {
     return hybridSearchCached(ctx.engine, queryText, {

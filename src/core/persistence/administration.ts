@@ -119,6 +119,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (operation === 'company_brain_preview') return { ...await runtime.previewCompanyBrain(engine, input) };
     return { ...await runtime.connectCompanyBrain(engine, input) };
   }
+  if (operation === 'trust_read' || operation === 'trust_preview' || operation === 'trust_apply') return (await import('../trust/owner-ipc.ts')).runTrustAdministration(engine, operation, params, config);
   if (currentVerifiedLocalWriter()?.remote) throw trustedCliRequired('Writer administration requires a trusted local CLI caller.');
   if (operation === 'writer_lock' || operation === 'writer_unlock') {
     keys(params, []);

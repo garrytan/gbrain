@@ -11,7 +11,19 @@ const MAX_PENDING_CHARS = 64 * 1024;
 const SUMMARY_FAILURES = 50;
 const ERROR_LINES = 15;
 
-export interface CapturedFailure { file: string; test: string; arm: string; error: string[] }
+export interface CapturedFailure { file: string; test: string; arm: string; error: string[]; timedOut?: boolean }
+
+/**
+ * The log shape of oven-sh/bun#34069 (fixed upstream by oven-sh/bun#44581,
+ * commit 13a98b0; in no Bun release as of 2026-10-09): a GC finalizer that
+ * runs while `Bun.spawnSync` waits leaves the runtime's private spawnSync
+ * loop with a drifted poll count for the life of the process, after which
+ * every synchronous child spawn with the matching poll count spins until the
+ * test deadline kills it (`killed N dangling process`) and returns empty
+ * output. Once it starts, the rest of the shard's sync-spawning tests time
+ * out one after another, in files that have nothing to do with each other.
+ */
+export const BUN_SPAWNSYNC_POISONED = 'bun_spawnsync_poisoned';
 
 /**
  * Reads the live test output line by line and keeps the last 50 failures
@@ -28,14 +40,26 @@ export class FailureCollector {
   private justFailed = false;
   private block: string[] = [];
   private tail: string[] = [];
+  bunVersion = '';
+  danglingKills = 0;
+  private failuresSinceKill = 0;
+  private timeoutsSinceKill = 0;
+  private filesSinceKill = new Set<string>();
   feed(raw: string): void {
     const line = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
     this.tail.push(line);
     if (this.tail.length > 20) this.tail.shift();
     // Bun prints a timeout or hook note right below its (fail) line.
     const last = this.failures[this.failures.length - 1];
-    if (this.justFailed && last && /^\s+\^ /.test(line)) { last.error.push(line.trim()); return; }
+    if (this.justFailed && last && /^\s+\^ /.test(line)) {
+      last.error.push(line.trim());
+      if (/timed out after/.test(line)) { last.timedOut = true; if (this.danglingKills) this.timeoutsSinceKill++; }
+      return;
+    }
     this.justFailed = false;
+    const bun = /^bun\stest v(\S+)/.exec(line);
+    if (bun) this.bunVersion = bun[1];
+    if (/^killed \d+ dangling process(?:es)?$/.test(line)) this.danglingKills++;
     const header = /^(?:::group::|##\[group\])?(\S.*\.test\.[cm]?[jt]sx?):$/.exec(line);
     if (header) { this.file = header[1]; this.fileFailures = 0; this.block = []; return; }
     if (/^=== .+ ===$/.test(line)) { this.arm = ''; this.fileFailures = 0; this.block = []; return; }
@@ -58,8 +82,28 @@ export class FailureCollector {
     if (this.failures.length > SUMMARY_FAILURES) this.failures.shift();
     this.total++;
     this.fileFailures++;
+    if (this.danglingKills) { this.failuresSinceKill++; this.filesSinceKill.add(this.file); }
     this.justFailed = true;
     this.block = [];
+  }
+  /**
+   * Whether the run carries the oven-sh/bun#34069 signature: a dangling child
+   * killed at a test deadline, and from then on nothing but timeouts, at least
+   * three of them, in at least two files. One hung test with a dangling child,
+   * a run of timeouts with no killed child, or any non-timeout failure after
+   * the kill is some other hang and is left for its own diagnosis.
+   */
+  poisoned(): boolean {
+    return this.danglingKills > 0 && this.timeoutsSinceKill >= 3
+      && this.timeoutsSinceKill === this.failuresSinceKill && this.filesSinceKill.size >= 2;
+  }
+  /** The one-paragraph verdict for a poisoned run, Markdown; empty otherwise. */
+  poisonedNote(): string {
+    if (!this.poisoned()) return '';
+    const bun = this.bunVersion ? `Bun v${this.bunVersion}` : 'this Bun';
+    return `> **${BUN_SPAWNSYNC_POISONED}**: \`killed N dangling process\` was followed by ${this.timeoutsSinceKill} timed-out tests across ${this.filesSinceKill.size} files and no other kind of failure. `
+      + `That is the ${bun} runtime defect oven-sh/bun#34069: a GC finalizer that ran while an earlier \`Bun.spawnSync\` waited left the runtime's spawnSync loop with a drifted poll count, and from then on every synchronous child spawn (\`spawnSync\`, \`execSync\`, \`execFileSync\`) in this process spins until the test deadline and returns empty output. `
+      + `The failures below say nothing about the tests; rerun the job. Fixed upstream by oven-sh/bun#44581 (commit 13a98b0), in no Bun release as of 2026-10-09; TODOS.md tracks the Bun bump.`;
   }
   /** Markdown for $GITHUB_STEP_SUMMARY after a failed run. */
   render(job: string, out: string, code: number): string {
@@ -70,6 +114,8 @@ export class FailureCollector {
     };
     const esc = (v: string) => v.replace(/([|`*_<[\]\\])/g, '\\$1').replace(/@/g, '@\u200b');
     const parts = [`### ${esc(job)}: exited ${code}`, '', `Full log: the job's uploaded timing log (${esc(out.split('/').pop() ?? out)}).`, ''];
+    const poisoned = this.poisonedNote();
+    if (poisoned) parts.push(poisoned, '');
     if (!this.failures.length) {
       parts.push('No `(fail)` lines were printed (setup, import or runner failure). Last log lines:', '', fence(this.tail), '');
       return `${parts.join('\n')}\n`;
@@ -182,6 +228,7 @@ export async function captureTestLog(job: string, out: string, command: string[]
     // Keep failed artifacts fail-closed when mined without GitHub run metadata.
     if (code !== 0) {
       await record(`##[error]captured command exited ${code}`);
+      if (failures.poisoned()) console.error(`capture-test-log: ${BUN_SPAWNSYNC_POISONED}: ${failures.danglingKills} dangling child kill(s) followed only by timeouts; see oven-sh/bun#34069 (fixed by oven-sh/bun#44581). Rerun the job.`);
       const summary = process.env.GITHUB_STEP_SUMMARY;
       // B13: CI's --log-failed can come back empty; the step summary keeps the
       // failing tests, their first error block and a repro command regardless.

@@ -143,7 +143,7 @@ describe('help advertises --json on list/get/stats (#3685)', () => {
   });
 
   test('cli.ts JOBS summary lines carry [--json] (source audit)', () => {
-    const src = surfaceFileSource('cli', 'src/cli.ts');
+    const src = surfaceFileSource('cli', 'src/cli/top-help.ts');
     const jobsListLine = src.split('\n').find((l) => /^\s*jobs list /.test(l));
     const jobsGetLine = src.split('\n').find((l) => /^\s*jobs get /.test(l));
     const jobsStatsLine = src.split('\n').find((l) => /^\s*jobs stats/.test(l));

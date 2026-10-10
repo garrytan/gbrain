@@ -14,7 +14,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { checkSyncFreshness } from '../src/commands/doctor.ts';
-import { CHUNKER_VERSION } from '../src/core/chunkers/code.ts';
+import { chunkerStamp } from '../src/core/chunkers/code.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -65,7 +65,7 @@ for (const backend of backends) {
       try {
         const stamp = async () => (await engine.executeRaw<{ v: string | null }>('SELECT chunker_version AS v FROM sources WHERE id=$1', [sourceId]))[0].v;
         await performSync(engine, { repoPath: root, sourceId, noPull: true, noEmbed: true });
-        expect(await stamp()).toBe(String(CHUNKER_VERSION));
+        expect(await stamp()).toBe(chunkerStamp());
 
         await engine.executeRaw("UPDATE sources SET chunker_version='6' WHERE id=$1", [sourceId]);
         commit(root, 'notes/second.md', 'An incremental change.');
@@ -74,7 +74,7 @@ for (const backend of backends) {
 
         const full = await performSync(engine, { repoPath: root, sourceId, noPull: true, noEmbed: true, full: true });
         expect(full.status).not.toBe('blocked_by_failures');
-        expect(await stamp()).toBe(String(CHUNKER_VERSION));
+        expect(await stamp()).toBe(chunkerStamp());
 
         // The reporter's symptom: 80 h after a successful sync of an unchanged repo, doctor stays ok.
         const later = Date.now() + 80 * 3_600_000;

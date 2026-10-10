@@ -25,7 +25,7 @@ import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 /** ceil(measured x 1.05) on the fixture below. */
-const CEILINGS = { search: 2540, query: 2540 };
+const CEILINGS = { search: 2756, query: 2756 };
 /**
  * The keyless fixture also gets the operator contract's degraded_recall
  * notice (F3) on every HTTP call. It is bounded on its own so the ceilings

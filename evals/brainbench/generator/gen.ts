@@ -26,6 +26,7 @@
 
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { generateTrustCorpus, TRUST_COUNTS } from './gen-trust.ts';
 
 // ---------------------------------------------------------------------------
 // PRNG (Mulberry32 — gbrain-evals amara-life convention)
@@ -731,6 +732,8 @@ export function generateCorpus(): Emitted[] {
   for (let i = 0; i < COUNTS.continuity_pairs; i++) out.push(...genContinuityPair(rng, u, i));
   for (let i = 0; i < COUNTS['multi-source']; i++) out.push(genMultiSource(rng, u, i));
   for (let i = 0; i < COUNTS.adversarial; i++) out.push(genAdversarial(rng, u, i));
+  // #5575 memory-trust categories draw last, so every older fixture stays byte-identical.
+  out.push(...generateTrustCorpus(rng, u));
 
   // Deterministic holdout split. Continuity pairs move together: a split pair
   // would orphan its partner in gate mode and fail the loader.
@@ -788,7 +791,7 @@ function main(): void {
     generated_fixtures: emitted.length,
     holdout_fixtures: holdout,
     gold_turns: goldTurnCount,
-    categories: COUNTS,
+    categories: { ...COUNTS, ...TRUST_COUNTS },
     prose: 'template-synthesized, PRNG-varied; deliberately no LLM pass (controlled difficulty; see README)',
     rebuild: 'bun evals/brainbench/generator/gen.ts',
     generation_cost_usd: 0,

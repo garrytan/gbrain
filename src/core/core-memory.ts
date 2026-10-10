@@ -18,6 +18,12 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { privatePagesFilterFragment } from './search/private-visibility.ts';
+import { quarantineFilterFragment } from './quarantine.ts';
+import { compareTrust, OWNER_TIER_FLOOR, type TrustTier } from './trust/tier.ts';
+import type { ReadEligibility } from './eligibility/policy.ts';
+import { proactiveEligibility } from './eligibility/registry.ts';
+import { activationSuppressedSql, pageEligibleSql } from './eligibility/sql.ts';
+import { compactTrustLabel, needsDataEnvelope, renderTrustedText, trustFields } from './eligibility/labels.ts';
 
 export const CORE_DEFAULT_MAX_CHARS = 4000;
 export const CORE_MIN_MAX_CHARS = 500;
@@ -105,6 +111,9 @@ export interface CorePageInput {
   compiled_truth: string;
   frontmatter?: unknown;
   revision?: string | null;
+  /** #5575 A6: the page's trust tier and short write origin; below `operator_curated` the header carries its label. */
+  trust_tier?: TrustTier;
+  origin?: string;
 }
 
 export interface CorePage extends CorePageInput { priority: number; rendered: string; chars: number }
@@ -113,7 +122,11 @@ export interface CorePage extends CorePageInput { priority: number; rendered: st
 export function renderCorePage(page: CorePageInput): string {
   const body = sanitizeRemoteBody(page.compiled_truth ?? '').trim();
   const title = (page.title || page.slug).replace(/\s+/g, ' ').trim();
-  return `### ${title} (${page.source_id}:${page.slug})${body ? `\n${body}` : ''}`;
+  const label = page.trust_tier && compareTrust(page.trust_tier, OWNER_TIER_FLOOR) < 0
+    ? ` ${compactTrustLabel({ trust_tier: page.trust_tier, origin: page.origin ?? 'legacy' })}` : '';
+  const shown = page.trust_tier && needsDataEnvelope(page.trust_tier) && body
+    ? renderTrustedText(body, { trust_tier: page.trust_tier, origin: page.origin ?? 'legacy' }) : body;
+  return `### ${title} (${page.source_id}:${page.slug})${label}${shown ? `\n${shown}` : ''}`;
 }
 
 export function toCorePage(page: CorePageInput): CorePage {
@@ -210,15 +223,23 @@ export interface ListCorePagesOpts {
   excludePrivate?: boolean;
   /** Exclude one page (the page being written, measured separately). */
   exclude?: { sourceId: string; slug: string };
+  /**
+   * #5575 (ENG-8, CEO-20): delivery reads pass the core surface's
+   * eligibility: quarantined pages and pages below the floor are not listed,
+   * and activation-suppressed pages come back flagged `suppressed`.
+   * Accounting reads (coreUsage) leave it unset.
+   */
+  eligibility?: ReadEligibility;
 }
 
-interface CoreRow { source_id: string; slug: string; title: string | null; compiled_truth: string | null; frontmatter: unknown; withdrawn: boolean }
+interface CoreRow { source_id: string; slug: string; title: string | null; compiled_truth: string | null; frontmatter: unknown; withdrawn: boolean;
+  trust_tier?: string; write_origin?: unknown; suppressed?: boolean }
 
 /**
  * Live core pages. Bounded: the cap leaves headroom over CORE_MAX_PAGES so
  * the renderer can still report what it left out.
  */
-export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {}): Promise<CorePage[]> {
+export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {}): Promise<Array<CorePage & { suppressed?: boolean }>> {
   const params: unknown[] = [];
   const where = [`p.deleted_at IS NULL`, `p.frontmatter @> '{"always_load": true}'::jsonb`];
   if (opts.sourceIds) {
@@ -230,12 +251,17 @@ export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {})
     where.push(`NOT (p.source_id = $${params.length - 1} AND p.slug = $${params.length})`);
   }
   if (opts.excludePrivate) where.push(privatePagesFilterFragment('p'));
+  const policy = opts.eligibility;
+  if (policy) where.push(quarantineFilterFragment('p'), pageEligibleSql('p', { floor: policy.floor }));
+  const trustCols = policy
+    ? `p.trust_tier, p.write_origin, ${policy.suppressFlagged ? activationSuppressedSql('pages', 'p') : 'false'} AS suppressed,` : '';
   const rows = await exec.executeRaw<CoreRow>(
-    `SELECT p.source_id, p.slug, p.title, p.compiled_truth, p.frontmatter,
+    `SELECT p.source_id, p.slug, p.title, p.compiled_truth, p.frontmatter, ${trustCols}
         EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = p.source_id AND (w.subject = '*' OR w.subject = p.slug)) AS withdrawn
       FROM pages p WHERE ${where.join(' AND ')} ORDER BY p.source_id, p.slug LIMIT ${CORE_MAX_PAGES * 4}`, params);
-  const pages: CorePage[] = [];
+  const pages: Array<CorePage & { suppressed?: boolean }> = [];
   for (const r of rows) {
+    if (r.suppressed === true) { pages.push({ ...toCorePage({ source_id: r.source_id, slug: r.slug, title: r.title ?? r.slug, compiled_truth: '' }), suppressed: true }); continue; }
     let compiled = r.compiled_truth ?? '';
     // Withdrawn facts (forget) are applied by the canonical snapshot read,
     // not by the stored body, so core never shows text get_page withholds.
@@ -247,6 +273,7 @@ export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {})
     pages.push(toCorePage({
       source_id: r.source_id, slug: r.slug, title: r.title ?? r.slug, compiled_truth: compiled,
       frontmatter: typeof r.frontmatter === 'string' ? JSON.parse(r.frontmatter) : r.frontmatter,
+      ...(policy ? trustFields(r.trust_tier, r.write_origin) : {}),
     }));
   }
   return pages;
@@ -265,6 +292,8 @@ export interface LoadCoreBlockOpts {
   excludePrivate?: boolean;
   notices?: string[];
   settings?: CoreSettings;
+  /** #5575: the caller's proactive eligibility (token floor); absent, the `core_delivery` surface policy applies. */
+  eligibility?: ReadEligibility;
 }
 
 /** Credential-like PII withholds the page; contact details and private paths are redacted in place. */
@@ -318,16 +347,20 @@ export function coreNoticeLine(n: { source_id: string; slug: string; revision: s
 }
 
 /** The block a session receives; empty text when core is disabled or empty. */
-export async function loadCoreBlock(engine: Pick<BrainEngine, 'executeRaw' | 'readPageSnapshot' | 'getConfig'>, opts: LoadCoreBlockOpts = {}): Promise<CoreBlock & { enabled: boolean }> {
+export async function loadCoreBlock(engine: Pick<BrainEngine, 'executeRaw' | 'readPageSnapshot' | 'getConfig'>, opts: LoadCoreBlockOpts = {}): Promise<CoreBlock & { enabled: boolean; activation_withheld?: number }> {
   const settings = opts.settings ?? await readCoreSettings(engine);
   if (!settings.enabled) {
     return { text: '', chars_used: 0, chars_limit: settings.maxChars, pages: [], truncated: false, omitted: [], revision: 'disabled', enabled: false };
   }
   const sourceIds = sessionCoreSources(opts.sessionSourceId, opts.allowedSources ?? null);
-  const listed = await listCorePages(engine, { sourceIds, excludePrivate: opts.excludePrivate ?? true });
+  const eligibility = opts.eligibility ?? await proactiveEligibility({ engine }, 'core_delivery');
+  const all = await listCorePages(engine, { sourceIds, excludePrivate: opts.excludePrivate ?? true, eligibility });
+  const listed = all.filter(p => !p.suppressed);
+  const suppressed = all.filter(p => p.suppressed).map(p => ({ source_id: p.source_id, slug: p.slug, family: 'unconfirmed agent-written instruction (gbrain trust review)' }));
   const { pages, withheld } = await applyCoreSensitivity(listed);
   const notices = opts.notices ?? (listed.length ? (await pendingCoreNotices(engine, sourceIds)).map(coreNoticeLine) : []);
-  return { ...renderCoreBlock(pages, { maxChars: settings.maxChars, notices, withheld }), enabled: true };
+  return { ...renderCoreBlock(pages, { maxChars: settings.maxChars, notices, withheld: [...withheld, ...suppressed] }), enabled: true,
+    ...(suppressed.length ? { activation_withheld: suppressed.length } : {}) };
 }
 
 /** Brain-wide accounting used by the write-path guard and `gbrain core status`. */

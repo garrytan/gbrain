@@ -610,6 +610,16 @@ More: [docs/guides/troubleshooting.md#consumers-without-heartbeat](../../docs/gu
 |---|---|---|---|---|---|---|
 | The content-sanity gate rejected the content because the operator set `content_sanity.junk_disposition` to `reject`. | A junk-pattern or operator-literal hit is refused instead of quarantined under that setting, so the page was not written. The same content refuses on every retry. | Remove the matched junk from the file, or switch `content_sanity.junk_disposition` back to `quarantine` (a user decision), then import it again. | agent | `repeat the read that failed` | 1 | no |
 
+### content_repair_needs_human
+
+<a id="content_repair_needs_human"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The content-repair model could not decide whether a held file and the page its frontmatter `slug:` names are the same page, so nothing was written and a person decides which keeps the slug. | A `frontmatter_slug_conflict` hold that the deterministic rules cannot clear (the named page exists and shares a type or a title word with the file) goes to the judgment model; `needs_human` is its answer when the shown frontmatter, headings, opening lines and cross-mentions do not decide identity. Removing the `slug:` line on a guess would mint a second page for the same thing, and merging on a guess would fold two different things together, so gbrain records the verdict on the hold as codes and slugs, retries nothing until the file changes, and the rest of the source keeps syncing. | Show the user the paragraph gbrain sources status <id> --json renders for the hold (the path and the two slugs). If the two differ, remove the slug: line of the file; if they are one page, merge the unique sections into the page that keeps the slug and delete the other file; then commit and run gbrain sync --source <id> --no-pull. Run: gbrain sources status '{source_id}' --json | user | `gbrain sources status '{source_id}' --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#content_repair_needs_human](../../docs/guides/write-refusals.md#content_repair_needs_human)
+
 ### core_budget_exceeded
 
 <a id="core_budget_exceeded"></a>
@@ -1056,6 +1066,14 @@ More: [docs/guides/repair.md#fix-not-writable](../../docs/guides/repair.md#fix-n
 
 More: [docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately](../../docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately)
 
+### forget_requires_owner
+
+<a id="forget_requires_owner"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller asked to forget a fact more trusted than its own writes, so nothing was forgotten and the owner was asked instead. | Lower-trust writers cannot overwrite, supersede or forget what the owner confirmed or curated (#5575 guarded supersession). The request became a trust proposal the owner can accept on the brain host; forget's frozen expired meaning is unchanged because nothing expired. | Do not retry. Tell the user the fact needs their decision and give them the command in fix (gbrain trust confirm <proposal_ref> on the brain host). | user | `repeat the read that failed` | 3 | no |
+
 ### frontmatter_slug_conflict
 
 <a id="frontmatter_slug_conflict"></a>
@@ -1418,7 +1436,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | A facts or takes fence in the page cannot be imported without dropping or guessing rows, so the page (or the file) was not written. | Facts and takes fences are the page's structured rows. Importing a fence that does not parse, repeats a marker or reuses a row number would silently drop or renumber rows, so coordinated writers refuse it and managed sync holds the one file while the rest of the source syncs. | A refused write: fix the fence the message names (fence, section and rows; the reason says what is wrong) and send the page again with a new request_id, or write rows with remember / takes_add. A held file or stored page: the maintenance run repairs it; preview it now with gbrain repair fences --source <id> on the brain host. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `header_unmapped`, `no_header`, `row_before_header`, `short_row`, `extra_cells`, `claim_split`, `holder_unresolved`, `missing_begin`, `split_rows`, `unclosed_trailing_content`, `marker_near_miss`, `repeated_marker`, `takes_in_facts`, `superseded_ambiguous`, `enum_unmapped`, `weight_missing`, `holder_missing`, `confidence_out_of_range`, `claim_value_invalid`, `takes_kind_unsupported`, `unparseable`, `row_collision`, `quoted_fence_rows`, `stored_row_collision`, `withdrawn_claim_in_malformed_fence`, `target_fence_malformed`, `prepare_time`, `normalizer_failed`, `llm_unavailable`, `llm_empty`, `llm_refused`, `llm_malformed`, `llm_truncated`, `llm_declined`, `llm_disabled`, `no_measured_model`, `budget_exhausted`, `no_pricing`, `ledger_unavailable`, `owner_unavailable`, `owner_cli_required`, `host_mismatch`, `transfer_in_progress`, `clone_in_progress`, `incarnation_changed`, `local_path_missing`, `coordination_path_missing`, `sync_in_progress`, `time_budget`, `changed_since_read`, `changed_since_preview`, `still_invalid`, `claim_changed`, `row_number_changed`, `visibility_loosened`, `row_count_changed`, `cell_changed`, `protection_loosened`.
+Reasons: `header_unmapped`, `no_header`, `row_before_header`, `short_row`, `extra_cells`, `claim_split`, `holder_unresolved`, `missing_begin`, `split_rows`, `unclosed_trailing_content`, `unclosed_ambiguous_tail`, `tail_exposure_approval`, `marker_near_miss`, `repeated_marker`, `takes_in_facts`, `superseded_ambiguous`, `enum_unmapped`, `weight_missing`, `holder_missing`, `confidence_out_of_range`, `claim_value_invalid`, `takes_kind_unsupported`, `unparseable`, `row_collision`, `quoted_fence_rows`, `stored_row_collision`, `withdrawn_claim_in_malformed_fence`, `target_fence_malformed`, `prepare_time`, `normalizer_failed`, `llm_unavailable`, `llm_empty`, `llm_refused`, `llm_malformed`, `llm_truncated`, `llm_declined`, `llm_disabled`, `no_measured_model`, `budget_exhausted`, `no_pricing`, `ledger_unavailable`, `owner_unavailable`, `owner_cli_required`, `host_mismatch`, `transfer_in_progress`, `clone_in_progress`, `incarnation_changed`, `local_path_missing`, `coordination_path_missing`, `sync_in_progress`, `time_budget`, `changed_since_read`, `changed_since_preview`, `still_invalid`, `claim_changed`, `row_number_changed`, `visibility_loosened`, `row_count_changed`, `cell_changed`, `protection_loosened`.
 
 More: [docs/guides/write-refusals.md#invalid_fence](../../docs/guides/write-refusals.md#invalid_fence)
 
@@ -1663,6 +1681,16 @@ More: [docs/guides/shared-brain-skills.md#membership-inactive-after-a-re-enrollm
 | This principal has no shared-skills membership with that installation id. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
+
+### merge_recommended
+
+<a id="merge_recommended"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The content-repair model judged a held file and the page its frontmatter `slug:` names to be the same page, so gbrain recommends merging them instead of removing the slug line; nothing was written. | A `frontmatter_slug_conflict` hold whose two sides describe the same person, company or topic is a duplicate, and the deterministic repair (delete the `slug:` line) would mint a second page for it. gbrain does not merge pages by itself yet (a lossless merge needs a coordinated two-page write with both revisions, withdrawal and metadata preservation; it ships separately), so the lane records the recommendation on the hold as codes and slugs (`meta.content_repair`: the canonical slug that keeps the page), `gbrain sync status` renders a paragraph for a person, and nothing retries it until the file changes. | Show the user the paragraph gbrain sources status <id> --json renders for the hold (the path, the canonical slug and the recommendation). After they agree, merge the unique sections of the duplicate into the canonical page, delete the duplicate file, commit, and run gbrain sync --source <id> --no-pull; the hold clears on that sync. Run: gbrain sources status '{source_id}' --json | user | `gbrain sources status '{source_id}' --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#merge_recommended](../../docs/guides/write-refusals.md#merge_recommended)
 
 ### method_not_allowed
 
@@ -1942,6 +1970,16 @@ More: [docs/guides/troubleshooting.md#persistence-write-stall](../../docs/guides
 
 Reasons: `timeout`, `live_serve`.
 
+### pglite_vector_index_too_large
+
+<a id="pglite_vector_index_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A PGLite vector (HNSW) index build was refused before it started because its in-memory graph would not fit PGLite's WebAssembly heap. | pglite.wasm caps memory at 2 GiB and pgvector keeps the whole HNSW graph in memory while it builds; a build past the budget used to run out of memory or fall back to hours of on-disk inserts. Vector search keeps working with exact scans. | Preview a move to Postgres (read-only): gbrain migrate --to postgres --plan --json Run: gbrain migrate --to postgres --plan --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/ENGINES.md#pglite-vector-index-ceiling](../../docs/ENGINES.md#pglite-vector-index-ceiling)
+
 ### plan_output_failed
 
 <a id="plan_output_failed"></a>
@@ -2029,6 +2067,26 @@ More: [docs/guides/repair.md#projection-owner-resident](../../docs/guides/repair
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The catalog adoption is accepted but not fully committed. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+### purge_blocked_pending_recovery
+
+<a id="purge_blocked_pending_recovery"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A purge was refused because a pending, running or recovering write still needs the content it would remove; nothing was purged. | Purge redacts stored write intents and rewrites pages; doing that under an unfinished publication or recovery would lose or resurrect content. | Wait for the named write to finish or recover (gbrain write-request <id>), then retry the purge with the same request id. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/memory-boundaries.md#purge](../../docs/guides/memory-boundaries.md#purge)
+
+### purged_content
+
+<a id="purged_content"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The content matches a purged fact, take or page in this source, so it was not saved. | A purge leaves a text-free tombstone (the claim fingerprint or the page content hash) so stale files, re-syncs, reverts and re-extraction cannot bring purged content back. | Do not retry the same content. Write it in new words if it is still true, or ask the user to clear the tombstone on the brain host (gbrain pages purges list, then gbrain pages unpurge <slug> for a page). | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/memory-boundaries.md#purge](../../docs/guides/memory-boundaries.md#purge)
 
 ### queue_capacity
 
@@ -2536,6 +2594,16 @@ Reasons: `content_directory`.
 |---|---|---|---|---|---|---|
 | Sync stopped because gbrain would hold a file whose exact bytes imported before; this is a gbrain bug. | The upgrade invariant says a newer reader never refuses bytes an older one imported, so the run stops without advancing rather than hide a regression. | Report it with the gbrain version, the file and the code; upgrade or pin the last good version, then run gbrain sync --source <id> --no-pull --retry-failed. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### tail_exposure_approval
+
+<a id="tail_exposure_approval"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A fence on a world-visible page has no end marker and prose follows its table; closing it after the last row is safe for the table but makes those lines visible to remote readers, so the content-repair lane previews the close and waits for a hash-bound approval instead of applying it unattended. | Everything after an unpaired begin marker is hidden by the privacy boundary. The repair model read the tail as prose (not rows), so the only judgment left is whether those exact lines may become visible, and that is the user's: the preview prints them and the hash binds them. On a private page nothing new is disclosed and the lane closes the fence by itself. | Show the user the preview's exposed lines (gbrain repair content --source <id> --only <path>, read-only), then run the printed gbrain repair content --source <id> --only <path> --apply --expect <hash> only after they agree; a changed tail invalidates the hash. By hand: add the end marker directly after the last table row and move the trailing text where it belongs, commit, then gbrain sync --source <id> --no-pull. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#tail_exposure_approval](../../docs/guides/write-refusals.md#tail_exposure_approval)
+
 ### take_row_collision
 
 <a id="take_row_collision"></a>
@@ -2606,6 +2674,14 @@ More: [docs/guides/data-ingestion.md#credential-redaction](../../docs/guides/dat
 |---|---|---|---|---|---|---|
 | Dream triage did not re-judge a transcript because its last judge verdict was truncated, refused or unparseable and its backoff has not ended. | An unreliable verdict is never cached, so without a backoff the same input was paid for every cycle; it waits 24h, doubling per repeat up to 7 days, and a content or triage-model change re-judges at once. | Leave it (it is retried after the backoff), or ask the user before `gbrain dream retriage --force`, which re-judges every transcript now and pays per file. Run: gbrain dream retriage --dry-run --json | agent | `repeat the read that failed` | 1 | yes |
 
+### trust_raise_refused
+
+<a id="trust_raise_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write tried to raise the trust tier of a fact, take, page or timeline entry without the owner's confirmation, so nothing was changed. | Only the owner can make memory more trusted: confirming on an interactive terminal, or through a connection that holds the memory_confirm scope. The database refuses any other raise so a bug or an agent write cannot promote its own content. | Do not retry. Ask the user to confirm the row themselves on the brain host (gbrain trust confirm <ref>), or leave its tier as it is. | user | `repeat the read that failed` | 3 | no |
+
 ### trusted_local_only
 
 <a id="trusted_local_only"></a>
@@ -2631,6 +2707,16 @@ More: [docs/guides/troubleshooting.md#two-consumers-on-host](../../docs/guides/t
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A required dependency or capability cannot serve this request. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+### unclosed_ambiguous_tail
+
+<a id="unclosed_ambiguous_tail"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A fence has no end marker and text follows its table, and the repair model read that tail as table rows written without pipes or could not tell, so gbrain will not choose where the fence ends; nothing was written. | Closing after the wrong row would hide rows behind the privacy boundary or expose text; a deterministic rule cannot place the end marker and the model declined to, so a person decides. The attempt memo keeps the same bytes from costing a second model call. | Read the page (gbrain get --source <id> -- <slug>), add the end marker after the last real row of the named fence (moving any rows the tail holds into the table), commit, then gbrain sync --source <id> --no-pull. The preview (gbrain repair fences --source <id> --only <path>, read-only) names the fence, section and last row. Run: gbrain repair fences --source '{source_id}' | user | `gbrain sources status '{source_id}' --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#unclosed_ambiguous_tail](../../docs/guides/write-refusals.md#unclosed_ambiguous_tail)
 
 ### unexpected_file_bytes
 
@@ -2779,6 +2865,36 @@ More: [docs/guides/write-refusals.md#worktree_dirty](../../docs/guides/write-ref
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Execution claim changed before publication. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+### write_gate_rejected
+
+<a id="write_gate_rejected"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The write gate refused external instruction-like content because the operator set `write_gate.external_mode` to `reject`. | Text from an untrusted source that reads like an instruction to an agent (an override, a standing rule, an exfiltration or credential request) is refused instead of held under that setting, so nothing was written. The same content refuses on every retry. | Tell the user the content was refused; whether to accept it or switch `write_gate.external_mode` back to `quarantine` is their decision. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `override`, `standing_instruction`, `exfiltration`, `credential`, `detector_error`.
+
+### write_held
+
+<a id="write_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The write gate held this content for the owner's review instead of saving it as memory. | Content from an untrusted source read like an instruction to an agent, so it was quarantined in the write-gate holding table. It is not searchable or recalled until the owner releases it; retrying the same write only re-opens the same hold. | Do not retry. Tell the user what was held and give them the release command from the fix; releasing is their decision. | user | `repeat the read that failed` | 3 | no |
+
+Reasons: `override`, `standing_instruction`, `exfiltration`, `credential`, `detector_error`.
+
+### write_outcome_unknown
+
+<a id="write_outcome_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The database connection dropped while a write was being admitted, and it kept dropping through the re-reads, so whether the write was accepted is unknown. | A session that closes under an admission (a pooler reap, a failover, pg_terminate_backend) leaves the transaction either committed or rolled back with no way to tell from the lost socket. gbrain re-runs the attempt, which starts by reading the retained request_id, so a single drop resolves by itself; this code means the database stayed unreachable through those re-reads. Before #6355 the raw socket error reached the caller, and a receipt oracle took it for a refusal while the write committed. | Read the request first (the fix names it): a committed or pending row means the write was accepted, replay the same request_id to wait for it; no row means it was not, submit it again with the same request_id. Never resubmit under a new request_id without that read. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#write_outcome_unknown](../../docs/guides/write-refusals.md#write_outcome_unknown)
 
 ### write_pending
 

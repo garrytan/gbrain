@@ -6,7 +6,7 @@
  * unreachable from the CLI (the formatter was only ever tested directly).
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { formatResult, captureRetrievalMeta, resetRetrievalMetaForTests } from '../src/cli.ts';
+import { formatResult, captureRetrievalMeta, resetRetrievalMetaForTests } from '../src/cli/main.ts';
 import { getCliOptions, setCliOptions, _resetCliOptionsForTest } from '../src/core/cli-options.ts';
 import type { SearchResult } from '../src/core/types.ts';
 

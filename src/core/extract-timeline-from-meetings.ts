@@ -17,6 +17,11 @@ import { computeEffectiveDate } from './effective-date.ts';
 import { parseFrontmatter } from './backfill-effective-date.ts';
 import { isPrivatePage } from './search/private-visibility.ts';
 import { quarantineFilterFragment } from './quarantine.ts';
+import { maintenanceTransaction } from './persistence/attribution.ts';
+import { derivedWriteTrust } from './trust/taint.ts';
+import { derivedGateConfig, derivedGateInput, recordTimelineFlag, timelineRowAllowed } from './trust/derived-gate.ts';
+import { assessTimelineForGate } from './write-gate.ts';
+import { storedTrustTier, type TaintInput } from './trust/tier.ts';
 
 export interface ExtractTimelineFromMeetingsOpts {
   dryRun?: boolean;
@@ -42,9 +47,13 @@ export interface ExtractTimelineFromMeetingsResult {
   batch_errors: number;
   /** First batch-insert error message, when batch_errors > 0. */
   first_batch_error?: string;
+  /** #5575 B3: rows the write gate quarantined or rejected (timeline rows are skipped, not held). */
+  write_gate_skipped?: number;
 }
 
 interface MeetingRow {
+  id: number;
+  trust_tier: string | null;
   slug: string;
   source_id: string;
   title: string;
@@ -83,7 +92,7 @@ export async function extractTimelineFromMeetings(
   const sourceFilter = opts.sourceIdFilter ? `AND source_id = $1` : '';
   const meetingParams = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
   const meetings = await engine.executeRaw<MeetingRow>(
-    `SELECT slug, source_id, title, effective_date, frontmatter, import_filename,
+    `SELECT id, trust_tier, slug, source_id, title, effective_date, frontmatter, import_filename,
             created_at, updated_at, compiled_truth, COALESCE(timeline, '') AS timeline
        FROM pages
       WHERE ${MEETING_PAGE_PREDICATE}
@@ -130,6 +139,10 @@ export async function extractTimelineFromMeetings(
   const allowCrossSource = await isCrossSourceLinksEnabled(engine);
 
   const batch: TimelineBatchInput[] = [];
+  // #5575 I2: the rows restate their meeting (no model), so a batch holds one meeting tier and is stamped with it.
+  const batchInputs: TaintInput[] = [];
+  const gateCfg = await derivedGateConfig(engine);
+  let gateSkipped = 0;
   let entriesCreated = 0;
   const entitiesTouched = new Set<string>();
   let meetingsScanned = 0;
@@ -140,10 +153,18 @@ export async function extractTimelineFromMeetings(
   let firstBatchError: string | undefined;
 
   async function flush() {
-    if (batch.length === 0) return;
+    if (batch.length === 0) { batchInputs.length = 0; return; }
     if (!dryRun) {
       try {
-        entriesCreated += await engine.addTimelineEntriesBatch(batch);
+        const trust = derivedWriteTrust({ channel: 'derive:meeting_timeline', inputs: batchInputs, projection: true });
+        // #5575 B3: the meeting title lands on other pages, so each row passes the write gate at the meeting's tier.
+        const kept = batch.map(row => ({ row, assessment: assessTimelineForGate(row, derivedGateInput(trust), gateCfg) })).filter(r => timelineRowAllowed(r.assessment));
+        gateSkipped += batch.length - kept.length;
+        entriesCreated += kept.length === 0 ? 0 : await maintenanceTransaction(engine, async tx => {
+          const count = await tx.addTimelineEntriesBatch(kept.map(r => r.row));
+          for (const r of kept) await recordTimelineFlag(tx, r.assessment, r.row);
+          return count;
+        }, trust);
       } catch (e) {
         // #2057: do NOT swallow. A bare `catch {}` here hid a brain-wide
         // timeline-write failure (the run reported 0 entries with no error).
@@ -158,6 +179,7 @@ export async function extractTimelineFromMeetings(
       entriesCreated += batch.length;
     }
     batch.length = 0;
+    batchInputs.length = 0;
   }
 
   for (const meeting of meetings) {
@@ -232,6 +254,9 @@ export async function extractTimelineFromMeetings(
     }
 
     // Emit one timeline row per (entity, this meeting).
+    const input: TaintInput = { table: 'pages', id: Number(meeting.id), tier: storedTrustTier(meeting.trust_tier) };
+    if (targets.size && batchInputs.length && batchInputs[0].tier !== input.tier) await flush();
+    if (targets.size) batchInputs.push(input);
     for (const t of targets.values()) {
       batch.push({
         slug: t.slug,
@@ -241,7 +266,7 @@ export async function extractTimelineFromMeetings(
         summary,
       });
       entitiesTouched.add(`${t.source_id}::${t.slug}`);
-      if (batch.length >= BATCH_SIZE) await flush();
+      if (batch.length >= BATCH_SIZE) { await flush(); batchInputs.push(input); }
     }
   }
 
@@ -269,5 +294,6 @@ export async function extractTimelineFromMeetings(
     entities_touched: entitiesTouched.size,
     batch_errors: batchErrors,
     first_batch_error: firstBatchError,
+    ...(gateSkipped ? { write_gate_skipped: gateSkipped } : {}),
   };
 }

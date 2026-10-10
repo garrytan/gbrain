@@ -5,7 +5,7 @@
  * (`RenderContext.isCallable`). Pure: the caller resolves its own scopes,
  * publish gates and bound-tool allow-set first.
  */
-import { opError, type Operation, type OperationError } from './contract.ts';
+import { opError, type OperationMeta, type OperationError } from './contract.ts';
 import type { Surface, Transport } from '../agent-output.ts';
 import { operationScopesAllowed } from '../scope.ts';
 import { filterOpsForSurface } from '../../mcp/surface.ts';
@@ -22,7 +22,7 @@ export interface CallableContext {
 }
 
 /** The one predicate behind tools/list AND dispatch. */
-export function isCallable(op: Operation, ctx: CallableContext): boolean {
+export function isCallable(op: OperationMeta, ctx: CallableContext): boolean {
   if (ctx.allowedOps && !ctx.allowedOps.has(op.name)) return false;
   if (filterOpsForSurface([op], ctx.surface).length === 0) return false;
   if (ctx.transport === 'cli') return true;
@@ -37,7 +37,7 @@ export function isCallable(op: Operation, ctx: CallableContext): boolean {
  * Publish gates keyed by gate key from the resolver's disabled-op set
  * (`disabledOpsForPublishGates`): a gate is on when none of its ops is disabled.
  */
-export function publishGatesFromDisabled(ops: readonly Operation[], disabled: ReadonlySet<string>): Record<string, boolean> {
+export function publishGatesFromDisabled(ops: readonly OperationMeta[], disabled: ReadonlySet<string>): Record<string, boolean> {
   const gates: Record<string, boolean> = {};
   for (const op of ops) {
     if (!op.publishGateKey) continue;
@@ -51,7 +51,7 @@ export function publishGatesFromDisabled(ops: readonly Operation[], disabled: Re
  * there): the exact CLI command as the fix, relayed to the user. `error`
  * keeps the historical `permission_denied`.
  */
-export function cliOnlyRefusal(op: Operation): OperationError {
+export function cliOnlyRefusal(op: OperationMeta): OperationError {
   const argv = [...(op.cliOnly?.argv ?? ['gbrain', '--help'])];
   const inputs = argv.filter(a => /^<[a-z_]+>$/.test(a)).map(a => ({ name: a.slice(1, -1), how: `The ${a.slice(1, -1)} value from your ${op.name} call.` }));
   return opError('trusted_local_only', `${op.name} runs only from the trusted local CLI on the brain host, not over MCP.`,

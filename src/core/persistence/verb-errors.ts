@@ -105,11 +105,16 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
   // #6188 (UC3): a company-brain source names the fence correction it will not write; the repository commit is the fix.
   if (code === 'source_writeback_required' && message?.startsWith('Canonical preparation would normalize a facts or takes fence (')) return { reason: code, message,
     suggestion: 'A company-brain source never rewrites repository files: fix the named fence in the repository, commit it, and resume the sync.' };
+  // #5575: a purged claim or page content is refused for good; the owner alone can clear its tombstone.
+  if (code === 'purged_content') return { reason: code, message: 'This content was purged from this source and cannot be saved again.',
+    suggestion: PURGED_SUGGESTION };
   const replaces = code === 'invalid_params' ? REPLACES_REFUSAL.exec(message ?? '') : null;
   if (replaces) return { reason: code, message: message!, suggestion: REPLACES_SUGGESTION[replaces[1]!]! };
   return { reason: isWriteErrorCode(code) ? code : 'storage_error', message: 'The write did not commit. Inspect its durable request on the source host.',
     suggestion: 'Resolve the reported write failure before starting a corrected attempt.' };
 }
+
+const PURGED_SUGGESTION = 'Do not retry the same content. If it is still true, write it in new words; only the owner can clear a purge tombstone on the brain host.';
 
 /** `remember.replaces` refusals decided under the target row lock keep their code and next step. */
 const REPLACES_REFUSAL = /^(target_superseded|target_withdrawn|target_expired|replaces_entity_mismatch|replaces_cross_page|replaces_duplicate): /;
@@ -133,6 +138,12 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       if (error.canonicalCode === 'invalid_fence') Object.assign(frozen, { reason: error.reason, fence: error.fence, fenceIssues: error.fenceIssues });
       throw frozen;
     }
+    // #5575: the frozen wire code stays invalid_params; the envelope's canonical code is purged_content.
+    if ((error.canonical ?? error.code) === 'purged_content') {
+      const purged = verbError('invalid_params', error.message, error.suggestion ?? PURGED_SUGGESTION);
+      purged.canonical = 'purged_content'; purged.writeError = 'purged_content';
+      throw purged;
+    }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
       ? 'scope_denied' : ['revision_required','revision_conflict','idempotency_conflict','invalid_params','page_identity_changed'].includes(error.code)
         ? 'invalid_params' : 'unavailable';
@@ -151,7 +162,7 @@ export function frozenVerbWriteError(receipt: WriteReceipt, reason?: WriteErrorC
     : receipt.state === 'conflict' ? 'revision_conflict'
       : receipt.state === 'cancelled' ? 'cancelled' : 'storage_error');
   const code = ['source_changed','permission_denied','scope_denied','writer_registration_required'].includes(writeError) ? 'scope_denied'
-    : ['revision_required', 'revision_conflict', 'idempotency_conflict','invalid_params','page_identity_changed'].includes(writeError) || writeError.startsWith('core_')
+    : ['revision_required', 'revision_conflict', 'idempotency_conflict','invalid_params','page_identity_changed','purged_content'].includes(writeError) || writeError.startsWith('core_')
       ? 'invalid_params' : 'unavailable';
   const diagnostic = writeFailureDiagnostic(writeError, message);
   const suggestion = pending
@@ -163,6 +174,7 @@ export function frozenVerbWriteError(receipt: WriteReceipt, reason?: WriteErrorC
     pending ? 'The write is accepted and awaiting completion; it is not committed.' : diagnostic.message,
     suggestion);
   if (!pending) error.detail = diagnostic.reason;
+  if (writeError === 'purged_content') error.canonical = 'purged_content';
   error.writeError = writeError;
   error.writeRequest = receipt;
   return error;

@@ -30,7 +30,7 @@ import {
 } from '../src/core/sync-embed-backfill.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
-import { CHUNKER_VERSION } from '../src/core/chunkers/code.ts';
+import { chunkerStamp } from '../src/core/chunkers/code.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 
 /** Offline embed stub so inline-proceed paths (posture tokenmax) don't network. */
@@ -180,7 +180,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     await runSources(workerBackedEngine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     await engine.executeRaw(
       `UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`,
-      [headSha, String(CHUNKER_VERSION)],
+      [headSha, chunkerStamp()],
     );
 
     const [source] = await engine.executeRaw<{
@@ -197,11 +197,11 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
       source,
       {
         id: 'disabled', local_path: repoPathTwo, config: { syncEnabled: false },
-        last_commit: repoTwoHead, chunker_version: String(CHUNKER_VERSION),
+        last_commit: repoTwoHead, chunker_version: chunkerStamp(),
       },
       {
         id: 'missing', local_path: join(repoPath, 'definitely-missing'), config: {},
-        last_commit: null, chunker_version: String(CHUNKER_VERSION),
+        last_commit: null, chunker_version: chunkerStamp(),
       },
     ];
     const active = candidates.filter((candidate) => candidate.config.syncEnabled !== false);
@@ -243,7 +243,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     await runSources(workerBackedEngine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     await engine.executeRaw(
       `UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`,
-      [headSha, String(CHUNKER_VERSION)],
+      [headSha, chunkerStamp()],
     );
     await engine.setConfig('sync.federated_v2', 'true');
     await engine.setConfig('sync.cost_gate_min_usd', '1000');
@@ -281,7 +281,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     await runSources(workerBackedEngine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     await engine.executeRaw(
       `UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`,
-      [headSha, String(CHUNKER_VERSION)],
+      [headSha, chunkerStamp()],
     );
     await engine.setConfig('sync.federated_v2', 'true');
     await engine.setConfig('sync.cost_gate_min_usd', '1000');
@@ -317,7 +317,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     await runSources(workerBackedEngine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     await engine.executeRaw(
       `UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`,
-      [headSha, String(CHUNKER_VERSION)],
+      [headSha, chunkerStamp()],
     );
     await engine.setConfig('sync.federated_v2', 'false');
     await engine.setConfig('sync.cost_gate_min_usd', '1000');
@@ -411,11 +411,11 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     const headShaTwo = execSync('git rev-parse HEAD', { cwd: repoPathTwo, stdio: 'pipe' }).toString().trim();
     await engine.executeRaw(
       `UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`,
-      [headSha, String(CHUNKER_VERSION)],
+      [headSha, chunkerStamp()],
     );
     await engine.executeRaw(
       `UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault-two'`,
-      [headShaTwo, String(CHUNKER_VERSION)],
+      [headShaTwo, chunkerStamp()],
     );
     // Seed a stale backlog so the deferred notice has a non-zero figure.
     await engine.putPage('vault/note', { type: 'note', title: 'note', compiled_truth: '# note' }, { sourceId: 'vault' });
@@ -482,7 +482,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     // Mirrors the executor's up_to_date predicate: HEAD==last_commit AND chunker
     // matches → 0 new tokens → below floor → proceeds without deferring.
     await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
-    await engine.executeRaw(`UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`, [headSha, String(CHUNKER_VERSION)]);
+    await engine.executeRaw(`UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`, [headSha, chunkerStamp()]);
     await engine.setConfig('sync.cost_gate_min_usd', '0');
 
     const { exitCode, stdout } = await runSyncCaptured(['--all', '--serial', '--json', '--no-pull']);
@@ -497,7 +497,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     // git-clean, but the commits are caught up. The OLD estimator priced the
     // whole tree (158M-token phantom); the new one mirrors execution → $0.
     await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
-    await engine.executeRaw(`UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`, [headSha, String(CHUNKER_VERSION)]);
+    await engine.executeRaw(`UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`, [headSha, chunkerStamp()]);
     // Dirty the tree with an untracked non-syncable scratch file (agents/crons
     // write constantly) — attached-HEAD sync never imports it.
     writeFileSync(join(repoPath, 'scratch.tmp'), 'uncommitted agent scratch');
@@ -575,7 +575,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     await engine.executeRaw(
       `UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`,
-      [headSha, String(CHUNKER_VERSION)],
+      [headSha, chunkerStamp()],
     );
     await engine.setConfig('sync.cost_gate_min_usd', '1000');
     commitLargeIncrementalDrop();
@@ -607,7 +607,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     await runSources(workerBackedEngine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     await engine.executeRaw(
       `UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`,
-      [headSha, String(CHUNKER_VERSION)],
+      [headSha, chunkerStamp()],
     );
     await engine.setConfig('sync.cost_gate_min_usd', '1000');
     commitLargeIncrementalDrop();
@@ -627,7 +627,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     await runSources(workerBackedEngine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     await engine.executeRaw(
       `UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`,
-      [headSha, String(CHUNKER_VERSION)],
+      [headSha, chunkerStamp()],
     );
     commitLargeIncrementalDrop();
 
@@ -644,7 +644,7 @@ describe('v0.41.31 — sync --all cost gate wiring', () => {
     await runSources(engine, ['add', 'vault', '--path', repoPath, '--no-federated']);
     await engine.executeRaw(
       `UPDATE sources SET last_commit = $1, chunker_version = $2 WHERE id = 'vault'`,
-      [headSha, String(CHUNKER_VERSION)],
+      [headSha, chunkerStamp()],
     );
     await engine.setConfig('sync.cost_gate_min_usd', '1000');
     commitLargeIncrementalDrop();

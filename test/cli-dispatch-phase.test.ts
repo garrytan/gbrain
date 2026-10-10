@@ -22,7 +22,7 @@
  * by extracting twice. Regenerate: GBRAIN_TEST_UPDATE_GOLDENS=1.
  */
 import { describe, expect, test } from 'bun:test';
-import { CLI_ONLY, THIN_CLIENT_REFUSED_COMMANDS, cliAliases } from '../src/cli.ts';
+import { CLI_ONLY, THIN_CLIENT_REFUSED_COMMANDS, cliAliases } from '../src/cli/main.ts';
 import { operations } from '../src/core/operations.ts';
 import { extractCliDispatch, thinClientRoutes, type CliDispatchShape } from './helpers/cli-dispatch-extract.ts';
 import { defineNormalizer, expectGolden, expectNormalizerStable } from './helpers/golden.ts';
@@ -89,7 +89,7 @@ describe('CLI dispatch shape (master AST)', () => {
     const shape = await expectNormalizerStable(extractCliDispatch, astNormalizer);
     expect(shape.sets.CLI_ONLY).toEqual([...CLI_ONLY].sort());
     expect(shape.sets.THIN_CLIENT_REFUSED_COMMANDS).toEqual([...THIN_CLIENT_REFUSED_COMMANDS].sort());
-    expect(shape.switchCases.length).toBe(66);
+    expect(shape.switchCases.length).toBe(67);
     expect(Object.keys(shape.commands).length).toBeGreaterThanOrEqual(shape.sets.CLI_ONLY.length);
   });
 

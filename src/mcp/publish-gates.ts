@@ -19,12 +19,13 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
-import { operations, type Operation } from '../core/operations.ts';
+import type { OperationMeta } from '../core/ops/contract.ts';
+import { OPERATION_MANIFEST } from '../core/operation-manifest.generated.ts';
 
-export type PublishGateKey = NonNullable<Operation['publishGateKey']>;
+export type PublishGateKey = NonNullable<OperationMeta['publishGateKey']>;
 
 /** Every config key an operation's publish gate reads; `config get` resolves these DB-first like the gate (#5358). */
-export const PUBLISH_GATE_KEYS: ReadonlySet<PublishGateKey> = new Set(operations.flatMap(op => (op.publishGateKey ? [op.publishGateKey] : [])));
+export const PUBLISH_GATE_KEYS: ReadonlySet<PublishGateKey> = new Set(OPERATION_MANIFEST.flatMap(op => (op.publishGateKey ? [op.publishGateKey] : [])));
 
 /**
  * Gates that default ON for the owner's stdio pipe when neither plane sets
@@ -69,7 +70,7 @@ export async function disabledOpsForPublishGates(
   config: GBrainConfig | null | undefined,
   opts: { transport?: string } = {},
 ): Promise<ReadonlySet<string>> {
-  const gated = operations.filter(op => op.publishGateKey);
+  const gated = OPERATION_MANIFEST.filter(op => op.publishGateKey);
   if (gated.length === 0) return new Set();
   const keys = [...new Set(gated.map(op => op.publishGateKey as PublishGateKey))];
   const resolved = new Map<PublishGateKey, boolean>();

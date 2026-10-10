@@ -44,6 +44,22 @@ export interface PageWithdrawal {
   visibility: 'private' | 'world';
   fact_hash: string;
   withdrawn_at: string;
+  /** A purge tombstone (fact_purges): the overlay drops the row instead of striking it. */
+  purged?: boolean;
+}
+/**
+ * The source's subject-'*' fact purge tombstones under the read's visibility
+ * filter, as a marker instead of a list: they apply to every page, so each
+ * overlay resolves them against the fence rows of the text it overlays
+ * (page-state/snapshot.ts `resolveGlobalPurges`). Count and latest purged_at
+ * change when a '*' tombstone is added or removed, so a digest that carries
+ * the marker goes stale on either.
+ */
+export interface GlobalPurgeMarker {
+  count: number;
+  latest: string | null;
+  /** The read kept world rows only (excludePrivate); the lookup applies the same filter. */
+  world_only: boolean;
 }
 export interface PageSnapshot {
   page: Page;
@@ -51,6 +67,8 @@ export interface PageSnapshot {
   revision: string;
   sourceIncarnation: string;
   withdrawals: PageWithdrawal[];
+  /** Subject-'*' purges, listed in `withdrawals` only when the stored text names them. Absent when the source has none under the read's filter. */
+  globalPurges?: GlobalPurgeMarker;
 }
 
 export class PageRevisionConflictError extends Error {

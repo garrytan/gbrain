@@ -60,6 +60,8 @@ import {
 } from './graduation-target.ts';
 import { drainForGraduation, freezeSource, graduationBlockers, withSourceWritable } from './graduation-drain.ts';
 import { buildDeferredIndexes, copySequences, copyTable, deferIndexes, detectTriggerBypass, reenableTriggers } from './graduation-copy.ts';
+import { TRUST_BACKFILL_COMPLETED_KEY } from '../trust/schema.ts';
+import { WRITE_GATE_SCAN_BASELINE_KEY } from '../write-gate-schema.ts';
 
 const DEFAULT_DRAIN_TIMEOUT_MS = 60_000;
 const HANDOFF_TIMEOUT_MS = 30_000;
@@ -421,7 +423,9 @@ function planHashOf(input: Record<string, unknown>): string {
 function probeTargetEmpty(probe: TargetProbe): boolean { return probe.empty; }
 
 /** initSchema writes these config keys (plus the copier's deferred-index marker); any other key is user data. */
-const SEED_CONFIG_KEYS = new Set(['chunk_strategy', 'embedding_dimensions', 'embedding_model', 'engine', 'version', 'graduation.deferred_indexes']);
+// The trust migrations seed two bookkeeping keys on an empty brain (v226 backfill completion, v227 scan baseline).
+const SEED_CONFIG_KEYS = new Set(['chunk_strategy', 'embedding_dimensions', 'embedding_model', 'engine', 'version', 'graduation.deferred_indexes',
+  TRUST_BACKFILL_COMPLETED_KEY, WRITE_GATE_SCAN_BASELINE_KEY]);
 async function userConfigKeys(main: BrainEngine): Promise<string[]> {
   const rows = await main.executeRaw<{ key: string }>('SELECT key FROM config ORDER BY key COLLATE "C"');
   return rows.map(r => r.key).filter(key => !SEED_CONFIG_KEYS.has(key));

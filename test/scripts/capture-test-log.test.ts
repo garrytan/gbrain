@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { mineWeights } from '../../scripts/mine-shard-weights.ts';
-import { captureTestLog } from '../../scripts/capture-test-log.ts';
+import { BUN_SPAWNSYNC_POISONED, FailureCollector, captureTestLog } from '../../scripts/capture-test-log.ts';
 
 const SCRIPT = resolve(import.meta.dir, '../../scripts/capture-test-log.ts');
 const roots: string[] = [];
@@ -211,5 +211,72 @@ test('waits forever', async () => { await new Promise(() => {}); });`);
     });
     expect(await proc.exited).toBe(0);
     expect(existsSync(summary)).toBe(false);
+  });
+});
+
+describe('bun_spawnsync_poisoned signature (oven-sh/bun#34069)', () => {
+  // The shard-7 shape of run 38004627376 attempt 1 (d4dc2d4d8) and run 37971386009 (c12e14adf): a dangling child
+  // killed at a deadline inside one file, then nothing but timeouts, in unrelated files, until the job budget ends.
+  const feed = (lines: string[]) => { const c = new FailureCollector(); for (const line of lines) c.feed(line); return c; };
+  const timeout = (test: string, ms: number) => [`(fail) ${test} [${ms}.00ms]`, `  ^ this test timed out after ${ms}ms.`];
+  const poisonedRun = [
+    'bun test v1.4.2 (744846f84)',
+    '##[group]test/persistence-git-publication.test.ts:',
+    '(pass) literal Git pathspecs publish only the bracketed target and preserve the index [89.95ms]',
+    'killed 1 dangling process', 'killed 1 dangling process',
+    ...timeout('unchanged replay, missing target and tracked deletion keep distinct outcomes', 60002),
+    '##[group]test/voice-gate.test.ts:', '(pass) voice gate > default deny [1.20ms]',
+    '##[group]test/persistence-preactivation-claim.test.ts:',
+    'killed 1 dangling process', ...timeout('#6122 pre-activation claim (pglite) > the dry run reports the claim', 120000),
+    '##[group]test/scripts/merge-lcov.test.ts:',
+    'killed 1 dangling process', ...timeout('merge: DA summing across lanes > sums per-line hits', 60045),
+  ];
+
+  it('names the signature in the summary and the stderr line, with the Bun version and the upstream fix', () => {
+    const c = feed(poisonedRun);
+    expect(c.poisoned()).toBe(true);
+    const summary = c.render('test (7)', '/tmp/unit.log', 1);
+    expect(summary).toContain(`**${BUN_SPAWNSYNC_POISONED}**`);
+    expect(summary).toContain('Bun v1.4.2');
+    expect(summary).toContain('3 timed-out tests across 3 files');
+    expect(summary).toContain('oven-sh/bun#34069');
+    expect(summary).toContain('oven-sh/bun#44581');
+    expect(summary).toContain('rerun the job');
+    // The failing tests still follow, so the shard's own evidence is kept.
+    expect(summary).toContain('#### test/scripts/merge-lcov.test.ts › merge: DA summing across lanes > sums per-line hits');
+  });
+
+  it('one hung test with a dangling child is not the signature', () => {
+    const c = feed([
+      'bun test v1.4.2 (744846f84)', '##[group]test/a.test.ts:', 'killed 1 dangling process',
+      ...timeout('git that outlives the probe timeout keeps Git effects unfinished', 60001),
+      '##[group]test/b.test.ts:', '(pass) b > works [1.00ms]',
+    ]);
+    expect(c.poisoned()).toBe(false);
+    expect(c.render('test (7)', '/tmp/unit.log', 1)).not.toContain(BUN_SPAWNSYNC_POISONED);
+  });
+
+  it('a run of timeouts with no killed child is a slow or wedged backend, not the signature', () => {
+    const c = feed([
+      'bun test v1.4.2 (744846f84)',
+      '##[group]test/a.test.ts:', ...timeout('a > first', 60000), ...timeout('a > second', 60000),
+      '##[group]test/b.test.ts:', ...timeout('b > third', 60000), ...timeout('b > fourth', 60000),
+    ]);
+    expect(c.poisoned()).toBe(false);
+    expect(c.render('test (7)', '/tmp/unit.log', 1)).not.toContain(BUN_SPAWNSYNC_POISONED);
+  });
+
+  it('a non-timeout failure after the kill, or timeouts confined to one file, is left for its own diagnosis', () => {
+    const mixed = feed([
+      ...poisonedRun,
+      '##[group]test/c.test.ts:', 'error: expect(received).toBe(expected)', '(fail) c > asserts [2.00ms]',
+    ]);
+    expect(mixed.poisoned()).toBe(false);
+    const oneFile = feed([
+      'bun test v1.4.2 (744846f84)', '##[group]test/a.test.ts:', 'killed 1 dangling process',
+      ...timeout('a > one', 60000), ...timeout('a > two', 60000), ...timeout('a > three', 60000),
+    ]);
+    expect(oneFile.poisoned()).toBe(false);
+    expect(oneFile.render('test (7)', '/tmp/unit.log', 1)).not.toContain(BUN_SPAWNSYNC_POISONED);
   });
 });

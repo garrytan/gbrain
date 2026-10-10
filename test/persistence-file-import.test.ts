@@ -142,6 +142,44 @@ test('a committed import replays the durable cursor when checkpoint cleanup was 
   }
 }), 120_000);
 
+test('GBRA-69: the import checkpoint holds no content; an import stopped after it resumes its request with the bytes it read', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await fixture(engine), file = join(f.input, 'checkpoint.md');
+    writeFileSync(file, '# Checkpoint\n\nThe content travels with the request, not the checkpoint.\n');
+    const expected = () => managedImportContent('checkpoint.md', readFileSync(file)).content;
+    const stored = () => engine.executeRaw<{ params: Record<string, unknown> }>(
+      "SELECT completed_keys->0 AS params FROM op_checkpoints WHERE op='managed-file-import' AND completed_keys->0->>'source_id'=$1", [f.sourceId]);
+    const original = engine.executeRaw;
+    const stop = async (legacy: boolean) => {
+      let reads = 0;
+      engine.executeRaw = async function(this: BrainEngine, sql, params) {
+        // The second checkpoint read is the one after the insert: the process stops before it submits.
+        if (sql.startsWith('SELECT fingerprint,completed_keys FROM op_checkpoints') && ++reads === 2) throw new Error('simulated stop after the checkpoint');
+        return original.call(this, sql, params);
+      } as BrainEngine['executeRaw'];
+      try { await expect(importManagedFile(engine, file, 'checkpoint.md', { sourceId: f.sourceId, noEmbed: true })).rejects.toThrow('simulated stop'); }
+      finally { engine.executeRaw = original; }
+      const [row] = await stored();
+      expect(row!.params).not.toHaveProperty('content');
+      expect(row!.params).toMatchObject({ kind: 'managed_file_import', slug: 'checkpoint', inputHash: sha256(readFileSync(file)) });
+      // A checkpoint an older binary wrote carried the content; it resumes and clears the same way.
+      if (legacy) await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,content}',to_jsonb($2::text))
+        WHERE op='managed-file-import' AND completed_keys->0->>'source_id'=$1`, [f.sourceId, expected()]);
+      return String(row!.params.request_id);
+    };
+    for (const legacy of [false, true]) {
+      const requestId = await stop(legacy);
+      expect(await importManagedFile(engine, file, 'checkpoint.md', { sourceId: f.sourceId, noEmbed: true })).toMatchObject({ status: 'imported' });
+      const requests = await engine.executeRaw<{ request_id: string; content: string; state: string }>(
+        "SELECT request_id::text, intent->>'content' AS content, state FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid", [f.sourceId, requestId]);
+      expect(requests).toEqual([{ request_id: requestId, content: expected(), state: 'committed' }]);
+      expect(await stored()).toHaveLength(0);
+      writeFileSync(file, `# Checkpoint\n\nSecond pass ${legacy}.\n`);
+    }
+    expect((await engine.getPage('checkpoint', { sourceId: f.sourceId }))?.compiled_truth).toContain('Second pass false');
+  }
+}), 120_000);
+
 test('managed import refuses cross-source input, symlink targets, skills, malformed YAML and disabled image modality', async () => withEnv(env, async () => {
   for (const engine of engines) {
     const f = await fixture(engine), other = await fixture(engine);

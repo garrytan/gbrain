@@ -60,7 +60,7 @@ describe('graduation inventory', () => {
     expect(new Set(names).size).toBe(names.length);
     const counts: Record<string, number> = {};
     for (const e of GRADUATION_INVENTORY.entries) counts[e.class] = (counts[e.class] ?? 0) + 1;
-    expect(counts).toEqual({ carry: 110, rebind: 2, rebuild: 2, discard: 7, schema_owned: 3 });
+    expect(counts).toEqual({ carry: 120, rebind: 2, rebuild: 2, discard: 7, schema_owned: 4 });
     for (const e of GRADUATION_INVENTORY.entries) {
       expect({ relation: e.relation, reason: e.reason.length > 5, present: e.engines.pglite || e.engines.postgres })
         .toEqual({ relation: e.relation, reason: true, present: true });

@@ -167,8 +167,8 @@ are stored. Names, operations and times are joined at read time by
 [write attribution](../mcp/ADMIN.md#write-attribution). `get_versions` returns
 attribution only to trusted local and `admin` callers. A NULL request with a
 principal is a maintenance write; all NULL is `unrecorded`: written before
-attribution existed or by one of the three writers listed under "unattributed"
-below. Attribution names the creator and the last writer; it is not an audit
+attribution existed (older releases also left `gbrain extract` timeline walks,
+meeting timeline extraction and enrichment unattributed). Attribution names the creator and the last writer; it is not an audit
 log of every write in between.
 
 Nothing is inferred for older rows. `gbrain repair attribution-backfill` fills
@@ -195,14 +195,12 @@ start `unrecorded`; version history is not copied).
   whole run. A row such a writer changes keeps its creator and moves its last
   writer. The maintenance principal is the local CLI registration
   (`local_cli`), else this host's identity (`application`, `host:<id>`), else
-  `host:unregistered`: attribution never creates an identity file. Only the
-  three writers listed under "unattributed" below write without an actor.
+  `host:unregistered`: attribution never creates an identity file. No direct
+  writer is left unattributed.
 
 Agents: treat `NULL` attribution on an unmanaged brain as "written before
-attribution existed or by `gbrain extract`, meeting timeline extraction or
-enrichment", not as evidence of tampering. To get attribution for those
-writers now, run the work on a managed brain or through a journaled
-operation. When you add a direct writer, run it in
+attribution existed, or before `gbrain extract`, meeting timeline extraction
+and enrichment were attributed (#5575)", not as evidence of tampering. When you add a direct writer, run it in
 `maintenanceTransaction(engine, fn)` (`persistence/attribution.ts`) or route it
 through the coordinator, then update these lists with the count
 `test/write-attribution-legacy.test.ts` reports. The test compares both lists
@@ -214,7 +212,7 @@ Attributed (inside a request, a coordinated scope or `maintenanceTransaction`,
 or a physical projection that leaves attribution untouched):
 
 <!-- write-attribution-covered:start -->
-- `src/commands/extract-conversation-facts.ts` (3): the unmanaged conversation fact index writes through `writeDerivedFacts` (one `maintenanceTransaction`); managed brains publish each page as a receipted `managed_maintenance_conversation_facts` request.
+- `src/commands/extract-conversation-facts.ts` (2): the unmanaged conversation fact index's audit rows write through `writeDerivedFacts` (one `maintenanceTransaction` at the page's derived tier) and its extracted rows through `insertDerivedFacts` (`persistence/derived-facts.ts`), which also runs the write gate; managed brains publish each page as a receipted `managed_maintenance_conversation_facts` request.
 - `src/commands/extract-timeline-db.ts` (2): `gbrain extract timeline --source db` commits one `maintenanceTransaction` per 100-row batch on unmanaged brains; managed brains publish per page through a maintenance request.
 - `src/commands/migrate-engine.ts` (5): engine copy keeps the source rows' attribution values verbatim.
 - `src/commands/sync/holds.ts` (1): a full sync's move of a held rename (`updateSlug` and its `source_path`) runs in one `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
@@ -222,27 +220,32 @@ or a physical projection that leaves attribution untouched):
 - `src/core/calibration/undo-wave.ts` (1): the calibration wave undo of take resolutions runs in `maintenanceTransaction`.
 - `src/core/chronicle/publish.ts` (3): Life Chronicle event generations: maintenance requests on managed brains; the unmanaged event write, retirement soft delete and retired stamp run in `maintenanceTransaction`.
 - `src/core/company-brain/profile.ts` (1): legacy sync soft deletes (`softDeleteSyncPages`) run in `maintenanceTransaction`, inside the company-brain source check when one is active.
-- `src/core/cycle/dream-provenance.ts` (1): the dream provenance frontmatter stamp runs per page in `maintenanceTransaction` (unmanaged brains only; managed synthesis publishes through maintenance requests).
+- `src/core/cycle/dream-provenance.ts` (1): the dream provenance frontmatter stamp runs per page in `maintenanceTransaction`, or `derivedMaintenanceTransaction` at the child's derived tier when the ref carries its taint (unmanaged brains only; managed synthesis publishes through maintenance requests).
+- `src/core/cycle/dream-taint.ts` (1): the unmanaged dream summary page runs in `derivedMaintenanceTransaction` at the tier of the pages it indexes; managed brains publish it through a maintenance request.
 - `src/core/cycle/drift.ts` (1): the unmanaged drift report page runs in `maintenanceTransaction`; managed brains publish it through a maintenance request.
 - `src/core/cycle/extract-atoms-page-state.ts` (1): the atom completion stamp runs in `maintenanceTransaction`.
 - `src/core/cycle/extract-atoms.ts` (1): stale atom retirement soft-deletes in 500-page `maintenanceTransaction` chunks.
-- `src/core/cycle/extract-facts.ts` (7): the unmanaged page reconcile and the expiry of fence facts whose page was soft-deleted run in `maintenanceTransaction`; managed brains publish `managed_maintenance_fence_facts` and `managed_maintenance_deleted_page_facts_expire` requests whose preparers write inside the coordinator publication.
-- `src/core/cycle/extract-takes.ts` (2): a receipted `managed_maintenance_takes_reextract` request per changed page on managed brains; the unmanaged batch upsert runs in `maintenanceTransaction`.
+- `src/core/cycle/extract-facts.ts` (7): the unmanaged page reconcile and the expiry of fence facts whose page was soft-deleted run in `maintenanceTransaction`; managed brains publish `managed_maintenance_fence_facts` and `managed_maintenance_deleted_page_facts_expire` requests whose preparers write inside the coordinator publication. Both reconcile paths write at the page's tier and gate new rows.
+- `src/core/cycle/extract-takes.ts` (1): one projected-takes writer stamps each page's tier and runs the write gate: inside a receipted `managed_maintenance_takes_reextract` request per changed page on managed brains, one `maintenanceTransaction` per page tier for the unmanaged batch upsert.
+- `src/core/enrichment-service.ts` (2): the enrichment stub fallback write and its auto-timeline entry run in `maintenanceTransaction` at the source page's derived tier (the stub import is lowered to it afterwards).
+- `src/core/extract-timeline-from-meetings.ts` (1): each meeting timeline batch runs in `maintenanceTransaction`, one meeting tier per batch.
 - `src/core/cycle/grade-takes.ts` (1): unmanaged take auto-resolution runs in `maintenanceTransaction`; managed brains publish a `takes_resolve` request.
 - `src/core/cycle/phantom-redirect.ts` (3): the unmanaged phantom fact move, canonical body refresh and phantom soft delete run in `maintenanceTransaction`; the managed redirect moves facts inside its coordinated write.
-- `src/core/cycle/phases/consolidate.ts` (4): unmanaged consolidation takes and fact updates run in `maintenanceTransaction` per cluster step; managed brains submit a maintenance consolidation request.
-- `src/core/cycle/synthesize.ts` (1): the unmanaged dream summary page runs in `maintenanceTransaction`; managed brains publish it through a maintenance request.
+- `src/core/cycle/phases/consolidate.ts` (4): unmanaged consolidation's take insert or re-promotion, consolidation marks and valid_until writeback run in one `derivedMaintenanceTransaction` per cluster at the cluster's derived tier; managed brains submit a maintenance consolidation request.
 - `src/core/embed-facts.ts` (1): embedding columns only (physical projection).
 - `src/core/embedding-dim-check.ts` (1): embedding columns only (physical projection).
 - `src/core/extract/receipt-writer.ts` (1): the extraction receipt page runs in `maintenanceTransaction`.
+- `src/core/facts/backstop.ts` (1): the facts backstop's DB-only fallbacks insert each fact through one helper, in `maintenanceTransaction` at the extraction's derived tier; managed brains publish through the facts request preparer.
 - `src/core/facts/conversation-publication.ts` (3): the managed conversation-facts preparer clears each member page's prior rows and inserts its frozen entry (or a blocked outcome row) inside the coordinator publication of its admitted batch request; the unmanaged cleanup runs the same clear in `maintenanceTransaction`.
-- `src/core/facts/backstop.ts` (3): the facts backstop's DB-only fallbacks insert each fact in `maintenanceTransaction`; managed brains publish through the facts request preparer.
+- `src/core/facts/derivation-inputs.ts` (3): `hideDerivedRows` expires derived facts, deactivates derived takes and soft-deletes derived pages inside the purge's coordinated transaction, attributed to the purge request.
 - `src/core/facts/fence-write.ts` (2): the markdown-first fence reconcile insert and its page body mirror each run in `maintenanceTransaction`.
 - `src/core/facts/forget.ts` (4): the legacy fence expiry, withdrawal and strike-through each run in `maintenanceTransaction` (nested inside a caller's coordinated write, they keep its actor).
 - `src/core/facts/proposal-supersede.ts` (4): unmanaged `decide` proposal accept and undo run in one `maintenanceTransaction` each; managed brains publish a `decide_proposal` request.
+- `src/core/facts/purge.ts` (2): `purge_fact` rewrites purged pages' bodies and redacts their versions inside `withCoordinatedWrite` with the purge request's attribution.
 - `src/core/facts/relink-publish.ts` (2): `relink_facts` request preparer.
 - `src/core/facts/unfenced-facts.ts` (2): the cycle and v0.32.2 fence of `row_num`-NULL facts: a maintenance request on managed brains; the unmanaged body mirror and row-number stamp run in `maintenanceTransaction`.
 - `src/core/facts/withdrawal.ts` (1): runs inside the `forget` request's coordinated write.
+- `src/core/trust/timeline-projection.ts` (2): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback write through it: one `maintenanceTransaction` per page tier.
 - `src/core/facts/write-single.ts` (2): the legacy single-fact insert and its supersession link each run in `maintenanceTransaction`; managed brains publish through the fact request.
 - `src/core/import-file.ts` (12): direct markdown, code and image imports, the moved-file rename (`updateSlug`) and the #3694 legacy-hash re-stamp run in `maintenanceTransaction`; managed imports go through the page request preparer.
 - `src/core/minions/handlers/ingest-capture.ts` (1): the capture ingest tombstone soft delete runs in `maintenanceTransaction`.
@@ -255,6 +258,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/canonical-projections.ts` (7): fence projection inside the request's publication.
 - `src/core/persistence/connector-google-receipts.ts` (2): request preparer.
 - `src/core/persistence/connector-sync.ts` (2): connector publication inside `withCoordinatedWrite`.
+- `src/core/persistence/derived-facts.ts` (1): the gated conversation fact insert (`insertDerivedFacts`) on unmanaged brains, in `writeDerivedFacts`' `maintenanceTransaction` at the page's derived tier.
 - `src/core/persistence/facts-prepare.ts` (3): managed `extract_facts` request preparer.
 - `src/core/persistence/file-repair.ts` (2): `managed_file_repair` request preparer (#5988).
 - `src/core/persistence/grandfather.ts` (2): request preparer.
@@ -268,13 +272,13 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/sync-prepare.ts` (4): managed sync request preparer.
 - `src/core/persistence/takes-prepare.ts` (3): takes request preparer.
 - `src/core/repair/captured-facts.ts` (1): a request on managed brains; the unmanaged captured-facts expiry runs in `maintenanceTransaction`.
-- `src/core/repair/ontology-facts.ts` (1): a coordinated database-only write (`coordinatedDatabaseWrite`, the `ontology_propose` path) on managed brains; the unmanaged ontology-facts restore runs in `maintenanceTransaction`.
 - `src/core/repair/conversation-labels.ts` (4): a request on managed brains; the unmanaged label retirement runs in `maintenanceTransaction`.
 - `src/core/repair/extractor-facts.ts` (1): a request on managed brains; the unmanaged extractor-facts restore runs in `maintenanceTransaction`.
 - `src/core/repair/frontmatter.ts` (1): a `managed_file_repair` request on managed sources; the unmanaged rename runs in `maintenanceTransaction`.
+- `src/core/repair/ontology-facts.ts` (1): a coordinated database-only write (`coordinatedDatabaseWrite`, the `ontology_propose` path) on managed brains; the unmanaged ontology-facts restore runs in `maintenanceTransaction`.
+- `src/core/repair/stale-atoms.ts` (3): a request on managed brains; the unmanaged retirement runs in `maintenanceTransaction`.
 - `src/core/repair/take-supersession.ts` (1): `gbrain repair take-supersession` reprojection: a receipted `managed_maintenance_take_reproject` request on managed brains, `maintenanceTransaction` on unmanaged ones; fence edits go through a revision-bound `put_page`.
 - `src/core/repair/timeline-comments.ts` (1): `gbrain repair timeline-comments` row cleanup: `withCoordinatedWrite` under the page key on managed brains, `maintenanceTransaction` otherwise.
-- `src/core/repair/stale-atoms.ts` (3): a request on managed brains; the unmanaged retirement runs in `maintenanceTransaction`.
 - `src/core/schema-pack/page-to-alias.ts` (1): the page-to-alias conversion soft-deletes each converted page in `maintenanceTransaction`.
 - `src/core/schema-pack/page-to-link.ts` (1): the page-to-link conversion soft-deletes each converted page in `maintenanceTransaction`.
 - `src/core/schema-pack/retype.ts` (1): each bounded retype batch runs in `maintenanceTransaction`.
@@ -284,16 +288,17 @@ or a physical projection that leaves attribution untouched):
 - `src/core/think/index.ts` (1): the saved `think` result page runs in `maintenanceTransaction`.
 - `src/core/timeline-dedup-repair.ts` (1): runs only from schema migration v139, before migration v193 adds the attribution columns, so it has no actor to record.
 - `src/core/timeline-write-through.ts` (2): the timeline write-through's page row splice and entry insert run in one `maintenanceTransaction`.
+- `src/core/trust/fence-guard.ts` (2): the guarded fence re-projection detaches or moves higher-tier fact rows inside the page's coordinated publication.
+- `src/core/trust/owner-actions.ts` (1): an owner release inserts the held fact in a coordinated (managed) or attributed (unmanaged) transaction at user_confirmed.
+- `src/core/trust/supersede-handlers.ts` (3): owner accept/undo of a trust proposal re-tiers the new fact (or take) inside the checked supersede's (or takes publication's) transaction.
 <!-- write-attribution-covered:end -->
 
-Unattributed (on unmanaged brains these write with `NULL` attribution). These
-three writers share the link-extraction and mention-linking code, and they are
-routed together with that code's rework:
+Unattributed (on unmanaged brains these would write with `NULL` attribution).
+The list is empty: `gbrain extract` timeline walks, enrichment and meeting
+timeline extraction run as tiered derivers since #5575 (I2). A new writer
+that cannot be attributed yet is declared here:
 
 <!-- write-attribution-unattributed:start -->
-- `src/commands/extract.ts` (4): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback.
-- `src/core/enrichment-service.ts` (2): enrichment page and auto-timeline entry.
-- `src/core/extract-timeline-from-meetings.ts` (1): meeting timeline batch.
 <!-- write-attribution-unattributed:end -->
 
 ## The privacy boundary

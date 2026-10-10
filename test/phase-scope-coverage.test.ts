@@ -41,7 +41,7 @@ describe('PHASE_SCOPE coverage', () => {
     expect(invalid).toEqual([]);
   });
 
-  test('all 27 phases covered (regression on accidental omission)', () => {
+  test('all 28 phases covered (regression on accidental omission)', () => {
     // Pin the count so a future PR that adds a phase to ALL_PHASES
     // without updating PHASE_SCOPE notices here too. The v0.39.1.0
     // master merge brought in the 17th phase (`schema-suggest`); v0.41
@@ -51,9 +51,9 @@ describe('PHASE_SCOPE coverage', () => {
     // #2653 adds 'drift' for 23; #5876 adds 'chronicle' for 24; GBRA-40 Lane D
     // adds 'facts_drain' for 25.
     // Temporal typed edges adds 'edge_contradictions' for 26.
-    // #6188 adds 'fence_repair' for 27.
-    expect(ALL_PHASES.length).toBe(27);
-    expect(Object.keys(PHASE_SCOPE).length).toBe(27);
+    // #6188 adds 'fence_repair' for 27; #6377 adds 'content_repair' for 28.
+    expect(ALL_PHASES.length).toBe(28);
+    expect(Object.keys(PHASE_SCOPE).length).toBe(28);
   });
 
   test('embed remains global (the headline brain-wide phase)', () => {

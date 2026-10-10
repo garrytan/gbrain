@@ -17,14 +17,14 @@
  * returns before startup side effects, strict argument checks and engine
  * access.
  */
-export const PAGES_SUBCOMMANDS = ['purge-deleted'] as const;
+export const PAGES_SUBCOMMANDS = ['purge-deleted', 'purges', 'unpurge'] as const;
 export const CACHE_SUBCOMMANDS = ['stats', 'clear', 'prune'] as const;
 export const INTEGRITY_SUBCOMMANDS = ['check', 'auto', 'review', 'reset-progress'] as const;
 export const HOOK_SUBCOMMANDS = ['session-start', 'user-prompt', 'stop', 'session-end', 'compact'] as const;
 export const SEARCH_SUBCOMMANDS = ['modes', 'stats', 'tune', 'diagnose'] as const;
 export const EDGE_PROPOSALS_SUBCOMMANDS = ['list', 'show', 'accept', 'reject', 'undo', 'date'] as const;
 export const CONFIG_SUBCOMMANDS = ['show', 'get', 'set', 'unset'] as const;
-export const QUARANTINE_SUBCOMMANDS = ['list', 'clear', 'scan'] as const;
+export const QUARANTINE_SUBCOMMANDS = ['list', 'clear', 'scan', 'release', 'drop'] as const;
 export const SCHEMA_SUBCOMMANDS = [
   'active', 'list', 'show', 'validate', 'use', 'detect', 'suggest', 'review-candidates', 'init', 'fork', 'edit',
   'diff', 'graph', 'lint', 'explain', 'review-orphans', 'downgrade', 'usage', 'stats', 'cardinality-preview',

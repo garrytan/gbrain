@@ -28,6 +28,7 @@ import {
 import { scheduleCheckpointHarvest, type HarvestAck } from '../core/context/checkpoint-harvest.ts';
 import { parseWbFileName } from '../core/context/corpus-segments.ts';
 import { loadCoreBlock } from '../core/core-memory.ts';
+import { coreTrustIdentity } from '../core/context/openclaw-core.ts';
 import type { TurnContextResult } from '../core/context/turn-context.ts';
 
 /** Tighter entity-card fan-out on the PUSH path (eng 4A): the server budget
@@ -75,10 +76,15 @@ export function makeContextPackIpcHandler(
     // array is a CONFIRMED empty manifest and settles the poll.
     const sessionSource = typeof req.sourceId === 'string' && req.sourceId.trim() ? req.sourceId : defaultSource;
     if (req.coreOnly === true) {
-      const core = await coreForSession(engine, sessionSource);
+      // #5575 ENG-11: the trust identity is read before the core content; a
+      // client memo whose identity still matches is revalidated without assembly.
+      const identity = await coreTrustIdentity(engine);
       // The OpenClaw lane reads the pressure gate on the same fetch; it checks remember's availability itself.
       const pressure = await readPressureGate(engine, true).catch(() => null);
-      return { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(core ? { core } : {}), ...(pressure ? { pressure } : {}) };
+      const base = { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(pressure ? { pressure } : {}) };
+      if (identity !== null && identity === req.coreIdentity) return { ...base, coreTrust: { identity, unchanged: true } };
+      const core = await coreForSession(engine, sessionSource);
+      return { ...base, ...(core ? { core } : {}), ...(core && identity !== null ? { coreTrust: { identity, unchanged: false } } : {}) };
     }
     if (req.manifestOnly === true) {
       const links = sessionId

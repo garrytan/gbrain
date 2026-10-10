@@ -406,6 +406,8 @@ export async function buildRelationalArm(
       excludePrivate: opts.excludePrivate,
       requireSafeChunks: opts.requireSafeChunks,
       takesHoldersAllowList: opts.takesHoldersAllowList,
+      minTrust: opts.minTrust,
+      suppressFlagged: opts.suppressFlagged,
       linkTypes: parsed.linkTypes,
       direction: parsed.direction,
       depth: opts.depth,

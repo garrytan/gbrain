@@ -35,7 +35,7 @@ import { serializeMarkdown } from '../src/core/markdown.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { callRemoteTool, unpackToolResult, _clearMcpClientTokenCache } from '../src/core/mcp-client.ts';
 import { resetStrictParamsModeCache } from '../src/mcp/validate-params.ts';
-import { formatResult } from '../src/cli.ts';
+import { formatResult } from '../src/cli/main.ts';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
 import { withEnv } from './helpers/with-env.ts';
 

@@ -42,6 +42,7 @@ export const ARTIFACTS: Artifact[] = [
   { name: 'error-code registry docs', regen: ['bun', 'scripts/build-error-codes.ts'], check: ['bun', 'scripts/build-error-codes.ts', '--check'] },
   { name: 'agent operator protocol blocks', regen: ['bun', 'scripts/build-agent-protocol.ts'], check: ['bun', 'scripts/build-agent-protocol.ts', '--check'] },
   { name: 'harness adapter reference', regen: ['bun', 'run', 'scripts/build-harness-docs.ts'], check: ['bun', '-e', HARNESS_DOCS_CHECK] },
+  { name: 'operation manifest', regen: ['bun', 'run', 'scripts/build-operation-manifest.ts'], check: [...BUN_TEST, 'test/operation-manifest.test.ts'] },
   { name: 'MCP tool catalog', regen: ['bun', 'run', 'scripts/generate-tool-catalog.ts'], check: ['bash', 'scripts/check-tool-catalog-fresh.sh'] },
   { name: 'skills manifest', regen: ['bun', 'run', 'scripts/generate-skills-manifest.ts'], check: ['bash', 'scripts/check-skills-manifest-fresh.sh'] },
   { name: 'eval metric glossary', regen: ['bun', 'run', 'scripts/generate-metric-glossary.ts'], check: ['bash', 'scripts/check-eval-glossary-fresh.sh'] },

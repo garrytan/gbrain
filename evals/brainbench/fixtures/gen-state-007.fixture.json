@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-state-007",
+  "suites": [
+    "state-resolution"
+  ],
+  "category": "state-resolution",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/stellan-frostholm",
+      "content": "---\ntitle: Stellan Frostholm\ntype: person\naliases: [stellan]\n---\n\n# Stellan Frostholm\n\nStellan Frostholm is the founder of Umbergale Labs.\n\n## Facts\n\n<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n| 1 | Stellan Frostholm is the COO of Umbergale Labs | fact | 1.0 | world | medium | 2026-01-01 |  | owner |  |\n<!--- gbrain:facts:end -->\n"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "forget",
+      "target": "s1",
+      "target_claim": "Stellan Frostholm is the COO of Umbergale Labs"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "Where is Stellan Frostholm now and what is their role?"
+    }
+  ]
+}

@@ -50,7 +50,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { Extension } from '@electric-sql/pglite';
+import { PGlite, type Extension } from '@electric-sql/pglite';
 
 /** The five on-disk asset paths PGLite's runtime needs, however they were found. */
 export interface PgliteAssetPaths {
@@ -159,7 +159,28 @@ export interface EmbeddedPgliteOptions {
   initdbWasmModule: WebAssembly.Module;
   fsBundle: Blob;
   extensions: { vector: Extension; pg_trgm: Extension };
+  startParams: string[];
 }
+
+/**
+ * Backend start parameters, appended to PGLite's defaults. PGLite is one
+ * backend with no worker processes, yet a CREATE INDEX still plans parallel
+ * workers from max_parallel_maintenance_workers, and pgvector's HNSW build
+ * then reserves maintenance_work_mem as a shared area up front inside the
+ * 2 GiB WASM heap that no worker ever uses. And WAL a single statement writes
+ * past the automatic checkpoint trigger (max_wal_size / 1.9) wedges PGLite
+ * (see pglite-engine/checkpoint-guard.ts, which checkpoints between
+ * statements): an HNSW build WAL-logs its whole index in one statement, about
+ * 2 GB at 250k 1024-dim chunks, past the 1 GB default's 539 MB trigger. 8 GB
+ * puts the trigger at 4.3 GB, above the largest index the heap can build
+ * (vector-index.ts PGLITE_HNSW_GRAPH_BUDGET_BYTES); the guard still
+ * checkpoints at 256 MB between statements.
+ */
+export const PGLITE_START_PARAMS = [
+  ...PGlite.defaultStartParams,
+  '-c', 'max_parallel_maintenance_workers=0',
+  '-c', 'max_wal_size=8GB',
+];
 
 let cached: Promise<EmbeddedPgliteOptions> | null = null;
 
@@ -210,7 +231,7 @@ async function build(): Promise<EmbeddedPgliteOptions> {
     setup: async () => ({ bundlePath: pgTrgmBundle }),
   };
 
-  return { pgliteWasmModule, initdbWasmModule, fsBundle, extensions: { vector, pg_trgm } };
+  return { pgliteWasmModule, initdbWasmModule, fsBundle, extensions: { vector, pg_trgm }, startParams: PGLITE_START_PARAMS };
 }
 
 /**

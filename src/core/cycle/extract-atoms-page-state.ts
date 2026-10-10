@@ -111,7 +111,8 @@ export async function transferLegacyAtomPageState(engine: SqlEngine, before: Pag
     for (const key of LEGACY_KEYS) delete frontmatter[key];
     return { sourceId: snapshot.page.source_id, slug: snapshot.page.slug, type: snapshot.page.type,
       title: snapshot.page.title, body: snapshot.page.compiled_truth,
-      timeline: snapshot.page.timeline, frontmatter, tags: [...snapshot.tags].sort(), withdrawals: snapshot.withdrawals };
+      timeline: snapshot.page.timeline, frontmatter, tags: [...snapshot.tags].sort(), withdrawals: snapshot.withdrawals,
+      global_purges: snapshot.globalPurges ?? null };
   };
   if (stableJson(canonical(before)) !== stableJson(canonical(after))) return false;
   const [existing] = await engine.executeRaw<{ fail_count: number; tombstoned: boolean }>(

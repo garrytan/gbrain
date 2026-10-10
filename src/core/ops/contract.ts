@@ -18,6 +18,7 @@ import { publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from '../p
 import type { Action, Notice } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import type { WriteAuthority } from '../persistence/model.ts';
+import type { TrustTier } from '../trust/tier.ts';
 import type { StdioSurfaceState } from '../../mcp/surface.ts';
 
 /** Agent contract v1: the wire renderer for `fix`/`notices` in toJSON(), registered by agent-output.ts on load. */
@@ -377,6 +378,14 @@ export interface AuthInfo {
    * projection degraded, or the brain predates migration v127.
    */
   surface?: string;
+  /**
+   * #5575 (CEO-18): the token's read floor (`oauth_clients.min_trust` /
+   * `access_tokens.min_trust`), set only by the local CLI (`gbrain auth create
+   * --min-trust`, `gbrain auth set-min-trust`). Every read op applies
+   * max(this floor, the caller's `min_trust` param), so a client can raise it
+   * but never lower it. Undefined = no floor (or a brain before the column).
+   */
+  minTrust?: TrustTier;
   /** Current transport ceiling applied to this authenticated request. */
   effectiveSurface?: 'verbs' | 'starter' | 'full';
   /**
@@ -782,6 +791,14 @@ export interface Operation {
     hidden?: boolean;
   };
 }
+
+/**
+ * Everything about an operation except its handler: the data tools/list,
+ * surface filtering, publish gates and CLI arg parsing read. Checked in as
+ * src/core/operation-manifest.generated.ts so `gbrain serve` and the CLI
+ * dispatcher can answer without loading every handler module.
+ */
+export type OperationMeta = Omit<Operation, 'handler'>;
 
 /**
  * An op that declares its own `source` param (timeline-add, ontology-add,

@@ -4,7 +4,11 @@
  * prior-aware `renumber` across body and timeline. Of two rows sharing a
  * number, the one matching the stored row keeps it; otherwise a row in a
  * fence that parses clean keeps it (Invariant 0), and the first occurrence
- * only breaks the remaining tie.
+ * only breaks the remaining tie. A `superseded by #N` reference that names a
+ * shared number is ambiguous, except inside a fence `merge_fences` built
+ * (#6377): there it names its own before-fence's row N and follows that
+ * row's new number (or the number of the kept row a dropped duplicate N
+ * equalled).
  *
  * Cells are edited in place by source span; a row is re-rendered only when
  * its header is rewritten, and then every cell keeps its source text and only
@@ -14,6 +18,7 @@
 import { parseFactsFence } from '../facts-fence.ts';
 import { stripStrikethrough } from '../fence-shared.ts';
 import { parseTakesFence } from '../takes-fence.ts';
+import type { MergeOrigins } from './merge.ts';
 import { planRowRules, type CellText, type RowPlan } from './rules.ts';
 import { extractRawRows, rowNumOf, type RawFence, type RawRow, type RawSection } from './raw-rows.ts';
 import { ALLOWED, BASE_WIDTH, canonicalColumn, CANONICAL_HEADER, collapse, COLUMN_DEFAULTS, COLUMNS, supersededRef } from './schema.ts';
@@ -43,7 +48,11 @@ interface RowWork {
   needsNumber: boolean;
   /** The row's fence parses with no warning (Invariant 0 prefers to leave it alone). */
   clean: boolean;
+  /** Index of the before fence the row came from, when `merge_fences` built its fence; null otherwise. */
+  origin: number | null;
   newNum?: number;
+  /** The `superseded by #N` reference the row carries now names this number. */
+  refTo?: number;
 }
 
 interface FenceWork {
@@ -60,6 +69,7 @@ interface Pass {
   works: FenceWork[];
   /** All rows of each kind in page order (body first), workable or not. */
   rows: Record<FenceKind, RowWork[]>;
+  merges: readonly MergeOrigins[];
   /** Next number to hand out; one counter for both kinds, so no new number repeats on the page. */
   next: number | null;
   nextNumber: () => number;
@@ -68,8 +78,8 @@ interface Pass {
 const REPORTED: ReadonlySet<FenceReason> = new Set(['row_before_header', 'no_header', 'short_row', 'extra_cells']);
 
 /** Plan and apply the content rules; `nextNumber` is called only when a row needs a new number. */
-export function contentPass(texts: Record<FenceSection, string>, ctx: FenceCtx, nextNumber: () => number): ContentResult {
-  const pass: Pass = { ctx, fixes: [], residual: [], edits: { body: [], timeline: [] }, works: [], rows: { facts: [], takes: [] }, next: null, nextNumber };
+export function contentPass(texts: Record<FenceSection, string>, ctx: FenceCtx, nextNumber: () => number, merges: readonly MergeOrigins[] = []): ContentResult {
+  const pass: Pass = { ctx, fixes: [], residual: [], edits: { body: [], timeline: [] }, works: [], rows: { facts: [], takes: [] }, next: null, nextNumber, merges };
   for (const section of ['body', 'timeline'] as const) planSection(pass, extractRawRows(texts[section], section));
   for (const kind of ['facts', 'takes'] as const) renumber(pass, kind);
   for (const work of pass.works) emitFence(pass, work);
@@ -95,7 +105,8 @@ function planSection(pass: Pass, raw: RawSection): void {
     if (balanced) pass.residual.push(...fence.issues.filter(i => REPORTED.has(i.reason)), ...headerlessIssues(fence));
     const rewrite = workable && fence.needsRewrite ? planRewrite(fence) : null;
     const clean = (fence.kind === 'facts' ? parseFactsFence(raw.text) : parseTakesFence(raw.text)).warnings.length === 0;
-    const rows = fence.rows.map(row => rowWork(pass, fence, row, workable, clean));
+    const merged = mergeOf(pass, fence);
+    const rows = fence.rows.map(row => rowWork(pass, fence, row, workable, clean, merged?.origins[row.occurrence] ?? null));
     pass.rows[fence.kind].push(...rows);
     if (workable) pass.works.push({ fence, rewrite, rows });
   }
@@ -143,13 +154,17 @@ function planRewrite(fence: RawFence): Rewrite {
   return { target, defaults };
 }
 
-function rowWork(pass: Pass, fence: RawFence, row: RawRow, workable: boolean, clean: boolean): RowWork {
+function mergeOf(pass: Pass, fence: RawFence): MergeOrigins | undefined {
+  return pass.merges.find(m => m.section === fence.section && m.kind === fence.kind);
+}
+
+function rowWork(pass: Pass, fence: RawFence, row: RawRow, workable: boolean, clean: boolean, origin: number | null): RowWork {
   const num = rowNumOf(fence, row);
   const aligned = workable && !row.beforeHeader && row.shape === 'ok';
   const plan = aligned ? planRowRules(fence.kind, cellTexts(row), pass.ctx) : null;
   const hidden = num !== null && (pass.ctx.hiddenRows?.has(num) ?? false);
   const minted = aligned && !fence.columns.includes('#') && fence.needsRewrite;
-  return { fence, row, num, plan, eligible: aligned && !hidden, needsNumber: minted || (plan?.badNumber ?? false), clean };
+  return { fence, row, num, plan, eligible: aligned && !hidden, needsNumber: minted || (plan?.badNumber ?? false), clean, origin };
 }
 
 function cellTexts(row: RawRow): Map<string, CellText> {
@@ -161,12 +176,26 @@ function claimKey(row: RawRow): string {
   return collapse(stripStrikethrough(row.byColumn.get('claim')?.text ?? '').text);
 }
 
+const REF_COLUMN: Record<FenceKind, string> = { facts: 'context', takes: 'source' };
+
+function refOf(kind: FenceKind, w: RowWork): number | null {
+  return supersededRef(w.row.byColumn.get(REF_COLUMN[kind])?.text ?? '');
+}
+
 function renumber(pass: Pass, kind: FenceKind): void {
   const rows = pass.rows[kind];
-  const refColumn = kind === 'facts' ? 'context' : 'source';
-  const refs = new Set(rows.map(w => supersededRef(w.row.byColumn.get(refColumn)?.text ?? '')).filter(n => n !== null));
+  // A reference from outside a merged fence makes any shared number it names ambiguous; a merged row's reference is resolved to its own before fence below.
+  const refs = new Set(rows.filter(w => w.origin === null).map(w => refOf(kind, w)).filter(n => n !== null));
   const groups = new Map<number, RowWork[]>();
   for (const w of rows) if (w.num !== null) groups.set(w.num, [...(groups.get(w.num) ?? []), w]);
+  const targets = new Map<RowWork, RowWork>();
+  for (const w of rows) {
+    const num = w.origin === null ? null : refOf(kind, w);
+    if (num === null) continue;
+    const target = localTarget(pass, kind, w, num, groups);
+    if (target === 'ambiguous') pass.residual.push(issueAt(w.fence, 'superseded_ambiguous', w.row.line, num, '#'));
+    else if (target) targets.set(w, target);
+  }
   for (const [num, group] of groups) {
     if (group.length < 2) continue;
     if (refs.has(num)) {
@@ -187,6 +216,40 @@ function renumber(pass: Pass, kind: FenceKind): void {
     pass.next ??= pass.nextNumber();
     w.newNum = pass.next++;
   }
+  for (const [w, target] of targets) {
+    const final = finalNum(target);
+    if (final === null || final === refOf(kind, w)) continue;
+    if (!w.plan) {
+      pass.residual.push(issueAt(w.fence, 'superseded_ambiguous', w.row.line, refOf(kind, w), '#'));
+      continue;
+    }
+    w.refTo = final;
+  }
+}
+
+/**
+ * The row a merged row's `superseded by #N` names: the one row numbered N of
+ * its own before fence, or the kept row a dropped duplicate numbered N of
+ * that fence equalled. With neither, N must not be a shared number.
+ */
+function localTarget(pass: Pass, kind: FenceKind, w: RowWork, num: number, groups: ReadonlyMap<number, RowWork[]>): RowWork | 'ambiguous' | null {
+  const merged = mergeOf(pass, w.fence)!;
+  const section = pass.rows[kind].filter(r => r.fence.section === w.fence.section);
+  const own = section.filter(r => r.origin === w.origin && r.num === num);
+  const dropped = merged.dropped.filter(d => d.fence === w.origin && d.num === num).map(d => section[d.keptOccurrence]!);
+  const candidates = [...own, ...dropped];
+  if (candidates.length > 1) return 'ambiguous';
+  if (candidates.length === 1) return candidates[0]!;
+  return (groups.get(num)?.length ?? 0) > 1 ? 'ambiguous' : null;
+}
+
+/** The reference cell rewritten to the row's new number, on top of any rule change to the same cell. */
+function refEdit(w: RowWork, kind: FenceKind): void {
+  const column = REF_COLUMN[kind];
+  const change = w.plan!.changes.find(c => c.column === column);
+  const raw = (change?.raw ?? w.row.byColumn.get(column)?.raw ?? '').replace(/(superseded by #)\d+/i, `$1${w.refTo}`);
+  if (change) change.raw = raw;
+  else w.plan!.changes.push({ column, raw, class: 'renumber' });
 }
 
 /** The number the row was written with (`0` and negatives included), or null when the cell is not numeric or absent. */
@@ -208,8 +271,13 @@ function emitFence(pass: Pass, work: FenceWork): void {
     if (w.newNum !== undefined) {
       pass.fixes.push({ fence: fence.kind, section: fence.section, row, column: '#', line: w.row.line, class: 'renumber', from: writtenNum(w.row) });
     }
+    if (w.refTo !== undefined) {
+      refEdit(w, fence.kind);
+      pass.fixes.push({ fence: fence.kind, section: fence.section, row, column: REF_COLUMN[fence.kind], line: w.row.line, class: 'renumber' });
+    }
     for (const change of w.plan.changes) {
       if (change.column === 'context' && change.class === 'kind_map') continue;
+      if (change.column === REF_COLUMN[fence.kind] && change.class === 'renumber') continue;
       pass.fixes.push({ fence: fence.kind, section: fence.section, row, column: change.column, line: w.row.line, class: change.class });
     }
     for (const i of w.plan.issues) pass.residual.push(issueAt(fence, i.reason, w.row.line, row, i.column, i.allowed));

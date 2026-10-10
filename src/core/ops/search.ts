@@ -31,7 +31,7 @@ import { redactRetrievalOutput } from '../search/output-redaction.ts';
 import { projectRows, resultRowsFor } from '../search/lean-rows.ts';
 import { buildScoreDetails } from '../search/explain-formatter.ts';
 import { TargetTrace, diagnoseProbe, diagnoseTrace, probeTarget, type ExplainTargetDiagnosis } from '../search/explain-target.ts';
-import { assembleEvidenceForHits, capDeliveredSnippets, deliverEvidence, effectivePlan, resolveEvidencePlan, unsupportedDelivery, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
+import { assembleEvidenceForHits, capDeliveredSnippets, capEvidenceToBudget, deliverEvidence, effectivePlan, resolveEvidencePlan, unsupportedDelivery, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
@@ -43,6 +43,10 @@ import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION } from '../operations-description
 import { declaredNames, titleName } from '../mentions/aliases.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
+import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
+import { stampPageTrust } from '../eligibility/stamp.ts';
+import type { TrustTier } from '../trust/tier.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import {
@@ -74,7 +78,14 @@ async function resolveEffectiveLimit(ctx: OperationContext, p: Record<string, un
 
 // --- Search ---
 
-type SourceScope = { sourceId?: string; sourceIds?: string[] };
+type SourceScope = { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier };
+
+/** The caller's source scope plus its effective read floor (#5575: token floor, `min_trust`, read policy). */
+async function trustedSearchScope(ctx: OperationContext, p: Record<string, unknown>, sourceIdParam: string | undefined): Promise<SourceScope> {
+  const scope = federatedSearchScope(ctx, sourceIdParam);
+  const { floor } = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
+  return floor ? { ...scope, minTrust: floor } : scope;
+}
 
 /**
  * The returned rows: redacted, snippet-capped, then projected to the caller's
@@ -98,7 +109,9 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   // otherwise the blocks are returned whole (their budget already bounds
   // them). The cap runs before the meta is emitted so it can report itself.
   const output = redactRetrievalOutput(results, { ...meta, delivery: evidence.delivery, ...shown });
-  const capped = evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : output.results;
+  // An explicit budget's cap holds at this final boundary too (snippet
+  // markers and redaction recounted); without one both are no-ops.
+  const capped = evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : capEvidenceToBudget(output.results, output.meta.delivery);
   ctx.emitResponseMeta?.('retrieval', output.meta);
   return projectRows(capped, rows);
 }
@@ -157,6 +170,7 @@ async function withEvidence(ctx: OperationContext, p: Record<string, unknown>, r
 async function evidenceOutput(ctx: OperationContext, p: Record<string, unknown>, results: SearchResult[], plan: EvidencePlan | null, scope: DeliveryScope,
   meta: HybridSearchMeta | null, snippetCap: number, buildMeta: (rows: SearchResult[]) => Promise<Record<string, unknown>>): Promise<SearchResult[]> {
   const ev = await withEvidence(ctx, p, results, plan, scope, meta);
+  ev.rows = await stampPageTrust(ctx.engine, ev.rows, scope.minTrust);
   return searchOutput(ctx, p, ev.rows, await buildMeta(ev.rows), snippetCap, ev.evidence);
 }
 
@@ -343,7 +357,8 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
   if (terms.length === 0 || !ctx.emitResponseMeta) return [];
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'];
   const remote = ctx.remote !== false;
-  const visibility = remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : '';
+  const visibility = `${remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : ''}
+         AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   try {
     // Most searches have no saved fact to find: one indexed probe (idx_facts_since) with the
     // same active-fact and visibility predicates skips the LIKE ANY scan when no fact qualifies.
@@ -642,6 +657,7 @@ const search: Operation = {
     salience: SALIENCE_PARAM,
     recency: RECENCY_PARAM,
     fields: FIELDS_PARAM,
+    min_trust: MIN_TRUST_PARAM,
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -659,7 +675,7 @@ const search: Operation = {
     // — out-of-grant ids throw permission_denied, and #2561's unqualified
     // trusted-local federated span is unchanged.
     const sourceIdParam = parseSourceIdParam(p.source_id, 'search', { allowAll: true });
-    const scope = federatedSearchScope(ctx, sourceIdParam);
+    const scope = await trustedSearchScope(ctx, p, sourceIdParam);
     // #4620: an explicit source_id must name a live source (after the grant check).
     await assertExplicitSourceLive(ctx, sourceIdParam);
     // #4352 — untrusted callers never see `visibility: private` pages
@@ -806,6 +822,7 @@ const query: Operation = {
     adaptive_return: { type: 'boolean', description: 'true when one answer is wanted (fewer rows; never returns empty); omit for breadth.' },
     autocut: { type: 'boolean', description: 'Default on (never returns empty); false gives full top-K for breadth, unlike adaptive_return.' },
     relational: { type: 'boolean', description: 'Relationship-graph arm (default on).' },
+    min_trust: MIN_TRUST_PARAM,
     ...EXPLAIN_PARAMS,
   },
   handler: async (ctx, p) => {
@@ -834,7 +851,7 @@ const query: Operation = {
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
     // #2561: unqualified trusted-local query spans federated sources (per-call
     // source_id / remote grants still resolve through resolveRequestedScope).
-    const querySourceScope = federatedSearchScope(ctx, sourceIdParam);
+    const querySourceScope = await trustedSearchScope(ctx, p, sourceIdParam);
     // #4620: an explicit source_id must name a live source (after the grant check).
     await assertExplicitSourceLive(ctx, sourceIdParam);
     // #4352 — same enforcement for the full-control query op (both the image
@@ -883,8 +900,9 @@ const query: Operation = {
         },
       })).map(r => ({ ...r }));
       stampDeepResearchIds(results);
-      imageMeta.retrieved_count = results.length;
-      return searchOutput(ctx, p, results, { ...await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', results, imageMeta, { types }), ...(plan && (plan.unit !== 'auto' || plan.explicitUnit) ? { delivery: unsupportedDelivery(plan, 'image_query_unsupported') } : {}) }, snippetCap);
+      const labeled = await stampPageTrust(ctx.engine, results, querySourceScope.minTrust);
+      imageMeta.retrieved_count = labeled.length;
+      return searchOutput(ctx, p, labeled, { ...await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', labeled, imageMeta, { types }), ...(plan && (plan.unit !== 'auto' || plan.explicitUnit) ? { delivery: unsupportedDelivery(plan, 'image_query_unsupported') } : {}) }, snippetCap);
     }
 
     if (!queryText) {
@@ -1164,6 +1182,7 @@ const assemble_evidence: Operation = {
     return_window: RETURN_WINDOW_PARAM,
     token_budget: { type: 'number', description: 'Token budget for the delivered evidence (default search.return_budget_default = 6000, auto search.return_budget_conversation = 24000; remote max 32000).' },
     detail: { type: 'string', enum: ['low', 'medium', 'high'], description: "As query: 'low' delivers compiled truth only (no timeline text)." },
+    min_trust: MIN_TRUST_PARAM,
   },
   scope: 'read', mutating: false,
   annotations: { title: 'assemble evidence', readOnlyHint: true },
@@ -1175,7 +1194,7 @@ const assemble_evidence: Operation = {
       throw invalidParam(ctx, 'assemble_evidence', 'hits', 'hits must be an array of { source_id: string, slug: string, chunk_id: integer }.',
         { def: assemble_evidence.params.hits, example: [{ source_id: 'default', slug: 'chat/session-0412', chunk_id: 8812 }] });
     }
-    const scope = federatedSearchScope(ctx);
+    const scope = await trustedSearchScope(ctx, p, undefined);
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
     const out = await assembleEvidenceForHits(ctx.engine, {
       hits: hits as FrozenHit[],
@@ -1185,7 +1204,7 @@ const assemble_evidence: Operation = {
       detail: p.detail as 'low' | 'medium' | 'high' | undefined,
       caller: { remote: ctx.remote !== false, ...scope, excludePrivate },
     });
-    return out;
+    return { ...out, results: await stampPageTrust(ctx.engine, out.results, scope.minTrust) };
   },
 };
 

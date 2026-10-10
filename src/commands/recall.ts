@@ -14,7 +14,8 @@
  *   gbrain recall --as-context              # prompt-injection-ready markdown
  *   gbrain recall --json                    # structured output
  *
- *   gbrain forget <fact-id>                  # shorthand for expireFact
+ *   gbrain forget <fact-id>                  # durable withdrawal (forget_fact / forget verb)
+ *   gbrain forget <fact-id> --purge          # owner-only purge (src/commands/forget-purge.ts)
  *
  * v0.32 additions (this file):
  *   --since-last-run            # read+advance ~/.gbrain/recall-cursors/<src>.json
@@ -826,6 +827,8 @@ function factRowToJson(r: FactRow): Record<string, unknown> {
 }
 
 export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine>), args: string[]): Promise<void> {
+  const purge = await import('./forget-purge.ts');
+  if (purge.routesToForgetPurge(args)) return purge.runForgetPurge(engine, args);
   const idArg = args.find(a => /^\d+$/.test(a));
   if (!idArg) {
     process.stderr.write('Usage: gbrain forget <fact-id> [--reason <text>] [--source <id>] [--request-id <uuid>] [--json]\n');

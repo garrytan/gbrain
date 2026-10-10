@@ -18,6 +18,8 @@ import { sha256 } from './digest.ts';
 import { assertPersistenceAccepting, estimatedRetryAfterMs, waiterOnlyOwner, onPersistenceLane, waitForWrite, writeResponse } from './service.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
 import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type TimelineSection } from './timeline-omission.ts';
+import { contentOriginTier } from '../trust/tier.ts';
+import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
 import { currentVerifiedLocalWriter, localHostId, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
@@ -54,8 +56,9 @@ const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 /**
  * Pre-admission reads every page of one batch makes with the same arguments:
  * the source row, the worktree binding, the writer registration, the shared
- * skillpack roots, the persistence identity and config values. All of them
- * are rechecked under lock by the admission transaction.
+ * skillpack roots, the persistence identity and config values, and a managed
+ * import's source-root and company-profile checks. All of them are rechecked
+ * under lock by the admission transaction or by publication.
  */
 const BATCH_SHARED_READS = new Set([
   "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1",
@@ -64,8 +67,21 @@ const BATCH_SHARED_READS = new Set([
   'SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid',
   'SELECT brain_id FROM persistence_brain WHERE singleton=1',
   'SELECT value FROM config WHERE key=$1',
+  "SELECT config,incarnation FROM sources WHERE id=$1",
+  "SELECT id FROM source_ingestion_receipts WHERE source_id=$1 AND source_incarnation=$2::uuid AND profile='company-brain' LIMIT 1",
+  'SELECT s.id,s.local_path,h.local_path AS worktree_path,b.relative_path FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid WHERE NOT s.archived',
 ]);
-function batchSharedReads(engine: BrainEngine): BrainEngine {
+/**
+ * A managed import's no-op screen (import-mutations.ts) only decides that a
+ * file is skipped; a file it does not skip is admitted and rechecked under
+ * lock. It also answers the local writer's credential check and the shared
+ * skill pack roots once per batch.
+ */
+export const SCREENING_SHARED_READS: ReadonlySet<string> = new Set([
+  'SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid',
+  'SELECT p.source_id,p.source_incarnation,s.local_path AS source_root, h.local_path AS worktree_root,b.relative_path FROM shared_skill_packs p JOIN sources s ON s.id=p.source_id AND s.incarnation=p.source_incarnation LEFT JOIN persistence_source_bindings b ON b.source_id=p.source_id AND b.source_incarnation=p.source_incarnation LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid',
+]);
+export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string>): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
     let value = reads.get(id) as Promise<T> | undefined;
@@ -74,8 +90,9 @@ function batchSharedReads(engine: BrainEngine): BrainEngine {
   };
   return new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
-      BATCH_SHARED_READS.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
+      BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
+    if (key === 'getAllConfig' && extra) return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });
@@ -152,7 +169,7 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   return resolveSlugForPath(scannerSourcePath(canonicalRoot, join(canonicalRoot, capturePath), await scannerSlugRootMode(ctx.engine, sourceId, canonicalRoot)));
 }
 
-function pendingAwareResponse(ctx: OperationContext, row: WriteRequest): Record<string, unknown> {
+export function pendingAwareResponse(ctx: OperationContext, row: WriteRequest): Record<string, unknown> {
   try { return writeResponse(row, { retryAfterMs: estimatedRetryAfterMs(ctx.engine, 1), waiterOnlyOwner: waiterOnlyOwner(ctx.engine) }); } catch (error) {
     // #5929: a trusted local caller is told when an owner on another build ran the failed attempt.
     const mismatch = ctx.remote === false ? ownerBuildMismatch(row.error_detail, VERSION) : null;
@@ -188,7 +205,7 @@ export async function submitPageMutation(ctx: OperationContext,
   // cache could explain drops it and prepares the write once more, uncached, so it ends as it would without it.
   const cached = await preadmitReads(ctx.engine);
   let prepared = await preparePageAdmission(cached ? { ...ctx, engine: cached } : ctx, { ...input, params });
-  if (prepared.prior) return pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs()));
+  if (prepared.prior) return throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false);
   const brainId = cached ? cachedPreadmitBrain(ctx.engine) : undefined;
   // Phase 4.4: the admission transaction runs on the warm single-write lane when it is free.
   const admit = (admission: WriteAdmission) => onPersistenceLane(ctx.engine, transaction => admitWrite(ctx.engine, admission, undefined, transaction),
@@ -199,10 +216,10 @@ export async function submitPageMutation(ctx: OperationContext,
     if (!cached || !preadmitRecheckFailed(error)) throw error;
     dropPreadmitCache(ctx.engine);
     prepared = await preparePageAdmission(ctx, { ...input, params: { ...params, request_id: prepared.admission.requestId } });
-    if (prepared.prior) return pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs()));
+    if (prepared.prior) return throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false);
     row = await admit(prepared.admission);
   }
-  const response = pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs()));
+  const response = throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs())), false);
   emitFenceNotice(ctx, response, row.slug);
   return { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) };
 }
@@ -229,6 +246,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   }
   const { page_batch: _forged, timeline_section: _section, ...params } = input.params;
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
+  if (p.content_origin !== undefined) contentOriginTier(p.content_origin);
   if (input.batch) p.page_batch = { id: input.batch.id, index: input.batch.index, size: input.batch.size };
   const requestId = input.batch ? input.batch.requestId : typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = pageMutationSource(ctx, p, input.operation);

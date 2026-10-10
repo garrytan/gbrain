@@ -24,21 +24,29 @@ import { renderPagesBlock } from '../src/core/think/gather.ts';
 import { runThink } from '../src/core/think/index.ts';
 import { formatDeliverySummary, formatResultsExplain } from '../src/core/search/explain-formatter.ts';
 import {
+  AUTO_PACKINGS,
   conversationSignal,
   assembleEvidenceForHits,
+  capDeliveredSnippets,
+  capEngaged,
   countEvidenceTokens,
   deliverEvidence,
   deliveryVersionSkewWarning,
   EVIDENCE_BLOCK_CHAR_CAP,
+  EVIDENCE_CUT_MARKER,
   EVIDENCE_OMISSION,
   evidenceFingerprint,
   isConversationLabels,
   locateChunks,
+  MIN_EXPLICIT_AUTO_BUDGET,
   pageEvidenceText,
+  resolveEvidencePlan,
   splitPieces,
   TIMELINE_SEPARATOR,
+  type AutoPacking,
   type EvidencePlan,
 } from '../src/core/search/evidence-delivery.ts';
+import { searchConfigValueRefusal } from '../src/core/search/config-values.ts';
 
 function rng(seed: number): () => number {
   let a = seed >>> 0;
@@ -171,8 +179,14 @@ function hitFor(p: FakePage, index: number): SearchResult {
   };
 }
 
-function planOf(unit: EvidencePlan['unit'], budget: number, window = 1): EvidencePlan {
-  return { requestedUnit: unit, unit, window, budgetTokens: budget, explicitUnit: true };
+/**
+ * A plan as resolveEvidencePlan builds it. `budgetExplicit` defaults to false:
+ * the existing property and spill tests pin today's implied-budget path,
+ * which every packing must leave byte-identical; the explicit-budget cap has
+ * its own tests below (`capPlan`).
+ */
+function planOf(unit: EvidencePlan['unit'], budget: number, window = 1, extra: Partial<EvidencePlan> = {}): EvidencePlan {
+  return { requestedUnit: unit, unit, window, budgetTokens: budget, explicitUnit: true, budgetExplicit: false, packing: 'cap_only', ...extra };
 }
 
 function randomCorpus(r: () => number, pageCount: number): FakePage[] {
@@ -223,6 +237,9 @@ describe('allocation and boundary properties', () => {
     }
   });
 
+  // Pins the implied-budget path (planOf: budgetExplicit false), which the cap
+  // never touches: every chunk is kept and a session that cannot fit spills.
+  // "Explicit budget: ..." below is its twin under the cap.
   test('auto: conversation pages whole, every other hit its unchanged chunk, nothing lost, expansion within budget', async () => {
     const r = rng(20261001);
     let sawPage = 0;
@@ -269,6 +286,7 @@ describe('allocation and boundary properties', () => {
     expect(sawChunk).toBeGreaterThan(10);
   });
 
+  // Implied budget only: under an explicit budget nothing spills (twin below).
   test('auto gives lower-ranked sessions their matching span, and spills a session that cannot fit to its chunks', async () => {
     const pages = randomCorpus(rng(5), 12).filter(p => p.slug.startsWith('chat/')).slice(0, 3);
     expect(pages).toHaveLength(3);
@@ -387,6 +405,364 @@ describe('allocation and boundary properties', () => {
     expect(results).toHaveLength(1);
     expect(results[0].chunk_text).toContain(EVIDENCE_OMISSION);
     expect(results[0].delivered.match_spans.map(s => s.chunk_id)).toEqual([5001, 5000 + page.chunks.length - 2]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Explicit budgets under auto: the cap (search.auto_packing)
+// ---------------------------------------------------------------------------
+
+const CAP_PACKINGS = AUTO_PACKINGS.filter((x): x is Exclude<AutoPacking, 'off'> => x !== 'off');
+
+function capPlan(budget: number, packing: AutoPacking = 'cap_only', window = 1): EvidencePlan {
+  return planOf('auto', budget, window, { budgetExplicit: true, packing });
+}
+
+const recount = (rows: Array<{ title?: string; chunk_text: string }>) => rows.reduce((n, x) => n + countEvidenceTokens(x.title ?? '') + countEvidenceTokens(x.chunk_text), 0);
+
+/** A chat page of three one-line turns: return_window 1 around turn 1 covers the whole page. */
+function chatPage(id: number, words: number, title = `Chat ${id}`): FakePage {
+  const r = rng(1000 + id);
+  const turn = (who: string, k: number) => `**${who}:** ${Array.from({ length: words }, () => WORDS[Math.floor(r() * WORDS.length)]).join(' ')} turn ${id}-${k}.`;
+  const chunks = [turn('user', 0), turn('assistant', 1), turn('user', 2)];
+  return { page_id: id, slug: `chat/c${id}`, title, chunks };
+}
+
+function notePage(id: number, words: number, title = `Note ${id}`): FakePage {
+  const r = rng(2000 + id);
+  return { page_id: id, slug: `notes/n${id}`, title, chunks: [`${Array.from({ length: words }, () => WORDS[Math.floor(r() * WORDS.length)]).join(' ')} note ${id}.`] };
+}
+
+const whole = (p: FakePage) => countEvidenceTokens(p.title) + countEvidenceTokens(p.chunks.join('\n\n'));
+const floorOf = (p: FakePage, i = 1) => countEvidenceTokens(p.title) + countEvidenceTokens(p.chunks[i] + (i < p.chunks.length - 1 ? '\n' : ''));
+
+describe('explicit budget: the cap', () => {
+  test('without an explicit budget every packing is today\'s path, byte for byte (guard 1, structural)', async () => {
+    const r = rng(20261009);
+    let compared = 0;
+    for (let trial = 0; trial < 60; trial++) {
+      const pages = randomCorpus(r, 1 + Math.floor(r() * 8));
+      const hits: SearchResult[] = [];
+      for (let k = 0; k < 1 + Math.floor(r() * 25); k++) {
+        const p = pages[Math.floor(r() * pages.length)];
+        const h = hitFor(p, Math.floor(r() * p.chunks.length));
+        if (!hits.some(x => x.chunk_id === h.chunk_id)) hits.push(h);
+      }
+      const budget = [40, 200, 800, 3000, 24000][Math.floor(r() * 5)];
+      const today = JSON.stringify(await deliverEvidence(fakeEngine(pages), hits, planOf('auto', budget, 1, { packing: 'off' }), {}));
+      for (const packing of AUTO_PACKINGS) {
+        expect(capEngaged(planOf('auto', budget, 1, { packing }))).toBe(false);
+        expect(JSON.stringify(await deliverEvidence(fakeEngine(pages), hits, planOf('auto', budget, 1, { packing }), {}))).toBe(today);
+        compared++;
+      }
+      // An explicit budget with packing off is today's path too.
+      expect(JSON.stringify(await deliverEvidence(fakeEngine(pages), hits, capPlan(budget, 'off'), {}))).toBe(today);
+    }
+    expect(compared).toBe(240);
+  });
+
+  // Twin of the implied-budget property above: under the cap the recount of
+  // the final evidence fields never exceeds the budget, nothing spills, rank
+  // one is always delivered and every hit is delivered or counted as dropped.
+  test('explicit budget: the recount never exceeds the budget, nothing spills, rank one survives, every hit is accounted for', async () => {
+    const r = rng(20261010);
+    let cut = 0;
+    let droppedAny = 0;
+    for (let trial = 0; trial < 50; trial++) {
+      const pages = randomCorpus(r, 1 + Math.floor(r() * 10));
+      const hits: SearchResult[] = [];
+      for (let k = 0; k < 1 + Math.floor(r() * 25); k++) {
+        const p = pages[Math.floor(r() * pages.length)];
+        const h = hitFor(p, Math.floor(r() * p.chunks.length));
+        if (!hits.some(x => x.chunk_id === h.chunk_id)) hits.push(h);
+      }
+      const items = new Set(hits.map(h => h.slug.startsWith('chat/') ? `p${h.page_id}` : `c${h.chunk_id}`)).size;
+      for (const packing of CAP_PACKINGS) {
+        const budget = [MIN_EXPLICIT_AUTO_BUDGET, 40, 200, 800, 3000, 8000, 24000][Math.floor(r() * 7)];
+        const snapshot = JSON.stringify(hits);
+        const { results, delivery } = await deliverEvidence(fakeEngine(pages), hits, capPlan(budget, packing, 1 + Math.floor(r() * 3)), {});
+        const label = `trial ${trial} ${packing} @${budget}`;
+        expect(JSON.stringify(hits)).toBe(snapshot);
+        expect(recount(results), label).toBeLessThanOrEqual(budget);
+        expect(delivery.budget_used, label).toBe(recount(results));
+        expect(delivery.auto_packing).toBe(packing);
+        expect(results.length, label).toBeGreaterThan(0);
+        expect(results[0].delivered.chunk_ids, label).toContain(hits[0].chunk_id);
+        expect(results.length + delivery.dropped, label).toBe(items);
+        expect(results.some(x => x.delivered.reason === 'conversation_over_budget'), label).toBe(false);
+        const firstRank = (x: SearchResult) => Math.min(...x.delivered!.chunk_ids.map(id => hits.findIndex(h => h.chunk_id === id)));
+        expect(results.map(firstRank)).toEqual(results.map(firstRank).sort((a, b) => a - b));
+        for (const res of results) {
+          expect(res.chunk_text.length).toBeLessThanOrEqual(EVIDENCE_BLOCK_CHAR_CAP + EVIDENCE_CUT_MARKER.length);
+          for (const sp of res.delivered.match_spans) {
+            expect(sp.end).toBeLessThanOrEqual(res.chunk_text.length);
+            const anchor = hits.find(h => h.chunk_id === sp.chunk_id)!;
+            expect(norm(anchor.chunk_text)).toContain(norm(res.chunk_text.slice(sp.start, sp.end)));
+          }
+          if (res.chunk_text.endsWith(EVIDENCE_CUT_MARKER)) { cut++; expect(res.delivered.truncated).toBe(true); }
+        }
+        if (delivery.dropped > 0) droppedAny++;
+      }
+    }
+    expect(cut).toBeGreaterThan(5);
+    expect(droppedAny).toBeGreaterThan(20);
+  });
+
+  test('explicit budget: a session that cannot fit is dropped, never spilled outside the budget (twin of the spill test)', async () => {
+    const pages = randomCorpus(rng(5), 12).filter(p => p.slug.startsWith('chat/')).slice(0, 3);
+    const hits = pages.map(p => hitFor(p, Math.floor(p.chunks.length / 2)));
+    let budget = countEvidenceTokens(hits[0].chunk_text);
+    let tight = await deliverEvidence(fakeEngine(pages), hits, capPlan(budget), {});
+    while (tight.results[0].delivered.truncated) tight = await deliverEvidence(fakeEngine(pages), hits, capPlan(++budget), {});
+    expect(tight.results.map(x => x.slug)).toEqual([pages[0].slug]);
+    expect(tight.delivery.dropped_reasons).toEqual({ budget_floor: 2 });
+    expect(tight.delivery.budget_used).toBeLessThanOrEqual(budget);
+    const today = await deliverEvidence(fakeEngine(pages), hits, planOf('auto', budget), {});
+    expect(today.delivery.budget_used).toBeGreaterThan(budget);
+  });
+
+  test('mixed notes and chats: global rank one comes first, note or chat', async () => {
+    const [c1, c2] = [chatPage(1, 60), chatPage(2, 60)];
+    const n3 = notePage(3, 30);
+    const budget = floorOf(c1) + whole(n3) + 4;
+    for (const packing of CAP_PACKINGS) {
+      const noteFirst = await deliverEvidence(fakeEngine([c1, c2, n3]), [hitFor(n3, 0), hitFor(c1, 1), hitFor(c2, 1)], capPlan(budget, packing), {});
+      expect(noteFirst.results.map(x => x.slug), packing).toEqual(packing === 'breadth_capped' ? ['notes/n3'] : ['notes/n3', 'chat/c1']);
+      expect(noteFirst.results[0].delivered).toMatchObject({ unit: 'chunk', reason: 'not_conversation', truncated: false });
+      const chatFirst = await deliverEvidence(fakeEngine([c1, c2, n3]), [hitFor(c1, 1), hitFor(n3, 0), hitFor(c2, 1)], capPlan(budget, packing), {});
+      expect(chatFirst.results.map(x => x.slug), packing).toEqual(['chat/c1', 'notes/n3']);
+      expect(recount(chatFirst.results)).toBeLessThanOrEqual(budget);
+    }
+  });
+
+  test('a leading chat is never crowded out by a lower-ranked note that does not fit', async () => {
+    const c1 = chatPage(1, 40);
+    const big = notePage(2, 900);
+    const budget = whole(c1) + 10;
+    for (const packing of CAP_PACKINGS) {
+      const { results, delivery } = await deliverEvidence(fakeEngine([c1, big]), [hitFor(c1, 1), hitFor(big, 0)], capPlan(budget, packing), {});
+      expect(results.map(x => x.slug), packing).toEqual(['chat/c1']);
+      expect(results[0].delivered).toMatchObject({ unit: 'page', truncated: false });
+      expect(delivery.dropped_reasons).toEqual({ budget_note: 1 });
+    }
+    // Today's implied path pays the note first and spills the chat to its chunk.
+    const today = await deliverEvidence(fakeEngine([c1, big]), [hitFor(c1, 1), hitFor(big, 0)], planOf('auto', budget), {});
+    expect(today.results.map(x => x.delivered.reason)).toEqual(['conversation_over_budget', 'not_conversation']);
+  });
+
+  test('notes only, over budget: the rank-order prefix that fits is kept and the rest is listed', async () => {
+    const [a, b, c] = [notePage(1, 20), notePage(2, 400), notePage(3, 20)];
+    const budget = whole(a) + 40;
+    const { results, delivery } = await deliverEvidence(fakeEngine([a, b, c]), [hitFor(a, 0), hitFor(b, 0), hitFor(c, 0)], capPlan(budget), {});
+    expect(results.map(x => x.slug)).toEqual(['notes/n1']);
+    expect(results[0].chunk_text).toBe(a.chunks[0]);
+    expect(delivery.dropped_reasons).toEqual({ budget_note: 2 });
+    // Rank one longer than the budget is cut at a piece boundary with the counted marker, never empty.
+    const cut = await deliverEvidence(fakeEngine([b, a]), [hitFor(b, 0), hitFor(a, 0)], capPlan(60), {});
+    expect(cut.results).toHaveLength(1);
+    expect(cut.results[0].chunk_text.endsWith(EVIDENCE_CUT_MARKER)).toBe(true);
+    expect(cut.results[0].chunk_text.length).toBeGreaterThan(EVIDENCE_CUT_MARKER.length + 10);
+    expect(b.chunks[0].startsWith(cut.results[0].chunk_text.slice(0, -EVIDENCE_CUT_MARKER.length))).toBe(true);
+    expect(cut.results[0].delivered).toMatchObject({ truncated: true, match_spans: [{ start: 0, end: cut.results[0].chunk_text.length - EVIDENCE_CUT_MARKER.length }] });
+    expect(recount(cut.results)).toBeLessThanOrEqual(60);
+    expect(cut.delivery.dropped_reasons).toEqual({ budget_note: 1 });
+  });
+
+  test('rank one longer than the budget is cut to fit with a marker, never dropped, in every packing', async () => {
+    const big = chatPage(1, 400);
+    const other = chatPage(2, 40);
+    for (const packing of CAP_PACKINGS) {
+      for (const budget of [MIN_EXPLICIT_AUTO_BUDGET, 40, 100]) {
+        const { results, delivery } = await deliverEvidence(fakeEngine([big, other]), [hitFor(big, 1), hitFor(other, 1)], capPlan(budget, packing), {});
+        expect(results.map(x => x.slug)).toEqual(['chat/c1']);
+        expect(results[0].delivered.truncated).toBe(true);
+        expect(results[0].chunk_text.endsWith(EVIDENCE_CUT_MARKER)).toBe(true);
+        expect(results[0].chunk_text.length - EVIDENCE_CUT_MARKER.length).toBeGreaterThan(0);
+        expect(recount(results), `${packing} @${budget}`).toBeLessThanOrEqual(budget);
+        expect(delivery.dropped).toBe(1);
+      }
+    }
+  });
+
+  test('breadth_capped keeps the longest rank-order prefix whose title, floor and target window fit, then drops the rest as breadth_cap', async () => {
+    const pages = [chatPage(1, 50), chatPage(2, 50), chatPage(3, 50), chatPage(4, 50)];
+    const hits = pages.map(p => hitFor(p, 1));
+    // return_window 1 around turn 1 is the whole three-turn page, so each group's price is the whole page.
+    const budget = whole(pages[0]) + whole(pages[1]) + Math.floor(whole(pages[2]) / 2);
+    const { results, delivery } = await deliverEvidence(fakeEngine(pages), hits, capPlan(budget, 'breadth_capped'), {});
+    expect(results.map(x => x.slug)).toEqual(['chat/c1', 'chat/c2']);
+    for (const res of results) expect(res.delivered).toMatchObject({ unit: 'page', truncated: false });
+    expect(delivery.dropped_reasons).toEqual({ breadth_cap: 2 });
+    // cap_only on the same budget reserves every floor first, so the third session keeps its span.
+    const capOnly = await deliverEvidence(fakeEngine(pages), hits, capPlan(budget, 'cap_only'), {});
+    expect(capOnly.results.length).toBeGreaterThan(2);
+    // An oversized first group is cut, never skipped.
+    const tiny = await deliverEvidence(fakeEngine(pages), hits, capPlan(floorOf(pages[0]) - 5, 'breadth_capped'), {});
+    expect(tiny.results.map(x => x.slug)).toEqual(['chat/c1']);
+    expect(tiny.results[0].delivered.truncated).toBe(true);
+    expect(tiny.delivery.dropped_reasons).toEqual({ breadth_cap: 3 });
+    // A first group whose window does not fit keeps its floor (rank one), and the rest are breadth-capped.
+    const lead = await deliverEvidence(fakeEngine(pages), hits, capPlan(floorOf(pages[0]) + 6, 'breadth_capped'), {});
+    expect(lead.results.map(x => x.slug)).toEqual(['chat/c1']);
+    expect(lead.delivery.dropped_reasons).toEqual({ breadth_cap: 3 });
+  });
+
+  test('depth_first takes each session whole when it fits, else the largest window, else skips it', async () => {
+    const pages = [chatPage(1, 60), chatPage(2, 60), chatPage(3, 60)];
+    const hits = pages.map(p => hitFor(p, 1));
+    const budget = whole(pages[0]) + floorOf(pages[1]) + 2;
+    const depth = await deliverEvidence(fakeEngine(pages), hits, capPlan(budget, 'depth_first'), {});
+    expect(depth.results.map(x => x.slug)).toEqual(['chat/c1', 'chat/c2']);
+    expect(depth.results[0].delivered).toMatchObject({ unit: 'page', truncated: false });
+    expect(depth.results[1].delivered.truncated).toBe(true);
+    expect(depth.delivery.dropped_reasons).toEqual({ budget_floor: 1 });
+    // cap_only reserves all three floors before growing any session.
+    const capOnly = await deliverEvidence(fakeEngine(pages), hits, capPlan(budget, 'cap_only'), {});
+    expect(capOnly.results.map(x => x.slug)).toEqual(['chat/c1', 'chat/c2', 'chat/c3']);
+    expect(capOnly.results[0].delivered.truncated).toBe(true);
+    // Depth first: the leading session grows into what is left before the next one is considered.
+    const greedy = await deliverEvidence(fakeEngine([pages[0], pages[1]]), [hitFor(pages[0], 1), hitFor(pages[1], 1)], capPlan(floorOf(pages[0]) + floorOf(pages[1]) + 1, 'depth_first'), {});
+    expect(greedy.results.map(x => x.slug)).toEqual(['chat/c1']);
+    expect(greedy.delivery.dropped_reasons).toEqual({ budget_floor: 1 });
+    // A session whose matching chunk does not fit is skipped; a later one that fits is still taken.
+    const [big, small] = [chatPage(5, 400), chatPage(6, 10)];
+    const skip = await deliverEvidence(fakeEngine([pages[0], big, small]), [hitFor(pages[0], 1), hitFor(big, 1), hitFor(small, 1)], capPlan(whole(pages[0]) + whole(small) + 2, 'depth_first'), {});
+    expect(skip.results.map(x => x.slug)).toEqual(['chat/c1', 'chat/c6']);
+    expect(skip.results.map(x => x.delivered.truncated)).toEqual([false, false]);
+    expect(skip.delivery.dropped_reasons).toEqual({ budget_floor: 1 });
+  });
+
+  test('source swamp: a curated note survives chat dumps that repeat its phrase under a tight budget, in every packing', async () => {
+    const phrase = 'renewal window closes friday';
+    const dumps = [1, 2, 3, 4].map(id => {
+      const p = chatPage(id, 120);
+      return { ...p, chunks: p.chunks.map(c => `${c} ${phrase}.`) };
+    });
+    const note: FakePage = { page_id: 9, slug: 'notes/renewal-policy', title: 'Renewal policy', chunks: [`The ${phrase}; the owner signs it.`] };
+    const budget = floorOf(dumps[0]) + whole(note) + 20;
+    for (const packing of CAP_PACKINGS) {
+      for (let at = 0; at <= 4; at++) {
+        const hits = dumps.map(d => hitFor(d, 1));
+        hits.splice(at, 0, hitFor(note, 0));
+        const { results } = await deliverEvidence(fakeEngine([...dumps, note]), hits, capPlan(budget, packing), {});
+        expect(results.some(x => x.slug === 'notes/renewal-policy'), `${packing}, note at rank ${at}`).toBe(true);
+        expect(recount(results)).toBeLessThanOrEqual(budget);
+      }
+    }
+  });
+
+  test('zero conversation hits: within the budget the rows are the ranked chunks, unchanged', async () => {
+    const notes = [notePage(1, 20), notePage(2, 20)];
+    const hits = notes.map(n => hitFor(n, 0));
+    const engine = fakeEngine(notes);
+    const { results, delivery } = await deliverEvidence(engine, hits, capPlan(4000), {});
+    expect(engine.calls).toBe(0);
+    expect(results.map(({ delivered, ...row }) => row)).toEqual(hits);
+    expect(delivery).toMatchObject({ auto_packing: 'cap_only', dropped: 0, budget_used: recount(results) });
+  });
+
+  test('redaction that grows a row is recounted inside the budget', async () => {
+    const secret = ['AKIA', 'ABCDEFGHIJKLMNOP'].join('');
+    const note: FakePage = { page_id: 4, slug: 'notes/keys', title: 'Keys', chunks: [`The deploy key is ${secret} ${secret} ${secret} for staging and nothing else here at all.`] };
+    const budget = Math.max(MIN_EXPLICIT_AUTO_BUDGET, whole(note));
+    const { results, delivery } = await deliverEvidence(fakeEngine([note]), [hitFor(note, 0)], capPlan(budget), {});
+    expect(results[0].chunk_text).not.toContain(secret);
+    expect(results[0].chunk_text).toContain('<REDACTED:');
+    expect(delivery.fallbacks).toContain('redaction_unmapped');
+    expect(recount(results)).toBeLessThanOrEqual(budget);
+    expect(delivery.budget_used).toBe(recount(results));
+  });
+
+  test('the 60,000-character cap is reached before a large budget, and CJK spans stay UTF-16 exact', async () => {
+    const big = Array.from({ length: 40 }, (_, i) => `**${i % 2 ? 'assistant' : 'user'}:** Paragraph ${i}. ${'lorem ipsum dolor sit amet '.repeat(90)}`);
+    const page: FakePage = { page_id: 2, slug: 'chat/big', title: 'Big', chunks: big };
+    const { results } = await deliverEvidence(fakeEngine([page]), [hitFor(page, 20)], capPlan(32000), {});
+    expect(results[0].chunk_text.length).toBeLessThanOrEqual(EVIDENCE_BLOCK_CHAR_CAP);
+    expect(results[0].chunk_text).toContain('Paragraph 20.');
+    const r = rng(31);
+    const cjkTurn = (who: string) => `**${who}:** ${Array.from({ length: 120 }, () => '天地玄黄宇宙洪荒日月盈昃'[Math.floor(r() * 12)]).join('')}`;
+    const cjk: FakePage = { page_id: 3, slug: 'chat/cjk', title: '会话', chunks: [cjkTurn('user'), cjkTurn('assistant'), cjkTurn('user'), cjkTurn('assistant')] };
+    for (const packing of CAP_PACKINGS) {
+      const out = await deliverEvidence(fakeEngine([cjk]), [hitFor(cjk, 2)], capPlan(120, packing), {});
+      expect(recount(out.results)).toBeLessThanOrEqual(120);
+      for (const sp of out.results[0].delivered.match_spans) expect(cjk.chunks[2]).toContain(out.results[0].chunk_text.slice(sp.start, sp.end));
+    }
+  });
+
+  test('fetch failure, timeout and cached hits under the cap: fresh chunks within the budget, cached ones dropped', async () => {
+    const pages = [chatPage(1, 200), chatPage(2, 200)];
+    const hits = pages.map(p => hitFor(p, 1));
+    const live = await deliverEvidence(fakeEngine(pages, { fail: true }), hits, capPlan(120), {});
+    expect(live.results[0].delivered.fallback_reason).toBe('fetch_failed');
+    expect(recount(live.results)).toBeLessThanOrEqual(120);
+    const hanging = { getChunkWindows: () => new Promise<never>(() => {}) } as unknown as BrainEngine;
+    const slow = await deliverEvidence(hanging, hits, capPlan(120), {}, { timeoutMs: 20 });
+    expect(slow.delivery.fallbacks).toContain('fetch_timeout');
+    expect(recount(slow.results)).toBeLessThanOrEqual(120);
+    const cached = await deliverEvidence(fakeEngine(pages, { fail: true }), hits, capPlan(120), {}, { liveHits: false });
+    expect(cached.results).toEqual([]);
+    expect(cached.delivery.dropped_reasons).toEqual({ not_readable: 2 });
+  });
+
+  test('budgets below the documented minimum, zero, negative and non-finite are refused by name; the minimum is served', async () => {
+    const stub = { getConfig: async () => null } as unknown as BrainEngine;
+    const plan = (budget: unknown, extra: Record<string, unknown> = {}) => resolveEvidencePlan(stub, {
+      remote: false, returnUnit: 'auto', returnWindow: undefined, budget, snippetChars: undefined, snippetCap: 0, op: 'query', ...extra,
+    });
+    for (const budget of [...Array.from({ length: MIN_EXPLICIT_AUTO_BUDGET - 1 }, (_, i) => i + 1), 0, -5, 31.9, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      await expect(plan(budget), String(budget)).rejects.toMatchObject({
+        code: 'invalid_params', message: expect.stringContaining(`token_budget must be at least ${MIN_EXPLICIT_AUTO_BUDGET} tokens`),
+      });
+    }
+    await expect(plan(3, { op: 'recall' })).rejects.toMatchObject({ message: expect.stringContaining('budget_tokens must be at least') });
+    expect(await plan(MIN_EXPLICIT_AUTO_BUDGET)).toMatchObject({ budgetTokens: MIN_EXPLICIT_AUTO_BUDGET, budgetExplicit: true, packing: 'cap_only' });
+    // Off the cap the old meanings stand: packing off, another unit, or no budget.
+    expect(await plan(5, { autoPacking: 'off' })).toMatchObject({ budgetTokens: 5, budgetExplicit: true, packing: 'off' });
+    expect(await plan(5, { returnUnit: 'page' })).toMatchObject({ unit: 'page', budgetTokens: 5 });
+    expect(await plan(undefined)).toMatchObject({ budgetTokens: 24000, budgetExplicit: false });
+    // With the unit implied, a budget that is not a positive number still means no budget, as before.
+    for (const budget of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(await plan(budget, { returnUnit: undefined, op: 'recall' })).toMatchObject({ unit: 'auto', budgetTokens: 24000, budgetExplicit: false });
+    }
+    await expect(plan(4000, { autoPacking: 'widest' })).rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('auto_packing must be one of off, cap_only, breadth_capped, depth_first') });
+    // At the minimum a non-empty hit list yields non-empty evidence within it.
+    const r = rng(77);
+    for (let trial = 0; trial < 20; trial++) {
+      const pages = randomCorpus(r, 1 + Math.floor(r() * 5));
+      const hits = pages.map(p => hitFor(p, Math.floor(r() * p.chunks.length)));
+      for (const packing of CAP_PACKINGS) {
+        const { results } = await deliverEvidence(fakeEngine(pages), hits, capPlan(MIN_EXPLICIT_AUTO_BUDGET, packing), {});
+        expect(results.length).toBeGreaterThan(0);
+        expect(results[0].chunk_text.replace(EVIDENCE_CUT_MARKER, '').trim().length).toBeGreaterThan(0);
+        expect(recount(results)).toBeLessThanOrEqual(MIN_EXPLICIT_AUTO_BUDGET);
+      }
+    }
+  });
+
+  test('under the cap a snippet marker is paid from the row\'s own allocation, or left out when it cannot fit', async () => {
+    const page = chatPage(1, 30);
+    const { results, delivery } = await deliverEvidence(fakeEngine([page]), [hitFor(page, 1)], capPlan(4000), {});
+    const before = countEvidenceTokens(results[0].chunk_text);
+    const cap = results[0].chunk_text.length - 3;
+    const capped = capDeliveredSnippets(results, cap, { ...delivery, fallbacks: [...delivery.fallbacks] });
+    expect(capped[0].chunk_text).toContain('[truncated');
+    expect(countEvidenceTokens(capped[0].chunk_text)).toBeLessThanOrEqual(before);
+    // Without the cap the same snippet cap grows the row (the old behavior, kept for implied budgets).
+    const legacy = capDeliveredSnippets(results, cap, { ...delivery, auto_packing: undefined, fallbacks: [...delivery.fallbacks] });
+    expect(countEvidenceTokens(legacy[0].chunk_text)).toBeGreaterThan(before);
+    // A row too small to hold the marker keeps a shorter body and says so.
+    const tiny = [{ ...results[0], chunk_text: 'Short row of ten words that the cap trims here.' }];
+    const meta = { ...delivery, fallbacks: [...delivery.fallbacks] };
+    const out = capDeliveredSnippets(tiny, 20, meta);
+    expect(out[0].chunk_text).not.toContain('[truncated');
+    expect(countEvidenceTokens(out[0].chunk_text)).toBeLessThanOrEqual(countEvidenceTokens(tiny[0].chunk_text));
+    expect(meta.fallbacks).toEqual(expect.arrayContaining(['snippet_cap', 'snippet_marker_omitted']));
+    expect(meta.budget_used).toBe(recount(out));
+  });
+
+  test('search.auto_packing refuses unknown values at config set', () => {
+    for (const v of AUTO_PACKINGS) expect(searchConfigValueRefusal('search.auto_packing', v)).toBeNull();
+    expect(searchConfigValueRefusal('search.auto_packing', 'breadth')).toMatchObject({ message: expect.stringContaining('must be one of off, cap_only, breadth_capped, depth_first'), example: 'cap_only' });
   });
 });
 
@@ -599,7 +975,7 @@ describe('ops', () => {
   test('recall keeps legacy fields and packing, adding delivered/delivery only when on', async () => {
     const off = await op('recall').handler(ctxOf(), { query: 'narwhal', budget_tokens: 5000, return_unit: 'chunk' }) as Record<string, any>;
     expect(off.delivery).toBeUndefined();
-    expect(off.results.every((r: Record<string, unknown>) => Object.keys(r).join(',') === 'slug,title,chunk,evidence,create_safety,provenance')).toBe(true);
+    expect(off.results.every((r: Record<string, unknown>) => Object.keys(r).join(',') === 'slug,title,chunk,evidence,create_safety,provenance,trust_tier,origin')).toBe(true);
     const on = await op('recall').handler(ctxOf(), { query: 'narwhal', budget_tokens: 5000, return_unit: 'page' }) as Record<string, any>;
     expect(on.delivery.requested_unit).toBe('page');
     expect(on.results[0].delivered.unit).toBe('page');
@@ -720,6 +1096,140 @@ describe('ops', () => {
     const text = 'x'.repeat(5000);
     const block = renderPagesBlock([{ slug: 'a/b', chunk_text: text } as SearchResult], 60000, 'q', { verbatim: true });
     expect(block).toContain(text);
+  });
+
+  test('explicit budgets below the minimum are refused through query, search, recall and assemble_evidence; a bare query budget stays legacy chunk (G7)', async () => {
+    const msg = (name: string) => expect.stringContaining(`${name} must be at least ${MIN_EXPLICIT_AUTO_BUDGET} tokens under return_unit auto`);
+    await expect(op('query').handler(ctxOf(), { query: 'narwhal', return_unit: 'auto', token_budget: 10, expand: false })).rejects.toMatchObject({ code: 'invalid_params', message: msg('token_budget') });
+    await expect(op('search').handler(ctxOf(), { query: 'narwhal', token_budget: 5 })).rejects.toMatchObject({ code: 'invalid_params', message: msg('token_budget') });
+    await expect(op('recall').handler(ctxOf(), { query: 'narwhal', return_unit: 'auto', budget_tokens: 3 })).rejects.toMatchObject({ code: 'invalid_params', message: msg('budget_tokens') });
+    await expect(op('assemble_evidence').handler(ctxOf(), { hits: [{ source_id: 'default', slug: 'chat/session-1', chunk_id: 0 }], return_unit: 'auto', token_budget: 0 }))
+      .rejects.toMatchObject({ code: 'invalid_params', message: msg('token_budget') });
+    lastMeta = null;
+    const bare = await op('query').handler(ctxOf(), { query: 'narwhal', token_budget: 10, expand: false }) as SearchResult[];
+    expect(lastMeta!.delivery).toBeUndefined();
+    expect(bare.every(r => r.delivered === undefined)).toBe(true);
+  });
+
+  test('an explicit budget caps query, search, recall and assemble_evidence at the final boundary, snippet markers included', async () => {
+    const rowsCost = (rows: Array<{ title?: string; chunk_text: string }>) => recount(rows);
+    for (const budget of [MIN_EXPLICIT_AUTO_BUDGET, 60, 400, 3000]) {
+      const viaQuery = await op('query').handler(ctxOf(), { query: 'narwhal', return_unit: 'auto', token_budget: budget, expand: false }) as SearchResult[];
+      expect(lastMeta!.delivery).toMatchObject({ auto_packing: 'cap_only', budget_tokens: budget });
+      expect(rowsCost(viaQuery), `query @${budget}`).toBeLessThanOrEqual(budget);
+      expect(lastMeta!.delivery.budget_used).toBe(rowsCost(viaQuery));
+      const viaSearch = await op('search').handler(ctxOf(), { query: 'narwhal', token_budget: budget }) as SearchResult[];
+      expect(rowsCost(viaSearch), `search @${budget}`).toBeLessThanOrEqual(budget);
+      for (const snippet of [10, 40, 120]) {
+        const capped = await op('query').handler(ctxOf(), { query: 'narwhal', return_unit: 'auto', token_budget: budget, snippet_chars: snippet, expand: false }) as SearchResult[];
+        expect(rowsCost(capped), `query @${budget} snippet ${snippet}`).toBeLessThanOrEqual(budget);
+        expect(lastMeta!.delivery.budget_used).toBe(rowsCost(capped));
+        expect(lastMeta!.delivery.tokens_delivered).toBe(capped.reduce((n, r) => n + countEvidenceTokens(r.chunk_text), 0));
+      }
+      const recall = await op('recall').handler(ctxOf(), { query: 'narwhal', return_unit: 'auto', budget_tokens: budget }) as Record<string, any>;
+      expect(recall.delivery.auto_packing).toBe('cap_only');
+      expect(recall.delivery.budget_used).toBeLessThanOrEqual(budget);
+      const hits = await op('query').handler(ctxOf(), { query: 'narwhal', return_unit: 'chunk', expand: false }) as SearchResult[];
+      const assembled = await op('assemble_evidence').handler(ctxOf(), {
+        hits: hits.map(h => ({ source_id: h.source_id, slug: h.slug, chunk_id: h.chunk_id })), return_unit: 'auto', token_budget: budget,
+      }) as { results: SearchResult[]; delivery: { budget_used: number } };
+      expect(rowsCost(assembled.results), `assemble @${budget}`).toBeLessThanOrEqual(budget);
+      expect(assembled.delivery.budget_used).toBe(rowsCost(assembled.results));
+    }
+    // The remote clamp: the cap applies to the clamped value.
+    const remote = await op('search').handler(ctxOf({ remote: true }), { query: 'narwhal', token_budget: 90000, fields: 'full' }) as SearchResult[];
+    expect(lastMeta!.delivery).toMatchObject({ budget_tokens: 32000, budget_clamped: { requested: 90000, max: 32000 }, auto_packing: 'cap_only' });
+    expect(rowsCost(remote)).toBeLessThanOrEqual(32000);
+  });
+
+  test('search.auto_packing selects the packing; the library override wins per call; neither touches a call without a budget', async () => {
+    const baseline = async () => {
+      const out: string[] = [];
+      out.push(JSON.stringify(await op('search').handler(ctxOf(), { query: 'narwhal' })), JSON.stringify(lastMeta));
+      out.push(JSON.stringify(await op('query').handler(ctxOf(), { query: 'narwhal', expand: false })), JSON.stringify(lastMeta));
+      out.push(JSON.stringify(await op('query').handler(ctxOf(), { query: 'narwhal', return_unit: 'auto', expand: false })), JSON.stringify(lastMeta));
+      out.push(JSON.stringify(await op('recall').handler(ctxOf(), { query: 'narwhal' })));
+      const hits = await op('search').handler(ctxOf(), { query: 'narwhal', return_unit: 'chunk' }) as SearchResult[];
+      out.push(JSON.stringify(await op('assemble_evidence').handler(ctxOf(), { hits: hits.map(h => ({ source_id: h.source_id, slug: h.slug, chunk_id: h.chunk_id })), return_unit: 'auto' })));
+      return out;
+    };
+    const today = await baseline();
+    try {
+      for (const packing of AUTO_PACKINGS) {
+        await engine.setConfig('search.auto_packing', packing);
+        expect(await baseline(), packing).toEqual(today);
+        await op('query').handler(ctxOf(), { query: 'narwhal', return_unit: 'auto', token_budget: 3000, expand: false });
+        if (packing === 'off') expect(lastMeta!.delivery.auto_packing).toBeUndefined();
+        else expect(lastMeta!.delivery.auto_packing).toBe(packing);
+      }
+      await engine.setConfig('search.auto_packing', 'depth_first');
+      const hits = await op('search').handler(ctxOf(), { query: 'narwhal', return_unit: 'chunk' }) as SearchResult[];
+      const frozen = hits.map(h => ({ source_id: h.source_id!, slug: h.slug, chunk_id: h.chunk_id }));
+      for (const packing of AUTO_PACKINGS) {
+        const out = await assembleEvidenceForHits(engine, { hits: frozen, return_unit: 'auto', budget_tokens: 3000, auto_packing: packing });
+        expect(out.delivery!.auto_packing).toBe(packing === 'off' ? undefined : packing);
+      }
+      await expect(assembleEvidenceForHits(engine, { hits: frozen, return_unit: 'auto', budget_tokens: 3000, auto_packing: 'widest' as never }))
+        .rejects.toMatchObject({ code: 'invalid_params' });
+    } finally {
+      await engine.executeRaw(`DELETE FROM config WHERE key = 'search.auto_packing'`);
+    }
+    // An explicit 24,000 and the implied 24,000 resolve to plans that differ only in the flag.
+    const resolve = (budget: unknown) => resolveEvidencePlan(engine, { remote: false, returnUnit: 'auto', returnWindow: undefined, budget, snippetChars: undefined, snippetCap: 0, op: 'search' });
+    const [explicit, implied] = [await resolve(24000), await resolve(undefined)];
+    expect({ ...explicit!, budgetExplicit: false }).toEqual(implied!);
+    expect(explicit!.budgetExplicit).toBe(true);
+  });
+
+  test('think passes no budget, so its prompt is the same under every packing', async () => {
+    const prompts: string[] = [];
+    const client = { create: async (params: { messages: Array<{ content: unknown }> }) => {
+      prompts.push(JSON.stringify(params.messages));
+      return { content: [{ type: 'text', text: '{"answer":"ok","citations":[],"gaps":[]}' }], usage: { input_tokens: 1, output_tokens: 1 } };
+    } };
+    try {
+      for (const packing of AUTO_PACKINGS) {
+        await engine.setConfig('search.auto_packing', packing);
+        await runThink(engine, { question: 'narwhal launch march', client: client as never, remote: false, reference_date: '2026-10-09' } as never);
+      }
+    } finally {
+      await engine.executeRaw(`DELETE FROM config WHERE key = 'search.auto_packing'`);
+    }
+    expect(new Set(prompts).size).toBe(1);
+  });
+
+  test('frozen-hit delivery carries effective_date, and every field a reader consumes equals live query (both packings and today\'s auto)', async () => {
+    await engine.executeRaw(`UPDATE pages SET effective_date = '2026-03-04', effective_date_source = 'frontmatter' WHERE slug = 'chat/session-1'`);
+    try {
+      const hits = await op('query').handler(ctxOf(), { query: 'narwhal', return_unit: 'chunk', expand: false }) as SearchResult[];
+      expect(lastMeta!.delivery).toBeUndefined();
+      const frozen = hits.map(h => ({ source_id: h.source_id!, slug: h.slug, chunk_id: h.chunk_id }));
+      const consumed = (rows: SearchResult[]) => rows.map(r => ({
+        slug: r.slug, title: r.title, chunk_text: r.chunk_text, effective_date: r.effective_date, effective_date_source: r.effective_date_source,
+        unit: r.delivered?.unit, spans: r.delivered?.match_spans, tokens: r.delivered?.tokens, truncated: r.delivered?.truncated, reason: r.delivered?.reason,
+        fallback: r.delivered?.fallback_reason, unmapped: r.delivered?.unmapped_chunk_ids,
+      }));
+      const totals = (d: Record<string, any>) => ({ budget_used: d.budget_used, tokens_delivered: d.tokens_delivered, fallbacks: d.fallbacks, dropped_reasons: d.dropped_reasons, auto_packing: d.auto_packing });
+      let dated = 0;
+      for (const packing of AUTO_PACKINGS) {
+        await engine.setConfig('search.auto_packing', packing);
+        for (const budget of [400, 3000, undefined]) {
+          const live = await op('query').handler(ctxOf(), { query: 'narwhal', return_unit: 'auto', expand: false, ...(budget ? { token_budget: budget } : {}) }) as SearchResult[];
+          const liveDelivery = lastMeta!.delivery;
+          const assembled = await assembleEvidenceForHits(engine, { hits: frozen, return_unit: 'auto', ...(budget ? { budget_tokens: budget } : {}) });
+          expect(consumed(assembled.results as SearchResult[]), `${packing} @${budget}`).toEqual(consumed(live));
+          expect(totals(assembled.delivery!)).toEqual(totals(liveDelivery));
+          expect(evidenceFingerprint(assembled.results)).toBe(evidenceFingerprint(live));
+          for (const r of assembled.results.filter(x => x.slug === 'chat/session-1')) { expect(r.effective_date).toBe('2026-03-04'); dated++; }
+          // A page with no date reads null on both paths, never an invented date.
+          for (const r of assembled.results.filter(x => x.slug !== 'chat/session-1')) expect(r.effective_date).toBeNull();
+        }
+      }
+      expect(dated).toBeGreaterThan(0);
+    } finally {
+      await engine.executeRaw(`UPDATE pages SET effective_date = NULL, effective_date_source = NULL WHERE slug = 'chat/session-1'`);
+      await engine.executeRaw(`DELETE FROM config WHERE key = 'search.auto_packing'`);
+    }
   });
 
   test('thin-client skew warning fires only when the server dropped delivery', () => {

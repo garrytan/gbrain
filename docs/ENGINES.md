@@ -171,6 +171,40 @@ the object is absent. Highly selective queries may correctly choose an exact
 plan. The [retrieval guide](architecture/RETRIEVAL.md#named-thing-retrieval-per-page-pool--title--alias--evidence)
 describes bounded candidate recovery and incomplete-result metadata.
 
+On Postgres the same refresh also analyzes the page columns every search
+filter reads (`deleted_at`, `source_id`, `type`, `slug`) and
+`content_chunks(model, modality, page_id)`, and an embed drain that embedded
+anything analyzes those chunk columns once at its end (each ANALYZE bounded by
+a 30 s statement and 2 s lock timeout). Without those statistics the vector
+candidate statement sorts every eligible chunk instead of walking the HNSW
+index, and at 1M chunks and above that sort runs past the 8 s vector budget,
+so hybrid search falls back to keyword-only results until autovacuum
+analyzes the tables. If a refresh is skipped (a lock, or a role that does not
+own the tables), run `ANALYZE content_chunks(model, modality, page_id)` and
+`ANALYZE pages` as the table owner.
+
+### Vector index sizing
+
+The chunk HNSW index stores each vector beside its graph links, so at 1,024
+dimensions it takes about 7.6 GiB per million chunks as `vector` (about
+9.8 GiB for a 1.28M-chunk brain) and a third of that as `halfvec`. The
+deferred ANN build (`gbrain migrate embeddings`, `gbrain reindex --vectors`)
+runs `CREATE INDEX CONCURRENTLY` with the server's `maintenance_work_mem`.
+When the graph does not fit, pgvector logs `hnsw graph no longer fits into
+maintenance_work_mem` and the build slows several-fold: 4.3x at 250k chunks
+with 256 MB. Before a large build, raise it on the brain host to the index
+size plus about 10% (Supabase: `supabase postgres-config update --config
+maintenance_work_mem=12GB --project-ref <ref> --experimental`, which reloads
+without a restart; self-hosted: `ALTER SYSTEM SET maintenance_work_mem =
+'12GB'` and `SELECT pg_reload_conf()`), and give it
+`max_parallel_maintenance_workers` of about half the cores: a 1M-chunk build
+took 103 s on 16 vCPU with 12 GB and 8 workers. Measured, not shipped:
+`halfvec` gives the same recall with an index a third the size, and
+`ef_construction` 128 adds about 0.02 to 0.03 unfiltered recall@10 for about
+25% more build time. Both need a migration or a rebuild, so the defaults stay
+(m 16, ef_construction 64, `vector`). Measurements and method:
+[`docs/eval/hnsw-scale-bench.md`](eval/hnsw-scale-bench.md).
+
 ### Opt-in RLS source-scope binding (`GBRAIN_RLS_SCOPE_BINDING`)
 
 Defense-in-depth layer for Postgres deployments that want the database itself
@@ -281,6 +315,23 @@ Details in INSTALL_FOR_AGENTS.md ("Engine preference for harness installs").
 - pgvector HNSW index for cosine similarity vector search (same as Postgres)
 - tsvector + ts_rank for full-text search (same as Postgres)
 - pg_trgm for fuzzy slug resolution (same as Postgres)
+
+### PGLite vector index ceiling
+
+PGLite runs Postgres inside WebAssembly, and pglite.wasm caps its memory at
+2 GiB. pgvector holds the whole HNSW graph in `maintenance_work_mem` while it
+builds, about 4.7 KB per 1,024-dimension chunk (1.16 GB at 250k chunks).
+gbrain starts PGLite with `max_parallel_maintenance_workers=0` (PGLite has no
+worker processes, and a planned parallel build reserved all of
+`maintenance_work_mem` up front) and `max_wal_size=8GB` (a build WAL-logs its
+whole index in one statement, and WAL past the automatic checkpoint trigger
+wedges PGLite). The deferred ANN build (`gbrain migrate embeddings`) and
+`gbrain reindex --vectors` size `maintenance_work_mem` to the graph
+(`withHnswBuildMemory` in `src/core/vector-index.ts`): a 248,802-chunk build
+takes about 11 minutes and a 1.9 GB index. A graph past the 1.5 GiB budget,
+about 300k chunks at 1,024 dimensions, is refused before the build with
+`pglite_vector_index_too_large`; vector search keeps working with exact scans,
+and the fix is the read-only `gbrain migrate --to postgres --plan --json`.
 
 **When to use PGLite vs Postgres:**
 
