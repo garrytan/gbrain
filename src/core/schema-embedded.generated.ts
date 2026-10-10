@@ -1994,6 +1994,7 @@ CREATE TABLE IF NOT EXISTS persistence_host_bindings (
     host_id uuid NOT NULL,
     local_path text NOT NULL,
     coordination_path text NOT NULL,
+    git_durability text CHECK (git_durability IN ('enabled','disabled')),
     PRIMARY KEY(worktree_id,host_id)
   );
 CREATE TABLE IF NOT EXISTS persistence_local_writers (

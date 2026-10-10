@@ -154,6 +154,12 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   }
   if (operation === 'writer_reindex_code') return (await import('./reindex-administration.ts')).runAuthenticatedCodeReindex(engine, params);
   if (operation === 'writer_embed_facts') return (await import('./embed-facts-administration.ts')).runAuthenticatedFactEmbedding(engine, params, config);
+  if (operation === 'writer_git_durability') {
+    const { GIT_DURABILITY_PARAMS, runGitDurabilityAdministration } = await import('./git-durability-administration.ts');
+    keys(params, [...GIT_DURABILITY_PARAMS]);
+    source(params.source_id);
+    return runGitDurabilityAdministration(engine, params);
+  }
   if (operation === 'writer_retry_effects') {
     keys(params, ['source_id', 'request_id', 'dry_run']);
     if (!isWriteRequestId(params.request_id)) throw invalid('A valid original write request UUID is required.',

@@ -35,7 +35,7 @@ import { withEnv } from './helpers/with-env.ts';
 const OWNER = 'aaaaaaaa-1111-4111-8111-111111111111', LOCAL = 'bbbbbbbb-2222-4222-8222-222222222222';
 const INCARNATION = 'cccccccc-3333-4333-8333-333333333333';
 const binding = (over: Partial<WorktreeBinding> = {}): WorktreeBinding => ({ worktree_id: randomUUID(), source_id: 'src', source_incarnation: INCARNATION, relative_path: '',
-  topology_generation: 1, owner_host_id: LOCAL, owner_epoch: 1, state: 'active', local_path: '/srv/brain', coordination_path: '/srv/brain/.gbrain-coordination', ...over });
+  topology_generation: 1, owner_host_id: LOCAL, owner_epoch: 1, state: 'active', local_path: '/srv/brain', coordination_path: '/srv/brain/.gbrain-coordination', git_durability: null, ...over });
 const http: RenderContext = { transport: 'http', surface: 'full', isCallable: () => false, preapproved: () => false, principal: 'client-example' };
 
 describe('the matrix', () => {
