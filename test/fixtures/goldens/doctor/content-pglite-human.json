@@ -88,6 +88,7 @@
       "  [OK] persistence_request_indexes: Managed sync request indexes are valid.",
       "  [OK] persistence_request_growth: 6 request row(s); no scope exhausts its lifetime request IDs within 90 days at its last-7-day rate.",
       "  [OK] persistence_write_stall: No write request has held its claim longer than persistence.max_claim_ms (600000 ms).",
+      "  [OK] lost_caller_writes: Every caller write with a retained receipt committed or was superseded.",
       "  [OK] persistence_session_timeouts: PGLite has no session to time out.",
       "  [OK] connector_held_items: No connector items are held.",
       "  [OK] git_held_files: No Git source files are held.",

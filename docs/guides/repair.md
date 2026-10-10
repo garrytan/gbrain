@@ -678,14 +678,20 @@ found.
 <a id="failed-writes"></a>
 ### Failed writes
 
+Two kinds of refusal leave a caller's write with a receipt but nothing landed.
 On a managed brain whose `tags`, `timeline_entries` or `takes` table has a
 `source_id` column gbrain does not create, the managed writer guard of a
-gbrain older than v0.60.38.0 refuses writes it should allow. Each refused write
-keeps a failed receipt with its full intent until receipt compaction
+gbrain older than v0.60.38.0 refuses writes it should allow. And a write ends
+`conflict` with `source_changed` when the page's canonical file and database
+copy differed at publication, as every write did on a brain whose v0.13.1
+grandfather `validate: false` stamp lived only in the database (#6429, fixed
+in v0.60.157.0: that stamp is no longer read as a file edit). Each refused
+write keeps a receipt with its full intent until receipt compaction
 (`persistence.receipt_retention_days`, 30 days by default). `gbrain repair
 failed-writes` submits those writes again. It is explicit-only and
 preview-bound, and needs v0.60.38.0 or later (`gbrain doctor --json` reports
-schema version 197 or later).
+schema version 197 or later). Doctor's `lost_caller_writes` counts the writes
+it would replay, per source, and names this preview.
 
 **Say to your agent:** *"Preview which refused writes gbrain can replay, show
 me the list, then apply after I agree."* The agent runs `gbrain repair
@@ -698,9 +704,10 @@ gbrain repair failed-writes --source <id> --apply --expect <hash>
 gbrain repair failed-writes --source <id>                 # replayed writes now read already_written
 ```
 
-Candidates are failed receipts refused by the guard: `writer_coordinator_required`,
+Candidates are failed receipts refused by the guard (`writer_coordinator_required`,
 or `storage_error` "Publication failed (P0001)" from releases that did not keep
-the guard's message. Only writes a caller made directly are replayed:
+the guard's message) and conflict receipts refused `source_changed` at
+publication. Only writes a caller made directly are replayed:
 `put_page`, `add_timeline_entry` and `remember`. The preview gives every
 candidate one class:
 
@@ -711,7 +718,7 @@ candidate one class:
 | `duplicate` | A later request with the same intent exists; that one is the candidate. | Kept. |
 | `superseded` | A later write or delete of the page committed or is pending; for `put_page`, also a later failed `put_page` (newer content) or a page changed since the caller read it. | Kept; re-issue by hand if still wanted. |
 | `unpinned_target` | A `remember` saved unattributed; replaying would infer its subject again and could pick another page. | Kept. Re-issue it with an explicit `entity` if it is still wanted. |
-| `file_database_drift` | Its last replay hit `source_changed` (file and database differ). | Kept until the page changes; reconcile it first. |
+| `file_database_drift` | Its last replay hit `source_changed` and the file still differs from the database. | Kept until the file matches again (a reconcile that writes only the file counts) or the page changes; reconcile it first. |
 | `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content (sync: `gbrain sync --source <id> --no-pull --retry-failed`). |
 
 The apply replays exactly the previewed set. Each write is classified again
@@ -1855,6 +1862,59 @@ issue's `reason` is the lowercased errno. Lint continues with the remaining
 files and counts the page in `fix_pending`; the cycle's lint phase reports
 `warn`, not `fail`. Make the file writable by the user running gbrain, or pass
 its directory or file name to `gbrain lint --exclude`, then run lint again.
+
+## Setup refusals
+
+`gbrain setup <harness>` resolves the brain, source, transport, launcher and
+registration owner before it writes anything, and refuses with one of these
+codes when that target is not safe to wire. A refusal writes nothing. Guide:
+[connect an agent with gbrain setup](setup.md).
+
+### Setup harness unsupported
+
+`setup_harness_unsupported`: setup wires Claude Code only in this release. The
+message names the guide for the harness you asked for (Codex:
+[docs/mcp/CODEX.md](../mcp/CODEX.md), OpenClaw:
+[docs/mcp/OPENCLAW.md](../mcp/OPENCLAW.md), Hermes:
+[docs/mcp/HERMES.md](../mcp/HERMES.md)); follow its manual steps.
+`gbrain setup --help` lists the supported harnesses.
+
+### Setup owner conflict
+
+`setup_owner_conflict`: something setup does not own holds the target. The
+`reason` says which:
+
+- `live_serve`: a running `gbrain serve` holds this PGLite brain's
+  single-writer lock and is not the server this setup registered. A stdio
+  registration would start a second server that fails on the lock. Stop that
+  server (quit the agent session that started it), or keep it and connect
+  through it: a shared `gbrain serve --http` is wired with
+  `gbrain bootstrap harness --harness claude-code`.
+- `unowned_entry`: the harness configuration already has an entry under the
+  same MCP server name, and its hash is not one this setup recorded (you or
+  another tool wrote it, or you edited it). Setup never overwrites it. Pick
+  another name with `--name`, or remove that entry yourself and run setup
+  again.
+- `other_install`: the connection receipt for this name belongs to a gbrain
+  install with a different `GBRAIN_HOME`. Run setup with `--name <other>` so
+  each install owns its own entries.
+- `harness_lane`: `gbrain bootstrap harness` (or a workspace bootstrap
+  install) already wires gbrain hooks or MCP in this configuration. Keep that
+  wiring, or remove it with `gbrain bootstrap harness --remove` first.
+
+`gbrain setup claude-code --dry-run --json` shows the resolved target and the
+blocking owner without writing anything.
+
+### Setup hosted connection
+
+`setup_hosted_connection`: this machine already reaches a hosted brain (a
+thin-client config from `gbrain init --mcp-only`, a remote `gbrain` entry in
+the harness configuration, or a `gbrain connect --install` receipt), and no
+`gbrain setup` receipt owns it. Setup never falls back to a new local brain,
+because sessions would then read an empty brain while useful memory stays on
+the hosted one. Manage that connection with `gbrain connect <mcp-url>
+--harness claude-code --install`; `gbrain doctor --only harness_wiring` shows
+which brain the registration reaches.
 
 ## Related
 

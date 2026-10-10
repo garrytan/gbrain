@@ -14,6 +14,7 @@ USAGE
 SETUP
   mcp grant <name> --help           Grant hosted access; private credential handoff
   mcp verify --help                 Verify connection, permissions, and memory
+  setup claude-code [--dry-run]      Give an agent memory: brain + MCP + hooks, verified (--remove undoes)
   init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)
   init --prefer-postgres [--allow-docker]
                                      Postgres-first install ladder (env URL >

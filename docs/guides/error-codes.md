@@ -2420,6 +2420,38 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 Reasons: `lock_held`, `no_brain`, `config_unreadable`, `missing_brain`, `brain_unopenable`, `repair_failed`, `unavailable`.
 
+### setup_harness_unsupported
+
+<a id="setup_harness_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup does not wire this harness yet; its guide has the manual connection steps. | Only harnesses with a supported row in the setup capability table are wired automatically, so setup never guesses another host's config format. | Correct the request using the message above, then retry. Run: gbrain setup --help | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/repair.md#setup-harness-unsupported](../../docs/guides/repair.md#setup-harness-unsupported)
+
+### setup_hosted_connection
+
+<a id="setup_hosted_connection"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This machine already reaches a hosted brain, so gbrain setup will not create a second, local brain. | A new local brain would split memory: sessions would read and write the empty local brain while useful memory stays on the hosted one. | Correct the request using the message above, then retry. Run: gbrain doctor --only harness_wiring --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.md#setup-hosted-connection)
+
+### setup_owner_conflict
+
+<a id="setup_owner_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another owner holds what gbrain setup would change: a live server owns this PGLite brain, or the harness configuration holds an entry setup did not write. | A PGLite brain has one writer, so a second server would fail on its lock; an entry setup did not record by hash is the user's or another install's and is never overwritten. | Correct the request using the message above, then retry. Run: gbrain setup claude-code --dry-run --json | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `live_serve`, `unowned_entry`, `other_install`, `harness_lane`.
+
+More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#setup-owner-conflict)
+
 ### shared_skills_unavailable
 
 <a id="shared_skills_unavailable"></a>
