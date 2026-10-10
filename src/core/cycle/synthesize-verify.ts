@@ -71,6 +71,7 @@ import { normalizePageFences } from '../fence-repair/import-step.ts';
 import { prepareAutomaticLinks } from '../persistence/links-preparation.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { resolveCycleDate, utcDate } from './cycle-date.ts';
+import { attributionChecksEnabled } from './attribution-checks.ts';
 import { resolveVerifyPrior } from './synthesize-verify-epochs.ts';
 export { readVerifyEpoch, loadChildWriteEpochs, loadPreRunRevision, isDreamOwnedPage, resolveVerifyPrior } from './synthesize-verify-epochs.ts';
 
@@ -152,6 +153,8 @@ export interface QuoteVerifyStats {
   number_not_in_source: number;
   /** A speaker's decision or commitment whose numbers/dates only another speaker stated (#5425). */
   decision_misattributed: number;
+  /** A sentence whose grounded quote a later user turn took back on the same number or date (#5425 [UC4]; `dream.attribution_checks`). */
+  superseded_in_source: number;
   skipped_no_transcript: number;
   /** Pages where read-back or write-back failed (fail-open, logged). */
   errors: number;
@@ -175,6 +178,7 @@ export function emptyQuoteVerifyStats(): QuoteVerifyStats {
     speaker_mismatch: 0,
     number_not_in_source: 0,
     decision_misattributed: 0,
+    superseded_in_source: 0,
     skipped_no_transcript: 0,
     errors: 0,
   };
@@ -552,20 +556,31 @@ export function numericFacts(text: string): Set<string> {
 /** A turn that opens by accepting the previous turn's proposal. */
 const ACCEPTANCE_RE = /^\W*(?:yes|yep|yeah|sure|ok(?:ay)?|agreed|sounds good|perfect|great|do (?:it|that)|go ahead|let'?s do (?:it|that)|approved)\b/i;
 
-function numbersBySpeaker(content: string, turns: SpeakerTurn[]): Map<string, Set<string>> {
+/**
+ * What each speaker stated, by speaker key: the tokens `extract` finds in the
+ * speaker's own turns, plus those of a turn by someone else that the speaker
+ * explicitly accepted in the very next turn (#5425: "yes, do that" makes the
+ * assistant's numbers the user's). `numbersBySpeaker` is the numeric form;
+ * `propose-takes-attribution.ts` passes its own token extractor.
+ */
+export function statedBySpeaker(content: string, turns: SpeakerTurn[], extract: (text: string) => Iterable<string>): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
-  let previous: { key: string; numbers: Set<string> } | null = null;
+  let previous: { key: string; tokens: Set<string> } | null = null;
   turns.forEach((turn, i) => {
     const text = content.slice(turn.labelEnd, turns[i + 1]?.labelStart ?? content.length);
     const key = speakerKey(turn.speaker);
-    const numbers = numericFacts(text);
+    const tokens = new Set(extract(text));
     const own = out.get(key) ?? new Set<string>();
-    for (const n of numbers) own.add(n);
-    if (previous && previous.key !== key && ACCEPTANCE_RE.test(text)) for (const n of previous.numbers) own.add(n);
+    for (const n of tokens) own.add(n);
+    if (previous && previous.key !== key && ACCEPTANCE_RE.test(text)) for (const n of previous.tokens) own.add(n);
     out.set(key, own);
-    previous = { key, numbers };
+    previous = { key, tokens };
   });
   return out;
+}
+
+function numbersBySpeaker(content: string, turns: SpeakerTurn[]): Map<string, Set<string>> {
+  return statedBySpeaker(content, turns, numericFacts);
 }
 
 /** Prepare one transcript for verification. */
@@ -809,8 +824,8 @@ const NUMERIC_CLAIM_RES: Array<{ re: RegExp; key: (m: RegExpMatchArray) => strin
   { re: /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b|\b\d{4,}\b/g, key: m => [canonNumber(Number.parseFloat(m[0].replace(/,/g, '')))] },
 ];
 
-/** Numeric and date claims in `text`, each once, with its canonical keys. */
-function numericClaims(text: string): Array<{ raw: string; claim: string; keys: string[] }> {
+/** Numeric and date claims in `text` (currency, scaled amounts, percents, dates, 4+ digit numbers), each once, with its canonical keys. */
+export function numericClaims(text: string): Array<{ raw: string; claim: string; keys: string[] }> {
   const out: Array<{ raw: string; claim: string; keys: string[] }> = [];
   const seen = new Set<string>();
   const covered: Array<[number, number]> = [];
@@ -850,7 +865,7 @@ const DECISION_RE = /\b(?:decid(?:e|ed|es)|agree(?:d|s)?|accept(?:ed|s)?|approv(
 /** A unit that records a proposal, a refusal or a negation is not asserting agreement. */
 const PROPOSAL_OR_REFUSAL_RE = /\b(?:(?:suggest|propos|recommend|offer|advis|declin|reject|refus)\w*|turned down|instead|rather than|not|no|never)\b|n't\b/i;
 /** A bare year names when, not what was decided; it is never attributed. */
-const YEAR_KEY_RE = /^(?:19|20|21)\d\d$/;
+export const YEAR_KEY_RE = /^(?:19|20|21)\d\d$/;
 
 /**
  * #5425: numbers and dates in a decision claim that some speaker stated but
@@ -867,6 +882,42 @@ function misattributedDecisionClaims(text: string, attribution: string, sources:
     .filter(({ keys }) => !keys.every(k => YEAR_KEY_RE.test(k)))
     .filter(({ keys }) => statedBy(keys, () => true) && !statedBy(keys, sp => speakers.includes(sp)))
     .map(({ raw }) => raw);
+}
+
+/** A user sentence that takes something back: a negation or a correction word. */
+const NEGATION_RE = /\b(?:not|no|never|nope|instead|rather than|scratch that|forget (?:it|that)|cancel\w*|drop(?:ped)? (?:it|that)|no longer|changed (?:my|our) mind|withdr\w+|retract\w*|revers\w+|wrong|incorrect|correction)\b|n't\b/i;
+const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+|\n+/;
+
+/**
+ * #5425 [UC4] `superseded_in_source`: the numbers and dates a unit carries
+ * that a user turn later in the same transcript, after the turn the unit's
+ * grounded quote came from, takes back in a sentence that negates and names
+ * that same number or date. Only `user` turns count (role-labelled
+ * transcripts), only the sentence holding both the negation and the number,
+ * never a bare year, so a later sentence that merely repeats a number, or
+ * negates a different one, supersedes nothing.
+ */
+function supersededClaims(text: string, grounded: Array<{ source: GroundedSource; start: number }>): string[] {
+  const claims = numericClaims(text).filter(({ keys }) => !keys.every(k => YEAR_KEY_RE.test(k)));
+  if (claims.length === 0) return [];
+  const out: string[] = [];
+  for (const { source, start } of grounded) {
+    if (source.turns.length === 0) continue;
+    const from = turnIndexAt(source.turns, start);
+    for (let i = from + 1; i < source.turns.length; i++) {
+      const turn = source.turns[i];
+      if (speakerKey(turn.speaker) !== 'user') continue;
+      const turnText = source.content.slice(turn.labelEnd, source.turns[i + 1]?.labelStart ?? source.content.length);
+      for (const sentence of turnText.split(SENTENCE_SPLIT_RE)) {
+        if (!NEGATION_RE.test(sentence)) continue;
+        const stated = numericFacts(sentence);
+        for (const { raw, keys } of claims) {
+          if (keys.some(k => stated.has(k)) && !out.some(o => o.startsWith(`${raw} `))) out.push(`${raw} was later taken back by the user: ${clip(sentence.trim(), 120)}`);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 const LIST_MARKER_RE = /^(?:[-*+]|\d+[.)]|>|#{1,6})[ \t]+/;
@@ -918,7 +969,7 @@ export function claimUnits(body: string, spans: Array<{ start: number; end: numb
   return units;
 }
 
-export type ClaimFailure = 'quote_not_in_source' | 'quote_crosses_speakers' | 'speaker_mismatch' | 'number_not_in_source' | 'decision_misattributed';
+export type ClaimFailure = 'quote_not_in_source' | 'quote_crosses_speakers' | 'speaker_mismatch' | 'number_not_in_source' | 'decision_misattributed' | 'superseded_in_source';
 
 export interface QuarantinedClaim {
   text: string;
@@ -1030,10 +1081,12 @@ function clip(s: string, n = PROVENANCE_TEXT_CHARS): string {
  * their speaker attribution only (no number, date or decision checks), for
  * writers whose prose legitimately derives numbers from its sources.
  */
-export function verifyBody(body: string, sources: GroundedSource[], opts: { priorNorm?: string; checks?: 'all' | 'quotes'; exemptNumericKeys?: ReadonlySet<string> } = {}): BodyVerification {
+export function verifyBody(body: string, sources: GroundedSource[], opts: { priorNorm?: string; checks?: 'all' | 'quotes'; exemptNumericKeys?: ReadonlySet<string>;
+  /** #5425 [UC4]: also quarantine `superseded_in_source` units (`dream.attribution_checks`; off: no change). */
+  supersession?: boolean } = {}): BodyVerification {
   const { spans, unbalanced } = extractQuoteSpans(body);
   const masked = maskNonProse(body);
-  const failures: Record<ClaimFailure, number> = { quote_not_in_source: 0, quote_crosses_speakers: 0, speaker_mismatch: 0, number_not_in_source: 0, decision_misattributed: 0 };
+  const failures: Record<ClaimFailure, number> = { quote_not_in_source: 0, quote_crosses_speakers: 0, speaker_mismatch: 0, number_not_in_source: 0, decision_misattributed: 0, superseded_in_source: 0 };
   const edits: Array<{ start: number; end: number; text: string }> = [];
   const quarantined: QuarantinedClaim[] = [];
   const provenance: QuoteProvenance[] = [];
@@ -1061,6 +1114,7 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
     const fail = (reason: ClaimFailure, detail: string) => { failures[reason]++; unitFailures.push({ reason, detail }); };
     const unitEdits: typeof edits = [];
     const unitProvenance: QuoteProvenance[] = [];
+    const grounded: Array<{ source: GroundedSource; start: number }> = [];
     for (const sp of unitSpans) {
       quotes++;
       const g = groundAcross(sp.inner, sources);
@@ -1087,6 +1141,7 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
         span: result.spans[0],
         speaker: speakers[0] ?? null,
       });
+      grounded.push({ source, start: result.spans[0][0] });
     }
     const unquoted = blank(masked.slice(u.start, u.end), quoteRanges);
     // Quotes-only mode (answers that legitimately compute numbers): no number or decision checks.
@@ -1096,6 +1151,7 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
       for (const n of misattributedDecisionClaims(unquoted, attribution, sources, [...mentioned.keys()])) {
         fail('decision_misattributed', `${[...mentioned.values()].join(', ')}: ${n} was stated only by another speaker`);
       }
+      if (opts.supersession) for (const n of supersededClaims(masked.slice(u.start, u.end), grounded)) fail('superseded_in_source', n);
     }
 
     if (unitFailures.length > 0) {
@@ -1189,13 +1245,15 @@ export interface GroundingPass {
 export function verifyDreamPage(
   page: VerifiablePage,
   sources: GroundedSource[],
-  opts: { prior: VerifiablePage | null; checkedAt: string },
+  opts: { prior: VerifiablePage | null; checkedAt: string;
+    /** #5425 [UC4]: `attributionChecksEnabled(engine)`; absent or false leaves the output unchanged. */
+    supersession?: boolean },
   stats: QuoteVerifyStats,
 ): VerifiedDreamPage {
   const priorNorm = opts.prior ? normForGrounding(`${opts.prior.compiled_truth}\n${opts.prior.timeline ?? ''}`) : undefined;
   const exemptNumericKeys = new Set([`date:${opts.checkedAt}`]);
-  const truth = verifyBody(page.compiled_truth ?? '', sources, { priorNorm, exemptNumericKeys });
-  const timeline = verifyBody(page.timeline ?? '', sources, { priorNorm, exemptNumericKeys });
+  const truth = verifyBody(page.compiled_truth ?? '', sources, { priorNorm, exemptNumericKeys, supersession: opts.supersession });
+  const timeline = verifyBody(page.timeline ?? '', sources, { priorNorm, exemptNumericKeys, supersession: opts.supersession });
   stats.pages_checked++;
   for (const r of [truth, timeline]) {
     stats.quotes_total += r.quotes;
@@ -1301,6 +1359,7 @@ export async function verifyAndRepairDreamPages(
 ): Promise<QuoteVerifyStats> {
   const stats = emptyQuoteVerifyStats();
   const checkedAt = opts.checkedAt ?? await resolveCycleDate(engine).catch(() => utcDate());
+  const supersession = await attributionChecksEnabled(engine);
   const pages = new Map<string, { slug: string; source_id: string; paths: string[]; first_write_at?: Date }>();
   for (const ref of refs) {
     const key = `${ref.source_id} ${ref.slug}`;
@@ -1337,7 +1396,7 @@ export async function verifyAndRepairDreamPages(
       if (prior === 'unchanged') { stats.skipped_unchanged++; continue; }
       if (prior) stats.preexisting_diffed++;
       const sources = ref.paths.map(sourceFor);
-      const mechanical = verifyDreamPage(page, sources, { prior, checkedAt }, stats);
+      const mechanical = verifyDreamPage(page, sources, { prior, checkedAt, supersession }, stats);
       const verified = opts.grounding ? await opts.grounding.apply(mechanical, sources, `page:${ref.source_id}:${ref.slug}`, checkedAt) : mechanical;
       if (verified.changed) {
         const tags = await engine.getTags(ref.slug, { sourceId: ref.source_id });

@@ -1522,7 +1522,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.link_manifest',
   'dream.synthesize.quote_verify',
   'dream.quote_verify',
-  'think.quote_verify',
+  'think.quote_verify', 'dream.attribution_checks', // #5425 [UC4] mechanical attribution checks, default off (cycle/attribution-checks.ts)
   'dream.synthesize.inline_concurrency',
   // #4152 triage knobs. The triage model's preferred key is
   // `models.dream.triage` (models.* prefix, registered via the models.dream.*
