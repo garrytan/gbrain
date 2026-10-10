@@ -131,13 +131,20 @@ invokes the actual GBrain CLI to install two temporary profiles, then calls the
 pinned Hermes `MemoryManager` and provider/MCP APIs against the real isolated
 loopback GBrain/PGLite fixture.
 
-The native-manager acceptance has four tests: save/recall across manager
-sessions, correction and withdrawal; MCP tool discovery plus a registry handler
-and native `skill_view`; concurrent disjoint profile grants; and capture
-consent off/on/withdrawal through a background worker plus warm-provider grant
-revocation. It demonstrates native host API and named lifecycle behavior. It
-does **not** run Hermes as a full agent, call a model, prove skill use by a
-model, cover the complete MCP catalog, or establish Hermes catalog acceptance.
+The native-manager acceptance has six tests covering save/recall across manager
+sessions, correction and withdrawal; MCP discovery and a registry handler plus
+native `skill_view`; concurrent disjoint profile grants; capture consent and
+warm-provider revocation; persistence across a fresh backend process; and
+same-session rewind/pre-compression rehydration. These tests establish native
+host API behavior, not model conversations or complete MCP-catalog coverage.
+
+Separate bounded native-model conversations against provider code at
+`1db67090d821d5a5ad7e1b25498b39004c872444` demonstrated context retrieval, explicit
+save, fresh-process recall, correction/withdrawal, and model-selected use of the
+installed canonical `query` skill. The failed initial correction collector and
+separate zero-model historical-row replay remain distinguished in the
+[validation record](../../docs/designs/HERMES_VALIDATION.md). This does not prove
+every model-driven lifecycle path or establish Hermes catalog acceptance.
 It also does not prove managed-writer lifecycle beyond the specific resident-owner
 source test above, production Hermes store/WAL behavior, all persistence races,
 Postgres lifecycle, or maintenance worker recovery. Optional Hermes plugins may
@@ -150,7 +157,7 @@ For a local run with the pinned checkout and the same locked GBrain dependencies
 
 ```sh
 python3.12 -m pip install 'ruamel.yaml==0.18.16' 'mcp==2.0.0' \
-  'httpx2==2.7.0' 'starlette==0.31.1' 'python-dotenv==1.2.2'
+  'httpx2==2.7.0' 'starlette==1.3.1' 'python-dotenv==1.2.2'
 HERMES_API_CHECKOUT=/path/to/pinned/hermes-agent \
   python3.12 test/hermes-python/validate_native.py
 HERMES_API_CHECKOUT=/path/to/pinned/hermes-agent \
@@ -179,7 +186,12 @@ be submitted. Do not replace it until the plugin is present in a published GBrai
 commit and that exact commit SHA can be reviewed.
 
 After publication, an owner or major contributor can submit a catalog entry to
-Hermes using the full published commit SHA and `subdir: integrations/hermes`:
+Hermes using the full published commit SHA and `subdir: integrations/hermes`.
+The catalog also permits a Hermes-maintainer-curated sweep. Naming `garrytan`
+as the repository maintainer is not permission to submit on that person's behalf.
+Prefer an upstream-retained commit for a durable release pin; current fetchability
+of a draft-PR commit does not establish its long-term availability. The GBrain
+contributor draft and a future eligible catalog submission are separate actions:
 
 ```yaml
 name: gbrain
@@ -187,7 +199,12 @@ repo: https://github.com/garrytan/gbrain
 sha: <published-40-character-commit-sha>
 subdir: integrations/hermes
 version: "1.0.0"
-description: Shared memory over HTTP MCP; capture is opt-in and server-gated.
+description: >-
+  Native memory over HTTP MCP; capture is opt-in and server-gated.
+  Disclosure — retrieval queries, standing entities, session identifiers and
+  explicit tool arguments go to the configured GBrain endpoint. Before-turn
+  queries are sent even with capture off; opted-in capture also sends paired
+  user/assistant text. The bearer token comes from the profile secret scope.
 maintainer: garrytan
 tier: community
 category: memory
@@ -239,6 +256,28 @@ context-budget explanation. It is retained for human review, not hidden or
 allowlisted: the real data flow to the configured server is disclosed above.
 General capability declarations remain empty because the seven memory tools
 belong to the registered MemoryProvider, not the general tool registry.
+
+### Catalog lineage and submission boundary
+
+Existing catalog entries include
+[`gbrain-pointer`](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/gbrain-pointer.yaml),
+[`gbrain-plugin`](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/gbrain-plugin.yaml),
+and [`gbrain-retrieval-reflex`](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/gbrain-retrieval-reflex.yaml).
+Reviewers should compare this package against those entries under the catalog's
+one-listing-per-lineage rule rather than accepting a rename as a new plugin.
+
+The substantive submission case is the implementation in this directory: a
+native `MemoryProvider` with its own bearer-authenticated HTTP MCP transport,
+seven explicit memory tools, boundary context/delta retrieval, and locally
+opted-in, server-consent-gated capture. The accompanying GBrain installer adds
+full native MCP access and the canonical skillpack; these are not capabilities
+silently supplied by installing the provider directory alone. The bounded
+source comparison in [PROVENANCE.md](PROVENANCE.md) found no substantial
+verbatim code block from the community pointer provider; it does not prove
+independent authorship. Credit and any applicable source notices must remain.
+An eligible submitter must present this distinction and the data-flow disclosure
+for Hermes maintainers to judge; neither structural validation nor this rationale
+is catalog approval.
 
 ### Prior art and acknowledgments
 
