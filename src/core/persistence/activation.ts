@@ -31,7 +31,14 @@ export interface ActivationReport {
    * until `gbrain sources writer git-durability <source> --enable` runs.
    */
   git_durability?: Array<{ source_id: string; state: 'on' | 'off' | 'unknown'; enable_command: string | null }>;
+  /** #5514: `activated: false` with `enabled: true` says why, so a no-op is not read as a silent failure. */
+  reason?: 'already_enabled';
+  next_action?: string;
 }
+/** #5514: the brain was managed before the command ran; activation changes nothing and cannot start an owner process. */
+const ALREADY_ENABLED = { reason: 'already_enabled', next_action: 'Managed persistence was already enabled before this command, so nothing changed. '
+  + 'If writes are accepted but never published (writer status shows ingress not_running or a null heartbeat), no owner process is running: '
+  + 'start gbrain serve or the autopilot on the owner host, then check gbrain sources writer status --probe --json.' } as const;
 const gitDurabilityListing = (bindings: WorktreeBinding[]): NonNullable<ActivationReport['git_durability']> => bindings.map(binding => {
   const state = gitDurabilityState(binding);
   return { source_id: binding.source_id, state, enable_command: state === 'on' ? null : `gbrain sources writer git-durability ${binding.source_id} --enable --dry-run` };
@@ -113,7 +120,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
   if (brain?.enabled && opts.expectedState === undefined) {
     const [count] = await engine.executeRaw<{ count: number }>(`SELECT COUNT(*)::integer AS count FROM persistence_source_bindings b
       JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE NOT s.archived`);
-    return { enabled: true, activated: false, filesystem_sources: count.count, native_lock: native };
+    return { enabled: true, activated: false, filesystem_sources: count.count, native_lock: native, ...ALREADY_ENABLED };
   }
   const hostId = opts.dryRun ? existingLocalHostId() : localHostId();
   const sources = await configuredSources(engine);
@@ -147,7 +154,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
       await assertWriterAdminState(tx, opts.expectedState);
       const [current] = await tx.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1 FOR UPDATE');
       await assertWriterAdminUnlocked(tx);
-      if (current?.enabled) return { enabled: true, activated: false, filesystem_sources: initial.length, native_lock: native };
+      if (current?.enabled) return { enabled: true, activated: false, filesystem_sources: initial.length, native_lock: native, ...ALREADY_ENABLED };
       const currentSources = await configuredSources(tx, true);
       const bindings = await validatedBindings(tx, currentSources, hostId, true);
       const identity = (rows: WorktreeBinding[]) => JSON.stringify(rows.map(row => [row.source_id,row.source_incarnation,row.worktree_id,row.owner_host_id,
