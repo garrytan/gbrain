@@ -7,7 +7,7 @@
  *
  *   redact (secret-scan + user patterns + imperative count)
  *     → render body lines (imessage-slack, REAL timestamps, anchor-escape)
- *       → split at message boundaries into part pages under the embed-skip
+ *       → split at message/UTF-8 boundaries into part pages under the embed-skip
  *         threshold → frontmatter (YAML serializer, mandatory type+date).
  *
  * Body format is the conversation-parser `imessage-slack` builtin — the
@@ -17,7 +17,8 @@
  * timestamps on re-parse.
  *
  * Split pages: bodies over PART_TARGET_BYTES split at message boundaries
- * with OVERLAP_MESSAGES carried into the next part (cross-boundary
+ * (oversized turns continue with the same speaker/time), with up to
+ * OVERLAP_MESSAGES carried into the next part when they fit (cross-boundary
  * decision/answer pairs can still ground facts; extraction dedup absorbs the
  * duplicates). Splitting exists because pages over the ~500KB embed_skip
  * threshold import as zero-chunk, unsearchable pages — the 5MB import cap is
@@ -34,7 +35,7 @@ import { DEFAULT_BYTES_WARN } from '../content-sanity.ts';
 import { applyRedaction, planRedaction, type EchoDictionary, type RedactionPlan } from '../secret-scan.ts';
 import { loadPatterns } from '../skillpack/harvest-lint.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
-import { ensureWellFormed, truncateUtf8 } from '../text-safe.ts';
+import { ensureWellFormed } from '../text-safe.ts';
 import { BUILTIN_PATTERNS } from '../conversation-parser/builtins.ts';
 import type { ParsedSession, TranscriptMessage } from './types.ts';
 import { buildTranscriptSlug, transcriptFullId, utcTimestamp } from './types.ts';
@@ -51,7 +52,7 @@ export const MESSAGE_ANCHOR_RE: RegExp = IMESSAGE_SLACK.regex;
 /** Date-heading shapes some builtins treat as day boundaries — escaped too. */
 const DATE_HEADING_RE = /^#{1,6}\s*\d{4}-\d{2}-\d{2}\b/;
 
-/** ~4K chars per message keeps pages readable; full text stays in source_uri. */
+/** @deprecated Legacy fixture sizing constant; message text is no longer capped. */
 export const MESSAGE_CHAR_CAP = 4000;
 
 /**
@@ -259,8 +260,7 @@ export function escapeAnchorLines(text: string): string {
  * Neutralize QUOTED facts/takes fence markers in a message body:
  * `gbrain:facts:begin` → `gbrain\:facts:begin`. A session that read another
  * page (context pack, get_page) quotes that page's `<!--- gbrain:facts:begin -->`
- * verbatim, and the per-message char cap routinely keeps the begin marker
- * while dropping the end — a live, unbalanced fence on a transcript page that
+ * verbatim; a part boundary can separate begin and end, leaving an unbalanced fence on a transcript page that
  * has no fence (FACTS_FENCE_UNBALANCED on every dream cycle), or a quoted
  * fence indexed as the transcript's own facts. Every fence consumer is an
  * exact-substring matcher on the marker token, so the backslash lands INSIDE
@@ -320,6 +320,9 @@ export function renderSessionParts(
   opts: { sourcePath: string; partTargetBytes?: number } = { sourcePath: '' },
 ): RenderSessionResult {
   const partTargetBytes = opts.partTargetBytes ?? PART_TARGET_BYTES;
+  if (!Number.isSafeInteger(partTargetBytes) || partTargetBytes <= 0) {
+    throw new Error('renderSessionParts: partTargetBytes must be a positive safe integer');
+  }
   const { session, imperativesFlagged } = redacted;
   const { meta, messages } = session;
   if (!messages.length) throw new Error('renderSessionParts: session has no messages');
@@ -340,29 +343,49 @@ export function renderSessionParts(
   // collision-proof across harnesses, days, and fallback session ids).
   const identityBase = `${meta.harness}-${transcriptFullId(meta.sessionId)}`;
 
-  // One rendered block per message (anchor line + escaped continuation).
+  // Escape the COMPLETE redacted turn before splitting: neither secrets nor
+  // quoted anchors/fences may regain their syntax at a continuation boundary.
+  // Continuations repeat the real speaker/time, but are not overlap candidates
+  // (duplicating a near-target fragment would exceed the page budget).
   let lastTs = firstTs;
-  const blocks: string[] = messages.map((m) => {
+  const blocks = messages.flatMap((m) => {
     const ts = m.timestamp || lastTs;
     lastTs = ts;
-    const text = escapeFenceMarkers(escapeAnchorLines(truncateUtf8(m.text, MESSAGE_CHAR_CAP)));
-    const [head, ...rest] = text.split('\n');
-    const anchor = `**${speakerLabel(m)}** (${anchorTimestamp(ts)}): ${head}`;
-    return rest.length ? `${anchor}\n${rest.join('\n')}` : anchor;
+    const anchor = `**${speakerLabel(m)}** (${anchorTimestamp(ts)}): `;
+    const budget = partTargetBytes - Buffer.byteLength(anchor, 'utf8') - 2;
+    if (budget < 4) throw new Error('renderSessionParts: part target cannot fit the message anchor and a Unicode character');
+    const text = Buffer.from(escapeFenceMarkers(escapeAnchorLines(ensureWellFormed(m.text))), 'utf8');
+    const pieces: string[] = [];
+    let start = 0;
+    do {
+      let end = Math.min(start + budget, text.length);
+      // A continuation byte cannot start the next slice. Back up at most
+      // three bytes; budget >= 4 guarantees forward progress for any scalar.
+      while (end < text.length && (text[end] & 0xc0) === 0x80) end--;
+      pieces.push(anchor + text.subarray(start, end).toString('utf8'));
+      start = end;
+    } while (start < text.length);
+    return pieces.map(body => ({ body, bytes: Buffer.byteLength(body, 'utf8') + 2, overlap: pieces.length === 1 }));
   });
 
   // Split at message boundaries under the part target, with overlap.
-  const groups: string[][] = [];
-  let current: string[] = [];
+  const groups: typeof blocks[] = [];
+  let current: typeof blocks = [];
   let currentBytes = 0;
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
-    const bytes = Buffer.byteLength(b, 'utf8') + 2;
+    const bytes = b.bytes;
     if (current.length > 0 && currentBytes + bytes > partTargetBytes) {
       groups.push(current);
-      const overlap = current.slice(-OVERLAP_MESSAGES);
+      // Keep a contiguous suffix of whole messages only, and only as much
+      // context as fits alongside the new block. Overlap must never grow a
+      // part beyond the same limit that motivated splitting it.
+      let overlap = current.slice(-OVERLAP_MESSAGES);
+      const lastFragment = overlap.findLastIndex(block => !block.overlap);
+      overlap = overlap.slice(lastFragment + 1);
+      while (overlap.length && overlap.reduce((n, block) => n + block.bytes, 0) + bytes > partTargetBytes) overlap.shift();
       current = [...overlap];
-      currentBytes = overlap.reduce((n, s) => n + Buffer.byteLength(s, 'utf8') + 2, 0);
+      currentBytes = overlap.reduce((n, block) => n + block.bytes, 0);
     }
     current.push(b);
     currentBytes += bytes;
@@ -390,7 +413,7 @@ export function renderSessionParts(
         ...(imperativesFlagged > 0 ? { imperatives_flagged: imperativesFlagged } : {}),
       },
     };
-    const body = group.join('\n\n');
+    const body = group.map(block => block.body).join('\n\n');
     return { slug, content: renderPartContent(fm, body), frontmatterId, part, of, frontmatter: fm, body };
   });
 

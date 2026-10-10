@@ -83,6 +83,25 @@ async function conversationPages(sourceId: string): Promise<number> {
 }
 
 describe('connector checkpoints', () => {
+  test('long conversation tails are archived, suffix-only edits update, and unchanged retries are idempotent (#6388)', async () => {
+    const conversation = conv('long-archive', T0 + 10);
+    conversation.turns = [{ role: 'user', text: 'x'.repeat(5000) + 'ORIGINAL-TAIL' }, { role: 'assistant', text: 'ok' }];
+    const state = newFixtureState([conversation]);
+    expect((await run(state)).status).toBe('success');
+    const bodies = async () => (await engine.executeRaw<{ compiled_truth: string }>(
+      `SELECT compiled_truth FROM pages WHERE source_id=$1 AND slug LIKE 'conversations/chatgpt/%' AND deleted_at IS NULL`, ['default']
+    )).map(row => row.compiled_truth).join('\n');
+    expect(await bodies()).toContain('ORIGINAL-TAIL');
+
+    state.conversations[0] = { ...conversation, updateTime: T0 + 20,
+      turns: [{ role: 'user', text: 'x'.repeat(5000) + 'EDITED-TAIL' }, { role: 'assistant', text: 'ok' }] };
+    expect((await run(state)).ingest?.imported).toBe(1);
+    expect(await bodies()).toContain('EDITED-TAIL');
+    expect(await bodies()).not.toContain('ORIGINAL-TAIL');
+    expect((await run(state)).fetched).toBe(0);
+    expect(await conversationPages('default')).toBe(1);
+  });
+
   test('the watermark is per source: a second source still receives the full history', async () => {
     const state = newFixtureState([conv('old-1', T0 - 30 * 86_400), conv('new-1', T0 + 10)]);
     const first = await run(state, { sourceId: 'default' });

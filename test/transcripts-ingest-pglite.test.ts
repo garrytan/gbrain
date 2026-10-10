@@ -124,6 +124,33 @@ function writeBigAgentSession(dir: string, id: string, messageCount: number): st
 }
 
 describe('cross-harness round-trip', () => {
+  test('a huge single turn lands searchable bounded parts including its tail (#6388)', async () => {
+    const path = join(tmp, 'huge-turn.jsonl');
+    const text = '漢字🙂 '.repeat(15_000) + 'END-OF-MESSAGE-MARKER';
+    writeFileSync(path, [
+      JSON.stringify({ type: 'session', version: 3, id: 'huge-turn', timestamp: '2026-08-10T08:00:00.000Z' }),
+      JSON.stringify({ type: 'message', timestamp: '2026-08-10T08:00:00.000Z', message: {
+        role: 'user', content: [{ type: 'text', text }] } }),
+    ].join('\n') + '\n');
+    const result = await runTranscriptsIngest(engine, baseOpts([path]));
+    expect(result.erroredFiles).toBe(0);
+    expect(result.pages.imported).toBeGreaterThan(3);
+    const pages = await engine.listPages({ type: 'conversation', sourceId: 'default', limit: 100 });
+    const bodies: string[] = [];
+    for (const page of pages) {
+      const stored = await engine.getPage(page.slug, { sourceId: 'default' });
+      expect(Buffer.byteLength(stored!.compiled_truth)).toBeLessThan(50_000);
+      bodies.push(stored!.compiled_truth);
+      const chunks = await engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM content_chunks WHERE page_id=$1`, [stored!.id]);
+      expect(chunks[0].n).toBeGreaterThan(0);
+    }
+    expect(bodies.join('\n')).toContain('END-OF-MESSAGE-MARKER');
+    const again = await runTranscriptsIngest(engine, baseOpts([path]));
+    expect(again.pages.imported).toBe(0);
+    expect(again.pages.skipped).toBe(pages.length);
+  });
+
   test('codex + openclaw fixtures land as conversation pages in one source', async () => {
     const r = await runTranscriptsIngest(engine, baseOpts([CODEX_FIXTURE, AGENT_FIXTURE]));
     expect(r.sessionsImported).toBe(2);
