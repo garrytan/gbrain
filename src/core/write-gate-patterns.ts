@@ -190,7 +190,7 @@ const OWN_PATTERNS: readonly WriteGatePattern[] = [
     `\\b(?:to|for) (?:any|all|every) (?:ai |llm )?${AGENT_V}s? (?:reading|seeing|processing|handling|that reads|who reads)\\b${CLAUSE}{0,200}\\b(?:always|never|must|should|do not|don't|from now on|going forward)\\b${SENT}{0,40}\\b(?:${SPEECH}|${ACTION})\\b`,
     ['reading', 'seeing', 'processing', 'handling', 'reads'], { requires: ['any', 'all', 'every'] }),
   own('agent-standing-rule', 'standing_instruction',
-    `\\b${AGENT}\\b(?: ?[,:]${CLAUSE}{0,200}\\b(?:always|never|must|should|do not|don't|from now on|going forward)\\b${SENT}{0,40}\\b(?:${SPEECH}|${ACTION})|${SENT}{0,40}\\b(?:always|never|from now on|going forward|henceforth)\\b${SENT}{0,40}\\b(?:${STRICT_SPEECH}|${ACTION})| (?:is|are|will be|shall be) (?:instructed |required |expected |supposed )?to (?:always |never |only )?(?:${SPEECH}|${ACTION}))\\b`,
+    `\\b${AGENT}\\b(?: ?(?:,${CLAUSE}{0,200}|:(?:[^*.!?|]${CLAUSE}{0,199}|))\\b(?:always|never|must|should|do not|don't|from now on|going forward)\\b${SENT}{0,40}\\b(?:${SPEECH}|${ACTION})|${SENT}{0,40}\\b(?:always|never|from now on|going forward|henceforth)\\b${SENT}{0,40}\\b(?:${STRICT_SPEECH}|${ACTION})| (?:is|are|will be|shall be) (?:instructed |required |expected |supposed )?to (?:always |never |only )?(?:${SPEECH}|${ACTION}))\\b`,
     AGENT_ANCHORS, { requires: [...MODAL_ANCHORS, 'is', 'are', 'will', 'shall'] }),
   own('you-always-say', 'standing_instruction',
     `\\byou\\b${SENT}{0,30}\\b(?:always|never)\\b${SENT}{0,40}\\b${STRICT_SPEECH}\\b`,

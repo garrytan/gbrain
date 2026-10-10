@@ -20,11 +20,13 @@ import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-gu
 import { getWorktreeBinding } from './ownership.ts';
 import { localHostId } from './identity.ts';
 import { sha256 } from './digest.ts';
+import { screeningPath } from './screening-paths.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { prepareCanonicalProjections } from './canonical-projections.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
+import type { PageSnapshot } from '../page-state/types.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 
@@ -112,7 +114,7 @@ export async function assertImportPaths(engine: BrainEngine, sourceId: string, r
     const roots = [source.local_path, source.worktree_path && source.relative_path !== null ? join(source.worktree_path, source.relative_path) : null];
     for (const candidate of roots) {
       if (!candidate) continue;
-      const other = existsSync(candidate) ? realpathSync(candidate) : resolve(candidate);
+      const other = screeningPath(`source-root\0${candidate}`, () => existsSync(candidate) ? realpathSync(candidate) : resolve(candidate));
       for (const path of [input, target]) {
         const rel = relative(other, path);
         if (rel === '' || !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)) {
@@ -126,7 +128,15 @@ export async function assertImportPaths(engine: BrainEngine, sourceId: string, r
   }
 }
 
-export async function prepareManagedImportMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
+/**
+ * `screen`: the no-op screen of an unadmitted request (import-mutations.ts), whose caller just checked the
+ * paths and read the input bytes and page snapshot it passes. The preparer then skips its own first path check,
+ * the input re-normalization and the snapshot re-read: `validate` re-runs every path and byte check last, and the
+ * no-op kernel re-checks the page revision, so a skip still rests on all of them; anything else is admitted
+ * and prepared again in full by its publication.
+ */
+export async function prepareManagedImportMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig,
+  screen?: { snapshot: PageSnapshot | null }): Promise<PreparedMutation> {
   const p = row.intent as ManagedImportIntent | null;
   if (row.authority.remote || row.principal_kind !== 'local_cli') throw trustedCliRequired('Filesystem import requires a trusted local CLI writer.');
   if (!p || p.kind !== 'managed_file_import' || typeof p.content !== 'string' || typeof p.inputPath !== 'string' || typeof p.sourcePath !== 'string') {
@@ -160,13 +170,13 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
       `The canonical copy of ${p.sourcePath} in source ${row.source_id} changed after import request ${row.request_id} was accepted, so it was not overwritten. Review that file, then import again if the import should still replace it.`,
       { fix: reimportFix(p.inputPath, row.source_id) });
   };
-  await checkPaths(engine);
-  const normalized = managedImportContent(p.sourcePath, readImportBytes(p.inputPath), p.activePack);
+  if (!screen) await checkPaths(engine);
+  const normalized = screen ? { slug: row.slug, content: p.content } : managedImportContent(p.sourcePath, readImportBytes(p.inputPath), p.activePack);
   if (normalized.slug !== row.slug || normalized.content !== p.content) throw opError('source_changed', 'The frozen file identity no longer matches the import.',
     `${p.sourcePath} now normalizes to different content or slug than import request ${row.request_id} accepted for ${row.slug}, so it published nothing. Import it again to publish the current file.`,
     { fix: reimportFix(p.inputPath, row.source_id) });
   const source = { sourceId: row.source_id };
-  const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
+  const snapshot = screen ? screen.snapshot : await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
   assertPageRevision(snapshot, p.expected_revision ? { expectedRevision: p.expected_revision } : {});
   if ((snapshot?.page.id ?? null) !== row.page_id || snapshot?.page.source_path && snapshot.page.source_path !== p.sourcePath) {
     throw opError('page_identity_changed', 'The imported path no longer names the accepted page.',

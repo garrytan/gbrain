@@ -3668,6 +3668,7 @@
       {
         "kind": "interface",
         "members": [
+          "globalPurges?: GlobalPurgeMarker | undefined",
           "page: Page",
           "revision: string",
           "sourceIncarnation: string",

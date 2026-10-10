@@ -158,16 +158,18 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
   if (limit <= 0) return [];
   const rows = await engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
+    // The worktree-wide conditions (owner, refresh fence, recovery blocks) are one
+    // InitPlan, so the claim walks persistence_effects_pending in order and stops at
+    // $3 rows instead of probing every ready effect of the worktree.
     return tx.executeRaw<PersistenceEffect>(`WITH ready AS (SELECT e.id FROM persistence_effects e
-      JOIN persistence_worktrees w ON w.id=e.worktree_id AND w.owner_host_id=$1::uuid
-      WHERE e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
+      WHERE EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=$2::uuid AND w.owner_host_id=$1::uuid
+        AND ${refreshFenceClear('w', 'id')}
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=w.id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=w.id AND blocked.recovery IS NOT NULL))
+      AND e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
       AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'version')
       AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
-      AND ${refreshFenceClear('e')}
-      AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
-        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
-      AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
-        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+      AND e.recovery IS NULL
       AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
         WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')
       ORDER BY e.next_attempt_at,e.id LIMIT $3 FOR UPDATE OF e SKIP LOCKED)

@@ -140,7 +140,7 @@ export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, byt
   // Withdrawal overlays intentionally precede physical mirroring. The ledger
   // is applied by the import preparation and cannot be undone by this check.
   const actual = canonical({ ...parsed, type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
-    parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals) }, parsed.tags);
+    parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals, { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges }) }, parsed.tags);
   return digest(actual) === digest(canonical(snapshot.page, snapshot.tags));
 }
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,

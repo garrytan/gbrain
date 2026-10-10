@@ -10,6 +10,48 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.141.0] - 2026-10-10
+
+**Re-importing and syncing unchanged files is 2.4x faster, `gbrain extract` finishes on a 50,000-page PGLite brain (114 s instead of hanging), a PGLite `serve` with a git backlog answers its first tool call in 0.6 s instead of 4.3 s, and a Postgres brain that lost its planner statistics gets them back instead of taking a minute per search.**
+
+Efficiency wave 7. Every number below is interleaved base vs this branch on the same 4-vCPU AMD EPYC / 16 GiB machine, Bun 1.4.2, synthetic brains (5k = 5,001 pages / 25,331 chunks, 50k = 50,010 / 248,802), cold processes, p50 / p95.
+
+| Path | Engine, brain | Before | After | N |
+|---|---|---|---|---|
+| unchanged re-import, 3,700 files | Postgres 5k | 35,310 / 36,281 ms | 14,268 / 15,552 ms | 3 |
+| unchanged re-import, 3,700 files | PGLite 5k | 19,278 / 20,138 ms | 8,111 / 8,254 ms | 3 |
+| first sync of an already-imported 3,700-file source | Postgres 5k | 119,230 / 137,457 ms | 87,227 / 88,866 ms | 2 |
+| first sync of an already-imported 3,700-file source | PGLite 5k | 84,242 / 91,485 ms | 63,996 / 65,691 ms | 2 |
+| `extract links --source db` from empty links | PGLite 50k | 1,485 s (3.5 → 59.9 ms/page) | 103 s in `extract all` (1.2-1.8 ms/page, flat) | 1 |
+| `extract all` watermark stamp | PGLite 50k | wedges at ~528 MB WAL | completes | 1 |
+| `serve` first tool call after a 50k import (29.8k queued git effects) | PGLite 50k | 4,340 / 4,596 ms | 630 / 726 ms | 10 |
+| git effects drained in 60 s of `serve` | PGLite 50k | 12.7k-14.0k | 20.0k-21.8k | 2 |
+| warm search with planner statistics deleted | Postgres 5k | 55,975 / 61,535 ms | 582 / 1,768 ms (564 after the first call) | 6 / 21 |
+
+### Itemized changes
+
+- **Skipped files cost less** (`persistence/import-mutations.ts`, `import-prepare.ts`, `noop-kernel.ts`, `sync-run.ts`, `sync-waivers.ts`, new `screening-paths.ts`, `shared-skills/knowledge-guard.ts`, `page-state/snapshot.ts`, `persistence/identity.ts`). A file the hash screen proves unchanged takes one page-snapshot read and no admission: the screen hands its snapshot to the preparer, which drops the duplicate path check and re-read, and the no-op kernel reports `revision_moved` when the page moved since. Other sources' realpath roots, the skillpack roots and the source Git scope are resolved once per screening batch (never across batches, never a thrown result), cutting openat/access/readlink syscalls 1.58M → 466k per re-import. `readPageSnapshot` computes its withdrawal fingerprints only when the page has withdrawals or `*` purges. `localHostId()` caches the validated `host.json` keyed by path, dev, inode, mtime, ctime and size (a file modified in the last 2 s is read, not cached), so a replaced or edited identity and a changed home still read fresh.
+- **PGLite extract at scale** (`pglite-engine.ts`, `pglite-engine/checkpoint-guard.ts`, `commands/extract.ts`). Autocommit writes through the engine's SQL helpers (`markPagesExtractedBatch` and the rest of `engineSql`) pass the same WAL checkpoint guard as `executeRaw`; before, the stamp loop reached PGLite's automatic checkpoint inside a write and spun forever. The `extract --source db` links walk refreshes planner statistics through `plannerStatsForLinkDrain` at each snapshot batch, so `links` is analyzed while it grows instead of planning every page against zero rows. The same 147,969 links come out (identical md5 of the ordered link set); Postgres is unchanged within noise (91.6 vs 92.8 s).
+- **Git effect claims** (`persistence/effect-journal.ts`, `worktree-refresh-schema.ts`). `claimCoalescedGitEffects` checks the worktree-wide conditions (owner, refresh fence, effect and request recovery blocks) once as an InitPlan and walks `persistence_effects_pending` in order to its limit: 351 → 25 ms per claim with 22k ready effects. PGLite runs each claim synchronously on the main thread, so the old claim also starved the serve boot behind it.
+- **Missing planner statistics on Postgres** (`search/projection-statistics.ts`, `postgres-engine.ts`, doctor `planner_stats_stale`, repair `planner-stats`). `missingSearchStatistics` is the one test for absent search statistics (the six `pages` and three `content_chunks` columns plus the projection statistics); the wave-6 write-pass skip, a once-per-process background guard on the first search outside a transaction (never awaited by the search), doctor and repair all use it. The flip comes from the `pages` statistics: without them the adjacency count runs pages × pages.
+- The write gate no longer flags an assistant's ordinary replies in saved chat transcripts ("As an AI language model, I don't…, but I can…") as instructions to an agent; planted instructions are still caught. (GBRA-58)
+- Importing or saving a page no longer slows down on a brain with many purged facts; gbrain looks up only the purges that match the page's own fact rows (12k tombstones: PGLite import 159 → 57 ms, Postgres 161 → 50 ms). Migration v231 adds two `fact_purges` indexes. (GBRA-58)
+- `test/e2e/persistence-idle-pool.test.ts` awaits the drain, dumps `pg_stat_activity` on failure and holds past one probe cycle. (GBRA-64)
+- Tests: `persistence-skip-cost.test.ts`, `persistence-host-identity-cache.test.ts`, `pglite-checkpoint-guard.test.ts` (with a WAL worker fixture), `extract-links-db-planner-stats.test.ts`, `search-statistics-guard.test.ts` + its Postgres e2e, `purge-global-marker.test.ts`, and a reference-predicate equivalence case in `persistence-git-coalescing-5530.slow.test.ts` (every fence, recovery, mirror, owner and readiness state claims exactly the old predicate's rows, both engines).
+
+## [0.60.140.0] - 2026-10-10
+
+**CI only: unit shard 7 no longer loses its tail to a Bun runtime defect, and a red shard that does names the defect instead of blaming the tests. Nothing in gbrain itself changes.**
+
+Three runs out of three of the `Test` workflow's shard 7 at the current file composition (d4dc2d4d8 twice, c12e14adf once) went bad about ten minutes in, inside `test/persistence-git-publication.test.ts`: a `git` run through `Bun.spawnSync` spun until the test deadline printed `killed 1 dangling process`, and from then on every synchronous child spawn in the process (`spawnSync`, `execSync`, `execFileSync`) in unrelated files timed out with empty output while asynchronous spawns and in-process tests kept passing. That is oven-sh/bun#34069 in Bun 1.4.0 and 1.4.2: a GC finalizer that runs while `Bun.spawnSync` waits leaves the runtime's private spawnSync loop with a drifted poll count for the life of the process. Bun fixed it upstream on 2026-10-05 (oven-sh/bun#44581, commit 13a98b0); no release carries it yet. The release gate refused v0.60.139.0 on it.
+
+### Itemized changes
+
+- `test/helpers/git-publication.ts`: `gitAsync` and `gitFixtureAsync` run git through `Bun.spawn` on the main loop; `test/persistence-git-publication.test.ts` uses them for every call, so the shard's densest run of `spawnSync` windows is gone. The synchronous `git` stays for callers that cannot await, and both now throw on any exit that is not 0: a null exit code (signal, or a `spawnSync` that returned without a status) used to pass as success and return `''`, which turned the poisoned run into a bogus fixture and a `durability_not_enabled` assertion two lines later. Both spawns pass the live `process.env`, so a test's `PATH` or `GIT_*` override reaches the child.
+- `scripts/capture-test-log.ts`: a red shard whose log shows `killed N dangling process` followed by nothing but timeouts, at least three of them in at least two files, is named `bun_spawnsync_poisoned` in the job's step summary and on stderr, with the Bun version, the upstream issue and fix, and "rerun the job". A signal only; nothing is resumed or retried. One hung test with a dangling child, timeouts with no killed child, timeouts confined to one file, or any non-timeout failure after the kill are left for their own diagnosis.
+- `TODOS.md`: bump Bun when a release carries 13a98b0; check the compare, not the version number.
+- Tests: `test/git-publication-helper.test.ts` (a git that ends by signal throws from both helpers with the command and the status; a non-zero exit carries git's stderr; the signal case returned `''` on the previous helper), `test/scripts/capture-test-log.test.ts` (the signature is named; the four look-alike shapes are not). The detector names both real shard-7 logs and not the same shard's unrelated recall-budget failure.
+
 ## [0.60.139.0] - 2026-10-09
 
 **Your agent can now tell your own notes from something a web page told it. Everything it reads back from memory says where it came from, text that reads like instructions to an agent is flagged when it is saved, and you can remove a fact you saved by mistake with a receipt that says exactly what was removed and what was out of reach.**

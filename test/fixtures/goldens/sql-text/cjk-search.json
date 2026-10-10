@@ -9,6 +9,15 @@
             "lane": "tx"
           },
           {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT r.tablename || '.' || r.attname AS col FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS r(tablename, attname, position) JOIN pg_class t ON t.oid = to_regclass(quote_ident(current_schema()) || '.' || r.tablename) WHERE t.reltuples >= 500 AND has_table_privilege(t.oid, 'SELECT') AND NOT row_security_active(t.oid) AND NOT EXISTS (SELECT 1 FROM pg_stats s WHERE s.schemaname = current_schema() AND s.tablename = r.tablename AND s.attname = r.attname) ORDER BY r.position",
+            "textSha256": "2f0ade4889d6952ec2f8fd51f66c747ad56df2971e5bd05f0c2f493beabc3a81"
+          },
+          {
             "lane": "tx",
             "params": [],
             "sql": "SET LOCAL jit = off",
@@ -19,6 +28,12 @@
             "params": [],
             "sql": "SET LOCAL statement_timeout = '8s'",
             "textSha256": "7346ddf58ceeb31a31fd4f44990faf92a5bf015f93c675513e2bc17e5c3619db"
+          },
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT reltuples::float8 AS reltuples FROM pg_class WHERE oid = 'pages'::regclass",
+            "textSha256": "9c89987a1c9f30be99f46a92c89f688c1b78d3fd58c024eb6cb075cc948c3dc0"
           },
           {
             "lane": "tx",
@@ -50,6 +65,15 @@
             "lane": "tx"
           },
           {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT r.tablename || '.' || r.attname AS col FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS r(tablename, attname, position) JOIN pg_class t ON t.oid = to_regclass(quote_ident(current_schema()) || '.' || r.tablename) WHERE t.reltuples >= 500 AND has_table_privilege(t.oid, 'SELECT') AND NOT row_security_active(t.oid) AND NOT EXISTS (SELECT 1 FROM pg_stats s WHERE s.schemaname = current_schema() AND s.tablename = r.tablename AND s.attname = r.attname) ORDER BY r.position",
+            "textSha256": "2f0ade4889d6952ec2f8fd51f66c747ad56df2971e5bd05f0c2f493beabc3a81"
+          },
+          {
             "lane": "tx",
             "params": [],
             "sql": "SET LOCAL jit = off",
@@ -60,6 +84,12 @@
             "params": [],
             "sql": "SET LOCAL statement_timeout = '8s'",
             "textSha256": "7346ddf58ceeb31a31fd4f44990faf92a5bf015f93c675513e2bc17e5c3619db"
+          },
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT reltuples::float8 AS reltuples FROM pg_class WHERE oid = 'pages'::regclass",
+            "textSha256": "9c89987a1c9f30be99f46a92c89f688c1b78d3fd58c024eb6cb075cc948c3dc0"
           },
           {
             "lane": "tx",

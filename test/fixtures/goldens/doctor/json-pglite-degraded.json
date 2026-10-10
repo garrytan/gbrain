@@ -1753,6 +1753,7 @@
             ],
             "engine": "pglite",
             "fix": "gbrain repair planner-stats --apply",
+            "missing_search_statistics": [],
             "stale": []
           },
           "message": "Planner statistics are fresh on 6 hot tables.",

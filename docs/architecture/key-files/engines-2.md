@@ -17,9 +17,11 @@ Current behavior and load-bearing invariants; history belongs in Git and CHANGEL
         v
   engine-sql/executor.ts          SqlExecutor: query/run, executeRaw, unsafe, transaction; {rows, affectedRows}
         |
-        +--> dialect-pglite.ts    db.query on the engine's cached, checkpoint-admitted handle
+        +--> dialect-pglite.ts    db.query on the engine's cached, checkpoint-guarded handle
         +--> dialect-postgres.ts  runUnsafe(conn, sql, params, {signal?, prepare: true, simple: false}); no gauge
   ```
+
+  Outside `engine.transaction()`, `engineSql` hands engine-sql `guardedHandle` (`src/core/pglite-engine/checkpoint-guard.ts`): WAL-writing statements take `runStatement`, executor transactions `runOutermost`, like `executeRaw` and `transaction()`. Before that, engine-sql autocommit writes such as `markPagesExtractedBatch` never probed WAL; past the automatic trigger (about 528 MB with max_wal_size 1 GB) the crossing UPDATE ran the checkpoint inline and spun forever (GBRA-69). Pinned by `test/pglite-checkpoint-guard.test.ts` and `test/fixtures/pglite-engine-sql-wal-worker.ts`.
 
   Inputs engine-sql never resolves arrive already resolved: source scope (`sourceIds` > `sourceId` > `'default'`), the registry-active embedding column (bare name, quoted with `quoteIdentifier`), page-state guards as callbacks (`lockPageKeys` / `readPageSnapshot`) and the engine's `transaction()` where master used it. A read master ran inside `withScopedReadTransaction` keeps that literal call in the engine method (the RLS AST inventory counts direct sites) and brands the tx handle's executor: `scopedRead(this.engineSqlOn(tx))` on Postgres, `scopedRead(this.engineSql)` on PGLite.
 

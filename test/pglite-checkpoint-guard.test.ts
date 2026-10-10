@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { CHECKPOINT_GUARD_MAX_BYTES, PgliteCheckpointGuard, checkpointGuardThreshold, writesWal } from '../src/core/pglite-engine/checkpoint-guard.ts';
 import { GBrainError } from '../src/core/types.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 const MB = 1024 * 1024;
 type Guarded = { _checkpointGuard: PgliteCheckpointGuard | undefined; db: { query(sql: string): Promise<{ rows: Array<Record<string, unknown>> }> } };
@@ -222,4 +224,54 @@ describe('autocommit write statements take the guard', () => {
       expect(stdout).toContain('done 200');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 120_000);
+
+  test('engine-sql autocommit writes (the extraction watermark stamp) past a 64 MB max_wal_size complete instead of wedging', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-engine-sql-wal-'));
+    try {
+      const child = Bun.spawn([process.execPath, join(import.meta.dir, 'fixtures', 'pglite-engine-sql-wal-worker.ts'), dir], { stdout: 'pipe', stderr: 'pipe' });
+      const timer = setTimeout(() => child.kill('SIGKILL'), 90_000);
+      const [stdout, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+      clearTimeout(timer);
+      expect(code).toBe(0);
+      expect(stdout).toMatch(/done \d+/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 120_000);
+});
+
+describe('engine-sql writes take the guard (GBRA-69 stamp wedge)', () => {
+  let engine: PGLiteEngine;
+  const refs = [{ slug: 'notes/a', source_id: 'default' }, { slug: 'notes/b', source_id: 'default' }];
+  type Sql = { engineSql: { transaction<T>(fn: (tx: { executeRaw(sql: string): Promise<unknown> }) => Promise<T>): Promise<T> } };
+  beforeAll(async () => {
+    configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    for (const { slug } of refs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body' });
+  });
+  afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); resetGateway(); });
+
+  test('an autocommit engine-sql write past the threshold checkpoints', async () => {
+    const spy = install(engine, { threshold: 0 });
+    expect(await engine.markPagesExtractedBatch(refs, new Date().toISOString())).toBe(2);
+    expect(spy.checkpoints()).toBe(1);
+  });
+
+  test('an engine-sql executor transaction checkpoints before BEGIN', async () => {
+    const spy = install(engine, { threshold: 0 });
+    await (engine as unknown as Sql).engineSql.transaction(tx => tx.executeRaw("UPDATE pages SET links_extracted_at = now() WHERE slug = 'notes/a'"));
+    expect(spy.checkpoints()).toBe(1);
+  });
+
+  test('inside engine.transaction() only the outermost probe checkpoints', async () => {
+    const spy = install(engine, { threshold: 0 });
+    await engine.transaction(tx => tx.markPagesExtractedBatch(refs, new Date().toISOString()));
+    expect(spy.checkpoints()).toBe(1);
+  });
+
+  test('below the threshold an engine-sql write never checkpoints', async () => {
+    const spy = install(engine, { threshold: Number.MAX_SAFE_INTEGER });
+    await engine.markPagesExtractedBatch(refs, new Date().toISOString());
+    expect(spy.checkpoints()).toBe(0);
+  });
 });

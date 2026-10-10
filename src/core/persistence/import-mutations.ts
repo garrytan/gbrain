@@ -18,6 +18,7 @@ import { digest, sha256 } from './digest.ts';
 import { assertImportPaths, managedImportContent, prepareManagedImportMutation, readImportBytes, type ImportPack, type ManagedImportIntent } from './import-prepare.ts';
 import { submissionAuthority } from './authority.ts';
 import { inspectUnchanged, screeningRequest } from './noop-kernel.ts';
+import { withScreeningPaths } from './screening-paths.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -97,7 +98,7 @@ export async function importManagedFiles(engine: BrainEngine, files: readonly Ma
   const planned: Array<{ i: number; slug: string; content: string; sourcePath: string; path: string; inputPath: string; inputHash: string; target: string }> = [];
   const slugs = new Set<string>();
   let rest = files.length;
-  for (let i = 0; i < files.length; i++) {
+  await withScreeningPaths(async () => { for (let i = 0; i < files.length; i++) {
     let { filePath, sourcePath } = files[i]!;
     try {
       if (isImageFilePath(sourcePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL !== 'true') {
@@ -119,7 +120,7 @@ export async function importManagedFiles(engine: BrainEngine, files: readonly Ma
       slugs.add(slug);
       planned.push({ i, slug, content, sourcePath, path, inputPath, inputHash: sha256(bytes), target });
     } catch (error) { fail(i, error); }
-  }
+  } });
   if (planned.length) await importPlanned(ctx, binding!, planned, opts, fail, (i, value) => { settled[i] = { status: 'fulfilled', value }; });
   if (rest < files.length) settled.splice(rest, files.length - rest, ...await importManagedFiles(engine, files.slice(rest), opts));
   return settled;
@@ -150,13 +151,15 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
   try {
     const pending = await readPending(members.map(member => member.key));
     const fresh: typeof members = [];
-    for (const member of members) {
+    await withScreeningPaths(async () => { for (const member of members) {
       member.params = pending.get(member.key);
       if (member.params) continue;
       try {
         const snapshot = await engine.readPageSnapshot(member.slug, { sourceId, includeDeleted: true });
+        // The input is the canonical file itself (the common case): its hash was taken from the bytes just read.
+        const targetHash = member.target === member.inputPath ? member.inputHash : existsSync(member.target) ? sha256(readImportBytes(member.target)) : null;
         const intent: ManagedImportIntent = { kind: 'managed_file_import', slug: member.slug, content: member.content, sourcePath: member.sourcePath, path: member.path,
-          inputPath: member.inputPath, inputHash: member.inputHash, targetHash: existsSync(member.target) ? sha256(readImportBytes(member.target)) : null,
+          inputPath: member.inputPath, inputHash: member.inputHash, targetHash,
           ownerEpoch: String(binding.owner_epoch), ...(snapshot ? { expected_revision: snapshot.revision } : {}),
           noEmbed: !!opts.noEmbed, ...(opts.activePack ? { activePack: opts.activePack } : {}) };
         // #5470: an import whose publication would change nothing takes no admission.
@@ -164,7 +167,7 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
         member.params = { ...intent, ...(members.length > 1 ? { import_batch: batch } : {}), request_id: randomUUID(), source_id: sourceId };
         fresh.push(member);
       } catch (error) { refuse(member, error); }
-    }
+    } });
     if (fresh.length) {
       await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
         SELECT $1,k,c::jsonb FROM unnest($2::text[],$3::text[]) AS u(k,c) ON CONFLICT DO NOTHING`,
@@ -255,7 +258,7 @@ async function unchangedManagedImport(ctx: OperationContext, binding: WorktreeBi
     const authority = await submissionAuthority(ctx, 'put_page', binding.source_id, binding.source_incarnation, intent.slug);
     const row = screeningRequest({ source_id: binding.source_id, source_incarnation: binding.source_incarnation, slug: intent.slug,
       page_id: snapshot.page.id, worktree_id: binding.worktree_id, authority, intent, operation: 'put_page' });
-    const prepared = await prepareManagedImportMutation(ctx.engine, row, ctx.config);
+    const prepared = await prepareManagedImportMutation(ctx.engine, row, ctx.config, { snapshot });
     if ((await inspectUnchanged(ctx.engine, { prepared, snapshot, sourcePath: intent.sourcePath, databaseOnly: false })).admitReason) return false;
     await prepared.validate?.(ctx.engine);
     return true;

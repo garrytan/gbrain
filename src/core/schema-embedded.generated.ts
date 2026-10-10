@@ -2911,6 +2911,11 @@ DO \$rls\$ BEGIN
 END \$rls\$;
 -- END GENERATED from src/core/facts/purge-schema.ts (MEMORY_PURGE_SCHEMA_SQL)
 
+-- BEGIN GENERATED from src/core/facts/purge-schema.ts (FACT_PURGE_LOOKUP_INDEX_SQL). Edit that file, then run: bun run build:schema
+CREATE INDEX IF NOT EXISTS fact_purges_subject_idx ON fact_purges (source_id, subject, fact_hash) INCLUDE (visibility, purged_at);
+CREATE INDEX IF NOT EXISTS fact_purges_all_subjects_idx ON fact_purges (source_id, purged_at) WHERE subject = '*';
+-- END GENERATED from src/core/facts/purge-schema.ts (FACT_PURGE_LOOKUP_INDEX_SQL)
+
 -- #5575 blocking write gate: verdict receipts and held facts/takes.
 -- BEGIN GENERATED from src/core/write-gate-schema.ts (WRITE_GATE_SCHEMA_SQL). Edit that file, then run: bun run build:schema
 CREATE TABLE IF NOT EXISTS write_gate_receipts (

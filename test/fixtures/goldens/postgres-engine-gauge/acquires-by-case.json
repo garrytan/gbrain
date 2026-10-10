@@ -309,9 +309,11 @@
     "revertToVersion#default": {},
     "revertToVersion#sourceId": {},
     "searchKeyword#cjk": {
+      "raw": 2,
       "tx": 1
     },
     "searchKeyword#cjk+sourceIds+detailLow": {
+      "raw": 2,
       "tx": 1
     },
     "searchKeywordChunks#cjk": {

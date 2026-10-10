@@ -187,7 +187,7 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   const pins: ReconcilePins = { brain_id: brain.brain_id, source_id: sourceId, source_incarnation: snapshot.sourceIncarnation, slug,
     page_id: snapshot.page.id, worktree_id: binding.worktree_id, binding_digest: digest({ binding, root, path: canonicalPath }), owner_epoch: String(binding.owner_epoch),
     revision: snapshot.revision, raw_file_hash: sha256(raw), relative_path: relative(root, path),
-    policy_digest: await reconcilePolicyDigest(engine, sourceId), withdrawals_digest: digest(snapshot.withdrawals), assessment_at: assessmentAt };
+    policy_digest: await reconcilePolicyDigest(engine, sourceId), withdrawals_digest: digest({ withdrawals: snapshot.withdrawals, global_purges: snapshot.globalPurges ?? null }), assessment_at: assessmentAt };
   return { binding, root, path, raw, snapshot, storedPage, file: reconcileCanonical(parsed, parsed.tags), pins, origin, originSourcePath: derived?.sourcePath ?? null };
 }
 export function assertReconcilePins(expected: ReconcilePins, actual: ReconcilePins): void {
@@ -214,7 +214,10 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
   strictReconcileKeys(value.preconditions, ['brain_id', 'source_id', 'source_incarnation', 'slug', 'page_id', 'worktree_id', 'binding_digest',
     'owner_epoch', 'revision', 'raw_file_hash', 'relative_path', 'policy_digest', 'withdrawals_digest', 'assessment_at']);
   strictReconcileKeys(value.preimages, ['file_base64', 'database', 'stored_page']);
-  strictReconcileKeys(value.preimages.database, ['page', 'tags', 'revision', 'sourceIncarnation', 'withdrawals']);
+  // globalPurges is optional here so an artifact written before the '*' purge marker validates and then reads stale (assertPreimages).
+  strictReconcileKeys(value.preimages.database, ['page', 'tags', 'revision', 'sourceIncarnation', 'withdrawals', 'globalPurges'],
+    ['page', 'tags', 'revision', 'sourceIncarnation', 'withdrawals']);
+  if (value.preimages.database.globalPurges !== undefined) strictReconcileKeys(value.preimages.database.globalPurges, ['count', 'latest', 'world_only']);
   strictReconcileKeys(value.preimages.database.page, ['id', 'slug', 'source_id', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter',
     'content_hash', 'source_path', 'knowledge_revision', 'text_projection_revision', 'emotional_weight', 'created_at', 'updated_at', 'updated_at_iso',
     'deleted_at', 'effective_date', 'effective_date_source', 'import_filename', 'salience_touched_at', 'source_kind', 'source_uri', 'ingested_via',

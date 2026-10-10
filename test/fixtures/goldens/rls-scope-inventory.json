@@ -2721,11 +2721,13 @@
       },
       "searchKeyword#cjk": {
         "flagOffLanes": [
+          "pool",
           "tx"
         ],
         "flagOffOpensTransaction": true,
         "flagOn": "scoped",
         "flagOnLanes": [
+          "pool",
           "tx"
         ],
         "flagOnScopes": [
@@ -2734,11 +2736,13 @@
       },
       "searchKeyword#cjk+sourceIds+detailLow": {
         "flagOffLanes": [
+          "pool",
           "tx"
         ],
         "flagOffOpensTransaction": true,
         "flagOn": "scoped",
         "flagOnLanes": [
+          "pool",
           "tx"
         ],
         "flagOnScopes": [
@@ -2747,11 +2751,13 @@
       },
       "searchKeyword#fts": {
         "flagOffLanes": [
+          "pool",
           "tx"
         ],
         "flagOffOpensTransaction": true,
         "flagOn": "scoped",
         "flagOnLanes": [
+          "pool",
           "tx"
         ],
         "flagOnScopes": [
@@ -2760,11 +2766,13 @@
       },
       "searchKeyword#fts+orFallback": {
         "flagOffLanes": [
+          "pool",
           "tx"
         ],
         "flagOffOpensTransaction": true,
         "flagOn": "scoped",
         "flagOnLanes": [
+          "pool",
           "tx"
         ],
         "flagOnScopes": [
@@ -2774,11 +2782,13 @@
       },
       "searchKeyword#fts+sourceIds": {
         "flagOffLanes": [
+          "pool",
           "tx"
         ],
         "flagOffOpensTransaction": true,
         "flagOn": "scoped",
         "flagOnLanes": [
+          "pool",
           "tx"
         ],
         "flagOnScopes": [

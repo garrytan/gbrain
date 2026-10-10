@@ -30,6 +30,7 @@ import { activateSharedSkillPersistence } from '../src/core/persistence/skill-ac
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
+import { claimCoalescedGitEffects } from '../src/core/persistence/effect-journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -307,6 +308,65 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
     expect(await gitStates(engine)).toEqual({ committed: 5 });
     expect(new Set((await engine.executeRaw<{ reason: string }>("SELECT outcome->>'reason' AS reason FROM persistence_effects WHERE kind='git'")).map(r => r.reason)))
       .toEqual(new Set(['durability_not_enabled']));
+  }), 300_000);
+  // Wave 7: the coalesced claim hoists its worktree-wide conditions into one InitPlan. This is the claim's
+  // predicate before that change, row by row; every state below must claim exactly the rows it selects.
+  test('the coalesced claim takes exactly the rows of the per-row reference predicate', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    await bindSource(engine, 'default', repo);
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    harden(repo);
+    await pauseGitEffects(engine, () => seed(ctx('default'), 6));
+    const [{ worktree_id: worktree }] = await engine.executeRaw<{ worktree_id: string }>("SELECT DISTINCT worktree_id FROM persistence_effects WHERE kind='git'");
+    const host = localHostId();
+    const reference = async (limit: number) => (await engine.executeRaw<{ id: number }>(`SELECT e.id FROM persistence_effects e
+      JOIN persistence_worktrees w ON w.id=e.worktree_id AND w.owner_host_id=$1::uuid
+      WHERE e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
+      AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'version')
+      AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
+      AND NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes fence WHERE fence.worktree_id=e.worktree_id
+        AND fence.state IN ('fenced','merged','recovery_required'))
+      AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
+        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
+        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')
+      ORDER BY e.next_attempt_at,e.id LIMIT $3`, [host, worktree, limit])).map(r => Number(r.id));
+    const ids = async () => (await engine.executeRaw<{ id: number }>("SELECT id FROM persistence_effects WHERE kind='git' ORDER BY id")).map(r => Number(r.id));
+    const all = await ids();
+    expect(all.length).toBe(6);
+    const reset = () => effectSql(engine, `UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,recovery=NULL,
+      next_attempt_at=now()-interval '1 second',data=data-'targets' WHERE kind='git'`);
+    const [{ request_id: mirrored, source_id, source_incarnation }] = await engine.executeRaw<{ request_id: string; source_id: string; source_incarnation: string }>(
+      'SELECT request_id,source_id,source_incarnation FROM persistence_effects WHERE id=$1', [all[2]]);
+    const states: [string, () => Promise<unknown>, () => Promise<unknown>][] = [
+      ['ready', async () => {}, async () => {}],
+      ['future, running and targeted rows', () => effectSql(engine, `UPDATE persistence_effects SET
+        next_attempt_at=CASE WHEN id=$1 THEN now()+interval '1 hour' ELSE next_attempt_at END,
+        state=CASE WHEN id IN ($2,$3) THEN 'running' ELSE state END,
+        claim_expires_at=CASE WHEN id=$2 THEN now()+interval '1 hour' WHEN id=$3 THEN now()-interval '1 second' ELSE claim_expires_at END,
+        data=CASE WHEN id=$4 THEN data||'{"targets":[]}'::jsonb ELSE data END WHERE kind='git'`, [all[0], all[1], all[2], all[3]]), async () => {}],
+      ['a pending withdrawal mirror', () => effectSql(engine, `INSERT INTO persistence_effects (request_id,kind,data,source_id,source_incarnation,worktree_id,next_attempt_at)
+        VALUES ($1::uuid,'withdrawal-mirror','{}'::jsonb,$2,$3::uuid,$4::uuid,now()+interval '1 hour')`, [mirrored, source_id, source_incarnation, worktree]),
+        () => effectSql(engine, "DELETE FROM persistence_effects WHERE kind='withdrawal-mirror'")],
+      ['an effect in recovery', () => effectSql(engine, `UPDATE persistence_effects SET recovery='{"reason":"probe"}'::jsonb WHERE id=$1`, [all[5]]), async () => {}],
+      ['another owner', () => engine.executeRaw('UPDATE persistence_worktrees SET owner_host_id=gen_random_uuid() WHERE id=$1::uuid', [worktree]),
+        () => engine.executeRaw('UPDATE persistence_worktrees SET owner_host_id=$2::uuid WHERE id=$1::uuid', [worktree, host])],
+      ...(['fenced', 'merged', 'recovery_required', 'draining', 'syncing'] as const).map(state => [`a ${state} refresh`,
+        () => engine.executeRaw(`INSERT INTO persistence_worktree_refreshes (worktree_id,source_ids,principal_id,owner_epoch,topology_generation,state,old_head,target_head,upstream_ref)
+          VALUES ($1::uuid,ARRAY['default'],gen_random_uuid(),1,1,$2,'a','b','origin/main')`, [worktree, state]),
+        () => engine.executeRaw('DELETE FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid', [worktree])] as [string, () => Promise<unknown>, () => Promise<unknown>]),
+    ];
+    for (const [name, apply, undo] of states) for (const limit of [1, 4, 100]) {
+      await reset(); await apply();
+      const expected = await reference(limit);
+      const claimed = (await claimCoalescedGitEffects(engine, host, worktree, limit)).map(e => Number(e.id));
+      expect({ name, limit, claimed }).toEqual({ name, limit, claimed: [...expected].sort((a, b) => a - b) });
+      await undo();
+    }
+    await reset();
+    expect(await reference(100)).toHaveLength(6);
   }), 300_000);
 });
 

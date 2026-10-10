@@ -1,5 +1,9 @@
 # TODOS
 
+## CI runtime follow-ups (filed 2026-10-09, GBRA-64)
+
+- [ ] **P2 — Bump Bun when a release carries 13a98b0 (oven-sh/bun#44581); check the compare, not the version number.** **What:** Bun 1.4.0 and 1.4.2 carry oven-sh/bun#34069: a GC finalizer that runs while `Bun.spawnSync` waits drifts the runtime's private spawnSync loop for the life of the process, after which every synchronous child spawn with the matching poll count spins until the test deadline and returns empty output. In our 384-file single-process unit shards that is one `killed N dangling process` followed by nothing but timeouts for the rest of the shard (run 38004627376 attempt 1 on d4dc2d4d8, run 37971386009 on c12e14adf, both at the same point of shard 7). `scripts/capture-test-log.ts` names the signature `bun_spawnsync_poisoned` in the step summary; a rerun is the remedy. **Fix:** when a Bun release includes commit 13a98b0 (`https://github.com/oven-sh/bun/compare/bun-v<version>...13a98b0dbd136bcc5c98a8adfb53c909aa3183cc` reports `behind` or `identical`, never trust the version number alone), move the CI matrix and the documented install floor to it, then remove the signature's "no release" wording. **Effort:** S. **Priority:** P2.
+
 ## Content-repair lane follow-ups (filed 2026-10-09, GBRA-72, #6377)
 
 Deferred by the plan (`docs/plans/2026-10-09-001-fix-content-repair-lane-6377-plan.md`, §2 B4 and §8 rows 4-7). The lane recommends a page merge and never executes one; interpretive frontmatter fixes stay consent-gated.

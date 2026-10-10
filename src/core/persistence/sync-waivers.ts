@@ -17,6 +17,7 @@ import { assertSyncPageOrigin, syncOriginScope } from './sync-origin.ts';
 import { faultPoint } from './fault-points.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { REVISION_BACKFILL_PENDING } from '../page-state/types.ts';
+import { withScreeningPaths } from './screening-paths.ts';
 
 export interface WaiverCursor { sourceId: string; incarnation: string; root: string; gitRoot: string; slugMode: 'git-root' | 'source-root';
   binding: { worktree_id: string }; authority: SyncAuthority; runId: string; index: number }
@@ -134,6 +135,10 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
 export async function screenWaiver(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal,
   frozen?: { snapshot: PageSnapshot | null }): Promise<NoopWaiver | null> {
   if (!noopWaiversEnabled() || pending.pageId === null) return null;
+  return withScreeningPaths(() => screenWaiverEntry(engine, cursor, pending, config, signal, frozen));
+}
+async function screenWaiverEntry(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig, signal?: AbortSignal,
+  frozen?: { snapshot: PageSnapshot | null }): Promise<NoopWaiver | null> {
   const intent = pending.intent;
   if (intent.kind === 'managed_sync_delete') {
     if (intent.unownedDeletion || intent.renameFrom || intent.rawHash !== null || typeof intent.path !== 'string' || typeof intent.sourcePath !== 'string') return null;

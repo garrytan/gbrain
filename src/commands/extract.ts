@@ -1889,6 +1889,7 @@ async function extractLinksFromDB(
   const grammar = await readLineGrammarSettings(engine), lineGrammar = { enabled: grammar.enabled, allowUndeclaredTypes: grammar.allowUndeclaredTypes };
   let skippedSettingsChanged = 0;
   progress.start('extract.links_db', walkRefs.length);
+  const plannerTick = dryRun ? async () => {} : await plannerStatsForLinkDrain(engine, async () => walkRefs.length);
 
   // Dedup in dry-run only — DB enforces uniqueness via ON CONFLICT in batch writes.
   const dryRunSeen = dryRun ? new Set<string>() : null;
@@ -1914,6 +1915,7 @@ async function extractLinksFromDB(
   for (const [index, { slug, source_id }] of walkRefs.entries()) {
     if (index >= snapshotBatch.start + snapshotBatch.covered) {
       await flushLinkWrites();
+      await plannerTick(index);
       snapshotBatch = { start: index, ...await readPageSnapshotsBatch(engine, walkRefs.slice(index, index + BATCH_SIZE)
         .map(ref => ({ slug: ref.slug, sourceId: ref.source_id }))) };
       wantedPages = !dryRun && await isWantedPagesEnabled(engine);
