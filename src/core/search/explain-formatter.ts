@@ -149,6 +149,22 @@ export function formatDegradedSummary(degraded: HybridSearchMeta['degraded'] | u
   return `degraded: ${degraded.map((d) => (d.reason ? `${d.stage} (${d.reason})` : d.stage)).join(', ')}`;
 }
 
+/**
+ * W3 — one-line rerank gate summary for `--explain` (null when the gate is
+ * off, so gate-off explain output is byte-identical).
+ */
+export function formatRerankGateSummary(gate: HybridSearchMeta['rerank_gate'] | undefined): string | null {
+  if (!gate) return null;
+  if (!gate.eligible) return `rerank gate (${gate.mode}): not graded (${gate.ineligible_reason})`;
+  const signal = [
+    gate.top_cosine !== undefined ? `cosine ${fmt(gate.top_cosine)}` : null,
+    gate.gap !== undefined ? `gap ${fmt(gate.gap)}` : null,
+    `${gate.candidates} candidates`,
+  ].filter(Boolean).join(', ');
+  const verdict = gate.would_skip ? 'would skip' : gate.skip_blocked ? `would rerank (${gate.skip_blocked})` : 'would rerank';
+  return `rerank gate (${gate.mode}): ${gate.grade} ${gate.reason} — ${verdict} (${signal})`;
+}
+
 /** One-line evidence-delivery summary for `--explain` (null when the stage did not run). */
 export function formatDeliverySummary(delivery: DeliveryMeta | undefined): string | null {
   if (!delivery) return null;
@@ -191,7 +207,7 @@ export function formatResultsExplain(
   const body = results.map((r, i) => formatResultExplain(r, i + 1)).join('\n\n') + '\n';
   // v0.42.3.0 — prepend the autocut summary when meta carries a decision;
   // v0.48.2 — and the degraded summary when any stage was skipped.
-  const head = [formatAutocutSummary(meta?.autocut), formatDegradedSummary(meta?.degraded), formatDeliverySummary(meta?.delivery), formatDecideSummary(meta?.decide)]
+  const head = [formatAutocutSummary(meta?.autocut), formatDegradedSummary(meta?.degraded), formatRerankGateSummary(meta?.rerank_gate), formatDeliverySummary(meta?.delivery), formatDecideSummary(meta?.decide)]
     .filter((l): l is string => l !== null);
   return head.length > 0 ? `${head.join('\n')}\n\n${body}` : body;
 }

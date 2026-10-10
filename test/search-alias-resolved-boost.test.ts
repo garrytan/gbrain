@@ -81,7 +81,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 30 (…; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256; 28→29 evb= expansion variant budget fold; 29→30 exact-title order #5889)', () => {
+  it('is 31 (…; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256; 28→29 evb= expansion variant budget fold; 29→30 exact-title order #5889; 30→31 rrg=/rrgg=/ecf= rerank gate fold W3)', () => {
     // mw2: 21→22 result-stamp/injection epoch (#1663 #3995 #3783 #4220).
     // #4352 follow-up: 22→23 private-visibility posture fold (xp=).
     // #4358 residual: 23→24 negative-offset cache-skip gap.
@@ -96,6 +96,6 @@ describe('KNOBS_HASH_VERSION', () => {
     // variant fusion reorders rows for identical knobs; null hashes as legacy.
     // 29→30 (#5889): exact-title-first title-arm order + weight-A remote
     // title predicate reorder rows for identical knobs; version-only.
-    expect(KNOBS_HASH_VERSION).toBe(30);
+    expect(KNOBS_HASH_VERSION).toBe(31);
   });
 });

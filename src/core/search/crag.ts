@@ -36,6 +36,9 @@
  */
 
 import type { SearchResult } from '../types.ts';
+import { type TrustTier, admitsTrust, maxTrust } from '../trust/tier.ts';
+import { DEFAULT_HIGH_COSINE_FLOOR } from './evidence.ts';
+import { normalizeAlias } from './alias-normalize.ts';
 
 export type RetrievalConfidence = 'strong' | 'moderate' | 'weak';
 
@@ -266,4 +269,157 @@ export function confidenceRank(level: RetrievalConfidence): number {
     case 'moderate': return 1;
     case 'weak': return 0;
   }
+}
+
+// ---------------------------------------------------------------------------
+// W3 — confidence-gated reranking: the PRE-rerank grade.
+//
+// `gradeRetrievalConfidence` grades the final, reranked list. The rerank gate
+// needs a grade BEFORE the cross-encoder runs, on the deduped candidates
+// (after fusion, cosine re-scoring and dedup). It mirrors the identity tiers
+// above, without System One decide evidence (stamped after rerank, opt-in
+// paid), and reads only what exists before reranking: the identity lookups
+// (exact-lookup hits and alias canonicals, read but not applied), the title
+// boost and the stamped raw cosine.
+// ---------------------------------------------------------------------------
+
+/** `search.reranker.gate`: off (no grade) or shadow (grade + stamp `meta.rerank_gate`, still rerank). */
+export type RerankGateMode = 'off' | 'shadow';
+
+export const RERANK_GATE_MODES: ReadonlyArray<RerankGateMode> = Object.freeze(['off', 'shadow']);
+
+export const DEFAULT_RERANK_GATE: RerankGateMode = 'off';
+
+/** Default `search.reranker.gate_min_gap` (δ): cosine margin rank-1 needs over the best other page. */
+export const DEFAULT_RERANK_GATE_MIN_GAP = 0.05;
+
+/**
+ * The lowest page trust tier a gate-strong rank-1 may carry. An
+ * `external_untrusted` page that echoes a common question cannot skip the
+ * cross-encoder; a caller's own `min_trust` raises the floor (`maxTrust`).
+ */
+export const RERANK_GATE_TRUST_FLOOR: TrustTier = 'unknown';
+
+/**
+ * Strong reasons a skip would apply to (`would_skip`). Title and alias (and
+ * the exact-lookup tier, which is slug or full-title identity) stay
+ * shadow-only until a corpus with titles and aliases shows them
+ * non-inferior: the counted benchmark has neither (A57).
+ */
+export const RERANK_GATE_SKIP_REASONS: ReadonlySet<PreRerankStrongReason> = new Set<PreRerankStrongReason>(['high_vector_match']);
+
+/** The one parse contract for the gate key and the per-call override: a `RERANK_GATE_MODES` literal (any case), else unset. */
+export function normalizeRerankGate(v: unknown): RerankGateMode | undefined {
+  if (typeof v !== 'string') return undefined;
+  const s = v.trim().toLowerCase();
+  return (RERANK_GATE_MODES as ReadonlyArray<string>).includes(s) ? (s as RerankGateMode) : undefined;
+}
+
+/** δ parse contract: a finite number (or numeric string) in [0, 1], else unset. */
+export function normalizeRerankGateMinGap(v: unknown): number | undefined {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : undefined;
+}
+
+export type PreRerankStrongReason = 'exact_lookup' | 'alias_hit' | 'exact_title_match' | 'high_vector_match';
+
+export type PreRerankNotStrongReason =
+  | 'no_candidates'
+  /** More than one exact-lookup or alias page, or a single-token alias hop would move rank 1. */
+  | 'identity_ambiguous'
+  /** Image modality or unified multimodal routing: never strong. */
+  | 'multimodal'
+  | 'no_cosine'
+  | 'cosine_below_floor'
+  /** Rank-1's cosine does not lead the best other page by δ. */
+  | 'gap_below_min'
+  | 'below_trust_floor';
+
+export interface PreRerankGrade {
+  strong: boolean;
+  reason: PreRerankStrongReason | PreRerankNotStrongReason;
+  /** Rank-1's stamped raw cosine, when finite. */
+  top_cosine?: number;
+  /** Rank-1's cosine minus the best cosine of a different page in the same space (rank-1's own cosine when no other page). */
+  gap?: number;
+  /** The page a strong grade vouches for: the identity page, or the fused rank-1. */
+  top?: { slug: string; source_id: string; page_id?: number };
+}
+
+export interface PreRerankGradeInput {
+  /** The deduped candidates in fused order (the reranker's input). Read only. */
+  candidates: readonly SearchResult[];
+  query: string;
+  /** Hits the exact-lookup tier would apply (one per page). */
+  exactLookupHits: readonly SearchResult[];
+  /** Full-query alias canonicals the alias hop would apply. */
+  aliasCanonicals: ReadonlyArray<{ slug: string; source_id: string }>;
+  /** True when the opt-in single-token alias hop has a candidate to move. */
+  aliasTokenHop?: boolean;
+  /** Image modality or unified multimodal routing. */
+  multimodal: boolean;
+  /** `search.evidence_cosine_floor` (default 0.8). */
+  cosineFloor?: number;
+  /** `search.reranker.gate_min_gap` (δ). */
+  minGap?: number;
+}
+
+const pageKey = (r: { slug: string; source_id?: string }): string => `${r.source_id ?? 'default'}::${r.slug}`;
+
+/**
+ * Pure pre-rerank grade. Strong when, in this order:
+ *   - the exact-lookup tier finds exactly one page;
+ *   - else the alias hop finds exactly one page;
+ *   - else rank-1 is a FULL-title identity (title boost and normalized
+ *     title equals the normalized query; a phrase inside a longer title is
+ *     not identity);
+ *   - else rank-1 is `high_vector_match` (cosine at or above the floor) AND
+ *     leads the best candidate from a different page in the same embedding
+ *     space by at least δ. Candidates are not in cosine order and dedup keeps
+ *     several chunks per page, so the gap is computed over pages.
+ * Multimodal queries and image rows are never strong. The trust floor is
+ * applied afterwards (`applyRerankGateTrust`): it needs the page's tier.
+ */
+export function gradePreRerank(input: PreRerankGradeInput): PreRerankGrade {
+  const { candidates } = input;
+  if (input.exactLookupHits.length > 1) return { strong: false, reason: 'identity_ambiguous' };
+  if (input.exactLookupHits.length === 1) {
+    const h = input.exactLookupHits[0];
+    return { strong: true, reason: 'exact_lookup', top: { slug: h.slug, source_id: h.source_id ?? 'default', ...(typeof h.page_id === 'number' && h.page_id > 0 ? { page_id: h.page_id } : {}) } };
+  }
+  if (input.aliasCanonicals.length > 1 || (input.aliasCanonicals.length === 0 && input.aliasTokenHop)) {
+    return { strong: false, reason: 'identity_ambiguous' };
+  }
+  if (input.aliasCanonicals.length === 1) {
+    const a = input.aliasCanonicals[0];
+    return { strong: true, reason: 'alias_hit', top: { slug: a.slug, source_id: a.source_id } };
+  }
+  const top = candidates[0];
+  if (!top) return { strong: false, reason: 'no_candidates' };
+  if (input.multimodal || top.modality === 'image') return { strong: false, reason: 'multimodal' };
+  const topRef = { slug: top.slug, source_id: top.source_id ?? 'default', ...(typeof top.page_id === 'number' ? { page_id: top.page_id } : {}) };
+  const qNorm = normalizeAlias(input.query);
+  if ((top.title_match_boost ?? 1) > 1 && qNorm !== '' && normalizeAlias(top.title ?? '') === qNorm) {
+    return { strong: true, reason: 'exact_title_match', top: topRef };
+  }
+  const cosine = top.cosine;
+  if (typeof cosine !== 'number' || !Number.isFinite(cosine)) return { strong: false, reason: 'no_cosine' };
+  const floor = input.cosineFloor ?? DEFAULT_HIGH_COSINE_FLOOR;
+  if (cosine < floor) return { strong: false, reason: 'cosine_below_floor', top_cosine: cosine };
+  const own = pageKey(top);
+  let other = 0;
+  for (const r of candidates) {
+    if (r.modality === 'image' || pageKey(r) === own) continue;
+    if (typeof r.cosine === 'number' && Number.isFinite(r.cosine) && r.cosine > other) other = r.cosine;
+  }
+  const gap = cosine - other;
+  if (gap < (input.minGap ?? DEFAULT_RERANK_GATE_MIN_GAP)) return { strong: false, reason: 'gap_below_min', top_cosine: cosine, gap };
+  return { strong: true, reason: 'high_vector_match', top_cosine: cosine, gap, top: topRef };
+}
+
+/** A strong grade whose page tier is below `max(callerFloor, RERANK_GATE_TRUST_FLOOR)` is not strong. Unknown tier reads as `unknown`. */
+export function applyRerankGateTrust(grade: PreRerankGrade, tier: TrustTier | undefined, callerFloor?: TrustTier): PreRerankGrade {
+  if (!grade.strong) return grade;
+  const floor = callerFloor ? maxTrust(callerFloor, RERANK_GATE_TRUST_FLOOR) : RERANK_GATE_TRUST_FLOOR;
+  return admitsTrust(tier ?? 'unknown', floor) ? grade : { ...grade, strong: false, reason: 'below_trust_floor' };
 }

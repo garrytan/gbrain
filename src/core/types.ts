@@ -2170,6 +2170,14 @@ export interface HybridSearchMeta {
    */
   metadata_boost_gate?: import('./search/metadata-boost-gate.ts').MetadataBoostGateDecision;
   /**
+   * W3 — the confidence gate in front of the cross-encoder (search/hybrid/rerank-gate.ts):
+   * eligibility, the pre-rerank grade and reason, rank-1 cosine and its gap
+   * over the best other page, the candidate count, `would_skip` and whether a
+   * reranker provider call was made. Present only on the main RRF path and
+   * only when `search.reranker.gate` is not `off`.
+   */
+  rerank_gate?: import('./search/hybrid/rerank-gate.ts').RerankGateMeta;
+  /**
    * v0.32.x (search-lite): token budget enforcement metadata. Omitted when
    * no budget was applied (backward-compatible with pre-search-lite
    * consumers).

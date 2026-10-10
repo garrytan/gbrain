@@ -40,6 +40,7 @@ and maintenance commands remain available.
 | `searchLimit` default         | 10             | 25         | 50             |
 | `reranker` (cross-encoder)    | off            | `voyage:rerank-2.5` | `voyage:rerank-2.5` |
 | `autocut` (rerank-cliff cut)  | off            | off        | off            |
+| `reranker_gate`               | off            | off        | off            |
 
 The `expansion` row is not decisive for any shipped verb today: `gbrain query`
 (the only verb that can expand) expands by default in every mode — pass
@@ -65,7 +66,7 @@ its model's input/output charges are separate from downstream reading costs.
 - **`tokenmax`** — no token budget, 50 results by default.
   Pairs with an expensive downstream model you want fully fed.
 
-Seven of the knobs deserve a sentence:
+Several of the knobs deserve a sentence:
 
 - **`expansion`** rewrites your query into multiple variants via a cheap
   LLM call when available (the historical Haiku estimate is roughly $1.50 per
@@ -130,6 +131,22 @@ Seven of the knobs deserve a sentence:
   vector-only matches"* (no skill backs this; your agent runs
   `gbrain config set search.metadata_boost_gate always`, and
   `gbrain config set search.metadata_boost_gate lexical` restores the default).
+- **`reranker_gate`** (config key `search.reranker.gate`; off in every
+  bundle) grades the fused candidates before the cross-encoder runs, from what
+  exists before reranking: an exact slug or full-title lookup that finds
+  exactly one page, a declared alias that names exactly one page, or a top
+  result whose raw cosine is at least `search.evidence_cosine_floor` (0.8) and
+  leads the best other page by `search.reranker.gate_min_gap` (δ, 0.05). Image
+  queries and pages marked `external_untrusted` never grade strong. `shadow`
+  records the grade in the response's `rerank_gate` metadata, on the
+  `--explain` header and in `gbrain search stats`, and still reranks: results
+  are identical to `off`. Use it to see how often the reranker is paying for
+  an answer retrieval already found. The floor and δ are part of the cache
+  key. **Say to your agent:** *"Show me how often my searches would not need
+  the reranker"* (no skill backs this; your agent runs
+  `gbrain config set search.reranker.gate shadow`, later
+  `gbrain search stats`, and `gbrain config set search.reranker.gate off`
+  restores the default).
 - **`keyword_arm_confidence_floor`** (config key
   `search.keyword_arm_confidence_floor`; off in every bundle) down-weights the
   keyword and title arms in the fusion when the keyword arm's top-vs-second
@@ -204,7 +221,8 @@ realistic-scale walkthrough live in
 ```bash
 gbrain search modes              # what is running, with per-knob attribution
 gbrain search modes --reset      # clear search.* overrides (mode bundle wins)
-gbrain search stats [--days N]   # cache hit rate, intent mix, budget drops
+gbrain search stats [--days N]   # cache hit rate, intent mix, budget drops,
+                                 # rerank gate counts when the gate is on
 gbrain search tune [--apply]     # data-driven recommendations
 gbrain search diagnose "<query>" --target <slug>
                                  # trace where a page surfaces (or fails to)
