@@ -219,12 +219,11 @@ async function readDbPlaneMergeValues(
     }
     if (typeof engine.listConfigKeys === 'function') {
       try {
-        for (const prefix of [CYCLE_PREFIX, CHAT_OPTIONS_PREFIX]) {
-          for (const key of await engine.listConfigKeys(prefix)) {
-            if (!key.startsWith(prefix)) continue;
-            const v = await engine.getConfig(key).catch(() => undefined);
-            if (v !== undefined && v !== null && v !== '') values.set(key, v);
-          }
+        // One listing for both prefixes (the fallback stays one round-trip per merge).
+        for (const key of await engine.listConfigKeys('')) {
+          if (!key.startsWith(CYCLE_PREFIX) && !key.startsWith(CHAT_OPTIONS_PREFIX)) continue;
+          const v = await engine.getConfig(key).catch(() => undefined);
+          if (v !== undefined && v !== null && v !== '') values.set(key, v);
         }
       } catch {
         // quiet failure — no cycle / chat-options merge this load

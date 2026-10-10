@@ -2330,7 +2330,7 @@
         },
         {
           "category": "meta",
-          "message": "0 distinct typed values (pack declares 20)",
+          "message": "no typed pages",
           "name": "type_proliferation",
           "status": "ok"
         },

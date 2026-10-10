@@ -2493,7 +2493,7 @@
         },
         {
           "category": "meta",
-          "message": "3 distinct typed values (pack declares 20)",
+          "message": "3 distinct typed values (pack gbrain-base-v2 declares 20)",
           "name": "type_proliferation",
           "status": "ok"
         },

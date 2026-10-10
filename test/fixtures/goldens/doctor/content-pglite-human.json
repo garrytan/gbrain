@@ -199,7 +199,7 @@
       "  [OK] timeline_coverage: Only 2 entity pages (< 5) — coverage ratio not meaningful at this scale",
       "  [INFO] takes_count: 0 takes (takes.bootstrap_enabled is false; opt in to enable)",
       "  [OK] pack_upgrade_available: Active pack gbrain-base-v2@1.3.0+a50a67b9 is current (no successor declared)",
-      "  [OK] type_proliferation: 3 distinct typed values (pack declares 20)",
+      "  [OK] type_proliferation: 3 distinct typed values (pack gbrain-base-v2 declares 20)",
       "  [OK] dangling_aliases: No dangling aliases",
       "Brain checks:  60/100  (category penalty)",
       "Skill checks:  95/100",

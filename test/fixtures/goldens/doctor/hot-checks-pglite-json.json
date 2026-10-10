@@ -2765,7 +2765,7 @@
           },
           {
             "category": "meta",
-            "message": "5 distinct typed values (pack declares 20)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 20)",
             "name": "type_proliferation",
             "status": "ok"
           },
@@ -5775,7 +5775,7 @@
           },
           {
             "category": "meta",
-            "message": "5 distinct typed values (pack declares 20)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 20)",
             "name": "type_proliferation",
             "status": "ok"
           },

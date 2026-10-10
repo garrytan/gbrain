@@ -58,7 +58,7 @@ export async function globalMaintenanceTimeoutsCheck(engine: BrainEngine): Promi
     ];
     const cause = causes.join('; ');
     const childAdvice = childTimeouts.map(c =>
-      `Raise the ${c.phase} child timeout with: gbrain config set dream.${c.phase}.subagent_timeout_ms <ms> (gbrain dream --phase ${c.phase} reruns it and is paid). `).join('');
+      `Rerunning the phase with gbrain dream --phase ${c.phase} is paid. Raise its child timeout with: gbrain config set dream.${c.phase}.subagent_timeout_ms <ms>. `).join('');
     return {
       name: 'global_maintenance_timeouts',
       status: 'warn',
