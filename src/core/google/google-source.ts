@@ -248,7 +248,6 @@ interface GmailSweep {
   activePack: ActivePack;
   summary: GoogleSyncSummary;
   countedSlugs: Set<string>;
-  progressTick: (note: string) => void;
   holds: ConnectorHoldSession;
 }
 
@@ -262,7 +261,7 @@ type ThreadOutcome = { kind: 'landed'; newestMs: number } | { kind: 'gone' | 'sk
  */
 async function attemptThread(g: GmailSweep, tid: string, version: string | null): Promise<ThreadOutcome> {
   if (!g.holds.shouldAttempt(tid, version)) {
-    g.progressTick(`thread ${tid} held`);
+    g.deps.tick(`thread ${tid} held`);
     return { kind: 'skipped' };
   }
   const seen: { thread?: GmailThreadData } = {};
@@ -271,7 +270,7 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null)
     g.holds.succeed(tid);
     const newestMs = thread?.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
     if (newestMs > (g.state.gmail_newest_ms ?? 0)) g.state.gmail_newest_ms = newestMs;
-    g.progressTick(`thread ${tid}`);
+    g.deps.tick(`thread ${tid}`);
     return { kind: 'landed', newestMs };
   } catch (e) {
     if (e instanceof GoogleCursorExpiredError && e.status === 404) {
@@ -280,7 +279,7 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null)
       // page it left behind.
       g.holds.drop(tid);
       g.deps.log(`[google] thread ${tid} vanished (404); skipping`);
-      g.progressTick(`thread ${tid} gone`);
+      g.deps.tick(`thread ${tid} gone`);
       return { kind: 'gone' };
     }
     const wasHeld = g.holds.isHeld(tid);
@@ -728,7 +727,9 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   const gmail = new GmailClient(...clientArgs);
   const calendar = new CalendarClient(...clientArgs);
   const people = new PeopleClient(...clientArgs);
-  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, extractCandidates: [], managed, processedThreads: new Set() };
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  const tick = (note: string): void => progress.tick(1, note);
+  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, tick, extractCandidates: [], managed, processedThreads: new Set() };
 
   const summary: GoogleSyncSummary = {
     status: 'synced',
@@ -787,9 +788,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     carryLegacyFailCounts(state.item_holds, state.gmail_fail_counts, (id) => id, new Date().toISOString()), { full: opts.full });
   state.item_holds = holds.holds.initial();
   delete state.gmail_fail_counts;
-  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('sync.google_materialize');
-  const tick = (note: string): void => progress.tick(1, note);
 
   try {
     const serviceErrors: string[] = [];
@@ -831,7 +830,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
         // sweepGmail reports thread-level failures via its return value —
         // they exit through normal returns, not throws, and stamping
         // last_sync_at over them would blind the staleness gate (H1).
-        gmailSweepOk = await sweepGmail({ deps, gmail, state, activePack, summary, countedSlugs, progressTick: tick, holds }, async () => {
+        gmailSweepOk = await sweepGmail({ deps, gmail, state, activePack, summary, countedSlugs, holds }, async () => {
           // #5581: current mail is complete but the backfill is not: bank freshness now, while the managed lease can still write.
           if (managed && summary.status !== 'partial' && !opts.signal?.aborted) {
             await managed.saveState(state, true, new Date(state.gmail_newest_ms ?? Date.now()).toISOString());

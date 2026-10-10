@@ -1631,3 +1631,58 @@ describe('loops_extract enqueue completeness', () => {
     }
   }, 120_000);
 });
+
+// ── Sweep progress (#5349) ──────────────────────────────────────────────────
+
+/** Forward-progress notes recorded while `fn` runs (what the progress-aware sync deadline extends on). */
+async function countForwardProgress<T>(fn: () => Promise<T>): Promise<{ result: T; notes: number }> {
+  const { onForwardProgress } = await import('../src/core/forward-progress.ts');
+  let notes = 0;
+  const off = onForwardProgress(() => { notes++; });
+  try {
+    return { result: await fn(), notes };
+  } finally {
+    off();
+  }
+}
+
+function fxContact(n: number): unknown {
+  return {
+    resourceName: `people/c00000000${n}`,
+    names: [{ displayName: `Contact Example ${n}`, metadata: { primary: true } }],
+    emailAddresses: [{ value: `contact${n}@example.com` }],
+  };
+}
+
+describe('sweep progress (#5349)', () => {
+  test('a contacts sweep notes forward progress once per imported contact, so the progress-aware deadline extends', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-pplprog-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.contacts = [fxContact(1), fxContact(2), fxContact(3)];
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        const { result, notes } = await countForwardProgress(() => sweep(dir, fx, vault, {}, 'contacts'));
+        expect(result.added).toBe(3);
+        expect(notes).toBeGreaterThanOrEqual(3);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a calendar sweep notes forward progress once per listed event, and a list with nothing to import notes none', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [1, 2, 3, 4].map((n) => meeting(`evt0000000000000${n}`, n));
+      const first = await countForwardProgress(() => sweep(dir, fx, vault, {}, 'calendar'));
+      expect(first.result.added).toBe(4);
+      expect(first.notes).toBeGreaterThanOrEqual(4);
+      // Heartbeats are not progress: an empty delta must not extend the deadline.
+      fx.calendarDelta = [];
+      const second = await countForwardProgress(() => sweep(dir, fx, vault, {}, 'calendar'));
+      expect(second.result.status).toBe('up_to_date');
+      expect(second.notes).toBe(0);
+    });
+  });
+});

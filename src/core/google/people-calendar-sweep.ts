@@ -91,6 +91,7 @@ export async function sweepContacts(
       await deletePageByRelPath(deps, existingPath, summary);
     }
     await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
+    deps.tick(`contact ${c.resourceName}`);
   }
   // Cursor commits only after the whole sweep succeeded.
   if (result.nextSyncToken) state.contacts_sync_token = result.nextSyncToken;
@@ -212,6 +213,7 @@ async function applyCalendarList(deps: GoogleSyncDeps, events: CalendarEventData
     if (change.kind !== 'write' || !page) continue;
     if (change.removeFirst) await deletePageByRelPath(deps, change.removeFirst, ctx.summary);
     await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
+    deps.tick(`event ${ev.id}`);
   }
   return !deps.opts.signal?.aborted;
 }

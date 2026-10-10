@@ -52,6 +52,13 @@ export interface GoogleSyncDeps {
   opts: SyncOpts;
   entry: CredentialEntry;
   log: (msg: string) => void;
+  /**
+   * #5349: one forward-progress note per imported item. The progress-aware
+   * sync deadline extends only on these (heartbeats are not progress), so a
+   * long first contacts or calendar sweep that is still landing pages is not
+   * killed at the hard deadline.
+   */
+  tick: (note: string) => void;
   /** Threads whose newest message falls in the recent window — LLM
    *  extraction candidates, enqueued (capped) after the sweep. */
   extractCandidates: Array<{ slug: string; threadId: string; newestMs: number }>;
