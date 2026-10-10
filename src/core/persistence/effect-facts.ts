@@ -113,7 +113,7 @@ export async function readFactsBackstopJobPage(engine: BrainEngine, data: Record
       || snapshot.revision !== data.revision) return { skipped: 'superseded' } as const;
     try { await authorizeFactsBackstop(engine, row); }
     catch (error) {
-      if (error instanceof OperationError && ['permission_denied', 'source_changed'].includes(error.code)) return { skipped: error.code } as const;
+      if (error instanceof OperationError && ['permission_denied', 'source_changed', 'page_not_found'].includes(error.code)) return { skipped: error.code } as const;
       throw error;
     }
   }
@@ -131,7 +131,7 @@ export async function dispatchFactsBackstopEffect(engine: BrainEngine, effect: P
     if (row && !skipped) {
       try { await authorizeFactsBackstop(tx, row, true); }
       catch (error) {
-        if (error instanceof OperationError && ['permission_denied', 'source_changed'].includes(error.code)) skipped = error.code;
+        if (error instanceof OperationError && ['permission_denied', 'source_changed', 'page_not_found'].includes(error.code)) skipped = error.code;
         else throw error;
       }
     }

@@ -7,7 +7,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { admitWrite, claimNextWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
-import { localHostId, registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { localHostId, registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { claimPersistenceEffect, publicEffectsForRequest } from '../src/core/persistence/effect-journal.ts';
@@ -260,4 +260,31 @@ test('#6232: a page that sets facts_backstop: false queues no extraction, and re
   const optedOut = content.replace('title: Field notes', 'title: Field notes\nfacts_backstop: false');
   expect(await rewrite(optedOut)).toEqual({ status: { skipped: 'opted_out' }, effectQueued: false });
   expect(await rewrite(content)).toEqual({ status: { queued: true }, effectQueued: true });
+}));
+
+async function publishRemote() {
+  const registration = await registerLocalWriter(engine, 'stdio', { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null });
+  return withVerifiedLocalRegistration(engine, registration, async () => {
+    const input = await prepare({ remote: true, auth: { token: 'fixture', clientId: 'fixture-client', scopes: ['read', 'write'], sourceId: 'default' } } as Partial<OperationContext>,
+      { content: content.replace('type: note\n', 'type: note\nvisibility: private\n') });
+    return publishMutation(engine, input.row, input.prepared);
+  });
+}
+
+test('#6322: a private page the stored remote principal can no longer see settles as skipped page_not_found, at dispatch and at durable job read', () => fixture(async () => {
+  await engine.setConfig('search.remote_private_pages', 'visible');
+  const row = await publishRemote();
+  expect(row.state).toBe('committed');
+  const effect = await claimFacts(row);
+  await engine.setConfig('search.remote_private_pages', 'hidden');
+  await dispatchFactsBackstopEffect(engine, effect, localHostId());
+  expect(await jobs()).toHaveLength(0);
+  expect((await publicEffectsForRequest(engine, row.id)).find(e => e.kind === 'facts-backstop')).toMatchObject({ state: 'skipped', reason: 'page_not_found' });
+  await engine.setConfig('search.remote_private_pages', 'visible');
+  await engine.executeRaw("DELETE FROM pages WHERE slug='notes/example'");
+  const visible = await publishRemote();
+  await dispatchFactsBackstopEffect(engine, await claimFacts(visible), localHostId());
+  const data = (await jobs())[0].data;
+  await engine.setConfig('search.remote_private_pages', 'hidden');
+  expect(await readFactsBackstopJobPage(engine, data)).toEqual({ skipped: 'page_not_found' });
 }));
