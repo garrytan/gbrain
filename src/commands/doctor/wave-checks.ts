@@ -120,6 +120,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async engine => (await import('./checks/persistence-requests.ts')).writeStallCheck(engine),
   },
   {
+    id: 'lost_caller_writes', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Replaying refused caller writes is a host-side, explicit-only repair.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some caller writes (remember, put_page, add_timeline_entry) were refused at publication and never landed; the caller saw an error and the fact or edit was dropped',
+    run: async (engine, scope) => (await import('./checks/persistence-requests.ts')).lostCallerWritesCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'persistence_session_timeouts', resolution: 'operator', registration: 'wave',
     count: d => d.reason === 'session_timeouts_not_applied' ? 1 : 0,
     hostOnly: 'The connection URL and its pooler are brain-host configuration outside any source scope.',

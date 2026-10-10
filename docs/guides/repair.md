@@ -678,14 +678,20 @@ found.
 <a id="failed-writes"></a>
 ### Failed writes
 
+Two kinds of refusal leave a caller's write with a receipt but nothing landed.
 On a managed brain whose `tags`, `timeline_entries` or `takes` table has a
 `source_id` column gbrain does not create, the managed writer guard of a
-gbrain older than v0.60.38.0 refuses writes it should allow. Each refused write
-keeps a failed receipt with its full intent until receipt compaction
+gbrain older than v0.60.38.0 refuses writes it should allow. And a write ends
+`conflict` with `source_changed` when the page's canonical file and database
+copy differed at publication, as every write did on a brain whose v0.13.1
+grandfather `validate: false` stamp lived only in the database (#6429, fixed
+in v0.60.157.0: that stamp is no longer read as a file edit). Each refused
+write keeps a receipt with its full intent until receipt compaction
 (`persistence.receipt_retention_days`, 30 days by default). `gbrain repair
 failed-writes` submits those writes again. It is explicit-only and
 preview-bound, and needs v0.60.38.0 or later (`gbrain doctor --json` reports
-schema version 197 or later).
+schema version 197 or later). Doctor's `lost_caller_writes` counts the writes
+it would replay, per source, and names this preview.
 
 **Say to your agent:** *"Preview which refused writes gbrain can replay, show
 me the list, then apply after I agree."* The agent runs `gbrain repair
@@ -698,9 +704,10 @@ gbrain repair failed-writes --source <id> --apply --expect <hash>
 gbrain repair failed-writes --source <id>                 # replayed writes now read already_written
 ```
 
-Candidates are failed receipts refused by the guard: `writer_coordinator_required`,
+Candidates are failed receipts refused by the guard (`writer_coordinator_required`,
 or `storage_error` "Publication failed (P0001)" from releases that did not keep
-the guard's message. Only writes a caller made directly are replayed:
+the guard's message) and conflict receipts refused `source_changed` at
+publication. Only writes a caller made directly are replayed:
 `put_page`, `add_timeline_entry` and `remember`. The preview gives every
 candidate one class:
 
@@ -711,7 +718,7 @@ candidate one class:
 | `duplicate` | A later request with the same intent exists; that one is the candidate. | Kept. |
 | `superseded` | A later write or delete of the page committed or is pending; for `put_page`, also a later failed `put_page` (newer content) or a page changed since the caller read it. | Kept; re-issue by hand if still wanted. |
 | `unpinned_target` | A `remember` saved unattributed; replaying would infer its subject again and could pick another page. | Kept. Re-issue it with an explicit `entity` if it is still wanted. |
-| `file_database_drift` | Its last replay hit `source_changed` (file and database differ). | Kept until the page changes; reconcile it first. |
+| `file_database_drift` | Its last replay hit `source_changed` and the file still differs from the database. | Kept until the file matches again (a reconcile that writes only the file counts) or the page changes; reconcile it first. |
 | `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content (sync: `gbrain sync --source <id> --no-pull --retry-failed`). |
 
 The apply replays exactly the previewed set. Each write is classified again
