@@ -23,6 +23,7 @@ import { contentRefusalFromReceipt } from '../import-screen.ts';
 import { fenceIssuesFromDetail, fenceLocationFromDetail } from '../fence-repair/refusal.ts';
 import { heldFileDiagnostic } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
+import { registerPersistenceConsumerConfig } from '../embedding-disabled.ts';
 
 interface Service { consumer: PersistenceConsumerLike; heartbeat?: ConsumerHeartbeat; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
@@ -120,7 +121,7 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     return prior.consumer;
   }
   const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,
-    { onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
+    { drainNotice: claimOwnerKind() === 'serve', onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
   const kind = claimOwnerKind();
   const service: Service = kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres'
     ? { consumer: new WaiterOnlyConsumer(engine, config, full, { kind, hostId: localHostId(), pool: () => enginePoolStats(engine) }), stopping: false }
@@ -184,6 +185,7 @@ export function persistenceConsumerConfig(engine: BrainEngine): GBrainConfig | u
   const service = services.get(engine);
   return service && !service.stopping ? service.consumer.config : undefined;
 }
+registerPersistenceConsumerConfig(persistenceConsumerConfig);
 export function persistenceConsumerStatus(engine: BrainEngine) {
   const service = services.get(engine);
   return service ? { state: service.stopping ? 'closing' : 'open', ...service.consumer.status() }

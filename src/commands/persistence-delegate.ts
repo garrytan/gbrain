@@ -5,7 +5,7 @@ import { OperationError } from '../core/ops/contract.ts';
 import { finishCliTeardown, noteRenderedErrorCode, setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
 import { PersistenceIpcTransportError } from '../core/persistence/ipc.ts';
-import { RemoteMcpError } from '../core/mcp-client.ts';
+import { RemoteMcpError } from '../core/remote-mcp-error.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
 import { acceptPendingRequested, pendingReceiptOf, pollCommand, WRITE_EXIT_DOCS, writeErrorExitCode } from '../core/persistence/write-wait.ts';
