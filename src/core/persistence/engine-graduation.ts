@@ -112,7 +112,7 @@ export interface GraduationDeps {
   initTargetSchema(target: BrainEngine, source: BrainEngine): Promise<void>;
   claimAutopilotPause(): Promise<(() => void) | null>;
   /** Failing check names of `gbrain doctor --no-migrate --json` against the fenced target. */
-  runTargetDoctor(runId: string, mainUrl: string): Promise<{ failing: readonly string[]; exempted: readonly string[] }>;
+  runTargetDoctor(runId: string, mainUrl: string, sourcePersistenceEnabled: boolean): Promise<{ failing: readonly string[]; exempted: readonly string[] }>;
   /** Failing source checks, measured with the source open under the run's lock. */
   runSourceDoctor(source: BrainEngine): Promise<readonly string[]>;
   hostId(): string;
@@ -154,7 +154,7 @@ export function defaultGraduationDeps(): GraduationDeps {
       await sized.initSchema(dimensions && model ? { embedding: { dimensions, model } } : {});
     },
     claimAutopilotPause: () => withStdoutOnStderr(() => quiesceAutopilot()),
-    async runTargetDoctor(runId, mainUrl) { return spawnTargetDoctor(runId, mainUrl); },
+    async runTargetDoctor(runId, mainUrl, sourcePersistenceEnabled) { return spawnTargetDoctor(runId, mainUrl, sourcePersistenceEnabled); },
     async runSourceDoctor(source) {
       // In process, on the engine this run (or plan) already opened; GBRAIN_GRADUATION_RUN keeps doctor read-only.
       const { buildChecks } = await import('../../commands/doctor.ts');
@@ -184,10 +184,11 @@ async function withStdoutOnStderr<T>(fn: () => Promise<T>): Promise<T> {
   try { return await fn(); } finally { console.log = log; }
 }
 
-function spawnTargetDoctor(runId: string, mainUrl: string): { failing: readonly string[]; exempted: readonly string[] } {
+function spawnTargetDoctor(runId: string, mainUrl: string, sourcePersistenceEnabled: boolean): { failing: readonly string[]; exempted: readonly string[] } {
   const script = process.argv[1] && /\.(ts|js|mjs)$/.test(process.argv[1]) ? [process.argv[1]] : [];
   const child = spawnSync(process.execPath, [...script, 'doctor', '--no-migrate', '--json', '--scope=brain'], {
-    env: { ...process.env, GBRAIN_DATABASE_URL: mainUrl, GBRAIN_GRADUATION_RUN: runId },
+    env: { ...process.env, GBRAIN_DATABASE_URL: mainUrl, GBRAIN_GRADUATION_RUN: runId,
+      GBRAIN_GRADUATION_SOURCE_PERSISTENCE: sourcePersistenceEnabled ? 'enabled' : 'disabled' },
     encoding: 'utf8', timeout: 600_000, maxBuffer: 64 * 1024 * 1024,
   });
   try {
@@ -881,7 +882,8 @@ async function stepVerify(run: Run): Promise<void> {
     runId: run.m.runId, expectFence: true,
     runDoctor: async () => {
       phase(run, 'doctor');
-      const doctor = await run.deps.runTargetDoctor(run.m.runId, run.m.targetUrls!.main);
+      const [brain] = await run.source!.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton = 1');
+      const doctor = await run.deps.runTargetDoctor(run.m.runId, run.m.targetUrls!.main, brain?.enabled === true);
       exempted = doctor.exempted;
       return doctor.failing;
     },

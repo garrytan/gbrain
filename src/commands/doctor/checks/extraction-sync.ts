@@ -27,7 +27,7 @@ import { resolveSourceLocalFilePath, sourceGitScope } from '../../../core/markdo
 import { scannerSlugRootMode } from '../../../core/write-through.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
-import { managedPersistenceEnabled } from '../../../core/persistence/ownership.ts';
+import { persistenceEnabledForHealth } from '../../../core/persistence/ownership.ts';
 import { upstreamFreshness } from '../../../core/sync-upstream.ts';
 import type { Check } from '../../doctor.ts';
 import { ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
@@ -1293,7 +1293,7 @@ export async function checkSyncFreshness(
     // machinery runs once, not once per source).
     const stalenessCeilingSeconds = resolveStalenessCeilingSeconds();
     let managed = false;
-    try { managed = await managedPersistenceEnabled(engine); } catch { /* pre-persistence brain */ }
+    try { managed = await persistenceEnabledForHealth(engine); } catch { /* pre-persistence brain */ }
     let upstream_unknown_count = 0;
     let upstream_behind_count = 0;
     for (const source of sources) {

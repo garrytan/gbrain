@@ -1,5 +1,6 @@
 import { isAbsolute, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { graduationVerifyInheritsPersistence } from '../persistence/ownership.ts';
 
 export interface OwnedContentFreshness {
   sourceId: string;
@@ -21,13 +22,13 @@ export async function ownedContentFreshness(engine: BrainEngine, sourceIds?: str
         AND (r.state='recovering' OR r.recovery IS NOT NULL))
        +(SELECT COUNT(*) FROM persistence_effects e WHERE e.source_id=s.id AND e.source_incarnation=s.incarnation
         AND e.recovery IS NOT NULL))::integer AS recovering
-    FROM sources s JOIN persistence_brain p ON p.singleton=1 AND p.enabled
+    FROM sources s JOIN persistence_brain p ON p.singleton=1 AND (p.enabled OR $2::boolean)
     JOIN config c ON c.key='shared_skills.content.v1.'||s.id||'.'||s.incarnation::text
     JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
     JOIN persistence_worktrees w ON w.id=b.worktree_id AND w.state='active' AND w.owner_host_id IS NOT NULL
     JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=w.owner_host_id
     WHERE NOT s.archived AND s.local_path IS NOT NULL AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-      AND NOT EXISTS (SELECT 1 FROM source_ingestion_receipts r WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.profile='company-brain')`, [sourceIds ?? null]);
+      AND NOT EXISTS (SELECT 1 FROM source_ingestion_receipts r WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.profile='company-brain')`, [sourceIds ?? null, await graduationVerifyInheritsPersistence(engine)]);
   const result: OwnedContentFreshness[] = [];
   for (const row of rows) {
     if (sourceIds && !sourceIds.includes(row.id)) continue;
