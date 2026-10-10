@@ -1148,8 +1148,7 @@ async function runPhaseSynthesizeInner(
     // chunks or the markdown body. Fail-open (abort still unwinds); kill
     // switch: dream.synthesize.quote_verify=false.
     let quoteVerifyStats: QuoteVerifyStats | null = null;
-    let publishPending = 0;
-    let postprocessConflicts: PostprocessConflict[] = [];
+    let publishPending = 0, postprocessConflicts: PostprocessConflict[] = [];
     const sinceByTranscript = await loadChildWriteEpochs(engine, childIds, jobRawSource, verifySince);
     const grounding = config.quoteVerify ? await resolveGroundingDecide(engine) : undefined;
     if (maintenance) {
@@ -1157,8 +1156,7 @@ async function runPhaseSynthesizeInner(
         worthProcessing, { cycleDate: summaryDate, quoteVerify: config.quoteVerify, sinceByTranscript, signal: opts.signal, grounding, meetingTranscriptsDir: config.meetingTranscriptsDir });
       writtenRefs = processed.writtenRefs;
       finalizedRefs = processed.finalizedRefs;
-      publishPending = processed.pending;
-      postprocessConflicts = processed.conflicts;
+      [publishPending, postprocessConflicts] = [processed.pending, processed.conflicts];
       quoteVerifyStats = config.quoteVerify ? processed.stats : null;
     } else if (config.quoteVerify && writtenRefs.length > 0) {
       const transcriptsForVerify = new Map<string, TranscriptForVerify>(worthProcessing.map(t => [t.filePath, { content: t.content }]));
