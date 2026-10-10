@@ -359,7 +359,7 @@ async function assembleCard(
 ): Promise<EntityCard> {
   const pageSlug = row.slug;
   const visibility = remote ? (['world'] as ('private' | 'world')[]) : undefined;
-  const { privatePagesFilterFragment, privateLinkOriginFilterFragment } = await import('../search/private-visibility.ts');
+  const { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateProvenanceFilterFragment } = await import('../search/private-visibility.ts');
   const inboundPrivacy = excludePrivate
     ? ` AND ${privatePagesFilterFragment('f')} AND ${privateLinkOriginFilterFragment('l')}`
     : '';
@@ -418,6 +418,7 @@ async function assembleCard(
         activeOnly: true,
         limit: FACT_FETCH_CAP,
         ...(visibility ? { visibility } : {}),
+        excludePrivate,
         eligibility,
       })
       .catch(() => [] as FactRow[]),
@@ -431,7 +432,7 @@ async function assembleCard(
         `SELECT COUNT(*) AS n
            FROM facts
           WHERE source_id = $1 AND entity_slug = $2
-            AND expired_at IS NULL${remote ? ` AND visibility = 'world'` : ''}`,
+            AND expired_at IS NULL${remote ? ` AND visibility = 'world'` : ''}${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
         [sourceId, pageSlug],
       )
       .then(rs => Number(rs[0]?.n ?? 0))

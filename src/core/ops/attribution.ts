@@ -18,6 +18,7 @@ import type { McpCall } from '../agent-output.ts';
 import { opTransport, paramUse, readFix } from './op-fix.ts';
 import { readHolders, readPolicyOpts } from './context.ts';
 import { storedTrustTier, type TrustTier, type WriteOrigin } from '../trust/tier.ts';
+import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 
 const DOCS = 'docs/mcp/ADMIN.md#write-attribution';
 
@@ -174,7 +175,7 @@ const get_write_attribution: Operation = {
     let created: StoredAttribution;
     let last: StoredAttribution;
     let trust: StoredTrust = { trust_tier: live?.trust_tier ?? null, write_origin: live?.write_origin ?? null };
-    const row = rowTarget(ctx, page.id, page.slug, sourceId, { fact, take, timeline });
+    const row = rowTarget(ctx, page.id, page.slug, sourceId, { fact, take, timeline }, policy.excludePrivate === true);
     if (row) {
       const [found] = await ctx.engine.executeRaw<{ id: number; w_req: string | null; w_kind: string | null; w_id: string | null; created_at: Date | string | null;
         l_req: string | null; l_kind: string | null; l_id: string | null; last_written_at: Date | string | null } & StoredTrust>(row.sql, row.params);
@@ -213,14 +214,14 @@ const get_write_attribution: Operation = {
 };
 
 function rowTarget(ctx: OperationContext, pageId: number, slug: string, sourceId: string,
-  ids: { fact?: number; take?: number; timeline?: number }): RowTarget | undefined {
+  ids: { fact?: number; take?: number; timeline?: number }, excludePrivate: boolean): RowTarget | undefined {
   const cols = `write_request_id::text AS w_req, write_principal_kind AS w_kind, write_principal_id AS w_id, created_at,
     last_write_request_id::text AS l_req, last_write_principal_kind AS l_kind, last_write_principal_id AS l_id, last_written_at,
     trust_tier, write_origin`;
   if (ids.fact !== undefined) {
     return { kind: 'fact', label: `fact #${ids.fact}`, list: { tool: 'recall', arguments: { entity: slug } },
       sql: `SELECT id, ${cols} FROM facts WHERE id = $1 AND source_id = $2 AND (entity_slug = $3 OR source_markdown_slug = $3)
-        ${ctx.remote === false ? '' : "AND visibility = 'world'"}`, params: [ids.fact, sourceId, slug] };
+        ${ctx.remote === false ? '' : "AND visibility = 'world'"} ${excludePrivate ? `AND ${privateProvenanceFilterFragment('facts')}` : ''}`, params: [ids.fact, sourceId, slug] };
   }
   if (ids.take !== undefined) {
     const holders = readHolders(ctx);

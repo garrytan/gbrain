@@ -660,6 +660,8 @@ export interface FactListOpts {
   fingerprint?: boolean;
   /** #5575 read eligibility (eligibility/sql.ts): read floor, quarantined-page and needs_rederive hiding, proactive suppression. Unset for internal writers. */
   eligibility?: import('./eligibility/policy.ts').ReadEligibility;
+  /** Hide facts whose provenance page (`source_markdown_slug`) is private. Resolved by the trusted operation layer (resolveExcludePrivatePages), never from MCP parameters. */
+  excludePrivate?: boolean;
 }
 
 /** Per-source operational health snapshot consumed by `gbrain doctor`. */
@@ -703,6 +705,8 @@ export interface TrajectoryOpts {
    * `remote: false` explicitly.
    */
   remote?: boolean;
+  /** Same as FactListOpts.excludePrivate: hide points whose provenance page is private. */
+  excludePrivate?: boolean;
   /** Metric filter. When set, only facts with this canonical metric label participate. */
   metric?: string;
   /**
@@ -2272,7 +2276,7 @@ export interface BrainEngine {
    */
   listSupersessions(
     source_id: string,
-    opts?: { since?: Date; limit?: number; visibility?: FactVisibility[]; eligibility?: FactListOpts['eligibility'] },
+    opts?: { since?: Date; limit?: number; visibility?: FactVisibility[]; eligibility?: FactListOpts['eligibility']; excludePrivate?: boolean },
   ): Promise<FactRow[]>;
 
   /**

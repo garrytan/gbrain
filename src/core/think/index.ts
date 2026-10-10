@@ -694,6 +694,7 @@ export async function runThink(
           const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
           const { formatTrajectoryBlock } = await import('../trajectory-format.ts');
           const sourceIdScalar = opts.sourceId ?? 'default';
+          const excludePrivate = opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote);
           // Per-candidate trajectory fetch. Concurrency cap = 3; each call
           // has its own 5s timeout via Promise.race. allSettled prevents
           // one error from killing the others (Codex Problem 13: timeout
@@ -719,6 +720,7 @@ export async function runThink(
                     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
                     ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
                     ...(opts.remote !== undefined ? { remote: opts.remote } : {}),
+                    excludePrivate,
                     kind: 'all',
                     limit: 100,
                   }),

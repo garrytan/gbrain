@@ -28,6 +28,7 @@ import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
+import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 
 export type EmbeddingCast = '::vector' | '::halfvec';
@@ -52,6 +53,10 @@ async function embeddingCast(exec: SqlExecutor, probe: ResolveEmbeddingCast | un
 /** #5575: the read-eligibility predicate for list reads that pass a policy (eligibility/sql.ts). */
 function eligibilityClause(opts: FactListOpts | undefined) {
   return opts?.eligibility ? sqlFragment` AND ${trustedSql(projectionEligibleSql('facts', 'facts', opts.eligibility))}` : sqlFragment``;
+}
+
+function privacyClause(opts: { excludePrivate?: boolean } | undefined) {
+  return opts?.excludePrivate ? sqlFragment` AND ${trustedSql(privateProvenanceFilterFragment('facts'))}` : sqlFragment``;
 }
 
 function grepPattern(opts: FactListOpts | undefined): string | null {
@@ -364,7 +369,7 @@ export async function listFactsByEntity(
         ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
         ${unconsolidatedOnly ? sqlFragment`AND consolidated_at IS NULL` : sqlFragment``}
         ${kinds ? sqlFragment`AND kind = ANY(${kinds}::text[])` : sqlFragment``}
-        ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}
+        ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${privacyClause(opts)}
         ${excludeAuditRows ? sqlFragment`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}
         ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}
       ORDER BY valid_from DESC, id DESC
@@ -399,7 +404,7 @@ export async function listFactsSince(
         ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
         ${unconsolidatedOnly ? sqlFragment`AND consolidated_at IS NULL` : sqlFragment``}
         ${kinds ? sqlFragment`AND kind = ANY(${kinds}::text[])` : sqlFragment``}
-        ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}
+        ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${privacyClause(opts)}
         ${excludeAuditRows ? sqlFragment`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}
         ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}
       ORDER BY ${eventTime ? sqlFragment`COALESCE(valid_from, created_at)` : sqlFragment`created_at`} DESC, id DESC
@@ -440,7 +445,7 @@ export async function listFactsKeyset(
     WHERE source_id = ${source_id}
       ${afterCondition}
       ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
-      ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${eligibilityClause(opts)}
+      ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${privacyClause(opts)}${eligibilityClause(opts)}
     ORDER BY created_at ASC, id ASC
     LIMIT ${limit}
   `)).rows;
@@ -468,7 +473,7 @@ export async function listFactsBySession(
         ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
         ${unconsolidatedOnly ? sqlFragment`AND consolidated_at IS NULL` : sqlFragment``}
         ${kinds ? sqlFragment`AND kind = ANY(${kinds}::text[])` : sqlFragment``}
-        ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}
+        ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${privacyClause(opts)}
         ${excludeAuditRows ? sqlFragment`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}
         ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}
       ORDER BY created_at DESC, id DESC
@@ -480,7 +485,7 @@ export async function listFactsBySession(
 export async function listSupersessions(
   exec: LegacyUnscopedRead,
     source_id: string,
-    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[]; eligibility?: import('../engine.ts').FactListOpts['eligibility'] },
+    opts?: { since?: Date; limit?: number; visibility?: ('private' | 'world')[]; eligibility?: import('../engine.ts').FactListOpts['eligibility']; excludePrivate?: boolean },
   ): Promise<FactRow[]> {
     const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
     const since = opts?.since ?? null;
@@ -496,7 +501,7 @@ export async function listSupersessions(
       WHERE source_id = ${source_id}
         AND superseded_by IS NOT NULL
         ${since ? sqlFragment`AND COALESCE(expired_at, valid_until) >= ${since}` : sqlFragment``}
-        ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${opts?.eligibility ? sqlFragment` AND ${trustedSql(projectionEligibleSql('facts', 'facts', opts.eligibility))}` : sqlFragment``}
+        ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${privacyClause(opts)}${opts?.eligibility ? sqlFragment` AND ${trustedSql(projectionEligibleSql('facts', 'facts', opts.eligibility))}` : sqlFragment``}
       ORDER BY COALESCE(expired_at, valid_until) DESC, id DESC
       LIMIT ${limit}
     `)).rows;
@@ -654,7 +659,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
       WHERE ${useArray ? sqlFragment`source_id = ANY(${sourceIds}::text[])` : sqlFragment`source_id = ${sourceId}`}
         AND entity_slug = ${opts.entitySlug}
         AND expired_at IS NULL
-        ${remoteFilter ? sqlFragment`AND visibility = 'world'` : sqlFragment``}
+        ${remoteFilter ? sqlFragment`AND visibility = 'world'` : sqlFragment``}${privacyClause(opts)}
         ${metric !== null ? sqlFragment`AND claim_metric = ${metric}` : sqlFragment``}
         ${kind === 'metric' ? sqlFragment`AND claim_metric IS NOT NULL` : sqlFragment``}
         ${kind === 'event' ? sqlFragment`AND event_type IS NOT NULL` : sqlFragment``}

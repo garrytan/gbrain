@@ -38,6 +38,7 @@ import { proactiveEligibility } from '../eligibility/registry.ts';
 import { partitionForActivation, suppressionSummary } from '../eligibility/activation.ts';
 import { trustFields } from '../eligibility/labels.ts';
 import { eligibilityCacheField, readTrustGeneration } from '../eligibility/generation.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 
 const DEFAULT_TTL_MS = 30_000;
 const DEFAULT_TOP_K = 10;
@@ -135,7 +136,10 @@ export async function getBrainHotMemoryMeta(
   // private included) warms the cache and a later remote/world-only call with
   // the same source+session+allowList is SERVED the private payload — a
   // cross-tier leak through the cache, not through the query.
-  const tier = ctx.remote === false ? 'all' : 'world';
+  // The operator opt-out (search.remote_private_pages) changes what a world
+  // read returns, so it is part of the tier too.
+  const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+  const tier = ctx.remote === false ? 'all' : excludePrivate ? 'world' : 'world+private-pages';
   // encodeCacheField (F5): source_id / session_id are caller-controlled and
   // may contain the '::' delimiter; percent-encode ':' so bumpHotMemoryCache's
   // split('::') can never mis-slice a component.
@@ -191,13 +195,13 @@ export async function getBrainHotMemoryMeta(
   let fetched: FactRow[] = [];
   if (sessionId) {
     fetched = await ctx.engine.listFactsBySession(sourceId, sessionId, {
-      activeOnly: true, limit: topK * 3, visibility, fingerprint: true, eligibility,
+      activeOnly: true, limit: topK * 3, visibility, excludePrivate, fingerprint: true, eligibility,
     });
   }
   // If no session-scoped rows, fall back to recent across the source.
   if (fetched.length === 0) {
     fetched = await ctx.engine.listFactsSince(sourceId, new Date(Date.now() - 24 * 60 * 60 * 1000), {
-      activeOnly: true, limit: topK * 3, visibility, fingerprint: true, eligibility,
+      activeOnly: true, limit: topK * 3, visibility, excludePrivate, fingerprint: true, eligibility,
     });
   }
   if (fetched.length === 0) {
