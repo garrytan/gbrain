@@ -2384,6 +2384,26 @@ Reasons: `rename_source_changed`.
 |---|---|---|---|---|---|---|
 | The exact authorized revision is unavailable. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
 
+### schema_pack_emit_mismatch
+
+<a id="schema_pack_emit_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A pack mutation refused to write because the YAML it emitted did not read back as the manifest it holds; the pack file on disk is unchanged. | The write boundary parses its own output and compares it to the manifest as normalized structures, so an emitter/parser asymmetry can no longer corrupt a pack silently. | Re-run the mutation on the current release; if it refuses again, run `gbrain schema validate <pack>` and report the named key with `gbrain doctor --json`. Run: gbrain schema active --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/architecture/schema-packs.md#oversized-pack](../../docs/architecture/schema-packs.md#oversized-pack)
+
+### schema_pack_too_large
+
+<a id="schema_pack_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The schema pack file is larger than the load bound, so it was not read; a pack this large is almost always a quoted scalar (a link-type regex) whose backslashes an older release doubled on every mutation. | Loading a pack of that size took every CLI process to tens of GB of memory. The original text cannot be recovered automatically: after N doublings only the author knows the intended regex, so the fix is a hand edit of the grown lines. | Open the pack file named in the message, restore the grown quoted lines (usually `inference.regex` under `link_types`) to their intended text, save, and re-run. `GBRAIN_SCHEMA_PACK_MAX_BYTES` raises the bound for one command when a pack is legitimately large. Run: gbrain schema active --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/architecture/schema-packs.md#oversized-pack](../../docs/architecture/schema-packs.md#oversized-pack)
+
 ### scope_denied
 
 <a id="scope_denied"></a>

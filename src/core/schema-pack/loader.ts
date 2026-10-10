@@ -16,15 +16,17 @@
 // when available. Empty file → INVALID_SHAPE. Unknown extension → falls
 // through to JSON.parse attempt.
 
-import { readFileSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { extname } from 'node:path';
 import { parseSchemaPackManifest, type SchemaPackManifest } from './manifest-v1.ts';
 
+export type SchemaPackLoaderErrorCode = 'PARSE_ERROR' | 'FILE_NOT_FOUND' | 'UNSUPPORTED_EXTENSION' | 'PACK_TOO_LARGE';
+
 export class SchemaPackLoaderError extends Error {
-  readonly code: 'PARSE_ERROR' | 'FILE_NOT_FOUND' | 'UNSUPPORTED_EXTENSION';
+  readonly code: SchemaPackLoaderErrorCode;
   readonly path: string;
 
-  constructor(code: 'PARSE_ERROR' | 'FILE_NOT_FOUND' | 'UNSUPPORTED_EXTENSION', message: string, path: string) {
+  constructor(code: SchemaPackLoaderErrorCode, message: string, path: string) {
     super(message);
     this.name = 'SchemaPackLoaderError';
     this.code = code;
@@ -33,16 +35,62 @@ export class SchemaPackLoaderError extends Error {
 }
 
 /**
- * Load + parse + validate a pack from disk. Returns the validated manifest.
- * Throws SchemaPackLoaderError (file/parse errors) or
- * SchemaPackManifestError (shape/version errors).
+ * The most bytes a pack file may hold (#6432). A hand-written manifest is
+ * tens of KB; a mutable pack past this bound is almost certainly the
+ * backslash-doubling growth an older release produced, and loading it is
+ * what took every CLI process to tens of GB of memory. The bound is read
+ * from the file size before any byte is allocated. Override:
+ * `GBRAIN_SCHEMA_PACK_MAX_BYTES` (also the doctor warn bound's default).
  */
-export function loadPackFromFile(path: string): SchemaPackManifest {
+export const SCHEMA_PACK_MAX_BYTES_DEFAULT = 8 * 1024 * 1024;
+export const OVERSIZED_PACK_RUNBOOK = 'docs/architecture/schema-packs.md#oversized-pack';
+
+export function schemaPackMaxBytes(): number {
+  const raw = process.env.GBRAIN_SCHEMA_PACK_MAX_BYTES;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : SCHEMA_PACK_MAX_BYTES_DEFAULT;
+}
+
+export function formatPackBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${bytes} B`;
+}
+
+/**
+ * Load + parse + validate a pack from disk. Returns the validated manifest.
+ * Throws SchemaPackLoaderError (file/parse/size errors) or
+ * SchemaPackManifestError (shape/version errors). The size check runs on
+ * the open descriptor before the read, and the read is bounded to that
+ * size, so a file that grows under us never allocates past the bound.
+ */
+export function loadPackFromFile(path: string, opts: { maxBytes?: number } = {}): SchemaPackManifest {
+  const maxBytes = opts.maxBytes ?? schemaPackMaxBytes();
+  let fd = -1;
   let content: string;
   try {
-    content = readFileSync(path, 'utf-8');
+    fd = openSync(path, 'r');
+    const size = fstatSync(fd).size;
+    if (size > maxBytes) {
+      throw new SchemaPackLoaderError(
+        'PACK_TOO_LARGE',
+        `pack file ${path} is ${formatPackBytes(size)}, above the ${formatPackBytes(maxBytes)} bound; it was not read. A pack this large is usually a quoted scalar (a link-type regex) whose backslashes an older release doubled on every mutation: open the file in an editor, restore the affected lines by hand, and re-run. Runbook: ${OVERSIZED_PACK_RUNBOOK}.`,
+        path,
+      );
+    }
+    const buf = Buffer.allocUnsafe(size);
+    let read = 0;
+    while (read < size) {
+      const n = readSync(fd, buf, read, size - read, read);
+      if (n === 0) break;
+      read += n;
+    }
+    content = buf.subarray(0, read).toString('utf-8');
   } catch (e) {
+    if (e instanceof SchemaPackLoaderError) throw e;
     throw new SchemaPackLoaderError('FILE_NOT_FOUND', `cannot read pack file: ${(e as Error).message}`, path);
+  } finally {
+    if (fd !== -1) try { closeSync(fd); } catch { /* already closed */ }
   }
   return loadPackFromString(content, path);
 }
@@ -95,18 +143,45 @@ export function parseYamlMini(content: string): unknown {
   let i = 0;
 
   function stripComment(line: string): string {
-    // Strip comments outside quoted strings. Simple state machine.
+    // Strip comments outside quoted strings. Inside double quotes a
+    // backslash escapes the next character (so `\"` and `\\` never toggle
+    // the state, #6432); inside single quotes `''` toggles twice and lands
+    // back inside, which is the YAML rule.
     let result = '';
     let inSingle = false;
     let inDouble = false;
     for (let j = 0; j < line.length; j++) {
       const c = line[j];
+      if (inDouble && c === '\\' && j + 1 < line.length) {
+        result += c + line[j + 1];
+        j++;
+        continue;
+      }
       if (c === "'" && !inDouble) inSingle = !inSingle;
       else if (c === '"' && !inSingle) inDouble = !inDouble;
       else if (c === '#' && !inSingle && !inDouble) break;
       result += c;
     }
     return result;
+  }
+
+  /**
+   * Decode a quoted scalar (#6432). Double quotes carry the JSON escape
+   * subset (`\\ \" \/ \b \f \n \r \t \uXXXX`), which is exactly what the
+   * emitter writes; anything else (`\q`, a YAML-only `\x41` or `\e`) is
+   * outside the supported subset and refuses naming the line, never a raw
+   * slice that would keep the escapes as content. Single quotes hold
+   * literal text with `''` for one quote.
+   */
+  function decodeQuoted(trimmed: string): string {
+    if (trimmed.startsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
+    try {
+      const decoded = JSON.parse(trimmed);
+      if (typeof decoded === 'string') return decoded;
+    } catch { /* fall through to the declared refusal */ }
+    throw new Error(
+      `line ${i}: double-quoted scalar ${trimmed.length > 60 ? trimmed.slice(0, 60) + '…' : trimmed} is outside the supported escape subset (JSON escapes only: \\\\ \\" \\/ \\b \\f \\n \\r \\t \\uXXXX); use single quotes for literal text or ship JSON`,
+    );
   }
 
   function parseScalar(raw: string): unknown {
@@ -126,9 +201,9 @@ export function parseYamlMini(content: string): unknown {
       }
     }
     // Quoted string
-    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-      return trimmed.slice(1, -1);
+    if (trimmed.length >= 2 && ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'")))) {
+      return decodeQuoted(trimmed);
     }
     // Number
     if (/^-?\d+$/.test(trimmed)) return parseInt(trimmed, 10);

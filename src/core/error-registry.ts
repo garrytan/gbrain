@@ -457,6 +457,17 @@ export const CODES = {
   writer_transfer_required: { class: 'caller', summary: "Writer transfer required." },
   writer_upgrade_required: { class: 'host_only', summary: "Apply the canonical writer guard, outbox, and source lifecycle migrations before activation." },
   wrong_account_consented: { class: 'caller', summary: "Google connect credential error: wrong account consented.", docs: 'docs/guides/google-connect.md#troubleshooting' },
+  // W14 PR1 P1.2 (#6432): schema-pack file growth. Both are SchemaPackMutationError/SchemaPackLoaderError codes (PACK_TOO_LARGE, EMIT_MISMATCH) in their snake_case registry form.
+  schema_pack_too_large: { class: 'host_only', actor: 'user', summary: "The schema pack file is larger than the load bound, so it was not read; a pack this large is almost always a quoted scalar (a link-type regex) whose backslashes an older release doubled on every mutation.",
+    why: 'Loading a pack of that size took every CLI process to tens of GB of memory. The original text cannot be recovered automatically: after N doublings only the author knows the intended regex, so the fix is a hand edit of the grown lines.',
+    docs: 'docs/architecture/schema-packs.md#oversized-pack',
+    suggestion: 'Open the pack file named in the message, restore the grown quoted lines (usually `inference.regex` under `link_types`) to their intended text, save, and re-run. `GBRAIN_SCHEMA_PACK_MAX_BYTES` raises the bound for one command when a pack is legitimately large.',
+    fix: { argv: ['gbrain', 'schema', 'active', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows which pack is active and where it resolved; changes nothing.' } },
+  schema_pack_emit_mismatch: { class: 'server', summary: "A pack mutation refused to write because the YAML it emitted did not read back as the manifest it holds; the pack file on disk is unchanged.",
+    why: 'The write boundary parses its own output and compares it to the manifest as normalized structures, so an emitter/parser asymmetry can no longer corrupt a pack silently.',
+    docs: 'docs/architecture/schema-packs.md#oversized-pack',
+    suggestion: 'Re-run the mutation on the current release; if it refuses again, run `gbrain schema validate <pack>` and report the named key with `gbrain doctor --json`.',
+    fix: { argv: ['gbrain', 'schema', 'active', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows which pack is active and where it resolved; changes nothing.' } },
 } as const satisfies Record<string, CodeEntry>;
 
 export type RegistryCode = keyof typeof CODES;
