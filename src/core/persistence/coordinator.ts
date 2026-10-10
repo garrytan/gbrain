@@ -17,7 +17,7 @@ import { chargePreparationAttempt, clearResolvedRecovery, completeWrite, getWrit
 import type { WaitingOn } from './claim-phase.ts';
 import { preparationKind } from './preparation-budget.ts';
 import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
-import type { NativeLockHandle } from './native-lock.ts';
+import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { lockCoreSources } from './core-guard.ts';
 import { publicationAttribution } from './attribution.ts';
@@ -278,7 +278,13 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await releaseUnpublishedClaim(engine, row, 'owner_unavailable');
         return (await getWriteRequestById(engine, row.id))!;
       }
-      lock = await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true });
+      try { lock = await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true }); }
+      catch (error) {
+        // #6305: this process cannot open the lock file (sandbox, unwritable lock directory): like a busy lock, publish nothing.
+        if (!isLockOpenFailure(error)) throw error;
+        await releaseUnpublishedClaim(engine, row, 'writer_lock_unavailable');
+        return (await getWriteRequestById(engine, row.id))!;
+      }
       if (!lock) {
         await releaseUnpublishedClaim(engine, row, 'writer_busy');
         return (await getWriteRequestById(engine, row.id))!;

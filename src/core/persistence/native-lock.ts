@@ -2,6 +2,7 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { constants as osConstants } from 'node:os';
 import { family, GLIBC, MUSL } from 'detect-libc';
 
 export interface NativeExportPublisher {
@@ -22,10 +23,33 @@ interface NativeBinding extends NativeExportPublisher {
 
 export class NativeLockUnavailableError extends Error {
   readonly code = 'writer_lock_unavailable';
-  constructor(message = 'Native writer locking is unavailable on this host', cause?: unknown) {
-    super(message, { cause });
+  /** #6305: 'open' when this process could not create or open the lock file itself (its directory or the file), as opposed to an addon, close or IPC failure. */
+  readonly stage?: 'open';
+  /** #6305: the OS error behind the failure (`EACCES`, `EISDIR`, `os_error_5`), when the cause names one. */
+  readonly osError?: string;
+  constructor(message = 'Native writer locking is unavailable on this host', cause?: unknown, stage?: 'open') {
+    const osError = nativeLockOsError(cause);
+    super(osError ? `${message} (${osError})` : message, { cause });
     this.name = 'NativeLockUnavailableError';
+    if (stage) this.stage = stage;
+    if (osError) this.osError = osError;
   }
+}
+
+/** #6305: this process could not create or open the lock file; a busy lock returns null instead. */
+export function isLockOpenFailure(error: unknown): error is NativeLockUnavailableError {
+  return error instanceof NativeLockUnavailableError && error.stage === 'open';
+}
+
+/** A node:fs error code, or the native addon's `(OS error N)` as its errno name (`os_error_N` when the platform has no name). */
+export function nativeLockOsError(cause: unknown): string | undefined {
+  const code = (cause as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && /^E[A-Z0-9]+$/.test(code)) return code;
+  const match = /\(OS error (\d+)\)/.exec(cause instanceof Error ? cause.message : '');
+  if (!match || match[1] === '0') return undefined;
+  const errno = Number(match[1]);
+  if (process.platform === 'win32') return `os_error_${errno}`;
+  return Object.entries(osConstants.errno).find(([, value]) => value === errno)?.[0] ?? `os_error_${errno}`;
 }
 
 export interface NativeLockHandle {
@@ -124,7 +148,7 @@ export async function acquireNativeLock(path: string, options: NativeLockOptions
     handle = binding.openLock(path);
   } catch (cause) {
     if (signal?.aborted) throw signal.reason;
-    throw new NativeLockUnavailableError('Cannot open the stable writer lock file', cause);
+    throw new NativeLockUnavailableError('Cannot open the stable writer lock file', cause, 'open');
   }
   let released = false;
   const release = async () => {

@@ -7,6 +7,9 @@ export interface WriteHealthFacts {
   owner_unavailable?: boolean;
   inspect_owner?: boolean;
 }
+/** How long a receipt that needs an owner's inspection asks callers to wait; #6305: also how long a consumer holds a root it cannot lock. */
+export const INSPECT_OWNER_RETRY_MS = 30_000;
+
 export function writeHealth(row: { state: WriteRequestState; created_at: Date | string; blocked_reason?: string | null },
   facts: WriteHealthFacts = {}, now = Date.now()): { retry_after_ms: number | null; diagnostic?: WriteDiagnostic } {
   if (isTerminalWriteState(row.state)) return { retry_after_ms: null };
@@ -21,7 +24,7 @@ export function writeHealth(row: { state: WriteRequestState; created_at: Date | 
   const unknown = reason === 'pending' || reason === 'cause_unknown';
   if (aged && unknown) reason = 'cause_unknown';
   const inspect = aged || unexpected || facts.inspect_owner || ['writer_pool_capacity', 'owner_unavailable', 'writer_lock_unavailable'].includes(reason);
-  return { retry_after_ms: inspect ? 30_000 : !unknown || age >= 30_000 ? 5000 : 1000,
+  return { retry_after_ms: inspect ? INSPECT_OWNER_RETRY_MS : !unknown || age >= 30_000 ? 5000 : 1000,
     diagnostic: { age_ms: age, assessment: unknown ? aged ? 'stalled' : 'pending' : 'blocked', reason,
       next_action: inspect ? 'inspect_owner' : 'poll', ...(facts.observed_at ? { observed_at: facts.observed_at } : {}) } };
 }

@@ -112,9 +112,10 @@ export const OWNER_EXCEPTION_MESSAGE = 'Publication failed on an unexpected owne
 
 /** #5929: the bounded identity of an unexpected owner exception (class, errno, frame), kept owner-only. */
 export function ownerExceptionFailure(error: unknown): PublicationFailure {
-  const e = (error && typeof error === 'object' ? error : {}) as { constructor?: { name?: unknown }; code?: unknown; errno?: unknown; stack?: unknown };
+  const e = (error && typeof error === 'object' ? error : {}) as { constructor?: { name?: unknown }; code?: unknown; errno?: unknown; stack?: unknown; osError?: unknown };
   const errorClass = ident(e.constructor?.name);
-  const raw = typeof e.code === 'string' ? e.code : typeof e.errno === 'number' ? String(e.errno) : undefined;
+  // #6305: an error that names the OS error behind it (a native lock failure) reports that, not its gbrain code.
+  const raw = typeof e.osError === 'string' ? e.osError : typeof e.code === 'string' ? e.code : typeof e.errno === 'number' ? String(e.errno) : undefined;
   const errno = raw && ERRNO.test(raw) ? raw : undefined;
   const frame = gbrainFrame(e.stack);
   return { code: 'storage_error', message: OWNER_EXCEPTION_MESSAGE,

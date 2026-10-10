@@ -36,6 +36,7 @@ import { OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest, storedAuthorizationReads } from './authority.ts';
 import { localHostId } from './identity.ts';
 import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease } from './ownership.ts';
+import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { awaitLaneBegin, awaitLaneTurn, LaneAbort, laneApplyBegin, laneClaimed, laneFinished, lanePolicy, stepDownLanes, type LaneState } from './sync-lanes.ts';
 import { cancelRows, windowPredecessor } from './sync-window.ts';
 import { clearResolvedRecoveries, completeWrite, ENSURE_COUNTERS_SQL, getWriteRequestById, LOCK_COUNTERS_SQL, markDispatched, markRecovering, prepareRecoveries,
@@ -213,8 +214,16 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
   // lease and publishes beside them; everything else takes it exclusively.
   // With this process's lanes open on the worktree but none publishing, it opens the lease for them to join.
   const beside = !lane && rows.length === 1 && singleWrite(head) && await foregroundPriority(engine);
-  const joined = beside ? joinWorktreeLease(binding) ?? ((lanePolicy(head.worktree_id)?.effective ?? 1) > 1 ? await acquireWorktreeShared(binding, engine) : null) : null;
-  const lock = lane ? await acquireWorktreeShared(binding, engine) : joined ?? await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true });
+  let joined: NativeLockHandle | null, lock: NativeLockHandle | null;
+  try {
+    joined = beside ? joinWorktreeLease(binding) ?? ((lanePolicy(head.worktree_id)?.effective ?? 1) > 1 ? await acquireWorktreeShared(binding, engine) : null) : null;
+    lock = lane ? await acquireWorktreeShared(binding, engine) : joined ?? await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true });
+  } catch (error) {
+    // #6305: this process cannot open the lock file. A lane group retries as busy; a single write falls through to
+    // publishMutation (row still running, same token), which releases it for an owner as writer_lock_unavailable.
+    if (!isLockOpenFailure(error)) throw error;
+    return lane ? { ...none, reason: 'busy' } : none;
+  }
   if (!lock) return { ...none, reason: 'busy' };
   if (joined) publishingBeside.add(head.id);
   if (lane) lane.coordinationPath ??= binding.coordination_path;

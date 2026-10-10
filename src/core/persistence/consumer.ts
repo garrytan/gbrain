@@ -30,10 +30,11 @@ import { releaseAbandonedClaims } from './effect-journal.ts';
 import { readWriteSwitchSnapshot, writeSwitchOn } from './switches.ts';
 import { consumerConnectionRoute, consumerStatementEngine, poolerExposureLine } from './consumer-lane.ts';
 import { isConnectionLoss } from '../retry-matcher.ts';
+import { INSPECT_OWNER_RETRY_MS } from './health.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
-type RootHold = { until?: Promise<void> };
+type RootHold = { until?: Promise<void>; retryAfterMs?: number };
 /** #6278: the budgets and switch in effect for this tick's claims; a test may pin them through `opts.preparationBudgets`. */
 export type EffectivePreparationPolicy = PreparationPolicy & { deadlines: boolean };
 /** #6278: an abandoned preparation that outlived the hard ceiling; it pins whatever its await holds until it settles. */
@@ -593,7 +594,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     let progressed = false;
     const root: RootHold = {};
     const task = this.executeOrGroup(row, root).then(result => { progressed = result; }).catch(error => this.report(error)).finally(() => {
-      if (!progressed) this.rootRetryAfter.set(key, Date.now() + (this.opts.pollMs ?? 250));
+      if (!progressed) this.rootRetryAfter.set(key, Date.now() + (root.retryAfterMs ?? this.opts.pollMs ?? 250));
       else { this.progressWake = true; this.publishedSinceMaintenance++; }
       this.active.delete(task);
       // The slot is free now; the root (or lane slot) waits for an abandoned preparation so nothing on it overtakes that work.
@@ -848,6 +849,10 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       await faultPoint('consumer:prepared', { requestId: row.request_id, sourceId: row.source_id, operation: row.operation });
       const { done, settled } = await this.publishSingle(row, prepared);
       if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', failureLogText(done));
+      if (done.state === 'queued' && done.blocked_reason === 'writer_lock_unavailable') {
+        root.retryAfterMs = INSPECT_OWNER_RETRY_MS;
+        this.log('publication', 'writer_lock_unavailable', `request ${row.request_id}: this process cannot open source ${row.source_id}'s worktree lock; left for an owner process`);
+      }
       if (done.state === 'committed' && row.worktree_id && !String(row.intent?.kind).startsWith('managed_sync_')) {
         this.foregroundCounts.set(row.worktree_id, this.foregroundCompletions(row.worktree_id) + 1);
       }
