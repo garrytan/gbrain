@@ -31,6 +31,7 @@ import { authorizePageVisibility } from './page-visibility.ts';
 import { withNoRepoWriteThroughWarning } from '../write-through.ts';
 import { assertUnboundPublication, classifyUnboundPage, unboundWriteWarning } from './unbound-source.ts';
 import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, recoveryStagingFile, upgradeRecoveryStaging } from './staging.ts';
+import { bindPublicationTimeouts, publicationTransaction } from './publication-deadline.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
@@ -343,7 +344,8 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       recovery = record;
       await hooks.boundary?.('prepared', row);
     }
-    const done = await engine.transaction(async tx => {
+    const done = await publicationTransaction(engine, async tx => {
+      bindPublicationTimeouts(tx);
       await declareDurablePersistence(tx);
       const liveBinding = await guardOwnership(tx, row, hostId);
       if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);

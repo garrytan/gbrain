@@ -32,6 +32,7 @@ import { consumerConnectionRoute, consumerStatementEngine, poolerExposureLine } 
 import { isConnectionLoss } from '../retry-matcher.ts';
 import { INSPECT_OWNER_RETRY_MS } from './health.ts';
 import { lockOpenOsError } from './native-lock.ts';
+import { boundPublication, readPublicationCeilingMs, type PublicationBound } from './publication-deadline.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
@@ -154,6 +155,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
   private abandoned = new Map<Promise<void>, number>();
   /** #6278: abandoned preparations past the ceiling, by request row id. */
   private zombies = new Map<string, AbandonedPreparation>();
+  /** #6288 (P2.3): publications past the ceiling, its grace and the settle window; any one makes this owner report restart_required. */
+  private stuckPublications = new Map<string, { request_id: string; stuck_at: string }>();
   private policy: EffectivePreparationPolicy = { ...DEFAULT_PREPARATION_POLICY, deadlines: true };
   private activeRoots = new Set<string>();
   /** #5984 Phase 4.5: active roots whose only task is a foreground write publishing beside this process's lane groups. */
@@ -622,7 +625,20 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     return isTerminal(row);
   }
   /** #6278: abandoned preparations past the ceiling have reached this process's cap; it claims nothing more until it restarts. */
-  restartRequired(): boolean { return this.zombies.size >= (this.opts.zombieCap ?? DEFAULT_ZOMBIE_CAP); }
+  restartRequired(): boolean { return this.zombies.size >= (this.opts.zombieCap ?? DEFAULT_ZOMBIE_CAP) || this.stuckPublications.size > 0; }
+  /** #6288 (P2.3): the consumer's side of `boundPublication`: the claim stamp at the ceiling, restart_required past it. */
+  private publicationBound(row: WriteRequest, ceilingMs: number, clock?: ClaimPhaseClock): PublicationBound {
+    return { ceilingMs,
+      onOverdue: () => {
+        if (clock) clock.waitingOn = 'publication_deadline';
+        this.log('publication', 'publication_deadline', `request ${row.request_id}: publishing past the ${ceilingMs} ms ceiling; its transaction's server-side timeouts end it on Postgres`);
+      },
+      onStuck: settled => {
+        this.stuckPublications.set(row.id, { request_id: row.request_id, stuck_at: new Date().toISOString() });
+        void settled.then(() => { this.stuckPublications.delete(row.id); });
+        this.log('publication', 'restart_required', `request ${row.request_id}: the publication has not settled past the ceiling and its grace; restart this process (its root stays held until then)`);
+      } };
+  }
   status() {
     const { deadlines, syncMs, maintenanceMs, ceilingMs, maxAttempts } = this.policy;
     return { accepting: !this.stopping, active_preparations: this.active.size, active_worktrees: this.activeRoots.size,
@@ -635,6 +651,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       abandoned_preparations: this.abandoned.size,
       outlived_ceiling: [...this.zombies.values()].map(value => ({ ...value })),
       restart_required: this.restartRequired(),
+      stuck_publications: [...this.stuckPublications.values()].map(value => ({ ...value })),
       // #6317: which connection this consumer's statements take, and whether the ordinary pool is a transaction-mode pooler.
       connection: consumerConnectionRoute(this.engine),
       ...(this.lastError ? { last_error: { ...this.lastError } } : {}) };
@@ -848,7 +865,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       preparationActive = false;
       enterClaimPhase(clock, 'publishing');
       await faultPoint('consumer:prepared', { requestId: row.request_id, sourceId: row.source_id, operation: row.operation });
-      const { done, settled } = await this.publishSingle(row, prepared);
+      const { done, settled } = await boundPublication(() => this.publishSingle(row, prepared), this.publicationBound(row, await readPublicationCeilingMs(this.engine), clock));
       if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', failureLogText(done));
       if (done.state === 'queued' && done.blocked_reason === 'writer_lock_unavailable') {
         root.retryAfterMs = INSPECT_OWNER_RETRY_MS;
@@ -904,6 +921,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       return await executeClaimedGroup(this.engine, rows, { hostId: this.hostId, lane,
         prepare: (member, engine, signal, clock) => this.prepare(engine, member, this.config, signal, clock),
         lease: this.leaseTiming(), policy: this.policy, foregroundMs: this.opts.preparationMs ?? 30_000,
+        publication: this.publicationBound(row, await readPublicationCeilingMs(this.engine)),
         leftRunning: (work, blocksRoot, abandoned) => {
           if (!blocksRoot) { this.keepUntilSettled(work); return; }
           // #6278: an abandoned member blocks its root until it settles or the ceiling passes; several abandoned members all hold it.

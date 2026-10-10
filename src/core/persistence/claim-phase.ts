@@ -43,8 +43,8 @@ import { VERSION } from '../../version.ts';
 import { consumerIdentity, sameProcess } from './consumer-heartbeat.ts';
 
 export type ClaimPhaseName = 'preparing' | 'publishing';
-/** #6405: `publication` is the publish phase's own wait (a stamp in `publishing` no longer reads `unknown`). */
-export const WAITING_ON = ['git', 'fs', 'db', 'pool', 'publication', 'unknown'] as const;
+/** #6405: `publication` is the publish phase's own wait (a stamp in `publishing` no longer reads `unknown`); #6288 `publication_deadline` is a publish past `persistence.publication_ceiling_ms`. */
+export const WAITING_ON = ['git', 'fs', 'db', 'pool', 'publication', 'publication_deadline', 'unknown'] as const;
 export type WaitingOn = typeof WAITING_ON[number];
 export interface ClaimPhaseClock {
   phase: ClaimPhaseName;

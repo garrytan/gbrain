@@ -24,6 +24,7 @@ import { cliRenderContext, renderAction, type Action, type RenderedAction } from
 import { managedSyncResumeArgs, syncResumeCommand } from '../sync-reconcile.ts';
 import { isWriteCapacityWait, outstandingCapacityOf } from './admission-retry.ts';
 import { clearDrainStep, readDrainStep } from './drain-step.ts';
+import { PUBLICATION_CEILING_DEFAULT_MS, readPublicationCeilingMs } from './publication-deadline.ts';
 import { isOwnerThisProcess, stampLastSql, WAITING_ON, type ClaimLastSql, type WaitingOn } from './claim-phase.ts';
 
 export type DrainOutcome = 'synced' | 'resumable' | 'blocked';
@@ -164,8 +165,6 @@ const DEADLINE_MARGIN_MS = 15_000;
 const PROGRESS_EVERY_MS = 10_000;
 /** #6405/#6423: a pass with no commit, no admission and no change at the head for this long is ended by the in-pass governor. */
 const IN_PASS_NO_PROGRESS_MS = 5 * 60_000;
-/** #6405: `persistence.publication_ceiling_ms`' default; a live claim in `publishing` past it ends the pass. */
-export const PUBLICATION_CEILING_DEFAULT_MS = 5 * 60_000;
 /** #6405 (R6): the governor's head read is abandoned past this, so a stuck read never parks the governor. */
 const GOVERN_PROBE_MS = 5_000;
 const GOVERN_EVERY_MS = 5_000;
@@ -587,11 +586,6 @@ function ownerPid(stamp: Record<string, unknown>): number | null {
   return typeof pid === 'number' ? pid : null;
 }
 /** The preparation budgets the drain's allowance reads (Lane A defines and validates the keys; defaults are the documented ones). */
-/** #6405: `persistence.publication_ceiling_ms` (60000 to 3600000; anything else reads as the default). */
-async function readPublicationCeilingMs(engine: Pick<BrainEngine, 'getConfig'>): Promise<number> {
-  const n = Number((await engine.getConfig('persistence.publication_ceiling_ms').catch(() => null))?.trim());
-  return Number.isInteger(n) && n >= 60_000 && n <= 3_600_000 ? n : PUBLICATION_CEILING_DEFAULT_MS;
-}
 async function readPreparationBudgets(engine: Pick<BrainEngine, 'getConfig'>): Promise<{ syncMs: number; maintenanceMs: number; ceilingMs: number }> {
   const read = async (key: string, fallback: number) => { const n = Number((await engine.getConfig(key).catch(() => null))?.trim()); return Number.isInteger(n) && n > 0 ? n : fallback; };
   return { syncMs: await read('persistence.sync_preparation_ms', SYNC_PREPARATION_DEFAULT_MS), maintenanceMs: await read('persistence.maintenance_preparation_ms', MAINTENANCE_PREPARATION_DEFAULT_MS),

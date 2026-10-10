@@ -51,6 +51,7 @@ import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects, queuesMentionLinks, reconcileFinishedBatch } from './effect-journal.ts';
 import { assertUnboundPublication, classifyUnboundPage } from './unbound-source.ts';
 import { declareDurablePersistence } from './protocol.ts';
+import { bindPublicationTimeouts, boundPublication, publicationTransaction, type PublicationBound } from './publication-deadline.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
@@ -203,7 +204,7 @@ export type TransactionRunner = <T>(fn: (tx: BrainEngine) => Promise<T>) => Prom
 const publishingBeside = new Set<string>();
 
 export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], prepared: PreparedMutation[], hostId = localHostId(),
-  hooks: GroupHooks = {}, lane: LaneState | null = null, transaction: TransactionRunner = fn => engine.transaction(fn)): Promise<{ done: WriteRequest[] | null; requeued: string[]; reason?: GroupFailure }> {
+  hooks: GroupHooks = {}, lane: LaneState | null = null, transaction: TransactionRunner = fn => publicationTransaction(engine, fn)): Promise<{ done: WriteRequest[] | null; requeued: string[]; reason?: GroupFailure }> {
   const head = rows[0];
   const none: { done: null; requeued: string[]; reason?: GroupFailure } = { done: null, requeued: [] };
   if (!head?.worktree_id || rows.some((row, i) => row.worktree_id !== head.worktree_id || row.source_id !== head.source_id || !groupable(row, prepared[i]!)
@@ -261,6 +262,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
     }
     if (lane) await awaitLaneBegin(lane, rows);
     const done = await transaction(async opened => {
+      bindPublicationTimeouts(opened);
       timed.apply?.end(rows.length);
       if (lane) timed.apply = laneApplyBegin(lane);
       const tx = groupReads(opened);
@@ -517,6 +519,8 @@ export interface GroupExecution {
    * or (#6278) a deadline; `abandoned` names the member and its clock for the ceiling.
    */
   leftRunning?(work: Promise<unknown>, blocksRoot: boolean, abandoned?: { row: WriteRequest; clock: ClaimPhaseClock }): void;
+  /** #6288 (P2.3): the publication ceiling and what the owner does at it and past it (publication-deadline.ts); absent, unbounded. */
+  publication?: PublicationBound;
 }
 
 /**
@@ -645,6 +649,10 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
     }
     for (const clock of clocks) if (clock) enterClaimPhase(clock, 'publishing');
     enterClaimPhase(groupClock, 'publishing');
+    const bounded = <T>(publish: () => Promise<T>): Promise<T> => run.publication ? boundPublication(publish, { ...run.publication, onOverdue: () => {
+      for (const clock of [...clocks, groupClock]) if (clock) clock.waitingOn = 'publication_deadline';
+      run.publication!.onOverdue?.();
+    } }) : publish();
     const live = rows.map((row, i) => ({ row, i })).filter(({ row }) => !released.has(row.id));
     if (!live.length) return progressed;
     const liveRows = live.map(({ row }) => row);
@@ -652,7 +660,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
     if (live.every(({ i }) => 'ok' in prepared[i]!)) {
       // #6278 lanes: a prefix publishes under the original group's order key, then drops its own begun mark.
       if (run.lane && liveRows.length < rows.length) await awaitLaneBegin(run.lane, rows);
-      const result = await publishGroup(engine, liveRows, live.map(({ i }) => (prepared[i] as { ok: PreparedMutation }).ok), run.hostId, run.hooks, run.lane ?? null);
+      const result = await bounded(() => publishGroup(engine, liveRows, live.map(({ i }) => (prepared[i] as { ok: PreparedMutation }).ok), run.hostId, run.hooks, run.lane ?? null));
       if (run.lane && liveRows.length < rows.length) run.lane.begun.delete(liveRows.at(-1)!.request_id);
       if (result.done) { for (const row of result.done) run.settled(row); return true; }
       requeued = new Set(result.requeued);
@@ -684,7 +692,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
       const p = prepared[i]!;
       // #6278: a member aborted by our own cancellation (never a deadline here) is released, not failed.
       if ('released' in p) { await releaseUnpublishedClaim(engine, row, p.released === 'claim_lost' ? 'claim_lost' : 'group_member_waiting'); stop ??= independent ? null : 'release'; continue; }
-      const done = 'ok' in p ? await publishMutation(engine, row, p.ok, run.hostId) : await finishUnpublishedFailure(engine, current, p.error, 'preparation');
+      const done = 'ok' in p ? await bounded(() => publishMutation(engine, row, p.ok, run.hostId)) : await finishUnpublishedFailure(engine, current, p.error, 'preparation');
       run.settled(done);
       if (done.state === 'committed') { progressed = true; continue; }
       if (['conflict', 'failed', 'cancelled'].includes(done.state)) { progressed = true; if (!independent) stop = 'cancel'; } else stop = 'release';
