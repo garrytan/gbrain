@@ -82,6 +82,7 @@
         "links_created": 612,
         "pages_processed": 224,
         "skipped_cross_source": 0,
+        "skipped_endpoint_changed": 0,
         "skipped_missing_target": 24,
         "timeline_entries_created": 198
       }
@@ -92,6 +93,7 @@
         "links_created": 612,
         "pages_processed": 224,
         "skipped_cross_source": 0,
+        "skipped_endpoint_changed": 0,
         "skipped_missing_target": 24,
         "timeline_entries_created": 0
       }

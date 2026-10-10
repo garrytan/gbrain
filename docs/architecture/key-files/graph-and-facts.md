@@ -28,7 +28,10 @@ automatic-link error so the note can commit without rewriting pack-owned edges.
 `DerivedLinkEndpointChangedError` identifies only missing or revision-changed
 endpoints detected before graph mutation. Automatic publication catches that
 specific failure, preserving its note and prior graph with retryable auto-link
-metadata; direct reconciliation still refuses. Other errors propagate and roll
+metadata; direct reconciliation still refuses. DB link/stale extraction counts
+endpoint conflicts per origin, preserves its graph and watermark, and continues
+the bounded walk; the next run retries it with fresh endpoint metadata.
+Other errors propagate and roll
 back publication rather than being mislabeled as a harmless link conflict.
 `replaceDerivedLinks` validates that origin and the locked person/meeting types
 and revisions; its `preserveExisting` path keeps matching row identities while

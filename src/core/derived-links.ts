@@ -180,17 +180,26 @@ export async function replaceDerivedLinksBatch(
  * Publish through replaceDerivedLinksBatch; when that transaction fails,
  * replay the origins one by one so every outcome is the unbatched one: null
  * for a settings-changed skip, and the first failing origin's error thrown
- * (after `onError`) with the origins before it committed.
+ * (after `onError`) with the origins before it committed. An opt-in endpoint
+ * deferral callback leaves just that origin stale and permits sibling progress.
  */
 export async function replaceDerivedLinksBatchOrReplay(engine: Pick<BrainEngine, 'replaceDerivedLinks' | 'replaceDerivedLinksBatch'>,
-  items: readonly DerivedLinkBatchItem[], onError?: (item: DerivedLinkBatchItem) => void): Promise<Array<{ created: number; removed: number } | null>> {
+  items: readonly DerivedLinkBatchItem[], onError?: (item: DerivedLinkBatchItem) => void,
+  onEndpointChanged?: (item: DerivedLinkBatchItem) => void): Promise<Array<{ created: number; removed: number } | null>> {
   if (!items.length) return [];
   try { return await engine.replaceDerivedLinksBatch(items); }
   catch {
     const results: Array<{ created: number; removed: number } | null> = [];
     for (const item of items) {
       try { results.push(await replaceDerivedLinksUnlessSettingsChanged(engine, item.origin, item.links, item.opts)); }
-      catch (error) { onError?.(item); throw error; }
+      catch (error) {
+        if (onEndpointChanged && error instanceof DerivedLinkEndpointChangedError) {
+          onEndpointChanged(item);
+          results.push(null);
+          continue;
+        }
+        onError?.(item); throw error;
+      }
     }
     return results;
   }
