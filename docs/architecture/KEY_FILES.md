@@ -1,26 +1,26 @@
 # Key files — per-file index (gbrain repo)
 
 Read a file's entry before editing it. This page routes to bounded subsystem
-references; **do not load every file in the directory**. Entries retain the
-implementation evidence and test references from the former single-file index.
+references; **do not load every file in the directory**. Entries keep the
+implementation evidence and test references.
 
-Find a specific path locally, then read that entry and its surrounding contract:
+Find a path locally, then read its entry and surrounding contract:
 
 ```bash
 rg -n -F 'src/core/ops/pages.ts' docs/architecture/key-files/
 ```
 
-The ranges below use the first path in each entry; grouped entries can document
-several related files. Search is the fallback when a path crosses subsystems.
-Edit the subsystem entry, not this routing page, when behavior changes.
-Keep entries current-state: release history belongs in `CHANGELOG.md` and Git.
+Ranges use each entry's first path; grouped entries can document several
+files. Search is the fallback when a path crosses subsystems.
+Edit the subsystem entry, not this page, when behavior changes.
+Keep entries current-state: history belongs in `CHANGELOG.md` and Git.
 Where a new storage method, migration, doctor check, command, route or sync
 phase goes: [CONTRIBUTING.md](../../CONTRIBUTING.md#where-does-my-change-go).
 A branch written before refactor wave 1 follows the generated
 [porting guide](wave-1-porting.md) ([JSON map](wave-1-moves.json)).
 `scripts/check-key-files-current-state.sh` checks every subsystem for history,
-duplicate file entries, and size growth. Split a growing subsystem at a useful
-boundary and add its link here rather than raising the cap.
+duplicate file entries and size growth. Split a growing subsystem at a useful
+boundary and link it here rather than raising the cap.
 
 | Subsystem | Entry range / scope |
 |---|---|
@@ -36,14 +36,15 @@ boundary and add its link here rather than raising the cap.
 | [Commands (4/6, continued)](key-files/commands-4-continued.md) | `src/commands/protocol.ts` through `src/commands/reindex-search-vector.ts`, `init-mode-picker.ts`, `src/core/embedding-migration-cli.ts` |
 | [Commands (5/6)](key-files/commands-5.md) | `src/commands/reindex.ts` through `src/commands/storage.ts` |
 | [Commands (6/6)](key-files/commands-6.md) | `src/commands/sync.ts` through `src/commands/whoknows.ts` |
-| [Core Ai](key-files/core-ai.md) | `src/core/ai/build-gateway-config.ts` through `src/core/ai/types.ts` |
+| [Core Ai](key-files/core-ai.md) | `src/core/ai/` gateway, embedding, dims, errors, fallbacks |
+| [Core Ai (continued)](key-files/core-ai-continued.md) | `src/core/ai/providers/*`, `recipes/*`, `voyage-gateway.ts` |
 | [Core Decide](key-files/core-decide.md) | `src/core/ai/decide/*`, `src/core/search/decide-stage.ts`, `gbrain decide`, `decide_health` (System One) |
 | [Core Cycle](key-files/core-cycle.md) | `src/core/cycle/anomaly.ts` through `src/core/cycle/phase-table.ts`: atoms, facts, drains, probes, phase scope |
 | [Core Cycle (continued)](key-files/core-cycle-continued.md) | `src/core/cycle/` synthesis, patterns, consolidation, concept publication and `connector-atoms.ts` |
 | [Core Minions (1/2)](key-files/core-minions-1.md) | `src/core/minions/` through `src/core/minions/rss-default.ts` |
 | [Core Minions (2/2)](key-files/core-minions-2.md) | `src/core/minions/run-child.ts` through `src/core/minions/worker.ts` |
 | [Core Persistence](key-files/core-persistence.md) | `src/core/persistence/` write journal, coordinator, effects, canonical projections and managed sync |
-| [Core Persistence (continued)](key-files/core-persistence-continued.md) | `worktree-refresh*.ts`, `persistence/connector-*.ts`, `connectors/item-holds*.ts`, checkpoint validation, no-op kernel, accepted-pending receipts, verb types/errors, database-write, attribution, purge-deleted, fact retirement, single-write path |
+| [Core Persistence (continued)](key-files/core-persistence-continued.md) | `worktree-refresh*.ts`, `persistence/connector-*.ts`, `connectors/item-holds*.ts`, checkpoint validation, no-op kernel, accepted-pending receipts, verb types/errors, attribution, purge-deleted, fact retirement, single-write path |
 | [Core Persistence (engine graduation)](key-files/core-persistence-graduation.md) | `engine-graduation*.ts`, `graduation-*.ts`, `src/commands/migrate-graduation.ts`, its doctor finding |
 | [Managed sync and persistence stalls](key-files/persistence-stalls.md) | preparation budgets, `claim-phase.ts`, `consumer.ts`, `group-publish.ts`, `journal.ts`, `diagnostics.ts`, `worktree-manifest.ts` |
 | [Core Search (1/2)](key-files/core-search-1.md) | `src/core/search/` through `src/core/search/rerank.ts` |
