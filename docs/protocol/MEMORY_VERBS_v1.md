@@ -166,7 +166,7 @@ Response — an additive SUPERSET of the plain facts envelope on EVERY call
 | `protocol_version` | int | always present (every verb, every call) |
 | `facts[]` | array | the base fact fields, PLUS per fact: `fact_id` (opaque STRING — the value `forget` accepts; the numeric `id` remains alongside it for compatibility) and `provenance` (the stored source attribution) |
 | `total` | int | count of facts returned |
-| `results[]` | array | search arm only: `slug`, `title`, `chunk`, `evidence`, `create_safety`, `provenance` (origin page slug) |
+| `results[]` | array | search arm only: `slug`, `title`, `chunk`, `evidence`, `create_safety`, `provenance` (origin page slug), `source_id` (additive since #4830: the source the hit came from; on a federated read each hit names its own source, and a hit that carries none is labeled only when the read's scope is a single source, never a blind `default`) |
 | `search_degraded` | string? | present when keyword-only fallback fired |
 | `budget_tokens` / `budget_used` / `dropped_count` | int? | present for a positive finite numeric budget, including when its floor is zero |
 | `budget_packing` | object? | present only when a valid `budget_policy` is supplied; effective policy and per-arm accounting |

@@ -46,7 +46,7 @@ src/core/minions/handlers/subagent.ts	runSubagentViaGateway	329	seed: W5 baselin
 src/core/minions/queue.ts	MinionQueue.add	498	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/minions/queue.ts	MinionQueue.add>result=this.engine.transaction(#0)	359	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/minions/worker.ts	MinionWorker.start	470	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/core/ops/facts.ts	recall.handler	348	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
+src/core/ops/facts.ts	recall.handler	351	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +3 #4830 (W14 PR3): every hit names its source_id, falling back to the scope's single source (the federated case stays absent)
 src/core/ops/search.ts	query.handler	332	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 GBRA-49 explain_target: one TargetTrace prep line and its HybridSearchOpts thread (diagnosis/meta live in prepareExplainTarget/finishExplainTarget)
 src/core/progressive-batch/orchestrator.ts	runProgressiveBatch	348	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/remediation/run.ts	runRemediation	428	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
