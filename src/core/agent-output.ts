@@ -40,6 +40,8 @@ export interface ActionInput { name: string; how: string }
 
 /** Stored/constructed form. Never carries `next` or `command`: both are computed at render time. */
 export interface Action {
+  /** Escalation only: an action the agent must not take without asking renders `ask_user` whatever else it carries. */
+  next?: 'ask_user';
   argv?: string[];
   mcp?: McpCall;
   consent: Effect[];
@@ -56,7 +58,7 @@ export interface Action {
 }
 
 /** Wire form: what an agent reads. */
-export interface RenderedAction extends Omit<Action, 'then' | 'docs'> {
+export interface RenderedAction extends Omit<Action, 'then' | 'docs' | 'next'> {
   command?: string;
   next: Next;
   docs?: string;
@@ -225,6 +227,7 @@ function warnInvalidRepoBase(value: string): void {
 
 /** The published decision table (first matching row wins). */
 export function deriveNext(a: Action, ctx: RenderContext): Next {
+  if (a.next === 'ask_user') return 'ask_user';
   const callableMcp = a.mcp !== undefined && ctx.isCallable(a.mcp.tool);
   const mcpOnlyOnCli = ctx.transport === 'cli' && !a.argv?.length && a.mcp !== undefined && !callableMcp;
   if (!a.argv?.length && !callableMcp && !mcpOnlyOnCli) return 'report';
