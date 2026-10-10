@@ -25,6 +25,9 @@ import { localHostId } from '../src/core/persistence/identity.ts';
 import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
+import { lockOpenOsError } from '../src/core/persistence/native-lock.ts';
+import { drainNext, runDrain } from '../src/core/persistence/sync-drain.ts';
+import type { SyncResult } from '../src/commands/sync.ts';
 import { publishSingleWrite } from '../src/core/persistence/group-publish.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
@@ -55,6 +58,17 @@ describe('native lock open failures are typed and carry the OS error', () => {
     expect(isLockOpenFailure(Object.assign(new Error('Cannot open'), { code: 'writer_lock_unavailable' }))).toBe(false);
     expect(nativeLockOsError(new Error('Native lock open failed (OS error 13)'))).toBe(process.platform === 'win32' ? 'os_error_13' : 'EACCES');
     expect(nativeLockOsError(new Error('Native lock open failed (OS error 0)'))).toBeUndefined();
+  });
+  test('a managed drain whose head stays queued as writer_lock_unavailable stops drain_stalled with a next that names it', async () => {
+    const pending = { status: 'partial', reason: 'writer_pending', fromCommit: null, toCommit: 'b', added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [],
+      managedCursor: { index: 1, total: 3 } } as SyncResult;
+    const stall = { request_id: 'req-1', state: 'queued', blocked_reason: 'writer_lock_unavailable', head_request_id: 'req-1', head_state: 'queued', claimable_here: false, owner_is_this_host: true };
+    const result = await runDrain({ pass: async () => pending, pauseMs: 1, stallMs: 20, probe: { blockedHead: async () => null, fingerprint: async () => ({ key: 'same', stall, claim: null }) } });
+    expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', stall: { blocked_reason: 'writer_lock_unavailable', cause: 'no_progress' } });
+    const next = drainNext(result, 'gbrain sync --source default --no-pull', 'default')!;
+    expect(next).toMatchObject({ command: 'gbrain sources writer status --source default --json', code: 'drain_stalled', safe_to_loop: false });
+    expect(next.why).toContain('blocked_reason=writer_lock_unavailable');
+    expect(next.why).toContain('names the OS error');
   });
   test('ownerExceptionFailure reports the OS error, not the gbrain code', () => {
     const error = new NativeLockUnavailableError('The OS could not acquire the writer lock', Object.assign(new Error('x'), { code: 'EACCES' }));
@@ -119,6 +133,16 @@ for (const kind of testBackends()) {
       expect(committed.state).toBe('committed');
       expect((await getWriteRequestById(engine, row.id))?.state).toBe('committed');
       expect(await engine.getPage('notes/locked-out', { sourceId: 'default' })).not.toBeNull();
+    }), 120_000);
+
+    test('the release keeps the OS error for the consumer log line (lockOpenOsError)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+      const { row, binding, prepared } = await claimedPut('notes/locked-out-errno');
+      rmSync(binding.coordination_path!, { force: true }); mkdirSync(binding.coordination_path!);
+      expect(await publish(engine, row, prepared)).toMatchObject({ state: 'queued', blocked_reason: 'writer_lock_unavailable' });
+      expect(lockOpenOsError(binding.worktree_id)).toBe('EISDIR');
+      rmSync(binding.coordination_path!, { recursive: true, force: true });
+      const again = (await claimNextWrite(engine, localHostId()))!;
+      expect((await publish(engine, again, await preparePageMutation(engine, again, context().config))).state).toBe('committed');
     }), 120_000);
 
     test('an EISDIR on the page file itself (the brain path) still fails terminally', async () => withEnv({ GBRAIN_HOME: home }, async () => {

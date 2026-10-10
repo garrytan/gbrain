@@ -37,6 +37,13 @@ export class NativeLockUnavailableError extends Error {
 }
 
 /** #6305: this process could not create or open the lock file; a busy lock returns null instead. */
+/** #6305: the OS error of the last lock-open failure per worktree, so the consumer's release line names it (the request's blocked_reason cannot). */
+const openFailures = new Map<string, string>();
+export function noteLockOpenFailure(worktreeId: string, error: unknown): void {
+  const os = error instanceof NativeLockUnavailableError ? error.osError : undefined;
+  if (os) openFailures.set(worktreeId, os); else openFailures.delete(worktreeId);
+}
+export function lockOpenOsError(worktreeId: string | null | undefined): string | null { return worktreeId ? openFailures.get(worktreeId) ?? null : null; }
 export function isLockOpenFailure(error: unknown): error is NativeLockUnavailableError {
   return error instanceof NativeLockUnavailableError && error.stage === 'open';
 }

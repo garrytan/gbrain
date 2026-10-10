@@ -878,6 +878,14 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
         why: 'Status names the request, its step and the owner process, read-only.', user_message: `Restart ${owner} on this host, then run: ${resumeCommand}`,
         verify: { argv: ['gbrain', 'sources', 'writer', 'movement', sourceId, '--json'] } }, cliRenderContext()), ...(docs ? { docs } : {}) };
   }
+  // #6305: the head stays queued as writer_lock_unavailable: no process that reached it could open the source's worktree lock.
+  if (d?.stop_reason === 'drain_stalled' && (d.stall?.blocked_reason === 'writer_lock_unavailable')) {
+    return { command: `gbrain sources writer status --source ${sourceId} --json`, safe_to_loop: false, retry_after_ms: 0, ...estimate, code: 'drain_stalled', cause: d.stall.cause,
+      why: `The write ${d.stall.request_id} stayed queued for ${d.stall.stalled_seconds}s with blocked_reason=writer_lock_unavailable: the processes that claimed it could not open source ${sourceId}'s worktree lock `
+        + '(a sandbox, or a lock directory this user cannot write; the consumer log line names the OS error), so they left it for an owner and none took it. Nothing failed and the cursor is intact. '
+        + `Run the sync from a process that can write the source's lock directory (the owner's gbrain serve, or this command outside the sandbox), then rerun: ${resumeCommand}`,
+      ...(docs ? { docs } : {}) };
+  }
   // #6423: the pass admitted nothing for the whole window; the step and statement name where it waited.
   if (d?.stop_reason === 'drain_stalled' && d.stall?.cause === 'no_admission') {
     const stall = d.stall;

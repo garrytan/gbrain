@@ -31,6 +31,7 @@ import { readWriteSwitchSnapshot, writeSwitchOn } from './switches.ts';
 import { consumerConnectionRoute, consumerStatementEngine, poolerExposureLine } from './consumer-lane.ts';
 import { isConnectionLoss } from '../retry-matcher.ts';
 import { INSPECT_OWNER_RETRY_MS } from './health.ts';
+import { lockOpenOsError } from './native-lock.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
@@ -851,7 +852,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', failureLogText(done));
       if (done.state === 'queued' && done.blocked_reason === 'writer_lock_unavailable') {
         root.retryAfterMs = INSPECT_OWNER_RETRY_MS;
-        this.log('publication', 'writer_lock_unavailable', `request ${row.request_id}: this process cannot open source ${row.source_id}'s worktree lock; left for an owner process`);
+        this.log('publication', 'writer_lock_unavailable', `request ${row.request_id}: this process cannot open source ${row.source_id}'s worktree lock${lockOpenOsError(row.worktree_id) ? ` (${lockOpenOsError(row.worktree_id)})` : ''}; left for an owner process`);
       }
       if (done.state === 'committed' && row.worktree_id && !String(row.intent?.kind).startsWith('managed_sync_')) {
         this.foregroundCounts.set(row.worktree_id, this.foregroundCompletions(row.worktree_id) + 1);
