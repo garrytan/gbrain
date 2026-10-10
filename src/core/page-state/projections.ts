@@ -10,23 +10,12 @@ import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
-import { getFtsLanguage } from '../fts-language.ts';
+import { getFtsLanguage, pageSearchVectorSql } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 import { belowSafeChunkFence } from '../search/safe-chunks.ts';
 import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
-
-/**
- * The page keyword vector every sealed writer stores: the title (weight A) and
- * the SANITIZED timeline (weight C, bound by the caller; never the raw column,
- * which can hold private or withdrawn fence text). `title` and `timeline` are
- * SQL expressions. Shared by the seal, the import seal and
- * `reindex-search-vector`, so the three cannot drift.
- */
-export function pageSearchVectorSql(title: string, timeline: string, lang: string = getFtsLanguage()): string {
-  return `setweight(to_tsvector('${lang}',COALESCE(${title},'')),'A') || setweight(to_tsvector('${lang}',${timeline}::text),'C')`;
-}
 
 /**
  * Complete the searchable snapshot only after its sanitized chunks are installed.

@@ -46,13 +46,12 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { getFtsLanguage, FTS_REINDEX_MARKER_KEY } from '../core/fts-language.ts';
+import { getFtsLanguage, FTS_REINDEX_MARKER_KEY, pageSearchVectorTriggerFnSql, chunkSearchVectorTriggerFnSql } from '../core/fts-language.ts';
 import { checkpointKey } from '../core/backfill-base.ts';
 import { consentGate } from '../core/consent-cli.ts';
 import type { ConsentEnv } from '../core/consent.ts';
 import { createProgress } from '../core/progress.ts';
-import { pageSearchVectorSql } from '../core/page-state/projections.ts';
-import { sanitizeRemoteBody } from '../core/remote-body.ts';
+import { backfillChunkVectors, backfillPageVectors } from '../core/search-vector-backfill.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 export interface ReindexSearchVectorOpts {
@@ -80,85 +79,8 @@ interface CountRow {
   chunks: number;
 }
 
-/** Rows per backfill UPDATE. Keyset-batched so one statement never locks the whole table. */
-export const BACKFILL_BATCH_SIZE = 5000;
-
 /** Checkpoint names (→ `backfill.<name>.last_id`), one per backfilled table. */
 const CHECKPOINT_NAME = { pages: 'fts_pages', content_chunks: 'fts_content_chunks' } as const;
-
-/**
- * Keyset-batched UPDATE: applies `setClause` to `table` rows where
- * search_vector IS NOT NULL, BACKFILL_BATCH_SIZE ids at a time, ticking
- * the shared progress reporter after each batch. Terminates when a batch
- * returns fewer rows than the batch size (or none). The cursor is persisted
- * after every batch so a killed run loses at most one batch on resume.
- */
-async function batchedBackfill(
-  engine: BrainEngine,
-  table: 'content_chunks',
-  setClause: string,
-  tick: (n: number) => void
-): Promise<void> {
-  const key = checkpointKey(CHECKPOINT_NAME[table]);
-  const saved = Number(await engine.getConfig(key));
-  let cursor = Number.isFinite(saved) && saved > 0 ? saved : 0;
-  for (;;) {
-    const rows = await engine.executeRaw<{ id: number }>(`
-      UPDATE ${table} SET ${setClause}
-      WHERE id IN (
-        SELECT id FROM ${table}
-        WHERE search_vector IS NOT NULL AND id > ${cursor}
-        ORDER BY id
-        LIMIT ${BACKFILL_BATCH_SIZE}
-      )
-      RETURNING id
-    `);
-    if (rows.length === 0) break;
-    tick(rows.length);
-    cursor = rows.reduce((m, r) => Math.max(m, Number(r.id)), cursor);
-    await engine.setConfig(key, String(cursor));
-    if (rows.length < BACKFILL_BATCH_SIZE) break;
-  }
-}
-
-/**
- * #6374: page vectors rebuilt with the seal's own expression. The pages
- * trigger fires only on `UPDATE OF title,timeline` and indexes the RAW
- * timeline, so neither an UPDATE-to-self nor re-firing it is right. Each batch
- * reads its rows through an UPDATE-to-self (row locks held for that statement
- * only, never across the TypeScript sanitize), sanitizes the timeline exactly
- * as the seal does, then writes `search_vector` guarded by the knowledge
- * revision it read: a page edited in between is skipped, and its own seal
- * indexes it under the new trigger language. The cursor is persisted after
- * every batch, as for chunks.
- */
-async function backfillPageVectors(engine: BrainEngine, lang: string, tick: (n: number) => void): Promise<void> {
-  const key = checkpointKey(CHECKPOINT_NAME.pages);
-  const saved = Number(await engine.getConfig(key));
-  let cursor = Number.isFinite(saved) && saved > 0 ? saved : 0;
-  for (;;) {
-    const rows = await engine.executeRaw<{ id: number; timeline: string | null; knowledge_revision: string }>(`
-      UPDATE pages SET id = id
-      WHERE id IN (
-        SELECT id FROM pages
-        WHERE search_vector IS NOT NULL AND id > ${cursor}
-        ORDER BY id
-        LIMIT ${BACKFILL_BATCH_SIZE}
-      )
-      RETURNING id, timeline, knowledge_revision::text AS knowledge_revision
-    `);
-    if (rows.length === 0) break;
-    await engine.executeRaw(`
-      UPDATE pages p SET search_vector = ${pageSearchVectorSql('p.title', 'v.timeline', lang)}
-      FROM unnest($1::int[], $2::text[], $3::uuid[]) AS v(id, timeline, revision)
-      WHERE p.id = v.id AND p.knowledge_revision = v.revision
-    `, [rows.map(r => Number(r.id)), rows.map(r => sanitizeRemoteBody(r.timeline ?? '')), rows.map(r => r.knowledge_revision)]);
-    tick(rows.length);
-    cursor = rows.reduce((m, r) => Math.max(m, Number(r.id)), cursor);
-    await engine.setConfig(key, String(cursor));
-    if (rows.length < BACKFILL_BATCH_SIZE) break;
-  }
-}
 
 /**
  * Programmatic entrypoint — takes a typed opts object. Used by tests and
@@ -223,48 +145,12 @@ export async function runReindexSearchVector(
     return { status: 'confirmation_required', language: lang, pagesUpdated: 0, chunksUpdated: 0, triggersRecreated: 0, durationMs: Date.now() - startedAt };
   }
 
-  // Recreate trigger functions. The strings are intentionally identical to
-  // the v124 migration body — keeping them in lockstep is the contract.
-  // `SET search_path = pg_catalog, public` mirrors the v120/#1647 hardening:
-  // CREATE OR REPLACE resets proconfig, so omitting it here would strip the
-  // hardening from every brain that runs this command.
-  //
-  // #2704: compiled_truth (the unbounded whole-page body) is deliberately
-  // NOT indexed here — it overflows Postgres's 1MB tsvector cap on large
-  // pages, and content_chunks.search_vector (populated separately, chunk-
-  // grain, well under the cap) is what searchKeyword() actually queries.
-  // See migrate.ts's v124 for the full rationale; keep this copy in sync.
-  const recreatePagesFn = `
-    CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET search_path = pg_catalog, public AS $fn$
-    DECLARE
-      timeline_text TEXT;
-    BEGIN
-      SELECT coalesce(string_agg(summary || ' ' || detail, ' '), '')
-      INTO timeline_text
-      FROM timeline_entries
-      WHERE page_id = NEW.id;
-
-      NEW.search_vector :=
-        setweight(to_tsvector('${lang}', coalesce(NEW.title, '')), 'A') ||
-        setweight(to_tsvector('${lang}', coalesce(NEW.timeline, '')), 'C') ||
-        setweight(to_tsvector('${lang}', coalesce(timeline_text, '')), 'C');
-
-      RETURN NEW;
-    END;
-    $fn$ LANGUAGE plpgsql;
-  `;
-
-  const recreateChunksFn = `
-    CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER SET search_path = pg_catalog, public AS $fn$
-    BEGIN
-      NEW.search_vector :=
-        setweight(to_tsvector('${lang}', COALESCE(NEW.doc_comment, '')), 'A') ||
-        setweight(to_tsvector('${lang}', COALESCE(NEW.symbol_name_qualified, '')), 'A') ||
-        setweight(to_tsvector('${lang}', COALESCE(NEW.chunk_text, '')), 'B');
-      RETURN NEW;
-    END;
-    $fn$ LANGUAGE plpgsql;
-  `;
+  // Trigger bodies come from the shared builders (fts-language.ts), the same
+  // text the fts-cjk-boundary migration applies. gbrain_fts_input(), which
+  // they call, exists on every brain: the schema blob and that migration
+  // create it before any command runs.
+  const recreatePagesFn = pageSearchVectorTriggerFnSql(lang);
+  const recreateChunksFn = chunkSearchVectorTriggerFnSql(lang);
 
   // #4795: marker first (see the docblock). A prior run interrupted on the
   // SAME language resumes from its checkpoints; any other state starts over.
@@ -297,22 +183,14 @@ export async function runReindexSearchVector(
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
   // Backfill: pages through the seal's expression over the sanitized
-  // timeline (backfillPageVectors); content_chunks gets a direct vector
-  // compute since the column itself is what we want.
+  // timeline; content_chunks gets a direct vector compute since the column
+  // itself is what we want.
   progress.start('reindex_search_vector.pages', pagesCount);
-  await backfillPageVectors(engine, lang, n => progress.tick(n));
+  await backfillPageVectors(engine, { lang, checkpoint: CHECKPOINT_NAME.pages, tick: n => progress.tick(n) });
   progress.finish();
 
   progress.start('reindex_search_vector.chunks', chunksCount);
-  await batchedBackfill(
-    engine,
-    'content_chunks',
-    `search_vector =
-      setweight(to_tsvector('${lang}', COALESCE(doc_comment, '')), 'A') ||
-      setweight(to_tsvector('${lang}', COALESCE(symbol_name_qualified, '')), 'A') ||
-      setweight(to_tsvector('${lang}', COALESCE(chunk_text, '')), 'B')`,
-    n => progress.tick(n)
-  );
+  await backfillChunkVectors(engine, { lang, checkpoint: CHECKPOINT_NAME.content_chunks, tick: n => progress.tick(n) });
   progress.finish();
 
   // Both backfills returned: the index is whole again under `lang`.

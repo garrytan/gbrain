@@ -80,7 +80,6 @@ const FRESH_GOLDEN = 'pglite-upgrade-replay/catalog-before-boot';
 const WHITESPACE_ONLY_FUNCTION_DRIFT = [
   'bump_page_generation_clock_fn()',
   'bump_page_generation_fn()',
-  'update_page_search_vector()',
 ];
 /** The OID-churn list is already sorted identity keys; nothing volatile to scrub. */
 const recreatedObjectsNormalizer = defineNormalizer<string[]>('oid-churn-keys-v1', (keys) => [...keys].sort());
