@@ -2,6 +2,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
@@ -31,7 +32,7 @@ suite('native Postgres local-subagent authority', () => {
     remote: false, sourceId, dryRun: false, logger: { info() {}, warn() {}, error() {} } });
 
   beforeAll(async () => {
-    home = mkdtempSync(join(process.env.TMPDIR!, 'hermes-local-pg-'));
+    home = mkdtempSync(join(tmpdir(), 'hermes-local-pg-'));
     process.env.GBRAIN_HOME = home;
     process.env.GIT_CEILING_DIRECTORIES = dirname(realpathSync(home));
     expect(Bun.spawnSync(['git', '-C', home, 'rev-parse', '--show-toplevel'], { env: process.env }).exitCode).not.toBe(0);

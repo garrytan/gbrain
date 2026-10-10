@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
@@ -41,7 +42,7 @@ afterAll(async () => {
   try { await engine?.disconnect(); } finally { await other?.disconnect(); }
 });
 beforeEach(async () => {
-  home = mkdtempSync(join(process.env.TMPDIR!, 'local-delegation-'));
+  home = mkdtempSync(join(tmpdir(), 'local-delegation-'));
   await withEnv(fixtureEnv(), async () => {
     const git = Bun.spawnSync(['git', '-C', home, 'rev-parse', '--show-toplevel'], { env: process.env });
     expect(git.exitCode).not.toBe(0); // Never discover the live agent home's ownership marker.

@@ -9,6 +9,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
@@ -54,7 +55,7 @@ afterAll(async () => {
   try { await engine?.disconnect(); } finally { await other?.disconnect(); }
 });
 beforeEach(async () => {
-  home = mkdtempSync(join(process.env.TMPDIR!, 'local-engine-view-'));
+  home = mkdtempSync(join(tmpdir(), 'local-engine-view-'));
   await withEnv(fixtureEnv(), async () => {
     expect(Bun.spawnSync(['git', '-C', home, 'rev-parse', '--show-toplevel'], { env: process.env }).exitCode).not.toBe(0);
     restoreKind(engine); dropPreadmitCache(engine); resetWriteSwitches();
