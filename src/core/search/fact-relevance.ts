@@ -141,6 +141,18 @@ const comparable = (model: string, dims: string | null) =>
   `f.embedding IS NOT NULL AND f.embedding_model = ${model} AND f.embedded_text_hash = md5(f.fact)${dims ? ` AND vector_dims(f.embedding) = ${dims}` : ''}`;
 
 /**
+ * Run with a custom plan per call. A cached generic plan (PGLite reuses named
+ * statements) cannot see the source arrays, estimates one matching fact and
+ * nests the policy anti-joins over every match: about 9x slower at 100k facts.
+ */
+function customPlan<T>(engine: BrainEngine, sql: string, params: unknown[]): Promise<T[]> {
+  return engine.transaction(async tx => {
+    await tx.executeRaw('SET LOCAL plan_cache_mode = force_custom_plan');
+    return tx.executeRaw<T>(sql, params);
+  });
+}
+
+/**
  * The bounded candidate pool for `question`. Throws on a database error
  * (callers choose fail-open or `unavailable`).
  */
@@ -170,10 +182,10 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     if (!terms.length) return [];
     const p = armParams(allSim ? simParams : []);
     const doc = factsFtsDocument('f');
-    return engine.executeRaw<Row>(
-      `WITH q AS (SELECT NULLIF(replace(plainto_tsquery('${getFtsLanguage()}'::regconfig, $${p.length + 1})::text, ' & ', ' | '), '')::tsquery AS q)
-       SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f, q WHERE ${where} AND q.q IS NOT NULL AND ${doc} @@ q.q
-       ORDER BY ts_rank_cd(${doc}, q.q) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 2}`,
+    const tsq = `NULLIF(replace(plainto_tsquery('${getFtsLanguage()}'::regconfig, $${p.length + 1})::text, ' & ', ' | '), '')::tsquery`;
+    return customPlan<Row>(engine,
+      `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND ${doc} @@ ${tsq}
+       ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 2}`,
       [...p, terms.join(' '), opts.depth.keyword]);
   };
   const nearest = async (): Promise<Row[]> => {
@@ -224,7 +236,7 @@ export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoo
     ? `SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.embedding IS NULL OR f.embedded_text_hash IS DISTINCT FROM md5(f.fact))
        UNION SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.embedding_model IS NULL OR f.embedding_model < ${model} OR f.embedding_model > ${model})`
     : `SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND NOT (${comparable(model, `$${params.length + 2}`)})`;
-  const rows = await engine.executeRaw<{ source_id: string; n: number | string }>(
+  const rows = await customPlan<{ source_id: string; n: number | string }>(engine,
     `WITH u AS MATERIALIZED (${uncomparable})
      SELECT f.source_id, count(*) AS n FROM facts f WHERE f.id IN (SELECT id FROM u) AND ${where}
      GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id`, [...params, getEmbeddingModel(), ...(declared ? [] : [dims])]);

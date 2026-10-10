@@ -340,7 +340,9 @@ for (const kind of testBackends()) {
       } finally {
         engine.executeRaw = real;
       }
-      expect(sent.find(q => q.includes('@@ q.q'))).toContain(`${factsFtsDocument('f')} @@ q.q`);
+      expect(sent.find(q => q.includes('plainto_tsquery'))).toContain(`${factsFtsDocument('f')} @@ `);
+      // The keyword arm and the uncomparable count each run under a per-call custom plan (cached generic plans nest the policy joins).
+      expect(sent.filter(q => q === 'SET LOCAL plan_cache_mode = force_custom_plan')).toHaveLength(2);
     });
 
     test('the question embedding goes through the gateway cache: a repeat recall, a query+question recall and a query followed by recall embed once', async () => {
