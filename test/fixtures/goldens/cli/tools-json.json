@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 227640,
-    "stdoutSha256": "16c270d5e53097660f179d20c4e5588d0c5e459c76ac28458fba52e7a186abb4",
+    "stdoutBytes": 227727,
+    "stdoutSha256": "d287a34cd377d201db103a781a2ef2ea96ea6fab8af6f49225e1f3a8f473cb5d",
     "toolNames": [
       "remember",
       "entity",
@@ -5665,6 +5665,7 @@
           "limit": "number?",
           "min_trust": "string?",
           "query": "string?",
+          "question": "string?",
           "return_unit": "string?",
           "return_window": "number?",
           "session_id": "string?",
@@ -5676,7 +5677,7 @@
         "schema": {
           "properties": {
             "budget_policy": {
-              "description": "facts_first (default) or query_first.",
+              "description": "Default facts_first.",
               "enum": [
                 "facts_first",
                 "query_first"
@@ -5688,11 +5689,11 @@
               "type": "number"
             },
             "entity": {
-              "description": "Entity slug; its facts, newest first.",
+              "description": "Entity slug; its facts.",
               "type": "string"
             },
             "grep": {
-              "description": "Substring of the fact text.",
+              "description": "Fact text substring.",
               "type": "string"
             },
             "include_expired": {
@@ -5723,8 +5724,12 @@
               "description": "Also search pages (results[]).",
               "type": "string"
             },
+            "question": {
+              "description": "Rank facts by relevance to it.",
+              "type": "string"
+            },
             "return_unit": {
-              "description": "results[] evidence unit (see search).",
+              "description": "results[] unit (see search).",
               "enum": [
                 "chunk",
                 "window",
@@ -5743,7 +5748,7 @@
               "type": "string"
             },
             "since": {
-              "description": "Since (ISO 8601 or \"8 hours ago\").",
+              "description": "ISO 8601 or \"8 hours ago\".",
               "type": "string"
             },
             "source_id": {
@@ -5751,7 +5756,7 @@
               "type": "string"
             },
             "supersessions": {
-              "description": "Supersession audit log only.",
+              "description": "Supersession log only.",
               "type": "boolean"
             }
           },

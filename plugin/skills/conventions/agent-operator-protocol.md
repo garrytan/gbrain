@@ -750,7 +750,7 @@ final document.
 is stateless, so dedupe is per authenticated client and session, and
 `degraded` and `safety` notices ride every affected call. At most 2
 `coaching` notices per session. Notices that describe one call's result
-(`empty_retrieval`, `unknown_param`, `listing_truncated`, `delta_incomplete`)
+(`empty_retrieval`, `unknown_param`, `listing_truncated`, `delta_incomplete`, `facts_unembedded`)
 are never deduped.
 
 **Degraded retry hint.** A `degraded` notice whose fix has `actor: provider`

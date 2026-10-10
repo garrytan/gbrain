@@ -76,9 +76,11 @@ interface EntityCandidate { id: number; slug: string; title: string; type: strin
 export async function namedEntity(engine: BrainEngine, query: string, scope: PageReadScope): Promise<EntityCandidate | null> {
   const params: unknown[] = [query.toLowerCase()];
   const filter = pageReadFilter('p', scope, params, true);
+  // The title match runs first over bare rows; the read filter (page visibility subqueries) then sees only the matches.
   const rows = await engine.executeRaw<EntityCandidate>(
-    `SELECT p.id, p.slug, p.title, p.type, p.source_id FROM pages p
-     WHERE ${filter} AND p.title IS NOT NULL AND length(p.title) >= 3 AND strpos($1, lower(p.title)) > 0
+    `WITH titled AS MATERIALIZED (SELECT id FROM pages WHERE title IS NOT NULL AND length(title) >= 3 AND strpos($1, lower(title)) > 0)
+     SELECT p.id, p.slug, p.title, p.type, p.source_id FROM pages p
+     WHERE p.id IN (SELECT id FROM titled) AND ${filter}
      ORDER BY p.source_id, p.slug LIMIT 50`, params);
   const matches = rows.filter(r => isFactEntityPage(r.slug, r.type) && isTitleMentionedInQuery(query, r.title));
   const outer = matches.filter(m => !matches.some(o => o !== m && o.title.length > m.title.length && containsTokenRun(tokenizeTitle(o.title), tokenizeTitle(m.title))));

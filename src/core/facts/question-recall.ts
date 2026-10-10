@@ -193,13 +193,15 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
   const { embedding, reason } = await questionEmbedding(ctx, question);
   if (!embedding && queryTerms(question).length === 0) return empty({ reason: 'no_query_terms' });
   try {
-    const pool = await collectFactCandidates(ctx.engine, question, scope, embedding, {
-      depth: { keyword: QUESTION_POOL_DEPTH, cosine: QUESTION_POOL_DEPTH, entity: QUESTION_POOL_DEPTH }, filters, cosineForAll: true,
-      hnswIterativeScan: resolveHnswIterativeScan(ctx.config),
-    });
-    const rule = await admissionRule(ctx.engine);
+    const [pool, uncomparable, rule] = await Promise.all([
+      collectFactCandidates(ctx.engine, question, scope, embedding, {
+        depth: { keyword: QUESTION_POOL_DEPTH, cosine: QUESTION_POOL_DEPTH, entity: QUESTION_POOL_DEPTH }, filters, cosineForAll: true,
+        hnswIterativeScan: resolveHnswIterativeScan(ctx.config),
+      }),
+      embedding ? countUncomparableFacts(ctx.engine, scope, filters, embedding.length) : [],
+      admissionRule(ctx.engine),
+    ]);
     const ranked = scoreFactCandidates(question, pool.candidates).filter(s => admitted(s, rule)).slice(0, input.limit);
-    const uncomparable = embedding && pool.column ? await countUncomparableFacts(ctx.engine, scope, filters, embedding.length) : [];
     const unembedded = uncomparable.reduce((n, r) => n + r.n, 0);
     const why = reason ?? (embedding && !pool.column ? 'facts_embedding_column_missing' : undefined);
     const degraded: FactsDegraded | undefined = why || unembedded ? { ...(why ? { reason: why } : {}), ...(unembedded ? { unembedded } : {}) } : undefined;

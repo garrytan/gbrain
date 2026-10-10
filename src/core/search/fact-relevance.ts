@@ -25,7 +25,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
-import { getFtsLanguage } from '../fts-language.ts';
+import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { privateProvenanceFilterFragment } from './private-visibility.ts';
 import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
@@ -136,9 +136,9 @@ function poolPredicate(scope: FactPoolScope, filters: FactPoolFilters | undefine
   return { where: clauses.join(' AND '), params };
 }
 
-/** The comparable-embedding predicate: same model, current text hash, same dimensions. */
-const comparable = (model: string, dims: string) =>
-  `f.embedding IS NOT NULL AND f.embedding_model = ${model} AND f.embedded_text_hash = md5(f.fact) AND vector_dims(f.embedding) = ${dims}`;
+/** The comparable-embedding predicate: same model, current text hash, same dimensions (`dims` null when the column declares the query's). */
+const comparable = (model: string, dims: string | null) =>
+  `f.embedding IS NOT NULL AND f.embedding_model = ${model} AND f.embedded_text_hash = md5(f.fact)${dims ? ` AND vector_dims(f.embedding) = ${dims}` : ''}`;
 
 /**
  * The bounded candidate pool for `question`. Throws on a database error
@@ -165,40 +165,46 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     }
   };
 
-  if (terms.length) {
+  type Row = FactCandidate & { similarity?: number | null };
+  const keyword = async (): Promise<Row[]> => {
+    if (!terms.length) return [];
     const p = armParams(allSim ? simParams : []);
-    const lang = `$${p.length + 1}`;
-    const q = `$${p.length + 2}`;
-    const doc = `to_tsvector(${lang}::regconfig, f.fact || ' ' || replace(COALESCE(f.entity_slug, ''), '-', ' '))`;
-    add(await engine.executeRaw(
-      `WITH q AS (SELECT NULLIF(replace(plainto_tsquery(${lang}::regconfig, ${q})::text, ' & ', ' | '), '')::tsquery AS q)
+    const doc = factsFtsDocument('f');
+    return engine.executeRaw<Row>(
+      `WITH q AS (SELECT NULLIF(replace(plainto_tsquery('${getFtsLanguage()}'::regconfig, $${p.length + 1})::text, ' & ', ' | '), '')::tsquery AS q)
        SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f, q WHERE ${where} AND q.q IS NOT NULL AND ${doc} @@ q.q
-       ORDER BY ts_rank_cd(${doc}, q.q) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 3}`,
-      [...p, getFtsLanguage(), terms.join(' '), opts.depth.keyword]));
-  }
-  if (vec) {
+       ORDER BY ts_rank_cd(${doc}, q.q) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 2}`,
+      [...p, terms.join(' '), opts.depth.keyword]);
+  };
+  const nearest = async (): Promise<Row[]> => {
+    if (!vec) return [];
     const p = armParams(simParams);
-    const sql = `SELECT ${COLS}, ${simSql} FROM facts f WHERE ${where} AND ${comparable(`$${n + 2}`, `$${n + 3}`)}
-       ORDER BY f.embedding <=> $${n + 1}${vec.cast}, f.id DESC LIMIT $${p.length + 1}`;
+    const sql = `SELECT ${COLS}, ${simSql} FROM facts f WHERE ${where} AND f.embedding IS NOT NULL AND f.embedding_model = $${n + 2}${column!.dims > 0 ? '' : ` AND vector_dims(f.embedding) = $${n + 3}`}
+       ORDER BY f.embedding <=> $${n + 1}${vec.cast} LIMIT $${p.length + 1}`;
     const bound = [...p, opts.depth.cosine];
-    add(opts.hnswIterativeScan
-      ? await engine.transaction(async tx => {
-        const iterative = opts.hnswIterativeScan !== 'off'
-          && supportsHnswIterativeScan((await tx.executeRaw<{ extversion: string }>(VECTOR_EXTENSION_VERSION_SQL))[0]?.extversion);
-        return withVectorSettings((s, v) => tx.executeRaw(s, v), iterative, opts.depth.cosine, 20_000,
-          () => tx.executeRaw<FactCandidate & { similarity: number }>(sql, bound), undefined, opts.hnswIterativeScan);
-      })
-      : await engine.executeRaw<FactCandidate & { similarity: number }>(sql, bound));
-  }
-  const sourceIds = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'];
-  const named = await namedEntity(engine, question, { sourceIds, excludePrivate: scope.excludePrivate });
-  if (named) {
+    if (!opts.hnswIterativeScan) return engine.executeRaw<Row>(sql, bound);
+    return engine.transaction(async tx => {
+      const iterative = opts.hnswIterativeScan !== 'off'
+        && supportsHnswIterativeScan((await tx.executeRaw<{ extversion: string }>(VECTOR_EXTENSION_VERSION_SQL))[0]?.extversion);
+      return withVectorSettings((s, v) => tx.executeRaw(s, v), iterative, opts.depth.cosine, 20_000,
+        () => tx.executeRaw<Row>(sql, bound), undefined, opts.hnswIterativeScan);
+    });
+  };
+  const entityFacts = async (): Promise<Row[]> => {
+    const sourceIds = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'];
+    const named = await namedEntity(engine, question, { sourceIds, excludePrivate: scope.excludePrivate });
+    if (!named) return [];
     const p = armParams(allSim ? simParams : []);
-    add(await engine.executeRaw(
+    return engine.executeRaw<Row>(
       `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND f.source_id = $${p.length + 1} AND f.entity_slug = $${p.length + 2}
        ORDER BY f.valid_from DESC, f.id DESC LIMIT $${p.length + 3}`,
-      [...p, named.source_id, named.slug, opts.depth.entity]), true);
-  }
+      [...p, named.source_id, named.slug, opts.depth.entity]);
+  };
+  // Independent arms run concurrently (separate connections on Postgres); merged in a fixed order.
+  const [byKeyword, byCosine, byEntity] = await Promise.all([keyword(), nearest(), entityFacts()]);
+  add(byKeyword);
+  add(byCosine);
+  add(byEntity, true);
   return { candidates: [...found.values()], cosine, column: !!column };
 }
 
@@ -209,9 +215,19 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
  */
 export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoolScope, filters: FactPoolFilters | undefined, dims: number): Promise<Array<{ source_id: string; n: number }>> {
   const { where, params } = poolPredicate(scope, filters);
+  const model = `$${params.length + 1}`;
+  const column = await factsEmbeddingColumn(engine);
+  if (!column) return [];
+  const declared = column.dims === dims;
+  // Cheap candidates first (idx_facts_unembedded, idx_facts_embedding_model), then the read policy on those rows only.
+  const uncomparable = declared
+    ? `SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.embedding IS NULL OR f.embedded_text_hash IS DISTINCT FROM md5(f.fact))
+       UNION SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.embedding_model IS NULL OR f.embedding_model < ${model} OR f.embedding_model > ${model})`
+    : `SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND NOT (${comparable(model, `$${params.length + 2}`)})`;
   const rows = await engine.executeRaw<{ source_id: string; n: number | string }>(
-    `SELECT f.source_id, count(*) AS n FROM facts f WHERE ${where} AND NOT (${comparable(`$${params.length + 1}`, `$${params.length + 2}`)})
-     GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id`, [...params, getEmbeddingModel(), dims]);
+    `WITH u AS MATERIALIZED (${uncomparable})
+     SELECT f.source_id, count(*) AS n FROM facts f WHERE f.id IN (SELECT id FROM u) AND ${where}
+     GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id`, [...params, getEmbeddingModel(), ...(declared ? [] : [dims])]);
   return rows.map(r => ({ source_id: r.source_id, n: Number(r.n) }));
 }
 

@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 227,
+    "count": 228,
     "gaps": [
       17,
       18,
@@ -26,6 +26,7 @@
       "buildIndexOnline": "ed5378b90f24f7d662e02865cf73af4248e348002661f8fbfd8ee1087c60a3e5",
       "clampOAuthTokenTtls": "b1e94ea8f5b3c3870a56b0f6d00d0a274c2e9dcad912b828848aec250732645f",
       "dropInvalidConcurrentIndex": "6864d844b7dfb2fbecdd0fb9c73e06248473376feb794b3fe58f036c70d2d44c",
+      "factsFtsIndexSql": "2bfacc9979a0962b592b2edd3541508259e21f42156fb94d042566461925286c",
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
       "grantFromRow": "2d0603bb0f964d7e45e04aa76bac54cd4f6f63c91a8d9f028b60b4792bc1695e",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
@@ -42,7 +43,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67"
     },
-    "latest": 232,
+    "latest": 233,
     "records": [
       {
         "handler": {
@@ -3475,6 +3476,26 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 232
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "factsFtsIndexSql",
+            "getFtsLanguage"
+          ],
+          "sha256": "264dd41685abb98743d788ee00d1c0467d29c85989c95156bd54ea0dd0421a08"
+        },
+        "idempotent": true,
+        "name": "facts_question_recall_indexes",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 233
       }
     ],
     "versions": [
@@ -3704,7 +3725,8 @@
       229,
       230,
       231,
-      232
+      232,
+      233
     ]
   },
   "normalizer": "migrations-record-v1"

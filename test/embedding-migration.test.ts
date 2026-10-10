@@ -383,6 +383,17 @@ describe('applyEmbeddingMigration', () => {
     expect(await embeddingColWidth('facts')).toBe(target);
   });
 
+  test('#4252: a dim change keeps the facts btree indexes that read the embedding column (v233 idx_facts_unembedded)', async () => {
+    const target = colDim === 512 ? 256 : 512;
+    const factIndexes = async () => (await engine.executeRaw<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes WHERE tablename = 'facts' AND indexname = 'idx_facts_unembedded'`)).map(r => r.indexname);
+    expect(await factIndexes()).toEqual(['idx_facts_unembedded']);
+    const plan = await planEmbeddingMigration(engine, { to: 'openai:text-embedding-3-small', dim: target });
+    expect((await applyEmbeddingMigration(engine, plan)).status).toBe('applied');
+    expect(await embeddingColWidth('facts')).toBe(target);
+    expect(await factIndexes()).toEqual(['idx_facts_unembedded']);
+  });
+
   test('post-transition the query cache can actually STORE a row at the new width', async () => {
     const target = colDim === 512 ? 256 : 512;
     const plan = await planEmbeddingMigration(engine, {
