@@ -34,7 +34,7 @@ const connectors_status: Operation = {
   description:
     'Per-provider chat-connector status: strategies, whether a credential is ' +
     'present and from where (env/file — never the value), token expiry, ' +
-    'last_sync_at, auth_error_at, auto_sync, incremental watermark and unresolved conversations. ' +
+    'last_sync_at, auth_error_at, auto_sync, and the incremental watermark. ' +
     'Local-only; credentials never cross the wire.',
   scope: 'read',
   localOnly: true, cliOnly: { argv: ['gbrain', 'connectors', 'status'] },
