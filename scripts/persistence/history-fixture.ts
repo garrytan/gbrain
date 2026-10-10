@@ -229,6 +229,19 @@ async function executeCommitted(world: Parameters<typeof executeOp>[0], d: OpDes
   return observation;
 }
 
+/** #6345: what a delayed Git effect that never rescheduled was doing, for the timeout message. */
+export async function delayedEffectDiagnostics(engine: BrainEngine, requestId: string, lock: string): Promise<string> {
+  const rows = (sql: string, params: unknown[] = []) => engine.executeRaw<{ row: unknown }>(sql, params)
+    .then(found => found.map(r => JSON.stringify(r.row)).join('\n  ') || '(none)', (error: Error) => `(query failed: ${error.message})`);
+  const effects = await rows(`SELECT to_jsonb(e) - 'data' AS row FROM persistence_effects e
+    JOIN persistence_requests r ON r.id=e.request_id WHERE r.request_id=$1::uuid ORDER BY e.id`, [requestId]);
+  const pending = await rows(`SELECT jsonb_build_object('id',id,'request_id',request_id,'state',state,'source_id',source_id,'slug',slug) AS row
+    FROM persistence_requests WHERE state NOT IN ('committed','conflict','failed','cancelled') ORDER BY sequence`);
+  const latest = await rows(`SELECT to_jsonb(e) - 'data' AS row FROM persistence_effects e ORDER BY e.updated_at DESC, e.id DESC LIMIT 12`);
+  return [`delayed request ${requestId} effects:\n  ${effects}`, `index.lock present: ${existsSync(lock)}`,
+    `non-terminal requests:\n  ${pending}`, `12 latest effects:\n  ${latest}`].join('\n');
+}
+
 export async function buildHistoryFixture(engine: BrainEngine,
   { pages, seed, sources, worktrees, root: requestedRoot, writeWaitMs }: HistoryFixtureOptions): Promise<HistoryFixture> {
   assert(Number.isSafeInteger(pages) && pages >= 1 && pages <= 10_000, 'history fixture: pages must be 1..10000');
@@ -279,7 +292,9 @@ export async function buildHistoryFixture(engine: BrainEngine,
         JOIN persistence_requests r ON r.id=e.request_id WHERE r.request_id=$1::uuid AND e.kind='git'
           AND e.state='queued' AND e.attempts>0 AND e.error_code='git_index_stale' AND e.next_attempt_at>now()`, [delayed.requestId]);
       if (effect) { delayedEffectId = effect.id; break; }
-      assert(Date.now() < deadline, 'history fixture: the Git effect never rescheduled after the stale index.lock');
+      if (Date.now() >= deadline) {
+        assert.fail(`history fixture: the Git effect never rescheduled after the stale index.lock\n${await delayedEffectDiagnostics(engine, delayed.requestId, lock)}`);
+      }
       await Bun.sleep(100);
     }
     // The production requeue is a fixed 30 s with no setting to lengthen it, and callers keep the
