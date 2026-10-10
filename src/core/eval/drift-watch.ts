@@ -11,7 +11,7 @@
  * so coverage grows deliberately.
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -90,18 +90,20 @@ export const RACY_DIFF_MS = 75;
  * itself failed (repo root missing, git unavailable, not a work tree,
  * timeout) so callers never mistake "could not check" for "clean".
  *
- * `commitSha` is a full or short SHA. When omitted, compares HEAD against
+ * `commitSha` is a SHA or revision; it never reaches git as an option (an
+ * empty or `-`-prefixed value returns null, and `--end-of-options` precedes
+ * the range). When omitted, compares HEAD against
  * working tree (uncommitted changes only).
  */
 export function filesDriftedSince(repoRoot: string, commitSha?: string, racyDiffMs = RACY_DIFF_MS): string[] | null {
   if (!existsSync(repoRoot)) return null;
+  if (commitSha !== undefined && (commitSha === '' || commitSha.startsWith('-'))) return null;
   try {
-    const range = commitSha ? `${commitSha}..HEAD` : 'HEAD';
     const args = commitSha
-      ? ['diff', '--name-only', range]
+      ? ['diff', '--name-only', '--end-of-options', `${commitSha}..HEAD`]
       : ['diff', '--name-only', 'HEAD'];
     const startedAt = Date.now();
-    const out = execSync(`git ${args.join(' ')}`, {
+    const out = execFileSync('git', args, {
       env: gitChildEnv(),
       cwd: repoRoot,
       encoding: 'utf-8',
@@ -110,7 +112,7 @@ export function filesDriftedSince(repoRoot: string, commitSha?: string, racyDiff
     });
     if (!commitSha && Date.now() - startedAt >= racyDiffMs) {
       try {
-        execSync('git update-index -q --refresh', { env: gitChildEnv(), cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 });
+        execFileSync('git', ['update-index', '-q', '--refresh'], { env: gitChildEnv(), cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 });
       } catch {
         /* a held index.lock or read-only checkout keeps the index as it was */
       }
