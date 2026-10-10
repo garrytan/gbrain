@@ -210,10 +210,10 @@ export function parseOnlyChecks(args: readonly string[]): Set<string> | null {
   return new Set(raw.flatMap((r) => r.split(',')).map((n) => n.trim()).filter(Boolean));
 }
 
-/** True when any requested check is a DB check (ordered after the DB-checks early stop). */
+/** True when any requested check is a DB check (after the DB-checks early stop) or a declared engine check of a pre-gate entry. */
 export function onlyNeedsEngine(only: ReadonlySet<string>): boolean {
   const gate = DOCTOR_CHECK_REGISTRY.indexOf(dbChecksGateEntry);
-  return DOCTOR_CHECK_REGISTRY.some((e, i) => i > gate && e.emits.some((n) => only.has(n)));
+  return DOCTOR_CHECK_REGISTRY.some((e, i) => (i > gate ? e.emits : e.engineChecks ?? []).some((n) => only.has(n)));
 }
 
 function selected(entry: DoctorEntry, only: ReadonlySet<string> | null | undefined): boolean {
