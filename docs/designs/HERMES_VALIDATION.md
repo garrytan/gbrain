@@ -7,6 +7,14 @@ This is a **draft integration candidate, not a full-parity or merge-readiness at
 - Local validation: macOS arm64, Bun 1.4.2, Python 3.12; isolated homes, synthetic SQLite/PGLite data, and a disposable loopback PostgreSQL instance. No live brain/profile installation was changed.
 - An independent Sol review and follow-up reviewed source and existing execution evidence. Follow-up closed the three runtime findings described below; it did not execute the tests itself.
 
+## CI follow-up
+
+The first GitHub `verify` job ([run 38025588088](https://github.com/garrytan/gbrain/actions/runs/38025588088/job/114135633904), draft head `507fa9367ad956d7888922bd491e731520350e23` tested in its merge commit) **passed typecheck and 76 of 77 checks**. Its sole failing check identified two test fixtures that needed canonical `beforeAll`/`afterAll` engine ownership; those fixtures were repaired without adding allowlist exceptions. The targeted isolation guard now passes both files, and their 11 tests pass.
+
+The first native-provider CI run exposed a separate real defect: initializing the last-wake timestamp to zero skipped the first delta on a newly booted runner whose monotonic clock had not reached the default cadence. The provider now distinguishes an unobserved wake with `None`; a deterministic zero-clock regression was red before the fix. After repair, **all 25 native-provider tests and all 4 native-manager acceptance tests pass locally**. The full local isolation scan still timed out; the targeted pass is not a claim that the entire scan ran successfully.
+
+The contributor gate is intentionally red for external PRs: upstream maintainers incorporate contributions into their fix-wave PRs. No maintainer override is requested or applied by this draft. New-head GitHub validation is still required. The local failed attempts below remain historical evidence and are not erased by these narrower successes.
+
 ## Executed evidence
 
 | Check | Observed result | Boundary |
