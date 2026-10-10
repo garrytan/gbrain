@@ -72,6 +72,36 @@ test('managed direct fact fence callers publish through the coordinator instead 
   } finally { await disposePersistenceConsumer(engine); rmSync(home, { recursive: true, force: true }); }
 });
 
+// #6333: each re-extraction of an edited page rewords the claim (cosine 0.86-0.93, below the
+// 0.95 rule); the classifier decides that band before the managed writer's SQL-only dedup.
+test('managed re-extractions that reword one claim leave one active fact', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-reword-'));
+  try {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      await engine.putPage('people/reword-example', { type: 'person', title: 'Reword Example', compiled_truth: 'A registered entity.' }, { sourceId: 'default' });
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      const wordings = ['Leads the data platform team', 'Is the head of the data platform team', 'Runs the data platform team', 'Heads the team that owns the data platform'];
+      // Shared axis plus one private axis per wording: pairwise cosine 1 / (1 + 0.33^2) = 0.90.
+      __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({
+        embeddings: values.map(v => Array.from({ length: 1536 }, (_, i) => (i === 0 ? 1 : i === wordings.indexOf(v) + 1 ? 0.33 : 0))),
+      })) as never);
+      const ctx = { engine, config: { engine: 'pglite' as const }, remote: false, sourceId: 'default', dryRun: false, logger: console };
+      for (const wording of wordings) {
+        __setChatTransportForTests(async opts => {
+          const existing = String(opts.messages[0]?.content ?? '').match(/<existing id="(\d+)"/);
+          const text = existing
+            ? JSON.stringify({ decision: 'duplicate', matched_id: Number(existing[1]) })
+            : JSON.stringify({ facts: [{ fact: wording, kind: 'fact', entity: 'people/reword-example', confidence: 1, notability: 'high' }] });
+          return { text, blocks: [], stopReason: 'end', usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' };
+        });
+        await operationsByName.extract_facts.handler(ctx, { turn_text: 'A note about who leads the data platform team.', request_id: randomUUID() });
+      }
+      const active = await engine.executeRaw<{ fact: string }>("SELECT fact FROM facts WHERE entity_slug='people/reword-example' AND expired_at IS NULL ORDER BY id");
+      expect(active.map(r => r.fact)).toEqual([wordings[0]]);
+    });
+  } finally { await disposePersistenceConsumer(engine); rmSync(home, { recursive: true, force: true }); }
+}, 60_000);
+
 test('managed extract_facts publishes multiple private entity fences and replays without provider calls', async () => {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-facts-'));
   try {

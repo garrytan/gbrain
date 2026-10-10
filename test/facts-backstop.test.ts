@@ -293,6 +293,43 @@ describe('runFactsBackstop — dedup fast-path', () => {
       expect(r2.inserted + r2.duplicate).toBe(1);
     }
   });
+
+  // Every save of a page re-runs extraction over the whole page, and the LLM
+  // words the same claim differently each time. Rewordings score 0.86-0.93
+  // cosine, below the 0.95 fast path; the classifier decides them.
+  test('four re-extractions of one page that reword one claim leave one active fact', async () => {
+    const entity = 'people/reword-' + Math.random().toString(36).slice(2, 9);
+    await engine.putPage(entity, { type: 'person', title: 'Reword Test', compiled_truth: '# Reword Test', frontmatter: {} });
+    const wordings = [
+      'Leads the data platform team',
+      'Is the head of the data platform team',
+      'Runs the data platform team',
+      'Heads the team that owns the data platform',
+    ];
+    // Shared axis plus one private axis per wording: pairwise cosine 1 / (1 + 0.33^2) = 0.90.
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({
+      embeddings: values.map(v => Array.from({ length: 1536 }, (_, i) => (i === 0 ? 1 : i === wordings.indexOf(v) + 1 ? 0.33 : 0))),
+    })) as never);
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'test' } });
+    const page = meetingPage();
+    try {
+      for (const wording of wordings) {
+        __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+          const existing = String(opts.messages[0]?.content ?? '').match(/<existing id="(\d+)"/);
+          const text = existing
+            ? JSON.stringify({ decision: 'duplicate', matched_id: Number(existing[1]) })
+            : JSON.stringify({ facts: [{ fact: wording, kind: 'event', entity, confidence: 1, notability: 'high' }] });
+          return { text, blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' };
+        });
+        await runFactsBackstop(page, makeCtx({ mode: 'inline', source: 'sync:import', sessionId: `sync:${page.slug}`, notabilityFilter: 'high-only' }));
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const active = await (engine as any).db.query('SELECT fact FROM facts WHERE entity_slug = $1 AND expired_at IS NULL ORDER BY id', [entity]);
+      expect(active.rows.map((r: { fact: string }) => r.fact)).toEqual([wordings[0]]);
+    } finally {
+      __setEmbedTransportForTests(null);
+    }
+  });
 });
 
 describe('runFactsBackstop — stub guard routing (v0.34.5)', () => {
