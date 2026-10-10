@@ -12,8 +12,8 @@ import { atomContractCases, exerciseManagedAtoms, atomBatchCases, exerciseManage
   }, 120_000);
   afterAll(async () => { await fixture?.close(); resetGateway(); });
   for (const scenario of atomContractCases) test(scenario, () => withSourceRowDiagnostics(fixture.engine, `atoms-${scenario.replaceAll('_', '-')}`, () => exerciseManagedAtoms(fixture.engine, scenario)), 60_000);
-  for (const scenario of atomBatchCases) test(`batch ${scenario}`, () => exerciseManagedAtomBatch(fixture.engine, scenario), 60_000);
+  for (const scenario of atomBatchCases) test(`batch ${scenario}`, () => withSourceRowDiagnostics(fixture.engine, `atoms-${scenario.replaceAll('_', '-')}`, () => exerciseManagedAtomBatch(fixture.engine, scenario)), 60_000);
   for (const scenario of atomAuthorityCases) test(`authority ${scenario} rejects normal and dry runs before providers`, () => exerciseManagedAtomAuthority(fixture.engine, scenario), 60_000);
-  test('reconciles stale atom pages and files', () => exerciseManagedAtomReconciliation(fixture.engine), 60_000);
-  for (const scenario of atomRetirementCases) test(`retirement ${scenario}`, () => exerciseManagedAtomRetirement(fixture.engine, scenario), 60_000);
+  test('reconciles stale atom pages and files', () => withSourceRowDiagnostics(fixture.engine, 'managed-atom-reconcile', () => exerciseManagedAtomReconciliation(fixture.engine)), 60_000);
+  for (const scenario of atomRetirementCases) test(`retirement ${scenario}`, () => withSourceRowDiagnostics(fixture.engine, `atom-retire-${scenario.replaceAll('_', '-')}`, () => exerciseManagedAtomRetirement(fixture.engine, scenario)), 60_000);
 });
