@@ -50,7 +50,8 @@ export const CONSUMER_DEADLINE_MS = 5_000;
 export type ConsumerRowMode = 'probing' | 'full' | 'waiter_only' | 'promoted';
 /** Process identity: `{ pid, nonce, pid_ns }`; `kind` names the gbrain command. */
 export interface ConsumerProcessIdentity { pid: number; nonce: string; pid_ns: string | null }
-export interface ConsumerPool { checked_out: number; max: number; waiters: number }
+/** The pool numbers a heartbeat row carries; `inflight_oldest_ms` and `completed` (#6383) are absent from rows an older owner wrote. */
+export interface ConsumerPool { checked_out: number; max: number; waiters: number; inflight_oldest_ms?: number; completed?: number }
 export interface ConsumerRow {
   host_id: string;
   pid: number;

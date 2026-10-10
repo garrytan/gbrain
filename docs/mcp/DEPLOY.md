@@ -678,6 +678,13 @@ Retry-After: 5
 - Container health checks that probe `/health` treat the `503` as unhealthy and
   restart the container. Pass `--fail-fast` (or set `GBRAIN_SERVE_FAIL_FAST=1`)
   there so the process exits non-zero with the classified envelope on stderr.
+- A supervisor that should also catch a pool that accepts TCP but answers no
+  real request probes `/health?deep=1` instead: it runs `SELECT 1` through the
+  same pooled dispatch the MCP handlers use, returns the pool block
+  (`checked_out`, `waiters`, `inflight_oldest_ms`, `stuck_discards`, …) and
+  answers 503 when the probe times out or a statement is past the pool's
+  in-flight budget ([pool diagnostics](../ENGINES.md#pg-connection-stuck)). A
+  two-minute interval is fine; one deep probe runs at a time.
 - A second `gbrain serve --http` on a port another server already holds exits
   with `serve_port_in_use`. A Postgres connect failure keeps the degraded-engine
   path (`GBRAIN_DB_ACCESS` marker, `gbrain db-repair`).

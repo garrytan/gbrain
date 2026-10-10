@@ -296,6 +296,61 @@ export function gbrainApplicationName(): string {
   return `gbrain ${owner.kind}:${owner.pid}:${(owner.nonce ?? '').slice(0, 8)}`.slice(0, 63);
 }
 
+/**
+ * #6383: the driver's pool-health hooks and the in-flight watchdog budget, one
+ * set per pool. `PoolHealthHooks` is what an engine passes to every pool it
+ * opens; `poolHealthOptions` turns it into postgres.js options.
+ */
+export interface StuckConnectionInfo { age_ms: number; queued: number; statement: string }
+export interface PoolHealthHooks {
+  /** #5730: a connection came back to the pool inside a transaction and was discarded. */
+  onpoisoned?: (status: string) => void;
+  /** #6383: the in-flight watchdog retired a connection whose statement never answered. */
+  onstuck?: (info: StuckConnectionInfo) => void;
+  /** #6383: a statement failed to build (`UNDEFINED_VALUE`, `MAX_PARAMETERS_EXCEEDED`) and was rejected alone. */
+  onbuilderror?: (code: string, statement: string) => void;
+}
+
+const DEFAULT_STUCK_GRACE_MS = 30_000;
+
+/** A `statement_timeout` GUC value in milliseconds (a bare number is milliseconds), or null when unset or 0. */
+export function gucMilliseconds(value: string | undefined): number | null {
+  if (value === undefined) return null;
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(us|ms|s|min|h|d)?\s*$/i.exec(value);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const unit = (m[2] ?? 'ms').toLowerCase();
+  const ms = unit === 'us' ? n / 1000 : unit === 'ms' ? n : unit === 's' ? n * 1000 : unit === 'min' ? n * 60_000 : unit === 'h' ? n * 3_600_000 : n * 86_400_000;
+  return ms > 0 ? ms : null;
+}
+
+/**
+ * #6383: seconds a head statement may wait with nothing coming back before the
+ * driver retires its connection: the pool's `statement_timeout` plus
+ * `GBRAIN_PG_STUCK_GRACE_MS` (default 30000). A legitimate statement cannot
+ * outlive the server-side timeout, so only a wedged connection (a desynced
+ * pipeline, a pooler that swallowed a CancelRequest, a dead peer) reaches it.
+ * Null, which disables the watchdog, when the statement timeout is off or the
+ * grace is `0`/`off`.
+ */
+export function resolveInflightTimeoutSeconds(statementTimeout: string | undefined): number | null {
+  const raw = process.env.GBRAIN_PG_STUCK_GRACE_MS;
+  if (raw === '0' || raw === 'off') return null;
+  const grace = raw !== undefined && Number.isFinite(Number(raw)) && Number(raw) > 0 ? Number(raw) : DEFAULT_STUCK_GRACE_MS;
+  const budget = gucMilliseconds(statementTimeout);
+  return budget === null ? null : Math.ceil((budget + grace) / 1000);
+}
+
+/** The postgres.js options for `PoolHealthHooks` on a pool whose connections start with `connection.statement_timeout`. */
+export function poolHealthOptions(hooks: PoolHealthHooks | undefined, statementTimeout: string | undefined): Record<string, unknown> {
+  return {
+    onpoisoned: hooks?.onpoisoned,
+    onstuck: hooks?.onstuck,
+    onbuilderror: hooks?.onbuilderror,
+    inflight_timeout: resolveInflightTimeoutSeconds(statementTimeout),
+  };
+}
+
 export function resolveSessionTimeouts(): Record<string, string> {
   const out: Record<string, string> = {};
   const add = (envKey: string, gucKey: string, defaultVal: string) => {
@@ -353,7 +408,7 @@ export function getConnection(): ReturnType<typeof postgres> {
  *
  * Back-compat: callers that ignore the return value are unaffected.
  */
-export async function connect(config: EngineConfig, hooks: { onpoisoned?: (status: string) => void } = {}): Promise<boolean> {
+export async function connect(config: EngineConfig, hooks: PoolHealthHooks = {}): Promise<boolean> {
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
@@ -389,7 +444,7 @@ export async function connect(config: EngineConfig, hooks: { onpoisoned?: (statu
       // during migrations + initSchema, and breaks stdout-parsing callers like
       // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
       onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
-      onpoisoned: hooks.onpoisoned,
+      ...poolHealthOptions(hooks, timeouts.statement_timeout),
       shared_types: resolveSharedTypes(url),
     };
     opts.connection = { ...timeouts, application_name: gbrainApplicationName() };

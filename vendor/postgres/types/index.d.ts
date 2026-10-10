@@ -125,6 +125,20 @@ interface BaseOptions<T extends Record<string, postgres.PostgresType>> {
    */
   onpoisoned: (status: string) => void;
   /**
+   * GBrain: seconds a head statement may wait for the server with nothing coming back
+   * before the connection is retired and every statement queued on it rejects with
+   * `CONNECTION_STUCK`. Null disables the watchdog.
+   * @default null
+   */
+  inflight_timeout: number | null;
+  /** GBrain: called once per connection the in-flight watchdog retired. */
+  onstuck: (stuck: { age_ms: number; queued: number; statement: string }) => void;
+  /**
+   * GBrain: called when a statement fails to build (`UNDEFINED_VALUE`, `MAX_PARAMETERS_EXCEEDED`);
+   * `statement` is its text with `$n` placeholders, never parameter values.
+   */
+  onbuilderror: (code: string, statement: string) => void;
+  /**
    * GBrain: share the parameter types of a described statement across this pool's
    * connections, so a connection running it for the first time skips the describe
    * round trip and keeps pipelining. Only built-in types are shared.
@@ -719,7 +733,7 @@ declare namespace postgres {
     options: ParsedOptions<TTypes>;
     parameters: ConnectionParameters;
     /** GBrain: the pool's own queue lengths at this instant (`queued` = queries waiting for a connection). */
-    pool: { max: number; open: number; busy: number; full: number; reserved: number; connecting: number; closed: number; ended: number; queued: number };
+    pool: { max: number; open: number; busy: number; full: number; reserved: number; connecting: number; closed: number; ended: number; queued: number; inflight_oldest_ms: number; completed: number };
 
     end(options?: { timeout?: number | undefined } | undefined): Promise<void>;
 

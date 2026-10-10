@@ -77,7 +77,7 @@ describe('claim stamp identity and last_sql', () => {
   });
 
   test('driverPoolStats reads the vendored driver\'s queues and reports null for a driver without the accessor', () => {
-    expect(driverPoolStats({ pool: { max: 10, open: 6, busy: 2, full: 1, reserved: 1, connecting: 0, closed: 0, ended: 0, queued: 3 } })).toEqual({ checked_out: 4, max: 10, waiters: 3 });
+    expect(driverPoolStats({ pool: { max: 10, open: 6, busy: 2, full: 1, reserved: 1, connecting: 0, closed: 0, ended: 0, queued: 3, inflight_oldest_ms: 250, completed: 42 } })).toEqual({ checked_out: 4, max: 10, waiters: 3, inflight_oldest_ms: 250, completed: 42 });
     expect(driverPoolStats({})).toBeNull();
     expect(driverPoolStats(null)).toBeNull();
   });

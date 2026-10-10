@@ -20,6 +20,8 @@
  */
 import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 import type { BrainEngine } from '../core/engine.ts';
+import { resolveInflightTimeoutSeconds, resolveSessionTimeouts } from '../core/db.ts';
+import { poolHealthSnapshot, type PoolHealthSnapshot } from '../core/postgres-engine/pool-stats.ts';
 import { VERSION } from '../version.ts';
 import type { ServeHttpContext } from './serve-http.ts';
 
@@ -209,15 +211,76 @@ export async function probeLiveness(
   }
 }
 
-/** GET /health: liveness only (full stats are the admin-only /admin/api/full-stats). */
+/**
+ * #6383: why `/health` answered 200 through a 50-minute wedge: `probeLiveness`
+ * runs its `SELECT 1` on a reserved connection, and `reserve()` only ever
+ * claims an idle one, while the wedged connections sat in the driver's busy
+ * queue where ordinary handler statements are routed. `/health?deep=1` runs
+ * the probe through that ordinary pooled dispatch (no reservation) and reads
+ * the pool's own numbers; it answers 503 when the probe does not return within
+ * its budget, when a statement has waited past the read pool's in-flight
+ * budget, or when the previous deep probe is still pending. One deep probe is
+ * in flight per engine at a time, so a stuck one is never joined by a pile.
+ */
+export type DeepHealthResult =
+  | { ok: true; status: 200; body: { status: 'ok'; deep: true; version: string; engine: string; probe_ms: number; pool: PoolHealthSnapshot | null } }
+  | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string; deep: true; pool: PoolHealthSnapshot | null } };
+
+const pendingDeepProbes = new WeakMap<object, Promise<unknown>>();
+
+/** The read pool's in-flight budget in ms (statement_timeout + grace), or null when the watchdog is off. */
+export function readPoolInflightBudgetMs(): number | null {
+  const seconds = resolveInflightTimeoutSeconds(resolveSessionTimeouts().statement_timeout);
+  return seconds === null ? null : seconds * 1000;
+}
+
+export async function probeDeepHealth(
+  engine: BrainEngine,
+  engineName: string,
+  version: string,
+  timeoutMs: number = HEALTH_TIMEOUT_MS,
+  budgetMs: number | null = readPoolInflightBudgetMs(),
+): Promise<DeepHealthResult> {
+  const pool = () => poolHealthSnapshot(engine);
+  const unavailable = (why: string): DeepHealthResult => ({ ok: false, status: 503, body: { error: 'service_unavailable', error_description: why, deep: true, pool: pool() } });
+  if (pendingDeepProbes.has(engine)) return unavailable('Deep health probe still pending from an earlier request (a pooled SELECT 1 has not answered)');
+  const started = Date.now();
+  const probe = engine.executeRaw('SELECT 1');
+  pendingDeepProbes.set(engine, probe);
+  probe.then(() => pendingDeepProbes.delete(engine), () => pendingDeepProbes.delete(engine));
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      probe,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('health_timeout')), timeoutMs); }),
+    ]);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'unknown';
+    return unavailable(msg === 'health_timeout'
+      ? `Deep health probe timed out: a pooled SELECT 1 did not answer within ${timeoutMs} ms`
+      : `Deep health probe failed: ${msg}`);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+  const snapshot = pool();
+  if (snapshot && budgetMs !== null && snapshot.inflight_oldest_ms > budgetMs) {
+    return unavailable(`A pooled statement has waited ${snapshot.inflight_oldest_ms} ms for the server, past the pool budget of ${budgetMs} ms`);
+  }
+  return { ok: true, status: 200, body: { status: 'ok', deep: true, version, engine: engineName, probe_ms: Date.now() - started, pool: snapshot } };
+}
+
+/** GET /health: liveness only (full stats are the admin-only /admin/api/full-stats); `?deep=1` probes through the ordinary pool. */
 export function mountHealth(app: Express, ctx: ServeHttpContext): void {
   const { engine, config } = ctx;
   // ---------------------------------------------------------------------------
   // Health check — liveness only. Full engine stats live at
   // /admin/api/full-stats (requireAdmin). See probeLiveness above for the why.
   // ---------------------------------------------------------------------------
-  app.get('/health', async (_req, res) => {
-    const result = await probeLiveness(engine, config.engine || 'pglite', VERSION);
+  app.get('/health', async (req, res) => {
+    const deep = req.query.deep;
+    const result = deep === '1' || deep === 'true'
+      ? await probeDeepHealth(engine, config.engine || 'pglite', VERSION)
+      : await probeLiveness(engine, config.engine || 'pglite', VERSION);
     res.status(result.status).json(result.body);
   });
 }

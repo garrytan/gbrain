@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { PoolStallWatch } from '../core/postgres-engine/pool-stall-watch.ts';
 import type { BrainEngine } from '../core/engine.ts';
 // C10: `--fail-fast` / GBRAIN_SERVE_FAIL_FAST=1 — exit with the classified envelope instead of status-only/degraded mode (decided in src/cli.ts's connect path; F4's status mode consults it too).
 export { serveFailFastRequested, writeServeFailFastEnvelope } from '../core/serve-fail-fast.ts';
@@ -245,6 +246,8 @@ export async function runServe(
     console.error(`[gbrain serve] ignoring GBRAIN_SURFACE="${resolved.invalidEnv}" (use verbs | starter | full)`);
   }
   console.error(`[gbrain serve] surface=${surface} (source: ${SURFACE_SOURCE_LABEL[resolved.source]})`);
+  // #6383: the pool stall line (Postgres only; the watch reports nothing for an engine without pool numbers).
+  if (engine.kind === 'postgres') new PoolStallWatch(engine, (line) => console.error(line)).start();
   // #4768: stdio read-only access ceiling. HTTP refuses it: per-token grants
   // (auth rescope-token --operations / rescope-client) are its operation control.
   const access = parseAccessFlag(args);

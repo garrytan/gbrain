@@ -17,6 +17,8 @@
  * at zero so a missed acquire can never underflow into negative counts.
  */
 
+import { sqlLabel } from './persistence/claim-phase.ts';
+
 /** Which engine seam the in-flight call went through. */
 export type GaugeKind = 'raw' | 'direct' | 'reserved' | 'tx';
 
@@ -89,4 +91,52 @@ export function formatPoisonedDiscardWarning(pool: 'read' | 'direct', status: st
   return `[gbrain] warn code=pg_connection_poisoned status=${byte} pool=${pool}` +
     ` cause="a connection came back to the pool inside a transaction; it was discarded and replaced"` +
     ` fix="gbrain doctor --json" docs=docs/ENGINES.md#pg-connection-poisoned`;
+}
+
+/**
+ * #6383: connections the vendored driver's in-flight watchdog retired because a
+ * statement waited `statement_timeout + grace` with nothing coming back, and
+ * statements the driver rejected alone because they failed to build. Each is
+ * counted once and logged as one fixed-shape warn line. The statement is named
+ * by its first keyword and table (`sqlLabel`), never its text or parameters.
+ */
+export class PoolIncidentCounter {
+  private stuck = 0;
+  private buildFailures = 0;
+
+  get stuckCount(): number {
+    return this.stuck;
+  }
+
+  get buildFailureCount(): number {
+    return this.buildFailures;
+  }
+
+  /** The driver hooks of one pool, bound to this counter (what an engine passes as `PoolHealthHooks`). */
+  hooks(pool: 'read' | 'direct'): { onstuck: (info: { age_ms: number; queued: number; statement: string }) => void; onbuilderror: (code: string, statement: string) => void } {
+    return { onstuck: (info) => this.recordStuck(pool, info), onbuilderror: (code, statement) => this.recordBuildFailure(pool, code, statement) };
+  }
+
+  recordStuck(pool: 'read' | 'direct', info: { age_ms: number; queued: number; statement: string }): void {
+    this.stuck += 1;
+    try { console.warn(formatStuckConnectionWarning(pool, info)); } catch { /* best-effort */ }
+  }
+
+  recordBuildFailure(pool: 'read' | 'direct', code: string, statement: string): void {
+    this.buildFailures += 1;
+    try { console.warn(formatBuildFailureWarning(pool, code, statement)); } catch { /* best-effort */ }
+  }
+}
+
+export function formatStuckConnectionWarning(pool: 'read' | 'direct', info: { age_ms: number; queued: number; statement: string }): string {
+  return `[gbrain] warn code=pg_connection_stuck pool=${pool} age_ms=${Math.max(0, Math.round(info.age_ms))} queued=${Math.max(0, info.queued | 0)} sql=${sqlLabel(info.statement).replaceAll(' ', '_')}` +
+    ` cause="a statement waited past statement_timeout with nothing coming back from the server; the connection was retired and its queued statements failed with CONNECTION_STUCK"` +
+    ` fix="gbrain doctor --json" docs=docs/ENGINES.md#pg-connection-stuck`;
+}
+
+export function formatBuildFailureWarning(pool: 'read' | 'direct', code: string, statement: string): string {
+  const safeCode = /^[A-Z_]+$/.test(code) ? code : 'BUILD_FAILED';
+  return `[gbrain] warn code=pg_statement_build_failed error=${safeCode} pool=${pool} sql=${sqlLabel(statement).replaceAll(' ', '_')}` +
+    ` cause="a statement could not be built from its parameters and was rejected before it reached the connection; other statements were not affected"` +
+    ` fix="gbrain doctor --json" docs=docs/ENGINES.md#pg-statement-build-failed`;
 }

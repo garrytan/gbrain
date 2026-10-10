@@ -6,8 +6,8 @@ import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { writeHealth } from './health.ts';
 import { claimStall, claimStateOf, isOwnerThisProcess, sqlLabel, type ClaimRow, type ClaimState, type ClaimStall } from './claim-phase.ts';
 import { cliRenderContext, renderAction, type Action, type RenderedAction } from '../agent-output.ts';
-import { enginePoolStats, type DriverPoolStats } from '../postgres-engine/pool-stats.ts';
-import { listHostConsumers, type ListedConsumer } from './consumer-heartbeat.ts';
+import { enginePoolStats } from '../postgres-engine/pool-stats.ts';
+import { listHostConsumers, type ConsumerPool, type ListedConsumer } from './consumer-heartbeat.ts';
 import type { WriteRequestState } from './types.ts';
 import { preparationBudgetMs } from './preparation-budget.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
@@ -109,7 +109,7 @@ export async function readOwnerBackends(engine: BrainEngine, owners: Array<Pick<
   }
 }
 /** #6317 (C1): the pool numbers for a running claim: this process's driver when it owns the claim, else the owner's heartbeat row. */
-function claimPool(engine: BrainEngine, claim: ClaimState, row: ListedConsumer | null): { pool: DriverPoolStats | null; pool_source: 'driver' | 'heartbeat' | null } {
+function claimPool(engine: BrainEngine, claim: ClaimState, row: ListedConsumer | null): { pool: ConsumerPool | null; pool_source: 'driver' | 'heartbeat' | null } {
   if (isOwnerThisProcess(claim.owner)) return { pool: enginePoolStats(engine), pool_source: enginePoolStats(engine) ? 'driver' : null };
   return { pool: row?.pool ?? null, pool_source: row?.pool ? 'heartbeat' : null };
 }

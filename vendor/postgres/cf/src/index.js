@@ -63,14 +63,18 @@ function Postgres(a, b) {
       , full = Queue()
       , queues = { connecting, reserved, closed, ended, open, busy, full }
 
-  const connections = [...Array(options.max)].map(() => Connection(options, queues, { onopen, onend, onclose }))
+  const connections = [...Array(options.max)].map(() => Connection(options, queues, { onopen, onend, onclose, onstuck }))
 
   const sql = Sql(handler)
 
-  Object.assign(sql, {
-    get parameters() { return options.parameters },
-    // GBrain: the pool's own queue lengths, read-only, for the consumer's pool diagnostics (#6317).
-    get pool() {
+  // GBrain: the pool's own queue lengths, read-only, for the consumer's pool diagnostics (#6317). A property
+  // getter, not an Object.assign member: Object.assign reads a getter once and copies its value, which froze
+  // these numbers at construction (#6383). `inflight_oldest_ms` is the age of the oldest head statement across
+  // the pool's connections and `completed` counts every ReadyForQuery that settled a statement.
+  Object.defineProperty(sql, 'pool', {
+    enumerable: false,
+    get() {
+      const now = performance.now()
       return {
         max: options.max,
         open: open.length,
@@ -80,9 +84,15 @@ function Postgres(a, b) {
         connecting: connecting.length,
         closed: closed.length,
         ended: ended.length,
-        queued: queries.length
+        queued: queries.length,
+        inflight_oldest_ms: connections.reduce((age, c) => c.inflightSince ? Math.max(age, Math.round(now - c.inflightSince)) : age, 0),
+        completed: options.shared.completed
       }
-    },
+    }
+  })
+
+  Object.assign(sql, {
+    get parameters() { return options.parameters },
     largeObject: largeObject.bind(null, sql),
     subscribe,
     CLOSE,
@@ -557,6 +567,15 @@ function Postgres(a, b) {
       : move(c, full)
   }
 
+  // GBrain (#6383): a connection the in-flight watchdog retired leaves rotation before its socket closes, so no
+  // statement is routed to it in between; onclose then returns it to `closed` like any other dropped connection.
+  function onstuck(c, info) {
+    c.queue !== ended && move(c, ended)
+    try {
+      options.onstuck && options.onstuck(info)
+    } catch (_) {}
+  }
+
   function poisoned(c) {
     if (c.queue === ended)
       return
@@ -603,7 +622,7 @@ function parseOptions(a, b) {
   'timeout' in o && (console.log('The timeout option is deprecated, use idle_timeout instead'), o.idle_timeout = o.timeout) // eslint-disable-line
   query.sslrootcert === 'system' && (query.ssl = 'verify-full')
 
-  const ints = ['idle_timeout', 'connect_timeout', 'max_lifetime', 'max_pipeline', 'backoff', 'keep_alive']
+  const ints = ['idle_timeout', 'connect_timeout', 'max_lifetime', 'max_pipeline', 'backoff', 'keep_alive', 'inflight_timeout']
   const defaults = {
     max             : globalThis.Cloudflare ? 3 : 10,
     ssl             : false,
@@ -612,6 +631,7 @@ function parseOptions(a, b) {
     connect_timeout : 30,
     max_lifetime    : max_lifetime,
     max_pipeline    : 100,
+    inflight_timeout: null,
     backoff         : backoff,
     keep_alive      : 60,
     prepare         : true,
@@ -651,12 +671,14 @@ function parseOptions(a, b) {
     onnotify        : o.onnotify,
     onclose         : o.onclose,
     onpoisoned      : o.onpoisoned,
+    onstuck         : o.onstuck,
+    onbuilderror    : o.onbuilderror,
     shared_types    : o.shared_types === false ? null : o.shared_types instanceof Map ? o.shared_types : new Map(),
     onparameter     : o.onparameter,
     socket          : o.socket,
     transform       : parseTransform(o.transform || { undefined: undefined }),
     parameters      : {},
-    shared          : { retries: 0, typeArrayMap: {} },
+    shared          : { retries: 0, typeArrayMap: {}, completed: 0 },
     ...mergeUserTypes(o.types)
   }
 }
