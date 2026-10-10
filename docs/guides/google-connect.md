@@ -130,8 +130,9 @@ the brain until you remove them — they are not reconciled automatically.
 ## Calendar window
 
 Calendar pages cover events from `--history-days` ago up to 60 days from
-now (`--future-days`, the `g_future_days` config key, 1..3650, moves that
-horizon per source), and each sweep applies that range on its own. That matters for
+now (`gbrain sources add … --future-days <n>`, stored as the source's
+`g_future_days`, 1..3650, moves that horizon per source), and each sweep
+applies that range on its own. That matters for
 incremental syncs: after any edit to a recurring series, Google sends back
 the series' instances for years before and after, and only those inside the
 range are kept. Because the 60-day edge moves forward daily, the sweep also
@@ -205,7 +206,11 @@ calendar pages."*
   On a managed brain the first sweep also runs a one-time catch-up over email
   threads whose newest message is from the last 30 days, so threads synced
   before extraction was queued are analyzed once; it finishes over later
-  sweeps when the enqueue ceiling binds.
+  sweeps when the enqueue ceiling binds. Threads under a label you listed in
+  `g_loops_exclude_labels` (or the brain-wide `loops.extraction_exclude_labels`)
+  are never queued and open no deterministic loop; an unknown label name
+  fails closed with `excluded_label_unresolved` until you fix it. See
+  [open loops](open-loops.md#which-threads-reach-the-extractor).
 - **Quiet threads.** A thread still inside its waiting window (24 h for
   inbound, 72 h for your own question) is re-checked when the window ends,
   even if no new mail arrives, and opens its loop then. See

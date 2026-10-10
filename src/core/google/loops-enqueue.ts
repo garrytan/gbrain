@@ -7,6 +7,37 @@ import type { GmailThreadData } from './types.ts';
 import type { ThreadLoopVerdict } from './loop-detect.ts';
 import { pendingLoopsExtractDepth, type LoopsEnqueueReport } from './loop-catchup.ts';
 import { myAddressSet, type GoogleSyncDeps } from './sweep-shared.ts';
+import type { GmailClient } from './google-clients.ts';
+import { excludedLabelTokens, NO_EXCLUSION, resolveExcludedLabels, storeLoopsExclusion, type LoopsExclusionPolicy } from './loops-exclusion.ts';
+
+/**
+ * #5445: resolves the source's loop exclusion labels once per sweep (one
+ * `getLabels` call when anything is configured), stores the resolution for
+ * the job handler and the hold publication, and names every unresolved
+ * label on stderr. A failed label list resolves id tokens only, so names
+ * stay unresolved and the sweep fails closed for new paid extraction.
+ */
+export async function resolveSweepExclusion(deps: Pick<GoogleSyncDeps, 'engine' | 'sourceId' | 'cfg' | 'opts' | 'log'>, gmail: Pick<GmailClient, 'getLabels'>): Promise<LoopsExclusionPolicy> {
+  const tokens = await excludedLabelTokens(deps.engine, deps.cfg);
+  if (tokens.length === 0) return NO_EXCLUSION;
+  let catalog: Array<{ id: string; name: string }> | null = null;
+  try {
+    catalog = await gmail.getLabels(deps.opts.signal ? { signal: deps.opts.signal } : {});
+  } catch (e) {
+    deps.log(`[google] loop exclusion: could not read the account's labels (${e instanceof Error ? e.message : String(e)}); label names stay unresolved this sweep`);
+  }
+  const policy = resolveExcludedLabels(tokens, catalog);
+  if (policy.unresolved.length > 0) {
+    deps.log(`[google] loop exclusion: ${policy.unresolved.map((t) => JSON.stringify(t)).join(', ')} ${policy.unresolved.length === 1 ? 'is not a label' : 'are not labels'} of ${deps.cfg.account}; ` +
+      'no new loop extraction runs for this source until the names resolve (excluded_label_unresolved)');
+  }
+  try {
+    await storeLoopsExclusion(deps.engine, deps.sourceId, policy);
+  } catch (e) {
+    deps.log(`[google] loop exclusion: could not store the resolution (${e instanceof Error ? e.message : String(e)})`);
+  }
+  return policy;
+}
 
 /**
  * Enqueue loops_extract jobs for every eligible candidate in this sweep, in
@@ -15,6 +46,12 @@ import { myAddressSet, type GoogleSyncDeps } from './sweep-shared.ts';
  */
 export async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<LoopsEnqueueReport> {
   const report: LoopsEnqueueReport = { enqueued: 0, deferred: 0, skipped_reason: null };
+  // #5445: an unresolved exclusion never reaches the queue; the report names
+  // the real reason rather than the empty candidate list it produced.
+  if (deps.exclusion.unresolved.length > 0) {
+    deps.log('[google] loops_extract: exclusion labels unresolved — nothing enqueued this sweep (excluded_label_unresolved)');
+    return { ...report, skipped_reason: 'excluded_label_unresolved' };
+  }
   if (deps.extractCandidates.length === 0) {
     deps.log('[google] loops_extract: no eligible thread in this sweep; nothing to enqueue');
     return { ...report, skipped_reason: 'no_candidates' };
@@ -113,7 +150,7 @@ export async function applyLoopDetection(
 ): Promise<ThreadLoopVerdict | null> {
   try {
     const { applyThreadLoopVerdict } = await import('./loop-detect.ts');
-    return await applyThreadLoopVerdict(deps.engine, deps.sourceId, thread, myAddressSet(deps.entry), pageSlug);
+    return await applyThreadLoopVerdict(deps.engine, deps.sourceId, thread, myAddressSet(deps.entry), pageSlug, new Date(), deps.exclusion);
   } catch (e) {
     // Detection must never fail a sync; it re-runs on the next touch.
     deps.log(`[google] loop detection failed for ${thread.threadId}: ${e instanceof Error ? e.message : String(e)}`);

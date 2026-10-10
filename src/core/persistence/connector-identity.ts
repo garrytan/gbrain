@@ -37,7 +37,7 @@ const underAuto = (config: GitHubSourceConfig): LeafClass => config.scope === 'a
 export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass>; github: Record<string, Rule> } = {
   google: {
     account: 'identity', services: 'identity', historyDays: 'identity', futureDays: 'identity', calendarId: 'identity', dir: 'identity',
-    access: 'excluded', tokenCommand: 'excluded', tokenEnv: 'excluded',
+    access: 'excluded', tokenCommand: 'excluded', tokenEnv: 'excluded', loopsExcludeLabels: 'excluded',
   },
   github: {
     scope: 'identity', repos: 'identity', dir: 'identity',

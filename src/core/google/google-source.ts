@@ -44,7 +44,8 @@ import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
 import { importRendered, myAddressSet, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
 export { myAddressSet } from './sweep-shared.ts';
 import { sweepCalendar, sweepContacts } from './people-calendar-sweep.ts';
-import { applyLoopDetection, enqueueLoopsExtraction } from './loops-enqueue.ts';
+import { applyLoopDetection, enqueueLoopsExtraction, resolveSweepExclusion } from './loops-enqueue.ts';
+import { NO_EXCLUSION } from './loops-exclusion.ts';
 import {
   CalendarClient,
   GmailClient,
@@ -185,7 +186,7 @@ async function processThread(
   }
   deps.processedThreads.add(thread.threadId);
   const verdict = await applyLoopDetection(deps, thread, slug);
-  if (verdict && deps.loopState) recordGraceVerdict(deps.loopState, thread, verdict, slug, myAddressSet(deps.entry), deps.log);
+  if (verdict && deps.loopState) recordGraceVerdict(deps.loopState, thread, verdict, slug, myAddressSet(deps.entry), deps.log, deps.exclusion);
   // LLM extraction candidates: trickle + the bounded recent window only —
   // the deep historical backfill is never extracted (spend honesty, F9).
   const newestMs = thread.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
@@ -194,7 +195,7 @@ async function processThread(
     // Structural eligibility, not "everything recent": bulk mail the owner
     // never joined would otherwise both pay for model calls AND crowd real
     // threads out of the sweep.
-    const verdict = loopExtractionEligibility(thread, myAddressSet(deps.entry));
+    const verdict = loopExtractionEligibility(thread, myAddressSet(deps.entry), deps.exclusion);
     summary.extractEligibility[verdict.reason] =
       (summary.extractEligibility[verdict.reason] ?? 0) + 1;
     if (verdict.eligible) {
@@ -450,7 +451,7 @@ async function settleGraceHolds(g: GmailSweep): Promise<'aborted' | void> {
     deps.log(`[google] loop grace backfill failed (retried next sweep): ${e instanceof Error ? e.message : String(e)}`);
   }
   const settled = await settleDueGraceHolds({ engine: deps.engine, sourceId: deps.sourceId, state, log: deps.log, signal: deps.opts.signal,
-    processed: deps.processedThreads, refetch: async (tid) => {
+    exclusion: deps.exclusion, processed: deps.processedThreads, refetch: async (tid) => {
       try {
         await processThread(deps, g.gmail, tid, g.activePack, g.summary, g.countedSlugs);
         return 'ok';
@@ -729,7 +730,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   const people = new PeopleClient(...clientArgs);
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   const tick = (note: string): void => progress.tick(1, note);
-  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, tick, extractCandidates: [], managed, processedThreads: new Set() };
+  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set() };
 
   const summary: GoogleSyncSummary = {
     status: 'synced',
@@ -827,6 +828,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     if (activeServices.includes('gmail')) {
       const stop = startHeartbeat(progress, 'gmail sweep');
       try {
+        deps.exclusion = await resolveSweepExclusion(deps, gmail);
         // sweepGmail reports thread-level failures via its return value —
         // they exit through normal returns, not throws, and stamping
         // last_sync_at over them would blind the staleness gate (H1).
@@ -860,7 +862,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       if (managed) {
         try {
           catchup = await runLoopsCatchup({ engine, sourceId, state, log, signal: opts.signal, myAddresses: myAddressSet(entry),
-            inFlight: new Set(deps.extractCandidates.map(c => c.slug)),
+            exclusion: deps.exclusion, inFlight: new Set(deps.extractCandidates.map(c => c.slug)),
             fetchThread: async (tid) => {
               try { return await gmail.getThread(tid, cfg.account, opts.signal ? { signal: opts.signal } : {}); }
               catch (e) { if (e instanceof GoogleCursorExpiredError && e.status === 404) return null; throw e; }

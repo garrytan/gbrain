@@ -14,6 +14,7 @@ import { connectorRender } from '../connectors/connector-text.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { mkdirPrivate } from '../atomic-write.ts';
 import type { GoogleSourceConfig, GoogleSourceState } from './types.ts';
+import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
 
 /** The "my addresses" identity set: account + Gmail sendAs aliases. */
 export function myAddressSet(entry: CredentialEntry): Set<string> {
@@ -59,6 +60,8 @@ export interface GoogleSyncDeps {
    * killed at the hard deadline.
    */
   tick: (note: string) => void;
+  /** #5445: the label exclusion resolved once for this sweep (see loops-exclusion.ts). */
+  exclusion: LoopsExclusionPolicy;
   /** Threads whose newest message falls in the recent window — LLM
    *  extraction candidates, enqueued (capped) after the sweep. */
   extractCandidates: Array<{ slug: string; threadId: string; newestMs: number }>;

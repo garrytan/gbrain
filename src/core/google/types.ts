@@ -27,6 +27,14 @@ export interface GoogleSourceConfig {
    * CALENDAR_HORIZON_DAYS.
    */
   futureDays?: number;
+  /**
+   * Gmail label names or ids whose threads the open-loop engine leaves alone
+   * (`g_loops_exclude_labels`, comma-separated; #5445). Present only when the
+   * source sets it; the brain-wide `loops.extraction_exclude_labels` is the
+   * fallback. Not part of the connector identity: it changes what is
+   * extracted, not which pages exist.
+   */
+  loopsExcludeLabels?: string[];
   /** Calendar swept by this source (default DEFAULT_CALENDAR_ID). One calendar per
    *  source so each keeps its own sync token — point a second source at a
    *  secondary calendar id to ingest it too. */

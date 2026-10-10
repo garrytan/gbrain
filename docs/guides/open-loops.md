@@ -111,6 +111,7 @@ calls nor crowds real correspondence out of the sweep:
 | `CATEGORY_PROMOTIONS` / `CATEGORY_SOCIAL` / `CATEGORY_FORUMS` (one shared list, `gmail-categories.ts`, applied by both lanes) | no, unless the owner joined in |
 | `List-Unsubscribe` bulk | no, unless the owner joined in |
 | `CATEGORY_UPDATES` | **yes** — invoices, contracts and document requests live there |
+| a label you excluded (`g_loops_exclude_labels` on the source, else the brain-wide `loops.extraction_exclude_labels`) | no — even when you joined in (`excluded_label`) |
 | ordinary human correspondence | yes |
 
 The owner-participated rule is the load-bearing one: your own outbound
@@ -121,6 +122,43 @@ message — with no sender, domain, subject or body matching, so there is no
 vendor list to maintain. The sweep logs per-reason counts
 (`loops_extract eligibility:`) so a run can be audited for over-filtering
 without mail content reaching the logs.
+
+**Your own exclusions** (#5445). Some mail is yours and still not a
+commitment: a recruiting agency's label, a vendor-notification label, a
+newsletter label you never unsubscribe from. Name those labels once and
+no thread under them enters paid extraction or opens a deterministic
+loop:
+
+```bash
+gbrain sources add <id> --kind google --account you@example.com \
+  --loops-exclude-labels "Newsletters, Recruiting/Agencies"      # per source (g_loops_exclude_labels)
+gbrain config set loops.extraction_exclude_labels "Label_7"      # brain-wide, for every source without its own list
+```
+
+Names or Gmail label ids both work (a source's own list wins over the
+brain-wide key; the lists do not merge). The brain-wide key is the way to
+change the exclusion of a source that already exists, and it takes effect on
+the next sweep. Every sweep resolves the names
+against the account's labels exactly once, stores the resolution, and
+applies it at **all three** points a thread can reach the extractor: the
+sweep's own enqueue, the managed catch-up, and the job itself when it
+runs (so a label you add after a job was queued still stops it before the
+model call, `skipped: excluded_label`). The deterministic detector withholds
+new opens on an excluded thread and a grace hold that comes due under a now
+excluded label is dropped without opening; a close is never withheld, an
+already-open loop is never touched, and the email page still imports. The
+exclusion sits above the owner-participated override: replying inside an
+excluded label does not buy the thread back.
+
+A name that is not one of the account's labels, or a label list Gmail
+would not return this sweep, **fails closed**: the sweep logs
+`"<name>" is not a label of <account>`, every candidate counts as
+`excluded_label_unresolved`, nothing is queued (`loops_enqueue.skipped_reason`
+says why), a queued job retries instead of running, and a due grace hold is
+kept for the next sweep. Fix the name (or delete the token) and the next
+sweep picks up where it left off; nothing was spent in between. An id-shaped
+token (`Label_12`, `CATEGORY_FORUMS`) still applies when the list cannot be
+read.
 
 **Every eligible thread is queued** (newest first — ordering only, nothing is
 dropped for being older). The MinionQueue is the backlog and the worker's

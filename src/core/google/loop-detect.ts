@@ -44,6 +44,7 @@ import {
 } from '../loops/loops-store.ts';
 import { isCalendarSystemMail, isNoiseSender } from './google-render.ts';
 import { hasBulkCategory } from './gmail-categories.ts';
+import { isExcludedByLabels, NO_EXCLUSION, pageLabelIds, type LoopsExclusionPolicy } from './loops-exclusion.ts';
 import type { GmailMessageMeta, GmailThreadData } from './types.ts';
 
 export const INBOUND_GRACE_HOURS = 24;
@@ -289,13 +290,15 @@ export async function applyThreadLoopVerdict(
   myAddresses: Set<string>,
   pageSlug: string | null,
   now: Date = new Date(),
+  exclusion: LoopsExclusionPolicy = NO_EXCLUSION,
 ): Promise<ThreadLoopVerdict> {
   const suppressions = await suppressionsFor(engine, sourceId);
   // One verdict, two lanes: `close` is the turn-flip set (suppression- and
   // grace-independent — only a genuine reply closes, and only the answered
   // type); `open` is suppression-filtered. A held loop (grace window,
   // CC-only nudge, muted sender) is neither opened nor closed.
-  const verdict = detectThreadLoop(thread, myAddresses, now, suppressions);
+  const verdict = withLabelExclusion(detectThreadLoop(thread, myAddresses, now, suppressions), exclusion,
+    thread.messages.flatMap((m) => m.labelIds));
 
   const desired = new Set(verdict.open.map((s) => s.loopType));
   const toClose = verdict.close.filter((t) => !desired.has(t));
@@ -308,9 +311,22 @@ export async function applyThreadLoopVerdict(
 }
 
 /**
+ * #5445: the label exclusion applied to a verdict. An excluded thread opens
+ * nothing and holds nothing; an unresolved policy withholds the same way
+ * (fail closed) until a sweep resolves it. Closes are never touched: the
+ * exclusion withholds opens, it does not fabricate replies.
+ */
+export function withLabelExclusion(verdict: ThreadLoopVerdict, exclusion: LoopsExclusionPolicy, labelIds: Iterable<string>): ThreadLoopVerdict {
+  if (!isExcludedByLabels(exclusion, labelIds) && exclusion.unresolved.length === 0) return verdict;
+  return { open: [], close: verdict.close };
+}
+
+/**
  * #5868: opens a grace-held loop whose deadline passed on an unchanged
- * thread, from the spec its last detection produced. Suppressions are
- * re-read so a mute added during the hold still withholds the open.
+ * thread, from the spec its last detection produced. Suppressions and the
+ * label exclusion are re-read so a mute or a label added during the hold
+ * still withholds the open (`'excluded'`); an unresolved exclusion keeps the
+ * hold for the next sweep (`'deferred'`).
  */
 export async function openDueGraceHold(
   engine: BrainEngine,
@@ -318,11 +334,17 @@ export async function openDueGraceHold(
   threadId: string,
   spec: ThreadLoopSpec,
   pageSlug: string | null,
-): Promise<boolean> {
+  exclusion: LoopsExclusionPolicy = NO_EXCLUSION,
+): Promise<'opened' | 'suppressed' | 'excluded' | 'deferred'> {
   const suppressions = await suppressionsFor(engine, sourceId);
-  if (suppressions.threads.has(threadId) || suppressions.senders.has(spec.counterpartyEmail)) return false;
+  if (suppressions.threads.has(threadId) || suppressions.senders.has(spec.counterpartyEmail)) return 'suppressed';
+  if (exclusion.ids.size > 0 || exclusion.unresolved.length > 0) {
+    const page = pageSlug ? await engine.getPage(pageSlug, { sourceId }) : null;
+    if (isExcludedByLabels(exclusion, pageLabelIds(page?.frontmatter as Record<string, unknown> | undefined))) return 'excluded';
+    if (exclusion.unresolved.length > 0) return 'deferred';
+  }
   await upsertThreadLoop(engine, sourceId, threadId, spec, pageSlug);
-  return true;
+  return 'opened';
 }
 
 async function upsertThreadLoop(

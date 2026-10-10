@@ -29,6 +29,7 @@ import { managedFactWritePreflight } from '../facts/managed-fact-write.ts';
 import { loadSuppressions, upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
 import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
 import { hasBulkCategory } from './gmail-categories.ts';
+import { isExcludedByLabels, loadLoopsExclusionPolicy, NO_EXCLUSION, pageLabelIds, type LoopsExclusionPolicy } from './loops-exclusion.ts';
 import { bareAddress, type GmailMessageMeta, type GmailThreadData } from './types.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { deriveTrust } from '../trust/taint.ts';
@@ -76,7 +77,9 @@ export interface ExtractEligibility {
     | 'spam_or_trash'
     | 'no_substantive_messages'
     | 'bulk_category'
-    | 'list_mail';
+    | 'list_mail'
+    | 'excluded_label'
+    | 'excluded_label_unresolved';
 }
 
 /**
@@ -100,10 +103,18 @@ export interface ExtractEligibility {
  *
  * CATEGORY_UPDATES is deliberately NOT excluded: invoices, contracts and
  * document requests land there, and they carry real obligations.
+ *
+ * #5445: a thread under one of the user's excluded labels (`exclusion`) is
+ * never extracted, and this beats the owner override: warm-up mail is sent
+ * FROM the owner's address, which is exactly why no mute can exclude it. A
+ * policy that could not be resolved (an unknown label name, a failed label
+ * list) fails CLOSED for new paid extraction: `excluded_label_unresolved`,
+ * counted in the sweep summary and retried on the next sweep.
  */
 export function loopExtractionEligibility(
   thread: GmailThreadData,
   myAddresses: Set<string> = new Set(),
+  exclusion: LoopsExclusionPolicy = NO_EXCLUSION,
 ): ExtractEligibility {
   const messages = thread.messages;
   if (messages.length === 0) return { eligible: false, reason: 'no_substantive_messages' };
@@ -115,6 +126,10 @@ export function loopExtractionEligibility(
   if (labels.has('SPAM') || labels.has('TRASH')) {
     return { eligible: false, reason: 'spam_or_trash' };
   }
+
+  // The user's own exclusion, before the owner override (see above).
+  if (isExcludedByLabels(exclusion, labels)) return { eligible: false, reason: 'excluded_label' };
+  if (exclusion.unresolved.length > 0) return { eligible: false, reason: 'excluded_label_unresolved' };
 
   // Machine mail carries no commitments: pure noise senders, and Calendar's
   // invitation/response notices (which come FROM a real colleague, so the
@@ -288,7 +303,7 @@ export interface LoopsExtractResult {
  */
 export class LoopsExtractRetryableError extends Error {
   constructor(
-    readonly reason: 'llm_unavailable' | 'truncated' | 'parse_barrier',
+    readonly reason: 'llm_unavailable' | 'truncated' | 'parse_barrier' | 'excluded_label_unresolved',
     message: string,
   ) {
     super(message);
@@ -336,6 +351,20 @@ export async function runLoopsExtract(
     [...senderAddresses].some((a) => suppressions.senders.has(a))
   ) {
     return { ...empty, reason: 'suppressed' };
+  }
+
+  // #5445: the label exclusion in force NOW, not at enqueue — a label the user
+  // added after this job was queued still stops it before the model call.
+  // An unresolved policy is retryable (the next sweep re-reads the labels),
+  // never a paid run.
+  const exclusion = await loadLoopsExclusionPolicy(engine, payload.sourceId);
+  if (isExcludedByLabels(exclusion, pageLabelIds(fm))) return { ...empty, reason: 'excluded_label' };
+  if (exclusion.unresolved.length > 0) {
+    throw new LoopsExtractRetryableError(
+      'excluded_label_unresolved',
+      `loops_extract: the loop exclusion labels ${exclusion.unresolved.map((t) => JSON.stringify(t)).join(', ')} are not labels of this account ` +
+        '(or the label list could not be read); no model call is made until a sweep resolves them — retryable',
+    );
   }
 
   // Managed brains publish the commitment fact through the coordinator; its
