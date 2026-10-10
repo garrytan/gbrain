@@ -90,7 +90,7 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
   const common = { ...credentialReceipt(c), harness: adapter.id, native_harness_verified: false, next_action: adapter.reload };
   if (adapter.connection === 'hermes-plugin') {
     if (!opts.root) throw new Error('storage_root_unverified: pass --root with the intended absolute Hermes profile home');
-    if (name !== 'gbrain' || opts.configPath) throw new Error('Hermes installation uses the gbrain connection in --root/config.yaml; custom names/config paths are unsupported');
+    if (name !== 'gbrain' || opts.configPath) throw new Error('Hermes installation uses the connection named "gbrain" in --root/config.yaml; custom names/config paths are unsupported');
     const home = checkedRoot(opts.root);
     const installed = await installHermesPlugin({ home, url: c.mcp_url, clientId: c.client_id,
       ...(opts.remove ? { remove: true } : { token: await credentialAccessToken(c) }) });

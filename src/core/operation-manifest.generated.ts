@@ -532,7 +532,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "capture",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Quick note (\"just remember this\"): auto-slugged under inbox/ by date + content hash, so recapturing is idempotent. Use put_page to control slug or type; remember for facts about entities.",
+    "description": "Quick notes: idempotent auto-slugs in inbox/<date>-<hash>. put_page controls slug/type; remember saves entity facts.",
     "params": {
       "source_id": {
         "type": "string",
@@ -583,7 +583,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "content": {
         "type": "string",
         "required": true,
-        "description": "Markdown or text (not a file path)."
+        "description": "Text/Markdown, not a path."
       },
       "local_file": {
         "type": "string",
@@ -598,11 +598,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "type": {
         "type": "string",
         "required": false,
-        "description": "Schema-pack page type (default note)."
+        "description": "Schema type; default note."
       },
       "ambient": {
         "type": "boolean",
-        "description": "Automatic transcript capture; true requires this brain's memory.auto_writeback opt-in."
+        "description": "Auto-capture; memory.auto_writeback opt-in."
       }
     },
     "scope": "write",

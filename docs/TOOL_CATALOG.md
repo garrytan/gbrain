@@ -168,7 +168,7 @@ Every non-localOnly operation on the MCP surface: 144 tools across 24 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `cancel_write_request` | Cancel your accepted write before it publishes. | write | yes |  |
-| `capture` | Quick note ("just remember this"): auto-slugged under inbox/ by date + content hash, so recapturing is idempotent. | write | yes |  |
+| `capture` | Quick notes: idempotent auto-slugs in inbox/<date>-<hash>. | write | yes |  |
 | `delete_page` | Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). | write |  |  |
 | `edit_page` | Change part of a page: prefer this over put_page for small changes. | write | yes |  |
 | `fetch` | Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
