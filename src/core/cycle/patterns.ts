@@ -398,6 +398,8 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
     // the reverse-write below dual-writes files).
     throwIfAborted(opts.signal, '[dream] patterns output');
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
+    // #6302 Part A [R17]: timeline appends are counted and reported, never quote-verified or provenance-stamped.
+    const appendedUnverified = await countChildTimelineAppends(engine, [job.id]);
 
     // #6052: `finalized` leaves out outputs whose managed publication is held (pending or contended); `held` counts them.
     const { quoteVerify, finalized, held } = await stampPatternOutputs(engine, maintenance, writtenRefs, submitted, derivation, config, cycleSourceId, cycleDate, opts.signal);
@@ -405,14 +407,15 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
       : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
     const details = { reflections_considered: submitted.length, reflections_selected: selected, plan_basis: plan.basis, patterns_written: finalized.length,
       ...(quoteVerify ? { quote_verify: quoteVerify } : {}), reverse_write_count: reverseWriteCount, publish_deferred: held,
-      child_outcome: outcome, job_id: job.id };
+      appended_unverified: appendedUnverified, child_outcome: outcome, job_id: job.id };
+    const appendedNote = appendedUnverified > 0 ? `; ${appendedUnverified} timeline entr${appendedUnverified === 1 ? 'y' : 'ies'} appended (unverified)` : '';
 
     // #2782: the phase status must reflect the child outcome. Pre-fix this
     // returned status:ok even when the subagent timed out (e.g. no
     // subagent-capable worker slot free for the whole wait window) and zero
     // pattern pages were written — a silent no-op for days.
     if (outcome !== 'completed') {
-      if (finalized.length === 0) {
+      if (finalized.length === 0 && appendedUnverified === 0) {
         return {
           phase: 'patterns',
           status: 'fail',
@@ -434,13 +437,13 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
         phase: 'patterns',
         status: 'warn',
         duration_ms: 0,
-        summary: `${finalized.length} pattern page(s) written but subagent job ${job.id} ended '${outcome}'`,
+        summary: `${finalized.length} pattern page(s) written${appendedNote} but subagent job ${job.id} ended '${outcome}'`,
         details,
       };
     }
     // A held output is unfinished: warn and leave the evidence watermark unstamped so the next cycle retries.
     if (held > 0) return { phase: 'patterns', status: 'warn', duration_ms: 0, details,
-      summary: `${finalized.length} pattern page(s) written; ${held} publication(s) held by the writer (pending or contended), retried next cycle` };
+      summary: `${finalized.length} pattern page(s) written${appendedNote}; ${held} publication(s) held by the writer (pending or contended), retried next cycle` };
 
     // #4879: stamp the EVIDENCE watermark (not now()) only on a completed
     // child — fail/warn/timeout above must retry next tick. A reflection
@@ -449,7 +452,7 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
     // named nothing; re-running it is exactly the spend bug.
     await engine.setConfig(evidenceKey, new Date(newestEvidenceMs).toISOString());
 
-    return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, details);
+    return ok(`${writtenRefs.length} pattern page(s) written/updated${appendedNote} (${outcome})`, details);
   } catch (e) {
     return failed(makeError('InternalError', 'PATTERNS_PHASE_FAIL',
       e instanceof Error ? (e.message || 'patterns phase threw') : String(e)));
@@ -796,6 +799,17 @@ async function collectChildPutPageSlugs(
     .map(slug => ({ slug, source_id: sourceId }));
 }
 
+/** Completed `brain_add_timeline_entry` calls of the given children (#6302 Part A). */
+async function countChildTimelineAppends(engine: BrainEngine, childIds: number[]): Promise<number> {
+  if (childIds.length === 0) return 0;
+  const [row] = await engine.executeRaw<{ n: number }>(
+    `SELECT count(*)::int AS n FROM subagent_tool_executions
+      WHERE job_id = ANY($1::int[]) AND tool_name = 'brain_add_timeline_entry' AND status = 'complete'`,
+    [childIds],
+  );
+  return Number(row?.n ?? 0);
+}
+
 // ── Reverse-write ────────────────────────────────────────────────────
 
 import { validateSourceId } from '../utils.ts';
@@ -923,6 +937,7 @@ function makeError(cls: string, code: string, message: string, hint?: string): P
 // source-scoping contract (#1586) without driving a whole dream cycle.
 // Mirrors synthesize.ts's `__testing` block.
 export const __testing = {
+  countChildTimelineAppends,
   gatherReflections,
   collectChildPutPageSlugs,
   reverseWriteRefs,

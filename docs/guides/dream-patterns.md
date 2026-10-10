@@ -62,4 +62,7 @@ slowly than the reflection count and halving may take several cycles to fit.
 
 - Fix wave 11: budget sizing from `dream.patterns.last_run` (#6177).
 - Fix wave 13: a child stopped at its own timeout records `timeout`, so the
-  next plan halves (#6296).
+  next plan halves (#6296). Timeline entries a child appends with
+  `add_timeline_entry` are counted in the phase result as
+  `appended_unverified`; unlike pages written with `put_page`, they are not
+  quote-verified or provenance-stamped yet (#6302).
