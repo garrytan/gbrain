@@ -890,6 +890,55 @@ describe('session-end', () => {
     expect(existsSync(join(home(), 'transcripts', 'corpus', 'sess-drift.txt'))).toBe(false);
   });
 
+  // A codex session opened and closed before the first prompt writes a rollout
+  // holding only its session_meta header (~19 KB: it embeds base_instructions).
+  // That is a recognized, empty session, not a host format change.
+  function codexRollout(sessionId: string, lines: string[]): { store: string; rollout: string } {
+    const store = join(tmp, 'codex-sessions');
+    const day = join(store, '2026', '10', '09');
+    mkdirSync(day, { recursive: true });
+    const rollout = join(day, `rollout-2026-10-09T13-55-06-${sessionId}.jsonl`);
+    writeFileSync(rollout, lines.join('\n') + '\n');
+    return { store, rollout };
+  }
+  const codexMeta = (id: string) =>
+    JSON.stringify({ timestamp: 't0', type: 'session_meta', payload: { id, cwd: '/repo', cli_version: '0.147.0', base_instructions: 'x'.repeat(18_000) } });
+
+  test('codex rollout with only a session_meta header → empty_session, no parser_drift alert', async () => {
+    const { store, rollout } = codexRollout('cdx-empty', [codexMeta('cdx-empty')]);
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    await runHook(['session-end', '--harness', 'codex'], {
+      stdin: JSON.stringify({ session_id: 'cdx-empty', transcript_path: rollout, cwd: ws }),
+      transcriptRoot: store,
+      spawnPush: () => {},
+    });
+    const hb = await lastHeartbeat();
+    expect(hb?.outcome).toBe('ok');
+    expect(hb?.reason).toBe('empty_session');
+    expect(hb?.turns).toBe(0);
+    expect(existsSync(await hookStatusPath())).toBe(false);
+    expect(existsSync(join(home(), 'transcripts', 'corpus', 'cdx-empty.txt'))).toBe(false);
+  });
+
+  test('codex rollout with a header plus unrecognized records still → parser_drift', async () => {
+    const { store, rollout } = codexRollout('cdx-drift', [
+      codexMeta('cdx-drift'),
+      JSON.stringify({ timestamp: 't1', type: 'renamed_turn_record', payload: { text: 'format changed under us' } }),
+    ]);
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    await runHook(['session-end', '--harness', 'codex'], {
+      stdin: JSON.stringify({ session_id: 'cdx-drift', transcript_path: rollout, cwd: ws }),
+      transcriptRoot: store,
+      spawnPush: () => {},
+    });
+    const hb = await lastHeartbeat();
+    expect(hb?.outcome).toBe('error');
+    expect(hb?.reason).toBe('parser_drift');
+    expect(JSON.parse(readFileSync(await hookStatusPath(), 'utf8')).error).toBe('parser_drift');
+  });
+
   test('confinement rejection: degraded heartbeat, no corpus write [S3#8]', async () => {
     const outside = join(tmp, 'outside.jsonl');
     writeFileSync(outside, userLine('outside content') + '\n');

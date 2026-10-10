@@ -257,6 +257,13 @@ export interface ParsedTranscript {
    * span. Kept alongside rather than on ToolCallRecord, which deliberately
    * carries no transcript-internal positions. */
   toolCallTurnIndexes: number[];
+  /**
+   * True when every line read parsed AND was a recognized session header —
+   * a session that ended before its first turn. The session-end hook reads
+   * this to tell an empty session from parser drift (bytes > 0, turns == 0).
+   * Optional: a parser that cannot tell leaves it unset, which keeps drift.
+   */
+  headerOnly?: boolean;
 }
 
 /**

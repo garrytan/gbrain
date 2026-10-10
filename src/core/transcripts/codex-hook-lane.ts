@@ -153,6 +153,7 @@ export function parseCodexHookTranscript(
   let cwd: string | undefined;
   let parsedLines = 0;
   let skippedLines = 0;
+  let headerLines = 0;
 
   for (const line of raw.split('\n')) {
     const t = line.trim();
@@ -168,6 +169,7 @@ export function parseCodexHookTranscript(
     const mapped = mapCodexLine(entry);
     switch (mapped.kind) {
       case 'session':
+        headerLines++;
         // #4981: first header wins (a forked rollout inherits its parent's header
         // later in the file); identity is payload.id, the id in the rollout filename.
         if (!sessionId && mapped.sessionId) sessionId = mapped.sessionId;
@@ -214,6 +216,7 @@ export function parseCodexHookTranscript(
     toolCallTurnIndexes,
     sessionId,
     cwd,
+    headerOnly: parsedLines > 0 && skippedLines === 0 && headerLines === parsedLines,
   };
 }
 

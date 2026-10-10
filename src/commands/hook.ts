@@ -1725,7 +1725,9 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
       }
       turnsN = parsed.turns.length;
       bytesN = parsed.bytesRead;
-      if (bytesN > 0 && turnsN === 0) {
+      if (bytesN > 0 && turnsN === 0 && parsed.headerOnly) {
+        reason = 'empty_session'; // ended before its first turn (codex writes session_meta at launch): not drift
+      } else if (bytesN > 0 && turnsN === 0) {
         // [G3] LOUD: the host format drifted under us — heartbeat error +
         // status file surfaced at the next session-start.
         outcome = 'error';
