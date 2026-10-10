@@ -1861,7 +1861,7 @@
   "test/persistence-facts-backstop.test.ts": 5904,
   "test/persistence-failure-diagnostics.test.ts": 432,
   "test/persistence-file-import.test.ts": 31374,
-  "test/persistence-git-coalescing-5530.slow.test.ts": 28797,
+  "test/persistence-git-coalescing-5530.slow.test.ts": 80000,
   "test/persistence-git-publication.test.ts": 1250,
   "test/persistence-git-subdir-origin.test.ts": 4366,
   "test/persistence-graph-publication.test.ts": 2865,

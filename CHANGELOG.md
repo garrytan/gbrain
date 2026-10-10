@@ -10,6 +10,26 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.154.0] - 2026-10-10
+
+**`gbrain serve` answers while a large effects backlog drains.** A big import followed by `gbrain embed --stale` left tens of thousands of queued page embedding effects whose chunks already had current vectors. The serve consumer ran each one through a claim, a guard, a projection read and a completion, and PGLite resolves its queries as one microtask chain, so stdin waited for the whole drain: on a 47k-page brain the first tool call took 432 to 489 s. It now answers in about 2 s, and the same backlog settles in about 18 s.
+
+Nothing needs doing after you upgrade. A drain longer than 5 s prints one progress line on serve's stderr.
+
+### Itemized changes
+
+- **No-op embedding effects settle in bulk** (`src/core/persistence/embedding-noop-settle.ts`). The serve drain first settles queued page embedding effects that have nothing left to embed, one statement per window of 200. An effect settles there only if the effect runner would find nothing to embed: never attempted, claimable by this host, its source unchanged, its page live and sealed at the effect's revision, and every chunk carrying a vector for the current signature, write column and model. The row ends exactly as the runner's own completion leaves it. Everything else, including any effect the settle passes over, still runs through the runner.
+- **A per-process cursor** keeps a backlog that cannot settle (stale vectors, an unconfigured provider) from being rescanned on every drain: on a 40k stale backlog the first sweep takes about 2 s and every later drain costs one indexed read.
+- **The drain yields to the event loop** between settle windows and between effect batches, never inside a Git group or while a worktree lock is held.
+- **The PGLite checkpoint guard reuses a WAL probe for up to 50 ms** while the reading leaves a full window of headroom at a bound well above the measured peak WAL rate, so a run of small writes no longer probes once per statement.
+- **Progress line.** `[persistence] phase=effects_drain state=running|done settled_noop_embeddings=… ran=… elapsed_s=…` on serve's stderr (never on CLI output), and `status()` reports the drain in progress.
+
+### For contributors
+
+- `test/persistence-drain-latency.serial.test.ts` is the forced probe: a tool call every 50 ms while 8,000 no-op effects drain must answer, and the event loop must not stall, within 2,000 ms (master: no call answers during the drain, worst gap 30.9 s).
+- `test/persistence-embedding-noop-settle.test.ts` (PGLite and Postgres) covers a mixed queue, Git rows untouched, row and request parity with the runner, a crash inside the settle (fault point `effect:embedding:settle`), guard refusals, the cursor, numeric id order and the runner fallback for passed effects.
+- `test/pglite-checkpoint-guard.test.ts` covers the probe reuse window, including WAL crossing the threshold inside it; `test/persistence-git-coalescing-5530.slow.test.ts` adds a write behind a Git backlog and a no-op embedding backlog.
+
 ## [0.60.153.0] - 2026-10-10
 
 **A repeated query in a long-running `gbrain serve` no longer waits on the embedding provider: about 110–150 ms faster per repeat, and 75 of 100 provider embed calls avoided on a realistic mix. Cold `search`, `query` and `stats` start 100–175 ms faster on both engines. Doctor's `eval_drift` stops paying 0.2–0.4 s per run on a freshly cloned or just-pulled source checkout. Rankings and output are unchanged.**
