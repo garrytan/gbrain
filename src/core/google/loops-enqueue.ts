@@ -9,6 +9,7 @@ import { pendingLoopsExtractDepth, type LoopsEnqueueReport } from './loop-catchu
 import { myAddressSet, type GoogleSyncDeps } from './sweep-shared.ts';
 import type { GmailClient } from './google-clients.ts';
 import { excludedLabelTokens, NO_EXCLUSION, resolveExcludedLabels, storeLoopsExclusion, type LoopsExclusionPolicy } from './loops-exclusion.ts';
+import { loopsSpendGate } from './loops-spend.ts';
 
 /**
  * #5445: resolves the source's loop exclusion labels once per sweep (one
@@ -76,6 +77,12 @@ export async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<Loop
       );
       return { ...report, skipped_reason: 'chat_unavailable' };
     }
+    // P4.6b: the day's spend authorization; a day already at its cap queues nothing.
+    const spend = await loopsSpendGate(deps.engine);
+    if (!spend.ok) {
+      deps.log(`[google] loops_extract: ${spend.message} — skipped enqueue of ${deps.extractCandidates.length} eligible thread(s) (${spend.reason})`);
+      return { ...report, skipped_reason: spend.reason };
+    }
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(deps.engine);
     // EVERY eligible candidate is enqueued (up to a generous safety ceiling).
@@ -132,6 +139,7 @@ export async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<Loop
           // its cap-hit coalesce loses brand-new keys, see above).
           idempotency_key: `loops:${deps.sourceId}:${c.slug}:${c.newestMs}`,
         },
+        { spendAuthorization: spend.record },
       );
     }
     deps.log(`[google] loops_extract: enqueued ${picked.length} eligible thread(s)`);

@@ -377,7 +377,9 @@ upstream failures rather than triggering a full re-list.
   bundle (a loud per-credential warning when a Testing-mode consent screen
   would travel with it — those tokens die within 7 days on the target).
 - LLM spend: commitment extraction sends recent email text (last 30 days,
-  capped per sweep) to your configured chat provider. Kill switch:
+  capped per sweep) to your configured chat provider, under a daily cap of
+  $2.00 (`loops.extraction_max_usd_per_day`; see
+  [open loops](open-loops.md#which-threads-reach-the-extractor)). Kill switch:
   `gbrain config set loops.extraction_enabled false`. The deterministic
   unanswered-thread detector is free and always on.
 - Atom extraction from email and calendar pages is on by default: page text

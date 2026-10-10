@@ -160,6 +160,23 @@ sweep picks up where it left off; nothing was spent in between. An id-shaped
 token (`Label_12`, `CATEGORY_FORUMS`) still applies when the list cannot be
 read.
 
+**What it may spend.** Extraction runs under a daily cap,
+`loops.extraction_max_usd_per_day` (default $2.00, per UTC day, across every
+source of the brain). Every `loops_extract` job a sweep or the managed
+catch-up queues carries the day's spend group, so the worker meters each
+model attempt against it: an attempt the cap cannot admit is refused before
+the provider is called (`cost_cap_exceeded` on the job, nothing spent), the
+job dies, and the thread is queued again on a later day when the sweep next
+touches it (the managed catch-up re-queues it once by itself). A sweep that
+finds the day already at its cap queues nothing and reports
+`loops_enqueue.skipped_reason: daily_spend_cap` with the amounts and the key
+to raise. `gbrain config set loops.extraction_max_usd_per_day 5` raises it;
+`0` queues no paid extraction at all (`spend_cap_zero`); a stored value makes
+the cap yours, so a model with no known price is refused instead of running
+unmetered. `gbrain jobs list --group <id>` shows a day's jobs and amounts
+(the group id is printed in the refusal). The deterministic detector is free
+and unaffected.
+
 **Every eligible thread is queued** (newest first — ordering only, nothing is
 dropped for being older). The MinionQueue is the backlog and the worker's
 concurrency is the rate limit (a thread only re-candidates when it changes,

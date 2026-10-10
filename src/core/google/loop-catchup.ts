@@ -36,6 +36,7 @@ import { connectorStateKey } from '../persistence/connector-state.ts';
 import { LOOPS_EXTRACT_ENQUEUE_CEILING, LOOPS_EXTRACT_JOB, LOOPS_EXTRACT_WINDOW_DAYS, isLoopsExtractionEnabled, loopExtractionEligibility } from './loops-extract.ts';
 import { openDueGraceHold, type ThreadLoopVerdict } from './loop-detect.ts';
 import { NO_EXCLUSION, type LoopsExclusionPolicy } from './loops-exclusion.ts';
+import { loopsSpendGate } from './loops-spend.ts';
 import type { GmailThreadData, GoogleSourceState, LoopGraceHold } from './types.ts';
 
 export const GRACE_HOLDS_CAP = 2_000;
@@ -241,6 +242,8 @@ export async function runLoopsCatchup(ctx: {
   }
   const { isAvailable } = await import('../ai/gateway.ts');
   if (!isAvailable('chat')) return skip('chat_unavailable', 'no configured chat model / API key');
+  const spend = await loopsSpendGate(ctx.engine, now);
+  if (!spend.ok) return skip(spend.reason, spend.message);
 
   const cu = ctx.state.loops_catchup ??= { version: 1, floor_ms: now - LOOPS_EXTRACT_WINDOW_DAYS * DAY_MS, retried: [], done: false };
   const pages = await ctx.engine.executeRaw<{ slug: string; thread_id: string; date: string }>(
@@ -262,7 +265,7 @@ export async function runLoopsCatchup(ctx: {
   const settle = (slug: string, rev: number, outcome: string) => recordLoopsExtractOutcome(ctx.engine, ctx.sourceId, slug, { rev, outcome, catchup: true });
   const enqueue = async (c: { slug: string; thread_id: string; rev: number }, key: string) => {
     await queue.add(LOOPS_EXTRACT_JOB, { slug: c.slug, sourceId: ctx.sourceId, threadId: c.thread_id, newestMs: c.rev, catchup: true },
-      { priority: 6, idempotency_key: key });
+      { priority: 6, idempotency_key: key }, { spendAuthorization: spend.record });
     budget--;
     report.enqueued++;
   };

@@ -1456,6 +1456,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #5445: brain-wide Gmail labels (names or ids, comma/JSON list) whose threads
   // never enter paid loop extraction; a source's g_loops_exclude_labels wins.
   'loops.extraction_exclude_labels',
+  // W14 P4.6b: USD per UTC day that loops_extract jobs may spend, brain-wide
+  // (default 2.00; 0 = no paid loop extraction). Validated in google/loops-spend.ts.
+  'loops.extraction_max_usd_per_day',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
   // Automatic facts drain caps (src/core/facts/drain.ts FACTS_DRAIN_KEYS).
