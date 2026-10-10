@@ -3,8 +3,9 @@
  * through a helper that drops Git's repository-locating variables (`gitChildEnv`,
  * or the stricter `backupGitEnv` / `hardenedGitEnvironment`). A new spawn that
  * inherits `process.env` (implicitly or with `...process.env`) fails here.
- * PENDING lists files owned by another lane; each is a named hunk request and
- * leaves the list once that lane adopts the helper.
+ * PENDING lists files owned by another lane that still need the helper (empty:
+ * GBRA-75 approved its hunk for sync-git.ts, git-visible-files.ts, fence-repair/census.ts
+ * and eval/drift-watch.ts in wave 13).
  */
 import { expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -12,9 +13,9 @@ import { join, relative } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
 const HELPERS = /\benv\s*:\s*(?:\{\s*\.\.\.)?(gitChildEnv|backupGitEnv|hardenedGitEnvironment)\(/;
-const SPAWN = /\b(spawnSync|spawn|execFileSync|execFileBounded|execFile)\(\s*['"]git['"]\s*,|\bBun\.spawn(Sync)?\(\s*\[\s*['"]git['"]/g;
-/** GBRA-75 (wave 10) owns these; the hunk request adopts gitChildEnv after wave 10 merges. */
-const PENDING = new Set(['src/core/sync-git.ts', 'src/core/git-visible-files.ts', 'src/core/fence-repair/census.ts']);
+const SPAWN = /\b(spawnSync|spawn|execFileSync|execFileBounded|execFile)\(\s*['"]git['"]\s*,|\bBun\.spawn(Sync)?\(\s*\[\s*['"]git['"]|\b(execSync|exec)\(\s*[`'"]git[\s`'"]/g;
+/** Files owned by another lane that still need the helper; each entry is a named hunk request. */
+const PENDING = new Set<string>([]);
 
 function files(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -41,6 +42,8 @@ function callText(source: string, open: number): string {
 export function unscrubbedGitSpawns(path: string, source: string): string[] {
   const found: string[] = [];
   for (const match of source.matchAll(SPAWN)) {
+    const lineStart = source.lastIndexOf('\n', match.index!) + 1;
+    if (/^\s*(\*|\/\/)/.test(source.slice(lineStart, match.index))) continue;
     const call = callText(source, source.indexOf('(', match.index!));
     const named = /,\s*([A-Za-z_$][\w$]*)\s*\)$/.exec(call)?.[1];
     const scrubbed = HELPERS.test(call) || (named !== undefined && new RegExp(`\\b${named}\\s*=\\s*\\{[^;]*${HELPERS.source}`).test(source));
@@ -65,6 +68,10 @@ test('the guard catches implicit and explicit process.env inheritance and accept
   expect(unscrubbedGitSpawns('x.ts', "execFileSync('git', ['status'], { env: gitChildEnv({ A: ')' }) });")).toEqual([]);
   expect(unscrubbedGitSpawns('x.ts', "const opts = { stdio: 'ignore', env: gitChildEnv() };\nexecFileSync('git', ['add'], opts);")).toEqual([]);
   expect(unscrubbedGitSpawns('x.ts', "spawnSync('git', HARDENED, { env: hardenedGitEnvironment() });")).toEqual([]);
+  expect(unscrubbedGitSpawns('x.ts', "execSync('git update-index -q --refresh', { cwd: root });")).toEqual(['x.ts:1']);
+  expect(unscrubbedGitSpawns('x.ts', " * `execSync(`git -C ${path} ...`)` in a doc comment")).toEqual([]);
+  expect(unscrubbedGitSpawns('x.ts', "execSync(`git ${args.join(' ')}`, { cwd: root });")).toEqual(['x.ts:1']);
+  expect(unscrubbedGitSpawns('x.ts', "execSync(`git ${args.join(' ')}`, { env: gitChildEnv(), cwd: root });")).toEqual([]);
 });
 
 test('PENDING names only files that still need the hunk', () => {

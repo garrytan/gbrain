@@ -15,6 +15,7 @@ import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { gitChildEnv } from '../git-env.ts';
 
 /**
  * Glob-ish patterns watched for retrieval drift. Each pattern is matched
@@ -101,6 +102,7 @@ export function filesDriftedSince(repoRoot: string, commitSha?: string, racyDiff
       : ['diff', '--name-only', 'HEAD'];
     const startedAt = Date.now();
     const out = execSync(`git ${args.join(' ')}`, {
+      env: gitChildEnv(),
       cwd: repoRoot,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -108,7 +110,7 @@ export function filesDriftedSince(repoRoot: string, commitSha?: string, racyDiff
     });
     if (!commitSha && Date.now() - startedAt >= racyDiffMs) {
       try {
-        execSync('git update-index -q --refresh', { cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 });
+        execSync('git update-index -q --refresh', { env: gitChildEnv(), cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 });
       } catch {
         /* a held index.lock or read-only checkout keeps the index as it was */
       }
