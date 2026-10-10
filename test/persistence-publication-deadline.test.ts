@@ -22,6 +22,7 @@ import { localHostId } from '../src/core/persistence/identity.ts';
 import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
+import { publishSingleWrite } from '../src/core/persistence/group-publish.ts';
 import { bindPublicationTimeouts, boundPublication, publicationIdleTimeoutMs, publicationTransaction, PUBLICATION_CEILING_DEFAULT_MS } from '../src/core/persistence/publication-deadline.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
@@ -156,10 +157,36 @@ for (const kind of testBackends()) {
       expect(signals.some(signal => signal instanceof AbortSignal)).toBe(true);
     }), 120_000);
 
+    for (const path of kind === 'postgres' ? ['publishMutation', 'publishSingleWrite'] as const : ['publishMutation'] as const)
+    test(`a refused timeout bind fails the publication inside its own transaction, with no unhandled rejection, and leaves no page (${path})`, async () => withEnv({ GBRAIN_HOME: home }, async () => {
+      const slug = `notes/bind-refused-${path.toLowerCase()}`;
+      const { row, prepared } = await claimedPut(slug);
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        const refusing = new Proxy(engine, { get(target, key) {
+          if (key === 'transaction') return <T>(fn: (tx: BrainEngine) => Promise<T>) => target.transaction(tx => fn(new Proxy(tx, { get(t, k) {
+            if (k === 'kind') return 'postgres';
+            if (k === 'executeRaw') return (sql: string, ...rest: unknown[]) => sql.includes('idle_in_transaction_session_timeout')
+              ? Promise.reject(Object.assign(new Error('SET refused by the pooler'), { code: '0A000' })) : (t.executeRaw as (...a: unknown[]) => unknown)(sql, ...rest);
+            const member = Reflect.get(t, k, t); return typeof member === 'function' ? member.bind(t) : member;
+          } })));
+          const member = Reflect.get(target, key, target); return typeof member === 'function' ? member.bind(target) : member;
+        } }) as BrainEngine;
+        const outcome = await (path === 'publishMutation' ? publishMutation(refusing, row, prepared, localHostId()) : publishSingleWrite(refusing, row, prepared, localHostId())).then(done => ({ done }), error => ({ error }));
+        await tick(50);
+        expect(unhandled).toEqual([]);
+        if ('done' in outcome) expect(outcome.done.state).not.toBe('committed');
+        else expect(String((outcome.error as Error).message)).toContain('SET refused');
+        expect(await engine.getPage(slug, { sourceId: 'default' })).toBeNull();
+      } finally { process.off('unhandledRejection', onUnhandled); }
+    }), 120_000);
+
     test(kind === 'postgres' ? 'a publish transaction idle past its bound is ended by the server and commits nothing' : 'PGLite: the idle bound is never applied (an ended idle transaction would wedge its only connection)', async () => {
       const before = await engine.executeRaw<{ n: number | string }>("SELECT count(*) AS n FROM config WHERE key='p23.probe'");
       const attempt = publicationTransaction(engine, async tx => {
-        bindPublicationTimeouts(tx);
+        await bindPublicationTimeouts(tx);
         const [shown] = await tx.executeRaw<{ v: string }>("SELECT current_setting('idle_in_transaction_session_timeout') AS v");
         // PGLite would enforce the bound too, and an idle transaction it ends wedges its only connection, so it is never set there.
         expect(shown!.v === '0').toBe(kind !== 'postgres');

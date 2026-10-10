@@ -262,7 +262,6 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
     }
     if (lane) await awaitLaneBegin(lane, rows);
     const done = await transaction(async opened => {
-      bindPublicationTimeouts(opened);
       timed.apply?.end(rows.length);
       if (lane) timed.apply = laneApplyBegin(lane);
       const tx = groupReads(opened);
@@ -273,6 +272,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       const keys = rows.flatMap((row, i) => [{ sourceId: row.source_id, slug: row.slug, incarnation: row.source_incarnation },
         ...(prepared[i]!.additionalPageKeys ?? []).map(key => key.sourceId === row.source_id ? { ...key, incarnation: row.source_incarnation } : key)]);
       const ready = pipelined(tx, [
+        () => bindPublicationTimeouts(opened),
         () => declareDurablePersistence(tx),
         () => guardOwnership(tx, head, hostId),
         // A published file needs recovery even if this transaction rolls back; claims are verified first.
@@ -284,7 +284,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
         () => prepared.some(member => member.file && !member.noop) ? tx.executeRaw(HOST_BINDING_SQL, [head.worktree_id]) : Promise.resolve([]),
         ...storedAuthorizationReads(tx, rows, true),
       ]).then(results => {
-        const [, live, started, readOnly] = results as [unknown, Awaited<ReturnType<typeof guardOwnership>>, unknown[], boolean];
+        const [, , live, started, readOnly] = results as [unknown, unknown, Awaited<ReturnType<typeof guardOwnership>>, unknown[], boolean];
         if (String(live?.owner_epoch) !== String(binding.owner_epoch)) throw new OperationError('owner_unavailable', 'Owner epoch changed before publication.', 'Inspect the source owner with gbrain sources writer status; do not claim or transfer the source to push this write.');
         if (started.length !== members.length) throw new OperationError('write_claim_lost', 'Execution claim changed before publication.', 'Another worker holds the request; inspect it rather than resubmitting.');
         // A file target prepared before the source became a read-only mirror is never published (as in publishMutation, noop included).

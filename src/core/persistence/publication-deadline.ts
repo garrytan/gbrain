@@ -48,14 +48,13 @@ export function publicationIdleTimeoutMs(ceilingMs = ceiling.value): number {
 }
 
 /**
- * Sets the transaction-local idle bound as the transaction's first statement. Not awaited: postgres.js sends it ahead of
- * the caller's next statement on the same connection (the `pipelined` contract), so it costs no round trip; a failure
- * surfaces on the statements after it. Skipped on PGLite: it would enforce the bound, and a transaction it ends there
- * wedges the engine's only connection.
+ * Sets the transaction-local idle bound. Callers await it (or send it first in their `pipelined` batch), so a refused SET
+ * fails this publication's transaction with its own error. Skipped on PGLite: it would enforce the bound, and a
+ * transaction it ends there wedges the engine's only connection.
  */
-export function bindPublicationTimeouts(tx: BrainEngine): void {
+export async function bindPublicationTimeouts(tx: BrainEngine): Promise<void> {
   if (tx.kind !== 'postgres') return;
-  tx.executeRaw("SELECT set_config('idle_in_transaction_session_timeout',$1,true)", [`${publicationIdleTimeoutMs()}ms`]).catch(() => undefined);
+  await tx.executeRaw("SELECT set_config('idle_in_transaction_session_timeout',$1,true)", [`${publicationIdleTimeoutMs()}ms`]);
 }
 
 /** `engine.transaction`, passing the current publication's signal on as `{ signal }` (an engine without the option ignores it). */
