@@ -44,7 +44,9 @@ export interface SyncDiscovery { binding: WorktreeBinding; root: string; gitRoot
   /** #5988: held paths that left the source (now excluded); their holds clear when the run checkpoints. */
   releasedHolds?: string[];
   /** #5988: `sources retry-held` paths this discovery consumed (screened as an entry or a candidate, or no longer eligible); cleared with the cursor save. */
-  retryTaken?: string[]; }
+  retryTaken?: string[];
+  /** #6349: the checkout's HEAD when the delta to it exceeded the cursor bound and `target` is a staged first-parent commit short of it. */
+  stagedHead?: string; }
 export interface ManagedSyncContext { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
   source: { last_commit: string | null; config: Record<string, unknown> }; }
 /** The persisted `sync.exclude` globs (plus a run's `--exclude`), as discovery matches them against a path relative to the source root. */
@@ -175,7 +177,30 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
       why: 'The sync command routes a connector source to its own coordinator.' } });
   return { binding, root, gitRoot, sourceId, incarnation: source.incarnation, source };
 }
-export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, context?: ManagedSyncContext): Promise<SyncDiscovery> {
+/** The cursor bound: entries and serialized bytes one frozen manifest may hold. */
+let cursorBound = { entries: 100_000, bytes: 16 * 1024 ** 2 };
+/** Test seam: a smaller cursor bound (call with no argument to restore the default). */
+export function _setCursorBoundForTest(bound?: { entries: number; bytes: number }): void { cursorBound = bound ?? { entries: 100_000, bytes: 16 * 1024 ** 2 }; }
+const manifestFits = (entries: readonly unknown[]) => entries.length <= cursorBound.entries && Buffer.byteLength(JSON.stringify(entries)) <= cursorBound.bytes;
+
+/**
+ * #6349: the furthest first-parent commit after `from` whose delta from `from` fits the cursor bound, found by a forward
+ * gallop that verifies every candidate it accepts (a net delta from a fixed base is not monotone along history: an add
+ * reverted later shrinks it again, so a binary search has no valid predicate). Null when even the first commit does not fit.
+ */
+export function stagedSyncTarget(gitRoot: string, from: string, target: string, fits: (commit: string) => boolean): { commit: string; first: string } | { oversized: string } {
+  const commits = syncGit(gitRoot, ['rev-list', '--first-parent', '--reverse', `${from}..${target}`]).split('\n').map(line => line.trim()).filter(Boolean);
+  let good = -1, step = 1;
+  while (good < commits.length - 1) {
+    const at = Math.min(good + step, commits.length - 1);
+    if (fits(commits[at]!)) { good = at; step *= 2; continue; }
+    if (step === 1 || at === good + 1) break;
+    step = Math.max(1, Math.floor((at - good) / 2));
+  }
+  return good < 0 ? { oversized: commits[0] ?? target } : { commit: commits[good]!, first: commits[0]! };
+}
+
+export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, context?: ManagedSyncContext, stage?: { target: string; head: string }): Promise<SyncDiscovery> {
   const { binding, root, gitRoot, sourceId, incarnation, source } = context ?? await resolveManagedSyncContext(engine, opts);
   const company = currentCompanyBrainSync(sourceId);
   const strategy = opts.strategy ?? source.config?.strategy ?? 'markdown';
@@ -193,9 +218,10 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const eligible = (path: string) => (!scope || path.startsWith(`${scope}/`)) &&
     !matchesAnyGlob(scope ? path.slice(scope.length + 1) : path, exclude) && !isReservedSkillBundlePath(sourcePath(path)) &&
     isSyncable(path, { strategy: strategy as 'markdown', includeHidden });
-  const target = company?.plan.revision?.commit ?? syncGit(gitRoot, ['rev-parse', 'HEAD']).trim();
+  const target = stage?.target ?? company?.plan.revision?.commit ?? syncGit(gitRoot, ['rev-parse', 'HEAD']).trim();
   const detached = !company && syncGit(gitRoot, ['rev-parse', '--abbrev-ref', 'HEAD']).trim() === 'HEAD';
-  const working = !company && (detached || (opts.workingTree ?? (await engine.getConfig('sync.include_working_tree') === 'true')));
+  // #6349: a staged run stops at a commit, so uncommitted working-tree changes wait for the stage that reaches HEAD.
+  const working = !company && !stage && (detached || (opts.workingTree ?? (await engine.getConfig('sync.include_working_tree') === 'true')));
   const dirty = company ? { added: [], modified: [], deleted: [], renamed: [] } : buildDetachedWorkingTreeManifest(gitRoot);
   const delta = !opts.full && source.last_commit ? computeSyncDelta(gitRoot, source.last_commit, target) : null;
   const entries = new Map<string, SyncEntry>();
@@ -322,10 +348,30 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const unsupported = selected.find(e => e.action === 'import' && !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path) && (company || !isImageFilePath(e.path)));
   if (unsupported) throw opError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.',
     `Managed sync of ${sourceId} imports only Markdown and code files, and this run selected others (for example ${unsupported.path}). Exclude them with --exclude or the sync.exclude config, then run gbrain sync --no-pull --source ${sourceId}.`);
-  if (selected.length > 100_000 || Buffer.byteLength(JSON.stringify(selected)) > 16 * 1024 ** 2) throw opError('request_too_large', 'Sync discovery exceeds the bounded cursor size.',
-    `This sync of ${sourceId} selected ${selected.length} entries, above the 100,000-entry and 16 MiB cursor bound; nothing was written. Narrow it with --exclude or the sync.exclude config, then run gbrain sync --no-pull --source ${sourceId}.`);
+  if (!manifestFits(selected)) {
+    // #6349: an incremental delta past the bound is synced in stages: the furthest first-parent commit whose delta fits,
+    // then the next stage from there (the CLI loops; a scheduled sync takes one stage per run).
+    if (delta?.status === 'ok' && !company && source.last_commit) {
+      const last = source.last_commit;
+      const deltaEntries = (commit: string) => {
+        const step = computeSyncDelta(gitRoot, last, commit);
+        if (step.status !== 'ok') return null;
+        const paths = [...step.manifest.added, ...step.manifest.modified, ...step.manifest.deleted, ...step.manifest.renamed.flatMap(r => [r.from, r.to])].filter(eligible);
+        return paths.map(path => ({ path: relative(nativeRoot, join(nativeGitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action: 'import', working: false }));
+      };
+      const staged = stagedSyncTarget(gitRoot, last, stage?.head ?? target, commit => { const entries = deltaEntries(commit); return !!entries && manifestFits(entries); });
+      if ('commit' in staged && staged.commit !== target) return discoverManagedSync(engine, opts, context, { target: staged.commit, head: stage?.head ?? target });
+      if ('oversized' in staged) {
+        const size = deltaEntries(staged.oversized)?.length ?? selected.length;
+        throw opError('request_too_large', 'One commit exceeds the bounded cursor size.',
+          `Commit ${staged.oversized.slice(0, 12)} alone changes ${size} syncable entries in ${sourceId} (from ${last.slice(0, 12)}), above the ${cursorBound.entries.toLocaleString('en-US')}-entry and ${Math.round(cursorBound.bytes / 1024 ** 2)} MiB cursor bound, so it cannot be synced in stages; nothing was written. Exclude part of it with --exclude or the sync.exclude config, then run gbrain sync --no-pull --source ${sourceId}.`);
+      }
+    }
+    throw opError('request_too_large', 'Sync discovery exceeds the bounded cursor size.',
+      `This sync of ${sourceId} selected ${selected.length} entries, above the 100,000-entry and 16 MiB cursor bound; nothing was written. Narrow it with --exclude or the sync.exclude config, then run gbrain sync --no-pull --source ${sourceId}.`);
+  }
   const discovered: SyncDiscovery = { discoveredAt, ...(released.length ? { releasedHolds: released } : {}), ...(retryTaken.length ? { retryTaken } : {}),
-    ...(refused.size ? { fileRefusals: [...refused.values()] } : {}), binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode, ...(company ? { companyPlan: company.plan } : {}) };
+    ...(refused.size ? { fileRefusals: [...refused.values()] } : {}), binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode, ...(company ? { companyPlan: company.plan } : {}), ...(stage ? { stagedHead: stage.head } : {}) };
   // Freeze all logical identities in one database statement, before yielding
   // between pages. A later interactive edit must conflict with this scan.
   const identities = await engine.executeRaw<{ id: number; slug: string; source_path: string | null; knowledge_revision: string }>(

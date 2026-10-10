@@ -708,7 +708,7 @@ export async function drainManagedSync(engine: BrainEngine, opts: SyncOpts, anno
   // since the pin (an incremental pin..HEAD discovery, which also re-screens holds whose file a later commit changed), so the
   // invocation ends at HEAD instead of leaving the gap to the next launch. Never a second extra pass: a checkout that keeps
   // committing would otherwise loop forever.
-  if (result.drain?.outcome === 'synced' && result.toCommit && !opts.dryRun && !opts.signal?.aborted && result.status !== 'up_to_date') {
+  if (result.drain?.outcome === 'synced' && result.toCommit && !opts.dryRun && !opts.signal?.aborted && result.status !== 'up_to_date' && !result.staged) {
     const head = await headOfSource(engine, opts);
     if (head && head !== result.toCommit) {
       if (announce) serr(`[sync] HEAD moved past the pinned target ${result.toCommit.slice(0, 8)} while the run drained; one more pass imports the commits since (to ${head.slice(0, 8)}).`);
