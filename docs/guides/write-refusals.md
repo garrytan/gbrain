@@ -536,7 +536,7 @@ changed or belongs to another owner"), because removing a live brain's marker
 to claim its files would let two brains write the same checkout.
 
 A marker left behind by a brain that no longer exists (a PGLite brain later
-moved to Postgres with `gbrain move-to-postgres`, a `gbrain init` that was
+moved to Postgres with `gbrain migrate`, a `gbrain init` that was
 redone, a database dropped by hand) refuses the same way, and the refusal does
 not say which file or which brain. `gbrain doctor` reports the
 `foreign_ownership_marker` check for every source checkout and owner binding

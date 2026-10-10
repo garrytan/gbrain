@@ -651,6 +651,38 @@ or abandon the transfer first. Shared-skill setup, which claims a checkout as
 administration rather than as an ordinary first write, is refused while locked.
 `lock` and `unlock` are idempotent and print the resulting state.
 
+### Git durability on a managed brain
+
+<a id="git-durability"></a>On a managed brain the persistence owner commits and
+pushes page writes through its Git effect; `gbrain sources push`, `sources
+harden` and `lint --fix` are not its Git writers and refuse with
+`writer_coordinator_required` naming this verb. Whether the owner commits is a
+recorded per-host-binding setting, `git_durability` (`on`, `off` or `unknown` in
+`writer status --json` and in `writer activate`'s listing):
+
+```bash
+gbrain sources writer status <source> --json                  # read git_durability and parked effects first
+gbrain sources writer git-durability <source> --enable --dry-run
+gbrain sources writer git-durability <source> --enable --admin-intent writer_git_durability --expected-state <admin_state>
+gbrain sources writer git-durability <source> --pat-file ~/.config/gbrain/pat --admin-intent writer_git_durability --expected-state <admin_state>
+gbrain sources writer git-durability <source> --disable --admin-intent writer_git_durability --expected-state <admin_state>
+```
+
+`--enable` runs a read-only `git push --dry-run` probe first (`git_branch_unborn`,
+`git_checkout_required` and `git_detached_head` refuse with the git step to take),
+records `enabled` on this host's binding and re-queues the Git effects completed
+`durability_not_enabled` while the setting was off, so the next worker pass commits
+and pushes them. `--pat-file` (a 0600 file; `pat_file_unreadable` otherwise) wires
+the repo-scoped push credential the same way `sources harden` does and retries this
+worktree's parked pushes. `--disable` records `disabled`; the effects complete
+`durability_not_enabled` and are re-queued by a later `--enable`. A binding with
+nothing recorded (`unknown`) keeps consulting the legacy post-commit hook, and a
+probe that cannot read the checkout fails the effect instead of skipping it. Only
+the host that owns the binding can change it (`writer_registration_required`
+elsewhere), and never during a pending recovery or transfer
+(`recovery_required`). The setting is not a backup: the owner still never pulls
+or rebases the checkout.
+
 ### Supported managed work and explicit repair
 
 Once active, ordinary authorized local atom extraction, fact fences/backstop,
