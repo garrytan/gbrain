@@ -16,7 +16,7 @@ import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from '
 import { acquireShared, deferToLease, exclusiveAcquired, joinLease, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
-import { readPhysicalRootStamp } from './physical-root-record.ts';
+import { assertPhysicalRootReservation, readPhysicalRootStamp } from './physical-root-record.ts';
 import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
@@ -137,11 +137,11 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
  * reports busy while lanes hold the lease, and the lease drains for it after `DEFER_WAIT_MS`.
  */
 export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal, engine?: BrainEngine,
-  opts: { yieldLanes?: boolean } = {}): Promise<NativeLockHandle | null> {
+  opts: { yieldLanes?: boolean; identity?: 'strict' | 'reservation' } = {}): Promise<NativeLockHandle | null> {
   if (!binding.local_path || !binding.coordination_path) return null;
   // #5984 lanes: an exclusive writer drains this process's lane lease first; while lanes still hold it the worktree is busy.
   if (waitMs <= 0 && !opts.yieldLanes ? !deferToLease(binding.coordination_path) : !await yieldLease(binding.coordination_path, waitMs, signal)) return null;
-  const lock = await lockWorktree(binding, waitMs, signal, engine);
+  const lock = await lockWorktree(binding, waitMs, signal, engine, opts.identity);
   if (lock) exclusiveAcquired(binding.coordination_path);
   return lock;
 }
@@ -154,12 +154,22 @@ export async function acquireWorktreeShared(binding: WorktreeBinding, engine: Br
 export function joinWorktreeLease(binding: WorktreeBinding): NativeLockHandle | null {
   return binding.local_path && binding.coordination_path ? joinLease(binding.coordination_path) : null;
 }
-async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: AbortSignal | undefined, engine: BrainEngine | undefined): Promise<NativeLockHandle | null> {
+/**
+ * `identity: 'reservation'` (#5914) is for a caller that publishes nothing (the
+ * pre-activation release): the native lock plus the reservation's worktree id
+ * and token, without the inode/birth comparison a recreated directory fails.
+ */
+async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: AbortSignal | undefined, engine: BrainEngine | undefined,
+  identityCheck: 'strict' | 'reservation' = 'strict'): Promise<NativeLockHandle | null> {
   if (!binding.coordination_path || !binding.local_path) return null;
   const lock = await (waitMs > 0 ? acquireNativeLock(binding.coordination_path, { timeoutMs: waitMs, signal })
     : tryAcquireNativeLock(binding.coordination_path));
   if (!lock) return null;
   const identity = { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path };
+  if (identityCheck === 'reservation') {
+    try { assertPhysicalRootReservation(binding.local_path, identity); return lock; }
+    catch (error) { await lock.release(); throw error; }
+  }
   try { assertPhysicalRoot(binding.local_path, identity); return lock; }
   catch (error) {
     try {
@@ -245,8 +255,14 @@ export function humanManifestProgress(): ProgressOptions | undefined {
   return options.mode === 'auto' ? options : undefined;
 }
 
+export interface WriterTransferOptions {
+  selfTransfer?: boolean;
+  dryRun?: boolean;
+  /** #5914: `--confirm-relocated-root`, a self-transfer of a directory recreated at the same path (inode/birth waived; everything else must agree). */
+  relocated?: boolean;
+}
 export async function prepareWriterTransfer(engine: BrainEngine, sourceId: string, hostId = localHostId(), expectedAdminState?: string,
-  opts: { selfTransfer?: boolean; dryRun?: boolean } = {}): Promise<{ worktree_id: string; owner_epoch: string; manifest: StoredWorktreeManifest }> {
+  opts: WriterTransferOptions = {}): Promise<{ worktree_id: string; owner_epoch: string; manifest: StoredWorktreeManifest }> {
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding || binding.owner_host_id !== hostId || !binding.local_path) throw opError('permission_denied', 'Only the current owner can prepare this transfer.',
     `This host does not own source ${sourceId}'s checkout, so nothing was prepared. Check which host owns it; transfer preparation runs in a terminal on that host.`,
@@ -282,7 +298,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
         { fix: writerStatusFix(sourceId) });
       const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
       const recovery = opts.selfTransfer ? inspectPhysicalRootRecovery(binding.local_path!, { brainId: brain.brain_id,
-        worktreeId: binding.worktree_id, hostId, coordinationPath: binding.coordination_path! }) : undefined;
+        worktreeId: binding.worktree_id, hostId, coordinationPath: binding.coordination_path! }, { relocated: opts.relocated === true }) : undefined;
       if (!opts.selfTransfer) assertPhysicalRoot(binding.local_path!, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
       if (hashed instanceof Error) throw hashed;
       const manifest: StoredWorktreeManifest = { ...hashed, ...(recovery ? { self_transfer: recovery } : {}) };
@@ -292,7 +308,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
   } finally { await lock.release(); }
 }
 export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string, path: string, expectedEpoch: string, expectedManifest: string, hostId = localHostId(), expectedAdminState?: string,
-  opts: { selfTransfer?: boolean; dryRun?: boolean } = {}): Promise<void> {
+  opts: WriterTransferOptions = {}): Promise<void> {
   const root = realpathSync(resolve(path));
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) throw opError('not_found', 'Source has no worktree owner.',
@@ -327,6 +343,10 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
         { fix: writerStatusFix(sourceId) });
       if (!!owner.manifest.self_transfer !== !!opts.selfTransfer || JSON.stringify(await getWorktreeBinding(tx, sourceId, hostId)) !== JSON.stringify(binding)) throw opError('writer_transfer_conflict', 'The prepared transfer mode or binding changed.',
         `Source ${sourceId} was prepared ${owner.manifest.self_transfer ? 'as' : 'without'} a self-transfer, or its binding changed since then, so nothing was accepted. Accept with the same --self-transfer choice used at prepare, after re-reading writer status.`,
+        { fix: writerStatusFix(sourceId) });
+      // #5914: the relocation waiver is persisted on the prepared record and must be repeated at accept, in both directions.
+      if (opts.selfTransfer && (owner.manifest.self_transfer?.relocated === true) !== (opts.relocated === true)) throw opError('writer_transfer_conflict', 'The prepared self-transfer differs on --confirm-relocated-root.',
+        `Source ${sourceId} was prepared ${owner.manifest.self_transfer?.relocated ? 'with' : 'without'} --confirm-relocated-root, so nothing was accepted. Accept with the same flag, or have the owner prepare again.`,
         { fix: writerStatusFix(sourceId) });
       const pending = await tx.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND (state IN ('running','recovering') OR recovery IS NOT NULL) LIMIT 1`, [binding.worktree_id]);
       const mirrors = await tx.executeRaw('SELECT id FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [binding.worktree_id]);

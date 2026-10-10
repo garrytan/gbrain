@@ -21,8 +21,8 @@ export const WRITER_HELP = `Usage:
   gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
   gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
   gbrain sources writer deactivate [--admin-intent writer_deactivate --expected-state <admin_state>] [--dry-run] [--json]
-  gbrain sources writer transfer prepare <source> [--self-transfer] [administration options] [--dry-run] [--json]
-  gbrain sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [--self-transfer] [administration options] [--dry-run] [--json]
+  gbrain sources writer transfer prepare <source> [--self-transfer [--confirm-relocated-root]] [administration options] [--dry-run] [--json]
+  gbrain sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [--self-transfer [--confirm-relocated-root]] [administration options] [--dry-run] [--json]
   gbrain sources writer lock [--json]
   gbrain sources writer unlock [--json]
 
@@ -110,7 +110,7 @@ export function adminHostConfig<T extends GBrainConfig>(config: T | null | undef
 
 type Group = 'writer' | 'local-writer';
 const GROUP_ARGV: Record<Group, string[]> = { writer: ['gbrain', 'sources', 'writer'], 'local-writer': ['gbrain', 'auth', 'local-writer'] };
-const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--cleanup-dead-local-locks', '--shared-skills'];
+const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--confirm-relocated-root', '--cleanup-dead-local-locks', '--shared-skills'];
 /** A CLI usage refusal: the exact usage in the suggestion, the group's help as the read-only fix. */
 function invalid(group: Group, message: string, suggestion: string) {
   return opError('invalid_params', message, suggestion, {

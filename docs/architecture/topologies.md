@@ -499,6 +499,40 @@ gbrain sources writer transfer accept default --brain host --self-transfer \
 # After separate approval, rerun accept without --dry-run.
 ```
 
+<a id="recreated-root"></a>**Recreated or moved canonical root (#5914).** A
+directory deleted and recreated at its recorded path (a restore from backup, a
+container rebuilt without its volume, a Migration Assistant copy) keeps its
+path but not its inode and birth time, so every verb refused
+`recovery_required`, self-transfer included. Two deliberate exits exist, and
+neither relaxes anything else:
+
+- *Same path, new directory:* add `--confirm-relocated-root` to both
+  self-transfer phases. It waives only the inode and birth-time comparison, and
+  only when the token, brain id, worktree id, root and coordination path of the
+  stamp and the **outside-root reservation** all agree; a copied in-root stamp
+  without the reservation beside the root is never authority. Prepare records
+  `relocated: true` on the durable manifest, accept must repeat the flag (in
+  either direction it refuses `writer_transfer_conflict`), and the reservation
+  is rewritten through a compare-and-swap: a reservation someone else changed
+  between prepare and accept refuses with detail `stale_record`, so prepare
+  again from a fresh status. The flag without `--self-transfer` is a usage
+  error.
+- *Recorded path now a symlink to the moved checkout:* run
+  `gbrain sources set-path <source> <recorded-or-real-path>` on the owner host.
+  When the recorded path resolves to the target and the reservation under the
+  recorded name and the stamp inside the real directory agree on token, brain
+  id and worktree id, the worktree keeps its id: `local_path` and the host
+  binding move to the real directory, the reservation is written under the new
+  `sha256(root)` name, the old one is removed and the stamp names the new root.
+  A token or worktree mismatch keeps the refusal and moves nothing.
+
+`gbrain sources writer deactivate --dry-run` lists a `physical_root` blocker
+exactly when its real run would refuse: the managed run takes the strict
+worktree lock, so a recreated root blocks it until one of the exits above ran;
+the classic (pre-activation) release publishes nothing and needs only the
+native lock plus a reservation naming the worktree whose stamp carries the same
+token, so a recreated root does not block it but a token mismatch does.
+
 For containers, persist the canonical source root, its sibling-reservation
 parent, persistence home and stable lock/coordination directory together across
 recreation. Storage preflight reports each location and can identify Linux
