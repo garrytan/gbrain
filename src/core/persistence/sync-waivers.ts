@@ -17,6 +17,7 @@ import { getWorktreeBinding } from './ownership.ts';
 import { assertSyncPageOrigin, syncOriginScope } from './sync-origin.ts';
 import { faultPoint } from './fault-points.ts';
 import { pipelined } from '../page-state/transactions.ts';
+import { noteDrainSql } from './drain-step.ts';
 import { REVISION_BACKFILL_PENDING } from '../page-state/types.ts';
 import { withScreeningPaths } from './screening-paths.ts';
 import { withBoundedReadSession } from './bounded-reads.ts';
@@ -161,6 +162,8 @@ export async function waiverBatchEnabled(engine: BrainEngine, env: NodeJS.Proces
   return !(value === '0' || value === 'false');
 }
 export interface WaiverRunEntry { pending: WaiverEntry; waived: NoopWaiver }
+/** #6423: the most calls `waiveNoopRun` pipelines in one round trip (two per entry: the unfinished-request read and the delete origin check). */
+export const WAIVER_PIPELINE_MAX = 64;
 /**
  * #5984 Phase 3: commits a run of consecutive screened waivers at the cursor
  * head in one transaction. It takes every page guard (in the engine's key
@@ -192,21 +195,27 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
         'SELECT id,slug,deleted_at IS NOT NULL AS deleted,knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])', [cursor.sourceId, run.map(entry => entry.pending.slug)]);
       const bySlug = new Map(pages.map(page => [page.slug, page]));
       const scope = syncOriginScope(cursor);
-      const checks = await pipelined(tx, run.flatMap(({ pending, waived }) => [
-        () => tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, unfinishedPageRequestParams(cursor, pending)),
-        () => waived.kind === 'delete'
-          ? assertSyncPageOrigin(tx, cursor.sourceId, pending.intent.sourcePath!, pending.pageId, true, scope).then(() => true, () => false)
-          : Promise.resolve(true),
-      ])) as Array<unknown[] | boolean>;
+      // #6423: the per-entry checks go out in pipelined chunks of at most WAIVER_PIPELINE_MAX calls, and a chunk is sent only
+      // while every entry before it validated (the prefix stops at the first entry that does not).
       let valid = 0;
-      for (const [i, { pending, waived }] of run.entries()) {
-        const page = bySlug.get(pending.slug);
-        const revision = page ? page.knowledge_revision == null ? REVISION_BACKFILL_PENDING : String(page.knowledge_revision) : null;
-        if (!page || Number(page.id) !== pending.pageId || revision !== pending.intent.expected_revision) break;
-        if (waived.kind === 'delete' ? !page.deleted || readSyncFile(cursor.root, pending.intent.path!) !== null : page.deleted) break;
-        if ((checks[2 * i] as unknown[]).length || checks[2 * i + 1] !== true) break;
-        if (waived.kind === 'import' && syncRawHash(cursor.root, pending.intent.path!) !== pending.intent.rawHash) break;
-        valid++;
+      chunks: for (let from = 0; from < run.length; from += WAIVER_PIPELINE_MAX / 2) {
+        const chunk = run.slice(from, from + WAIVER_PIPELINE_MAX / 2);
+        noteDrainSql(UNFINISHED_PAGE_REQUEST_SQL);
+        const checks = await pipelined(tx, chunk.flatMap(({ pending, waived }) => [
+          () => tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, unfinishedPageRequestParams(cursor, pending)),
+          () => waived.kind === 'delete'
+            ? assertSyncPageOrigin(tx, cursor.sourceId, pending.intent.sourcePath!, pending.pageId, true, scope).then(() => true, () => false)
+            : Promise.resolve(true),
+        ])) as Array<unknown[] | boolean>;
+        for (const [i, { pending, waived }] of chunk.entries()) {
+          const page = bySlug.get(pending.slug);
+          const revision = page ? page.knowledge_revision == null ? REVISION_BACKFILL_PENDING : String(page.knowledge_revision) : null;
+          if (!page || Number(page.id) !== pending.pageId || revision !== pending.intent.expected_revision) break chunks;
+          if (waived.kind === 'delete' ? !page.deleted || readSyncFile(cursor.root, pending.intent.path!) !== null : page.deleted) break chunks;
+          if ((checks[2 * i] as unknown[]).length || checks[2 * i + 1] !== true) break chunks;
+          if (waived.kind === 'import' && syncRawHash(cursor.root, pending.intent.path!) !== pending.intent.rawHash) break chunks;
+          valid++;
+        }
       }
       if (!valid) return null;
       return { cursor: await advance(tx, run.slice(0, valid)), waived: valid, ...(valid < run.length ? { next: run[valid]!.pending } : {}) };

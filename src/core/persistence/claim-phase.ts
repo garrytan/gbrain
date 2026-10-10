@@ -43,7 +43,8 @@ import { VERSION } from '../../version.ts';
 import { consumerIdentity, sameProcess } from './consumer-heartbeat.ts';
 
 export type ClaimPhaseName = 'preparing' | 'publishing';
-export const WAITING_ON = ['git', 'fs', 'db', 'pool', 'unknown'] as const;
+/** #6405: `publication` is the publish phase's own wait (a stamp in `publishing` no longer reads `unknown`). */
+export const WAITING_ON = ['git', 'fs', 'db', 'pool', 'publication', 'unknown'] as const;
 export type WaitingOn = typeof WAITING_ON[number];
 export interface ClaimPhaseClock {
   phase: ClaimPhaseName;
@@ -88,7 +89,7 @@ export function enterClaimPhase(clock: ClaimPhaseClock, phase: ClaimPhaseName, n
   clock.since = now;
   clock.step = null;
   clock.stepSince = now;
-  clock.waitingOn = 'unknown';
+  clock.waitingOn = phase === 'publishing' ? 'publication' : 'unknown';
 }
 /**
  * A preparer's step boundary: names the step and what its await waits on,
