@@ -12,7 +12,7 @@ import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { hermesAdapter } from '../src/core/transcripts/hermes.ts';
+import { hermesAdapter, HERMES_SPEC_TARGET } from '../src/core/transcripts/hermes.ts';
 import { trimSessionMessages } from '../src/core/transcripts/session-selection.ts';
 import type { FileDiagnostics, ParsedSession } from '../src/core/transcripts/types.ts';
 
@@ -28,13 +28,26 @@ async function drain(path: string, sessionSources?: string[]) {
   return { sessions, diagnostics: step.value as FileDiagnostics };
 }
 
+test('the verified schema contract is scoped to the exercised native Hermes pin', async () => {
+  const parsed = await drain(nativeFixture());
+  expect(parsed.sessions).toHaveLength(2);
+  expect(HERMES_SPEC_TARGET.status).toBe('verified');
+  expect(HERMES_SPEC_TARGET.references.join('\n')).toContain('46d7718a52ff33accb15dc0501736fbdb6833cab');
+  expect(HERMES_SPEC_TARGET.note).toContain('Other revisions and populated production stores are not covered');
+});
+
 function nativeFixture(): string {
   const dir = mkdtempSync(join(tmpdir(), 'hermes-native-fixture-'));
   tempDirs.push(dir);
   const path = join(dir, 'state.db');
   const checkout = process.env.HERMES_API_CHECKOUT;
   const python = process.env.HERMES_FIXTURE_PYTHON;
+  const requirePinned = process.env.HERMES_REQUIRE_PINNED_FIXTURE === '1';
+  if (Boolean(checkout) !== Boolean(python)) {
+    throw new Error('HERMES_API_CHECKOUT and HERMES_FIXTURE_PYTHON must be set together');
+  }
   if (!checkout || !python) {
+    if (requirePinned) throw new Error('Pinned Hermes fixture required; set HERMES_API_CHECKOUT and HERMES_FIXTURE_PYTHON');
     copyFileSync(checkedInFixture, path);
     return path;
   }
@@ -73,7 +86,7 @@ describe('native Hermes state.db transcript compatibility', () => {
     expect(cutover.meta.raw?.source_session_id).toBe('fixture-cli');
     expect(trimSessionMessages(cli, '2026-08-05T08:00:05Z').meta.sessionId).toBe(cutover.meta.sessionId);
     expect(cli.messages).toHaveLength(4); // trimming is a separate view, never destructive
-  });
+  }, 30_000);
 
   test('reads a cleanly closed WAL-mode store when SQLite left no WAL sidecar', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'hermes-closed-wal-'));

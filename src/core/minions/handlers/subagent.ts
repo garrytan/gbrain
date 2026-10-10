@@ -72,6 +72,7 @@ import {
   type PersistedToolExec,
 } from './subagent-persistence.ts';
 import { randomUUIDv7 } from 'bun';
+import { localSubagentTools } from '../local-subagent.ts';
 import { snapshotFromJob } from '../delegated-policy.ts';
 import { applyDelegatedData, guardDelegatedTools } from '../delegated-tools.ts';
 import { withDelegatedSpend } from '../delegated-spend.ts';
@@ -326,6 +327,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   ): Promise<SubagentResult> {
     const data = { ...(ctx.data ?? {}) } as unknown as SubagentHandlerData;
     const submitted = snapshotFromJob(ctx.data);
+    const localSubagent = await localSubagentTools(engine, ctx.id, ctx.data);
     await applyDelegatedData(engine, submitted, ctx.id, data);
     if (!data.prompt || typeof data.prompt !== 'string') {
       throw new Error('subagent job data.prompt is required (string)');
@@ -467,6 +469,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // the server-side check stay in sync).
     const registry = deps.toolRegistry ?? buildBrainTools({
       subagentId: ctx.id,
+      localSubagent,
       engine,
       config,
       brainId: data.brain_id,
@@ -533,6 +536,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         // the model path (the standing embed machinery backfills).
         const oneshotRegistry = deps.toolRegistry ?? buildBrainTools({
           subagentId: ctx.id,
+          localSubagent,
           engine,
           config,
           brainId: data.brain_id,

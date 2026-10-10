@@ -63,6 +63,7 @@ import { basename, join, dirname, isAbsolute, resolve } from 'node:path';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine, DreamVerdict, TriageSegment } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
+import { BRAIN_TOOL_ALLOWLIST } from '../minions/tools/brain-tool-allowlist.ts';
 import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue } from '../minions/queue.ts';
 import { clampSubagentBudgets, CYCLE_DEADLINE_RESERVE_MS, MIN_PATTERNS_SUBAGENT_BUDGET_MS, loadPatternsOutputSlugPrefix } from './patterns.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
@@ -332,6 +333,7 @@ export function rewriteChunkedSlug(slug: string, hash6: string, idx: number): st
 // ── Public entry ──────────────────────────────────────────────────────
 
 export interface SynthesizePhaseOpts {
+  localSubagentSubmit?: (data: Record<string, unknown>, operations: readonly string[], prefixes: readonly string[]) => Promise<import('../minions/queue.ts').TrustedSubmitOpts>;
   brainDir: string;
   dryRun: boolean;
   /** #4077: cooperative cancellation from the enclosing cycle/minion job. A
@@ -951,13 +953,19 @@ async function runPhaseSynthesizeInner(
           private_queue_owner_token: privateQueueOwnerToken,
           private_queue_lease_ms: DEFAULT_PRIVATE_QUEUE_LEASE_MS,
         };
+        // Explicit producer mints a payload-bound capability; legacy producers stay unchanged.
+        const allowedOperations = [...BRAIN_TOOL_ALLOWLIST];
+        if (opts.localSubagentSubmit) childData.allowed_tools = allowedOperations;
+        const trustedSubmit = opts.localSubagentSubmit
+          ? await opts.localSubagentSubmit(childData as unknown as Record<string, unknown>, allowedOperations, allowedSlugPrefixes)
+          : { allowProtectedSubmit: true };
         let child: Awaited<ReturnType<typeof queue.add>>;
         try {
           child = await queue.add(
             'subagent',
             childData as unknown as Record<string, unknown>,
             submitOpts,
-            { allowProtectedSubmit: true },
+            trustedSubmit,
           );
         } catch (e) {
           // Admission quota (minions.quota_max_waiting.subagent, config-only):
@@ -1002,7 +1010,7 @@ async function runPhaseSynthesizeInner(
               'subagent',
               childData as unknown as Record<string, unknown>,
               submitOpts,
-              { allowProtectedSubmit: true },
+              trustedSubmit,
             );
           }
         }

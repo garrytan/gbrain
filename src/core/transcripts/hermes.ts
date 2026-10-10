@@ -7,14 +7,16 @@
  * parse a private temp snapshot; source storage stays read-only. The snapshot
  * dir is removed in finally, including early generator cancellation.
  *
- * Schema pinned to NousResearch/hermes-agent commit
- * 46d7718a52ff33accb15dc0501736fbdb6833cab (hermes_state_common.py SCHEMA_SQL)
- * — sessions(id, source, display_name,
- * title, started_at REAL epoch-seconds, cwd, model) and messages(session_id,
- * role, content, timestamp REAL). A synthetic SQLite fixture uses the full
- * pinned upstream DDL. No production store was verified, so the SPEC_TARGET
- * stays PROVISIONAL; the bytes>0/sessions==0 drift signal is
- * the runtime backstop.
+ * Compatibility contract: ONLY NousResearch/hermes-agent commit
+ * 46d7718a52ff33accb15dc0501736fbdb6833cab, specifically
+ * hermes_state_common.py SCHEMA_SQL and hermes_state.py SessionDB. That
+ * revision defines sessions(id, source, display_name, title, started_at REAL
+ * epoch-seconds, cwd, model) and messages(session_id, role, content,
+ * timestamp REAL); test/hermes-native-transcript.test.ts builds a synthetic
+ * store through the pinned SessionDB API in its native-fixture lane. This is
+ * not a claim of compatibility with other Hermes revisions or populated
+ * production stores. The verified target is this exact pinned API only.
+ * A bytes>0/sessions==0 drift signal is the runtime backstop.
  */
 
 import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -32,7 +34,7 @@ import type {
 
 export const HERMES_SPEC_TARGET: HostSpecTarget = {
   id: 'hermes-state-db-46d7718-2026-10',
-  status: 'provisional',
+  status: 'verified',
   verifiedAt: '2026-10-09',
   references: [
     'https://github.com/NousResearch/hermes-agent/blob/46d7718a52ff33accb15dc0501736fbdb6833cab/hermes_state_common.py',
@@ -49,7 +51,8 @@ export const HERMES_SPEC_TARGET: HostSpecTarget = {
     'JSON block array is unwrapped to its text blocks. active/compacted ' +
     'flags are IGNORED (the archive wants full history, not the live ' +
     'context window). Exact sessions.source filters do not prove per-turn human origin. ' +
-    'PROVISIONAL: pinned schema + synthetic SQLite compatibility; no populated production sample verified.',
+    'Verified against the pinned native SessionDB with generated synthetic SQLite and live-WAL fixtures. ' +
+    'Other revisions and populated production stores are not covered by this target.',
 };
 
 /** Hard cap for the store copy (FTS indexes make legitimate stores large). */

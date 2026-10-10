@@ -6,7 +6,7 @@ on:
     paths:
       - 'integrations/hermes/**'
       - 'test/hermes-python/**'
-      - 'test/hermes-managed-writer.test.ts'
+      - 'test/hermes-*.test.ts'
       - 'test/helpers/**'
       - 'test/fixtures/transcripts/**'
       - 'bunfig.toml'
@@ -20,7 +20,7 @@ on:
     paths:
       - 'integrations/hermes/**'
       - 'test/hermes-python/**'
-      - 'test/hermes-managed-writer.test.ts'
+      - 'test/hermes-*.test.ts'
       - 'test/helpers/**'
       - 'test/fixtures/transcripts/**'
       - 'bunfig.toml'
@@ -73,6 +73,16 @@ jobs:
           HERMES_API_CHECKOUT: ${{ github.workspace }}/_ci/hermes-agent
           PYTHONDONTWRITEBYTECODE: '1'
         run: python test/hermes-python/validate_native.py
+      - name: Regenerated pinned Hermes SQLite contract
+        env:
+          HERMES_API_CHECKOUT: ${{ github.workspace }}/_ci/hermes-agent
+          HERMES_REQUIRE_PINNED_FIXTURE: '1'
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          export HERMES_FIXTURE_PYTHON="$(command -v python)"
+          . scripts/lib/test-env.sh
+          ensure_pglite_snapshot hermes-native-contract
+          bun test --timeout=60000 test/hermes-native-transcript.test.ts test/hermes-transcript-cutover.test.ts
       - name: Managed-writer Hermes transcript reconciliation
         run: bun test --timeout=60000 test/hermes-managed-writer.test.ts
       - name: Native Hermes MemoryManager acceptance
@@ -80,3 +90,45 @@ jobs:
           HERMES_API_CHECKOUT: ${{ github.workspace }}/_ci/hermes-agent
           PYTHONDONTWRITEBYTECODE: '1'
         run: python test/hermes-python/native_manager_acceptance.py
+
+  marketplace-validation:
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      # Hermes owns the workspace root so its pinned, local PM action uses
+      # exactly the same layout as its own plugin-catalog admission workflow.
+      - name: Pinned Hermes marketplace validator
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: NousResearch/hermes-agent
+          ref: dce1e9b37581dd62e480a9064dc04a709c2940d3
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Candidate plugin at the event commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: _candidate
+          persist-credentials: false
+      - name: Locked Hermes runtime, without optional extras
+        uses: ./.github/actions/setup-pm
+        with:
+          toolchain: python
+          extras: '[]'
+          cache: 'false'
+          cache-python: 'false'
+      - name: Native marketplace admission checks
+        # No event text or credentials are interpolated into executable code.
+        run: |
+          set -euo pipefail
+          hermes plugins validate _candidate/integrations/hermes --install-deps --json > marketplace-validation.json 2> marketplace-validation.stderr
+          python -c 'import json,pathlib; r=json.loads(pathlib.Path("marketplace-validation.json").read_text()); e=pathlib.Path("marketplace-validation.stderr").read_text(); assert r["ok"] and all(c["ok"] for c in r["checks"]); assert "dependency preparation failed:" not in e; print(json.dumps(r,indent=2))'
+      - name: Preserve validator and scanner disclosures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hermes-marketplace-validation
+          path: |
+            marketplace-validation.json
+            marketplace-validation.stderr
+          if-no-files-found: warn

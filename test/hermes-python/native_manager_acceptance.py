@@ -27,7 +27,7 @@ sys.path.insert(0, str(checkout))
 from agent.memory_manager import MemoryManager
 from agent.secret_scope import set_secret_scope, reset_secret_scope, set_multiplex_active
 from hermes_constants import set_hermes_home_override, reset_hermes_home_override
-from hermes_cli.config import load_config
+from hermes_cli.config import load_config, save_config
 from plugins.memory import load_memory_provider
 
 
@@ -48,12 +48,16 @@ class NativeManagerAcceptance(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(prefix="hermes-manager-acceptance-")
         cls.addClassCleanup(cls.temp.cleanup)
         cls.root = Path(cls.temp.name)
+        cls.data_dir = cls.root / "durable-pglite"
         cls.stderr = (cls.root / "server.log").open("w+")
         cls.addClassCleanup(cls.stderr.close)
+        server_env = os.environ.copy()
+        server_env["GBRAIN_HERMES_FIXTURE_DATA_DIR"] = str(cls.data_dir)
+        cls.server_env = server_env
         cls.server = subprocess.Popen(
             [shutil.which("bun"), "test/helpers/hermes-provider-server.ts"], cwd=REPO,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=cls.stderr,
-            text=True, bufsize=1,
+            text=True, bufsize=1, env=server_env,
         )
         cls.addClassCleanup(cls.stop_server)
         cls.lines = queue.Queue()
@@ -110,6 +114,40 @@ class NativeManagerAcceptance(unittest.TestCase):
         if result.get("control") != action:
             raise RuntimeError("Unexpected fixture control response")
         return result["result"]
+
+    @classmethod
+    def restart_fixture_process(cls):
+        """Replace the actual Bun/PGLite host process while retaining its on-disk data dir."""
+        old = cls.server
+        if old.stdin:
+            old.stdin.close()
+        old.wait(timeout=30)
+        if old.stdout:
+            old.stdout.close()
+        cls.server_env["GBRAIN_HERMES_FIXTURE_REOPEN"] = "1"
+        cls.server = subprocess.Popen(
+            [shutil.which("bun"), "test/helpers/hermes-provider-server.ts"], cwd=REPO,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=cls.stderr,
+            text=True, bufsize=1, env=cls.server_env,
+        )
+        cls.lines = queue.Queue()
+        def read_lines():
+            for line in cls.server.stdout:
+                try:
+                    cls.lines.put(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        cls.reader = threading.Thread(target=read_lines, daemon=True)
+        cls.reader.start()
+        try:
+            cls.ready = cls.lines.get(timeout=120)
+        except queue.Empty:
+            cls.stderr.flush()
+            cls.stderr.seek(0)
+            raise RuntimeError("Restarted native fixture failed to become ready: " + cls.stderr.read()[-5000:]) from None
+        if not cls.ready.get("sourceTokens"):
+            raise RuntimeError("Restarted native fixture did not return source-scoped grants")
+        return cls.ready
 
     def manager(self, home, sid):
         provider = load_memory_provider("gbrain")
@@ -198,6 +236,61 @@ class NativeManagerAcceptance(unittest.TestCase):
                 self.assertIn("Brain", skill.get("content", ""))
             finally:
                 fresh.shutdown_all()
+
+    def test_05_durable_pglite_state_survives_engine_and_http_server_restart(self):
+        home, grant = self.profiles[0]
+        marker = "durable-after-restart-7319"
+        with scope(home, grant["token"]):
+            manager = self.manager(home, "before-process-restart")
+            try:
+                result = json.loads(manager.handle_tool_call("gbrain_remember", {
+                    "fact": f"Synthetic restart evidence marker is {marker}.",
+                    "entity": "restart-evidence", "infer_entity": False,
+                    "visibility": "world", "provenance": "durable restart regression fixture",
+                }))
+                self.assertNotIn("error", result, result)
+                self.assertEqual(result.get("state"), "committed", result)
+            finally:
+                manager.shutdown_all()
+
+            restarted = self.restart_fixture_process()
+            self.assertEqual(self.data_dir.is_dir(), True, "fixture must use a filesystem-backed PGLite data directory")
+            self.assertTrue(restarted.get("url"))
+            config = load_config()
+            config["memory"]["gbrain"]["url"] = restarted["url"]
+            save_config(config, merge_existing=True)
+
+            fresh = self.manager(home, "after-process-restart")
+            try:
+                recalled = fresh.handle_tool_call("gbrain_recall", {"entity": "restart-evidence"})
+                self.assertIn(marker, recalled, "fresh provider/manager must read committed state from reopened PGLite")
+            finally:
+                fresh.shutdown_all()
+
+    def test_06_native_manager_forwards_rewind_and_compression_hooks_for_rehydration(self):
+        home, grant = self.profiles[0]
+        with scope(home, grant["token"]):
+            manager = self.manager(home, "hook-rehydration-session")
+            try:
+                provider = manager.get_provider("gbrain")
+                calls = []
+                original_call = provider._client.call
+                def record_call(name, arguments):
+                    calls.append((name, dict(arguments)))
+                    return original_call(name, arguments)
+                provider._client.call = record_call
+
+                manager.prefetch_all(grant["marker"])
+                manager.on_session_switch("hook-rehydration-session", rewound=True)
+                after_undo = manager.prefetch_all(grant["marker"], session_id="hook-rehydration-session")
+                self.assertIn(grant["marker"], after_undo)
+                manager.on_pre_compress([], require_checkpoint=False)
+                after_compress = manager.prefetch_all(grant["marker"], session_id="hook-rehydration-session")
+                self.assertIn(grant["marker"], after_compress)
+                packs = [args for name, args in calls if name == "context_pack"]
+                self.assertGreaterEqual(len(packs), 3, "initial, same-ID rewind, and pre-compress each require rehydration")
+            finally:
+                manager.shutdown_all()
 
     def test_02_concurrent_profile_contexts_cannot_read_sibling_sources(self):
         def read_profile(index):

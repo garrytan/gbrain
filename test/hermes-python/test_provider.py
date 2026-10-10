@@ -327,6 +327,63 @@ class ContractTests(unittest.TestCase):
             self.assertIn("unavailable", p.prefetch("work"))
             self.assertEqual(len(self.server.calls), count)
 
+    def test_warm_provider_tracks_secret_rotation_removal_renewal_and_sibling_scope(self):
+        from hermes_constants import set_hermes_home_override, reset_hermes_home_override
+        import os
+
+        original = os.environ.get("GBRAIN_MCP_TOKEN")
+        os.environ["GBRAIN_MCP_TOKEN"] = "ambient-static-must-not-fallback"
+        one = {"GBRAIN_MCP_TOKEN": "profile-one-token"}
+        two = {"GBRAIN_MCP_TOKEN": "profile-two-token"}
+        try:
+            with profile(self.home, "unused"):
+                first_scope = set_secret_scope(one, profile_home=str(self.home))
+                first_home = set_hermes_home_override(self.home)
+                try:
+                    warm = self.provider()
+                    warm.prefetch("rotation check")
+                    self.assertEqual(self.server.calls[-1][0], "Bearer profile-one-token")
+
+                    one["GBRAIN_MCP_TOKEN"] = "profile-one-renewed-token"
+                    warm.prefetch("rotation check")
+                    self.assertEqual(self.server.calls[-1][0], "Bearer profile-one-renewed-token")
+
+                    from concurrent.futures import ThreadPoolExecutor
+                    from threading import Barrier
+                    barrier = Barrier(2)
+                    def concurrent_prefetch(home, secret, sid):
+                        with profile(home, secret):
+                            participant = self.provider(sid)
+                            barrier.wait(timeout=10)
+                            return participant.prefetch("simultaneous profile check")
+                    with ThreadPoolExecutor(max_workers=2) as pool:
+                        first_future = pool.submit(concurrent_prefetch, self.home, "profile-one-renewed-token", "parallel-one")
+                        sibling_future = pool.submit(concurrent_prefetch, self.other, "profile-two-token", "parallel-two")
+                        first_future.result(timeout=20)
+                        sibling_future.result(timeout=20)
+                    headers = [header for header, _ in self.server.calls]
+                    self.assertIn("Bearer profile-one-renewed-token", headers)
+                    self.assertIn("Bearer profile-two-token", headers)
+
+                    one.pop("GBRAIN_MCP_TOKEN")
+                    calls = len(self.server.calls)
+                    missing = warm.prefetch("must fail closed")
+                    self.assertIn("gbrain notice", missing)
+                    self.assertEqual(len(self.server.calls), calls)
+                    self.assertNotIn("ambient-static-must-not-fallback", missing)
+
+                    one["GBRAIN_MCP_TOKEN"] = "profile-one-renewed-again"
+                    warm.prefetch("renewed after removal")
+                    self.assertEqual(self.server.calls[-1][0], "Bearer profile-one-renewed-again")
+                finally:
+                    reset_hermes_home_override(first_home)
+                    reset_secret_scope(first_scope)
+        finally:
+            if original is None:
+                os.environ.pop("GBRAIN_MCP_TOKEN", None)
+            else:
+                os.environ["GBRAIN_MCP_TOKEN"] = original
+
     def test_first_delta_does_not_depend_on_host_uptime(self):
         from unittest.mock import patch
         CONFIGS[str(self.home)]["memory"]["gbrain"]["heartbeat_seconds"] = 300

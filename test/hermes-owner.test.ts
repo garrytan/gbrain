@@ -126,6 +126,18 @@ test('wire input rejects path, source and paid-work widening; receipt retains om
   assert.ok(JSON.stringify(cycle).length < 4096);
 });
 
+test('lock receipts bound identifiers without truncating or hiding omission counts', () => {
+  const f = fixture();
+  const ids = ['gbrain-sync:' + 'x'.repeat(300_000), ...Array.from({ length: 500 }, (_, i) => `gbrain-sync:source-${i}`)];
+  const report = hermesReportForWire({ ...f.report, lock_reap: { reaped: ids.length, reapedIds: ids } });
+  assert.equal(report.lock_reap!.reaped, 501);
+  assert.equal(report.lock_reap!.reapedIds.length, 100);
+  assert.deepEqual(report.lock_reap!.reapedIds, ids.slice(1, 101));
+  assert.equal(report.wire_omitted.reaped_lock_ids, 401);
+  assert.ok(Buffer.byteLength(JSON.stringify(report)) < 16_384);
+  assert.equal(ids[0].length, 300_012, 'wire projection must not mutate the original receipt');
+});
+
 test('non-success CLI JSON carries a D5 failure envelope without discarding progress', () => {
   const f = fixture();
   for (const status of ['partial', 'failed'] as const) {
