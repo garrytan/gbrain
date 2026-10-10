@@ -306,7 +306,8 @@ export const extractorFactsRepair: RepairHandler = {
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }
-    const approved = await loadApprovedSet<ExtractorFactsPage>(engine, { command: 'extractor-facts', hash: opts.expect, previewCommand: command });
+    const approved = await loadApprovedSet<ExtractorFactsPage>(engine, { command: 'extractor-facts', hash: opts.expect, previewCommand: command,
+      emptyHash: async () => previewHash(await hashParts(engine, scope, includeAmbiguous, [])) });
     const scopeKey = JSON.stringify(scope.source_ids);
     if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey)) {
       throw previewChangedError(opts.expect, command);

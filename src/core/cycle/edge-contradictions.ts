@@ -21,6 +21,9 @@
  * different targets whose combined evidence hash has no proposal yet.
  * Bounded by max_subjects and the cycle budget meter (max_usd).
  */
+import { redactProviderKeys } from '../ai/key-redact.ts';
+import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
+import { applyRedaction, planRedaction } from '../secret-scan.ts';
 import { LINK_EXTRACTION_GENERATION_KEY } from '../line-grammar.ts';
 import { linkExtractorWatermarkFor } from '../link-extraction-watermark.ts';
 import { createHash } from 'node:crypto';
@@ -266,10 +269,18 @@ export async function runPhaseEdgeContradictions(engine: BrainEngine, opts: Edge
     // Skip subjects whose every pair already has a proposal for this evidence.
     const pairs: Array<[CandidateRow, CandidateRow]> = [];
     for (let i = 0; i < g.rels.length; i++) for (let j = i + 1; j < g.rels.length; j++) pairs.push(ordered(g.rels[i], g.rels[j]));
-    const known = new Set((await engine.executeRaw<{ a: number; b: number }>(
-      `SELECT a_to_page_id AS a, b_to_page_id AS b FROM link_edge_proposals
+    // #6311: an error row is known while it is in its 24 h backoff or held after JUDGE_MAX_ATTEMPTS.
+    const known = new Set<string>();
+    const priorAttempts = new Map<string, number>();
+    for (const r of await engine.executeRaw<{ a: number; b: number; status: string; detail: string | null; recent: boolean }>(
+      `SELECT a_to_page_id AS a, b_to_page_id AS b, status, detail, updated_at > now() - interval '24 hours' AS recent FROM link_edge_proposals
         WHERE from_page_id = $1 AND link_type = $2 AND evidence_hash = ANY($3::text[])`,
-      [g.fromId, g.linkType, pairs.map(([a, b]) => pairHash(a, b))])).map(r => `${r.a}:${r.b}`));
+      [g.fromId, g.linkType, pairs.map(([a, b]) => pairHash(a, b))])) {
+      const key = `${r.a}:${r.b}`;
+      const attempts = r.status === 'error' ? judgeAttempts(r.detail) : 0;
+      if (r.status !== 'error' || r.recent || attempts >= JUDGE_MAX_ATTEMPTS) known.add(key);
+      else priorAttempts.set(key, attempts);
+    }
     const fresh = pairs.filter(([a, b]) => !known.has(`${a.to_page_id}:${b.to_page_id}`));
     if (fresh.length === 0) { totals.skipped_known++; continue; }
 
@@ -285,14 +296,22 @@ export async function runPhaseEdgeContradictions(engine: BrainEngine, opts: Edge
     if (!check.allowed) { budgetExhausted = true; break; }
 
     let verdict: JudgePair[] | null = null;
+    let failure = 'malformed: judge output missing or malformed';
     try { verdict = await judge({ subject: g, relationships, modelHint: model, maxOutputTokens: JUDGE_MAX_OUTPUT_TOKENS }); }
-    catch (e) { process.stderr.write(`[edge_contradictions] judge failed for ${g.slug}: ${(e as Error).message}\n`); }
+    catch (e) {
+      failure = judgeFailureDetail(e);
+      process.stderr.write(`[edge_contradictions] judge failed for ${g.slug}: ${failure}\n`);
+    }
     totals.judged++;
     for (const [a, b] of fresh) {
       const hash = pairHash(a, b);
       const ia = g.rels.indexOf(a) + 1, ib = g.rels.indexOf(b) + 1;
       if (!verdict) {
-        await recordProposal(engine, g, a, b, hash, { status: 'error', model, detail: 'judge output missing or malformed' });
+        const attempt = (priorAttempts.get(`${a.to_page_id}:${b.to_page_id}`) ?? 0) + 1;
+        const detail = attempt >= JUDGE_MAX_ATTEMPTS
+          ? `held after ${attempt} attempts; ${failure}; reset: gbrain edge-proposals retry --all-held`
+          : `attempt ${attempt}/${JUDGE_MAX_ATTEMPTS}; ${failure}`;
+        await recordProposal(engine, g, a, b, hash, { status: 'error', model, detail });
         totals.errors++;
         continue;
       }
@@ -392,6 +411,23 @@ async function runDeclaredSingleValue(
   return { handled, totals };
 }
 
+/** #6311: judge attempts per evidence key; the 24 h backoff spaces them, then the pair is held until `edge-proposals retry`. */
+export const JUDGE_MAX_ATTEMPTS = 3;
+
+/** Attempts an error row records (`attempt N/3; …` or `held after N attempts; …`); a legacy row counts as one. */
+function judgeAttempts(detail: string | null): number {
+  const m = /^(?:attempt (\d+)\/\d+|held after (\d+) attempts);/.exec(detail ?? '');
+  return m ? Number(m[1] ?? m[2]) : 1;
+}
+
+/** The stored failure: error class plus a redacted message of at most 200 characters. */
+function judgeFailureDetail(e: unknown): string {
+  const name = e instanceof Error ? e.name || 'Error' : 'Error';
+  const raw = redactConnectionInfo(redactProviderKeys(e instanceof Error ? e.message : String(e), process.env));
+  const message = applyRedaction(planRedaction(raw, { labeledCredentials: true })).replace(/\s+/g, ' ').trim();
+  return `${name}: ${message.length > 200 ? `${message.slice(0, 199)}…` : message}`;
+}
+
 async function recordProposal(
   engine: BrainEngine, g: SubjectGroup, a: CandidateRow, b: CandidateRow, hash: string,
   p: { status: string; model: string; confidence?: number | null; endingTo?: number; closeDate?: string; bornClosed?: boolean; line?: string; detail?: string },
@@ -400,7 +436,11 @@ async function recordProposal(
     `INSERT INTO link_edge_proposals (source_id, from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash, status,
        ending_to_page_id, close_date, born_closed, model, confidence, generated_line, detail)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12, $13, $14)
-     ON CONFLICT (from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash) DO NOTHING
+     ON CONFLICT (from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash) DO UPDATE SET
+       status = EXCLUDED.status, ending_to_page_id = EXCLUDED.ending_to_page_id, close_date = EXCLUDED.close_date,
+       born_closed = EXCLUDED.born_closed, model = EXCLUDED.model, confidence = EXCLUDED.confidence,
+       generated_line = EXCLUDED.generated_line, detail = EXCLUDED.detail, updated_at = now()
+     WHERE link_edge_proposals.status = 'error'
      RETURNING id`,
     [g.sourceId, g.fromId, Number(a.to_page_id), Number(b.to_page_id), g.linkType, hash, p.status,
       p.endingTo ?? null, p.closeDate ?? null, p.bornClosed ?? false, p.model, p.confidence ?? null, p.line ?? null, p.detail ?? null]);

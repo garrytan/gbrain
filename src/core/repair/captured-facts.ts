@@ -268,7 +268,11 @@ export const capturedFactsRepair: RepairHandler = {
         `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }
-    const approved = await loadApprovedSet<CapturedFactsPage>(engine, { command: 'captured-facts', hash: opts.expect, previewCommand: command });
+    const approved = await loadApprovedSet<CapturedFactsPage>(engine, { command: 'captured-facts', hash: opts.expect, previewCommand: command,
+      emptyHash: async () => {
+        const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
+        return previewHash(['captured-facts-v1', brain?.brain_id ?? 'host', scope.source_ids, includeAmbiguous, []]);
+      } });
     const scopeKey = JSON.stringify(scope.source_ids);
     if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey)) {
       throw previewChangedError(opts.expect, command);

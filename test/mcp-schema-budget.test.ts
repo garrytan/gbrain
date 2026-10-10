@@ -50,7 +50,7 @@ import { cl100kAvailable, estimateTokens } from '../src/core/chunkers/token-esti
 
 const SERVED_STARTER_MAX_CHARS = 25_000;
 const SERVED_STARTER_MAX_TOKENS = 5_700;
-/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; traverse_graph's `hops` is full-surface-only, 25,941 measured; 26,402 once mute_notice, the dismissal for the coaching notices starter sessions receive, joined starter; 26,671 with #6007's put_page wait_ms param and write guidance, which carry the put_pages hint and the receipt poll rule starter agents need; 26,679 with delta's opaque `cursor` param, paid for by trimming delta's own descriptions, model-visible 24,985; 26,692 with recall's `question` param, paid for by trimming recall's own parameter text, model-visible 24,998). */
+/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; traverse_graph's `hops` is full-surface-only, 25,941 measured; 26,402 once mute_notice, the dismissal for the coaching notices starter sessions receive, joined starter; 26,671 with #6007's put_page wait_ms param and write guidance, which carry the put_pages hint and the receipt poll rule starter agents need; 26,679 with delta's opaque `cursor` param, paid for by trimming delta's own descriptions, model-visible 24,985; 26,692 with recall's `question` param, paid for by trimming recall's own parameter text, model-visible 24,998; 24,996 after the #6446 merge, recall's grep text trimmed again). */
 const SERVED_STARTER_MAX_JSON_CHARS = 26_700;
 /** 4,042 at the cost wave + 586 for the operator contract's error protocol, notice prefix and memory loop (F1); no schema guidance moved here. */
 const INSTRUCTIONS_MAX_CHARS = 4_868; // #6007: +240 for the issue-required write guidance (put_pages, wait_ms)
@@ -176,6 +176,17 @@ describe('minimum guidance (DX-14)', () => {
       for (const phrase of phrases) expect(op.description, `${name}: ${phrase}`).toContain(phrase);
     });
   }
+
+  test('remember items description names entity and the optional item fields on starter and full (#6363)', () => {
+    for (const surface of ['starter', 'full'] as const) {
+      const op = filterOpsForSurface(operations, surface).find(o => o.name === 'remember')!;
+      const [def] = buildToolDefs([op]);
+      const items = (def.inputSchema.properties as Record<string, { description?: string }>).items;
+      for (const field of ['fact', 'entity', 'provenance', 'kind', 'ttl', 'visibility']) {
+        expect(items.description, `${surface}: ${field}`).toContain(field);
+      }
+    }
+  });
 
   test('every required input of a starter tool is declared in its schema', () => {
     for (const def of buildToolDefs(operations.filter(o => STARTER_OPS.has(o.name)))) {

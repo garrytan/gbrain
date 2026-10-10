@@ -60,7 +60,6 @@ import {
   stampDeepResearchIds,
   stampEvidenceSafe,
   maybeCaptureSearch,
-  thinkSourceScopeOpts,
 } from './context.ts';
 
 /**
@@ -88,6 +87,12 @@ async function trustedSearchScope(ctx: OperationContext, p: Record<string, unkno
   const scope = federatedSearchScope(ctx, sourceIdParam);
   const { floor } = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
   return floor ? { ...scope, minTrust: floor } : scope;
+}
+
+/** CRAG think escalation reads the same sources the query searched (explicit `source_id` included). */
+function thinkScopeFromQueryScope(scope: SourceScope): { sourceId?: string; allowedSources?: string[] } {
+  if (scope.sourceIds !== undefined) return { allowedSources: scope.sourceIds };
+  return scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {};
 }
 
 /**
@@ -1097,7 +1102,7 @@ const query: Operation = {
           try {
             const { runThink } = await import('../think/index.ts');
             const { embedQuery } = await import('../embedding.ts');
-            const thinkScope = thinkSourceScopeOpts(ctx);
+            const thinkScope = thinkScopeFromQueryScope(querySourceScope);
             const t = await runThink(ctx.engine, {
               question: queryText,
               since: typeof p.since === 'string' ? p.since : undefined,

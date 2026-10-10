@@ -252,7 +252,7 @@ const recall: Operation = {
     include_expired: { type: 'boolean', description: 'Include expired.' },
     supersessions: { type: 'boolean', description: 'Supersession log only.' },
     limit: { type: 'number', description: 'Per-arm max (default 50, cap 100).' },
-    grep: { type: 'string', description: 'Fact text substring.' },
+    grep: { type: 'string', description: 'Text substring.' },
     include_pending: { type: 'boolean', description: 'Pending count.' },
     return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'results[] unit (see search).' },
     return_window: { type: 'number', description: 'Window size 1-3.' },
