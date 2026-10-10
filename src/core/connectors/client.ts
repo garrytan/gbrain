@@ -36,6 +36,14 @@ export class ConnectorForbiddenError extends Error {
   }
 }
 
+/** Raised on a missing item; never confused with auth or a transient 5xx. */
+export class ConnectorNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConnectorNotFoundError';
+  }
+}
+
 /** A desktop-browser UA so the request doesn't self-identify as a bot. */
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
@@ -140,6 +148,9 @@ export class ConnectorClient {
         redirect: 'manual',
       });
       const bodyText = await res.text();
+      // An absent conversation is not a transient 5xx. Providers may use this
+      // typed verdict to resolve legacy routing without swallowing auth errors.
+      if (res.status === 404) throw new ConnectorNotFoundError(`connector: HTTP 404 on ${pathOrUrl}`);
       const c = classifyResponse(res, bodyText, this.now());
 
       if (c.kind === 'ok') {

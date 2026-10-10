@@ -20,6 +20,7 @@
 
 import type { HostSpecTarget } from '../../bootstrap/host-specs.ts';
 import type { ConnectorClient } from '../client.ts';
+import { ConnectorNotFoundError } from '../client.ts';
 import { toIso } from './chatgpt.ts';
 import type {
   ChatHistoryProvider,
@@ -56,6 +57,7 @@ const memoConversationOrg = new WeakMap<ConnectorClient, Map<string, string>>();
 
 const LIST_PAGE_LIMIT = 100;
 const MAX_LIST_PAGES = 500; // per org; never treat a truncated list as complete
+const MAX_LEGACY_ORG_LOOKUP = 10;
 
 interface OrgRow {
   uuid?: string;
@@ -174,6 +176,7 @@ export const claudeProvider: ChatHistoryProvider = {
           if (!opts.stopBefore || !updatedAt || updatedAt > opts.stopBefore) allOlder = false;
           stubs.push({
             id: r.uuid,
+            orgId: org,
             title: typeof r.name === 'string' ? r.name : undefined,
             updatedAt,
             createdAt: toIso(r.created_at) || undefined,
@@ -194,13 +197,30 @@ export const claudeProvider: ChatHistoryProvider = {
   async fetchConversation(
     client: ConnectorClient,
     id: string,
-    opts: { signal?: AbortSignal } = {},
+    opts: { signal?: AbortSignal; orgId?: string } = {},
   ): Promise<Record<string, unknown>> {
-    const org = memoConversationOrg.get(client)?.get(id) ?? (await resolveOrgs(client, opts.signal))[0];
-    const conv = await client.fetchJSON<Record<string, unknown>>(
-      `/api/organizations/${encodeURIComponent(org)}/chat_conversations/${encodeURIComponent(id)}?tree=True&rendering_mode=messages`,
-      { signal: opts.signal },
-    );
+    const orgs = await resolveOrgs(client, opts.signal);
+    const knownOrg = memoConversationOrg.get(client)?.get(id) ?? opts.orgId;
+    if (knownOrg && !orgs.includes(knownOrg)) throw new Error('claude: retained conversation organization is no longer accessible');
+    // Legacy ledgers did not retain the organization. Try only detail endpoints
+    // in accessible orgs, never reopen a full-history listing. Only 404 permits
+    // the next org; auth, blocks, drift and network failures remain terminal.
+    let conv: Record<string, unknown> | undefined;
+    for (const org of knownOrg ? [knownOrg] : orgs.slice(0, MAX_LEGACY_ORG_LOOKUP)) {
+      try {
+        conv = await client.fetchJSON<Record<string, unknown>>(
+          `/api/organizations/${encodeURIComponent(org)}/chat_conversations/${encodeURIComponent(id)}?tree=True&rendering_mode=messages`,
+          { signal: opts.signal },
+        );
+        const routing = memoConversationOrg.get(client) ?? new Map<string, string>();
+        routing.set(id, org);
+        memoConversationOrg.set(client, routing);
+        break;
+      } catch (e) {
+        if (!(e instanceof ConnectorNotFoundError)) throw e;
+      }
+    }
+    if (!conv) throw new ConnectorNotFoundError('claude: conversation not found in bounded organization lookup; use --full to refresh routing');
     const rawMsgs = Array.isArray((conv as { chat_messages?: unknown }).chat_messages)
       ? ((conv as { chat_messages: MsgRow[] }).chat_messages)
       : null;
@@ -222,6 +242,10 @@ export const claudeProvider: ChatHistoryProvider = {
       updated_at: conv.updated_at,
       chat_messages,
     };
+  },
+
+  conversationOrg(client, id) {
+    return memoConversationOrg.get(client)?.get(id);
   },
 
   sessionInstructions(): string {

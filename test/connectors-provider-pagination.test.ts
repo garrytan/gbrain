@@ -38,6 +38,29 @@ async function collect(gen: AsyncGenerator<ConversationStub>): Promise<Conversat
 }
 
 describe('claude connector listing (C-17)', () => {
+  test('a legacy retry resolves its org by bounded details, retains routing and stops on auth errors', async () => {
+    const seen: string[] = [];
+    const server = claudeServer([{ uuid: 'org-a', convs: 1 }, { uuid: 'org-b', convs: 1 }]);
+    const client = clientFor('https://claude.ai', server, seen);
+    const conv = await claudeProvider.fetchConversation(client, 'org-b-c0');
+    expect(conv.uuid).toBe('org-b-c0');
+    expect(claudeProvider.conversationOrg?.(client, 'org-b-c0')).toBe('org-b');
+    expect(seen.filter(p => p.includes('chat_conversations?'))).toEqual([]);
+    expect(seen.filter(p => p.includes('/chat_conversations/'))).toHaveLength(2);
+    const blocked: string[] = [];
+    const authClient = clientFor('https://claude.ai', url =>
+      url.pathname.includes('/chat_conversations/') ? json({ error: 'expired' }, 401) : server(url), blocked);
+    await expect(claudeProvider.fetchConversation(authClient, 'org-b-c0')).rejects.toMatchObject({ name: 'ConnectorAuthError' });
+    expect(blocked.filter(p => p.includes('/org-b/chat_conversations/'))).toEqual([]);
+  });
+
+  test('a missing legacy conversation searches at most ten accessible orgs', async () => {
+    const seen: string[] = [];
+    const client = clientFor('https://claude.ai', claudeServer(Array.from({ length: 15 }, (_, i) => ({ uuid: `org-${i}`, convs: 0 }))), seen);
+    await expect(claudeProvider.fetchConversation(client, 'missing')).rejects.toMatchObject({ name: 'ConnectorNotFoundError' });
+    expect(seen.filter(p => p.includes('/chat_conversations/'))).toHaveLength(10);
+  });
+
   const iso = (i: number) => new Date(Date.UTC(2026, 7, 1) + i * 60_000).toISOString();
   function claudeServer(orgs: Array<{ uuid: string; capabilities?: string[]; convs: number }>) {
     return (url: URL): Response => {

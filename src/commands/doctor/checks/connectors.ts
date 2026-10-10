@@ -16,6 +16,7 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { connectorProviderNames } from '../../../core/connectors/registry.ts';
 import { loadCredential } from '../../../core/connectors/credentials.ts';
+import { readConversationFailures } from '../../../core/connectors/failures.ts';
 import {
   authErrorAtKey,
   autoSyncKey,
@@ -38,11 +39,16 @@ export async function connectorsHealthCheck(engine: BrainEngine): Promise<Check>
   const problems: string[] = [];
   let anyCredential = false;
   const now = Date.now();
+  const sourceId = (await engine.getConfig(sourceIdKey())) || 'default';
 
   for (const provider of connectorProviderNames()) {
     const cred = loadCredential(provider);
     if (!cred) continue;
     anyCredential = true;
+    const unresolved = Object.keys(await readConversationFailures(engine, provider, sourceId)).length;
+    if (unresolved) {
+      problems.push(`${provider}: ${unresolved} unresolved conversation(s) — archive incomplete; bounded daily retries on sync; inspect \`gbrain connectors status ${provider} --json\``);
+    }
 
     const authErrorAt = await engine.getConfig(authErrorAtKey(provider));
     if (authErrorAt && cred.savedAt && authErrorAt > cred.savedAt) {
@@ -51,7 +57,7 @@ export async function connectorsHealthCheck(engine: BrainEngine): Promise<Check>
     }
 
     if (isTruthy(await engine.getConfig(autoSyncKey(provider)))) {
-      const lastSyncAt = await readConnectorState(engine, provider, (await engine.getConfig(sourceIdKey())) || 'default', 'last_sync_at');
+      const lastSyncAt = await readConnectorState(engine, provider, sourceId, 'last_sync_at');
       const lastMs = lastSyncAt ? Date.parse(lastSyncAt) : NaN;
       if (!Number.isFinite(lastMs) || now - lastMs >= staleHours * 3_600_000) {
         problems.push(

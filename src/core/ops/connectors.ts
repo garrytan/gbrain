@@ -16,6 +16,7 @@ import type { Operation } from './contract.ts';
 import { hostOnlyError, invalidParam } from './op-fix.ts';
 import { connectorProviders } from '../connectors/registry.ts';
 import { credentialMode, resolveCredential } from '../connectors/credentials.ts';
+import { readConversationFailures } from '../connectors/failures.ts';
 import {
   authErrorAtKey,
   autoSyncKey,
@@ -33,7 +34,7 @@ const connectors_status: Operation = {
   description:
     'Per-provider chat-connector status: strategies, whether a credential is ' +
     'present and from where (env/file — never the value), token expiry, ' +
-    'last_sync_at, auth_error_at, auto_sync, and the incremental watermark. ' +
+    'last_sync_at, auth_error_at, auto_sync, incremental watermark and unresolved conversations. ' +
     'Local-only; credentials never cross the wire.',
   scope: 'read',
   localOnly: true, cliOnly: { argv: ['gbrain', 'connectors', 'status'] },
@@ -66,6 +67,7 @@ const connectors_status: Operation = {
         last_sync_at: await readConnectorState(ctx.engine, prov.name, sourceId, 'last_sync_at'),
         auth_error_at: (await ctx.engine.getConfig(authErrorAtKey(prov.name))) || null,
         watermark_iso: await readConnectorState(ctx.engine, prov.name, sourceId, 'watermark_iso'),
+        unresolved: await readConversationFailures(ctx.engine, prov.name, sourceId),
       });
     }
     return { providers: out };

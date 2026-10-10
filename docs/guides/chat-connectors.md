@@ -105,10 +105,25 @@ has now failed three times at its current update time. That last case is
 quarantine. On its third failure at the same `updatedAt` a conversation is
 listed under `quarantined` in the sync result (`--json`) and stops blocking the
 watermark, so a run whose status is `partial` (the status still counts those
-errors) can advance it. Normal syncs skip a quarantined conversation until the
-provider reports a newer update time for it; `--full` lists and retries every
-conversation, quarantined ones included. Any other failed conversation keeps
-the watermark where it is, so the next run lists it and tries again.
+errors) can advance it. Failed IDs are retained even below the listing window.
+Normal syncs retry up to ten due quarantined conversations per run, directly by
+ID, with a 24-hour backoff after each failed attempt. Oldest due attempts go
+first, so persistent failures rotate rather than hiding other omissions. These
+retries still obey `--limit`; `--dry-run` previews them without fetching or
+changing state. A listed edit retries immediately; `--full` bypasses backoff
+and lists and retries every conversation, quarantined ones included. Any other
+failed conversation keeps the watermark where it is and is retried next run.
+Sync remains `partial` while any retained failure is unresolved, including
+during backoff or when the incremental list is empty. `connectors status --json`
+includes the source's `unresolved` ledger (attempts, update time, next retry
+time and, for Claude, organization routing); doctor warns that the archive is
+incomplete. Successful ingest clears only that conversation's failure.
+Legacy Claude failures without routing metadata try only the conversation's
+detail endpoint in up to ten accessible organizations, stopping immediately on
+auth or bot-block errors. If that bounded lookup cannot find it, `--full`
+refreshes routing from the provider's complete listing.
+Already-discarded failures cannot be reconstructed from the watermark: use one
+explicit `--full` repair for history lost before failed-ID retention.
 Re-imports are free (content-hash idempotency), so re-running is safe.
 
 The watermark is deliberately a config scalar, **not** `op_checkpoint`:
@@ -205,7 +220,7 @@ the export-file lane (`conversation-archive`) — it always works.
 | `forbidden` | Cloudflare/bot challenge on server-side fetch | Use the official export + `gbrain transcripts ingest` | user (downloads the export); agent ingests it | none | `gbrain connectors status --json` |
 | `auth_required` | cookie expired/invalid | Re-copy a fresh Cookie header, `gbrain connectors auth` | user (copies a fresh Cookie header) | `credentials` | `gbrain connectors status --json` |
 | `connectors auth` exits 1 with an `[AGENT]` cookie checklist | no credential and nobody at the terminal ([headless lane](#headless-lane-an-agent-without-a-terminal)) | Relay the `[SHOW USER]` checklist; the user pipes the cookie into `gbrain connectors auth <provider> --cookie -` | user (copies the cookie) | `credentials` | `gbrain connectors status --json` |
-| `partial` | a conversation failed to fetch or import, the conversation list failed, or `--limit` capped the run | Re-run. A failed conversation is retried and holds the watermark until it imports. One that failed three times at the same update time is quarantined instead: normal syncs skip it and it no longer holds the watermark, until the provider shows a newer update time or you run with `--full` | agent | `egress` (fetches from the provider again) | `gbrain connectors status --json` |
+| `partial` | an unresolved fetch/import failure, a failed list, or `--limit` capped the run | Re-run. Quarantine releases the watermark but retains the omission for bounded daily targeted retries. A listed edit or `--full` bypasses backoff; status shows unresolved IDs and next retry times | agent | `egress` (fetches from the provider again) | `gbrain connectors status --json` |
 | receipt shows drift | provider API shape changed | Affected threads skipped (not lost); export lane still works | agent (reports it) | none | `gbrain connectors status --json` |
 
 ## v2 roadmap

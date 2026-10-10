@@ -160,6 +160,7 @@ function printResult(r: ConnectorSyncResult): void {
       `  listed=${r.listed} fetched=${r.fetched} errors=${r.fetchErrors}` +
       (i ? `  imported=${i.imported} skipped=${i.skipped} redactions=${i.redactions}` : '') +
       (r.watermarkAdvancedTo ? `  watermark→${r.watermarkAdvancedTo}` : '') +
+      (r.quarantined.length ? `  quarantined=${r.quarantined.length} (archive incomplete; bounded daily retries)` : '') +
       (r.embedKickoff !== 'none' && r.embedKickoff !== 'below_threshold' ? `  embed:${r.embedKickoff}` : ''),
   );
   if (r.hint) console.log(`  ${r.hint.split('\n')[0]}`);

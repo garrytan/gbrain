@@ -69,6 +69,8 @@ export interface ResolvedCredential {
 /** A conversation as seen in a provider's LIST endpoint (newest-first). */
 export interface ConversationStub {
   id: string;
+  /** Provider routing retained for retries outside the incremental list window. */
+  orgId?: string;
   title?: string;
   /** ISO 8601 UTC last-update time — the axis the watermark compares against. */
   updatedAt: string;
@@ -133,8 +135,10 @@ export interface ChatHistoryProvider {
   fetchConversation(
     client: ConnectorClient,
     id: string,
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; orgId?: string },
   ): Promise<Record<string, unknown>>;
+  /** Routing learned during a targeted detail lookup (legacy failures lack it). */
+  conversationOrg?(client: ConnectorClient, id: string): string | undefined;
   /** Paste-in credential-capture instructions for the browser-session lane. */
   sessionInstructions(): string;
 }

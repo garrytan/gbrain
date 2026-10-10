@@ -70,7 +70,7 @@ function ingestFailing(failingId: string): typeof runTranscriptsIngest {
   };
 }
 
-async function run(state: FixtureState, runIngest: typeof runTranscriptsIngest) {
+async function run(state: FixtureState, runIngest: typeof runTranscriptsIngest, nowMs = NOW_MS) {
   const srv = startFixture(chatgptHandler(state));
   try {
     return await runConnectorSync(engine, {
@@ -78,7 +78,7 @@ async function run(state: FixtureState, runIngest: typeof runTranscriptsIngest) 
       sourceId: 'default',
       deps: {
         fetchImpl: (url, init) => fetch(url.replace(CHATGPT_BASE_URL, srv.baseUrl), init),
-        now: () => NOW_MS,
+        now: () => nowMs,
         sleep: () => Promise.resolve(),
         runIngest,
       },
@@ -89,6 +89,20 @@ async function run(state: FixtureState, runIngest: typeof runTranscriptsIngest) 
 }
 
 describe('connector ingest failures', () => {
+  test('a quarantined old ingest failure remains retryable after the list floor passes it', async () => {
+    const state = newFixtureState([conv('old-failure', T0 - 30 * 86_400), conv('new-ok', T0)]);
+    for (let k = 0; k < 3; k++) await run(state, ingestFailing('old-failure'));
+    const key = 'connectors.chatgpt.source.default.failed';
+    expect(JSON.parse((await engine.getConfig(key))!)['old-failure'].attempts).toBe(3);
+    const recovered = await run(state, runTranscriptsIngest, NOW_MS + 86_400_000);
+    expect(recovered.listed).toBe(1);
+    expect(recovered.fetched).toBe(1);
+    expect(recovered.status).toBe('nothing_new'); // real ingest's hash-idempotent replay
+    expect(recovered.quarantined).toEqual([]);
+    expect(JSON.parse((await engine.getConfig(key))!)).toEqual({});
+    expect(state.hits['detail:new-ok']).toBe(1);
+  });
+
   test('a conversation that fails to ingest is quarantined and stops holding the watermark', async () => {
     const state = newFixtureState([conv('c-1', T0 + 10), conv('c-2', T0 + 20), conv('c-3', T0 + 30)]);
     const runIngest = ingestFailing('c-1');
@@ -103,6 +117,6 @@ describe('connector ingest failures', () => {
     expect(results[2].quarantined).toEqual(['c-1']);
     expect(results[2].watermarkAdvancedTo).toBe(new Date((T0 + 30) * 1000).toISOString());
     expect(results[3].fetched).toBe(0);
-    expect(results[3].status).toBe('nothing_new');
+    expect(results[3].status).toBe('partial');
   });
 });

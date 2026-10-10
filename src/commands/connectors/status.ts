@@ -10,6 +10,7 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
 import { connectorProviders, getConnectorProvider } from '../../core/connectors/registry.ts';
 import { credentialMode, resolveCredential } from '../../core/connectors/credentials.ts';
+import { readConversationFailures } from '../../core/connectors/failures.ts';
 import {
   authErrorAtKey,
   autoSyncKey,
@@ -48,6 +49,7 @@ export async function runConnectorStatus(engine: BrainEngine, args: string[]): P
       last_sync_at: await readConnectorState(engine, prov.name, sourceId, 'last_sync_at'),
       auth_error_at: (await engine.getConfig(authErrorAtKey(prov.name))) || null,
       watermark_iso: await readConnectorState(engine, prov.name, sourceId, 'watermark_iso'),
+      unresolved: await readConversationFailures(engine, prov.name, sourceId),
     });
   }
 
@@ -61,7 +63,8 @@ export async function runConnectorStatus(engine: BrainEngine, args: string[]): P
     const auth = r.auth_error_at ? `  ⚠ auth error at ${r.auth_error_at} (re-auth)` : '';
     console.log(
       `${r.provider}  [${r.spec_target_status}]  ${cred}  auto_sync=${r.auto_sync}\n` +
-        `  last_sync: ${r.last_sync_at ?? 'never'}  watermark: ${r.watermark_iso ?? 'none'}${auth}`,
+        `  last_sync: ${r.last_sync_at ?? 'never'}  watermark: ${r.watermark_iso ?? 'none'}${auth}` +
+        `  unresolved=${Object.keys(r.unresolved).length}`,
     );
   }
 }

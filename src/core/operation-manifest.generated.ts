@@ -4071,7 +4071,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Per-provider chat-connector status: strategies, whether a credential is present and from where (env/file — never the value), token expiry, last_sync_at, auth_error_at, auto_sync, and the incremental watermark. Local-only; credentials never cross the wire.",
+    "description": "Per-provider chat-connector status: strategies, whether a credential is present and from where (env/file — never the value), token expiry, last_sync_at, auth_error_at, auto_sync, incremental watermark and unresolved conversations. Local-only; credentials never cross the wire.",
     "scope": "read",
     "localOnly": true,
     "cliOnly": {
