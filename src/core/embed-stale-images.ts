@@ -18,6 +18,7 @@ import type { BrainEngine } from './engine.ts';
 import { importImageFile } from './import-file.ts';
 import { safeChunksFilter } from './search/safe-chunks.ts';
 import { serr } from './console-prefix.ts';
+import { gitChildEnv } from './git-env.ts';
 
 export interface StaleImageSweepResult {
   candidates: number;
@@ -91,7 +92,7 @@ function locateSourceFile(root: string, sourcePath: string, gitRoots: Map<string
   if (existsSync(direct)) return direct;
   if (!gitRoots.has(root)) {
     try {
-      gitRoots.set(root, execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim());
+      gitRoots.set(root, execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim());
     } catch { gitRoots.set(root, null); }
   }
   const gitRoot = gitRoots.get(root);

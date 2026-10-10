@@ -59,6 +59,7 @@ import { canonicalRepairFields, confinedRepairTarget, managedRepairRoot, prepare
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 type Mode = 'managed' | 'legacy';
 type RepairClass = 'safe' | 'interpretive';
@@ -210,7 +211,7 @@ async function sourceRoots(engine: BrainEngine, scope: RepairScope, residuals: R
 function markdownFiles(root: string): string[] {
   let paths: string[];
   try {
-    paths = execFileSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'ignore'] })
+    paths = execFileSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { env: gitChildEnv(), encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'ignore'] })
       .split('\0').filter(Boolean);
   } catch {
     paths = (readdirSync(root, { recursive: true }) as string[]).map(path => path.split('\\').join('/'));

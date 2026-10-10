@@ -60,6 +60,7 @@ import { withPageTierKept } from '../trust/fence-append.ts';
 import { recordTaintEdges } from '../trust/taint.ts';
 import { recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts';
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -179,7 +180,7 @@ export function gitPathState(repoPath: string, filePath: string): FactFenceGitPa
     const status = execFileSync(
       'git',
       ['-C', repoPath, 'status', '--porcelain=v1', '--untracked-files=all', '--', rel],
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: process.env },
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv() },
     );
     const lines = status.split('\n').filter((l) => l.length > 0);
     if (lines.length === 0) return 'clean';
