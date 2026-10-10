@@ -145,6 +145,44 @@ export async function rescopeClientGrantInTransaction(db: GrantDatabase, clientI
   return { before, after, revision: after.revision, dryRun: false };
 }
 
+/**
+ * #6202: whether a client already holds a code or token. A first consent is
+ * offered and recorded only while it holds neither, so a client approved by a
+ * server that predates the consent transition (revision still 0) never has its
+ * source moved under tokens it already holds.
+ */
+export async function clientHoldsAuthorization(db: GrantDatabase, clientId: string): Promise<boolean> {
+  const [row] = await query(db)`SELECT EXISTS (SELECT 1 FROM oauth_tokens WHERE client_id = ${clientId})
+    OR EXISTS (SELECT 1 FROM oauth_codes WHERE client_id = ${clientId}) AS held`;
+  return row?.held === true;
+}
+
+/**
+ * #6202: the first owner consent of a self-registered client, run in the
+ * caller's transaction beside the authorization-code insert. Always persists:
+ * the revision moves 0 → 1 with an `action='consent'` audit row even when the
+ * source is unchanged, so the client is never offered the choice again and a
+ * second pending request fails its policy check. A new `sourceId` lands in
+ * `source_id` + `federated_read` and is validated against active sources;
+ * nothing else in the grant changes.
+ */
+export async function recordFirstConsentInTransaction(db: GrantDatabase, clientId: string, sourceId: string | undefined, actor: string): Promise<GrantMutationResult> {
+  const sql = query(db);
+  const rows = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
+  if (!rows.length) throw new GrantError('client_not_found', `No OAuth client found with id "${clientId}"`);
+  if (!('grant_revision' in rows[0]) || !('takes_holders' in rows[0])) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing client grants');
+  const before = grantFromRow(rows[0]);
+  if (before.revision !== 0) throw new GrantError('grant_conflict', `Grant changed (expected revision 0, current ${before.revision}); review a fresh request`);
+  if (await clientHoldsAuthorization(sql, clientId)) throw new GrantError('grant_conflict', 'The client already holds an authorization; review a fresh request');
+  const after: ClientGrant = { ...before, revision: 1 };
+  if (sourceId !== undefined && sourceId !== before.sourceId) {
+    Object.assign(after, { sourceId, federatedRead: [sourceId], sourcesNone: false });
+    validateClientGrant(after, await grantValidationContext(db));
+  }
+  await persistGrant(sql, before, after, actor, 'consent');
+  return { before, after, revision: 1, dryRun: false };
+}
+
 /** One UPDATE+audit statement: SQL-only provider callers get atomicity too. */
 export async function persistGrant(sql: SqlQuery, before: ClientGrant, after: ClientGrant, actor: string, action: string): Promise<void> {
   const result = await sql`

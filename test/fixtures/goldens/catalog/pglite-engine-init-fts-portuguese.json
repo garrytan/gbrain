@@ -182,6 +182,7 @@
       "oauth_clients.oauth_clients_complete_agent_grant": "c CHECK (((NOT (COALESCE(scope, ''::text) ~ '(^|[[:space:]])agent([[:space:]]|$)'::text)) OR ((COALESCE(cardinality(bound_tools), 0) > 0) AND (source_id IS NOT NULL) AND (bound_source_id IS NOT NULL) AND (bound_source_id = source_id) AND COALESCE((source_id = ANY (federated_read)), false) AND (((delegated_namespace = 'job'::text) AND (delegated_slug_prefixes IS NULL)) OR ((delegated_namespace = 'prefixes'::text) AND (COALESCE(cardinality(delegated_slug_prefixes), 0) > 0))) AND (bound_max_concurrent > 0))))",
       "oauth_clients.oauth_clients_min_trust_check": "c CHECK (((min_trust IS NULL) OR (min_trust = ANY (ARRAY['user_confirmed'::text, 'operator_curated'::text, 'tool_observed'::text, 'agent_written'::text, 'unknown'::text, 'external_untrusted'::text]))))",
       "oauth_clients.oauth_clients_pkey": "p PRIMARY KEY (client_id)",
+      "oauth_clients.oauth_clients_registered_via_check": "c CHECK ((registered_via = 'dcr'::text))",
       "oauth_clients.oauth_clients_source_grant_check": "c CHECK ((source_grant = 'none'::text))",
       "oauth_clients.oauth_clients_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE RESTRICT",
       "oauth_clients.trust_generation_update": "t TRIGGER DEFERRABLE INITIALLY DEFERRED",
@@ -2391,7 +2392,8 @@
           "28 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "29 source_grant text/text NULL",
           "30 takes_holders ARRAY/_text NULL",
-          "31 min_trust text/text NULL"
+          "31 min_trust text/text NULL",
+          "32 registered_via text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

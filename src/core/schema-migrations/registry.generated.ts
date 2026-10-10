@@ -233,6 +233,7 @@ import { v229 } from './v229-trust-allow-rules.ts';
 import { v230 } from './v230-trust-generation.ts';
 import { v231 } from './v231-fact-purge-lookup-indexes.ts';
 import { v232 } from './v232-fts-cjk-boundary.ts';
+import { v233 } from './v233-oauth-client-registered-via.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -464,4 +465,5 @@ export const MIGRATIONS: Migration[] = [
   v230,
   v231,
   v232,
+  v233,
 ];
