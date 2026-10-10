@@ -115,6 +115,7 @@ import { isClaudeCliSelfTranscriptPath } from '../core/ai/providers/claude-cli-s
 import { withoutPhysicalRootMetadata } from '../core/persistence/root-metadata.ts';
 import { HOOK_SUBCOMMANDS as HOOK_EVENTS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 import { isManagedFilesystemPath } from '../core/persistence/filesystem-guard.ts';
+import { resolveSourceIdEngineFree } from '../core/source-resolver.ts';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -481,6 +482,12 @@ async function writeHeartbeat(io: HookIo, entry: HookHeartbeatEntry): Promise<vo
 
 // ── session-start [A3, G4, B3, B4] ──────────────────────────────────────────
 
+/** Context-arm source: GBRAIN_SOURCE, else the .gbrain-source walk from the payload cwd (#5941: codex
+ * hooks.json is machine-global, so its context hooks bake no source). Malformed → none (fail-open). */
+function hookContextSource(ws: string): string | undefined {
+  try { return resolveSourceIdEngineFree(null, ws) ?? undefined; } catch { return undefined; }
+}
+
 async function hookSessionStart(io: HookIo): Promise<number> {
   const t0 = Date.now();
   let outcome: HookHeartbeatEntry['outcome'] = 'ok';
@@ -542,7 +549,8 @@ async function hookSessionStart(io: HookIo): Promise<number> {
         // Engine-uniform (#4245): same config-keyed socket/secret resolution
         // as the user-prompt and compact arms (PGLite data dir; Postgres
         // hash12(database_url) run-dir). Null → silent skip, as before.
-        const packSocket = await hookResolveSocketForConfig(cfg, process.env.GBRAIN_SOURCE);
+        const sourceId = hookContextSource(ws);
+        const packSocket = await hookResolveSocketForConfig(cfg, sourceId);
         if (packSocket) {
           const secret = readIpcSecretForConfig(cfg);
           if (secret) {
@@ -559,7 +567,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
               const res = await requestContextPack(packSocket, {
                 secret,
                 ...(sessionId ? { sessionId } : {}),
-                ...(process.env.GBRAIN_SOURCE ? { sourceId: process.env.GBRAIN_SOURCE } : {}),
+                ...(sourceId ? { sourceId } : {}),
                 trigger,
               }, { timeoutMs: Math.min(CONTEXT_PACK_CLIENT_TIMEOUT_MS, remaining) });
               if (res !== IPC_UNAVAILABLE && !('degraded' in res)) {
@@ -1177,7 +1185,8 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // Postgres off hash12(database_url) under ~/.gbrain/run. Null = no
     // keying material at all (no config, thin-client remote) — ENGINE-FREE
     // means no direct-engine fallback here; pull-mode covers it.
-    const socketPath = await hookResolveSocketForConfig(cfg, process.env.GBRAIN_SOURCE);
+    const sourceId = hookContextSource(io.cwd ?? (typeof j.cwd === 'string' ? j.cwd : process.cwd()));
+    const socketPath = await hookResolveSocketForConfig(cfg, sourceId);
     if (!socketPath) {
       return { outcome: 'degraded', reason: 'no_pglite_path' };
     }
@@ -1185,7 +1194,6 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     if (!secret) return { outcome: 'degraded', reason: 'no_serve' };
 
     const sessionId = typeof j.session_id === 'string' ? j.session_id : undefined;
-    const sourceId = process.env.GBRAIN_SOURCE || undefined;
     const res = await requestTurnContext(socketPath, {
       secret,
       window: turns,
@@ -1193,9 +1201,8 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
       ...(sessionId ? { sessionId } : {}),
       ...(sourceId ? { sourceId } : {}),
       // Feedback-loop attribution: the serve logs the delivered block's
-      // volunteered pages/pointers under this channel. Bootstrap registers
-      // hooks for Claude Code only today; a future codex registration passes
-      // `--harness codex` on the hook command.
+      // volunteered pages/pointers under this channel (codex hooks pass
+      // `--harness codex`, #5941).
       channel: io.harness ?? 'claude-code',
     });
     if (res === IPC_UNAVAILABLE) {
