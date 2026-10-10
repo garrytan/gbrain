@@ -8,6 +8,8 @@ import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
  */
 
 import { opError, type Operation, type OperationContext } from './contract.ts';
+import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
+import { stampRowTrust } from '../eligibility/stamp.ts';
 import { opTransport, paramUse } from './op-fix.ts';
 import {
   readPolicyOpts,
@@ -38,9 +40,11 @@ const takes_list: Operation = {
     sort_by: { type: 'string', description: 'weight | since_date | created_at (default created_at)' },
     limit: { type: 'number', description: 'Max rows (default 100, cap 500)' },
     offset: { type: 'number', description: 'Skip first N rows' },
+    min_trust: MIN_TRUST_PARAM,
   },
   handler: async (ctx, p) => {
-    return ctx.engine.listTakes({
+    const eligibility = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
+    const rows = await ctx.engine.listTakes({
       // #2200-class: honor federated/source scope (via the take's page.source_id).
       ...await readPolicyOpts(ctx),
       page_slug: p.page_slug as string | undefined,
@@ -54,7 +58,9 @@ const takes_list: Operation = {
       // Per-token allow-list — server-side filter for MCP-bound calls.
       // Local CLI callers leave takesHoldersAllowList unset and see all holders.
       takesHoldersAllowList: readHolders(ctx),
+      eligibility,
     });
+    return stampRowTrust(ctx.engine, 'takes', rows, r => r.id);
   },
   cliHints: { name: 'takes-list' },
 };
@@ -69,13 +75,17 @@ const takes_search: Operation = {
   params: {
     query: { type: 'string', required: true, description: "Search text matched against take claim text via trigram similarity, e.g. 'valuation cap'. This is the search text param — there is no `text` param." },
     limit: { type: 'number', description: 'Max results (default 30, cap 100)' },
+    min_trust: MIN_TRUST_PARAM,
   },
   handler: async (ctx, p) => {
-    return ctx.engine.searchTakes(p.query as string, {
+    const eligibility = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
+    const hits = await ctx.engine.searchTakes(p.query as string, {
       ...await readPolicyOpts(ctx),
       limit: p.limit as number | undefined,
       takesHoldersAllowList: readHolders(ctx),
+      eligibility,
     });
+    return stampRowTrust(ctx.engine, 'takes', hits, h => h.take_id);
   },
   cliHints: { name: 'takes-search', positional: ['query'] },
 };
@@ -307,7 +317,7 @@ const think: Operation = {
     if (remote && (Boolean(p.save) || Boolean(p.take))) ctx.emitNotice?.(thinkNotSavedNotice());
     const { recordThinkAnswer, feedbackMetaFields } = await import('../feedback/record.ts');
     const feedbackMeta = feedbackMetaFields(await recordThinkAnswer(ctx, 'think', result));
-    delete result.feedback_evidence;
+    delete result.feedback_evidence; delete result.taint_refs;
     const { persist: _persist, ...visible } = result;
     return {
       ...visible,

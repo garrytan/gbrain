@@ -30,7 +30,7 @@ import { consumerIdentity, listHostConsumers, resetConsumerIdentityForTest, star
 import { claimOwner, setClaimOwnerForTest } from '../../src/core/persistence/claim-phase.ts';
 import { localHostIdentity } from '../../src/core/persistence/identity.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
-import { disposePersistenceConsumer, persistenceConsumerStatus, preparePersistedMutation } from '../../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, persistenceConsumerStatus, preparePersistedMutation, startPersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { resetWriteSwitches } from '../../src/core/persistence/switches.ts';
 import { performSync } from '../../src/commands/sync/perform.ts';
 import { twoConsumersOnHostCheck } from '../../src/commands/doctor/checks/persistence-consumers.ts';
@@ -118,6 +118,12 @@ describe.skipIf(!hasDatabase())('two consumers on one host (Postgres, #6317)', (
       try {
         await waitFor(async () => (await listHostConsumers(engine, hostId)).some(row => row.pid === serve.pid && row.kind === 'serve' && row.mode === 'full'), { timeoutMs: 30_000, intervalMs: 200, label: 'the serve writes its heartbeat row' });
         const f = await fixture(100);
+        // The CLI's consumer settles before the drain admits anything: while it still probes it claims nothing, and a
+        // fast serve could publish all 100 first. Its election is what this test pins, not that race.
+        startPersistenceConsumer(engine, { engine: 'postgres' });
+        const settled = single ? 'waiter_only' : 'full';
+        await waitFor(async () => (persistenceConsumerStatus(engine) as { consumer_election?: { mode: string } }).consumer_election?.mode === settled,
+          { timeoutMs: 30_000, intervalMs: 50, label: `the CLI consumer settles to ${settled}` });
         const result = await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true, lanes: 4 });
         expect(result.drain?.outcome).toBe('synced');
         const rows = await imports(f.id);
@@ -155,9 +161,20 @@ describe.skipIf(!hasDatabase())('two consumers on one host (Postgres, #6317)', (
     resetWriteSwitches();
     await engine.executeRaw('DELETE FROM persistence_consumers');
     const make = () => new PersistenceConsumer(engine, { engine: 'postgres' }, preparePersistedMutation, { hostId, pollMs: 1_000_000, onError: () => {} });
-    const a = new WaiterOnlyConsumer(engine, { engine: 'postgres' }, make, { kind: 'jobs', hostId, pollMs: 1_000_000, idleMaxMs: 1_000_000, heartbeatEveryMs: 1_000_000, log: () => {} });
+    // "Both probe before either has written a row" is the precondition, not a race to win: each starter's first read
+    // waits until the other's first read has started, so neither sees the row the other's start-up writes.
+    const bothRead = Promise.withResolvers<void>();
+    let firstReads = 0;
+    const readTogether = () => {
+      let first = true;
+      return async (signal: AbortSignal) => {
+        if (first) { first = false; if (++firstReads === 2) bothRead.resolve(); await bothRead.promise; }
+        return listHostConsumers(engine, hostId, { signal });
+      };
+    };
+    const a = new WaiterOnlyConsumer(engine, { engine: 'postgres' }, make, { kind: 'jobs', hostId, readConsumers: readTogether(), pollMs: 1_000_000, idleMaxMs: 1_000_000, heartbeatEveryMs: 1_000_000, log: () => {} });
     resetConsumerIdentityForTest({ pid: process.pid + 100_000, nonce: 'second-starter' });
-    const b = new WaiterOnlyConsumer(engine, { engine: 'postgres' }, make, { kind: 'sync', hostId, pollMs: 1_000_000, idleMaxMs: 1_000_000, heartbeatEveryMs: 1_000_000, log: () => {} });
+    const b = new WaiterOnlyConsumer(engine, { engine: 'postgres' }, make, { kind: 'sync', hostId, readConsumers: readTogether(), pollMs: 1_000_000, idleMaxMs: 1_000_000, heartbeatEveryMs: 1_000_000, log: () => {} });
     resetConsumerIdentityForTest(original);
     try {
       // Both probe before either has written a row: the known residual (a preference, not a fenced role).

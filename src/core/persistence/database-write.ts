@@ -7,6 +7,7 @@ import { managedPersistenceEnabled } from './ownership.ts';
 import { initializeLocalPersistence } from './page-mutations.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { principalAttribution } from './attribution.ts';
+import type { WriteTrust } from '../trust/tier.ts';
 
 /**
  * A coordinated, database-only write on a managed brain: rows with no
@@ -18,7 +19,7 @@ import { principalAttribution } from './attribution.ts';
  * brain; the caller keeps its legacy path.
  */
 export async function coordinatedDatabaseWrite<T>(ctx: OperationContext, operation: string, authoritySlug: string,
-  lockSlugs: readonly string[], write: (engine: BrainEngine, sourceId: string) => Promise<T>): Promise<{ value: T } | null> {
+  lockSlugs: readonly string[], write: (engine: BrainEngine, sourceId: string) => Promise<T>, trust?: WriteTrust): Promise<{ value: T } | null> {
   if (!await managedPersistenceEnabled(ctx.engine)) return null;
   assertPersistenceAccepting(ctx.engine);
   const sourceId = ctx.sourceId ?? 'default';
@@ -42,6 +43,6 @@ export async function coordinatedDatabaseWrite<T>(ctx: OperationContext, operati
     await authorizeWrite(tx, authority, operation, authoritySlug, true);
     await tx.lockPageKeys(lockSlugs.map(slug => ({ sourceId, slug })));
     return write(tx, sourceId);
-  }, principalAttribution(authority.principal)));
+  }, { ...principalAttribution(authority.principal), ...(trust ? { trust } : {}) }));
   return { value };
 }

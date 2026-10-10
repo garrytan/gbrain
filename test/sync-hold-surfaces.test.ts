@@ -346,10 +346,11 @@ describe('#6188 fence holds on every DB-backed surface: the router and the fix b
   afterAll(async () => { await engine.disconnect(); rmSync(home, { recursive: true, force: true }); }, 60_000);
 
   const expectRoute = (text: string, kind: 'fences' | 'frontmatter' | 'mixed', sourceId: string) => {
-    if (kind !== 'frontmatter') expect(text).toContain(`gbrain repair fences --source ${sourceId}`);
+    // #6377: the source-level route for fence (and slug-conflict) holds is the content lane; a fence hold's own fix still names `repair fences --only`.
+    if (kind !== 'frontmatter') expect(text).toContain(`gbrain repair content --source ${sourceId}`);
     if (kind !== 'fences') expect(text).toContain(`gbrain repair frontmatter --source ${sourceId}`);
     if (kind === 'fences') expect(text).not.toContain('repair frontmatter');
-    if (kind === 'frontmatter') expect(text).not.toContain('repair fences');
+    if (kind === 'frontmatter') expect(text).not.toContain('repair content');
     for (const secret of SECRETS) expect(text).not.toContain(secret);
   };
   const SOURCES = [['fences-only', 'fences'], ['frontmatter-only', 'frontmatter'], ['mixed-holds', 'mixed']] as const;
@@ -367,7 +368,7 @@ describe('#6188 fence holds on every DB-backed surface: the router and the fix b
       expectRoute((await retryHeld(engine, sourceId, { dryRun: false })).next_action, kind, sourceId);
       const doctor = await gitHeldFilesCheck(engine, [sourceId]);
       expectRoute(doctor.message, kind, sourceId);
-      expect(doctor.fix!.argv).toEqual(kind === 'fences' ? ['gbrain', 'repair', 'fences', '--source', sourceId] : ['gbrain', 'repair', 'frontmatter', '--source', sourceId]);
+      expect(doctor.fix!.argv).toEqual(kind === 'fences' ? ['gbrain', 'repair', 'content', '--source', sourceId] : ['gbrain', 'repair', 'frontmatter', '--source', sourceId]);
       const banner = bannerFindingLine({ spec: WAVE_CHECKS.find(spec => spec.id === 'git_held_files')!, check: doctor, state: 'finding' });
       expectRoute(banner, kind, sourceId);
       const report = await buildHoldReport(engine, { sourceId, incarnation: await incarnationOf(engine, sourceId), runId: 'none', remote: false,

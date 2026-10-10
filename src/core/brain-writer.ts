@@ -602,6 +602,34 @@ export interface ScanOpts {
    * (post-pruneDir). Production callers don't pass this; the regression
    * suite uses it to assert descent-time pruning directly. */
   visitDir?: (dirPath: string) => void;
+  /** Parse only each file's frontmatter head (`frontmatterScanHead`) when that
+   * provably yields the same findings; the doctor scan sets it. */
+  frontmatterOnly?: boolean;
+}
+
+/**
+ * The prefix of `content` through its closing frontmatter fence line, when
+ * validating that prefix yields exactly the errors, warnings, recovery and
+ * slug of the whole file; otherwise `content` itself. Proven only for the
+ * plain shape every frontmatter reader agrees on: the file starts with a
+ * `---` line (no BOM, blank lines or language selector), no line before the
+ * first `---` close starts with `---`, the close is a bare `---` line after
+ * at least one block line, and the file has no NUL byte (NULL_BYTES reads
+ * the whole file). Everything after the close is body, which the findings
+ * never read.
+ */
+export function frontmatterScanHead(content: string): string {
+  if (!content.startsWith('---') || content.includes('\0')) return content;
+  const first = content.indexOf('\n');
+  if (first < 0 || (first !== 3 && content.slice(0, first) !== '---\r')) return content;
+  for (let start = first + 1, line = 1; ; line++) {
+    const end = content.indexOf('\n', start);
+    if (end < 0) return content;
+    const text = content.slice(start, end);
+    if (text.trim() === '---') return line >= 2 && (text === '---' || text === '---\r') ? content.slice(0, end + 1) : content;
+    if (text.startsWith('---')) return content;
+    start = end + 1;
+  }
 }
 
 /** Timeout-arm winner for the COUNT-vs-deadline race in scanBrainSources.
@@ -818,7 +846,7 @@ function scanOneSource(
       return true; // skip unreadable
     }
     const expectedSlug = slugifyPath(relPath);
-    const parsed = parseMarkdown(content, relPath, { validate: true, expectedSlug });
+    const parsed = parseMarkdown(opts.frontmatterOnly ? frontmatterScanHead(content) : content, relPath, { validate: true, expectedSlug });
     const errs = (parsed.errors ?? []).filter((e) => {
       if (e.code !== 'MISSING_OPEN') return true;
       if (opts.strictMissingOpen) return true;

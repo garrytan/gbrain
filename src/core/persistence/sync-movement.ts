@@ -9,8 +9,9 @@
  * (`readManagedSyncBacklog`: index, total, held, the drain's last advance),
  * the movement watermark (the newest `completed_at` of a committed
  * `managed_sync_*` receipt in the current source incarnation, read through
- * the partial index on `(worktree_id, completed_at DESC) WHERE
- * state='committed'`; never a count, since compaction nulls `intent`), the
+ * the partial index `persistence_requests_sync_watermark`, whose predicate
+ * repeats the read's kind test; never a count, since compaction nulls
+ * `intent`), the
  * head request's claim stamp (`step_since` moving is progress too: a
  * multi-wave group commits nothing until its last wave), the newest hold, and
  * who could move it: a live drain (the per-source sync lock) or a live
@@ -83,6 +84,12 @@ const newest = (...values: Array<string | null | undefined>): string | null => v
 
 export function writerStatusCommand(sourceId: string): string { return `gbrain sources writer status --source ${sourceId} --json`; }
 
+/** $1 worktree, $2 source incarnation. The kind test matches the `persistence_requests_sync_watermark` predicate text, so the planner can prove the partial index applies. */
+export const MOVEMENT_WATERMARK_SQL = `SELECT
+        (SELECT r.completed_at FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state='committed' AND r.source_incarnation=$2::uuid
+           AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.completed_at DESC LIMIT 1) AS last_commit_at,
+        (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted`;
+
 interface BindingRow { source_id: string; worktree_id: string; source_incarnation: string; owner_host_id: string | null }
 interface WatermarkRow { last_commit_at: unknown; admitted: number | string }
 interface HeadRow { request_id: string; state: string; claim_phase: unknown; execution_token: string | null; claim_lapsed: boolean | null; publication_started: boolean | null }
@@ -106,11 +113,7 @@ export async function readSourceMovement(engine: BrainEngine, opts: { sourceIds?
   const liveHeartbeat = () => heartbeat ??= listHostConsumers(engine, host).then(rows => rows.some(row => (row.mode === 'full' || row.mode === 'promoted') && row.liveness === 'live'), () => false);
   const out: SourceMovement[] = [];
   for (const binding of bindings) {
-    const [mark] = await engine.executeRaw<WatermarkRow>(`SELECT
-        (SELECT r.completed_at FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state='committed' AND r.source_incarnation=$2::uuid
-           AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.completed_at DESC LIMIT 1) AS last_commit_at,
-        (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted`,
-    [binding.worktree_id, binding.source_incarnation]);
+    const [mark] = await engine.executeRaw<WatermarkRow>(MOVEMENT_WATERMARK_SQL, [binding.worktree_id, binding.source_incarnation]);
     const [headRow] = await engine.executeRaw<HeadRow>(`SELECT request_id::text AS request_id, state, claim_phase, execution_token::text AS execution_token,
         (claim_expires_at IS NOT NULL AND claim_expires_at < now()) AS claim_lapsed, publication_started
       FROM persistence_requests WHERE worktree_id=$1::uuid AND state IN ('queued','running','recovering') ORDER BY (state <> 'running'), sequence LIMIT 1`, [binding.worktree_id]);

@@ -27,6 +27,10 @@ import { isAvailable } from './ai/gateway.ts';
 // #4222: shared generic-token reject list — same list gates the by-mention
 // gazetteer and drives the junk_entity_hubs doctor check.
 import { isJunkEntityName } from './entity-name-quality.ts';
+import { maintenanceTransaction } from './persistence/attribution.ts';
+import { deriveTrust, derivedMaintenanceTransaction, lowerDerivedPage } from './trust/taint.ts';
+import { derivedGateConfig, derivedGateInput, recordTimelineFlag, timelineRowAllowed } from './trust/derived-gate.ts';
+import { assessTimelineForGate } from './write-gate.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -150,6 +154,8 @@ export async function enrichEntity(
   // Fail-closed: only an explicit `trusted: true` writes authoritative pages.
   const trusted = opts?.trusted === true;
   const scope = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
+  // #5575 I2: a stub and its timeline row restate the source page's mention, so they carry its taint (capped at agent_written).
+  const derivation = await deriveTrust(engine, [{ table: 'pages', sourceId, slug: request.sourceSlug }], { channel: 'derive:enrichment' });
 
   // 1. Count existing mentions for tier auto-escalation
   const { mentionCount, mentionSources } = await countMentions(engine, request.entityName, opts?.sourceId);
@@ -214,9 +220,10 @@ export async function enrichEntity(
       // when a provider is configured) and reachable by the recall arms.
       const md = serializeMarkdown(frontmatter, content, '', { type, title, tags: [] });
       await importFromContent(engine, slug, md, {
-        noEmbed: !isAvailable('embedding'),
+        noEmbed: !isAvailable('embedding'), writeGate: derivedGateInput(derivation.trust),
         ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
       });
+      await lowerDerivedPage(engine, derivation, sourceId, slug);
     } catch (e) {
       // Fail-open fallback: a pipeline error (parse edge case, size guard)
       // must never regress the batch — the pre-#3994 direct write still
@@ -227,13 +234,10 @@ export async function enrichEntity(
         `[enrich] import pipeline failed for stub ${slug} (${e instanceof Error ? e.message : String(e)}); ` +
         'falling back to a direct unchunked write — the page exists but is not chunked/embedded until re-imported.\n',
       );
-      await engine.putPage(slug, {
-        title,
-        type,
-        compiled_truth: content,
-        timeline: '',
-        frontmatter,
-      }, scope);
+      await derivedMaintenanceTransaction(engine, derivation, async tx => {
+        const page = await tx.putPage(slug, { title, type, compiled_truth: content, timeline: '', frontmatter }, scope);
+        return { result: page, rows: [{ table: 'pages', id: page.id, sourceId }] };
+      });
     }
     action = 'created';
   }
@@ -241,12 +245,14 @@ export async function enrichEntity(
   // 4. Add timeline entry
   let timelineAdded = false;
   try {
-    await engine.addTimelineEntry(slug, { // gbrain-allow-direct-insert: auto-timeline reconciliation triggered by entity reference in source markdown
-      date: new Date().toISOString().split('T')[0] ?? '',
-      summary: `Referenced in [${request.sourceSlug}](${request.sourceSlug}) — ${request.context}`,
-      source: request.sourceSlug,
-    }, scope);
-    timelineAdded = true;
+    const entry = { date: new Date().toISOString().split('T')[0] ?? '', summary: `Referenced in [${request.sourceSlug}](${request.sourceSlug}) — ${request.context}`, source: request.sourceSlug };
+    // #5575 B3: the caller's context lands on the entity page, so it passes the write gate at the derived tier.
+    const assessment = assessTimelineForGate(entry, derivedGateInput(derivation.trust), await derivedGateConfig(engine));
+    timelineAdded = timelineRowAllowed(assessment) && await maintenanceTransaction(engine, async tx => {
+      const added = await tx.addTimelineEntry(slug, entry, scope); // gbrain-allow-direct-insert: auto-timeline reconciliation triggered by entity reference in source markdown
+      if (added) await recordTimelineFlag(tx, assessment, { slug, source_id: sourceId, ...entry });
+      return true;
+    }, derivation.trust);
   } catch {
     // Timeline add failed (page might not support it)
   }

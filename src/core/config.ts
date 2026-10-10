@@ -1405,6 +1405,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.return_budget_default',
   'search.return_budget_conversation',
   'search.return_budget_max_remote',
+  'search.auto_packing',
   'think.return_unit',
   // Models tier system (v0.31.12)
   'models.default',
@@ -1580,6 +1581,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4702: per-pattern opt-out (JSON array or comma-separated names) —
   // finer than junk_patterns_enabled (all patterns) / disabled (kill-switch).
   'content_sanity.disabled_patterns',
+  // #5575 write gate (local-only): quarantine|flag|reject|off and flag|off; read by import-screen.ts.
+  'write_gate.external_mode',
+  'write_gate.agent_mode',
+  // #5575 read side (local-only): label|filter and suppress|allow; read by eligibility/policy.ts.
+  'trust.read_policy',
+  'trust.agent_activation',
   // MCP skill-catalog publishing (PR1)
   'mcp.publish_skills',
   'mcp.publish_skills_prompted',
@@ -1635,6 +1642,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'wanted_pages.enabled',
   // Remote writes (the persistence `links` effect) record missing mention targets too. On by default (held-out verdict H8).
   'wanted_pages.remote',
+  // context_pack cards list the newest pages dated after the entity page that mention it (src/core/mentions/newer-mentions.ts). On by default.
+  'mentions.newer_on_cards',
   // Line grammar (src/core/line-grammar.ts): typed relation lines, off by default
   // (held-out verdict H3); undeclared relation types fall back to inference unless allowed.
   'line_grammar.enabled',

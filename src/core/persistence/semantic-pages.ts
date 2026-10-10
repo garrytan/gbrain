@@ -1,3 +1,7 @@
+import { requestChannelTrust } from '../trust/channel.ts';
+import { gateField, gateInput, loadWriteGateConfig } from '../trust/gate-outcomes.ts';
+import { recordWriteGateReceipt } from '../write-gate-store.ts';
+import { assessTimelineForGate, writeGateRejectedError } from '../write-gate.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -74,6 +78,9 @@ export async function prepareSemanticPageMutation(engine: BrainEngine, row: Writ
   if (!exact && tuples.some(tuple => tuple.date === rendered.canonical.date && tuple.source === rendered.canonical.source && tuple.summary === rendered.canonical.summary)) {
     throw new OperationError('invalid_params', 'This timeline identity already exists with different detail.', 'Read and conditionally edit the existing page to change that entry.');
   }
+  // #5575 CEO-27: the timeline row is gated at the request's tier; it keeps its own tier, the page keeps its own.
+  const gate = assessTimelineForGate(entry, gateInput(requestChannelTrust(row) ?? { tier: 'unknown', origin: null }, row.id), await loadWriteGateConfig(engine));
+  if (gate.verdict === 'reject' || gate.verdict === 'quarantine') throw writeGateRejectedError(gate);
   const page = { ...snapshot.page, timeline: exact ? snapshot.page.timeline : spliceTimelineBlock(snapshot.page.timeline, entry.date, block) };
   const prepared = await preparePageMutation(engine, row, config, {
     expectedRevision: snapshot.revision, content: serializePageToMarkdown(page, snapshot.tags),
@@ -81,6 +88,9 @@ export async function prepareSemanticPageMutation(engine: BrainEngine, row: Writ
   return { ...prepared, apply: async tx => {
     const outcome = await prepared.apply(tx);
     const inserted = await tx.addTimelineEntry(row.slug, { ...rendered.canonical, detail: rendered.detail }, { sourceId: row.source_id });
-    return { ...outcome, status: exact && !inserted ? 'skipped' : 'ok', ...(exact && !inserted ? { reason: 'duplicate' } : {}), entry: rendered.canonical };
+    const [stored] = gate.verdict === 'flag' ? await tx.executeRaw<{ id: number }>(`SELECT t.id FROM timeline_entries t JOIN pages p ON p.id = t.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 AND t.date = $3::date AND t.summary = $4 ORDER BY t.id DESC LIMIT 1`, [row.source_id, row.slug, rendered.canonical.date, rendered.canonical.summary]) : [];
+    const flagged = stored ? gateField(gate, `p:${row.source_id}/${row.slug}`, await recordWriteGateReceipt(tx, { targetTable: 'timeline_entries', targetId: Number(stored.id), sourceId: row.source_id, assessment: gate, requestId: row.id })) : undefined;
+    return { ...outcome, status: exact && !inserted ? 'skipped' : 'ok', ...(exact && !inserted ? { reason: 'duplicate' } : {}), entry: rendered.canonical, ...(flagged ? { gate: flagged } : {}) };
   } };
 }

@@ -56,6 +56,10 @@ import { logStubGuardEvent } from './stub-guard-audit.ts';
 import { isFactWithdrawn } from './withdrawal.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { withPageTierKept } from '../trust/fence-append.ts';
+import { recordTaintEdges } from '../trust/taint.ts';
+import { recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts';
+import type { TaintInput, WriteTrust } from '../trust/tier.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -99,6 +103,8 @@ export interface FenceInputFact {
   sessionId: string | null;
   /** Speaker attribution; written to the fence's attributed_to cell. */
   attributedTo?: FactAttribution;
+  /** #5575 B3: the deriver's write-gate decision (an `insert`); a flag records its receipt on the new row. */
+  gate?: GatedRowDecision;
 }
 
 export interface FenceWriteResult {
@@ -288,6 +294,8 @@ export async function writeFactsToFence(
   engine: BrainEngine,
   target: FenceTarget,
   facts: FenceInputFact[],
+  /** #5575 I2: a deriver's taint; the new rows get its tier and input edges. Unmanaged path only. */
+  derivation?: { trust: WriteTrust; inputs: readonly TaintInput[] },
 ): Promise<FenceWriteResult> {
   if (await managedPersistenceEnabled(engine)) {
     // The coordinator owns the canonical file on a managed brain: publish the
@@ -337,7 +345,7 @@ export async function writeFactsToFence(
   }
   const { filePath, writeRoot } = resolved;
   if (!hasSourceFilesystemLock(writeRoot)) {
-    return withSourceFilesystemLock(engine, writeRoot, () => writeFactsToFence(engine, target, facts));
+    return withSourceFilesystemLock(engine, writeRoot, () => writeFactsToFence(engine, target, facts, derivation));
   }
   const tmpPath = `${filePath}.tmp`;
   const durabilityEnabled = isDurabilityHardened(writeRoot);
@@ -523,9 +531,10 @@ export async function writeFactsToFence(
         const reparsed = parseMarkdown(tmpBody, `${target.slug}.md`);
         const existing = await engine.getPage(target.slug, { sourceId: target.sourceId });
         if (existing) {
-          await maintenanceTransaction(engine, tx => tx.refreshPageBody(target.slug, target.sourceId,
+          // #5575 ENG-1: the appended rows carry their own tier; the page keeps its tier.
+          await maintenanceTransaction(engine, tx => withPageTierKept(tx, target, () => tx.refreshPageBody(target.slug, target.sourceId,
             sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
-            existing.content_hash || contentHash(existing)));
+            existing.content_hash || contentHash(existing))));
         }
       } catch (err) {
         // The file is committed; the page cache stays stale until the next
@@ -554,7 +563,7 @@ export async function writeFactsToFence(
         source_session: facts[i].sessionId,
       }));
 
-      const result = await maintenanceTransaction(engine, tx => tx.insertFacts(enriched, { source_id: target.sourceId })); // gbrain-allow-direct-insert: writeFactsToFence is the markdown-first reconcile path; runs only after the atomic fence write commits
+      const result = await insertFenceRows(engine, target.sourceId, enriched, facts, derivation);
       // v0.46 (#3014) — an unresolvable `superseded by #N` reference (self
       // / dangling / struck target) leaves superseded_by NULL; log it rather
       // than swallow it. The row still lands (expired_at set for struck
@@ -576,6 +585,23 @@ export async function writeFactsToFence(
     },
     { timeoutMs: 5_000 },
   );
+}
+
+/**
+ * The DB stamp of new fence rows in one attributed transaction: at the
+ * deriver's tier when it declared one, with input edges, and the flag receipt
+ * of a row whose gate decision flagged it (`facts[i]` is the input of row i).
+ */
+async function insertFenceRows(engine: BrainEngine, sourceId: string, rows: Parameters<BrainEngine['insertFacts']>[0], facts: FenceInputFact[],
+  derivation?: { trust: WriteTrust; inputs: readonly TaintInput[] }) {
+  return maintenanceTransaction(engine, async tx => {
+    const inserted = await tx.insertFacts(rows, { source_id: sourceId }); // gbrain-allow-direct-insert: writeFactsToFence is the markdown-first reconcile path; runs only after the atomic fence write commits
+    for (const [i, id] of inserted.ids.entries()) {
+      if (derivation) await recordTaintEdges(tx, { table: 'facts', id, sourceId }, derivation.inputs);
+      if (facts[i]?.gate && inserted.ids.length === facts.length) await recordFlaggedRow(tx, facts[i].gate!, { table: 'facts', id, sourceId });
+    }
+    return inserted;
+  }, derivation?.trust);
 }
 
 /**

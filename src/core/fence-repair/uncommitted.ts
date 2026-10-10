@@ -37,9 +37,9 @@ export interface UncommittedFenceRepair {
 
 const fingerprint = (sourceId: string, incarnation: string, path: string) => `${sourceId}:${incarnation}:${path}`;
 
-/** The commit step printed for a legacy repair: stage only this path and commit it with the fence-repair subject. */
-export function legacyCommitStep(root: string, path: string, classes: readonly string[]): string {
-  return `git -C ${shellQuote([root])} add -- ${shellQuote([path])} && git -C ${shellQuote([root])} commit -m ${shellQuote([fenceRepairCommitSubject(path, classes)])} -- ${shellQuote([path])}`;
+/** The commit step printed for a legacy repair: stage only this path and commit it with the fence-repair subject and the `gbrain-repair:` trailer the Git effect would write. */
+export function legacyCommitStep(root: string, path: string, classes: readonly string[], tier: FenceRepairReceipt['tier'] = 'deterministic'): string {
+  return `git -C ${shellQuote([root])} add -- ${shellQuote([path])} && git -C ${shellQuote([root])} commit -m ${shellQuote([fenceRepairCommitSubject(path, classes)])} -m ${shellQuote([`gbrain-repair: invalid_fence ${tier} high`])} -- ${shellQuote([path])}`;
 }
 
 export async function recordUncommittedFenceRepair(engine: Exec, notice: UncommittedFenceRepair): Promise<void> {

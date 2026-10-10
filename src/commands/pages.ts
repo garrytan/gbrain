@@ -90,6 +90,11 @@ export function printUsage(): void {
   console.log(`gbrain pages — page-level operator commands (v0.26.5)
 
 Subcommands:
+  purges list [--source <id>] [--json]
+                                    List page purge tombstones (slug, hash, request, time).
+  unpurge <slug> [--source <id>] [--json]
+                                    Clear a page's purge tombstones so its old content can be
+                                    imported again. Restores nothing.
   purge-deleted [--older-than HOURS|Nh|Nd] [--dry-run] [--json] [--yes]
                                     Hard-delete soft-deleted pages older than the cutoff
                                     (default 72h) in every source of the brain (per-source
@@ -112,6 +117,7 @@ export async function runPages(engine: BrainEngine, args: string[]): Promise<voi
   const sub = args[0] as (typeof PAGES_SUBCOMMANDS)[number] | undefined;
   switch (sub) {
     case 'purge-deleted': return runPurgeDeleted(engine, args.slice(1));
+    case 'purges': case 'unpurge': return (await import('./pages-purges.ts')).runPagePurges(engine, sub, args.slice(1));
     case undefined:
       printUsage();
       return;

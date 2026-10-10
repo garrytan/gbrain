@@ -145,7 +145,7 @@ async function main() {
       };
     },
   }) as BrainEngine;
-  const plan = (unit: EvidencePlan['unit']): EvidencePlan => ({ requestedUnit: unit, unit, window: 1, budgetTokens: BUDGET, explicitUnit: true });
+  const plan = (unit: EvidencePlan['unit']): EvidencePlan => ({ requestedUnit: unit, unit, window: 1, budgetTokens: BUDGET, explicitUnit: true, budgetExplicit: false, packing: 'cap_only' });
   const scope = { excludePrivate: true, requireSafeChunks: true };
   const results: Record<string, unknown>[] = [];
   const large = pages.filter(p => p.kind === 'large');

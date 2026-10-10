@@ -42,7 +42,7 @@ import { importFromContent } from '../../src/core/import-file.ts';
 import { operations, type OperationContext } from '../../src/core/operations.ts';
 import { renderFactsTable, FACTS_FENCE_BEGIN } from '../../src/core/facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../../src/core/takes-fence.ts';
-import { deliverEvidence, type EvidencePlan } from '../../src/core/search/evidence-delivery.ts';
+import { AUTO_PACKINGS, EVIDENCE_CUT_MARKER, assembleEvidenceForHits, countEvidenceTokens, deliverEvidence, type EvidencePlan } from '../../src/core/search/evidence-delivery.ts';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { createManagedFixtureSource, withManagedFixtureWrite } from '../helpers/managed-e2e-fixture-write.ts';
@@ -324,7 +324,8 @@ for (const backend of backends) describe(`evidence delivery leak canaries (${bac
             expect(text, `${label}: ${row.slug} carries a code-chunk header`).not.toMatch(CODE_HEADER_LINE);
             if (unit === 'page') expect(row.delivered?.fallback_reason, `${label}: ${row.slug} fell back to a chunk`).toBeUndefined();
             const whole = row.delivered?.unit === 'page' && !row.delivered.truncated;
-            for (const segment of text.split('\n\n[…]\n\n')) {
+            const body = text.endsWith(EVIDENCE_CUT_MARKER) ? text.slice(0, -EVIDENCE_CUT_MARKER.length) : text;
+            for (const segment of body.split('\n\n[…]\n\n')) {
               for (const line of segment.split('\n')) {
                 const t = line.trim();
                 if (!t) continue;
@@ -352,6 +353,55 @@ for (const backend of backends) describe(`evidence delivery leak canaries (${bac
         }
       }
       expect(checked).toBeGreaterThan(100);
+    });
+  }, 180_000);
+
+  test('explicit budgets under every packing: no canaries, no cross-source or private text, a subset of get_page, within the budget', async () => {
+    await mutate(async () => {
+      const recount = (rows: SearchResult[]) => rows.reduce((n, r) => n + countEvidenceTokens(r.title ?? '') + countEvidenceTokens(r.chunk_text), 0);
+      try {
+        for (const packing of AUTO_PACKINGS.filter(p => p !== 'off')) {
+          await engine.setConfig('search.auto_packing', packing);
+          for (const remote of [false, true]) {
+            const canaries = remote ? [...ALWAYS_CANARIES.filter(c => c !== 'EDITSECRETCANARY'), ...REMOTE_CANARIES] : ALWAYS_CANARIES.filter(c => c !== 'EDITSECRETCANARY');
+            const reference = new Map<string, string | null>();
+            const readable = async (slug: string) => {
+              if (!reference.has(slug)) {
+                try {
+                  const page = await operations.find(o => o.name === 'get_page')!.handler(ctxOf(remote), { slug, source_id: BOUND, include_content: true }) as { content: string };
+                  reference.set(slug, page.content);
+                } catch { reference.set(slug, null); }
+              }
+              return reference.get(slug)!;
+            };
+            for (const budget of [64, 400, 3000]) {
+              const label = `${packing} remote=${remote} @${budget}`;
+              const search = await operations.find(o => o.name === 'search')!.handler(ctxOf(remote), { query: 'heron', token_budget: budget, source_id: BOUND, limit: 50, fields: 'full' }) as SearchResult[];
+              const query = await operations.find(o => o.name === 'query')!.handler(ctxOf(remote), { query: 'heron', return_unit: 'auto', token_budget: budget, source_id: BOUND, expand: false, fields: 'full' }) as SearchResult[];
+              const recall = await operations.find(o => o.name === 'recall')!.handler(ctxOf(remote), { query: 'heron', return_unit: 'auto', budget_tokens: budget, source_id: BOUND });
+              // Frozen hits name the same slug in an ungranted source, and a page this caller cannot read.
+              const frozen = [...search.map(h => ({ source_id: h.source_id!, slug: h.slug, chunk_id: h.chunk_id })), { source_id: FOREIGN, slug: 'notes/heron', chunk_id: 0 }];
+              const assembled = await assembleEvidenceForHits(engine, { hits: frozen, return_unit: 'auto', budget_tokens: budget, auto_packing: packing, caller: { remote, sourceId: BOUND } });
+              for (const [name, payload] of [['search', search], ['query', query], ['recall', recall], ['assemble', assembled]] as const) assertNoLeak(`${label} ${name}`, payload, canaries);
+              expect(assembled.unresolved, label).toContain(frozen.length - 1);
+              for (const rows of [search, query, assembled.results as SearchResult[]]) {
+                expect(recount(rows), label).toBeLessThanOrEqual(budget);
+                for (const row of rows) {
+                  const ref = await readable(row.slug);
+                  expect(ref, `${label}: ${row.slug} delivered but not readable via get_page`).not.toBeNull();
+                  if (row.delivered?.reason === 'not_conversation') continue;
+                  const body = row.chunk_text.endsWith(EVIDENCE_CUT_MARKER) ? row.chunk_text.slice(0, -EVIDENCE_CUT_MARKER.length) : row.chunk_text;
+                  for (const line of body.split('\n\n[…]\n\n').flatMap(seg => seg.split('\n'))) {
+                    if (line.trim()) expect(ref!.includes(line.trim()), `${label}: ${row.slug} line not in get_page: ${line.slice(0, 80)}`).toBe(true);
+                  }
+                }
+              }
+            }
+          }
+        }
+      } finally {
+        await engine.executeRaw(`DELETE FROM config WHERE key = 'search.auto_packing'`);
+      }
     });
   }, 180_000);
 
@@ -387,7 +437,7 @@ for (const backend of backends) describe(`evidence delivery leak canaries (${bac
   }, 180_000);
 
   test('stale hits are re-authorized: grant revocation, private flip and mid-flight edit', async () => {
-    const plan: EvidencePlan = { requestedUnit: 'page', unit: 'page', window: 1, budgetTokens: 32000, explicitUnit: true };
+    const plan: EvidencePlan = { requestedUnit: 'page', unit: 'page', window: 1, budgetTokens: 32000, explicitUnit: true, budgetExplicit: false, packing: 'cap_only' };
     await mutate(async () => {
       // Revocation: hits ranked under a two-source grant, expanded after the grant narrowed.
       const wide = await operations.find(o => o.name === 'search')!.handler({ ...ctxOf(false), sourceId: BOUND }, { query: 'heron', source_id: '__all__', limit: 50 }) as SearchResult[];

@@ -24,7 +24,7 @@
  */
 
 import type { Operation } from './operations.ts';
-import { WRITE_RECEIPT_SCHEMA, WRITE_REQUEST_PARAM, PAGE_MUTATION_PARAMS } from './persistence/params.ts';
+import { WRITE_RECEIPT_SCHEMA, WRITE_REQUEST_PARAM, AGENT_CONTENT_PARAMS, CONTENT_ORIGIN_PARAM } from './persistence/params.ts';
 import { WRITE_ERROR_CODES } from './persistence/types.ts';
 
 /** Frozen protocol version for the MEMORY_VERBS v1 verb set. Single source of truth. */
@@ -64,7 +64,7 @@ const remember: Operation = {
   outputRedaction: 'no_stored_text',
   description: 'MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.',
   params: {
-    ...PAGE_MUTATION_PARAMS,
+    ...AGENT_CONTENT_PARAMS,
     fact: { type: 'string', description: 'One claim.' },
     items: {
       type: 'array',
@@ -158,6 +158,10 @@ const remember: Operation = {
         'Use "world" (default — agents can recall it) or "private" (local CLI reads only).',
       );
     }
+    if (p.content_origin !== undefined && !CONTENT_ORIGIN_PARAM.enum!.includes(p.content_origin as string)) {
+      throw verbError('invalid_params', `content_origin must be one of ${CONTENT_ORIGIN_PARAM.enum!.join(', ')}; got ${JSON.stringify(p.content_origin)}.`,
+        'Pass content_origin as user_said, tool_output (text from a web page, email, file or other tool) or inferred, or omit it.');
+    }
     const replaces = typeof p.replaces === 'string' ? p.replaces.trim() : typeof p.replaces === 'number' ? String(p.replaces) : undefined;
     if (replaces !== undefined && (!/^\d+$/.test(replaces) || Number(replaces) <= 0)) {
       throw verbError(
@@ -217,6 +221,7 @@ const entity: Operation = {
     const { buildEntityCard } = await import('./verbs/entity-card.ts');
     const result = await buildEntityCard(ctx.engine, ctx.sourceId ?? 'default', name, {
       remote: ctx.remote !== false, includeReferences: true, surfaceCeiling: ctx.surfaceCeiling,
+      omitQuarantined: ctx.remote !== false, // #5575: like get_page, a remote reader never gets a quarantined page's card
     });
     const coverage = result.card?.coverage ?? result.coverage;
     if (coverage) {
@@ -456,10 +461,11 @@ const COVERAGE_SCHEMA = {
 /** One `referenced_by` row (mentions/referrers.ts). */
 const REFERENCE_ROW_SCHEMA = {
   type: 'object',
-  required: ['slug', 'title', 'type', 'canonical_type', 'date', 'date_source', 'preview'],
+  required: ['slug', 'title', 'type', 'canonical_type', 'date', 'date_source', 'preview', 'trust_tier', 'origin'],
   properties: {
     slug: { type: 'string' }, title: { type: 'string' }, type: { type: ['string', 'null'] }, canonical_type: { type: 'string' },
     date: { type: ['string', 'null'] }, date_source: { type: 'string' }, preview: { type: 'string' },
+    trust_tier: { type: 'string' }, origin: { type: 'string' }, unconfirmed: { type: 'boolean', const: true },
   },
 } as const;
 

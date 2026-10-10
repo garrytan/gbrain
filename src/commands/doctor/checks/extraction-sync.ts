@@ -12,7 +12,7 @@ import { probeSourceGitState } from '../../../core/git-head.ts';
 // this pure comparator (no git subprocess on the HTTP MCP doctor path).
 import { lagFromContentMs, loadSyncFreshnessSources, resolveStalenessCeilingSeconds } from '../../../core/source-health.ts';
 import { resolveEnvNumber, resolveHoursEnv, warnOnceForEnv } from '../../../core/env-number.ts';
-import { CHUNKER_VERSION } from '../../../core/chunkers/code.ts';
+import { chunkerStamp } from '../../../core/chunkers/code.ts';
 import { effectiveLinkExtractorWatermark, smallBrainBacklogNote } from '../../../core/link-extraction-watermark.ts';
 import { previewMentionPass } from '../../../core/mentions/stale.ts';
 import { isUndefinedColumnError } from '../../../core/utils.ts';
@@ -23,7 +23,7 @@ import {
   findDbOnlyCollisions,
 } from '../../../core/storage-config.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync.ts';
-import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
+import { resolveSourceLocalFilePath, sourceGitScope } from '../../../core/markdown.ts';
 import { scannerSlugRootMode } from '../../../core/write-through.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
@@ -448,10 +448,11 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
       if (rows.length === 0) continue;
       let backedWithoutSourcePath: Set<string> | null = null;
       const mode = await scannerSlugRootMode(engine, src.id, src.local_path!);
+      const gitScope = sourceGitScope(src.local_path!);
       for (const { slug, source_path: sourcePath } of rows) {
         if (dbOnlyDirs.some(dir => slug.startsWith(dir))) continue;
         if (sourcePath) {
-          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug, mode);
+          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug, mode, gitScope);
           if (filePath && existsSync(filePath)) continue;
         } else {
           backedWithoutSourcePath ??= collectMarkdownSlugs(src.local_path!);
@@ -1234,8 +1235,8 @@ export async function checkSyncFreshness(
     // v0.41.27.0: D7 narrowed predicate. The CHUNKER_VERSION caller-side
     // check mirrors sync.ts:1057's chunker-version gate so doctor agrees
     // with sync on "is there work to do?". `sources.chunker_version` is
-    // a TEXT column storing String(CHUNKER_VERSION).
-    const currentChunkerVersion = String(CHUNKER_VERSION);
+    // a TEXT column storing chunkerStamp().
+    const currentChunkerVersion = chunkerStamp();
 
     const issues: string[] = [];
     let ownedContent = new Set<string>();

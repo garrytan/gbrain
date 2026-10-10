@@ -174,6 +174,8 @@ function resolution(hold: Pick<ContentRefusal, 'code' | 'reason' | 'key' | 'line
     case 'file_too_large': return `Split ${path} into files under ${MAX_FILE_SIZE} bytes and commit, or leave it out of the source with sync.exclude.`;
     case 'frontmatter_slug_conflict': return `Remove the slug: line of ${path} (the path decides the slug), or move the file to the path its slug names.`;
     case 'content_rejected': return `Remove the junk the content-sanity gate matched in ${path}, or ask the user whether junk_disposition should stay reject.`;
+    case 'purged_content': return `${path} carries purged page content; delete or edit it and commit, or the owner clears the tombstone with gbrain pages unpurge.`;
+    case 'write_gate_rejected': return `The write gate refused ${path} as external instruction-like content; ask the user whether to edit it or whether write_gate.external_mode should stay reject.`;
     case 'rename_held': return `Re-run the preview with --include-ambiguous to re-bind the rename of ${path} to the current page, or restore the old file name.`;
     case 'parser_regression': return `This is a gbrain bug: report the gbrain version, ${path} and the code; upgrade or pin the last good version.`;
     default: return hold.reason === 'ambiguous_protected_key' ? `Write ${where} on one line with one quoted value; gbrain never guesses who may read a page or where it came from.`

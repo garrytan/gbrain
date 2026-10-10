@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-trust-006",
+  "suites": [
+    "trust"
+  ],
+  "category": "trust",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/tamsin-windermoor",
+      "content": "---\ntitle: Tamsin Windermoor\ntype: person\naliases: [tamsin]\n---\n\nTamsin Windermoor is the founder of Cloudmeadow Works.\n"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "people/tamsin-windermoor",
+      "content": "---\ntitle: Tamsin Windermoor\ntype: person\naliases: [tamsin]\n---\n\nTamsin Windermoor is the founder of Cloudmeadow Works. Tamsin now also advises a Porto studio.\n"
+    },
+    {
+      "step_id": "s3",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/anouk-brief-006",
+      "content": "---\ntitle: Anouk brief 006\ntype: note\ntrust_tier: user_confirmed\nsource_kind: sync\n---\n\nAnouk Mirelez sent the hiring plan.\n"
+    },
+    {
+      "step_id": "s4",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/tamsin-web-006",
+      "content": "---\ntitle: Tamsin web note 006\ntype: note\n---\n\nCloudmeadow Works ships weekly.\n",
+      "content_origin": "tool_output"
+    },
+    {
+      "step_id": "s5",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/tamsin-web-006",
+      "content": "---\ntitle: Tamsin web note 006\ntype: note\n---\n\nCloudmeadow Works ships weekly. Tidied by the agent.\n"
+    },
+    {
+      "step_id": "s6",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Anouk Mirelez prefers written updates",
+      "entity": "people/anouk-mirelez",
+      "kind": "preference",
+      "content_origin": "user_said"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I know about Tamsin Windermoor?"
+    }
+  ]
+}

@@ -100,6 +100,7 @@ test/cycle-patterns.test.ts	patterns private-queue keepalive wiring	1	readFileSy
 test/cycle-phase-deadline-drift.test.ts	propose_takes deadline < job timeout (#4168)	4	readFileSync
 test/cycle/nightly-probe-routes.test.ts	resolveNightlyProbeModelRoutes	6	source-surface-helper
 test/cycle/nightly-probe-routes.test.ts	resolveNightlyProbeModelRoutesForDaemon (autopilot step dep)	3	source-surface-helper
+test/deletion-inventory.test.ts	deletion inventory	3	readFileSync
 test/destructive-guard.test.ts	FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)	9	readFileSync
 test/destructive-guard.test.ts	assessDestructiveImpact	5	readFileSync
 test/destructive-guard.test.ts	formatters (display helpers)	4	readFileSync
@@ -268,7 +269,7 @@ test/runtime-version.test.ts	stated Bun floor	1	readFileSync
 test/schema-bootstrap-coverage.test.ts	(file-level)	14	source-surface-helper
 test/schema-pack-unify-types-handler.test.ts	#1575 unify-types worker dry-run default	1	source-surface-helper
 test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural)	1	readFileSync
-test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	8	exec-scan
+test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	9	exec-scan
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/ci-executed-counts.test.ts	CLI	2	readFileSync
@@ -368,6 +369,7 @@ test/think-embed-question-wiring.serial.test.ts	#3734 — synthesize verb wires 
 test/timing-safe.test.ts	extraction contract	1	source-surface-helper
 test/title-fuzzy-index.test.ts	findByTitleFuzzy indexed threshold	2	source-surface-helper
 test/transcription-injection.test.ts	transcription — command injection (#245)	2	readFileSync
+test/trust-write-gate-drift.test.ts	(file-level)	1	readFileSync
 test/upgrade.serial.test.ts	detectInstallMethod — package-install classification (in-process)	4	readFileSync
 test/upgrade.serial.test.ts	runUpgrade target verification (#4366)	8	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane A — defaults sweep	8	source-surface-helper

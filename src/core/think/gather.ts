@@ -16,6 +16,8 @@
  */
 
 import type { BrainEngine, TakeHit, Take } from '../engine.ts';
+import type { TrustTier } from '../trust/tier.ts';
+import { EXTERNAL_DATA_RULE, needsDataEnvelope, trustAttributes } from '../eligibility/labels.ts';
 import { hybridSearch } from '../search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../search/internal-breadth.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -196,6 +198,7 @@ export async function runGather(
   const takesKwPromise = engine.searchTakes(opts.question, {
     limit: takesLimit,
     ...pageScope,
+    eligibility: {},
   }).catch((e) => {
     warnings.push('GATHER_TAKES_KEYWORD_FAILED');
     process.stderr.write(`[think.gather] takes-keyword stream failed: ${(e as Error).message}\n`);
@@ -207,6 +210,7 @@ export async function runGather(
     ? engine.searchTakesVector(opts.questionEmbedding, {
         limit: takesLimit,
         ...pageScope,
+        eligibility: {},
       }).catch((e) => {
         warnings.push('GATHER_TAKES_VECTOR_FAILED');
         process.stderr.write(`[think.gather] takes-vector stream failed: ${(e as Error).message}\n`);
@@ -633,11 +637,13 @@ export function renderPagesBlock(
     const title = String(page.title ?? '');
     const slugIdentity = slug.split('/').pop()?.replace(/[-_]/g, ' ') ?? '';
     const content = String(page.chunk_text ?? page.compiled_truth ?? page.snippet ?? '');
-    const flag = (p.injection_suspected ? `${INJECTION_SUSPECTED_LINE}\n` : '') + graphEvidenceLine(p);
+    const flag = (p.injection_suspected ? `${INJECTION_SUSPECTED_LINE}\n` : '')
+      + (p.trust_tier && needsDataEnvelope(p.trust_tier) ? `${EXTERNAL_DATA_RULE}\n` : '') + graphEvidenceLine(p);
+    const trustAttr = p.trust_tier ? ` ${trustAttributes({ trust_tier: p.trust_tier, origin: p.origin ?? 'legacy' })}` : '';
     // Evidence delivery: the block was already budgeted and cut around its
     // hits; render it whole (capped only by excerptLen).
     if (typeof opts.verbatim === 'function' ? opts.verbatim(p) : opts.verbatim) {
-      return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}>\n${flag}${content.slice(0, opts.verbatimLen ?? excerptLen)}\n</page>`;
+      return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}${trustAttr}>\n${flag}${content.slice(0, opts.verbatimLen ?? excerptLen)}\n</page>`;
     }
     const excerpt = selectRelevantExcerptDetailed(
       content,
@@ -649,7 +655,7 @@ export function renderPagesBlock(
       (excerpt.truncatedStart ? `${EXCERPT_CUT_START_MARKER}\n` : '') +
       excerpt.text +
       (excerpt.truncatedEnd ? `\n${EXCERPT_CUT_END_MARKER}` : '');
-    return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}>\n${flag}${body}\n</page>`;
+    return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}${trustAttr}>\n${flag}${body}\n</page>`;
   }).join('\n\n');
 }
 
@@ -663,10 +669,11 @@ function graphEvidenceLine(p: SearchResult): string {
 
 export function takesHitToTakeForPrompt(h: TakeHit | Take): {
   page_slug: string; row_num: number; claim: string; kind: string;
-  holder: string; weight: number; source?: string | null; since_date?: string | null;
+  holder: string; weight: number; source?: string | null; since_date?: string | null; trust_tier?: TrustTier; origin?: string;
 } {
   // TakeHit + Take share the slug/claim/kind/holder/weight surface.
   const t = h as Take & TakeHit;
+  const lt = h as { trust_tier?: TrustTier; origin?: string };
   return {
     page_slug: t.page_slug,
     row_num: t.row_num,
@@ -676,5 +683,6 @@ export function takesHitToTakeForPrompt(h: TakeHit | Take): {
     weight: t.weight,
     source: 'source' in t ? (t as Take).source : null,
     since_date: 'since_date' in t ? (t as Take).since_date : null,
+    ...(lt.trust_tier ? { trust_tier: lt.trust_tier, origin: lt.origin } : {}),
   };
 }

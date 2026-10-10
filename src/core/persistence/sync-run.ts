@@ -12,7 +12,7 @@ import { getWriteRequest, admitWriteInTransaction, foregroundPriority, intentDig
 import { preparationConfigView } from './config-snapshot.ts';
 import { isWriteCapacityWait, retryWriteAdmission } from './admission-retry.ts';
 import { assertPersistenceAccepting, awaitWrite, foregroundWriteCompletions, startPersistenceConsumer, type WriteWait } from './service.ts';
-import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncContent, readSyncFile, syncGit, type ManagedSyncContext, type SyncDiscovery } from './sync-discovery.ts';
+import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncFile, syncGit, type ManagedSyncContext, type SyncDiscovery } from './sync-discovery.ts';
 import { isImageFilePath } from '../sync.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, SYNC_PROCESSING_KEYS, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
@@ -41,7 +41,7 @@ import { laneApplyMsPerMember, lanePolicy, openLanes } from './sync-lanes.ts';
 import { isContentRefusal } from '../import-screen.ts';
 import { isRetryableConnError, isStatementTimeoutError } from '../retry-matcher.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
-import { dryRunScreen, isSyncReadBound, loadSyncScreenRun, managedImageHold, pinnedBlob, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
+import { dryRunScreen, isSyncReadBound, loadSyncScreenRun, managedImageHold, pinnedBlob, pinnedContent, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
 import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { managedSyncWriteDiagnostic } from './sync-write-diagnostic.ts';
 import { fileChangedAfterAdmission, headCommittedBytes, originFaultHold, pageChangeProof, pageChangedHold, pinnedWorktreeConflict, receiptPageFaultHold, worktreeDirtyHold } from './sync-page-fault.ts';
@@ -51,6 +51,8 @@ import { withCoordinatedWrite } from './context.ts';
 import { principalAttribution } from './attribution.ts';
 import { recordSyncRunTrend } from '../fence-repair/census-store.ts';
 import { addFencesNormalized, addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, heldGitPaths, fencesNormalizedReport, holdsEscalated, readGitHoldRetryPaths, readGitSourceHolds, readSyncHoldPolicy, recordSyncConversion, recoveredReport, requestGitHoldRetry, writeGitHold, type FencesTally, type SyncHoldPolicy } from './sync-holds.ts';
+import { withScreeningPaths } from './screening-paths.ts';
+import { withBoundedReadSession } from './bounded-reads.ts';
 
 export interface ManagedSyncWriteDiagnostic {
   source_id: string;
@@ -352,7 +354,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
         `Source ${cursor.sourceId}'s approved company-brain content manifest no longer includes ${entry.path} for this run (its approval changed, or the file is no longer an included path), so nothing was imported for it. If the approval changed, inspect and approve the repository again first (gbrain sources inspect --help).`);
       content = (await readCommittedBlob(cursor.companyPlan.revision!, blob, cursor.companyPlan.limits)).toString('utf8');
       assertActive();
-    } else content = entry.action === 'import' && !oversize ? readSyncContent(cursor, entry) : null;
+    } else content = entry.action === 'import' && !oversize ? pinnedContent(cursor, entry) : null;
     // #6340: working-tree bytes that differ from the pinned blob but are committed at HEAD (a commit past the pin on a
     // live checkout) are imported as HEAD has them; the pin..HEAD diff later re-imports the same bytes as a no-op.
     // Uncommitted bytes keep the pinned content and reach the publication screen (idea from PR #6323).
@@ -806,6 +808,30 @@ const WAIVER_RUN_MAX = 64;
  */
 async function waiveRun(engine: BrainEngine, cursor: Cursor, head: Pending, key: string, config: GBrainConfig, assertActive: () => void,
   frozenRun: Parameters<typeof freezeEntry>[4], drainStartedAt: number, limit: number, onProgress: SyncOpts['onProgress']): Promise<Cursor | null> {
+  // The run's screens share one memo of root-level path facts (screening-paths.ts); waiveNoopRun re-validates each entry.
+  // GBRA-75 wave 9: and one bounded-read session (bounded-reads.ts), so the run's screens share one transaction.
+  const run = await withScreeningPaths(() => withBoundedReadSession(engine, session => screenWaiverRun(session, cursor, head, key, config, assertActive, frozenRun, limit)));
+  if (!run) return null;
+  assertActive();
+  const observedAt = frozenRun.observedAt ?? new Date().toISOString();
+  const done = await waiveNoopRun(engine, cursor, run, key, async (tx, prefix) => {
+    let next: Cursor = cursor;
+    for (const { waived } of prefix) next = waivedCursor(next, waived);
+    const paths = prefix.map(({ pending }) => pending.intent.path).filter((path): path is string => typeof path === 'string');
+    return writeCursor(tx, key, cursor, { ...next, progress: stampProgress(cursor.progress, cursor.index, cursor.index + prefix.length, drainStartedAt) }, async inner => {
+      for (const path of await heldGitPaths(inner, cursor.sourceId, cursor.incarnation, paths)) await holdClear(cursor, path, observedAt)!(inner);
+    });
+  }, tx => currentCursor(tx, key, cursor));
+  if (!done) return null;
+  for (let index = cursor.index + 1; index <= cursor.index + done.waived; index++) onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: index, total: cursor.entries.length, waived: true });
+  assertActive();
+  return done.next && done.cursor.index === cursor.index + done.waived
+    ? saveCursor(engine, key, done.cursor, { ...done.cursor, pending: done.next as Pending }, false, assertActive) : done.cursor;
+}
+
+/** waiveRun's screens: the head, then its followers four at a time while each one screens as a waiver. */
+async function screenWaiverRun(engine: BrainEngine, cursor: Cursor, head: Pending, key: string, config: GBrainConfig, assertActive: () => void,
+  frozenRun: Parameters<typeof freezeEntry>[4], limit: number): Promise<WaiverRunEntry[] | null> {
   const first = await screenWaiver(engine, cursor, head, config, frozenRun.signal);
   if (!first) return null;
   assertActive();
@@ -823,21 +849,7 @@ async function waiveRun(engine: BrainEngine, cursor: Cursor, head: Pending, key:
     }
     next += batch.length;
   }
-  assertActive();
-  const observedAt = frozenRun.observedAt ?? new Date().toISOString();
-  const done = await waiveNoopRun(engine, cursor, run, key, async (tx, prefix) => {
-    let next: Cursor = cursor;
-    for (const { waived } of prefix) next = waivedCursor(next, waived);
-    const paths = prefix.map(({ pending }) => pending.intent.path).filter((path): path is string => typeof path === 'string');
-    return writeCursor(tx, key, cursor, { ...next, progress: stampProgress(cursor.progress, cursor.index, cursor.index + prefix.length, drainStartedAt) }, async inner => {
-      for (const path of await heldGitPaths(inner, cursor.sourceId, cursor.incarnation, paths)) await holdClear(cursor, path, observedAt)!(inner);
-    });
-  }, tx => currentCursor(tx, key, cursor));
-  if (!done) return null;
-  for (let index = cursor.index + 1; index <= cursor.index + done.waived; index++) onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: index, total: cursor.entries.length, waived: true });
-  assertActive();
-  return done.next && done.cursor.index === cursor.index + done.waived
-    ? saveCursor(engine, key, done.cursor, { ...done.cursor, pending: done.next as Pending }, false, assertActive) : done.cursor;
+  return run;
 }
 
 /** #5984 bulk: freezes the followers of an eligible head and records them with it as the cursor's group. */
@@ -1109,7 +1121,8 @@ async function cursorMovedAdmission(engine: BrainEngine, key: string, admitting:
  */
 async function finishCheckpoint(engine: BrainEngine, key: string, cursor: Cursor, company: boolean, assertActive: () => void): Promise<SyncResult> {
   await clearManagedSyncFailureAfterSuccess(engine, key);
-  if (cursor.counts.added + cursor.counts.modified + cursor.counts.deleted > 0) await refreshProjectionStatistics(engine);
+  const changed = cursor.counts.added + cursor.counts.modified + cursor.counts.deleted;
+  if (changed > 0) await refreshProjectionStatistics(engine, changed);
   assertActive();
   const scheduled = company ? [] : await readGitHoldRetryPaths(engine, cursor.sourceId, cursor.incarnation);
   assertActive();
@@ -1407,7 +1420,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         if (held?.request_id !== pending.requestId || held.same !== true) throw new CursorMoved();
         assertActive();
         return accepted;
-      })).catch(error => cursorMovedAdmission(engine, key, admitting, pending, error));
+      }), undefined, error => engine.reconnect({ error })).catch(error => cursorMovedAdmission(engine, key, admitting, pending, error));
       if (!row) { cursor = await currentCursor(engine, key, cursor); continue; }
       await validateSyncAuthority(engine, cursor.authority, pending.slug);
       assertSyncDispatchActive();

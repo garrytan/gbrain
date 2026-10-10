@@ -65,4 +65,36 @@ describe.skipIf(!url)('JIT off for statements past the JIT cost thresholds (#627
       } finally { watch.restore(); }
     }, { databaseUrl: url });
   }, 180_000);
+
+  test('search backlink counts run with JIT off, alone and inside a caller transaction that keeps its setting', async () => {
+    await managedBrain(async ({ engine, ctx }) => {
+      await put(ctx, 'notes/jit-target', 'JIT target');
+      const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='notes/jit-target'", []);
+      const watch = watchJit(/COUNT\(DISTINCT l\.from_page_id\)/);
+      try {
+        expect((await engine.getBacklinkCounts([page!.id])).get(page!.id)).toBe(0);
+        expect(watch.seen).toEqual(['off']);
+        const after = await engine.transaction(async tx => {
+          await tx.getBacklinkCounts([page!.id]);
+          return ((await tx.executeRaw("SELECT current_setting('jit') AS jit", [])) as Array<{ jit: string }>)[0]!.jit;
+        });
+        expect(watch.seen).toEqual(['off', 'off']);
+        expect(after).toBe('on');
+        expect(((await engine.executeRaw("SELECT current_setting('jit') AS jit", [])) as Array<{ jit: string }>)[0]!.jit).toBe('on');
+      } finally { watch.restore(); }
+    }, { databaseUrl: url });
+  }, 180_000);
+
+  test('getHealth runs its aggregate, linkable-scope and most-connected statements with JIT off', async () => {
+    await managedBrain(async ({ engine, ctx }) => {
+      await put(ctx, 'people/jit-person', 'JIT person');
+      const watch = watchJit(/WITH entity_pages AS|WITH linkable_pages AS MATERIALIZED|AS link_count/);
+      try {
+        expect((await engine.getHealth()).page_count).toBeGreaterThan(0);
+        expect(watch.seen.length).toBeGreaterThanOrEqual(3);
+        expect(watch.seen.every(jit => jit === 'off')).toBe(true);
+        expect(((await engine.executeRaw("SELECT current_setting('jit') AS jit", [])) as Array<{ jit: string }>)[0]!.jit).toBe('on');
+      } finally { watch.restore(); }
+    }, { databaseUrl: url });
+  }, 180_000);
 });

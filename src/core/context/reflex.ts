@@ -30,6 +30,8 @@
  *   4. else → disabled (policy skill carries; doctor reports it)
  */
 
+import { proactiveEligibility } from '../eligibility/registry.ts';
+import { renderTrustedInline } from '../eligibility/labels.ts';
 import { join } from 'node:path';
 import { mkdirSync, appendFileSync } from 'node:fs';
 import { gbrainPath, loadConfig, isEnvDisabled, type GBrainConfig } from '../config.ts';
@@ -303,7 +305,7 @@ export function renderReflexAddition(
   const lines: string[] = pointerText ? [pointerText, ''] : [];
   lines.push('## Brain pages the brain volunteers');
   for (const v of volunteered) {
-    const syn = v.synopsis ? ` — ${v.synopsis}` : '';
+    const syn = v.trust_tier ? ` — ${renderTrustedInline(v.synopsis, { trust_tier: v.trust_tier, origin: v.origin ?? 'legacy' })}` : v.synopsis ? ` — ${v.synopsis}` : '';
     lines.push(`- **${v.display}** → \`${v.slug}\` (${v.confidence.toFixed(2)}, ${v.rationale})${syn}`);
   }
   return lines.join('\n');
@@ -331,7 +333,8 @@ async function resolve(
     if (!engine) return null;
     const { resolveSourceId } = await import('../source-resolver.ts');
     const sourceId = await resolveSourceId(engine, null, params.workspaceDir);
-    return resolveEntitiesToPointers(engine, sourceId, candidates, opts);
+    // #5575 (CEO-20): the OpenClaw context engine's direct rung is a proactive surface.
+    return resolveEntitiesToPointers(engine, sourceId, candidates, { ...opts, eligibility: await proactiveEligibility({ engine }, 'context_engine') });
   }
   // 4. Disabled (PGLite with no serve / unknown engine). Policy skill carries.
   return null;

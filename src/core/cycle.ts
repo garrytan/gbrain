@@ -68,6 +68,7 @@ export { anyAbortSignal } from './abort-signals.ts';
 export type CyclePhase =
   | 'lint' | 'backlinks' | 'sync' | 'synthesize' | 'extract' | 'extract_facts'
   | 'fence_repair' // #6188: repairs held and stored malformed facts/takes fences (global maintenance lane)
+  | 'content_repair' // #6377: the rest of the content-repair lane (slug conflicts and later kinds), right after fence_repair
   | 'resolve_symbol_edges'
   | 'patterns' | 'recompute_emotional_weight' | 'consolidate'
   // v0.36.1.0 Hindsight calibration wave:
@@ -125,6 +126,8 @@ export const ALL_PHASES: CyclePhase[] = [
   'sync',
   // #6188: right after sync, so a fence the sync just held is repaired before extract and extract_facts read the page.
   'fence_repair',
+  // #6377: the other content-repair kinds (src/core/repair/content-lane.ts) right after it, same reason.
+  'content_repair',
   'synthesize',
   'extract',
   // v0.32.2 — reconcile DB facts index from the `## Facts` fence on
@@ -324,6 +327,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'backlinks',
   'sync',
   'fence_repair', // #6188: writes repaired fences through coordinated writes
+  'content_repair', // #6377: writes content repairs through the same coordinated file-repair path
   'synthesize',
   'extract',
   // v0.32.2 — wipes + re-inserts facts per affected page.
@@ -1856,6 +1860,18 @@ async function runPhaseOrphans(engine: BrainEngine, sourceId?: string): Promise<
 
 // ─── Main ──────────────────────────────────────────────────────────
 
+
+/**
+ * #6188 / #6377: the two repair-lane phases that run right after `sync`, in this order. `runCycle` dispatches them
+ * through one loop; each phase module owns its gate, budget and report.
+ */
+const REPAIR_LANE_PHASES = ['fence_repair', 'content_repair'] as const;
+
+async function runRepairLanePhase(phase: typeof REPAIR_LANE_PHASES[number], engine: BrainEngine | null,
+  opts: { dryRun: boolean; signal?: AbortSignal; deadlineAtMs: number | null }): Promise<PhaseResult> {
+  return phase === 'fence_repair' ? (await import('./cycle/fence-repair.ts')).runFenceRepairPhase(engine, opts) : (await import('./cycle/content-repair.ts')).runContentRepairPhase(engine, opts);
+}
+
 /**
  * Run the brain maintenance cycle.
  *
@@ -2239,9 +2255,9 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
-    if (phases.includes('fence_repair')) { // #6188: one bounded run of the `fences` repair kind (src/core/cycle/fence-repair.ts)
-      checkAborted(cycleSignal);
-      const { result, duration_ms } = await timePhase(async () => (await import('./cycle/fence-repair.ts')).runFenceRepairPhase(engine, { dryRun, signal: cycleSignal, deadlineAtMs: opts.deadlineAtMs ?? null }), 'fence_repair');
+    for (const phase of REPAIR_LANE_PHASES) { // #6188 fence_repair, then #6377 content_repair: one bounded run each (src/core/cycle/{fence,content}-repair.ts)
+      if (!phases.includes(phase)) continue; checkAborted(cycleSignal);
+      const { result, duration_ms } = await timePhase(() => runRepairLanePhase(phase, engine, { dryRun, signal: cycleSignal, deadlineAtMs: opts.deadlineAtMs ?? null }), phase);
       phaseResults.push({ ...result, duration_ms }); await safeYield(opts.yieldBetweenPhases);
     }
 

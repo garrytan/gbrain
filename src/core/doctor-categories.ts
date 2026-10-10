@@ -64,6 +64,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'connector_held_items',
   'git_held_files',
   'fence_integrity',
+  // #5575: stored trust tier counts, the legacy-row backfill, scan and source claims.
+  'trust_tiers',
+  'trust_scan',
+  'trust_sources_unclaimed',
   'credential_projection_pending',
   'derived_visibility',
   'extractor_facts_expired',

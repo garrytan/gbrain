@@ -4,7 +4,8 @@
  * Env: WORKER_DATABASE_URL, WORKER_SOURCE, WORKER_SLUGS (comma-separated, one
  * put_page each, in order; with WORKER_GO, the go file's content instead), WORKER_INTERVAL_MS (gap between writes; 0 = back to
  * back), WORKER_OUT (JSON results), WORKER_GO (optional: a file whose creation starts the writes, so a
- * test can start the process ahead and write at a chosen moment). GBRAIN_HOME is the drain's, so both processes
+ * test can start the process ahead and write at a chosen moment), WORKER_READY (optional: a file this process creates once
+ * connected, so a test can wait out its startup before the moment it measures). GBRAIN_HOME is the drain's, so both processes
  * are the same local writer on the same owner host. WORKER_PREPARING_HOLD_MS (optional): when this process claims its
  * own write, its preparation waits that long first (results record `held: [start, end]`), so the write stays claimed
  * by this process, unpublished, while the drain's lanes hold the worktree.
@@ -22,6 +23,7 @@ let admittedAt: number | undefined;
 const postgres = new PostgresEngine();
 const engine = observeAdmissionTransactions(postgres, () => { admittedAt ??= Date.now(); });
 await postgres.connect({ database_url: process.env.WORKER_DATABASE_URL!, poolSize: 4 });
+if (process.env.WORKER_READY) writeFileSync(process.env.WORKER_READY, '1');
 const sourceId = process.env.WORKER_SOURCE!;
 const interval = Number(process.env.WORKER_INTERVAL_MS ?? '0');
 const results: Array<{ slug: string; state: string; error?: string; submitted: number; returned: number; admitted?: number; held?: [number, number] }> = [];

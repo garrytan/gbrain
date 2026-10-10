@@ -1,3 +1,4 @@
+import { ownerImportTrust } from '../trust/channel.ts';
 import { basename } from 'node:path';
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
@@ -137,7 +138,7 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
   const content = serializePageToMarkdown({ ...state.snapshot.page, ...prepared.result }, prepared.result.tags);
   const ready = prepared.ready;
   return {
-    observedRevision: state.snapshot.revision,
+    observedRevision: state.snapshot.revision, trust: await ownerImportTrust(engine, row, prepared.result.frontmatter, state.path),
     file: { path: state.path, root: state.root, content, expectedBeforeHash: state.pins.raw_file_hash },
     // A database-only page matched by its slug path always records that file as its origin.
     noop: ready.noop && sha256(content) === state.pins.raw_file_hash && state.origin === 'recorded',

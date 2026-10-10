@@ -109,7 +109,7 @@ const SEED_ROW_LIMITS: Readonly<Record<string, number>> = {
   op_checkpoints: 1, page_generation_clock: 1, persistence_brain: 1, shared_skill_state: 1, sources: 1,
 };
 /** Each engine's own schema writes these; they never count against emptiness. */
-const SCHEMA_OWNED_TABLES = new Set(['config', 'file_migration_ledger', 'persistence_graduation']);
+const SCHEMA_OWNED_TABLES = new Set(['config', 'file_migration_ledger', 'persistence_graduation', 'trust_policy_state']);
 
 /**
  * A target counts as empty when it has no public tables, or a gbrain schema whose

@@ -138,6 +138,9 @@ function markdownTimelineKeys(text: string, slug: string): Set<string> {
   return keys;
 }
 
+/** A page's stored non-event timeline row as reconciliation reads it (`date` is `YYYY-MM-DD`). */
+export type StoredTimelineTuple = TimelineTuple & { id: number; detail: string | null };
+
 /**
  * Reconcile a page's timeline rows with its current text: retract every row
  * an earlier version of the page produced that the current text no longer
@@ -145,17 +148,18 @@ function markdownTimelineKeys(text: string, slug: string): Set<string> {
  * version of the page ever produced (enrichment, meeting fan-out, inferred
  * anchors) and event-page projections are never touched. The page_versions
  * scan only runs when the page holds a row the current text does not produce.
- * Returns the orphaned rows; they are deleted unless `dryRun`.
+ * Returns the orphaned rows; they are deleted unless `dryRun`. `storedRows`
+ * is the caller's own read of those rows (a batched walk), used instead of reading them here.
  */
 export async function retractRemovedTimelineEntries(
   engine: Pick<BrainEngine, 'executeRaw'>,
   slug: string,
   sourceId: string,
   currentText: string,
-  opts: { dryRun?: boolean } = {},
+  opts: { dryRun?: boolean; storedRows?: ReadonlyArray<StoredTimelineTuple> } = {},
 ): Promise<Array<TimelineTuple & { id: number }>> {
   const kept = markdownTimelineKeys(currentText, slug);
-  const rows = await engine.executeRaw<TimelineTuple & { id: number; detail: string | null }>(
+  const rows = opts.storedRows ?? await engine.executeRaw<StoredTimelineTuple>(
     `SELECT t.id, to_char(t.date, 'YYYY-MM-DD') AS date, t.source, t.summary, t.detail FROM timeline_entries t
       JOIN pages p ON p.id = t.page_id
       WHERE p.source_id = $1 AND p.slug = $2 AND t.event_page_id IS NULL`, [sourceId, slug]);

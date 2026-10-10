@@ -1,0 +1,14 @@
+{
+  "fixture_id": "gen-del-003",
+  "turns": {},
+  "trust": {
+    "items": [
+      {
+        "item_id": "i1",
+        "check": "purged",
+        "step": "s3",
+        "probe": "Anouk's door code is 4757-003"
+      }
+    ]
+  }
+}

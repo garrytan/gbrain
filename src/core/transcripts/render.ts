@@ -89,9 +89,10 @@ export function defaultUserPatternsPath(): string {
  * Agent-directed imperative shapes. Detection only STAMPS A COUNT into the
  * page's transcript_import frontmatter (hash-covered, idempotent) so readers
  * and future triage can see the page carries instruction-shaped content —
- * it never hides or rewrites the text.
+ * it never hides or rewrites the text. The write gate
+ * (`src/core/write-gate-patterns.ts`) reuses them as `override` patterns.
  */
-const IMPERATIVE_RES: readonly RegExp[] = [
+export const IMPERATIVE_RES: readonly RegExp[] = [
   /\b(ignore|disregard|forget)\s+(all\s+|any\s+)?(previous|prior|above|earlier)\s+(instructions|context|rules)\b/i,
   /\byou\s+(must|should)\s+now\s+(act|behave|respond)\b/i,
   /\bnew\s+system\s+prompt\b/i,

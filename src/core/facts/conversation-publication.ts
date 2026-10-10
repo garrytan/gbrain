@@ -71,6 +71,11 @@ import { waitForWrite } from '../persistence/service.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { CONVERSATION_EXTRACTOR_VERSION, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from './audit-sources.ts';
 import { ALLOWED_TYPES, pageTypesForAllowed, type AllowedType } from './conversation-types.ts';
+import { withWriteTrust } from '../persistence/context.ts';
+import { conversationDerivation } from '../persistence/derived-facts.ts';
+import { recordTaintEdges } from '../trust/taint.ts';
+import { applyGateDecision, derivedGateConfig, derivedGateInput } from '../trust/derived-gate.ts';
+import { decideFactWrite, recordFlaggedRow } from '../write-gate-store.ts';
 
 export const CONVERSATION_FACTS_INTENT = 'managed_maintenance_conversation_facts';
 export const CONVERSATION_FACTS_PROTOCOL = 1;
@@ -386,18 +391,18 @@ async function mergedEntities(tx: BrainEngine, sourceId: string, slugs: string[]
  * Shared by the managed apply and the unmanaged writer.
  */
 export async function replaceConversationFacts(tx: BrainEngine, sourceId: string, slug: string,
-  rows: Array<Omit<ConversationFactRow, 'row_num' | 'source_markdown_slug'>>): Promise<{ deleted: number; inserted: number }> {
+  rows: Array<Omit<ConversationFactRow, 'row_num' | 'source_markdown_slug'>>): Promise<{ deleted: number; inserted: number; ids: number[] }> {
   const deleted = await clearConversationFacts(tx, sourceId, slug);
-  if (!rows.length) return { deleted, inserted: 0 };
+  if (!rows.length) return { deleted, inserted: 0, ids: [] };
   const [top] = await tx.executeRaw<{ n: number | string | null }>(
     'SELECT max(row_num) AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [sourceId, slug]);
   const start = top?.n == null ? 0 : Number(top.n) + 1;
-  const { inserted } = await tx.insertFacts(rows.map((fact, i) => ({ ...fact, row_num: start + i, source_markdown_slug: slug })), { source_id: sourceId }); // gbrain-allow-direct-insert: a conversation page's derived fact batch replaced under its page lock (inside the receipted publication on a managed brain)
+  const { inserted, ids } = await tx.insertFacts(rows.map((fact, i) => ({ ...fact, row_num: start + i, source_markdown_slug: slug })), { source_id: sourceId }); // gbrain-allow-direct-insert: a conversation page's derived fact batch replaced under its page lock (inside the receipted publication on a managed brain)
   if (inserted !== rows.length) {
     throw opError('storage_error', 'A conversation fact insert was lost; the page\'s prior facts were kept.',
       `Only ${inserted} of ${rows.length} fact rows of ${slug} in source ${sourceId} were inserted, so the replacement rolled back. Run the extraction for the page again; report this if it repeats.`);
   }
-  return { deleted, inserted };
+  return { deleted, inserted, ids };
 }
 
 /** Context marker `gbrain repair conversation-labels` appends to the rows it retires. */
@@ -459,9 +464,21 @@ async function applyEntry(tx: BrainEngine, row: WriteRequest, entry: Conversatio
     embedding: vectors && fact.embedding ? new Float32Array(fact.embedding) : null,
     embedding_model: vectors && fact.embedding ? entry.embedding!.model : null,
   }));
-  const { deleted } = await replaceConversationFacts(tx, row.source_id, entry.slug, rows);
+  // #5575 I2/B3: the rows carry the conversation page's tier and pass the write gate at it; outcome audit rows are not gated.
+  const derivation = await conversationDerivation(tx, row.source_id, entry.slug);
+  const cfg = await derivedGateConfig(tx);
+  const decisions = rows.map(fact => OUTCOME_SOURCES.has(fact.source) ? null : decideFactWrite(fact,
+    { sourceId: row.source_id, slug: entry.slug, payload: { ...fact, embedding: null }, input: derivedGateInput(derivation.trust, row.id), cfg }));
+  for (const d of decisions) if (d && d.action !== 'insert') await applyGateDecision(tx, d, { table: 'facts', sourceId: row.source_id }, async () => null);
+  const kept = rows.filter((_, i) => decisions[i]?.action !== 'hold' && decisions[i]?.action !== 'reject');
+  const flags = decisions.filter(d => d?.action !== 'hold' && d?.action !== 'reject');
+  const { deleted, ids } = await withWriteTrust(tx, derivation.trust, () => replaceConversationFacts(tx, row.source_id, entry.slug, kept));
+  for (const [i, id] of ids.entries()) {
+    await recordTaintEdges(tx, { table: 'facts', id, sourceId: row.source_id }, derivation.inputs);
+    if (flags[i] && ids.length === kept.length) await recordFlaggedRow(tx, flags[i]!, { table: 'facts', id, sourceId: row.source_id });
+  }
   const outcome = entry.rows.find(fact => OUTCOME_SOURCES.has(fact.source));
-  return { ...base, status: 'committed', deleted, facts_inserted: rows.filter(fact => !OUTCOME_SOURCES.has(fact.source)).length,
+  return { ...base, status: 'committed', deleted, facts_inserted: kept.filter(fact => !OUTCOME_SOURCES.has(fact.source)).length,
     page_outcome: outcome ? (outcome.source === TERMINAL_AUDIT_SOURCE ? 'complete' : 'non_extractable') : null, newest_end: entry.newest_end,
     vectors_dropped: vectors ? 0 : entry.rows.filter(fact => fact.embedding).length };
 }

@@ -171,6 +171,8 @@ export async function buildRelationalList(req: HybridRequest): Promise<SearchRes
       excludePrivate: opts?.excludePrivate,
       requireSafeChunks: opts?.requireSafeChunks,
       takesHoldersAllowList: opts?.takesHoldersAllowList,
+      minTrust: opts?.minTrust,
+      suppressFlagged: opts?.suppressFlagged,
       planner: resolvedMode.relational_planner,
       orientOneHop: resolvedMode.relational_orient_onehop ?? resolvedMode.relational_planner,
       onMeta: (m) => {
@@ -197,7 +199,8 @@ export async function resolveModalityAndQueries(req: HybridRequest) {
     explicitModality === undefined &&
     regexModality === 'text' &&
     resolvedMode.cross_modal_llm_intent &&
-    isAmbiguousModalityQuery(query)
+    isAmbiguousModalityQuery(query) &&
+    (await import('../../ai/multimodal-model.ts')).multimodalEmbeddingModel() !== null
   ) {
     try {
       const { classifyModalityWithLLM } = await import('../llm-intent.ts');

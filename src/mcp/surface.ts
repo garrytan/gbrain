@@ -31,13 +31,13 @@
  * an explicit `--surface` restart.
  */
 
-import type { Operation } from '../core/operations.ts';
+import type { OperationMeta } from '../core/ops/contract.ts';
 import type { Notice } from '../core/agent-output.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
 import { opError } from '../core/ops/contract.ts';
-import { BRAIN_TOOL_ALLOWLIST } from '../core/minions/tools/brain-allowlist.ts';
+import { BRAIN_TOOL_ALLOWLIST } from '../core/minions/tools/brain-tool-allowlist.ts';
 
 export type McpSurface = 'verbs' | 'starter' | 'full';
 
@@ -169,7 +169,7 @@ export function parseAccessFlag(args: string[]): McpAccess {
   return raw;
 }
 
-export function isReadOnlyOperation(op: Pick<Operation, 'scope' | 'mutating' | 'requiredScopes'>): boolean {
+export function isReadOnlyOperation(op: Pick<OperationMeta, 'scope' | 'mutating' | 'requiredScopes'>): boolean {
   return op.scope === 'read' && op.mutating !== true && !op.requiredScopes?.length;
 }
 
@@ -214,7 +214,7 @@ export function resolveStdioSurface(
   return { ...resolveSurfaceWithSource(flag, config), invalidEnv: env };
 }
 
-export function filterOpsForSurface(ops: Operation[], surface: McpSurface): Operation[] {
+export function filterOpsForSurface<T extends OperationMeta>(ops: T[], surface: McpSurface): T[] {
   if (surface === 'full') return ops;
   // FROZEN: 'verbs' is EXACTLY `op.verb === true` (MEMORY_VERBS v1) — starter
   // extends the ladder above it and must never alter these semantics.
@@ -223,13 +223,13 @@ export function filterOpsForSurface(ops: Operation[], surface: McpSurface): Oper
 }
 
 /** Starter ops advertise every param except the full-surface-only ones. */
-function starterParams(op: Operation): Operation {
+function starterParams<T extends OperationMeta>(op: T): T {
   if (!Object.values(op.params).some(p => p.fullSurfaceOnly)) return op;
   return { ...op, params: Object.fromEntries(Object.entries(op.params).filter(([, p]) => !p.fullSurfaceOnly)) };
 }
 
 /** The fail-closed allow-set handed to dispatchToolCall. */
-export function allowedOpNames(ops: Operation[], surface: McpSurface): ReadonlySet<string> {
+export function allowedOpNames(ops: OperationMeta[], surface: McpSurface): ReadonlySet<string> {
   return new Set(filterOpsForSurface(ops, surface).map(o => o.name));
 }
 
@@ -349,9 +349,9 @@ export async function resolveAdvertisedSurface(engine: BrainEngine | null, confi
 }
 
 /** The tools to list: the callable set narrowed to the advertised surface (never wider). */
-export function advertisedOps<T extends Operation>(callable: T[], callableSurface: McpSurface, advertised: McpSurface | null): T[] {
+export function advertisedOps<T extends OperationMeta>(callable: T[], callableSurface: McpSurface, advertised: McpSurface | null): T[] {
   if (!advertised || !surfaceWiderThan(callableSurface, advertised)) return callable;
-  const listed = new Set(filterOpsForSurface(callable as Operation[], advertised).map(op => op.name));
+  const listed = new Set(filterOpsForSurface(callable, advertised).map(op => op.name));
   return callable.filter(op => listed.has(op.name));
 }
 
@@ -368,7 +368,7 @@ export function stdioToolListing(advertised: () => Promise<McpSurface | null>, s
   const startSurface = session.surface;
   const notify = () => { Promise.resolve(server.sendToolListChanged()).catch(() => { /* best-effort */ }); };
   return {
-    async listed<T extends Operation>(visible: T[]): Promise<T[]> {
+    async listed<T extends OperationMeta>(visible: T[]): Promise<T[]> {
       // A session the agent widened with request_tools {surface} lists everything it asked for.
       if (session.surface !== startSurface) return visible;
       const listed = advertisedOps(visible, session.surface, await advertised());
@@ -422,13 +422,13 @@ export interface StdioSurfaceState {
   readonly readOnly: boolean;
   /** `mcp.allow_session_widen` as last resolved (boot, then each request_tools call). */
   widenAllowed: boolean;
-  surfacedOps: Operation[];
+  surfacedOps: OperationMeta[];
   allowedOps: ReadonlySet<string> | undefined;
   widen(to: McpSurface): { from: McpSurface; to: McpSurface; added: string[] };
 }
 
 export function createStdioSurfaceState(
-  ops: Operation[],
+  ops: OperationMeta[],
   init: { surface: McpSurface; source: SurfaceSource; readOnly: boolean; onWiden?: (change: { from: McpSurface; to: McpSurface; added: string[] }) => void },
 ): StdioSurfaceState {
   const compute = (surface: McpSurface) => {

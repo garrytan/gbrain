@@ -136,7 +136,9 @@ const commitText = (text: string) => text.replace(/[\u0000-\u001f\u007f]/g, '');
  * `notes` (keyed by requested path) carry a preparer's commit metadata: a
  * path that commits alone with a note uses its subject; a group keeps the
  * generic subject and lists the noted paths' lines in the body, in path
- * order. Control characters are stripped from both.
+ * order. A note's `gbrain-repair:` trailer goes in the message's last
+ * paragraph (one line per noted path), where Git reads trailers. Control
+ * characters are stripped from all three.
  */
 export async function commitGitTargets(root: string, relativePaths: string[], signal?: AbortSignal,
   notes?: ReadonlyMap<string, GitCommitNote>): Promise<Map<string, GitOutcome | OperationError>> {
@@ -192,7 +194,8 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     const subject = commitPaths.length > 1 ? `gbrain: persist ${commitPaths.length} canonical memory updates`
       : commitText(noted.get(commitPaths[0]!)?.subject ?? '') || 'gbrain: persist canonical memory update';
     const body = commitPaths.length > 1 ? [...new Set([...noted.keys()].sort().map(path => commitText(noted.get(path)!.line)).filter(Boolean))] : [];
-    const result = await git(root, hooks, ['commit', '--only', '-m', subject, ...(body.length ? ['-m', body.join('\n')] : []), '--', ...commitPaths], signal);
+    const trailers = [...new Set([...noted.keys()].sort().map(path => commitText(noted.get(path)!.trailer ?? '')).filter(Boolean))];
+    const result = await git(root, hooks, ['commit', '--only', '-m', subject, ...(body.length ? ['-m', body.join('\n')] : []), ...(trailers.length ? ['-m', trailers.join('\n')] : []), '--', ...commitPaths], signal);
     const outcome = result.code === 0 ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
     for (const c of changed) results.set(c.requested, outcome);
@@ -216,6 +219,9 @@ export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{
   });
 }
 
+/** The outcome a Git effect records when its root has no durability hook: no git command ran. */
+export const DURABILITY_NOT_ENABLED = { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' } as const;
+
 /**
  * Caller owns the native worktree lock. Never run pull, rebase, or legacy hooks.
  * `hardened` is the caller's durability probe of `root`, taken before it locked
@@ -223,7 +229,7 @@ export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{
  */
 export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal,
   hardened?: boolean, note?: GitCommitNote): Promise<Record<string, unknown>> {
-  if (!(hardened ?? await isDurabilityHardenedAsync(root))) return { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' };
+  if (!(hardened ?? await isDurabilityHardenedAsync(root))) return { ...DURABILITY_NOT_ENABLED };
   const outcome = (await commitGitTargets(root, [relativePath], signal, note ? new Map([[relativePath, note]]) : undefined)).get(relativePath)!;
   if (outcome instanceof OperationError) throw outcome;
   if (outcome.reason === 'target_absent') return outcome;

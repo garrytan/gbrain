@@ -6,9 +6,10 @@ import type { ImportResult, ParsedPage } from '../import-file.ts';
  * #6007: what an apply reports to its caller. `pageId` is the page it
  * wrote, when the write left it live; `sealed` means sealing its text
  * projection was its last step that can change the page's revision, title or
- * timeline.
+ * timeline. `chunkerSeal`: a coordinated apply left the page's chunker version
+ * to the caller, which stamps it with its text seal (`sealImportedPage`).
  */
-export interface PreparedImportApplied { pageId?: number; sealed: boolean }
+export interface PreparedImportApplied { pageId?: number; sealed: boolean; chunkerSeal?: number }
 
 /** Parsing/provider work is complete. apply must run under the coordinator's transaction. */
 export interface PreparedContentImport {

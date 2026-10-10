@@ -31,6 +31,8 @@ const LOCK = /^\s*SELECT\b[\s\S]*?\bFROM\s+([a-z_]+)\b(?:\s+[a-z]\b)?[\s\S]*\bFO
 /** A statement writing a journal table fires its protocol trigger's brain-row FOR SHARE read; counters it updates are locked first. */
 const TRIGGERED_BRAIN = /\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+persistence_(?:requests|effects)\b/i;
 const COUNTER_WRITE = /\b(?:INSERT\s+INTO|UPDATE)\s+persistence_counters\b/i;
+/** A file publication takes its request-row lock with the `publication_started` stamp (coordinator.ts) instead of a bare FOR UPDATE. */
+const PUBLICATION_STAMP = /^\s*UPDATE\s+persistence_requests\s+SET\s+publication_started\s*=\s*true\s+WHERE\s+id\s*=\s*\$1\b/i;
 const ORDERED_ROWS = new Set(['persistence_worktrees', 'sources', 'persistence_counters']);
 const store = new AsyncLocalStorage<Trace>();
 const violations: LockOrderViolation[] = [];
@@ -38,6 +40,7 @@ let installed = false;
 let enabled = false;
 let traced = 0;
 let sharedBrainPublications = 0;
+let publicationRowLockStatementsMax = 0;
 
 function record(sql: string, params: unknown[] | undefined): void {
   const trace = store.getStore();
@@ -46,6 +49,11 @@ function record(sql: string, params: unknown[] | undefined): void {
   if (!/^\s*SELECT\b/i.test(sql)) {
     if (COUNTER_WRITE.test(sql)) trace.locks.push({ table: 'persistence_counters', ids: [], sql: flat, exclusive: true });
     if (TRIGGERED_BRAIN.test(sql)) trace.locks.push({ table: 'persistence_brain', ids: [], sql: `trigger: ${flat}`, exclusive: false });
+    if (PUBLICATION_STAMP.test(sql)) {
+      const bound = params?.[0];
+      trace.locks.push({ table: 'persistence_requests', ids: bound === undefined ? [] : [String(bound)], sql: flat, exclusive: true });
+      trace.publication = true;
+    }
   }
   const match = LOCK.exec(sql);
   if (!match) return;
@@ -85,6 +93,8 @@ function check(trace: Trace): void {
   const brain = trace.locks.find(l => l.table === 'persistence_brain' && l.exclusive);
   if (trace.publication && brain) violations.push({ rule: 'publication_locks_brain', detail: brain.sql });
   if (trace.publication && trace.locks.some(l => l.table === 'persistence_brain')) sharedBrainPublications++;
+  // A publication locks its request row once: the `publication_started` stamp is that lock, not a second statement after it.
+  if (trace.publication) publicationRowLockStatementsMax = Math.max(publicationRowLockStatementsMax, trace.locks.filter(l => l.table === 'persistence_requests').length);
 }
 
 /**
@@ -116,6 +126,6 @@ export function installLockOrderTrace(): void {
   }
 }
 
-export function lockOrderReport(): { transactions: number; publications_reading_brain_for_share: number; violations: LockOrderViolation[] } {
-  return { transactions: traced, publications_reading_brain_for_share: sharedBrainPublications, violations: [...violations] };
+export function lockOrderReport(): { transactions: number; publications_reading_brain_for_share: number; publication_row_lock_statements_max: number; violations: LockOrderViolation[] } {
+  return { transactions: traced, publications_reading_brain_for_share: sharedBrainPublications, publication_row_lock_statements_max: publicationRowLockStatementsMax, violations: [...violations] };
 }

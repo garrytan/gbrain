@@ -20,7 +20,8 @@ import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type FileRec
 import type { NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { lockCoreSources } from './core-guard.ts';
-import { requestAttribution } from './attribution.ts';
+import { publicationAttribution } from './attribution.ts';
+import type { WriteTrust } from '../trust/tier.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { mayReprepare } from './semantic.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
@@ -64,6 +65,8 @@ interface PreparedMutationBase {
    */
   postimage?: PageSnapshot | null;
   validate?(tx: BrainEngine): Promise<void>;
+  /** #5575: the tier and origin of the rows apply writes; absent: the request's channel tier (trust/channel.ts). */
+  trust?: WriteTrust;
 }
 /**
  * A page file target; `publishMode` (Google pages) is the exact mode it publishes with, and its created directories get 0700.
@@ -344,7 +347,11 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       // A page target's visibility is checked below, once its page is locked.
       await authorizeStoredRequest(tx, row, true, { pageVisibility: skill });
       await lockCounters(tx, ['brain', principalKey(requestPrincipal(row)), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])]);
-      const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
+      // A file publication stamps `publication_started` on the row lock it takes anyway; the stamp lives and dies
+      // with this transaction either way (control.ts reads a rolled-back stamp as "never started").
+      const [current] = await tx.executeRaw<WriteRequest>(recovery
+        ? 'UPDATE persistence_requests SET publication_started=true WHERE id=$1::uuid RETURNING *'
+        : 'SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
       if (!current || current.execution_token !== row.execution_token || current.state !== 'running') throw opError('write_claim_lost', 'Execution claim changed before publication.',
         `Another worker took over request ${row.request_id} (its execution claim expired or was reassigned) before this attempt published, so this attempt wrote nothing and the current holder decides the outcome. Inspect the request rather than resubmitting it.`,
         { fix: requestFix(row) });
@@ -370,7 +377,6 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         for (const record of records) if ((skill ? bundleFileHash(record) : fileHash(record.path)) !== record.beforeHash) {
           throw localEditRefusal('The canonical file changed during preparation.', row, skill, 'while the write was being prepared');
         }
-        await tx.executeRaw('UPDATE persistence_requests SET publication_started=true WHERE id=$1::uuid', [row.id]);
         await hooks.boundary?.('before_publication', row);
         // Mark before the call: a rename followed by an fsync error still needs recovery.
         published = true;
@@ -390,7 +396,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await hooks.boundary?.('after_publication', row);
       }
       prepared.postimage = undefined;
-      const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx, snapshot), requestAttribution(row));
+      const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx, snapshot), publicationAttribution(row, prepared.trust));
       if (!skill) await classifyUnboundPage(tx, row);
       if (prepared.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
       const final = skill ? null : await publicationPostimage(tx, row, prepared);

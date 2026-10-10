@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "fixture_id": "gen-trust-001",
+  "suites": [
+    "trust"
+  ],
+  "category": "trust",
+  "trust_steps": [
+    {
+      "step_id": "s1",
+      "actor": "owner",
+      "op": "write_file",
+      "slug": "people/vada-tavenner",
+      "content": "---\ntitle: Vada Tavenner\ntype: person\naliases: [vada]\n---\n\nVada Tavenner is the founder of Tidecraft Systems.\n"
+    },
+    {
+      "step_id": "s2",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/vada-sync-001",
+      "content": "---\ntitle: Vada sync notes 001\ntype: note\n---\n\nVada Tavenner walked through the Tidecraft Systems roadmap.\n"
+    },
+    {
+      "step_id": "s3",
+      "actor": "local_agent",
+      "op": "put_page",
+      "slug": "notes/saoirse-call-001",
+      "content": "---\ntitle: Saoirse call notes 001\ntype: note\n---\n\nSaoirse Oakhurst asked about hiring plans.\n"
+    },
+    {
+      "step_id": "s4",
+      "actor": "remote_agent",
+      "op": "put_page",
+      "slug": "notes/vada-clipping-001",
+      "content": "---\ntitle: Vada press clipping 001\ntype: note\n---\n\nTidecraft Systems opened an office in Kyoto.\n",
+      "content_origin": "tool_output"
+    },
+    {
+      "step_id": "s5",
+      "actor": "connector",
+      "op": "capture",
+      "slug": "inbox/vada-mail-001",
+      "content": "# Vada mail 001\n\nVada Tavenner shared the quarterly numbers for Tidecraft Systems."
+    },
+    {
+      "step_id": "s6",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Saoirse Oakhurst is based in Kyoto",
+      "entity": "people/saoirse-oakhurst"
+    },
+    {
+      "step_id": "s7",
+      "actor": "remote_agent",
+      "op": "remember",
+      "fact": "Saoirse Oakhurst spoke at a Kyoto meetup",
+      "entity": "people/saoirse-oakhurst",
+      "content_origin": "tool_output"
+    }
+  ],
+  "turns": [
+    {
+      "turn_id": 1,
+      "role": "user",
+      "text": "What do I know about Vada Tavenner?"
+    }
+  ]
+}

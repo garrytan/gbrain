@@ -14,9 +14,17 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isTrustTier } from '../../core/trust/tier.ts';
 import {
   ALL_SUITES,
   FIXTURE_SCHEMA_VERSION,
+  TRUST_ACTOR_OPS,
+  TRUST_ACTORS,
+  TRUST_CHECKS,
+  TRUST_OPS,
+  isTrustSuite,
+  type TrustCheck,
+  type TrustSuite,
   type BrainBenchFixture,
   type BrainBenchSuite,
   type FixtureGold,
@@ -37,12 +45,21 @@ export class FixtureValidationError extends Error {
 
 const FIXTURE_KEYS = new Set([
   'schema_version', 'fixture_id', 'suites', 'category', 'holdout', 'sources',
-  'active_source', 'seed_pages', 'seed_facts', 'turns', 'continuity',
+  'active_source', 'seed_pages', 'seed_facts', 'turns', 'continuity', 'trust_steps',
 ]);
 const TURN_KEYS = new Set(['turn_id', 'role', 'text', 'ts']);
 const SEED_PAGE_KEYS = new Set(['slug', 'content', 'source_id']);
 const SEED_FACT_KEYS = new Set(['fact', 'entity_slug', 'source', 'source_session', 'source_id']);
-const GOLD_KEYS = new Set(['fixture_id', 'turns', 'continuity']);
+const GOLD_KEYS = new Set(['fixture_id', 'turns', 'continuity', 'trust']);
+const TRUST_STEP_KEYS = new Set(['step_id', 'actor', 'op', 'slug', 'content', 'fact', 'entity', 'kind', 'content_origin', 'target', 'target_claim']);
+const TRUST_ITEM_KEYS = new Set(['item_id', 'check', 'step', 'claim', 'tier', 'arm', 'canary', 'preference', 'probe']);
+/** Which gold checks each memory-trust suite scores. */
+export const TRUST_SUITE_CHECKS: Readonly<Record<TrustSuite, readonly TrustCheck[]>> = {
+  trust: ['tier', 'max_tier', 'refused'],
+  'state-resolution': ['current', 'stale', 'history', 'guarded'],
+  poisoning: ['poison', 'benign'],
+  deletion: ['purged'],
+};
 const TURN_GOLD_KEYS = new Set(['should_retrieve', 'gold_slugs', 'acceptable_slugs', 'gold_facts']);
 const GOLD_FACT_KEYS = new Set(['gist', 'fact', 'entity_slug', 'match_keywords', 'kind']);
 
@@ -169,7 +186,92 @@ export function validateFixture(file: string, raw: unknown): BrainBenchFixture {
     }
   }
 
+  validateTrustSteps(file, f);
+
   return raw as BrainBenchFixture;
+}
+
+function validateTrustSteps(file: string, f: Record<string, unknown>): void {
+  const suites = f.suites as string[];
+  const trustSuites = suites.filter(isTrustSuite);
+  if (trustSuites.length === 0) {
+    if (f.trust_steps !== undefined) throw new FixtureValidationError(file, 'trust_steps belong to memory-trust suite fixtures only');
+    return;
+  }
+  if (suites.length !== 1) {
+    throw new FixtureValidationError(file, `a memory-trust fixture declares exactly one suite (got ${suites.join(', ')})`);
+  }
+  if (f.seed_pages !== undefined || f.seed_facts !== undefined || f.continuity !== undefined) {
+    throw new FixtureValidationError(file, 'memory-trust fixtures write through trust_steps, never seed_pages/seed_facts/continuity');
+  }
+  if (!Array.isArray(f.trust_steps) || f.trust_steps.length === 0) {
+    throw new FixtureValidationError(file, 'memory-trust fixtures require a non-empty trust_steps array');
+  }
+  const seen = new Set<string>();
+  for (const st of f.trust_steps as Array<Record<string, unknown>>) {
+    assertOnlyKeys(file, st, TRUST_STEP_KEYS, 'trust_steps[]');
+    if (typeof st.step_id !== 'string' || !st.step_id) throw new FixtureValidationError(file, 'trust_steps[].step_id required');
+    if (seen.has(st.step_id)) throw new FixtureValidationError(file, `duplicate step_id ${st.step_id}`);
+    if (!(TRUST_ACTORS as readonly unknown[]).includes(st.actor)) {
+      throw new FixtureValidationError(file, `trust_steps[${st.step_id}].actor must be one of ${TRUST_ACTORS.join(', ')}`);
+    }
+    if (!(TRUST_OPS as readonly unknown[]).includes(st.op) || !TRUST_ACTOR_OPS[st.actor as keyof typeof TRUST_ACTOR_OPS].includes(st.op as never)) {
+      throw new FixtureValidationError(file, `trust_steps[${st.step_id}]: actor ${String(st.actor)} cannot perform op ${String(st.op)}`);
+    }
+    for (const k of ['slug', 'content', 'fact', 'entity', 'kind', 'content_origin', 'target', 'target_claim'] as const) {
+      if (st[k] !== undefined && typeof st[k] !== 'string') throw new FixtureValidationError(file, `trust_steps[${st.step_id}].${k} must be a string`);
+    }
+    if (st.target !== undefined && !seen.has(st.target as string)) {
+      throw new FixtureValidationError(file, `trust_steps[${st.step_id}].target "${String(st.target)}" names no earlier step`);
+    }
+    const needs: Partial<Record<string, string[]>> = {
+      write_file: ['slug', 'content'], put_page: ['slug', 'content'], capture: ['slug', 'content'], remember: ['fact'],
+      forget: ['target'], confirm: ['target'], purge: ['target'], raise_tier: ['target'],
+    };
+    for (const k of needs[st.op as string] ?? []) {
+      if (typeof st[k] !== 'string' || !st[k]) throw new FixtureValidationError(file, `trust_steps[${st.step_id}] (${String(st.op)}) requires ${k}`);
+    }
+    seen.add(st.step_id);
+  }
+}
+
+function validateTrustGold(file: string, g: Record<string, unknown>, fixture: BrainBenchFixture): void {
+  const suite = fixture.suites.find(isTrustSuite);
+  if (!suite) {
+    if (g.trust !== undefined) throw new FixtureValidationError(file, 'gold.trust present but the fixture runs no memory-trust suite');
+    return;
+  }
+  const t = g.trust as Record<string, unknown> | undefined;
+  if (!t || !Array.isArray(t.items) || t.items.length === 0) {
+    throw new FixtureValidationError(file, 'memory-trust fixtures require gold.trust.items');
+  }
+  assertOnlyKeys(file, t, new Set(['items']), 'gold.trust');
+  const steps = new Set((fixture.trust_steps ?? []).map(s => s.step_id));
+  const ids = new Set<string>();
+  for (const it of t.items as Array<Record<string, unknown>>) {
+    assertOnlyKeys(file, it, TRUST_ITEM_KEYS, 'gold.trust.items[]');
+    if (typeof it.item_id !== 'string' || !it.item_id || ids.has(it.item_id)) {
+      throw new FixtureValidationError(file, 'gold.trust.items[].item_id must be a unique non-empty string');
+    }
+    ids.add(it.item_id);
+    if (!(TRUST_CHECKS as readonly unknown[]).includes(it.check) || !TRUST_SUITE_CHECKS[suite].includes(it.check as TrustCheck)) {
+      throw new FixtureValidationError(file, `gold.trust.items[${it.item_id}].check must be one of ${TRUST_SUITE_CHECKS[suite].join(', ')} for suite ${suite}`);
+    }
+    if (typeof it.step !== 'string' || !steps.has(it.step)) {
+      throw new FixtureValidationError(file, `gold.trust.items[${it.item_id}].step names no trust step`);
+    }
+    if ((it.check === 'tier' || it.check === 'max_tier') && !isTrustTier(it.tier)) {
+      throw new FixtureValidationError(file, `gold.trust.items[${it.item_id}].tier must name a trust tier`);
+    }
+    if (it.check === 'poison' || it.check === 'benign') {
+      if (it.arm !== 'external' && it.arm !== 'agent_relayed') throw new FixtureValidationError(file, `gold.trust.items[${it.item_id}].arm must be external|agent_relayed`);
+      if (typeof it.canary !== 'string' || it.canary.length < 8) throw new FixtureValidationError(file, `gold.trust.items[${it.item_id}].canary must be a unique token (8+ chars)`);
+    }
+    if (it.preference !== undefined && typeof it.preference !== 'boolean') throw new FixtureValidationError(file, 'preference must be boolean');
+    if (it.check === 'purged' && (typeof it.probe !== 'string' || !it.probe)) {
+      throw new FixtureValidationError(file, `gold.trust.items[${it.item_id}].probe required`);
+    }
+  }
 }
 
 export function validateGold(file: string, raw: unknown, fixture: BrainBenchFixture): FixtureGold {
@@ -280,6 +382,8 @@ export function validateGold(file: string, raw: unknown, fixture: BrainBenchFixt
   } else if (g.continuity !== undefined) {
     throw new FixtureValidationError(file, 'gold.continuity present but fixture has no continuity block');
   }
+
+  validateTrustGold(file, g, fixture);
 
   return raw as FixtureGold;
 }

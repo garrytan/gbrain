@@ -13,6 +13,8 @@ import { publishMaintenancePage, type MaintenanceAuthority } from '../persistenc
 import { writeResponse } from '../persistence/service.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
+import { transcriptDerivation } from './dream-taint.ts';
+import { declareDerivation, readDerivationDeclaration } from '../trust/taint.ts';
 import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource, type GroundingPass } from './synthesize-verify.ts';
 
 interface OutputRef { slug: string; source_id: string; raw_source?: string; seat?: string; first_write_at?: Date; }
@@ -27,7 +29,9 @@ export async function postprocessManagedSynthesis(
   childIds: number[],
   jobRawSource: Map<number, string>,
   transcripts: DiscoveredTranscript[],
-  opts: { cycleDate: string; quoteVerify: boolean; sinceByTranscript: Map<string, Date>; signal?: AbortSignal; grounding?: GroundingPass },
+  opts: { cycleDate: string; quoteVerify: boolean; sinceByTranscript: Map<string, Date>; signal?: AbortSignal; grounding?: GroundingPass;
+    /** #5575 I2: files under it are third-party speech; their outputs publish external_untrusted. */
+    meetingTranscriptsDir?: string | null },
 ) {
   const stats = emptyQuoteVerifyStats();
   const writtenRefs: OutputRef[] = [];
@@ -106,8 +110,12 @@ export async function postprocessManagedSynthesis(
       content = serializePageToMarkdown(page, snapshot.tags);
     }
     throwIfAborted(opts.signal, '[dream] synthesis postprocessing');
+    // #5575 I2: the page publishes at its transcript's tier (lowered even when the content is unchanged), with its input edges.
+    // A retained request replays the declaration it was admitted with (none for one admitted before tiers).
+    const derivation = prior ? readDerivationDeclaration(prior.intent?.derivation) ?? undefined
+      : await transcriptDerivation(engine, transcript, opts.meetingTranscriptsDir).then(d => declareDerivation(d.trust, d.inputs));
     try {
-      await publishMaintenancePage(engine, authority, ref.slug, content, { requestId, expectedRevision: revision });
+      await publishMaintenancePage(engine, authority, ref.slug, content, { requestId, expectedRevision: revision, derivation });
     } catch (error) {
       deferPublishOrThrow(error, `${ref.slug} (request ${requestId})`);
       pending++;

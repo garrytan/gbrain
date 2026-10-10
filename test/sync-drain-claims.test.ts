@@ -135,11 +135,12 @@ describe('claim-aware no-progress window', () => {
     test('a lapsed head a consumer here can reclaim gets exactly one extra window, then drain_stalled / owner_missing; without one it stops at once', async () => {
       let reclaimable = true;
       const probe = probeWith(claim({ lapsed: true, step_age_ms: 5_000 }), 'same', { reclaimableHere: async () => reclaimable });
-      const passesAt: number[] = [];
-      const extended = await runDrain({ pass: async () => { passesAt.push(Date.now()); return pending(2); }, probe, pauseMs: 1, stallMs: 40 });
+      const startedAt = Date.now();
+      const extended = await runDrain({ pass: async () => pending(2), probe, pauseMs: 1, stallMs: 40 });
+      const endedAt = Date.now();
       expect(extended.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'drain_stalled', stall: { cause: 'owner_missing' } });
-      // Two windows of 40 ms (three passes each at least), not one.
-      expect(passesAt[passesAt.length - 1]! - passesAt[0]!).toBeGreaterThanOrEqual(80);
+      // Two windows of 40 ms (three passes each at least), not one. Each window runs from the probe after a pass, so the bound is on the drain's wall time, not on pass timestamps.
+      expect(endedAt - startedAt).toBeGreaterThanOrEqual(80);
       expect(extended.drain!.passes).toBeGreaterThanOrEqual(6);
       reclaimable = false;
       const at = Date.now();
@@ -259,10 +260,35 @@ describe('engineStallProbe fingerprint', () => {
 });
 
 /** Captures the drain's stderr lines (`serr` writes through console.error without a source prefix). */
-function captureStderr(): { lines: string[]; stalled: () => string[]; restore(): void } {
-  const lines: string[] = [];
-  const spy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); });
-  return { lines, stalled: () => lines.filter(line => line.includes('· stalled ')), restore: () => spy.mockRestore() };
+function captureStderr(): { lines: string[]; stalled: () => string[]; stalledAt: () => Array<{ line: string; at: number }>; restore(): void } {
+  const lines: string[] = [], at: number[] = [];
+  const spy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); at.push(Date.now()); });
+  const stalledAt = () => lines.flatMap((line, i) => line.includes('· stalled ') ? [{ line, at: at[i]! }] : []);
+  return { lines, stalled: () => stalledAt().map(entry => entry.line), stalledAt, restore: () => spy.mockRestore() };
+}
+/** One head read of the stall probe: when it started and when it settled (the line it feeds prints right after it settles). */
+interface HeadRead { startedAt: number; settledAt: number }
+/** Wraps a probe's `head` so every read's start and settle times are kept, in settle order. */
+function headReadsOf(probe: StallProbe): { probe: StallProbe; list: HeadRead[] } {
+  const list: HeadRead[] = [];
+  const head = probe.head;
+  if (!head) return { probe, list };
+  return { list, probe: { ...probe, head: async () => {
+    const startedAt = Date.now();
+    try { return await head(); } finally { list.push({ startedAt, settledAt: Date.now() }); }
+  } } };
+}
+/**
+ * The stall lines that belong to the park: each line is attributed to the latest head read settled at or before it was
+ * printed, and counts only when that read started after `parkedAt`. A read in flight across the stamp shows the state
+ * before it (a true "preparing" line), so counting lines by position misattributes it to the park.
+ */
+function parkedStallLines(lines: ReadonlyArray<{ line: string; at: number }>, reads: ReadonlyArray<HeadRead>, parkedAt: number): string[] {
+  if (!parkedAt) return [];
+  return lines.flatMap(({ line, at }) => {
+    const read = [...reads].reverse().find(entry => entry.settledAt <= at);
+    return read && read.startedAt >= parkedAt ? [line] : [];
+  });
 }
 const until = async (check: () => boolean, ms: number) => { const end = Date.now() + ms; while (!check() && Date.now() < end) await new Promise(r => setTimeout(r, 10)); return check(); };
 const committed = { phase: 'managed_sync.page_committed' } as Parameters<NonNullable<Parameters<typeof runDrain>[0]['onProgress']>>[0];
@@ -331,6 +357,21 @@ describe('live stall line during a pass (B6)', () => {
       await closePostgres?.(); rmSync(home, { recursive: true, force: true });
     });
 
+    test('forced probe: a head read in flight across the park stamp prints a true "preparing" line that is not the park\'s first line', () => {
+      // The master flake (#6271's unit-lane arm): read 1 starts before the stamp, settles after it, and its line prints after
+      // the park snapshot. Counting lines by position took that line as the parked member's; attributing by read start does not.
+      const parkedAt = 1_000;
+      const reads: HeadRead[] = [{ startedAt: 990, settledAt: 1_005 }, { startedAt: 1_010, settledAt: 1_020 }];
+      const lines = [{ line: '[sync] 1/3 processed · stalled 0s on preparing', at: 1_006 }, { line: '[sync] 1/3 processed · stalled 1s on origin_check (waiting on db) · allowed 2m', at: 1_021 }];
+      const byPosition = lines.map(entry => entry.line);
+      expect(byPosition[0]).toMatch(/on preparing$/);
+      expect(parkedStallLines(lines, reads, parkedAt)).toEqual([lines[1]!.line]);
+      // A line before the park, or with no settled read behind it, is never the park's.
+      expect(parkedStallLines([{ line: lines[0]!.line, at: 900 }], reads, parkedAt)).toEqual([]);
+      expect(parkedStallLines(lines, [], parkedAt)).toEqual([]);
+      expect(parkedStallLines(lines, reads, 0)).toEqual([]);
+    });
+
     test('the line names the parked member\'s step within about two intervals, then the sync finishes once it is released', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
       for (const engine of engines) {
         const id = `live-${randomUUID().replace(/-/g, '').slice(0, 20)}`, root = join(home, id);
@@ -345,22 +386,25 @@ describe('live stall line during a pass (B6)', () => {
         await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
         let release!: () => void;
         const released = new Promise<void>(resolve => { release = resolve; });
-        let parkedAt = 0, linesBeforePark = 0;
+        let parkedAt = 0;
         const err = captureStderr();
-        // Lines printed before the park (a request still queued at startup) are not the parked member's.
-        const parkedLines = () => err.stalled().slice(linesBeforePark);
+        // A stall line comes from a head read; only a read that started after the park can show the parked member's stamp.
+        // A read started before the stamp committed and settled after it prints a true-at-read-time "preparing" line, so the
+        // lines are attributed to their read's start, never counted by position (#6355 fold-in: the master flake on #6271).
+        const probe = engineStallProbe(engine, id);
+        const reads = headReadsOf(probe);
+        const parkedLines = () => parkedStallLines(err.stalledAt(), reads.list, parkedAt);
         // The first member parks in preparation, honouring its signal; the stamp gains the step a preparer would enter (the keys a renewal writes).
         installFaultHook(async (at, detail) => {
           if (at !== 'consumer:preparing' || detail.sourceId !== id || parkedAt) return;
           await engine.executeRaw(`UPDATE persistence_requests SET claim_phase = claim_phase || '{"step":"origin_check","waiting_on":"db"}'::jsonb WHERE request_id=$1::uuid`, [detail.requestId]);
           parkedAt = Date.now();
-          linesBeforePark = err.stalled().length;
           await new Promise<void>(resolve => { void released.then(resolve); detail.signal?.addEventListener('abort', () => resolve(), { once: true }); });
         });
         try {
           const bulk = await resolveBulkSettings(await preparationConfigView(engine), false);
           expect(bulk.enabled).toBe(engine.kind === 'postgres');
-          const drain = runDrain({ announce: true, progressMs: PROGRESS, probe: engineStallProbe(engine, id), bulk: { enabled: bulk.enabled, reason: bulk.reason },
+          const drain = runDrain({ announce: true, progressMs: PROGRESS, probe: reads.probe, bulk: { enabled: bulk.enabled, reason: bulk.reason },
             pass: (signal, onProgress) => performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true, signal, onProgress, ...(bulk.enabled ? { bulk } : {}) }) });
           expect(await until(() => parkedAt > 0, 30_000)).toBe(true);
           const seen = await until(() => parkedLines().length > 0, 10 * PROGRESS);

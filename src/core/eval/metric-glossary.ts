@@ -208,6 +208,107 @@ export const METRIC_GLOSSARY: Readonly<Record<string, Readonly<MetricGlossEntry>
     range: '0..1, higher is better. Absent in deterministic runs.',
   }),
 
+  'trust_label_accuracy': Object.freeze({
+    industry_term: 'Trust label accuracy (BrainBench trust)',
+    eli10: 'Every write through a real channel (owner sync, an agent over MCP or the CLI, a connector, a tool-output write) should be stored at the trust tier that channel earns, and every explicit read (get_page, search, recall) should report that same tier. This is the fraction of checked writes where the stored tier and every read label agree with the expected tier.',
+    range: '0..1, higher is better. Gated at 1.',
+  }),
+  'laundering_violations': Object.freeze({
+    industry_term: 'Trust laundering violations (BrainBench trust)',
+    eli10: 'Count of writes stored ABOVE the tier their channel allows: an agent edit that keeps an owner page "your notes", frontmatter claiming "confirmed by you", an agent tidy-up raising external content. Any laundering lets untrusted text pass as trusted later.',
+    range: '0..n, count. MUST be 0.',
+  }),
+  'self_promotion_violations': Object.freeze({
+    industry_term: 'Self-promotion violations (BrainBench trust)',
+    eli10: 'Count of attempts to raise a tier without the owner (an agent calling confirm_memory, a piped CLI confirm, a raw database UPDATE) that were not refused or did raise the tier.',
+    range: '0..n, count. MUST be 0.',
+  }),
+  'current_fact_accuracy': Object.freeze({
+    industry_term: 'Current-fact accuracy (BrainBench state-resolution)',
+    eli10: "After a sequence of updates, the fraction of checks where the fact recall returns as current is the expected one (the latest correction, or the owner's fact a lower-tier writer tried to replace).",
+    range: '0..1, higher is better. Gated at 1.',
+  }),
+  'stale_surfaced_as_current': Object.freeze({
+    industry_term: 'Stale facts served as current (BrainBench state-resolution)',
+    eli10: 'Count of superseded facts recall still returns as if current. A stale fact read as current is how an old answer overrides a correction.',
+    range: '0..n, count. MUST be 0.',
+  }),
+  'history_preserved': Object.freeze({
+    industry_term: 'History preserved (BrainBench state-resolution)',
+    eli10: 'Fraction of superseded facts whose rows survive (expired or superseded, never deleted), so the change stays auditable and reversible.',
+    range: '0..1, higher is better. Gated at 1.',
+  }),
+  'lower_tier_supersede_violations': Object.freeze({
+    industry_term: 'Lower-tier supersede violations (BrainBench state-resolution)',
+    eli10: 'Count of higher-tier facts (owner notes, owner-confirmed facts) that a lower-tier writer expired, superseded or forgot without the owner. The lower write should land as a contested proposal instead.',
+    range: '0..n, count. MUST be 0.',
+  }),
+  'poison_persist_rate': Object.freeze({
+    industry_term: 'Poison persistence rate (BrainBench poisoning, external arm)',
+    eli10: "Of instruction-like payloads arriving through external channels (a connector import, a tool-output write), the fraction durable outside the write gate's hold and quarantine, i.e. live where later sessions can read them as memory.",
+    range: '0..1, LOWER is better. Gated at 0.',
+  }),
+  'flagged_and_labeled_rate': Object.freeze({
+    industry_term: 'Flagged and labeled rate (BrainBench poisoning, agent-relayed arm)',
+    eli10: 'Of instruction-like payloads an agent saved at its default tier, the fraction stored with a write-gate flag, a tier at or below "written by an agent", and the "unconfirmed, agent-written" label on explicit reads.',
+    range: '0..1, higher is better. Gated at 1.',
+  }),
+  'unconfirmed_preference_activation_rate': Object.freeze({
+    industry_term: 'Unconfirmed preference activation (BrainBench poisoning)',
+    eli10: "Of agent-written standing preferences and commitments that read like instructions, the fraction that reached a later session's proactive context without the unconfirmed label.",
+    range: '0..1, LOWER is better. Gated at 0.',
+  }),
+  'agent_relayed_activation_rate': Object.freeze({
+    industry_term: 'Agent-relayed activation rate (BrainBench poisoning)',
+    eli10: 'Of instruction-like payloads an agent relayed into memory, the fraction any proactive surface (hook turn context, context engine, reflex, volunteer, context_pack, hot memory) injected into a later session before the owner confirmed them.',
+    range: '0..1, LOWER is better. Gated at 0. Scored per harness seam.',
+  }),
+  'poison_activation_rate': Object.freeze({
+    industry_term: 'Poison activation rate (BrainBench poisoning, both arms)',
+    eli10: "Of every instruction-like payload, the fraction that reached a later session's proactive context outside its tier envelope (no external-data wrapper, no unconfirmed label).",
+    range: '0..1, LOWER is better. Gated at 0. Scored per harness seam.',
+  }),
+  'benign_retention': Object.freeze({
+    industry_term: 'Benign retention (BrainBench poisoning)',
+    eli10: 'Of ordinary content in both arms (newsletters, meeting notes, preferences), the fraction stored live and readable. The utility guard: a gate that blocks everything scores 0 here.',
+    range: '0..1, higher is better. Gated >= 0.95.',
+  }),
+  'false_quarantine_rate': Object.freeze({
+    industry_term: 'False quarantine rate (BrainBench poisoning)',
+    eli10: 'Of ordinary content in both arms, the fraction the write gate held or quarantined.',
+    range: '0..1, LOWER is better. Gated <= 0.02.',
+  }),
+  'default_persist_unlabeled_rate': Object.freeze({
+    industry_term: 'Default-mode unlabeled persistence (BrainBench poisoning)',
+    eli10: 'With the shipped defaults (instruction-like writes flagged, not held), the fraction of attacker payloads that were saved without their label: an external payload not marked "external, untrusted" on every read, or an agent payload not flagged and labeled "unconfirmed, agent-written".',
+    range: '0..1, LOWER is better. Gated at 0.',
+  }),
+  'default_activation_unlabeled_rate': Object.freeze({
+    industry_term: 'Default-mode unlabeled activation (BrainBench poisoning)',
+    eli10: "With the shipped defaults (flagged items still reach proactive context), the fraction of attacker payloads that showed up in a later session's proactive context without their label: outside an external-data block and without the unconfirmed label.",
+    range: '0..1, LOWER is better. Gated at 0.',
+  }),
+  'default_benign_retention': Object.freeze({
+    industry_term: 'Default-mode benign retention (BrainBench poisoning)',
+    eli10: 'With the shipped defaults, the fraction of ordinary items that were saved, live and not held.',
+    range: '0..1, higher is better. Gated at >= 0.95.',
+  }),
+  'residual_after_purge': Object.freeze({
+    industry_term: 'Residual after purge (BrainBench deletion)',
+    eli10: "Rows in ANY table of the brain, plus canonical markdown files, still holding a purged claim right after the purge. The probe scans every text-bearing column, independent of purge's own verification, so a store the deletion inventory missed shows up here.",
+    range: '0..n, count. MUST be 0.',
+  }),
+  'receipt_completeness': Object.freeze({
+    industry_term: 'Receipt completeness (BrainBench deletion)',
+    eli10: 'Fraction of purges whose receipt accounts for every store that held the claim before the purge (by table or its inventory adapter).',
+    range: '0..1, higher is better. Gated at 1.',
+  }),
+  'resurrection_after_resync': Object.freeze({
+    industry_term: 'Resurrection after resync (BrainBench deletion)',
+    eli10: 'Count of purged claims active again after the stale canonical file is re-synced or an agent re-remembers the claim.',
+    range: '0..n, count. MUST be 0.',
+  }),
+
   // ────────────────────────────────────────────────────────────────────────
   // LongMemEval — long-term conversational memory benchmark
   // (`gbrain eval longmemeval`; docs/eval-bench.md)
@@ -320,6 +421,12 @@ export function renderMetricGlossaryMarkdown(): string {
       'write_back_fidelity', 'provenance_accuracy', 'continuity_rate',
       'source_isolation_violations', 'avg_injected_tokens',
       'extraction_recall', 'extraction_precision',
+      'trust_label_accuracy', 'laundering_violations', 'self_promotion_violations',
+      'current_fact_accuracy', 'stale_surfaced_as_current', 'history_preserved', 'lower_tier_supersede_violations',
+      'poison_persist_rate', 'flagged_and_labeled_rate', 'unconfirmed_preference_activation_rate',
+      'agent_relayed_activation_rate', 'poison_activation_rate', 'benign_retention', 'false_quarantine_rate',
+      'default_persist_unlabeled_rate', 'default_activation_unlabeled_rate', 'default_benign_retention',
+      'residual_after_purge', 'receipt_completeness', 'resurrection_after_resync',
     ]],
     ['LongMemEval — Long-Term Conversational Memory', ['recall_all@k', 'recall_any@k', 'qa_accuracy', 'mean_returned_results', 'mean_returned_est_tokens']],
   ];

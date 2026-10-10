@@ -31,7 +31,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   const finish = async (result: SyncResult, refresh = false): Promise<SyncResult> => {
     assertSyncDispatchActive();
     if (refresh && (result.pagesAffected.length > 0 || result.deleted > 0)) {
-      await refreshProjectionStatistics(engine);
+      await refreshProjectionStatistics(engine, result.pagesAffected.length + result.deleted);
     }
     if (refresh && !opts.dryRun) await recordUpstreamObservation(engine, opts.sourceId ?? 'default', opts.repoPath);
     return result;

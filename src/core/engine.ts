@@ -1,8 +1,9 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
+import type { PageSnapshotBatch } from './page-snapshot-batch.ts';
 import type { LinkReadScope } from './link-validity.ts';
 import type { ChunkWindowRequest, ChunkWindowOpts, ChunkWindowPage } from './search/chunk-windows.ts';
-import type { DerivedLinkOrigin, DerivedLinkReplacementOptions } from './derived-links.ts';
+import type { DerivedLinkBatchItem, DerivedLinkOrigin, DerivedLinkReplacementOptions } from './derived-links.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -226,7 +227,7 @@ export interface ReservedConnection {
   executeRaw<T = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; prepare?: boolean },
   ): Promise<T[]>;
 }
 
@@ -317,6 +318,8 @@ export interface TakesListOpts extends PageReadPolicy {
    *  scalar, matching sourceScopeOpts. Omitted (local CLI) = no source filter. */
   sourceId?: string;
   sourceIds?: string[];
+  /** #5575 read eligibility (eligibility/sql.ts) for read ops; unset for internal writers and fence re-renders. */
+  eligibility?: import('./eligibility/policy.ts').ReadEligibility;
 }
 
 /** Search result row from searchTakes / searchTakesVector. */
@@ -542,6 +545,9 @@ export interface FactRow {
   created_at_iso?: string;
   /** Who asserted the claim (migration v215); null when attribution is unavailable. */
   attributed_to?: FactAttribution | null;
+  /** #5575: the stored trust tier and write origin (absent on brains before the trust migration). */
+  trust_tier?: import('./trust/tier.ts').TrustTier;
+  write_origin?: Record<string, unknown> | null;
 }
 
 /**
@@ -652,6 +658,8 @@ export interface FactListOpts {
   excludeAuditRows?: boolean;
   /** #5888: listFactsSince/listFactsBySession also select `gbrain_fact_fingerprint(fact)` as `fact_fingerprint`. */
   fingerprint?: boolean;
+  /** #5575 read eligibility (eligibility/sql.ts): read floor, quarantined-page and needs_rederive hiding, proactive suppression. Unset for internal writers. */
+  eligibility?: import('./eligibility/policy.ts').ReadEligibility;
 }
 
 /** Per-source operational health snapshot consumed by `gbrain doctor`. */
@@ -799,6 +807,11 @@ export interface BrainEngine {
    */
   getPage(slug: string, opts?: GetPageOpts): Promise<Page | null>;
   readPageSnapshot(slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null>;
+  /**
+   * `readPageSnapshot(slug, { sourceId })` for a run of exact refs in one statement (page-snapshot-batch.ts):
+   * the longest prefix whose bodies fit `maxBytes`. Postgres binds the refs' sources for RLS.
+   */
+  readPageSnapshotsBatch(refs: ReadonlyArray<{ slug: string; sourceId: string }>, opts?: { maxBytes?: number; includeDeleted?: boolean; absentIsNull?: boolean }): Promise<PageSnapshotBatch>;
   /** Hold exact page identities through commit, including absent rows. Requires a transaction. */
   lockPageKeys(keys: readonly PageKey[]): Promise<void>;
   /**
@@ -849,6 +862,7 @@ export interface BrainEngine {
     sourceId: string,
     opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string },
   ): Promise<{ slug: string; id: number } | null>;
+  findDuplicatePages?(sourceId: string, inputs: ReadonlyArray<{ hash: string; frontmatterId?: string | null; excludeSlug?: string }>): Promise<Array<{ slug: string; id: number } | null>>;
   /**
    * Hard-delete a page row. Cascades to content_chunks, page_links,
    * chunk_relations via existing FK ON DELETE CASCADE.
@@ -1170,9 +1184,9 @@ export interface BrainEngine {
    * earlier in this transaction; the stale-row work is skipped and the page is
    * sealed at that chunker version after the insert. With `pageId` (the
    * caller's own write of that page in this transaction) the seal and the
-   * insert are sent together and the seal's page is checked against it.
+   * insert are sent together and the seal's page is checked against it (`deferSeal`: by the caller, sealImportedPage).
    */
-  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number } & BatchOpts): Promise<void>;
+  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true } & BatchOpts): Promise<void>;
   /**
    * Read every chunk for a page. Scope precedence mirrors getPage (#2555):
    * a federated grant (`sourceIds[]`) wins over scalar `sourceId`; with
@@ -1413,6 +1427,8 @@ export interface BrainEngine {
    */
   addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number>;
   replaceDerivedLinks(origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions): Promise<{ created: number; removed: number }>;
+  /** replaceDerivedLinks for many origins in one transaction; any failure rolls back every origin (derived-links.ts). */
+  replaceDerivedLinksBatch(items: readonly DerivedLinkBatchItem[]): Promise<Array<{ created: number; removed: number }>>;
   /**
    * Remove links from `from` to `to`. If linkType is provided, only that specific
    * (from, to, type) row is removed. If omitted, ALL link types between the pair
@@ -1876,7 +1892,7 @@ export interface BrainEngine {
    * Honors `takesHoldersAllowList` via WHERE filter so MCP-bound calls cannot
    * retrieve holders outside the token's allow-list.
    */
-  searchTakes(query: string, opts?: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] }): Promise<TakeHit[]>;
+  searchTakes(query: string, opts?: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: import('./eligibility/policy.ts').ReadEligibility }): Promise<TakeHit[]>;
 
   /**
    * Vector search across active takes. Cosine distance against `embedding`.
@@ -1884,7 +1900,7 @@ export interface BrainEngine {
    */
   searchTakesVector(
     embedding: Float32Array,
-    opts?: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] },
+    opts?: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: import('./eligibility/policy.ts').ReadEligibility },
   ): Promise<TakeHit[]>;
 
   /** Look up embeddings by take id (mirrors getEmbeddingsByChunkIds). */
@@ -2256,7 +2272,7 @@ export interface BrainEngine {
    */
   listSupersessions(
     source_id: string,
-    opts?: { since?: Date; limit?: number; visibility?: FactVisibility[] },
+    opts?: { since?: Date; limit?: number; visibility?: FactVisibility[]; eligibility?: FactListOpts['eligibility'] },
   ): Promise<FactRow[]>;
 
   /**

@@ -15,6 +15,7 @@
  * which turns a throw into the residual reason `normalizer_failed`.
  */
 import { contentPass } from './content.ts';
+import { beforeLine, type MergeOrigins } from './merge.ts';
 import { sectionsOf, strictFailures, strictPageClean } from './page-checks.ts';
 import { extractRawRows, rowNumOf } from './raw-rows.ts';
 import { strayCellPass } from './stray-cells.ts';
@@ -22,7 +23,7 @@ import { structuralPass } from './structure.ts';
 import type { FenceCtx, FenceFix, FenceIssue, FencePage, FenceSection, StoredRowMap } from './types.ts';
 
 /** Rule-set version; bump when a rule widens. It is part of the hold `fence_version` (`FENCE_VERSION`), so older holds are re-screened. */
-export const FENCE_RULES_VERSION = 2;
+export const FENCE_RULES_VERSION = 3;
 
 export interface NormalizeResult<T extends FencePage> {
   page: T;
@@ -40,16 +41,20 @@ export function normalizeFences<T extends FencePage>(page: T, ctx: FenceCtx): No
   const fixes: FenceFix[] = [];
   const residual: FenceIssue[] = [];
   const texts: Record<FenceSection, string> = { body: '', timeline: '' };
+  const merges: MergeOrigins[] = [];
   for (const [section, text] of sectionsOf(page)) {
-    const pass = structuralPass(text, section);
+    const pass = structuralPass(text, section, ctx);
     const stray = strayCellPass(pass.text, section);
     texts[section] = stray.text;
     fixes.push(...pass.fixes, ...stray.fixes);
     residual.push(...pass.residual);
+    merges.push(...pass.merges);
   }
-  const content = contentPass(texts, ctx, () => Math.max(nextFreeRowNum(page, ctx.storedRows), maxHidden(ctx) + 1));
+  const content = contentPass(texts, ctx, () => Math.max(nextFreeRowNum(page, ctx.storedRows), maxHidden(ctx) + 1), merges);
   fixes.push(...content.fixes);
   residual.push(...content.residual);
+  // Rows a merge moved are reported at their line in the before page, where the file still has them.
+  if (merges.length) for (const item of [...fixes, ...residual]) item.line = beforeLine(merges, item);
   const out = withSections(page, content.texts);
   if (!residual.length) residual.push(...unparseable(out));
   return { page: out, fixes, residual };

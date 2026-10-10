@@ -12,8 +12,11 @@ export async function readExportWithdrawals(tx: BrainEngine, sourceId: string): 
     jsonb_build_object('visibility',visibility,'fact_hash',fact_hash,'withdrawn_at',withdrawn_at,'subject',subject)::text)+1),0)+2 AS bytes
     FROM fact_withdrawals WHERE source_id=$1`, [sourceId]);
   if (Number(size.bytes) > EXPORT_PAYLOAD_LIMIT) throw new Error('Export withdrawal ledger capacity exceeded. No destination output was published.');
-  return tx.executeRaw<ExportWithdrawal>(`SELECT visibility,fact_hash,withdrawn_at,subject
-    FROM fact_withdrawals WHERE source_id=$1 ORDER BY visibility,fact_hash,subject`, [sourceId]);
+  // Purge tombstones ride the same overlay and drop their rows from the export.
+  return tx.executeRaw<ExportWithdrawal>(`SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
+    FROM fact_withdrawals WHERE source_id=$1
+    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1
+    ORDER BY visibility,fact_hash,subject`, [sourceId]);
 }
 
 export async function readExportPage(tx: BrainEngine, key: { id: string; source_id: string; slug: string }, withdrawals: ExportWithdrawal[]) {
@@ -27,7 +30,7 @@ export async function readExportPage(tx: BrainEngine, key: { id: string; source_
   const page = rowToPage(row);
   if (page.compiled_truth.includes('gbrain:facts:') || page.timeline.includes('gbrain:facts:')) {
     const applicable = withdrawals.filter(w => w.subject === '*' || w.subject === page.slug)
-      .map(({ visibility, fact_hash, withdrawn_at }) => ({ visibility, fact_hash, withdrawn_at }));
+      .map(({ visibility, fact_hash, withdrawn_at, purged }) => ({ visibility, fact_hash, withdrawn_at, ...(purged ? { purged: true } : {}) }));
     Object.assign(page, await overlayCanonicalBodies(tx.executeRaw.bind(tx), page.compiled_truth, page.timeline, applicable));
   }
   return { page, tags: row.export_tags as string[] };

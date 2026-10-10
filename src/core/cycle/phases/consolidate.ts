@@ -30,7 +30,11 @@ import { createHash } from 'node:crypto';
 import { isAborted } from '../../abort-check.ts';
 import { maintenancePreflight, submitMaintenanceConsolidation } from '../../persistence/prepared-maintenance.ts';
 import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
-import { maintenanceTransaction } from '../../persistence/attribution.ts';
+import { declareDerivation, derivedMaintenanceTransaction, derivedWriteTrust, isExternalTier, readTaintInputs } from '../../trust/taint.ts';
+import { DEFAULT_WRITE_GATE_CONFIG, type WriteGateConfig } from '../../write-gate.ts';
+import { loadImportSanityConfig } from '../../import-screen.ts';
+import { decideTakeWrite, recordFlaggedRow, recordWriteGateHold, type GatedRowDecision } from '../../write-gate-store.ts';
+import type { TaintInput, WriteTrust } from '../../trust/tier.ts';
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
@@ -94,6 +98,10 @@ export async function runPhaseConsolidate(
   let bucketsProcessed = 0;
   let bucketsSkipped = 0;
   let clustersSkippedRetired = 0;
+  let clustersGateHeld = 0;
+  let clustersGateRejected = 0;
+  // #5575 write gate: unmanaged takes are gated here (managed ones in takes-prepare); read once per run.
+  let gateConfig: WriteGateConfig | undefined;
 
   // Pull every (source_id, entity_slug) bucket of unconsolidated facts.
   // Uses the partial idx_facts_unconsolidated index.
@@ -165,7 +173,11 @@ export async function runPhaseConsolidate(
 
     bucketsProcessed += 1;
     const claims = await loadClaimShapes(engine, unconsolidated.map(f => f.id));
-    const clusters = clusterFacts(unconsolidated, threshold, claims);
+    // #5575 ENG-3: a take's tier is the least trusted fact in its cluster, so
+    // external facts cluster apart from owner facts and their takes are external.
+    const taint = new Map((await readTaintInputs(engine, unconsolidated.map(f => ({ table: 'facts' as const, id: f.id })))).map(i => [Number(i.id), i]));
+    const clusters = [false, true].flatMap(external =>
+      clusterFacts(unconsolidated.filter(f => isExternalTier(taint.get(f.id)!.tier) === external), threshold, claims));
 
     // Resolve entity_slug → page_id. If page missing in this source, skip.
     const pageRows = await engine.executeRaw<{ id: number }>(
@@ -195,6 +207,8 @@ export async function runPhaseConsolidate(
         .reduce((min, d) => (d < min ? d : min))
         .toISOString()
         .slice(0, 10);
+      const inputs = cluster.map(f => taint.get(f.id)!);
+      const derivation = { inputs, trust: derivedWriteTrust({ channel: 'derive:consolidate', inputs }) };
 
       if (dryRun) {
         // Pretend we did it.
@@ -206,7 +220,8 @@ export async function runPhaseConsolidate(
 
       if (maintenance) {
         const receipt = await submitMaintenanceConsolidation(engine, maintenance, b.entity_slug, cluster,
-          { claim: best.fact, weight: clamp01(avgWeight), source: sources.slice(0, 200), since: sinceISO });
+          { claim: best.fact, weight: clamp01(avgWeight), source: sources.slice(0, 200), since: sinceISO },
+          declareDerivation(derivation.trust, inputs));
         factsConsolidated += Number(receipt.facts_consolidated ?? 0);
         takesWritten += Number(receipt.takes_written ?? 0);
         if (receipt.reason === 'retired_take') clustersSkippedRetired++;
@@ -247,73 +262,65 @@ export async function runPhaseConsolidate(
         [pageId, best.fact],
       );
 
-      let takeId: number;
-      if (existing.length > 0) {
-        // Re-promotion of a cluster we already wrote a take for. Refresh
-        // the source-aggregation string (new fact rows may carry new
-        // source_session values that the prior run didn't see); leave
-        // row_num + weight untouched to keep the take's identity stable.
-        takeId = existing[0].id;
-        // A resolved take is immutable everywhere else (the engines throw
-        // TAKE_RESOLVED_IMMUTABLE / TAKE_ALREADY_RESOLVED); this raw UPDATE
-        // would bypass that guard. Reuse its id so the facts still consolidate
-        // into it, but leave the row untouched.
-        if (existing[0].resolved_at === null) {
-          await maintenanceTransaction(engine, tx => tx.executeRaw(
-            `UPDATE takes SET source = $1, updated_at = now() WHERE id = $2`,
-            [sources.slice(0, 200), takeId],
-          ));
+      // #5575: the take, its source refresh, the consolidation marks and the
+      // valid_until writeback are one maintenance transaction at the cluster's
+      // derived tier. A re-promotion changes no content column, so the take is
+      // lowered explicitly to min(existing, cluster): an external cluster
+      // cannot keep an owner take's tier. Edges: take -> every cluster fact.
+      // Write gate on a new take: reject skips the cluster; hold records it for review and leaves the facts unconsolidated.
+      const takeRow = { page_id: pageId, row_num: nextRowNum, claim: best.fact, kind: 'fact', holder: 'self', weight: clamp01(avgWeight),
+        since_date: sinceISO, source: sources.slice(0, 200), active: true };
+      const gate = existing.length ? null : await gateNewTake(engine, derivation, takeRow, { sourceId: b.source_id, slug: b.entity_slug },
+        gateConfig ??= (await loadImportSanityConfig(engine)).writeGate ?? DEFAULT_WRITE_GATE_CONFIG);
+      if (gate && gate.action !== 'insert') { if (gate.action === 'hold') clustersGateHeld++; else clustersGateRejected++; continue; }
+      const written = await derivedMaintenanceTransaction<{ created: boolean; takeId: number | null } | null>(engine, derivation, async tx => {
+        let takeId: number;
+        let created = false;
+        if (existing.length > 0) {
+          // Re-promotion of a cluster we already wrote a take for. Refresh
+          // the source-aggregation string (new fact rows may carry new
+          // source_session values that the prior run didn't see); leave
+          // row_num + weight untouched to keep the take's identity stable.
+          takeId = existing[0].id;
+          // A resolved take is immutable everywhere else (the engines throw
+          // TAKE_RESOLVED_IMMUTABLE / TAKE_ALREADY_RESOLVED); this raw UPDATE
+          // would bypass that guard. Reuse its id so the facts still consolidate
+          // into it, but leave the row untouched.
+          if (existing[0].resolved_at === null) {
+            await tx.executeRaw(`UPDATE takes SET source = $1, updated_at = now() WHERE id = $2`, [sources.slice(0, 200), takeId]);
+          }
+        } else {
+          const inserted = await tx.addTakesBatch([takeRow]);
+          if (inserted < 1) return { result: null, rows: [] };
+          const idRows = await tx.executeRaw<{ id: number }>(
+            `SELECT id FROM takes WHERE page_id = $1 AND row_num = $2`,
+            [pageId, nextRowNum],
+          );
+          if (idRows.length === 0) return { result: { created: true, takeId: null }, rows: [] };
+          takeId = idRows[0].id;
+          created = true;
+          if (gate) await recordFlaggedRow(tx, gate, { table: 'takes', id: takeId, sourceId: b.source_id });
         }
-      } else {
-        const inserted = await maintenanceTransaction(engine, tx => tx.addTakesBatch([{
-          page_id: pageId,
-          row_num: nextRowNum,
-          claim: best.fact,
-          kind: 'fact',
-          holder: 'self',
-          weight: clamp01(avgWeight),
-          since_date: sinceISO,
-          source: sources.slice(0, 200),
-          active: true,
-        }]));
-        if (inserted < 1) continue;
 
-        const idRows = await engine.executeRaw<{ id: number }>(
-          `SELECT id FROM takes WHERE page_id = $1 AND row_num = $2`,
-          [pageId, nextRowNum],
-        );
-        if (idRows.length === 0) {
-          nextRowNum += 1;
-          continue;
-        }
-        takeId = idRows[0].id;
-        nextRowNum += 1;
-        takesWritten += 1;
-      }
-
-      // Mark all contributing facts consolidated.
-      await maintenanceTransaction(engine, async tx => {
+        // Mark all contributing facts consolidated.
         for (const f of cluster) await tx.consolidateFact(f.id, takeId);
-      });
-      factsConsolidated += cluster.length;
 
-      // v0.35.4 (D-CDX-4 part 2) — chronological valid_until writeback.
-      // Sort the cluster by (valid_from ASC, id ASC); walk consecutive
-      // pairs; stamp the older fact's valid_until = next_newer.valid_from.
-      // The newest fact keeps valid_until = NULL. This makes the facts
-      // table a proper bitemporal record without the contradiction probe
-      // having to mutate it (preserves auto-supersession.ts:4 invariant —
-      // see also R8 test guard).
-      //
-      // Idempotent: re-running on the same cluster produces the same
-      // chronological order and the same valid_until values. No-op if
-      // valid_until is already correct.
-      const chronological = [...cluster].sort((a, b) => {
-        const t = a.valid_from.getTime() - b.valid_from.getTime();
-        if (t !== 0) return t;
-        return a.id - b.id;
-      });
-      await maintenanceTransaction(engine, async tx => {
+        // v0.35.4 (D-CDX-4 part 2) — chronological valid_until writeback.
+        // Sort the cluster by (valid_from ASC, id ASC); walk consecutive
+        // pairs; stamp the older fact's valid_until = next_newer.valid_from.
+        // The newest fact keeps valid_until = NULL. This makes the facts
+        // table a proper bitemporal record without the contradiction probe
+        // having to mutate it (preserves auto-supersession.ts:4 invariant —
+        // see also R8 test guard).
+        //
+        // Idempotent: re-running on the same cluster produces the same
+        // chronological order and the same valid_until values. No-op if
+        // valid_until is already correct.
+        const chronological = [...cluster].sort((a, b) => {
+          const t = a.valid_from.getTime() - b.valid_from.getTime();
+          if (t !== 0) return t;
+          return a.id - b.id;
+        });
         for (let i = 0; i < chronological.length - 1; i++) {
           const older = chronological[i];
           const newer = chronological[i + 1];
@@ -328,7 +335,12 @@ export async function runPhaseConsolidate(
             [newer.valid_from, older.id],
           );
         }
+        return { result: { created, takeId }, rows: [{ table: 'takes' as const, id: Number(takeId), sourceId: b.source_id }] };
       });
+      if (written?.created) nextRowNum += 1;
+      if (!written?.takeId) continue;
+      if (written.created) takesWritten += 1;
+      factsConsolidated += cluster.length;
     }
   }
 
@@ -339,7 +351,9 @@ export async function runPhaseConsolidate(
     summary: dryRun
       ? `(dry-run) would promote ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets`
       : `promoted ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets` +
-        (clustersSkippedRetired ? `; skipped ${clustersSkippedRetired} clusters with retired takes` : ''),
+        (clustersSkippedRetired ? `; skipped ${clustersSkippedRetired} clusters with retired takes` : '') +
+        (clustersGateHeld ? `; held ${clustersGateHeld} takes for write-gate review` : '') +
+        (clustersGateRejected ? `; write gate rejected ${clustersGateRejected} takes` : ''),
     details: {
       dryRun,
       cluster_threshold: threshold,
@@ -349,9 +363,25 @@ export async function runPhaseConsolidate(
       buckets_processed: bucketsProcessed,
       buckets_skipped: bucketsSkipped,
       clusters_skipped_retired: clustersSkippedRetired,
+      clusters_gate_held: clustersGateHeld,
+      clusters_gate_rejected: clustersGateRejected,
       ...(factsConsolidated === 0 && clustersSkippedRetired > 0 ? { reason: 'retired_take' } : {}),
     },
   };
+}
+
+/**
+ * #5575 write gate on one new unmanaged take, assessed at its cluster's
+ * derived tier (the gate never assesses operator_curated or above). A hold is
+ * recorded here, in an attributed transaction at that tier; the caller
+ * inserts on `insert` (recording a flag receipt) and skips otherwise.
+ */
+async function gateNewTake(engine: BrainEngine, derivation: { trust: WriteTrust; inputs: readonly TaintInput[] },
+  takeRow: { claim: string; source: string } & Record<string, unknown>, at: { sourceId: string; slug: string }, cfg: WriteGateConfig): Promise<GatedRowDecision> {
+  const gate = decideTakeWrite({ claim: takeRow.claim, source: takeRow.source }, { ...at, payload: takeRow,
+    input: { tier: derivation.trust.tier, origin: derivation.trust.origin, requestId: null }, cfg });
+  if (gate.action === 'hold') await derivedMaintenanceTransaction(engine, derivation, async tx => ({ result: await recordWriteGateHold(tx, gate.hold!), rows: [] }));
+  return gate;
 }
 
 /** The typed-claim columns of a fact (FactRow does not carry them). */

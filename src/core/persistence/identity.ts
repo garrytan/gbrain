@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync, fsyncSync, linkSync, unlinkSync, renameSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync, fsyncSync, linkSync, unlinkSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
 import type { BrainEngine } from '../engine.ts';
@@ -74,10 +74,30 @@ export function readMachineId(): string | null {
 function mintedUnderNow(): HostIdentityMintedUnder {
   return { home: process.env.HOME ?? null, gbrain_home: process.env.GBRAIN_HOME ?? null, hostname: hostname(), machine_id: readMachineId() };
 }
+/**
+ * The file identity `readHostIdentity` caches a validated document under: path, device, inode, mtime, ctime and
+ * size, so an in-place edit, a rename over the path or another home all miss. Null when the file is absent;
+ * undefined for any other stat error, which reads uncached so an unreadable file still fails as before.
+ * File timestamps tick coarsely (a few ms on Linux), so a same-size rewrite inside one tick keeps every field:
+ * a file modified less than HOST_IDENTITY_RACY_MS ago (or in the future) is read but not cached, as git treats
+ * racily clean index entries.
+ */
+const HOST_IDENTITY_RACY_MS = 2000n;
+function hostIdentityKey(path: string): { key: string; settled: boolean } | null | undefined {
+  try {
+    const stat = statSync(path, { bigint: true });
+    const age = BigInt(Date.now()) - stat.mtimeNs / 1_000_000n;
+    return { key: [path, stat.dev, stat.ino, stat.mtimeNs, stat.ctimeNs, stat.size].join('\0'), settled: age >= HOST_IDENTITY_RACY_MS };
+  } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : undefined; }
+}
+let cachedHostIdentity: { key: string; value: HostIdentityFile } | undefined;
 function readHostIdentity(path: string, create: boolean): HostIdentityFile | null {
-  if (!create && !existsSync(path)) return null;
+  const key = hostIdentityKey(path);
+  if (key?.settled && cachedHostIdentity?.key === key.key) return cachedHostIdentity.value;
+  if (!create && (key === null || key === undefined && !existsSync(path))) return null;
   const value = privateJson<HostIdentityFile>(path, () => ({ version: 1, id: randomUUID(), minted_under: mintedUnderNow() }));
   if (value.version !== 1 || typeof value.id !== 'string') throw invalidIdentityFile('The local writer identity is invalid.', path, 'host identity');
+  if (key?.settled) cachedHostIdentity = { key: key.key, value };
   return value;
 }
 export function localHostId(): string {

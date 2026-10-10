@@ -58,6 +58,7 @@ import { frontmatterRepair } from './frontmatter.ts';
 import { attributionBackfillRepair } from './attribution-backfill.ts';
 import { plannerStatsRepair } from './planner-stats.ts';
 import { fencesRepair } from './fences.ts';
+import { slugConflictsRepair } from './slug-conflicts.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
 import type { OperationError } from '../ops/contract.ts';
 
@@ -233,6 +234,16 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + '(a)-(g) and is a Tier 1 fixed point, or it is not written. Managed sources commit through the Git effect, legacy sources back up and print '
       + 'the commit step, database-only pages take a revision-bound write. --only/--skip <path> and --slug <slug> select; --no-llm keeps to the free '
       + 'tiers; --max-usd <n> lowers the model cap for this run. Preview-bound: --apply --expect <hash> applies exactly the previewed set.',
+  },
+  'slug-conflicts': {
+    handler: slugConflictsRepair, embeds: 'effect', checks: [], preview_bound: true, spends: 'llm',
+    summary: 'Clear frontmatter_slug_conflict sync holds (#6377): a file whose frontmatter slug: names another page. A stray slug (no such page and no such '
+      + 'file, or a page of another type with no title word in common) loses the slug: line deterministically; anything else is judged by the content-repair '
+      + 'model (models.content_repair, else models.fence_repair, else the measured list) under the fences.repair caps and the same daily ledger as fences: '
+      + 'remove_slug applies the one-line edit, merge_into and needs_human write nothing and record the recommendation on the hold for a person '
+      + '(gbrain sync status shows the paragraph). Managed sources commit through the Git effect with a gbrain-repair: trailer, legacy sources back up and '
+      + 'print the commit step. --only/--skip <path> select; --no-llm keeps to the deterministic tier; --max-usd <n> lowers the model cap for this run. '
+      + 'Preview-bound: --apply --expect <hash> applies exactly the previewed set. gbrain repair content runs fences, then this kind.',
   },
   'planner-stats': {
     handler: plannerStatsRepair, embeds: 'none', checks: ['planner_stats_stale'],

@@ -47,10 +47,11 @@ export interface WaveCheckSpec {
 
 /**
  * #6188 (D7): what clears malformed fences, from a check's `auto_repair` detail: the next maintenance run while
- * one is active and `fences.repair.enabled` is on, otherwise `gbrain repair fences` (whose preview prints the apply command).
+ * one is active and `fences.repair.enabled` is on, otherwise the preview `command`: the content lane for held files (#6377), `gbrain repair fences`
+ * for malformed fences stored pages carry (whose preview prints the apply command).
  */
-function fenceRepairHow(details: Record<string, any>, source?: string): string {
-  const preview = `preview with: gbrain repair fences${source ? ` --source ${source}` : ''}`;
+function fenceRepairHow(details: Record<string, any>, source: string | undefined, command: 'fences' | 'content'): string {
+  const preview = `preview with: gbrain repair ${command}${source ? ` --source ${source}` : ''}`;
   const auto = details.auto_repair as { active?: boolean; enabled?: boolean } | undefined;
   if (auto && auto.active === false) return `not repaired automatically (${auto.enabled === false ? 'fences.repair.enabled is false' : 'no maintenance run is active'}); ${preview}`;
   const manual = Array.isArray(details.sources) ? details.sources.reduce((sum: number, c: { by_tier?: { manual?: number } }) => sum + Number(c.by_tier?.manual ?? 0), 0) : 0;
@@ -138,14 +139,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     hostOnly: 'Held file paths are host-local; remote callers see held counts on sync results, get_page and search.',
     count: d => Number(d.held ?? 0),
     impact: 'Some Git source files are held instead of imported, so their pages are missing or keep an older revision',
-    bannerHow: (d, how, source) => !d.fences ? how : d.fences >= Number(d.held ?? 0) ? `fence holds: ${fenceRepairHow(d, source)}` : `${how}; fence holds: ${fenceRepairHow(d, source)}`,
+    bannerHow: (d, how, source) => !d.fences ? how : d.fences >= Number(d.held ?? 0) ? `fence holds: ${fenceRepairHow(d, source, 'content')}` : `${how}; fence holds: ${fenceRepairHow(d, source, 'content')}`,
     run: async (engine, scope) => (await import('./checks/git-holds.ts')).gitHeldFilesCheck(engine, scope.sourceIds),
   },
   {
     id: 'fence_integrity', resolution: 'repair', registration: 'doctor.ts',
     count: d => Number(d.total ?? 0),
     impact: 'Some facts or takes fences are malformed and wait for repair; none of them blocks a sync',
-    bannerHow: (d, _how, source) => fenceRepairHow(d, source),
+    bannerHow: (d, _how, source) => fenceRepairHow(d, source, 'fences'),
     run: async (engine, scope) => (await import('./checks/fence-integrity.ts')).fenceIntegrityCheck(engine, scope.sourceIds),
   },
   {

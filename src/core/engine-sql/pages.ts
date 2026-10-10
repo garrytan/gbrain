@@ -60,6 +60,31 @@ export async function findDuplicatePage(
       return { slug: r.slug, id: Number(r.id) };
   }
 
+/**
+ * GBRA-75 wave 10: `findDuplicatePage` for several inputs of one source in one statement. Entry i is the row the
+ * single call returns for `inputs[i]`: the same predicate, the same order and the first row per input.
+ */
+export async function findDuplicatePages(
+  exec: ScopedRead,
+  sourceId: string,
+  inputs: ReadonlyArray<{ hash: string; frontmatterId?: string | null; excludeSlug?: string }>,
+): Promise<Array<{ slug: string; id: number } | null>> {
+  if (!inputs.length) return [];
+  const { rows } = await exec.run<{ n: number | string; id: number | string; slug: string }>(sqlFragment`
+    SELECT DISTINCT ON (k.n) k.n, p.id, p.slug
+    FROM jsonb_to_recordset(${JSON.stringify(inputs.map((input, i) => ({ n: i + 1, hash: input.hash, frontmatter_id: input.frontmatterId ?? null,
+      exclude_slug: input.excludeSlug ?? null })))}::text::jsonb) AS k(n int, hash text, frontmatter_id text, exclude_slug text)
+    JOIN pages p ON p.source_id = ${sourceId}
+      AND p.deleted_at IS NULL
+      AND (p.content_hash = k.hash OR (p.frontmatter->>'id' = k.frontmatter_id AND k.frontmatter_id IS NOT NULL))
+      AND (k.exclude_slug IS NULL OR p.slug <> k.exclude_slug)
+    ORDER BY k.n, (p.frontmatter->>'id' IS NOT DISTINCT FROM k.frontmatter_id) DESC, p.id
+  `);
+  const found: Array<{ slug: string; id: number } | null> = inputs.map(() => null);
+  for (const row of rows) found[Number(row.n) - 1] = { slug: row.slug, id: Number(row.id) };
+  return found;
+}
+
 export async function putPage(
   exec: SqlExecutor,
   slug: string,
@@ -508,10 +533,11 @@ export async function listPrefixSampledPages(scoped: ScopedReadRunner, opts: Dom
           p.source_id,
           p.title,
           p.compiled_truth,
-          p.last_retrieved_at,
+          GREATEST(p.last_retrieved_at, r.last_retrieved_at) AS last_retrieved_at,
           substring(p.slug from '^[^/]+/[^/]+') AS prefix,
           COUNT(pl.id) AS connection_count
         FROM pages p
+        LEFT JOIN page_retrievals r ON r.page_id = p.id
         LEFT JOIN page_links pl ON pl.to_page_id = p.id
         WHERE p.deleted_at IS NULL
           AND substring(p.slug from '^[^/]+/[^/]+') = ANY(${opts.prefixes}::text[])
@@ -521,7 +547,7 @@ export async function listPrefixSampledPages(scoped: ScopedReadRunner, opts: Dom
             OR (${sourceIds}::text[] IS NULL AND ${sourceId}::text IS NOT NULL AND p.source_id = ${sourceId})
             OR (${sourceIds}::text[] IS NULL AND ${sourceId}::text IS NULL)
           )
-        GROUP BY p.id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at
+        GROUP BY p.id, p.slug, p.source_id, p.title, p.compiled_truth, p.last_retrieved_at, r.last_retrieved_at
       ),
       ranked AS (
         SELECT
@@ -594,10 +620,11 @@ export async function listCorpusSample(scoped: ScopedReadRunner, opts: CorpusSam
           p.source_id,
           p.title,
           p.compiled_truth,
-          p.last_retrieved_at,
+          GREATEST(p.last_retrieved_at, r.last_retrieved_at) AS last_retrieved_at,
           substring(p.slug from '^[^/]+/[^/]+') AS prefix,
           (SELECT COUNT(*) FROM page_links pl WHERE pl.to_page_id = p.id) AS connection_count
         FROM pages p
+        LEFT JOIN page_retrievals r ON r.page_id = p.id
         WHERE p.deleted_at IS NULL
           AND (cardinality(${exclude}::text[]) = 0 OR NOT (p.slug = ANY(${exclude}::text[])))
           AND (

@@ -144,6 +144,6 @@ export async function admitGroup(engine: BrainEngine, members: WaiverEntry[], cu
     ]) as [unknown, WriteRequest[]];
     if (!await cursorHolds(tx)) throw new GroupMoved();
     return rows;
-  })).catch(error => { if (error instanceof GroupMoved) return null; throw error; });
+  }), undefined, error => engine.reconnect({ error })).catch(error => { if (error instanceof GroupMoved) return null; throw error; });
 }
 class GroupMoved extends Error {}

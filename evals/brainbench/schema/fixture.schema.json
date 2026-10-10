@@ -12,7 +12,7 @@
     "suites": {
       "type": "array",
       "minItems": 1,
-      "items": { "enum": ["know-to-ask", "push", "write-back", "continuity"] }
+      "items": { "enum": ["know-to-ask", "push", "write-back", "continuity", "trust", "state-resolution", "poisoning", "deletion"] }
     },
     "category": { "type": "string" },
     "holdout": { "type": "boolean", "description": "Excluded from the CI gate; scored in published runs only." },
@@ -68,6 +68,32 @@
       "properties": {
         "pair_id": { "type": "string" },
         "pair_role": { "enum": ["writer", "reader"] }
+      }
+    },
+    "trust_steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Memory-trust suites only (exactly one suite per fixture, no seed_pages/seed_facts/continuity): ordered writes through real channels, run before the turns replay as a later session.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["step_id", "actor", "op"],
+        "properties": {
+          "step_id": { "type": "string" },
+          "actor": { "enum": ["owner", "local_agent", "remote_agent", "connector", "raw"] },
+          "op": {
+            "enum": ["write_file", "sync", "put_page", "capture", "remember", "forget", "confirm", "purge", "raise_tier"],
+            "description": "owner: write_file|sync|confirm|purge · local_agent: put_page|remember|confirm · remote_agent: put_page|capture|remember|forget|confirm|purge · connector: capture · raw: raise_tier."
+          },
+          "slug": { "type": "string" },
+          "content": { "type": "string" },
+          "fact": { "type": "string" },
+          "entity": { "type": "string" },
+          "kind": { "enum": ["fact", "preference", "commitment", "event", "belief"] },
+          "content_origin": { "enum": ["user_said", "tool_output", "inferred"] },
+          "target": { "type": "string", "description": "An earlier step_id whose row this step acts on." },
+          "target_claim": { "type": "string", "description": "Picks one fact of a page step by its claim text." }
+        }
       }
     }
   }

@@ -4,7 +4,7 @@
  * gate, the shared failure-ledger bookmark gate, and the post-advance
  * extract / facts / embed passes.
  */
-import { CHUNKER_VERSION } from '../../core/chunkers/code.ts';
+import { chunkerStamp } from '../../core/chunkers/code.ts';
 import { serr, slog } from '../../core/console-prefix.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { clearOpCheckpoint } from '../../core/op-checkpoint.ts';
@@ -67,7 +67,7 @@ export async function finishWithoutChanges(
     // completes cleanly here).
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
-    await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await writeChunkerVersion(engine, opts.sourceId, chunkerStamp());
     if (!company) { await clearOpCheckpoint(engine, ckpt.paths); await clearOpCheckpoint(engine, ckpt.target); }
     // A commit whose ONLY changes are malformed filenames lands here with
     // totalChanges === 0 — the anchor advances past those files forever, so
@@ -291,7 +291,7 @@ async function applyBookmarkGate(
     await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(gitContextRoot, pin), gitContextRoot);
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeSyncAnchor(engine, opts.sourceId, 'repo_path', anchorPath);
-    await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await writeChunkerVersion(engine, opts.sourceId, chunkerStamp());
     if (!company) { await clearOpCheckpoint(engine, ckpt.paths); await clearOpCheckpoint(engine, ckpt.target); }
   };
 

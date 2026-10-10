@@ -25,11 +25,12 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { phaseCGrandfather } from '../src/commands/migrations/v0_13_1.ts';
 import { admitCanonicalGrandfather } from '../src/core/persistence/grandfather.ts';
-import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
-import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, startPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
+import { claimCoalescedGitEffects } from '../src/core/persistence/effect-journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -142,6 +143,8 @@ const gitStates = async (engine: BrainEngine) => Object.fromEntries((await engin
   "SELECT state, count(*)::int AS n FROM persistence_effects WHERE kind='git' GROUP BY state ORDER BY state")).map(r => [r.state, Number(r.n)]));
 
 const PAGES = Number(process.env.GBRAIN_TEST_COALESCE_PAGES ?? 250);
+// Six full groups whose commits each take a second: on master the write waits out about six seconds of them.
+const BACKLOG = 600, COMMIT_SLEEP_S = 1;
 
 for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind})`, () => {
   if (kind === 'postgres') process.env.GBRAIN_TEST_COALESCE_PG ??= process.env.DATABASE_URL;
@@ -307,6 +310,164 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
     expect(await gitStates(engine)).toEqual({ committed: 5 });
     expect(new Set((await engine.executeRaw<{ reason: string }>("SELECT outcome->>'reason' AS reason FROM persistence_effects WHERE kind='git'")).map(r => r.reason)))
       .toEqual(new Set(['durability_not_enabled']));
+  }), 300_000);
+  // Wave 8: a group without the durability hook guards each source once and records its plain outcomes in one
+  // statement. Every other outcome (a replaced file, an unsafe path, an archived source) is unchanged.
+  test('without the durability hook, a group records its outcomes in one statement and one guard transaction per source', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    mkdirSync(join(repo.root, 'nested'));
+    await bindSource(engine, 'default', repo);
+    await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('nested', 'nested', $1)", [join(repo.root, 'nested')]);
+    await claimWorktree(engine, 'nested', join(repo.root, 'nested'), localHostId());
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    await pauseGitEffects(engine, async () => { await seed(ctx('nested'), 3, 700); await seed(ctx('default'), 30); });
+    await release(engine);
+    const outcomeWrites: string[] = [];
+    let transactions = 0;
+    const executeRaw = engine.executeRaw, transaction = engine.transaction;
+    Object.assign(engine, {
+      executeRaw(this: BrainEngine, ...args: Parameters<BrainEngine['executeRaw']>) { if (/^UPDATE persistence_effects\b[\s\S]*outcome=/.test(args[0])) outcomeWrites.push(args[0]); return executeRaw.apply(this, args); },
+      transaction(this: BrainEngine, ...args: Parameters<BrainEngine['transaction']>) { transactions++; return transaction.apply(this, args); },
+    });
+    try { await pass(engine); } finally { Object.assign(engine, { executeRaw, transaction }); }
+    expect(await gitStates(engine)).toEqual({ committed: 33 });
+    expect(outcomeWrites).toHaveLength(1);
+    // Two guards (one per source) plus the pass's fixed claim transactions; one guard per effect made 37.
+    expect(transactions).toBeLessThanOrEqual(6);
+  }), 300_000);
+  test('without the durability hook, every effect of a mixed group keeps its own outcome', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    mkdirSync(join(repo.root, 'nested'));
+    await bindSource(engine, 'default', repo);
+    await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('nested', 'nested', $1)", [join(repo.root, 'nested')]);
+    await claimWorktree(engine, 'nested', join(repo.root, 'nested'), localHostId());
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    await pauseGitEffects(engine, async () => { await seed(ctx('default'), 6); await seed(ctx('nested'), 2, 700); });
+    await effectSql(engine, `UPDATE persistence_effects SET data=jsonb_set(data,'{relative_path}','"../outside.md"')
+      WHERE id=(SELECT id FROM persistence_effects WHERE kind='git' ORDER BY id LIMIT 1 OFFSET 2)`);
+    writeFileSync(join(repo.root, 'notes', 'page-0004.md'), pageContent(4, ' Edited by hand.'));
+    await effectSql(engine, "UPDATE persistence_effects SET source_incarnation=gen_random_uuid() WHERE kind='git' AND source_id='nested'");
+    await release(engine);
+    await pass(engine);
+    const rows = await engine.executeRaw<{ slug: string; state: string; error_code: string | null; reason: string | null; git: string | null }>(`SELECT data->>'slug' AS slug,
+      state,error_code,outcome->>'reason' AS reason,outcome->>'git' AS git FROM persistence_effects WHERE kind='git' ORDER BY source_id,data->>'slug'`);
+    expect(rows.map(r => [r.slug, r.state, r.error_code, r.reason, r.git])).toEqual([
+      ['notes/page-0000', 'committed', null, 'durability_not_enabled', 'skipped'],
+      ['notes/page-0001', 'committed', null, 'durability_not_enabled', 'skipped'],
+      ['notes/page-0002', 'queued', 'source_changed', null, null],
+      ['notes/page-0003', 'committed', null, 'durability_not_enabled', 'skipped'],
+      ['notes/page-0004', 'committed', null, null, 'superseded'],
+      ['notes/page-0005', 'committed', null, 'durability_not_enabled', 'skipped'],
+      ['notes/page-0700', 'failed', 'source_changed', null, null],
+      ['notes/page-0701', 'failed', 'source_changed', null, null],
+    ]);
+  }), 300_000);
+  // Wave 9: under a backlog every group is full. A write admitted while the consumer drains a hooked
+  // worktree's Git effects publishes within the 5 s write wait instead of waiting out the whole backlog.
+  test('a write admitted behind a full-group Git backlog publishes within the write wait', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    await bindSource(engine, 'default', repo);
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    harden(repo);
+    await pauseGitEffects(engine, () => seed(ctx('default'), BACKLOG));
+    const real = Bun.which('git')!;
+    const committing = join(home, 'committing');
+    const stub = stubGit(home, `case " $* " in *" commit "*) touch '${committing}'; sleep ${COMMIT_SLEEP_S};; esac\nexec '${real}' "$@"`);
+    await withEnv({ PATH: `${stub}:${process.env.PATH}` }, async () => {
+      await release(engine);
+      startPersistenceConsumer(engine, { engine: engine.kind, embedding_disabled: true } as never);
+      // The consumer is committing a full group under the worktree lock when the write arrives.
+      for (let i = 0; i < 200 && !existsSync(committing); i++) await Bun.sleep(25);
+      expect(existsSync(committing)).toBe(true);
+      const commitsBefore = repo.commits();
+      const started = performance.now();
+      const result = await submitPageMutation(ctx('default'), { operation: 'put_page', waitMs: 5000,
+        params: { slug: 'notes/behind-backlog', request_id: randomUUID(), content: pageContent(9999) } });
+      const elapsed = performance.now() - started;
+      expect(result.status).not.toBe('pending');
+      expect(elapsed).toBeLessThan(5000);
+      // It went ahead of the backlog: at most the group already committing when it arrived landed first.
+      expect(repo.commits() - commitsBefore).toBeLessThanOrEqual(2);
+      await disposePersistenceConsumer(engine);
+    });
+    // Every effect still commits, in claim order per worktree.
+    await release(engine);
+    while ((await gitStates(engine)).queued) { await release(engine); await pass(engine); }
+    expect(await gitStates(engine)).toEqual({ committed: BACKLOG + 1 });
+  }), 300_000);
+  test('a write that finds the worktree busy is requeued as writer_busy with no stale preparing phase', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    await bindSource(engine, 'default', repo);
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    await seed(ctx('default'), 1);
+    const binding = (await getWorktreeBinding(engine, 'default', localHostId()))!;
+    const held = (await acquireWorktree(binding, 30_000, undefined, engine))!;
+    try {
+      await submitPageMutation(ctx('default'), { operation: 'put_page', waitMs: 1500,
+        params: { slug: 'notes/lock-held', request_id: randomUUID(), content: pageContent(7777) } }).catch(() => undefined);
+      const [row] = await engine.executeRaw<{ state: string; blocked_reason: string | null; claim_phase: unknown }>(
+        "SELECT state,blocked_reason,claim_phase FROM persistence_requests ORDER BY created_at DESC LIMIT 1");
+      expect(row).toEqual({ state: 'queued', blocked_reason: 'writer_busy', claim_phase: null });
+    } finally { await held.release(); await disposePersistenceConsumer(engine); }
+  }), 300_000);
+  // Wave 7: the coalesced claim hoists its worktree-wide conditions into one InitPlan. This is the claim's
+  // predicate before that change, row by row; every state below must claim exactly the rows it selects.
+  test('the coalesced claim takes exactly the rows of the per-row reference predicate', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    await bindSource(engine, 'default', repo);
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    harden(repo);
+    await pauseGitEffects(engine, () => seed(ctx('default'), 6));
+    const [{ worktree_id: worktree }] = await engine.executeRaw<{ worktree_id: string }>("SELECT DISTINCT worktree_id FROM persistence_effects WHERE kind='git'");
+    const host = localHostId();
+    const reference = async (limit: number) => (await engine.executeRaw<{ id: number }>(`SELECT e.id FROM persistence_effects e
+      JOIN persistence_worktrees w ON w.id=e.worktree_id AND w.owner_host_id=$1::uuid
+      WHERE e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
+      AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'version')
+      AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
+      AND NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes fence WHERE fence.worktree_id=e.worktree_id
+        AND fence.state IN ('fenced','merged','recovery_required'))
+      AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
+        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
+        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')
+      ORDER BY e.next_attempt_at,e.id LIMIT $3`, [host, worktree, limit])).map(r => Number(r.id));
+    const ids = async () => (await engine.executeRaw<{ id: number }>("SELECT id FROM persistence_effects WHERE kind='git' ORDER BY id")).map(r => Number(r.id));
+    const all = await ids();
+    expect(all.length).toBe(6);
+    const reset = () => effectSql(engine, `UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,recovery=NULL,
+      next_attempt_at=now()-interval '1 second',data=data-'targets' WHERE kind='git'`);
+    const [{ request_id: mirrored, source_id, source_incarnation }] = await engine.executeRaw<{ request_id: string; source_id: string; source_incarnation: string }>(
+      'SELECT request_id,source_id,source_incarnation FROM persistence_effects WHERE id=$1', [all[2]]);
+    const states: [string, () => Promise<unknown>, () => Promise<unknown>][] = [
+      ['ready', async () => {}, async () => {}],
+      ['future, running and targeted rows', () => effectSql(engine, `UPDATE persistence_effects SET
+        next_attempt_at=CASE WHEN id=$1 THEN now()+interval '1 hour' ELSE next_attempt_at END,
+        state=CASE WHEN id IN ($2,$3) THEN 'running' ELSE state END,
+        claim_expires_at=CASE WHEN id=$2 THEN now()+interval '1 hour' WHEN id=$3 THEN now()-interval '1 second' ELSE claim_expires_at END,
+        data=CASE WHEN id=$4 THEN data||'{"targets":[]}'::jsonb ELSE data END WHERE kind='git'`, [all[0], all[1], all[2], all[3]]), async () => {}],
+      ['a pending withdrawal mirror', () => effectSql(engine, `INSERT INTO persistence_effects (request_id,kind,data,source_id,source_incarnation,worktree_id,next_attempt_at)
+        VALUES ($1::uuid,'withdrawal-mirror','{}'::jsonb,$2,$3::uuid,$4::uuid,now()+interval '1 hour')`, [mirrored, source_id, source_incarnation, worktree]),
+        () => effectSql(engine, "DELETE FROM persistence_effects WHERE kind='withdrawal-mirror'")],
+      ['an effect in recovery', () => effectSql(engine, `UPDATE persistence_effects SET recovery='{"reason":"probe"}'::jsonb WHERE id=$1`, [all[5]]), async () => {}],
+      ['another owner', () => engine.executeRaw('UPDATE persistence_worktrees SET owner_host_id=gen_random_uuid() WHERE id=$1::uuid', [worktree]),
+        () => engine.executeRaw('UPDATE persistence_worktrees SET owner_host_id=$2::uuid WHERE id=$1::uuid', [worktree, host])],
+      ...(['fenced', 'merged', 'recovery_required', 'draining', 'syncing'] as const).map(state => [`a ${state} refresh`,
+        () => engine.executeRaw(`INSERT INTO persistence_worktree_refreshes (worktree_id,source_ids,principal_id,owner_epoch,topology_generation,state,old_head,target_head,upstream_ref)
+          VALUES ($1::uuid,ARRAY['default'],gen_random_uuid(),1,1,$2,'a','b','origin/main')`, [worktree, state]),
+        () => engine.executeRaw('DELETE FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid', [worktree])] as [string, () => Promise<unknown>, () => Promise<unknown>]),
+    ];
+    for (const [name, apply, undo] of states) for (const limit of [1, 4, 100]) {
+      await reset(); await apply();
+      const expected = await reference(limit);
+      const claimed = (await claimCoalescedGitEffects(engine, host, worktree, limit)).map(e => Number(e.id));
+      expect({ name, limit, claimed }).toEqual({ name, limit, claimed: [...expected].sort((a, b) => a - b) });
+      await undo();
+    }
+    await reset();
+    expect(await reference(100)).toHaveLength(6);
   }), 300_000);
 });
 

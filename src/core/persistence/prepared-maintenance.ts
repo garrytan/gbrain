@@ -27,6 +27,7 @@ import { nativeLockCapability } from './native-lock.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import { MaintenanceWriteWait } from './maintenance-wait.ts';
+import { declaredWriteTrust, lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type DerivationDeclaration } from '../trust/taint.ts';
 
 export interface MaintenanceAuthority {
   writer: WriteAuthority;
@@ -177,13 +178,15 @@ async function submitMaintenance(engine: BrainEngine, authority: MaintenanceAuth
 /** #5523: a Life Chronicle timeline row projected onto the depth page in the same publication. */
 export interface MaintenanceEventProjection { depth_slug: string; date: string; summary: string; }
 
+/** `derivation` (#5575 I2): the deriver's taint declaration; the page and its edges are stamped from it at publication. */
 export async function publishMaintenancePage(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
   content: string, options: { requestId?: string; expectedRevision: string | null; file?: boolean;
-    eventProjection?: MaintenanceEventProjection }): Promise<Record<string, unknown>> {
+    eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration }): Promise<Record<string, unknown>> {
   const projection = options.eventProjection ? { event_projection: options.eventProjection } : {};
+  const derivation = options.derivation ? { derivation: options.derivation } : {};
   return submitMaintenance(engine, authority, slug, { kind: 'managed_maintenance_page', content,
-    expected_revision: options.expectedRevision, ...projection }, options.requestId ?? maintenanceRequestId({ authority: authority.writer,
-    slug, content, revision: options.expectedRevision, file: options.file ?? true, ...projection }), options.file);
+    expected_revision: options.expectedRevision, ...projection, ...derivation }, options.requestId ?? maintenanceRequestId({ authority: authority.writer,
+    slug, content, revision: options.expectedRevision, file: options.file ?? true, ...projection, ...derivation }), options.file);
 }
 
 /** A maintenance request with its own intent kind, keyed by the intent (a retry replays its receipt). */
@@ -202,8 +205,9 @@ export async function submitDatabaseMaintenanceIntent(engine: BrainEngine, autho
   return submitMaintenance(engine, authority, slug, intent, requestId, false);
 }
 
+/** `derivation` (#5575 I2): the deriver's taint declaration, stamped onto the output page. */
 export async function stampMaintenancePage(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
-  cycleDate: string, rawSource?: string, rawTraceExemptReason?: string, seat?: string | null): Promise<void> {
+  cycleDate: string, rawSource?: string, rawTraceExemptReason?: string, seat?: string | null, derivation?: DerivationDeclaration): Promise<void> {
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: authority.writer.sourceId });
   if (!snapshot) throw opError('page_not_found', 'A maintenance output page disappeared.',
     `Output page ${slug} in '${authority.writer.sourceId}' no longer exists, so it was not stamped. Confirm with the command in fix, then run maintenance again to regenerate it if it is still wanted.`,
@@ -214,7 +218,8 @@ export async function stampMaintenancePage(engine: BrainEngine, authority: Maint
     dream_cycle_date: firstDate, dream_created_cycle_date: firstDate, ...(rawSource ? { raw_source: rawSource } : {}),
     ...(rawTraceExemptReason ? { raw_trace_exempt: true, raw_trace_exempt_reason: rawTraceExemptReason } : {}),
     ...(seat ? { seat } : {}) } };
-  await publishMaintenancePage(engine, authority, slug, serializePageToMarkdown(page, snapshot.tags), { expectedRevision: snapshot.revision });
+  await publishMaintenancePage(engine, authority, slug, serializePageToMarkdown(page, snapshot.tags), { expectedRevision: snapshot.revision,
+    ...(derivation ? { derivation } : {}) });
 }
 
 export async function verifyMaintenanceOutputs(engine: BrainEngine, authority: MaintenanceAuthority,
@@ -252,7 +257,8 @@ export async function readFacts(engine: BrainEngine, sourceId: string, ids: numb
 }
 
 export async function submitMaintenanceConsolidation(engine: BrainEngine, authority: MaintenanceAuthority,
-  slug: string, cluster: FactRow[], take: { claim: string; weight: number; source: string; since: string }): Promise<Record<string, unknown>> {
+  slug: string, cluster: FactRow[], take: { claim: string; weight: number; source: string; since: string },
+  derivation?: DerivationDeclaration): Promise<Record<string, unknown>> {
   const sourceId = authority.writer.sourceId;
   const facts = await readFacts(engine, sourceId, cluster.map(f => f.id));
   if (facts.length !== cluster.length || facts.some(f => f.value.visibility !== 'world' || f.value.expired_at || f.value.consolidated_at)) {
@@ -276,7 +282,7 @@ export async function submitMaintenanceConsolidation(engine: BrainEngine, author
     pages.push({ slug: pageSlug, revision: snapshot.revision, id: snapshot.page.id });
   }
   const target = pages.find(p => p.slug === slug)!;
-  const intent = { kind: 'managed_maintenance_consolidate', expected_revision: target.revision, facts, pages, ...take };
+  const intent = { kind: 'managed_maintenance_consolidate', expected_revision: target.revision, facts, pages, ...take, ...(derivation ? { derivation } : {}) };
   const requestId = maintenanceRequestId({ source: authority.writer.sourceIncarnation, slug, intent });
   return submitMaintenance(engine, authority, slug, intent, requestId);
 }
@@ -389,8 +395,34 @@ export async function applyPreservingTakeResolutions(tx: BrainEngine, pageId: nu
   return outcome;
 }
 
-/** `clock` (#6278): the claim's phase clock, threaded to the page and adoption preparers' step boundaries. */
+/**
+ * #5575 I2: a maintenance intent that carries a derivation declaration
+ * publishes at the declared tier (never above agent_written), lowers its
+ * derived row when the publication changed no content column, and records
+ * the complete input edges (ENG-7). A consolidation's takes fence edit
+ * keeps the entity page's tier (page-prepare's fence-edit rule).
+ */
 export async function prepareMaintenanceMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
+  const prepared = await prepareMaintenanceKind(engine, row, config, clock);
+  const declaration = readDerivationDeclaration(row.intent?.derivation);
+  if (!declaration) return prepared;
+  const trust = declaredWriteTrust(declaration);
+  const consolidation = row.intent?.kind === 'managed_maintenance_consolidate';
+  return { ...prepared, trust, apply: async (tx, preimage) => {
+    const outcome = await prepared.apply(tx, preimage);
+    const [derived] = consolidation ? (outcome.take_id ? [{ table: 'takes' as const, id: Number(outcome.take_id) }] : [])
+      : (await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [row.source_id, row.slug]))
+        .map(page => ({ table: 'pages' as const, id: Number(page.id) }));
+    if (derived) {
+      await lowerToDerivedTier(tx, derived.table, [derived.id], trust);
+      await recordTaintEdges(tx, { ...derived, sourceId: row.source_id }, declaration.inputs);
+    }
+    return outcome;
+  } };
+}
+
+/** `clock` (#6278): the claim's phase clock, threaded to the page and adoption preparers' step boundaries. */
+async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
   if (row.authority.remote) throw trustedCliRequired('Remote maintenance publication is not supported.');
   enterClaimStep(clock, 'maintenance_dispatch');
   if (row.intent?.kind === 'managed_maintenance_restore_extractor_facts') return (await import('../repair/extractor-facts.ts')).prepareExtractorFactsRestore(engine, row);

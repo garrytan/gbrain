@@ -9,7 +9,7 @@
  * sources (--source, GBRAIN_SOURCE) still get the unavailable note.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { makeContext } from '../src/cli.ts';
+import { makeContext } from '../src/cli/main.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';

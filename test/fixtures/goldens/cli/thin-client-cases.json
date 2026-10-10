@@ -738,6 +738,16 @@
       "stdout": []
     },
     {
+      "argv": "trust",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain trust` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain trust",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
       "argv": "watch",
       "exitCode": 1,
       "stderr": [

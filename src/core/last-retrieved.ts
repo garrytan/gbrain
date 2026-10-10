@@ -10,11 +10,23 @@
  *   dream cycle, doctor probes, etc. Pure signal: "a user-facing surface
  *   just surfaced this page."
  *
- * - 5-min throttle (D2). The UPDATE includes a `WHERE last_retrieved_at IS
- *   NULL OR last_retrieved_at < NOW() - INTERVAL '5 minutes'` clause so
- *   hot pages surfaced by many concurrent searches don't pile up MVCC
- *   row versions. ~90% of writes skipped in steady state on a heavily-
- *   searched brain. Mirrors `embedded_at` reset gating in `upsertChunks`.
+ * - 5-min throttle (D2). The upsert only moves a timestamp older than
+ *   5 minutes, so hot pages surfaced by many concurrent searches don't pile
+ *   up MVCC row versions. ~90% of writes skipped in steady state on a
+ *   heavily-searched brain. Mirrors `embedded_at` reset gating in
+ *   `upsertChunks`.
+ *
+ * - Narrow side table (migration v224). The timestamp lives in
+ *   `page_retrievals(page_id, last_retrieved_at)`, not on `pages`: an UPDATE
+ *   of `pages` fired seven triggers per statement, wrote a new wide heap
+ *   tuple plus an entry in every pages index, and advanced
+ *   `page_generation_clock_seq` even when the throttle matched no row, which
+ *   expired the query-cache bookmark, the get_health memo and the projection
+ *   readiness memo on every read. The upsert is a HOT update of a 40-byte
+ *   row with no triggers. Readers take
+ *   `GREATEST(pages.last_retrieved_at, page_retrievals.last_retrieved_at)`:
+ *   the migration copied the column, and a mixed-version writer still
+ *   updating `pages.last_retrieved_at` stays visible.
  *
  * - Default-on with `search.track_retrieval` config escape hatch (D13).
  *   Operators worried about per-search write amplification can opt out:
@@ -34,7 +46,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import { isUndefinedColumnError } from './utils.ts';
+import { isUndefinedTableError } from './utils.ts';
 import { registerBackgroundWorkDrainer } from './background-work.ts';
 
 let _trackRetrievalCache: { ts: number; enabled: boolean } | null = null;
@@ -163,6 +175,19 @@ export function _resetTrackRetrievalCacheForTests(): void {
 }
 
 /**
+ * $1 page ids. Ids of pages that do not exist are skipped, as the UPDATE of
+ * `pages` skipped them. The SELECT drops rows still inside the window before
+ * the upsert, because ON CONFLICT locks (and so dirties) a conflicting row even
+ * when its WHERE then skips it; the ON CONFLICT test keeps a concurrent bump
+ * from moving a row twice.
+ */
+export const BUMP_LAST_RETRIEVED_SQL = `INSERT INTO page_retrievals (page_id, last_retrieved_at)
+  SELECT p.id, NOW() FROM pages p LEFT JOIN page_retrievals r ON r.page_id = p.id
+   WHERE p.id = ANY($1::int[]) AND (r.page_id IS NULL OR r.last_retrieved_at < NOW() - INTERVAL '5 minutes')
+  ON CONFLICT (page_id) DO UPDATE SET last_retrieved_at = EXCLUDED.last_retrieved_at
+    WHERE page_retrievals.last_retrieved_at < NOW() - INTERVAL '5 minutes'`;
+
+/**
  * Bump `last_retrieved_at` on the given page_ids. Fire-and-forget — caller
  * MUST NOT await this for the op response. Empty ids list is a no-op.
  *
@@ -180,21 +205,14 @@ export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): voi
     try {
       const enabled = await isTrackingEnabled(engine);
       if (!enabled) return;
-      // 5-minute throttle (D2) + best-effort. The UPDATE is idempotent:
+      // 5-minute throttle (D2) + best-effort. The upsert is idempotent:
       // setting last_retrieved_at = NOW() multiple times in a row is the
       // same as setting it once (TIMESTAMPTZ comparison is monotonic).
-      await engine.executeRaw(
-        `UPDATE pages
-           SET last_retrieved_at = NOW()
-           WHERE id = ANY($1::int[])
-             AND (last_retrieved_at IS NULL
-                  OR last_retrieved_at < NOW() - INTERVAL '5 minutes')`,
-        [pageIds]
-      );
+      await engine.executeRaw(BUMP_LAST_RETRIEVED_SQL, [pageIds]);
     } catch (err) {
-      // Pre-v77 brain (column missing) falls through silently — the search
+      // Pre-v224 brain (table missing) falls through silently — the search
       // op already returned, the LSD signal just stays NULL until upgrade.
-      if (isUndefinedColumnError(err, 'last_retrieved_at')) return;
+      if (isUndefinedTableError(err)) return;
       // Other errors: stderr-warn but don't break the op response.
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[last-retrieved] write-back failed (best-effort): ${msg}`);
