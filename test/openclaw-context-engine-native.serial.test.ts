@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -142,6 +142,38 @@ describe.skipIf(!host)('pinned OpenClaw native context-engine startup', () => {
       expect(otherMessages).toContain('people/alice-example');
       expect(otherMessages).toContain('other-source-saved-page-canary');
       expect(otherMessages).not.toContain('main-source-saved-page-canary');
+
+      // #6316: a real host compaction (2026.9.x passes sessionTarget, no sessionFile) banks a segment.
+      const gatewayPort = 20_000 + Math.floor(Math.random() * 20_000);
+      const config = JSON.parse(readFileSync(configPath, 'utf8'));
+      writeFileSync(configPath, JSON.stringify({ ...config, gateway: { mode: 'local', port: gatewayPort, bind: 'loopback', auth: { mode: 'none' } } }));
+      const gateway = Bun.spawn([host!, 'gateway', 'run'], { env, cwd: otherWorkspace, stdout: 'pipe', stderr: 'pipe' });
+      try {
+        const reader = gateway.stdout.getReader();
+        let gatewayLog = '';
+        const readyBy = Date.now() + 60_000;
+        while (!gatewayLog.includes('[gateway] ready') && Date.now() < readyBy) {
+          const chunk = await Promise.race([reader.read(), Bun.sleep(1_000).then(() => null)]);
+          if (chunk?.done) break;
+          if (chunk?.value) gatewayLog += new TextDecoder().decode(chunk.value);
+        }
+        reader.releaseLock();
+        expect(gatewayLog).toContain('[gateway] ready');
+        const compacted = JSON.parse(await run(['sessions', 'compact', 'agent:main:fresh-conversation-one', '--agent', 'main', '--json', '--timeout', '60000']));
+        expect(compacted).toMatchObject({ ok: true, compacted: true });
+      } finally {
+        gateway.kill();
+        await gateway.exited;
+      }
+      const spool = join(dir, '.gbrain', 'transcripts', 'corpus', 'sourced');
+      const segments = (existsSync(spool) ? readdirSync(spool) : []).filter((name) => name.includes('.seg-') && name.endsWith('.txt'));
+      expect(segments).toHaveLength(1);
+      expect(readFileSync(join(spool, segments[0]!), 'utf8')).toContain('Tell me about Alice Example.');
+      const heartbeat = join(dir, '.gbrain', 'integrations', 'hooks', 'heartbeat.jsonl');
+      const checkpoints = (existsSync(heartbeat) ? readFileSync(heartbeat, 'utf8').trim().split('\n') : [])
+        .map((line) => JSON.parse(line)).filter((entry) => entry.event === 'openclaw-compact');
+      expect(checkpoints).toHaveLength(1);
+      expect(checkpoints[0].segment).not.toBe('skipped');
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       rmSync(dir, { recursive: true, force: true });

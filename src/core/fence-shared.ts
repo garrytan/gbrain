@@ -100,3 +100,22 @@ export function parseStringCell(raw: string): string | undefined {
 export function escapeFenceCell(s: string): string {
   return s.replace(/\|/g, '\\|').replace(/\r\n?|\n/g, '<br>');
 }
+
+/**
+ * A fence rewrite refused because the fence it starts from does not parse
+ * cleanly. Every rewriter re-renders the rows the parser returned, so
+ * rewriting such a fence would silently delete the rows the parser skipped.
+ * The message names the fence only: parser warnings embed row text, so they
+ * stay on `warnings` for the caller to locate, never in the message.
+ */
+export class FenceRewriteRefusal extends Error {
+  constructor(readonly fence: 'facts' | 'takes', readonly warnings: readonly string[]) {
+    super(`The ${fence} fence does not parse cleanly, so it was not rewritten; fix the fence first.`);
+    this.name = 'FenceRewriteRefusal';
+  }
+}
+
+/** Throw `FenceRewriteRefusal` when the parse a rewrite starts from has warnings. */
+export function assertFenceRewritable(fence: 'facts' | 'takes', parsed: { warnings: readonly string[] }): void {
+  if (parsed.warnings.length > 0) throw new FenceRewriteRefusal(fence, parsed.warnings);
+}

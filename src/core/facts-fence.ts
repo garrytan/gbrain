@@ -46,6 +46,7 @@ import {
   stripStrikethrough,
   parseStringCell,
   escapeFenceCell,
+  assertFenceRewritable,
 } from './fence-shared.ts';
 import { findLineOutsideFencedCode, locateOutsideCode, protectedRegions, unclosedCodeFenceStart } from './fence-scan.ts';
 
@@ -166,6 +167,47 @@ function parseNumericCell(raw: string): number | undefined | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** #6385: the facts columns in canonical order (`#` is the row number), as the header names them. */
+export const FACTS_FENCE_COLUMNS = [
+  '#', 'claim', 'kind', 'confidence', 'visibility', 'notability', 'valid_from', 'valid_until', 'source', 'context',
+  'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to',
+] as const;
+export type FactsFenceColumn = typeof FACTS_FENCE_COLUMNS[number];
+/** Columns a header may leave out, and a row may omit at its end. */
+export const FACTS_OPTIONAL_COLUMNS: ReadonlySet<string> = new Set(['context', 'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to']);
+
+/**
+ * #6385: the column each cell of a row is read as, from the header cells, or
+ * why the header cannot be read. Every header cell must name a facts column
+ * once, and every required column must be named. A header in canonical order
+ * is a prefix of the canonical layout, so cells past it keep their canonical
+ * meaning (a 14-cell typed row under the 10-column header); any other header
+ * is the whole layout.
+ */
+export function factsHeaderLayout(headerCells: readonly string[]): { layout: FactsFenceColumn[]; named: number } | { problem: string } {
+  const names = headerCells.map(cell => cell.trim().toLowerCase());
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (!(FACTS_FENCE_COLUMNS as readonly string[]).includes(name)) return { problem: `unsupported header column "${name}"` };
+    if (seen.has(name)) return { problem: `duplicate header column "${name}"` };
+    seen.add(name);
+  }
+  const missing = FACTS_FENCE_COLUMNS.find(column => !FACTS_OPTIONAL_COLUMNS.has(column) && !seen.has(column));
+  if (missing) return { problem: `header has no "${missing}" column` };
+  const canonical = names.every((name, i) => name === FACTS_FENCE_COLUMNS[i]);
+  return { layout: canonical ? [...FACTS_FENCE_COLUMNS] : names as FactsFenceColumn[], named: names.length };
+}
+
+/**
+ * #6385: why a row cannot be read under a header layout, or null. A row may
+ * omit only trailing optional columns the header names; cells past the
+ * layout must be empty, since a value there has no column to mean.
+ */
+export function factsRowProblem(layout: readonly FactsFenceColumn[], named: number, cells: readonly string[]): 'short' | 'extra' | null {
+  if (cells.slice(layout.length).some(cell => cell.trim())) return 'extra';
+  return layout.slice(cells.length, named).some(column => !FACTS_OPTIONAL_COLUMNS.has(column)) ? 'short' : null;
+}
+
 function parseSupersededByFromContext(context: string | undefined): number | undefined {
   if (!context) return undefined;
   const m = context.match(/superseded by #(\d+)/i);
@@ -206,6 +248,8 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
   const lines = inner.split('\n');
   const facts: ParsedFact[] = [];
   let sawHeader = false;
+  let layout: FactsFenceColumn[] = [];
+  let named = 0;
   const seenRowNums = new Set<number>();
 
   for (let i = 0; i < lines.length; i++) {
@@ -214,11 +258,20 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
     const cells = parseRowCells(line);
     if (!cells) continue;
 
-    // Header row: cells include 'claim' and 'kind' (case-insensitive).
+    // Header row: cells include 'claim' and 'kind' (case-insensitive). #6385:
+    // cells are then read by the column the header names, so a header this
+    // parser cannot map reads no rows (a rewrite refuses; the repair lane
+    // maps aliases and order).
     if (!sawHeader) {
       const lower = cells.map(c => c.toLowerCase());
       if (lower.includes('claim') && lower.includes('kind')) {
         sawHeader = true;
+        const header = factsHeaderLayout(cells);
+        if ('problem' in header) {
+          warnings.push(`FACTS_TABLE_MALFORMED: ${header.problem}`);
+          return { facts: [], warnings };
+        }
+        ({ layout, named } = header);
         continue;
       }
       warnings.push(`FACTS_TABLE_MALFORMED: row before header: "${line.trim()}"`);
@@ -228,29 +281,25 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
     // Separator row (just dashes/colons) — skip.
     if (isSeparatorRow(cells)) continue;
 
-    // Expect 10 cells (legacy 10-cell fence) OR 14 cells (v0.35.4
-    // typed-claim wide fence): row_num, claim, kind, confidence,
-    // visibility, notability, valid_from, valid_until, source, context,
-    // [claim_metric, claim_value, claim_unit, claim_period].
-    // Tolerate 9 (missing trailing context cell) — markdown editors often
-    // drop empty trailing cells.
-    if (cells.length < 9) {
+    // A row may drop trailing optional cells (markdown editors often drop an
+    // empty trailing context); a required cell or a value past the layout is
+    // a malformed row.
+    const shape = factsRowProblem(layout, named, cells);
+    if (shape === 'short') {
       warnings.push(`FACTS_TABLE_MALFORMED: only ${cells.length} cells in row "${line.trim()}"`);
       continue;
     }
+    if (shape === 'extra') {
+      warnings.push(`FACTS_TABLE_MALFORMED: ${cells.length} cells in row "${line.trim()}", more than its ${layout.length} columns`);
+      continue;
+    }
 
-    const [
-      rowNumStr, claimRaw, kindRaw, confidenceRaw,
-      visibilityRaw, notabilityRaw,
-      validFromRaw, validUntilRaw,
-      sourceRaw,
-      contextRaw = '',
-      claimMetricRaw = '',
-      claimValueRaw = '',
-      claimUnitRaw = '',
-      claimPeriodRaw = '',
-      attributedToRaw = '',
-    ] = cells;
+    const cell = (column: FactsFenceColumn): string => cells[layout.indexOf(column)] ?? '';
+    const rowNumStr = cell('#'), claimRaw = cell('claim'), kindRaw = cell('kind'), confidenceRaw = cell('confidence');
+    const visibilityRaw = cell('visibility'), notabilityRaw = cell('notability');
+    const validFromRaw = cell('valid_from'), validUntilRaw = cell('valid_until'), sourceRaw = cell('source'), contextRaw = cell('context');
+    const claimMetricRaw = cell('claim_metric'), claimValueRaw = cell('claim_value'), claimUnitRaw = cell('claim_unit');
+    const claimPeriodRaw = cell('claim_period'), attributedToRaw = cell('attributed_to');
 
     const rowNum = parseInt(rowNumStr, 10);
     if (!Number.isFinite(rowNum) || rowNum <= 0) {
@@ -536,7 +585,8 @@ export function factsGapWarning(
  *
  * Append-only — row_num is set to (max existing rowNum in the fence) + 1.
  * Stable forever, so cross-page refs like `<slug>#F<N>` keep pointing at
- * the same row.
+ * the same row. Throws `FenceRewriteRefusal` when the existing fence does
+ * not parse cleanly: re-rendering it would drop the rows the parser skipped.
  */
 export function upsertFactRow(
   body: string,
@@ -545,7 +595,9 @@ export function upsertFactRow(
     active?: boolean;
   },
 ): { body: string; rowNum: number } {
-  const { facts } = parseFactsFence(body);
+  const parsed = parseFactsFence(body);
+  assertFenceRewritable('facts', parsed);
+  const { facts } = parsed;
   const nextRowNum = newRow.rowNum
     ?? (facts.length > 0 ? Math.max(...facts.map(f => f.rowNum)) + 1 : 1);
 

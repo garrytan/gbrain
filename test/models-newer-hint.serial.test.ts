@@ -77,7 +77,7 @@ describe('gbrain models — newer-available hint', () => {
     const engine = new StubConfigEngine();
     engine.set('models.tier.reasoning', 'anthropic:claude-sonnet-5-5');
     engine.set('models.tier.deep', 'anthropic:claude-opus-6');
-    engine.set('models.tier.utility', 'claude-haiku-4-5');
+    engine.set('models.tier.utility', 'claude-haiku-5-5');
     engine.set('models.tier.subagent', 'openai:gpt-5.6');
 
     const report = await reportOf(engine);

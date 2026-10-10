@@ -842,6 +842,59 @@ describe('claude-cli LanguageModel — context isolation', () => {
   });
 });
 
+describe('claude-cli LanguageModel — output cap (#6424)', () => {
+  async function runWithCap(maxOutputTokens: number | undefined): Promise<{ env: string; settings: string }> {
+    const envLog = join(stubDir, 'cap-env.log');
+    const argvLog = join(stubDir, 'cap-argv.log');
+    const capStub = [
+      '#!/bin/sh',
+      `printf "cap=%s\\n" "\${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-UNSET}" > "${envLog}"`,
+      `printf "%s\\n" "$@" > "${argvLog}"`,
+      'cat > /dev/null',
+      `cat "${stubResponsePath}"`,
+    ].join('\n');
+    writeFileSync(stubBin, capStub);
+    chmodSync(stubBin, 0o755);
+    stageResponse(baseEnvelope('ok'));
+    try {
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      await model.doGenerate({
+        prompt: [userMessage('hi')],
+        ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+      } as LanguageModelV2CallOptions);
+      const argv = readFileSync(argvLog, 'utf8').split('\n').filter(Boolean);
+      return { env: readFileSync(envLog, 'utf8').trim(), settings: argv[argv.indexOf('--settings') + 1] };
+    } finally {
+      writeFileSync(stubBin, ['#!/bin/sh', 'cat > /dev/null', `cat "${stubResponsePath}"`].join('\n'));
+      chmodSync(stubBin, 0o755);
+    }
+  }
+
+  test('forwards maxOutputTokens as CLAUDE_CODE_MAX_OUTPUT_TOKENS in the child env and the inline --settings env', async () => {
+    await withStubEnv(async () => {
+      await withEnv({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: undefined }, async () => {
+        const seen = await runWithCap(16384);
+        expect(seen.env).toBe('cap=16384');
+        expect(JSON.parse(seen.settings)).toEqual({
+          disableAllHooks: true,
+          env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: '16384' },
+        });
+      });
+    });
+  });
+
+  test('sets no cap when the call passes none', async () => {
+    await withStubEnv(async () => {
+      await withEnv({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: undefined }, async () => {
+        const seen = await runWithCap(undefined);
+        expect(seen.env).toBe('cap=UNSET');
+        expect(seen.settings).toBe('{"disableAllHooks":true}');
+      });
+    });
+  });
+});
+
 describe('claude-cli LanguageModel — abort + error envelopes', () => {
   test('SIGTERMs the child on AbortSignal', async () => {
     await withStubEnv(async () => {

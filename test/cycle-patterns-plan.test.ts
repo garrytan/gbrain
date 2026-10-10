@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runPhasePatterns } from '../src/core/cycle/patterns.ts';
-import { PATTERNS_LAST_RUN_KEY, planPatternsRun, type PatternsLastRun } from '../src/core/cycle/patterns-plan.ts';
+import { PATTERNS_LAST_RUN_KEY, planPatternsRun, readPatternsLastRun, recordPatternsLastRun, type PatternsLastRun } from '../src/core/cycle/patterns-plan.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { __setChatTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 
@@ -109,6 +109,18 @@ describe('runPhasePatterns budget sizing (#6177)', () => {
       expect(await jobs()).toBe(0);
       expect(JSON.parse((await engine.getConfig(PATTERNS_LAST_RUN_KEY))!).budget_skips).toBe(1);
     } finally { rmSync(brainDir, { recursive: true, force: true }); }
+  });
+
+  test('a child dead-lettered at its own timeout records timeout, so the next plan halves (#6296)', async () => {
+    for (const error_text of ['timeout exceeded', 'wall-clock timeout exceeded']) {
+      await recordPatternsLastRun(engine, { duration_ms: 20 * MIN, reflections: 40, outcome: 'dead', error_text });
+      const last = await readPatternsLastRun(engine);
+      expect(last?.outcome).toBe('timeout');
+      const plan = planPatternsRun({ budgetMs: 28 * MIN, lastRun: last, reflections: 100, minEvidence: 3, nowMs: Date.now() });
+      expect(plan.n).toBeLessThanOrEqual(20);
+    }
+    await recordPatternsLastRun(engine, { duration_ms: 20 * MIN, reflections: 40, outcome: 'dead', error_text: 'provider down' });
+    expect((await readPatternsLastRun(engine))?.outcome).toBe('failed');
   });
 
   test('a child that ends without completing still records last_run', async () => {

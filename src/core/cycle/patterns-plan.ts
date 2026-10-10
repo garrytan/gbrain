@@ -75,9 +75,15 @@ export async function readPatternsLastRun(engine: BrainEngine): Promise<Patterns
   }
 }
 
-/** Record a child's cost; any end other than completed or timeout is `failed`. */
-export async function recordPatternsLastRun(engine: BrainEngine, run: { duration_ms: number; reflections: number; outcome: string }): Promise<void> {
-  const outcome: PatternsLastRun['outcome'] = run.outcome === 'completed' || run.outcome === 'timeout' ? run.outcome : 'failed';
+/**
+ * Record a child's cost; any end other than completed or timeout is `failed`.
+ * #6296: a child dead-lettered at its own timeout_ms (`timeout exceeded`,
+ * `wall-clock timeout exceeded`) is a timeout, so the next plan halves.
+ */
+export async function recordPatternsLastRun(engine: BrainEngine,
+  run: { duration_ms: number; reflections: number; outcome: string; error_text?: string | null }): Promise<void> {
+  const timedOut = run.outcome === 'timeout' || (run.outcome === 'dead' && /^(wall-clock )?timeout exceeded$/.test(run.error_text ?? ''));
+  const outcome: PatternsLastRun['outcome'] = timedOut ? 'timeout' : run.outcome === 'completed' ? 'completed' : 'failed';
   const record: PatternsLastRun = { duration_ms: run.duration_ms, reflections: run.reflections, at: new Date().toISOString(), outcome, budget_skips: 0 };
   await engine.setConfig(PATTERNS_LAST_RUN_KEY, JSON.stringify(record)).catch(() => undefined);
 }

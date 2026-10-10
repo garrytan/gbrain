@@ -93,7 +93,7 @@ export async function judgeBatch(engine: BrainEngine, sourceId: string, model: s
   const { chat } = await import('../ai/gateway.ts');
   const result = await chat({
     model, system: SYSTEM, messages: [{ role: 'user', content: render(batch) }],
-    maxTokens: 64 + batch.length * 40, temperature: 0, abortSignal: signal, responseSchema: RESPONSE_SCHEMA,
+    maxTokens: 64 + batch.length * 40, temperature: 0, abortSignal: signal, responseSchema: RESPONSE_SCHEMA, thinking: 'off',
   });
   const subjects = result.stopReason === 'refusal' || result.stopReason === 'content_filter' ? null : parseSubjects(result.text, batch.length);
   if (!subjects) return batch.map(f => ({ id: f.id, slug: null, reason: 'model_unparseable' as const }));
