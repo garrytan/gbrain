@@ -10,6 +10,40 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.144.0] - 2026-10-10
+
+**A managed import writes about 12% less WAL on Postgres (200 → 176 KB per page at 50,000 pages) and spends 3-13% less time executing SQL, with the same rows: each imported, synced or put page is sealed by one closing write instead of two, the import's crash checkpoint no longer stores the page text, and the write claim looks up its root's earlier rows by index.**
+
+Efficiency wave (GBRA-69). Base is master at wave 7 (f3155533e), measured on the same 4-vCPU AMD EPYC / 16 GiB machine, Bun 1.4.2, synthetic brains (5k = 5,003 pages, 50k = 50,030 pages / 265,861 chunks), cold `gbrain import` of every source with `--no-embed`, N=1.
+
+| Path | Engine, brain | Before | After |
+|---|---|---|---|
+| `gbrain import`, wall | Postgres 50k | 1,458 s (29.1 ms/page) | 1,427 s (28.5 ms/page) |
+| SQL execution time | Postgres 50k | 657 s | 635 s |
+| WAL written | Postgres 50k | 9.99 GB | 8.81 GB |
+| `gbrain import`, wall | Postgres 5k | 142.9 s | 133.5 s |
+| SQL execution time | Postgres 5k | 64.2 s | 55.6 s |
+| `gbrain import`, wall | PGLite 5k | 151.9 s | 141.9 s |
+
+### Itemized changes
+
+- **One closing page write** (`import-file.ts`, `page-state/projections.ts` `sealImportedPage`, `persistence/import-prepare.ts`, `sync-prepare.ts`, `page-prepare.ts`, `engine-sql/chunks.ts`). A coordinated import (managed import, managed sync and the lean `put_page` path) no longer stamps `chunker_version` with its chunk insert; its apply reports `chunkerSeal` and the caller stamps it in the same UPDATE as the text seal, after its one read-back. The chunker version is stamped whatever the page's revision, the text seal only at the revision read back, and the page id is checked against the page the transaction wrote, as before. Uncoordinated imports are unchanged.
+- **Content-free import checkpoints** (`persistence/import-mutations.ts`). The managed-import `op_checkpoints` row keeps the admission's request id and expectations but not the page content: its key binds the input hash, so a retry restores the content from the bytes it just read and refuses a checkpoint whose stored input hash or slug does not match. Checkpoints written by older binaries, which carry the content, still resume and clear. (Design agreed with GBRA-64.)
+- **Indexed claim root probe** (`persistence/journal.ts` `claimableWriteSql`). The "unfinished row ahead on the same root" anti-join matches a worktree root by `worktree_id` and a database-only root by `source_incarnation`, both covered by the pending indexes, instead of a COALESCE text key that walked every pending row once per candidate: 6.1 → 1.4 ms per claim with eight worktrees of queued rows; unchanged for a single source. The claimable rows and their order are identical. (Design agreed with GBRA-64.)
+- Tests: `claim-earlier-equivalence.test.ts` + its Postgres e2e (120 randomized request tables of worktree and database-only roots, every state, passable sync rows and lane groups claim exactly the former predicate's rows in the same order; a forced break of either probe fails it; the Postgres arm checks the index range scan), a checkpoint-resume case in `persistence-file-import.test.ts` (content-free checkpoint, legacy checkpoint with content), and `e2e/managed-import-crash.test.ts` (an import SIGKILLed after admission or at the closing write is published from the stored request on retry, same request id, page sealed, both engines).
+
+## [0.60.143.0] - 2026-10-10
+
+**The crash robot drops each run's database as soon as the run passes, so a transaction-mode pooler no longer holds every run's server connections until the budget ends. Harness only; no product behavior changes.**
+
+Master `f250a517c` failed the `Crash robot / postgres / Bun 1.4.0` cell with `FATAL: sorry, too many clients already` 25 runs into its 600 s budget. The robot gives every run its own database and, until now, kept all of them until the phase ended. Through the CI PgBouncer (wildcard `[databases]`, transaction mode) each run's database gets its own server pool, and PgBouncer keeps those connections for `server_idle_timeout` (600 s by default, the length of a full robot budget), so the server held about four idle backends per finished run: 111 server connections across 26 fixture databases in the failing cell against `max_connections=100`. The previous green masters ran the same cases with the same per-run counts and passed only because their slower early runs reached 22 cases before the budget closed; in the passing Bun 1.4.2 sibling, started at the same moment, PgBouncer's first `server idle timeout` closes came at 06:22:23, 46 s after the Bun 1.4.0 cell's first refusal at 06:21:37. Nothing in `#6412` (v0.60.142.0) changed how many connections a run opens.
+
+### Itemized changes
+
+- `scripts/persistence/robot-driver.ts`: a run that passes has its database dropped (`WITH (FORCE)`) before the next run starts, which ends the pooler's server connections to it. A failing run keeps its database for the retained-fixture metadata as before.
+- `scripts/persistence/validate.ts`, `scripts/persistence/failure-diagnostics.ts`: a failed Postgres gate records `connection_diagnostic` in the manifest: `max_connections`, the backend total and counts per database class (this harness's fixtures or other), state and wait class. No database name, query text or client address is included.
+- `test/e2e/persistence-robot-fixture-release.test.ts`: one replayed run through the pooler when `GBRAIN_PGBOUNCER_URL` names one (direct otherwise); the passed run's database must be gone with no backend attached (four idle pooler backends remained before the fix), and the connection diagnostic's shape is pinned.
+
 ## [0.60.142.0] - 2026-10-10
 
 **A file write's publication takes its request-row lock and its `publication_started` stamp in one statement instead of two. No behavior changes; one UPDATE fewer per published file.**

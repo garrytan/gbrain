@@ -32,7 +32,7 @@ import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
-import { sealPageTextProjection } from '../page-state/projections.ts';
+import { sealImportedPage, sealPageTextProjection } from '../page-state/projections.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { materializeTimeline, prepareCanonicalProjections, type TimelineRowsRemoved } from './canonical-projections.ts';
@@ -532,7 +532,8 @@ export async function preparePageMutation(unbounded: BrainEngine, row: WriteRequ
         const final = await tx.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
         const live = final && final.page.deleted_at == null ? final : null;
         await verifyPageReadable(tx, row.slug, ready.contentHash!, row.source_id, 'importFromContent', live?.page ?? null);
-        if (live) await sealPageTextProjection(tx, row.slug, row.source_id, live);
+        if (applied?.chunkerSeal !== undefined) await sealImportedPage(tx, row.slug, row.source_id, live, applied.chunkerSeal, applied.pageId);
+        else if (live) await sealPageTextProjection(tx, row.slug, row.source_id, live);
         if (core) await core.record(tx, final?.revision ?? null);
         publication.postimage = final;
       } else {

@@ -15,7 +15,7 @@ import { fenceWhere } from '../fence-repair/refusal.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { assertPageRevision } from '../page-state/types.ts';
-import { sealPageTextProjection } from '../page-state/projections.ts';
+import { sealImportedPage, sealPageTextProjection } from '../page-state/projections.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { localHostId } from './identity.ts';
@@ -215,7 +215,7 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
     trust: await ownerImportTrust(engine, row, ready.parsedPage?.frontmatter, p.sourcePath), deferEmbedding: image || p.noEmbed, validate: async tx => { await checkPaths(tx); await ready.validate(tx); },
     file: { root, path, content: rendered, expectedBeforeHash: p.targetHash },
     apply: async tx => {
-      await ready.apply(tx);
+      const applied = await ready.apply(tx);
       await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
       if (project) {
         // The coordinator proved the base revision under its page guard (importFromContent `coordinated`); this is the
@@ -226,7 +226,8 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
         if (!ready.noop) {
           await verifyPageReadable(tx, row.slug, ready.contentHash!, row.source_id, 'importFromContent', live?.page ?? null);
           await project(tx, final?.page.id);
-          if (live) await sealPageTextProjection(tx, row.slug, row.source_id, live);
+          if (applied?.chunkerSeal !== undefined) await sealImportedPage(tx, row.slug, row.source_id, live, applied.chunkerSeal, applied.pageId);
+          else if (live) await sealPageTextProjection(tx, row.slug, row.source_id, live);
         }
         mutation.postimage = final;
       } else if (!ready.noop && !image) await sealPageTextProjection(tx, row.slug, row.source_id);

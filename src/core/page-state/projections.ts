@@ -32,6 +32,24 @@ export async function sealPageTextProjection(engine: BrainEngine, slug: string, 
   [sourceId, slug, sanitizeRemoteBody(current.page.timeline), current.revision]);
 }
 
+/**
+ * A coordinated import's one closing page write: the chunker version its apply
+ * deferred (`PreparedImportApplied.chunkerSeal`) and, when `live` is the page at
+ * its current revision, the text seal `sealPageTextProjection` would write. The
+ * chunker version is stamped whatever the revision, as the deferred seal was.
+ */
+export async function sealImportedPage(engine: BrainEngine, slug: string, sourceId: string, live: PageSnapshot | null,
+  chunkerSeal: number, pageId?: number): Promise<void> {
+  const rows = await engine.executeRaw<{ id: number }>(`UPDATE pages SET chunker_version=$5,
+    text_projection_revision=CASE WHEN knowledge_revision=$4::uuid THEN knowledge_revision ELSE text_projection_revision END,
+    search_vector=CASE WHEN knowledge_revision=$4::uuid THEN setweight(to_tsvector('${getFtsLanguage()}',COALESCE(title,'')),'A') ||
+      setweight(to_tsvector('${getFtsLanguage()}',$3::text),'C') ELSE search_vector END
+    WHERE source_id=$1 AND slug=$2 RETURNING id`,
+  [sourceId, slug, live ? sanitizeRemoteBody(live.page.timeline) : '', live?.revision ?? null, chunkerSeal]);
+  if (rows.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
+  if (pageId !== undefined && Number(rows[0]!.id) !== Number(pageId)) throw new Error(`Page ${slug} (source=${sourceId}) is not the page this transaction wrote`);
+}
+
 export interface ProjectionSnapshot {
   snapshot: PageSnapshot;
   chunks: Chunk[];

@@ -62,6 +62,13 @@ const IMPORT_OP = 'managed-file-import';
 /** How long an import waits for one file's publication, as a single import always has. */
 const IMPORT_WAIT_MS = 30_000;
 type PendingImport = ManagedImportIntent & { request_id: string; source_id: string };
+/**
+ * GBRA-69: the durable pre-admission checkpoint holds the admission's expectations and request id,
+ * not the file's content: its key binds the input hash, so a retry restores the content from the
+ * bytes it just read (and refuses when they no longer hash to the stored input). Checkpoints older
+ * binaries wrote still carry the content; their row is matched as stored.
+ */
+type StoredImport = Omit<PendingImport, 'content'> & { content?: string };
 
 export async function importManagedFile(engine: BrainEngine, filePath: string, sourcePath: string,
   opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string } = {}): Promise<ImportResult> {
@@ -138,9 +145,17 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
     principal = await requestPrincipalForContext(ctx);
   } catch (error) { for (const entry of planned) fail(entry.i, error); return; }
   const members = planned.map(entry => ({ ...entry, key: digest({ principal, incarnation: binding.source_incarnation, inputPath: entry.inputPath, sourcePath: entry.sourcePath,
-    path: entry.path, inputHash: entry.inputHash, noEmbed: !!opts.noEmbed, activePack: opts.activePack ?? null }), params: undefined as PendingImport | undefined }));
-  const readPending = async (keys: string[]) => new Map((await engine.executeRaw<{ fingerprint: string; completed_keys: [PendingImport] }>(
+    path: entry.path, inputHash: entry.inputHash, noEmbed: !!opts.noEmbed, activePack: opts.activePack ?? null }),
+    params: undefined as PendingImport | undefined, stored: undefined as StoredImport | undefined }));
+  const readPending = async (keys: string[]) => new Map((await engine.executeRaw<{ fingerprint: string; completed_keys: [StoredImport] }>(
     'SELECT fingerprint,completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])', [IMPORT_OP, keys])).map(row => [row.fingerprint, row.completed_keys[0]]));
+  const resume = (member: (typeof members)[number], stored: StoredImport) => {
+    // The key binds the input hash and slug, so a mismatch is a checkpoint this binary cannot pair with the bytes.
+    if (stored.inputHash !== member.inputHash || stored.slug !== member.slug) throw opError('internal_error', 'A pending import checkpoint does not match the file it is keyed by.',
+      `The checkpointed import of ${member.sourcePath} (request ${stored.request_id}) in source ${sourceId} records a different input than the bytes just read under the same key, so nothing was resubmitted. Report it with gbrain doctor --json.`);
+    member.stored = stored;
+    member.params = { ...stored, content: member.content } as PendingImport;
+  };
   const open = new Set(members);
   const settle = (member: (typeof members)[number], value: ImportResult) => { open.delete(member); done(member.i, value); };
   const refuse = (member: (typeof members)[number], reason: unknown) => { open.delete(member); fail(member.i, reason); };
@@ -152,9 +167,9 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
     const pending = await readPending(members.map(member => member.key));
     const fresh: typeof members = [];
     await withScreeningPaths(async () => { for (const member of members) {
-      member.params = pending.get(member.key);
-      if (member.params) continue;
       try {
+        const stored = pending.get(member.key);
+        if (stored) { resume(member, stored); continue; }
         const snapshot = await engine.readPageSnapshot(member.slug, { sourceId, includeDeleted: true });
         // The input is the canonical file itself (the common case): its hash was taken from the bytes just read.
         const targetHash = member.target === member.inputPath ? member.inputHash : existsSync(member.target) ? sha256(readImportBytes(member.target)) : null;
@@ -171,9 +186,9 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
     if (fresh.length) {
       await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
         SELECT $1,k,c::jsonb FROM unnest($2::text[],$3::text[]) AS u(k,c) ON CONFLICT DO NOTHING`,
-      [IMPORT_OP, fresh.map(member => member.key), fresh.map(member => JSON.stringify([member.params]))]);
+      [IMPORT_OP, fresh.map(member => member.key), fresh.map(member => { const { content: _content, ...stored } = member.params!; return JSON.stringify([stored]); })]);
       const stored = await readPending(fresh.map(member => member.key));
-      for (const member of fresh) member.params = stored.get(member.key)!;
+      for (const member of fresh) { try { resume(member, stored.get(member.key)!); } catch (error) { refuse(member, error); } }
     }
   } catch (error) { for (const member of [...open]) refuse(member, error); return; }
   const submitted = members.filter(member => open.has(member));
@@ -198,7 +213,7 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
   try {
     await engine.executeRaw(`DELETE FROM op_checkpoints o USING unnest($2::text[],$3::text[]) AS d(k,c)
       WHERE o.op=$1 AND o.fingerprint=d.k AND o.completed_keys=d.c::jsonb`,
-    [IMPORT_OP, cleared.map(member => member.key), cleared.map(member => JSON.stringify([member.params]))]);
+    [IMPORT_OP, cleared.map(member => member.key), cleared.map(member => JSON.stringify([member.stored]))]);
   } catch (error) { for (const member of cleared) fail(member.i, error); }
 }
 

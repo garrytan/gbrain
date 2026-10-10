@@ -17,7 +17,7 @@ import { resolveSlugForPath, slugifyPath, isCodeFilePath } from '../sync.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { sameCanonicalImport } from '../page-state/import-guard.ts';
 import { assertPageRevision } from '../page-state/types.ts';
-import { sealPageTextProjection } from '../page-state/projections.ts';
+import { sealImportedPage, sealPageTextProjection } from '../page-state/projections.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
@@ -566,7 +566,7 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
         applied = movedImport;
       }
       // A moved page is versioned from its own (rename source) read.
-      await applied.apply(tx, renamed ? undefined : preimage);
+      const installed = await applied.apply(tx, renamed ? undefined : preimage);
       // Hash no-ops still repair a missing physical origin under the same guard (a page write records it itself).
       if (applied.noop) await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
       // #5984: the one read of the page after its last page write (the projections
@@ -578,7 +578,11 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
       // The projections, the text seal, the hold and the provenance touch separate rows; their pipelines run together.
       await pipelined(tx, [
         async () => { if (!applied.noop || p.companyApproval) await project(tx, final?.page.id); },
-        async () => { if (!applied.noop && live) await sealPageTextProjection(tx, row.slug, row.source_id, live); },
+        async () => {
+          if (applied.noop) return;
+          if (installed?.chunkerSeal !== undefined) await sealImportedPage(tx, row.slug, row.source_id, live, installed.chunkerSeal, installed.pageId);
+          else if (live) await sealPageTextProjection(tx, row.slug, row.source_id, live);
+        },
         () => releaseHold(tx),
         async () => { if (final) await recordSyncImportProvenance(tx, { source_id: row.source_id, incarnation: row.source_incarnation, page_id: Number(final.page.id), origin: p.sourcePath!,
           raw_sha256: sha256(p.content!), ...(p.blobOid ? { blob_oid: p.blobOid } : {}), gbrain_version: VERSION, ...(recovery?.length ? { recovery } : {}) }); },

@@ -7,7 +7,7 @@ import postgres from '#postgres'
 import { assertSafeE2eDatabaseUrl } from '../../test/helpers/db-guard.ts';
 import { distribution, type HarnessConfig } from './harness.ts';
 import { keylessBrainEnv } from '../../test/helpers/provider-env.ts';
-import { boundedDiagnostic, diagnosticError, retentionMetadata } from './failure-diagnostics.ts';
+import { boundedDiagnostic, connectionDiagnostic, diagnosticError, retentionMetadata } from './failure-diagnostics.ts';
 import { FULL_ROBOT_SECONDS, replayEntries, runDigest, runRobotPhase, type RobotRun } from './robot-driver.ts';
 import { shrinkRun } from './shrink.ts';
 
@@ -215,6 +215,7 @@ export async function runValidation(options: ValidationOptions) {
         assert(response.ok, 'Owner diagnostic endpoint failed'); return response.json();
       }, 1_750))),
     }));
+    if (admin) manifest.connection_diagnostic = await boundedDiagnostic(() => connectionDiagnostic(admin!));
     throw error;
   }
   finally {

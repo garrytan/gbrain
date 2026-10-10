@@ -758,6 +758,7 @@ export async function importFromContent(
       () => writePageAliases(tx, slug, sourceId ?? 'default', parsed, opts.activePack, mentionPolicy),
     ]);
     const pageId = written && written.deleted_at == null ? written.id : undefined;
+    const deferSeal = opts.coordinated === true && pageId !== undefined;
     await pipelined(tx, [
       async () => {
         // Tag reconciliation (A14): frontmatter tags carry tag_source='frontmatter'.
@@ -776,7 +777,7 @@ export async function importFromContent(
           const embeddingColumn = await stampEmbeddingInputs(tx, fresh, null,
             { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
           await tx.upsertChunks(slug, kept.size ? fresh.filter((_, i) => !kept.has(i)) : fresh, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: MARKDOWN_CHUNKER_VERSION,
-            ...(pageId !== undefined ? { pageId: Number(pageId) } : {}) });
+            ...(pageId !== undefined ? { pageId: Number(pageId) } : {}), ...(deferSeal ? { deferSeal: true as const } : {}) });
           // v0.41.31: stamp embedding provenance when this import actually
           // embedded (not --no-embed), so a later model/dims swap is detectable
           // as stale via embed --stale. The deferred/backfill + per-slug embed
@@ -790,7 +791,7 @@ export async function importFromContent(
         } else {
           // Seal only the completed, full-body sanitized replacement (the upsert above seals its own); a
           // body-only write or a failed transaction must never certify old stored fragments.
-          await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
+          if (!deferSeal) await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
         }
       },
     ]);
@@ -840,7 +841,7 @@ export async function importFromContent(
       // guard. Deferred provider results cannot replace newer text or chunks.
       persistedProjection = await readProjectionSnapshot(tx, slug, txOpts.sourceId);
     }
-    return { pageId: written && written.deleted_at == null ? written.id : undefined, sealed: !opts.coordinated && !opts.beforeCommit };
+    return { pageId, sealed: !opts.coordinated && !opts.beforeCommit, ...(deferSeal ? { chunkerSeal: MARKDOWN_CHUNKER_VERSION } : {}) };
   };
   if (opts.prepare) return opts.prepare({
     slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
