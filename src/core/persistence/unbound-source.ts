@@ -65,7 +65,7 @@ export function unboundSourceError(sourceId: string, path: string | null, scope:
   // A configuration state, not a transient one: a retry gets the same refusal, and every way out is the user's choice.
   error.retryable = false;
   error.fix = {
-    next: 'ask_user',
+    ask_user: true,
     consent: [],
     actor: path ? 'agent' : 'user',
     why: classic
