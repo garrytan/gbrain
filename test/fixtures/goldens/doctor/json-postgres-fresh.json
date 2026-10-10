@@ -2047,7 +2047,7 @@
         },
         {
           "category": "brain",
-          "message": "21 retrieval-affecting file(s) changed since HEAD: src/core/chunkers/code.ts, src/core/chunkers/recursive.ts, src/core/chunkers/token-estimate.ts, …. Re-run `gbrain eval run-all` after committing these changes.",
+          "message": "No retrieval-affecting files changed in working tree.",
           "name": "eval_drift",
           "status": "ok"
         },
