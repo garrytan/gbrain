@@ -80,7 +80,7 @@ for (const kind of testBackends()) {
       ['fetch exact hit across sources', 'people/bob-example', { resolveAlias: true, requireUnambiguous: true, sourceIds: ['default', 'alt'] }],
       ['fetch exact hit in one source', 'people/bob-example', { resolveAlias: true, requireUnambiguous: true, sourceId: 'default' }],
       ['private exact with preserveExactIdentity', 'people/private-example', { resolveAlias: true, excludePrivate: true, preserveExactIdentity: true, sourceIds: ['default', 'alt'] }],
-    ] as const)('%s visits fewer than 100 pages rows per statement', async (_name, slug, opts) => {
+    ] as Array<[string, string, NonNullable<Parameters<typeof readPageSnapshot>[2]>]>)('%s visits fewer than 100 pages rows per statement', async (_name, slug, opts) => {
       const { counts } = await visits(slug, opts);
       expect(counts.length).toBeGreaterThan(0);
       for (const count of counts) expect(count).toBeLessThan(100);
