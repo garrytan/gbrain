@@ -19,7 +19,7 @@ import { MaintenanceWriteWait } from './maintenance-wait.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteAuthority, WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
-import { writeAtomPageState } from '../cycle/extract-atoms-page-state.ts';
+import { MAX_DETERMINISTIC_FAILURES, writeAtomPageState } from '../cycle/extract-atoms-page-state.ts';
 import { effectiveVisibility } from '../search/private-visibility.ts';
 import { declareDerivation, deriveTrust, lowerToDerivedTier, recordTaintEdges } from '../trust/taint.ts';
 
@@ -41,8 +41,15 @@ export interface ManagedAtomSession {
   config: GBrainConfig;
   /** #5854: the publish wait of the job this session runs in (a drain attempt shares one across its batches). */
   wait: MaintenanceWriteWait;
-  retry?: { runKey: string; checkpointKey: string; expectedCheckpoint: unknown; rows: WriteRequest[]; origin: AtomOrigin };
+  retry?: AtomClaim & { checkpointKey: string; rows: WriteRequest[]; origin: AtomOrigin };
+  /** #6325: the automatic attempt each failed drain key resumes under, claimed against that key's failed checkpoint. */
+  attempts?: Map<string, AtomClaim>;
 }
+/** The run key a batch is admitted under and, for a retry, the checkpoint it advances (compare-and-set). */
+interface AtomClaim { runKey: string; checkpointKey?: string; expectedCheckpoint?: unknown }
+/** One `managed-atoms` checkpoint row. `attempts` counts completed failures of its content; `held` marks the bound. */
+interface AtomCheckpoint { requestId?: string; failure?: string; attempts?: number; held?: boolean }
+export type AtomResume = 'run' | 'done' | 'held';
 export interface AtomIntent extends Record<string, unknown> {
   kind: 'managed_atom_page' | 'managed_atom_delete' | 'managed_atom_complete';
   runKey: string;
@@ -246,13 +253,18 @@ export function atomRetryInputKey(session: ManagedAtomSession, origin: AtomOrigi
   return digest([digest(atomInput(session, origin)), origin.textHash]);
 }
 
-function runKey(session: ManagedAtomSession, origin: AtomOrigin): string {
+function atomClaim(session: ManagedAtomSession, origin: AtomOrigin): AtomClaim {
   if (session.retry) {
     if (atomRetryInputKey(session, session.retry.origin) !== atomRetryInputKey(session, origin)) throw opError('source_changed', 'The atom retry input no longer matches its accepted source snapshot.',
       `${origin.kind === 'page' ? `Page ${origin.locator}` : 'The transcript'} in source ${session.sourceId} changed after the reviewed atom batch was accepted, so the retry cannot replay it. Nothing was retried; the regular drain extracts the current content as a new run.`,
       { fix: drainFix(session.sourceId) });
-    return session.retry.runKey;
+    return session.retry;
   }
+  const key = drainKey(session, origin);
+  return session.attempts?.get(key) ?? { runKey: key };
+}
+
+function drainKey(session: ManagedAtomSession, origin: AtomOrigin): string {
   // A database-only connector run is its own run: once an owner claims the source, the owner's
   // run extracts again instead of replaying the batch the claim refused (claiming keeps the incarnation).
   const key = atomInputKey(session, origin);
@@ -294,7 +306,7 @@ function malformedAtomReceipt(row: WriteRequest): never {
   const params = JSON.stringify({ sourceId: row.source_id, retryRequestId: row.request_id });
   const error = new OperationError('extraction_failed', `The accepted atom extraction failed${typeof failure === 'string' && failure ? ` (${failure})` : ''}; a new attempt needs approval.`,
     `Approve one new attempt with gbrain jobs submit extract-atoms-drain --params '${params}'.`);
-  error.why = 'A failed managed atom batch keeps its failure receipt instead of retrying on its own, so the same input is not paid for every cycle; the earlier atoms of the page stay as they were.';
+  error.why = 'This failed managed atom batch is not retried on its own (an explicit retry failed, or the drain has no checkpoint to count it against), so the same input is not paid for again without approval; the earlier atoms of the page stay as they were.';
   error.fix = { argv: ['gbrain', 'jobs', 'submit', 'extract-atoms-drain', '--params', params], consent: ['paid'], actor: 'agent', requires_exclusive: false,
     why: 'Runs one new paid extraction attempt for this batch; ask the user before spending.',
     verify: { argv: ['gbrain', 'write-request', '--', row.request_id] } };
@@ -303,30 +315,63 @@ function malformedAtomReceipt(row: WriteRequest): never {
   throw error;
 }
 
-export async function resumeManagedAtoms(engine: BrainEngine, session: ManagedAtomSession, origin: AtomOrigin): Promise<boolean> {
-  const key = runKey(session, origin);
-  const [checkpoint] = await engine.executeRaw<{ completed_keys: Array<{ failure?: string; requestId?: string }> }>(
+async function readAtomCheckpoint(engine: BrainEngine, key: string): Promise<AtomCheckpoint[] | null> {
+  const [checkpoint] = await engine.executeRaw<{ completed_keys: AtomCheckpoint[] }>(
     "SELECT completed_keys FROM op_checkpoints WHERE op='managed-atoms' AND fingerprint=$1", [key]);
-  if (checkpoint) {
-    if (!checkpoint.completed_keys[0]?.failure) return true;
-    const requestId = checkpoint.completed_keys[0]?.requestId;
-    if (requestId) {
-      const failed = await getWriteRequest(engine, session.authority.principal, requestId);
+  return checkpoint?.completed_keys ?? null;
+}
+
+/**
+ * Whether an origin's atoms are done, held, or need a model run, after waiting out any accepted batch.
+ * #6325: the drain does not replay a failed batch's receipt. It resumes the next automatic attempt, whose
+ * run key is fixed by the failed checkpoint (one stable id per failure, so a crashed attempt resumes and two
+ * runs admit the same requests); its completion advances the failed checkpoint by compare-and-set. After
+ * MAX_DETERMINISTIC_FAILURES completed failures of one content the checkpoint is `held`, and only an
+ * explicit retry runs it again.
+ */
+export async function resumeManagedAtoms(engine: BrainEngine, session: ManagedAtomSession, origin: AtomOrigin): Promise<AtomResume> {
+  if (session.retry) {
+    const key = atomClaim(session, origin).runKey;
+    const checkpoint = (await readAtomCheckpoint(engine, key))?.[0];
+    if (checkpoint && !checkpoint.failure) return 'done';
+    if (checkpoint?.requestId) {
+      const failed = await getWriteRequest(engine, session.authority.principal, checkpoint.requestId);
       if (failed) { await authorizeStoredRequest(engine, failed); malformedAtomReceipt(failed); }
     }
+    const resumed = await resumeAtomBatch(engine, session, key);
+    return typeof resumed === 'string' ? resumed : malformedAtomReceipt(resumed);
   }
+  const key = drainKey(session, origin);
+  let failed: { row: WriteRequest; checkpoint: string } | null = null;
+  for (;;) {
+    const checkpoint = await readAtomCheckpoint(engine, key);
+    const state = JSON.stringify(checkpoint);
+    // A batch that completed failed without moving the checkpoint (it was purged) is reported, not looped on.
+    if (failed && failed.checkpoint === state) malformedAtomReceipt(failed.row);
+    const head = checkpoint?.[0];
+    if (checkpoint && !head?.failure) return 'done';
+    if (head?.held) return 'held';
+    if (checkpoint) (session.attempts ??= new Map()).set(key, { runKey: digest([key, head?.requestId ?? null, 'automatic']), checkpointKey: key, expectedCheckpoint: checkpoint });
+    const resumed = await resumeAtomBatch(engine, session, atomClaim(session, origin).runKey);
+    if (typeof resumed === 'string') return resumed;
+    failed = { row: resumed, checkpoint: state };
+  }
+}
+
+/** Waits out the batch accepted under `key`: 'run' when there is none, 'done' when it completed, or its failed completion row. */
+async function resumeAtomBatch(engine: BrainEngine, session: ManagedAtomSession, key: string): Promise<'run' | 'done' | WriteRequest> {
   const rows = await atomBatchRows(engine, session, key);
-  if (!rows.length) return false;
+  if (!rows.length) return 'run';
   for (const row of rows) {
     await authorizeStoredRequest(engine, row);
     const completed = session.wait.observe(await waitForWrite(engine, row, session.config, session.wait.ms()));
     writeResponse(completed);
-    if (completed.outcome?.failure) malformedAtomReceipt(completed);
+    if (completed.outcome?.failure) return completed;
   }
   if (!rows.some(row => row.request_id === atomRequestId(key, '__managed_atom_complete__'))) throw opError('storage_error', 'The accepted atom batch has no completion receipt.',
     `Source ${session.sourceId}'s atom pages were accepted but the batch's completion was never journaled, so its outcome is unconfirmed. Inspect the accepted request ${rows[0].request_id} and the owner before resubmitting anything.`,
     { fix: receiptFix(rows[0].request_id) });
-  return true;
+  return 'done';
 }
 
 export interface ManagedAtomRetirement {
@@ -338,7 +383,9 @@ export interface ManagedAtomRetirement {
 export async function publishManagedAtoms(engine: BrainEngine, session: ManagedAtomSession, origin: AtomOrigin,
   atoms: Array<{ slug: string; content: string; links: LinkBatchInput[]; expectedTarget?: { pageId: number | null; revision: string | null } }>,
   failure?: string, reviewedRetirements?: ManagedAtomRetirement[]): Promise<WriteReceipt[]> {
-  const key = runKey(session, origin);
+  const claim = atomClaim(session, origin);
+  const key = claim.runKey;
+  const advance = claim.checkpointKey ? { checkpointKey: claim.checkpointKey, expectedCheckpoint: claim.expectedCheckpoint ?? null } : {};
   const inputs: Array<{ slug: string; pageId: number | null; intent: AtomIntent }> = [];
   for (const atom of atoms) {
     await authorizeWrite(engine, session.authority, 'put_page', atom.slug);
@@ -356,7 +403,7 @@ export async function publishManagedAtoms(engine: BrainEngine, session: ManagedA
         { fix: pageFix(session.sourceId, atom.slug) });
     }
     inputs.push({ slug: atom.slug, pageId: target.pageId, intent: { kind: 'managed_atom_page', runKey: key, origin,
-      ...(session.retry ? { checkpointKey: session.retry.checkpointKey, expectedCheckpoint: session.retry.expectedCheckpoint } : {}),
+      ...advance,
       ...(target.revision ? { expected_revision: target.revision } : {}), content: atom.content, links: atom.links } as AtomIntent });
   }
   const originKey = origin.kind === 'page' ? 'source_slug' : 'source_path';
@@ -373,16 +420,14 @@ export async function publishManagedAtoms(engine: BrainEngine, session: ManagedA
   for (const retirement of retirements) {
     await authorizeWrite(engine, session.authority, 'delete_page', retirement.slug);
     inputs.push({ slug: retirement.slug, pageId: retirement.pageId, intent: {
-      kind: 'managed_atom_delete', runKey: key, origin, expected_revision: retirement.revision,
-      ...(session.retry ? { checkpointKey: session.retry.checkpointKey, expectedCheckpoint: session.retry.expectedCheckpoint } : {}),
+      kind: 'managed_atom_delete', runKey: key, origin, expected_revision: retirement.revision, ...advance,
     } as AtomIntent });
   }
   const rows = await engine.transaction(async tx => {
     const children: string[] = [];
     const accepted: WriteRequest[] = [];
     for (const input of [...inputs, { slug: '__managed_atom_complete__', pageId: null,
-      intent: { kind: 'managed_atom_complete', runKey: key, origin, children, ...(failure ? { failure } : {}),
-        ...(session.retry ? { checkpointKey: session.retry.checkpointKey, expectedCheckpoint: session.retry.expectedCheckpoint } : {}) } as AtomIntent }]) {
+      intent: { kind: 'managed_atom_complete', runKey: key, origin, children, ...(failure ? { failure } : {}), ...advance } as AtomIntent }]) {
       const requestId = atomRequestId(key, input.slug);
       const row = await admitWriteInTransaction(tx, { principal: session.authority.principal, authority: session.authority,
         operation: 'submit_job', sourceId: session.sourceId, sourceIncarnation: session.incarnation,
@@ -485,8 +530,12 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
           contentHash: p.origin.contentHash, identity: { pageId: p.origin.pageId!, sourceIncarnation: row.source_incarnation,
             revision: p.origin.revision! } }, p.failure ? 'failure' : 'complete');
       }
+      // #6325: one strike per completed failure of this content, counted on the checkpoint it advances.
+      const prior = Array.isArray(p.expectedCheckpoint) ? p.expectedCheckpoint[0] as AtomCheckpoint | undefined : undefined;
+      const attempts = (prior?.failure ? Number(prior.attempts ?? 1) : 0) + 1;
       const checkpoint = JSON.stringify([{ sourceId: row.source_id, incarnation: row.source_incarnation, requestId: row.request_id,
-        kind: p.origin.kind, locator: p.origin.locator, pageId: p.origin.pageId, contentHash: p.origin.contentHash, ...(p.failure ? { failure: p.failure } : {}) }]);
+        kind: p.origin.kind, locator: p.origin.locator, pageId: p.origin.pageId, contentHash: p.origin.contentHash,
+        ...(p.failure ? { failure: p.failure, attempts, ...(attempts >= MAX_DETERMINISTIC_FAILURES ? { held: true } : {}) } : {}) }]);
       await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-atoms',$1,$2::text::jsonb)
         ON CONFLICT(op,fingerprint) DO NOTHING`, [p.runKey, checkpoint]);
       if (p.checkpointKey) {
@@ -494,8 +543,8 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
           ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()
           WHERE op_checkpoints.completed_keys=$3::text::jsonb RETURNING fingerprint`,
         [p.checkpointKey, checkpoint, p.expectedCheckpoint === null ? null : JSON.stringify(p.expectedCheckpoint)]);
-        if (!advanced.length) throw opError('revision_conflict', 'The reviewed atom retry checkpoint changed.',
-          `Another atom run completed source ${row.source_id}'s reviewed checkpoint after retry ${row.request_id} was accepted, so the retry was not recorded. Read the retry receipt; the later run's atoms stand.`,
+        if (!advanced.length) throw opError('revision_conflict', 'The atom retry checkpoint changed.',
+          `Another atom run completed source ${row.source_id}'s atom checkpoint after retry ${row.request_id} was accepted, so the retry was not recorded. Read the retry receipt; the later run's atoms stand.`,
           { fix: receiptFix(row.request_id) });
       }
       return { status: p.failure ? 'failed' : 'completed',
@@ -522,14 +571,56 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
   } };
 }
 
-/** The completed, failure-free `managed-atoms` checkpoint `ac` for one page at its current content hash. */
-export function managedAtomCompletedSql(page: { sourceId: string; slug: string; pageId: string; contentHash: string }): string {
+/** A `managed-atoms` checkpoint `ac` for one page at its current content hash, completed or failed. */
+function managedAtomIdentitySql(page: { sourceId: string; slug: string; pageId: string; contentHash: string }): string {
   return `ac.op='managed-atoms' AND ac.completed_keys->0->>'sourceId'=${page.sourceId}
     AND ac.completed_keys->0->>'incarnation'=(SELECT incarnation::text FROM sources WHERE id=${page.sourceId})
     AND ac.completed_keys->0->>'kind'='page' AND ac.completed_keys->0->>'locator'=${page.slug}
-    AND ac.completed_keys->0->>'pageId'=${page.pageId}::text AND ac.completed_keys->0->>'contentHash'=${page.contentHash}
+    AND ac.completed_keys->0->>'pageId'=${page.pageId}::text AND ac.completed_keys->0->>'contentHash'=${page.contentHash}`;
+}
+
+/** The completed, failure-free `managed-atoms` checkpoint `ac` for one page at its current content hash. */
+export function managedAtomCompletedSql(page: { sourceId: string; slug: string; pageId: string; contentHash: string }): string {
+  return `${managedAtomIdentitySql(page)}
     AND ac.completed_keys->0->>'failure' IS NULL`;
 }
 
+/** #6325: discovery and the backlog skip a page whose current content completed or is held after repeated failures. */
 export const MANAGED_ATOM_DISCOVERY_SQL = `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
-  WHERE ${managedAtomCompletedSql({ sourceId: 'p.source_id', slug: 'p.slug', pageId: 'p.id', contentHash: 'p.content_hash' })})`;
+  WHERE ${managedAtomIdentitySql({ sourceId: 'p.source_id', slug: 'p.slug', pageId: 'p.id', contentHash: 'p.content_hash' })}
+    AND (ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true'))`;
+
+export interface HeldManagedAtom {
+  source_id: string;
+  kind: 'page' | 'transcript';
+  locator: string;
+  request_id: string;
+  failure: string;
+  attempts: number;
+  held_at: string;
+}
+
+/**
+ * #6325: managed atom origins held after MAX_DETERMINISTIC_FAILURES failed extractions of their current
+ * content, in the source's current incarnation, that no later run completed. A page whose content
+ * changed since is back in the backlog and not listed.
+ */
+export async function listHeldManagedAtoms(engine: BrainEngine, sourceIds?: string[]): Promise<HeldManagedAtom[]> {
+  const rows = await engine.executeRaw<HeldManagedAtom & { attempts: string | number; held_at: string | Date }>(
+    `SELECT DISTINCT ON (h.completed_keys->0->>'requestId')
+        h.completed_keys->0->>'sourceId' AS source_id, h.completed_keys->0->>'kind' AS kind,
+        h.completed_keys->0->>'locator' AS locator, h.completed_keys->0->>'requestId' AS request_id,
+        h.completed_keys->0->>'failure' AS failure, h.completed_keys->0->>'attempts' AS attempts, h.updated_at AS held_at
+       FROM op_checkpoints h JOIN sources s ON s.id=h.completed_keys->0->>'sourceId' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+      WHERE h.op='managed-atoms' AND h.completed_keys->0->>'held'='true'
+        AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
+        AND (h.completed_keys->0->>'kind'<>'page' OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=s.id
+          AND p.id::text=h.completed_keys->0->>'pageId' AND p.content_hash=h.completed_keys->0->>'contentHash' AND p.deleted_at IS NULL))
+        AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac WHERE ac.op='managed-atoms' AND ac.completed_keys->0->>'failure' IS NULL
+          AND ac.completed_keys->0->>'sourceId'=s.id AND ac.completed_keys->0->>'incarnation'=s.incarnation::text
+          AND ac.completed_keys->0->>'kind'=h.completed_keys->0->>'kind' AND ac.completed_keys->0->>'locator'=h.completed_keys->0->>'locator'
+          AND ac.completed_keys->0->>'contentHash'=h.completed_keys->0->>'contentHash')
+      ORDER BY h.completed_keys->0->>'requestId', h.updated_at`, [sourceIds ?? null]);
+  return rows.map(row => ({ ...row, attempts: Number(row.attempts), held_at: new Date(row.held_at).toISOString() }))
+    .sort((a, b) => a.source_id.localeCompare(b.source_id) || a.locator.localeCompare(b.locator));
+}

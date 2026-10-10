@@ -171,6 +171,7 @@
       "  [OK] two_consumers_on_host: PGLite admits one process; no consumer heartbeat rows are kept.",
       "  [OK] consumers_without_heartbeat: PGLite admits one process; no consumer heartbeat rows are kept.",
       "  [OK] host_identity_mismatch: This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
+      "  [OK] extract_atoms_held_failed: No managed atom page or transcript is held after repeated extraction failures.",
       "  [OK] fence_integrity: No malformed facts or takes fence is held, stored or waiting in a checkout (2 source(s) scanned).",
       "  [OK] search_mode: Mode: conservative (no per-key overrides — mode bundle is canonical).",
       "  [OK] hidden_by_search_policy: No pages hidden by search-exclude policy.",

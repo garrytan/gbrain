@@ -2181,6 +2181,17 @@
           {
             "category": "brain",
             "details": {
+              "code": "held_failed",
+              "held": 0,
+              "items": []
+            },
+            "message": "No managed atom page or transcript is held after repeated extraction failures.",
+            "name": "extract_atoms_held_failed",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -5170,6 +5181,17 @@
             },
             "message": "This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
             "name": "host_identity_mismatch",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "code": "held_failed",
+              "held": 0,
+              "items": []
+            },
+            "message": "No managed atom page or transcript is held after repeated extraction failures.",
+            "name": "extract_atoms_held_failed",
             "status": "ok"
           },
           {

@@ -242,7 +242,8 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
       }
       await disposePersistenceConsumer(engine);
       const replay = await runPhaseExtractAtoms(engine, opts);
-      expect(calls).toBe(1);
+      // #6325: a malformed batch is retried automatically (one strike per completed failure).
+      expect(calls).toBe(scenario === 'malformed' ? 2 : 1);
       expect(replay.status).toBe(scenario === 'malformed' ? 'warn' : 'ok');
       const atoms = await engine.executeRaw<{ slug: string; visibility: string }>("SELECT slug,frontmatter->>'visibility' AS visibility FROM pages WHERE source_id=$1 AND type='atom'", [sourceId]);
       expect(atoms).toHaveLength(scenario === 'zero_yield' || scenario === 'malformed' ? 0 : 1);
@@ -261,12 +262,19 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
       if (scenario !== 'malformed' && !transcript) expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
       expect((await engine.getPage(page.slug, { sourceId }))?.frontmatter).not.toHaveProperty('atoms_scan_hash');
       if (scenario === 'zero_yield' || scenario === 'malformed') {
+        // #6325: the third malformed attempt holds the page; a held page is neither re-run nor re-struck.
+        if (scenario === 'malformed') {
+          await disposePersistenceConsumer(engine);
+          await runPhaseExtractAtoms(engine, opts);
+          expect(calls).toBe(3);
+          expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
+        }
         const state = await readState();
         await disposePersistenceConsumer(engine);
         await runPhaseExtractAtoms(engine, opts);
-        expect(calls).toBe(1);
+        expect(calls).toBe(scenario === 'malformed' ? 3 : 1);
         expect(await readState()).toEqual(state);
-        expect(state).toEqual([{ content_hash: page.content_hash!, fail_count: scenario === 'malformed' ? 1 : 0, tombstoned: scenario === 'zero_yield' }]);
+        expect(state).toEqual([{ content_hash: page.content_hash!, fail_count: scenario === 'malformed' ? 3 : 0, tombstoned: scenario === 'zero_yield' }]);
       }
     });
   } finally { restoreWait(); await disposePersistenceConsumer(engine); await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); __setChatTransportForTests(null); rmSync(home, { recursive: true, force: true }); }

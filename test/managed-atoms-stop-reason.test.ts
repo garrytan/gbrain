@@ -1,9 +1,9 @@
 /**
  * #6260 on a managed brain: a clipped atoms response (stopReason length,
  * refusal or content_filter) is a failure receipt. It never publishes atoms,
- * never retires the page's earlier atoms, and the next run asks for an
- * approved retry instead of paying again; the approved retry with a complete
- * answer extracts.
+ * never retires the page's earlier atoms, and the next run retries it
+ * automatically (#6325, bounded at MAX_DETERMINISTIC_FAILURES); an explicit
+ * retry with a complete answer extracts.
  */
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -38,7 +38,7 @@ async function liveAtoms(): Promise<string[]> {
 }
 
 for (const stop of ['length', 'refusal', 'content_filter'] as const) {
-  test(`managed ${stop}: failure receipt, prior atoms kept, next run asks for an approved retry`, async () => {
+  test(`managed ${stop}: failure receipt, prior atoms kept, next run retries automatically`, async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-atom-stop-'));
     try {
       await withEnv({ GBRAIN_HOME: home }, async () => {
@@ -76,9 +76,8 @@ for (const stop of ['length', 'refusal', 'content_filter'] as const) {
 
         await disposePersistenceConsumer(engine);
         const again = await extract();
-        expect(calls).toBe(2);
+        expect(calls).toBe(3);
         expect(JSON.stringify(again.details?.failures)).toContain(`stopReason=${stop}`);
-        expect(JSON.stringify(again.details?.failures)).toContain('a new attempt needs approval');
         expect(await liveAtoms()).toEqual(prior);
 
         await disposePersistenceConsumer(engine);
@@ -91,7 +90,7 @@ for (const stop of ['length', 'refusal', 'content_filter'] as const) {
           updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] };
         const retried = await worker.getHandler('extract-atoms-drain')!(job) as Record<string, unknown>;
         expect(retried.model_rerun).toBe(true);
-        expect(calls).toBe(3);
+        expect(calls).toBe(4);
         const after = await liveAtoms();
         expect(after).toHaveLength(1);
         expect(after[0]).toContain('hire-slowly');

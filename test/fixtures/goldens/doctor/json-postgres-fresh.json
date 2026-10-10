@@ -1952,6 +1952,17 @@
         {
           "category": "brain",
           "details": {
+            "code": "held_failed",
+            "held": 0,
+            "items": []
+          },
+          "message": "No managed atom page or transcript is held after repeated extraction failures.",
+          "name": "extract_atoms_held_failed",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "docs": "docs/guides/write-refusals.md#invalid_fence",
             "model_repair": {
               "max_usd_per_day": 1,
