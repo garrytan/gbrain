@@ -90,7 +90,8 @@ describe('readResultLog', () => {
   test('search-shaped results (content[0] is the hit array; notices follow as later blocks)', () => {
     const hits = JSON.stringify([{ slug: 'people/alice-example', chunk_id: 7, score: 0.9, chunk_text: 'Private body text' }]);
     const log = readResultLog({ content: [{ type: 'text', text: hits }, { type: 'text', text: '[gbrain notice x]' }] });
-    expect(log).toEqual({ slugs: ['people/alice-example'], fact_ids: [], items: 1 });
+    expect(log).toEqual({ slugs: ['people/alice-example'], pages: [{ slug: 'people/alice-example', source_id: null }],
+      fact_ids: [], items: 1 });
   });
   test('fact rows yield ids, never the fact text', () => {
     const text = JSON.stringify({ facts: [{ id: 41, fact: 'Signed the LOI on Friday', entity: 'companies/acme' },
@@ -109,7 +110,24 @@ describe('readResultLog', () => {
     expect(log.items).toBe(80);
   });
   test('a non-JSON result summarizes to nothing, never throws', () => {
-    expect(readResultLog({ content: [{ type: 'text', text: '# Just markdown' }] })).toEqual({ slugs: [], fact_ids: [], items: null });
-    expect(readResultLog({})).toEqual({ slugs: [], fact_ids: [], items: null });
+    expect(readResultLog({ content: [{ type: 'text', text: '# Just markdown' }] })).toEqual({ slugs: [], pages: [], fact_ids: [], items: null });
+    expect(readResultLog({})).toEqual({ slugs: [], pages: [], fact_ids: [], items: null });
+  });
+  test('each page keeps its source; the same slug from two sources is two pages', () => {
+    const hits = JSON.stringify([{ slug: 'permission-test/x', source_id: 'person-matt' },
+      { slug: 'permission-test/x', source_id: 'data-leadership' }, { slug: 'people/a', source_id: 'person-matt' }]);
+    const log = readResultLog({ content: [{ type: 'text', text: hits }] });
+    expect(log.slugs).toEqual(['permission-test/x', 'people/a']);
+    expect(log.pages).toEqual([{ slug: 'permission-test/x', source_id: 'person-matt' },
+      { slug: 'permission-test/x', source_id: 'data-leadership' }, { slug: 'people/a', source_id: 'person-matt' }]);
+  });
+  test('saved facts search attached (structured _meta) are counted with their entities, never their text', () => {
+    const log = readResultLog({ content: [{ type: 'text', text: '[]' }, { type: 'text', text: 'Saved facts (remember)…' }],
+      _meta: { retrieval: { saved_facts: [
+        { fact: 'Signed the LOI', entity_slug: 'people/alex-viada', valid_from: '2026-10-09', source: 'chat' },
+        { fact: 'Weekly sync moved', entity_slug: 'people/alex-viada', valid_from: '2026-10-10', source: 'chat' },
+        { fact: 'Loose note', entity_slug: null, valid_from: '2026-10-10', source: 'chat' }] } } });
+    expect(log.saved_facts).toEqual({ n: 3, entities: ['people/alex-viada'] });
+    expect(JSON.stringify(log)).not.toContain('LOI');
   });
 });
