@@ -13,6 +13,10 @@ export function harnessSharedSkillsRoot(options: HarnessStatusOptions): string |
   const name = options.name ?? 'gbrain';
   if (!isValidName(name)) throw new Error('Invalid connection name');
   if (adapter.connection === 'manual') return null;
+  if (adapter.connection === 'hermes-plugin') {
+    if (!options.root) throw new Error('An explicit Hermes profile home is required: pass --root.');
+    return join(checkedRoot(options.root), '.gbrain-hermes');
+  }
   if (adapter.connection === 'thin-cli') {
     if (!options.root) throw new Error('An explicit persistent root is required for this harness.');
     return join(checkedRoot(options.root), '.gbrain');

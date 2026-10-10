@@ -23,3 +23,7 @@ Current behavior and load-bearing invariants; history belongs in Git and CHANGEL
 
 - `src/core/ops/feedback.ts` — the `rate_answer` op (scope `write`, CLI `gbrain rate <answer_id> <rating>`), delegating to `feedback/rate.ts`. Answers carry `answer_id` from `ops/search.ts` (`search`, `query` via `buildRetrievalResponseMeta`), `ops/takes.ts` (`think`), `verbs.ts` (`synthesize`) and `ops/facts.ts` (`recall` page arm on the hybrid path).
 
+
+
+- `src/core/transcripts/session-selection.ts` normalizes exact Hermes origin selectors and strict message cutoffs; cutoff views have independent deterministic archive/checkpoint identities and preserve full archives. Hermes schema fixture is pinned to `46d7718a52ff33accb15dc0501736fbdb6833cab`, still provisional until native store evidence. `src/core/hermes-maintenance.ts` coordinates source-scoped ingest/readback and opt-in cycle work. `src/core/serve-hermes-runner.ts` reuses the authenticated live owner and awaits cancellation on shutdown.
+- `src/core/ops/ambient-capture.ts` enforces explicit ambient transcript opt-in and admission-time consent; persistence journal replay remains idempotent. A locked authoritative config row serializes fresh admission against withdrawal. Explicit capture remains independent.

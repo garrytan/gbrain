@@ -102,6 +102,9 @@ const CAPTURED = join(EVAL_FIXTURES, 'captured-sample.ndjson');
 
 /** One row per command-table record that declares `json`; a new declaration needs a row. */
 const JSON_ROWS: Record<string, JsonRow> = {
+  // Hermes setup removal is engine-free; an absent isolated profile is an honest success receipt.
+  hermes: { ok: ['hermes', 'setup', '--hermes-home', join(emptyHome, 'hermes-profile'), '--remove', '--json'],
+    fail: ['hermes', 'setup', '--bogus', '--json'], okOnEmpty: true },
   errors: { ok: ['errors', 'unknown_flag', '--json'], fail: ['errors', 'definitely_not_a_code', '--json'], okOnEmpty: true },
   init: { ok: ['init', '--pglite', '--no-embedding', '--json'], fail: ['init', '--mcp-only', '--json', '--mcp-url', 'http://127.0.0.1:1/mcp'], okOnEmpty: true },
   doctor: { ok: ['doctor', '--json', '--fast'], fail: ['doctor', '--json'] },
@@ -166,6 +169,13 @@ describe('D5 json contract: one success and one failure per json-declared comman
     expect(declared).toEqual(Object.keys(JSON_ROWS).sort());
   });
 
+  test('hermes maintain invalid flags retain a single D5 failure envelope', async () => {
+    const result = await runCli(['hermes', 'maintain', '--window', '0', '--json'],
+      { home: emptyHome, cwd: emptyHome, timeoutMs: 60_000 });
+    assertFailureShape('hermes maintain', 'document', result);
+    expect(JSON.parse(result.stdout)).toMatchObject({ code: 'invalid_params', contract_version: 1 });
+  });
+
   for (const record of JSON_DECLARED) {
     test(`${record.name} --json: success shape and failure envelope`, async () => {
       const row = JSON_ROWS[record.name];
@@ -180,6 +190,7 @@ describe('D5 json contract: one success and one failure per json-declared comman
           expect(ok.exitCode, `${record.name} ok: ${ok.stderr.slice(-800)}`).toBe(0);
           const lines = parsedShape(record.mode, ok.stdout).length;
           if (!row.okMayBeEmpty) expect(lines).toBeGreaterThan(0);
+          if (record.name === 'hermes') expect(ok.stderr).not.toContain('"status"');
         }
         const failHome = row.failOnBrain ? brainHome : emptyHome;
         assertFailureShape(record.name, record.mode, await runCli(row.fail, { home: failHome, cwd: failHome, timeoutMs: 120_000 }));

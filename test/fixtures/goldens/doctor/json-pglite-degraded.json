@@ -1630,7 +1630,9 @@
             "backlog": {
               "active": 0,
               "delayed": 0,
-              "waiting": 0
+              "paused": 0,
+              "waiting": 0,
+              "waiting_children": 0
             },
             "budget_usd": 1,
             "daily_budget_usd": 5,

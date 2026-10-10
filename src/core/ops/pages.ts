@@ -27,6 +27,7 @@ import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
+import { assertAmbientTranscriptCapture } from './ambient-capture.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
 import { invalidParam, readFix } from './op-fix.ts';
 import { isDatetimeInputError } from '../utils.ts';
@@ -649,10 +650,11 @@ const capture: Operation = {
   params: {
     ...AGENT_CONTENT_PARAMS,
     ...CAPTURE_EVENT_PARAMS,
-    content: { type: 'string', required: true, description: 'Markdown or text (not a file path).' },
+    content: { type: 'string', required: true, description: 'Text/Markdown, not a path.' },
     local_file: { type: 'string', description: 'Local CLI only.', required: false },
     slug: { type: 'string', required: false, description: 'Default inbox/<date>-<hash>.' },
-    type: { type: 'string', required: false, description: 'Schema-pack page type (default note).' },
+    type: { type: 'string', required: false, description: 'Schema type; default note.' },
+    ambient: { type: 'boolean', description: 'Auto-capture; memory.auto_writeback opt-in.' },
   },
   scope: 'write',
   mutating: true,
@@ -662,6 +664,7 @@ const capture: Operation = {
   cliHints: { name: 'capture', hidden: true },
   handler: async (ctx, p) => {
     pageMutationSource(ctx, p, 'capture');
+    if (ctx.dryRun) await assertAmbientTranscriptCapture(ctx.engine, p.ambient);
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         validatePageSlug(p.slug);

@@ -915,6 +915,7 @@ ${bootstrapFromEnv
   const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', async () => {
     movementWatch.stop();
     await factsDrain.stop();
+    await (await import('../core/serve-hermes-runner.ts')).shutdownDelegatedHermesMaintenance(engine);
     await engine.disconnect();
   });
   try {
@@ -922,6 +923,7 @@ ${bootstrapFromEnv
   } finally {
     movementWatch.stop();
     await factsDrain.stop();
+    await (await import('../core/serve-hermes-runner.ts')).shutdownDelegatedHermesMaintenance(engine);
     // Close the IPC listener + reap the socket file on orderly shutdown
     // (abnormal termination goes through the registered cleanup above).
     ipcBinding.close();

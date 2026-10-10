@@ -5991,6 +5991,7 @@
           "jobId?: number | undefined",
           "localFederatedSourceIds?: string[] | undefined",
           "localSourceImplicit?: boolean | undefined",
+          "localSubagent?: LocalSubagentCapability | undefined",
           "logger: Logger",
           "remote: boolean",
           "replayAuthority?: WriteAuthority | undefined",

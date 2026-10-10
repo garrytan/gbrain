@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 222258,
-    "stdoutSha256": "c57b5a6ee1354ed3411589becdcc087ea6d74b14101affa2869bbbb0ce20ce94",
+    "stdoutBytes": 222326,
+    "stdoutSha256": "d07805fc7c6013603f5a115f78a94963c2a4d54210ace277abf72dc7b68a6a13",
     "toolNames": [
       "remember",
       "entity",
@@ -731,12 +731,13 @@
         "scope": "admin"
       },
       {
-        "description": "Quick note (\"just remember this\"): auto-slugged under inbox/ by date + content hash, so recapturing is idempotent. Use put_page to control slug or type; remember for facts about entities.",
+        "description": "Quick notes: idempotent auto-slugs in inbox/<date>-<hash>. put_page controls slug/type; remember saves entity facts.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
         "name": "capture",
         "parameters": {
+          "ambient": "boolean?",
           "content": "string",
           "content_origin": "string?",
           "depth": "string?",
@@ -755,8 +756,12 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "ambient": {
+              "description": "Auto-capture; memory.auto_writeback opt-in.",
+              "type": "boolean"
+            },
             "content": {
-              "description": "Markdown or text (not a file path).",
+              "description": "Text/Markdown, not a path.",
               "type": "string"
             },
             "content_origin": {
@@ -801,7 +806,7 @@
               "type": "string"
             },
             "type": {
-              "description": "Schema-pack page type (default note).",
+              "description": "Schema type; default note.",
               "type": "string"
             },
             "what": {

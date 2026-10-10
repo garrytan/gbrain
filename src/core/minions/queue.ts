@@ -8,7 +8,8 @@
  *   await queue.prune({ olderThan: new Date(Date.now() - 30 * 86400000) });
  */
 
-import { APPLICATION_AUTHORITY, LEGACY_AUTHORITY_COLUMN, assertNoUnreviewedJobs, authorizeJobExecution, currentSubmissionAuthority, parseSubmissionAuthority, type SubmissionAuthority } from './submission-authority.ts';
+import { LEGACY_AUTHORITY_COLUMN, assertNoUnreviewedJobs, authorizeJobExecution, type SubmissionAuthority } from './submission-authority.ts';
+import { resolveSubmissionAuthority, lockSubmission, bindLocalSubagentJob, authorizeReplaySource } from './submission-boundary.ts';
 import type { BrainEngine } from '../engine.ts';
 import type {
   MinionJob, MinionJobInput, MinionJobStatus, InboxMessage, TokenUpdate,
@@ -20,7 +21,7 @@ import { adoptSpendAuthorization, legacyDefaultClaimSetSql, legacyDefaultClaimPa
 import { validateAttachment } from './attachments.ts';
 import { isProtectedJobName } from './protected-names.ts';
 import { assertEmbedBackfillQueueAdmission } from './embed-backfill-admission.ts';
-import { lockDelegatedSubmission, checkDelegatedCapacity, prepareDelegatedReplay, admitDelegatedRetry } from './delegated-admission.ts';
+import { checkDelegatedCapacity, prepareDelegatedReplay, admitDelegatedRetry } from './delegated-admission.ts';
 import {
   computeParamHash,
   resolveAdmissionPolicy,
@@ -222,9 +223,8 @@ export class MinionQueue {
     // Normalize first so the protected-name check and the insert use the same
     // canonical form. Without the trim-before-check, `queue.add(' shell ', ...)`
     // would evade the guard and insert a job literally named 'shell'.
-    if (currentSubmissionAuthority() && currentSubmissionAuthority()!.kind !== 'application') throw new Error('Remote jobs cannot submit descendant jobs');
-    const authority = parseSubmissionAuthority(trusted?.submissionAuthority ?? APPLICATION_AUTHORITY);
-    if (!authority) throw new Error('Unsupported submission authority');
+    const authority = resolveSubmissionAuthority(this.engine, trusted);
+    if (authority.kind === 'local_subagent') data = structuredClone(data ?? {});
     const delegatedClientId = authority.kind === 'remote_agent' ? authority.principal.id : trusted?.delegatedClientId;
     if (authority.kind === 'remote_agent' && trusted?.delegatedClientId !== undefined && trusted.delegatedClientId !== delegatedClientId) {
       throw new Error('Delegated submission identity differs from its authority');
@@ -341,7 +341,7 @@ export class MinionQueue {
 
     const result = await this.engine.transaction(async (tx) => {
       // Client lock spans grant validation, capacity check and insertion.
-      const delegatedLimit = await lockDelegatedSubmission(tx, delegatedClientId, jobName, data);
+      const delegatedLimit = await lockSubmission(tx, authority, delegatedClientId, jobName, data);
       // 1. Idempotency fast path — if a row already exists for this key, return it
       //    without doing any other work. The unique partial index guarantees
       //    no second row can be inserted with the same non-null key.
@@ -657,7 +657,7 @@ export class MinionQueue {
       const outcome = await insertOrCoalesce(tx, insertSql, params, opts?.idempotency_key, authority);
       if ('coalesced' in outcome) return outcome.coalesced;
 
-      const child = rowToMinionJob(outcome.inserted);
+      const child = await bindLocalSubagentJob(tx, rowToMinionJob(outcome.inserted), authority);
 
       // 4. Flip parent to waiting-children if this is a fresh child insert.
       //    Only transition from non-terminal, non-already-waiting-children states.
@@ -2334,7 +2334,7 @@ export class MinionQueue {
     const source = await this.getJob(id);
     if (!source) return null;
     if (!['completed', 'failed', 'dead'].includes(source.status)) return null;
-    const authority = await authorizeJobExecution(this.engine, source);
+    const authority = await authorizeReplaySource(this.engine, source); // local_subagent ceilings refuse replay first
     if (authority.kind !== 'application' && dataOverrides && Object.keys(dataOverrides).length) throw new Error('Remote job replay cannot override accepted data; submit a new job');
 
     const { data, clientId } = prepareDelegatedReplay(source.name, source.data, dataOverrides);

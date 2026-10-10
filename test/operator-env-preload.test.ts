@@ -141,6 +141,17 @@ describe('operator-env-preload (#4023)', () => {
     for (const name of probed) expect({ [name]: r.report[name] }).toEqual({ [name]: ambient[name] });
   }, 30_000);
 
+  test('Hermes fixture reopen survives scrub and its old name fails with migration guidance', () => {
+    const current = 'GBRAIN_TEST_HERMES_FIXTURE_REOPEN';
+    const legacy = 'GBRAIN_HERMES_FIXTURE_REOPEN';
+    const kept = runProbe({ [current]: '1' }, [current, legacy]);
+    expect(kept.exitCode).toBe(0);
+    expect(kept.report[current]).toBe('1');
+    const rejected = runProbe({ [legacy]: '1' }, [current, legacy]);
+    expect(rejected.exitCode).not.toBe(0);
+    expect(rejected.stderr).toContain(`${legacy} was renamed to ${current}`);
+  }, 30_000);
+
   test('cold snapshot opt-out survives preload and clears both inherited snapshot paths', () => {
     const r = runProbe({
       GBRAIN_NO_SNAPSHOT: '1',

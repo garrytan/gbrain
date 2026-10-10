@@ -1705,7 +1705,9 @@
             "backlog": {
               "active": 0,
               "delayed": 0,
-              "waiting": 0
+              "paused": 0,
+              "waiting": 0,
+              "waiting_children": 0
             },
             "daily_spent_usd": 0,
             "docs": "docs/guides/facts-drain.md",

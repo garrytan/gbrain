@@ -6,6 +6,7 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
+import { assertAmbientTranscriptCapture } from '../ops/ambient-capture.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, isLegacyStoredPageSlug, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
@@ -21,6 +22,7 @@ import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type Ti
 import { contentOriginTier } from '../trust/tier.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
+import { localSubagentPrincipal } from '../minions/local-subagent.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
 import { currentVerifiedLocalWriter, localHostId, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -41,6 +43,7 @@ import { isConnectorSourceKind } from './connector-identity.ts';
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
   if (ctx.replayAuthority) return { ...ctx.replayAuthority.principal };
+  if (ctx.localSubagent) return localSubagentPrincipal(ctx)!;
   if (ctx.auth?.principal) return { ...ctx.auth.principal };
   const verified = currentVerifiedLocalWriter();
   if (verified) return verified.principal;
@@ -50,7 +53,7 @@ export async function requestPrincipalForContext(ctx: OperationContext): Promise
 }
 /** A local installation registers once; revoked records are never silently replaced. */
 export async function initializeLocalPersistence(ctx: OperationContext): Promise<void> {
-  if (!ctx.auth && !currentVerifiedLocalWriter()) await registerLocalWriter(ctx.engine, ctx.remote === false ? 'cli' : 'stdio');
+  if (!ctx.localSubagent && !ctx.auth && !currentVerifiedLocalWriter()) await registerLocalWriter(ctx.engine, ctx.remote === false ? 'cli' : 'stdio');
 }
 const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 /**
@@ -105,8 +108,9 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
  * whole call instead of once per page.
  */
 export async function withBatchAdmission<T>(ctx: OperationContext, run: (own: OperationContext, shared: OperationContext) => Promise<T>): Promise<T> {
-  const shared: OperationContext = { ...ctx, engine: batchSharedReads(ctx.engine) };
-  if (ctx.auth || currentVerifiedLocalWriter()) return run(ctx, shared);
+  // Opaque local-subagent capabilities stay bound to their original engine; no memoizing view is substituted.
+  const shared: OperationContext = ctx.localSubagent ? ctx : { ...ctx, engine: batchSharedReads(ctx.engine) };
+  if (ctx.localSubagent || ctx.auth || currentVerifiedLocalWriter()) return run(ctx, shared);
   await initializeLocalPersistence(ctx);
   const registration = await readLocalWriter(ctx.engine, ctx.remote === false ? 'cli' : 'stdio');
   return withVerifiedLocalRegistration(ctx.engine, registration, () => run(ctx, shared));
@@ -203,7 +207,10 @@ export async function submitPageMutation(ctx: OperationContext,
   const waitMs = () => wireWaitMs !== undefined ? Math.max(0, wireWaitMs - (performance.now() - arrived)) : input.waitMs ?? ctx.writeWaitMs;
   // Phase 4.2: pre-admission reads that admission rechecks come from this process's cache; a refusal the
   // cache could explain drops it and prepares the write once more, uncached, so it ends as it would without it.
-  const cached = await preadmitReads(ctx.engine);
+  // A local-subagent capability is bound to the exact engine object it was minted for. Read views (this cache,
+  // the batch memo) are different objects and are never trusted: opaque-capability contexts skip them and
+  // prepare, admit and look up receipts on the original engine.
+  const cached = ctx.localSubagent ? null : await preadmitReads(ctx.engine);
   let prepared = await preparePageAdmission(cached ? { ...ctx, engine: cached } : ctx, { ...input, params });
   if (prepared.prior) return throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false);
   const brainId = cached ? cachedPreadmitBrain(ctx.engine) : undefined;
@@ -266,6 +273,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     assertReplayIntent(prior, intentDigest({ operation: input.operation, sourceId, slug: prior.slug, callerIntent }));
     return { prior };
   }
+  if (input.operation === 'capture') await assertAmbientTranscriptCapture(ctx.engine, p.ambient);
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
   const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);

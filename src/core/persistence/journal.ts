@@ -4,6 +4,7 @@ import type { BrainEngine } from '../engine.ts';
 import { assertRecoveryStagingAbsent } from './staging.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { assertAmbientTranscriptCapture } from '../ops/ambient-capture.ts';
 import type { Action } from '../agent-output.ts';
 import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
@@ -205,6 +206,8 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       }
       return assertReplayIntent(prior, fingerprint);
     }
+    // Already-admitted requests retain their receipt; only new automatic writes need current consent.
+    if (input.operation === 'capture') await assertAmbientTranscriptCapture(tx, input.intent.ambient, true);
     if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
     for (const row of counters) {
       const brain = row.key === 'brain';
@@ -285,6 +288,7 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
   }
   const fresh = items.filter(item => !priors.has(item.requestId));
   if (fresh.length) {
+    for (const { input } of fresh) if (input.operation === 'capture') await assertAmbientTranscriptCapture(tx, input.intent.ambient, true);
     const bytes = fresh.reduce((sum, item) => sum + item.bytes, 0), terminalBytes = fresh.reduce((sum, item) => sum + item.terminalBytes, 0);
     for (const row of counters) {
       const brain = row.key === 'brain', scope = brain ? 'brain' : 'principal';

@@ -90,6 +90,8 @@ export interface FileDiagnostics {
 }
 
 export interface ParseSessionsOpts {
+  /** Exact Hermes sessions.source include list; undefined includes every source. */
+  sessionSources?: string[];
   /**
    * Per-format byte budget. Most adapters REJECT a monolithic file over budget
    * rather than truncating it; codex instead degrades to a bounded head+tail

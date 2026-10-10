@@ -16,7 +16,11 @@ import type { MinionJob } from './types.ts';
 
 export const REMOTE_JOB_NAMES = ['sync', 'import', 'lint', 'lint-fix'] as const;
 export type RemoteJobName = typeof REMOTE_JOB_NAMES[number];
-export type SubmissionAuthority = { version: 1; kind: 'application' } | RemoteJobAuthority | RemoteAgentAuthority;
+export type SubmissionAuthority = { version: 1; kind: 'application' } | RemoteJobAuthority | RemoteAgentAuthority | LocalSubagentAuthority;
+import { parseLocalSubagent, assertLocalSubagentExecution, type LocalSubagentAuthority } from './local-subagent.ts';
+export { prepareLocalSubagent } from './local-subagent.ts';
+export type { LocalSubagentAuthority } from './local-subagent.ts';
+
 export interface RemoteAgentAuthority {
   version: 1;
   kind: 'remote_agent';
@@ -72,6 +76,7 @@ export function parseSubmissionAuthority(value: unknown): SubmissionAuthority | 
   if (a?.version !== 1) return null;
   if (a.kind === 'application') return APPLICATION_AUTHORITY;
   const p = record(a.principal), g = record(a.grant);
+  if (a.kind === 'local_subagent') return parseLocalSubagent(a);
   if (a.kind === 'remote_agent') {
     if (p?.kind !== 'oauth_client' || typeof p.id !== 'string' || !p.id || !g ||
         !Array.isArray(g.scopes) || !g.scopes.every(v => typeof v === 'string') ||
@@ -95,7 +100,7 @@ export function parseSubmissionAuthority(value: unknown): SubmissionAuthority | 
 }
 export function assertSameAuthority(actual: unknown, expected: SubmissionAuthority): void {
   const parsed = parseSubmissionAuthority(actual);
-  if (!parsed || authorityDigest(parsed) !== authorityDigest(expected)) deny('coalescing across submission authorities is forbidden',
+  if (!parsed || authorityDigest(parsed.kind === 'local_subagent' ? { ...parsed, acceptedJobId: undefined } : parsed) !== authorityDigest(expected.kind === 'local_subagent' ? { ...expected, acceptedJobId: undefined } : expected)) deny('coalescing across submission authorities is forbidden',
     'A job with this idempotency key was queued under another principal or grant. Submit with a new idempotency key, or leave that job to its submitter.');
 }
 
@@ -269,6 +274,11 @@ export async function authorizeJobExecution(engine: BrainEngine, job: Pick<Minio
   if (!a) deny('missing or unsupported submission authority; review locally with jobs authorize-legacy',
     'This queued job has no readable submission authority, so it does not run until reviewed. On the brain host, gbrain jobs authorize-legacy lists it for the user to approve or cancel.');
   if (a.kind === 'application') return a;
+  if (a.kind === 'local_subagent') {
+    if (job.name !== 'subagent') deny('local subagent authority is bound to subagent jobs', 'Submit this authority only for the subagent handler.');
+    await assertLocalSubagentExecution(engine, a, job.name, job.data, job.id);
+    return a;
+  }
   if (a.kind === 'remote_agent') {
     if (job.name !== 'subagent' || authorityDigest(job.data) !== a.payloadHash) deny('agent payload differs from its accepted grant',
       'This agent job\'s data changed after it was accepted, so it does not run. Submit a new agent job.');

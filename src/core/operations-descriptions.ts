@@ -200,4 +200,4 @@ export const SKILL_CLIENT_GUIDANCE = {
  * test/operations-descriptions.test.ts.
  */
 export const CAPTURE_DESCRIPTION =
-  "Quick note (\"just remember this\"): auto-slugged under inbox/ by date + content hash, so recapturing is idempotent. Use put_page to control slug or type; remember for facts about entities.";
+  "Quick notes: idempotent auto-slugs in inbox/<date>-<hash>. put_page controls slug/type; remember saves entity facts.";

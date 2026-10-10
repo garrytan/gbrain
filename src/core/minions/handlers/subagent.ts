@@ -38,7 +38,8 @@ import type {
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { loadConfig, isConfigTruthy } from '../../config.ts';
-import { buildBrainTools, selectAllowedTools } from '../tools/brain-allowlist.ts';
+import { selectAllowedTools } from '../tools/brain-allowlist.ts';
+import { jobBrainTools } from './subagent-job-tools.ts';
 import {
   acquireLease,
   releaseLease,
@@ -71,6 +72,7 @@ import {
   type PersistedToolExec,
 } from './subagent-persistence.ts';
 import { randomUUIDv7 } from 'bun';
+import { localSubagentTools } from '../local-subagent.ts';
 import { snapshotFromJob } from '../delegated-policy.ts';
 import { applyDelegatedData, guardDelegatedTools } from '../delegated-tools.ts';
 import { withDelegatedSpend } from '../delegated-spend.ts';
@@ -330,6 +332,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   ): Promise<SubagentResult> {
     const data = { ...(ctx.data ?? {}) } as unknown as SubagentHandlerData;
     const submitted = snapshotFromJob(ctx.data);
+    const localSubagent = await localSubagentTools(engine, ctx.id, ctx.data);
     await applyDelegatedData(engine, submitted, ctx.id, data);
     if (!data.prompt || typeof data.prompt !== 'string') {
       throw new Error('subagent job data.prompt is required (string)');
@@ -462,21 +465,9 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       );
     }
 
-    // Build the tool registry bound to THIS job as the owning subagent.
-    // brain_id (per-call brain override; children inherit parent's unless
-    // they set their own) and allowed_slug_prefixes (v0.23 trusted-workspace
-    // allow-list — flows through buildBrainTools → the put_page schema
-    // description AND the OperationContext, so the model's tool schema and
-    // the server-side check stay in sync).
-    const registry = deps.toolRegistry ?? buildBrainTools({
-      subagentId: ctx.id,
-      engine,
-      config,
-      brainId: data.brain_id,
-      allowedSlugPrefixes: data.allowed_slug_prefixes,
-      // #1586: cycle-resolved source scope for tool-call OperationContexts.
-      sourceId: data.source_id,
-    });
+    // Build the tool registry bound to THIS job as the owning subagent
+    // (brain_id, allowed_slug_prefixes, source_id and the local capability: see jobBrainTools).
+    const registry = jobBrainTools(deps.toolRegistry, ctx.id, data, engine, config, localSubagent);
     const selectedTools = selectAllowedTools(registry, data.allowed_tools);
     const guardTools = (tools: ToolDef[], deferEmbeds = false) => guardDelegatedTools(engine, config, submitted, ctx.id, tools, deps.toolRegistry !== undefined, deferEmbeds);
     const toolDefs = guardTools(selectedTools);
@@ -534,15 +525,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       if (dispatchOneshot) {
         // Rebuild put_page with deferEmbeds so the embed network call leaves
         // the model path (the standing embed machinery backfills).
-        const oneshotRegistry = deps.toolRegistry ?? buildBrainTools({
-          subagentId: ctx.id,
-          engine,
-          config,
-          brainId: data.brain_id,
-          allowedSlugPrefixes: data.allowed_slug_prefixes,
-          sourceId: data.source_id,
-          deferEmbeds: true,
-        });
+        const oneshotRegistry = jobBrainTools(deps.toolRegistry, ctx.id, data, engine, config, localSubagent, true);
         // Honor allowed_tools EXACTLY like the loop registry — a submitter
         // that scoped its job read-only must not gain write capability by
         // setting mode: oneshot (put_page filtered out → no_put_page_tool

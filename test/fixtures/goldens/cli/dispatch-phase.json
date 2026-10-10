@@ -952,6 +952,25 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "hermes": {
+        "hasSwitchCase": false,
+        "phase": "pre-connect-own-engine",
+        "preConnectRules": [
+          {
+            "condition": "command === 'hermes'",
+            "connectsEngine": true,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": true,
+            "unconditionalFor": [
+              "hermes"
+            ]
+          }
+        ],
+        "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
       "hook": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

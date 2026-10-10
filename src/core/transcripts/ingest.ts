@@ -45,6 +45,7 @@ import {
 } from './render.ts';
 import { RECONCILE_SAFETY_KEYS } from '../persistence/reconcile-safety.ts';
 import { ATOMS_SCAN_HASH_KEY } from '../utils.ts';
+import { lastMessageTs, trimSessionMessages } from './session-selection.ts';
 
 export interface IngestActivePack {
   page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }>;
@@ -61,6 +62,12 @@ export interface TranscriptsIngestOpts {
   limit?: number;
   /** Only sessions whose LAST message is strictly newer than this ISO. */
   sinceIso?: string;
+  /** Opt-in message cutover, applied before redaction/rendering; --since stays session-level. */
+  messagesSinceIso?: string;
+  /** Exact Hermes sessions.source include list. Other formats are refused when set. */
+  sessionSources?: string[];
+  /** Cooperative maintenance deadline. Never advances a partially completed scan. */
+  signal?: AbortSignal;
   /** Resolved source id — threads through import, raw-data, reconciliation. */
   sourceId: string;
   /** Embedding opt-in (default OFF: bulk imports defer to the embed backfill). */
@@ -143,26 +150,6 @@ export interface TranscriptsIngestResult {
   maxSessionTs: string;
 }
 
-/**
- * Session's last message timestamp, NORMALIZED to Z-form ISO ('' when none
- * carry one). Normalization matters because since/watermark comparisons are
- * lexicographic: an offset-form ISO (+07:00) string-sorts after a real-time
- * newer Z-form and would poison the watermark. UNPARSEABLE timestamps are
- * SKIPPED, never passed through — a single hostile/corrupt value like a
- * letter-leading string would otherwise become the watermark and since-filter
- * every real session forever.
- */
-function lastMessageTs(messages: Array<{ timestamp: string }>): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const raw = messages[i].timestamp;
-    if (!raw) continue;
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) continue;
-    return d.toISOString();
-  }
-  return '';
-}
-
 const RUN_ABORT_MARKER = 'transcripts-ingest run abort';
 
 function isPerSessionImportError(err: unknown): boolean {
@@ -171,11 +158,8 @@ function isPerSessionImportError(err: unknown): boolean {
   return err instanceof Error && /too large|invalid byte sequence/i.test(err.message);
 }
 
-export async function runTranscriptsIngest(
-  engine: BrainEngine,
-  opts: TranscriptsIngestOpts,
-): Promise<TranscriptsIngestResult> {
-  const result: TranscriptsIngestResult = {
+function createIngestResult(): TranscriptsIngestResult {
+  return {
     files: [],
     pages: { imported: 0, skipped: 0, errored: 0, planned: 0 },
     sessionsSeen: 0,
@@ -193,6 +177,13 @@ export async function runTranscriptsIngest(
     cleanScan: true,
     maxSessionTs: '',
   };
+}
+
+export async function runTranscriptsIngest(
+  engine: BrainEngine,
+  opts: TranscriptsIngestOpts,
+): Promise<TranscriptsIngestResult> {
+  const result = createIngestResult();
   let limitTruncated = false;
 
   // Redaction patterns compile ONCE per run — loadPatterns re-reads and
@@ -206,6 +197,7 @@ export async function runTranscriptsIngest(
   let newWorkSessions = 0;
 
   for (const path of opts.paths) {
+    opts.signal?.throwIfAborted();
     if (limitTruncated) break;
     const fileOutcome: IngestFileOutcome = {
       path,
@@ -232,11 +224,17 @@ export async function runTranscriptsIngest(
       continue;
     }
     fileOutcome.format = detected.adapter.format;
+    if (opts.sessionSources && detected.adapter.format !== 'hermes') {
+      fileOutcome.error = 'session-source filtering requires the hermes format';
+      result.erroredFiles++; result.cleanScan = false;
+      opts.onFileDone?.(++done, total, path);
+      continue;
+    }
 
     // gbrain#4149: thread the explicit cap override; omit the opts object
     // entirely when unset so adapters keep their native defaults.
-    const gen = opts.maxBytes != null
-      ? detected.adapter.parse(path, { maxBytes: opts.maxBytes })
+    const gen = opts.maxBytes != null || opts.sessionSources
+      ? detected.adapter.parse(path, { maxBytes: opts.maxBytes, sessionSources: opts.sessionSources })
       : detected.adapter.parse(path);
     try {
       let step = await gen.next();
@@ -246,13 +244,21 @@ export async function runTranscriptsIngest(
           await gen.return?.(undefined as never);
           break;
         }
-        const session = step.value;
+        opts.signal?.throwIfAborted();
+        const original = step.value;
         result.sessionsSeen++;
-        opts.onSession?.(session.meta.sessionId);
-        const lastTs = lastMessageTs(session.messages);
+        opts.onSession?.(original.meta.sessionId);
+        opts.signal?.throwIfAborted();
+        const lastTs = lastMessageTs(original.messages);
         if (lastTs && lastTs > result.maxSessionTs) result.maxSessionTs = lastTs;
 
         if (opts.sinceIso && lastTs && lastTs <= opts.sinceIso) {
+          result.sessionsFiltered++;
+          step = await gen.next();
+          continue;
+        }
+        const session = trimSessionMessages(original, opts.messagesSinceIso);
+        if (opts.messagesSinceIso && session.messages.length === 0) {
           result.sessionsFiltered++;
           step = await gen.next();
           continue;
@@ -319,6 +325,7 @@ export async function runTranscriptsIngest(
             outcome.baseSlug = rendered.baseSlug;
             let resolvedBaseSlug = rendered.baseSlug;
             for (const part of rendered.parts) {
+              opts.signal?.throwIfAborted();
               try {
                 await preserveForeignFrontmatter(engine, opts.sourceId ?? 'default', part);
                 const provenance = { source_kind: `transcript:${session.meta.harness}`, source_uri: path, ingested_via: 'cli:transcripts-ingest' };
@@ -399,6 +406,7 @@ export async function runTranscriptsIngest(
                       canonicalJson(JSON.parse(JSON.stringify(redacted.session.meta.raw)));
                 }
                 if (needsRaw) {
+                  opts.signal?.throwIfAborted();
                   await engine.putRawData(resolvedBaseSlug, rawSource, redacted.session.meta.raw, {
                     sourceId: opts.sourceId,
                   });
@@ -431,7 +439,12 @@ export async function runTranscriptsIngest(
               const m = /^-p(\d+)$/.exec(suffix);
               const num = m ? Number(m[1]) : NaN;
               if (Number.isFinite(num) && num > rendered.parts.length) {
-                await engine.deletePage(row.slug, { sourceId: opts.sourceId });
+                opts.signal?.throwIfAborted();
+                if (coordinator) {
+                  if (!await deleteTranscriptPart(coordinator, engine, opts.sourceId, row.slug)) continue;
+                } else {
+                  await engine.deletePage(row.slug, { sourceId: opts.sourceId });
+                }
                 result.partsDeleted++;
               }
             }
@@ -450,6 +463,8 @@ export async function runTranscriptsIngest(
       }
       if (step.done && step.value) applyFileDiagnostics(step.value, fileOutcome, result);
     } catch (err) {
+      await gen.return?.(undefined as never);
+      opts.signal?.throwIfAborted();
       if (err instanceof Error && err.message.startsWith(RUN_ABORT_MARKER)) throw err;
       fileOutcome.error = err instanceof Error ? err.message : String(err);
       result.erroredFiles++;
@@ -462,6 +477,18 @@ export async function runTranscriptsIngest(
 
   if (opts.dryRun) result.cleanScan = false; // dry-runs never advance watermarks
   return result;
+}
+
+/** Publish the stale part's tombstone and remove its canonical file together. */
+async function deleteTranscriptPart(ctx: OperationContext, engine: BrainEngine, sourceId: string, slug: string): Promise<boolean> {
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+  if (!snapshot) return false; // already deleted by another writer
+  const receipt = await submitPageMutation(ctx, {
+    operation: 'delete_page',
+    params: { slug, source_id: sourceId, expected_revision: snapshot.revision },
+  });
+  if (receipt.state !== 'committed') throw new Error(`Stale transcript part deletion not committed: ${slug}`);
+  return true;
 }
 
 /**
