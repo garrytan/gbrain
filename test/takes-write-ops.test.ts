@@ -90,7 +90,7 @@ describe('takes_add', () => {
 
   test('holder fence: outside-allow-list holder denies with an explicit authority error', async () => {
     const res = await dispatchToolCall(engine, 'takes_add', {
-      slug: 'people/alice-example', claim: 'Private hunch', kind: 'hunch', holder: 'people/garry-example',
+      slug: 'people/alice-example', claim: 'Private hunch', kind: 'hunch', holder: 'people/dana-example',
     }, { ...STDIO_WORLD });
     expect(res.isError).toBe(true);
     const body = parsed(res);
@@ -117,7 +117,7 @@ describe('takes_add', () => {
 
   test('trusted local caller is unfenced', async () => {
     const res = await dispatchToolCall(engine, 'takes_add', {
-      slug: 'people/alice-example', claim: 'Owner-held view', kind: 'bet', holder: 'people/garry-example', weight: 0.8,
+      slug: 'people/alice-example', claim: 'Owner-held view', kind: 'bet', holder: 'people/dana-example', weight: 0.8,
     }, { ...LOCAL });
     expect(parsed(res).row_num).toBe(2);
   });
@@ -166,7 +166,7 @@ describe('takes_update + holder row fence', () => {
   });
 
   test('[CEO-F4] fenced row and missing row share the not_found shape (no existence leak)', async () => {
-    // Row 2 is holder people/garry-example — outside the world allow-list.
+    // Row 2 is holder people/dana-example — outside the world allow-list.
     const fenced = await dispatchToolCall(engine, 'takes_update', {
       slug: 'people/alice-example', row_num: 2, weight: 0.1,
     }, { ...STDIO_WORLD });
@@ -424,7 +424,7 @@ describe('takes-write adversarial regressions (F1 cross-holder / P1-2 containmen
         FENCE_HEADER,
         FENCE_SEP,
         '| 1 | Ships consensus fact | fact | world | 0.8 | 2026-01 | public |',
-        '| 2 | Private cross-holder finding | finding | people/garry-example | 0.6 | 2026-02 | owner note |',
+        '| 2 | Private cross-holder finding | finding | people/dana-example | 0.6 | 2026-02 | owner note |',
         TAKES_FENCE_END,
         '',
       ].join('\n'),
@@ -451,7 +451,7 @@ describe('takes-write adversarial regressions (F1 cross-holder / P1-2 containmen
     const onDisk = readFileSync(join(repo, `${F1_SLUG}.md`), 'utf-8');
     expect(onDisk).toContain('Private cross-holder finding');
     expect(onDisk).toContain('| finding |'); // the skipped row's kind cell intact
-    expect(onDisk).toContain('people/garry-example');
+    expect(onDisk).toContain('people/dana-example');
     // And the valid row was NOT mutated (weight untouched).
     expect(onDisk).toContain('| 1 | Ships consensus fact | fact | world | 0.8 |');
   });
