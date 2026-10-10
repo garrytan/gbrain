@@ -203,9 +203,10 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     '  under your own account), verify the privacy bit via the API, push.',
   hooks:
     'gbrain bootstrap hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
-    '                       [--seat <label> | --no-seat] [--surface verbs|starter|full]\n' +
+    '                       [--seat <label> | --no-seat] [--surface verbs|starter|full] [--adopt [--name <server>]]\n' +
     '  Register MCP (--surface full unless given; a replaced entry keeps its surface) (+ per-turn hooks on Claude Code, ON by default; --no-hooks opts out).\n' +
-    '  --seat credits captured sessions to this agent seat (kept on re-install; --no-seat clears it; --seat off records none).',
+    '  --seat credits captured sessions to this agent seat (kept on re-install; --no-seat clears it; --seat off records none).\n' +
+    '  --adopt (Codex): record the project .codex/config.toml server you manage yourself as the wire evidence after a passing verify; writes no config.',
   verify:
     'gbrain bootstrap verify [--json]\n' +
     '  The whole install contract (round-trip, graph floor, magic moment, scans, hooks smoke). Exit 0 or not done.',
@@ -1100,6 +1101,12 @@ async function runHooks(
     return 1;
   }
   const sourceId = state.manifest.source_id;
+  if (rest.includes('--adopt')) {
+    const { adoptConnection } = await import('../core/bootstrap/adopt-connection.ts');
+    const adopted = adoptConnection(ws, home, harness, flagValue(rest, '--name') ?? undefined);
+    for (const line of adopted.lines) (adopted.code === 0 ? console.log : console.error)(line);
+    return adopted.code;
+  }
 
   // WP8: the interview's declared audience becomes the machine-local
   // brain.audience declaration (file mirror; the classifier and the harness
