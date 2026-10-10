@@ -1856,6 +1856,59 @@ files and counts the page in `fix_pending`; the cycle's lint phase reports
 `warn`, not `fail`. Make the file writable by the user running gbrain, or pass
 its directory or file name to `gbrain lint --exclude`, then run lint again.
 
+## Setup refusals
+
+`gbrain setup <harness>` resolves the brain, source, transport, launcher and
+registration owner before it writes anything, and refuses with one of these
+codes when that target is not safe to wire. A refusal writes nothing. Guide:
+[connect an agent with gbrain setup](setup.md).
+
+### Setup harness unsupported
+
+`setup_harness_unsupported`: setup wires Claude Code only in this release. The
+message names the guide for the harness you asked for (Codex:
+[docs/mcp/CODEX.md](../mcp/CODEX.md), OpenClaw:
+[docs/mcp/OPENCLAW.md](../mcp/OPENCLAW.md), Hermes:
+[docs/mcp/HERMES.md](../mcp/HERMES.md)); follow its manual steps.
+`gbrain setup --help` lists the supported harnesses.
+
+### Setup owner conflict
+
+`setup_owner_conflict`: something setup does not own holds the target. The
+`reason` says which:
+
+- `live_serve`: a running `gbrain serve` holds this PGLite brain's
+  single-writer lock and is not the server this setup registered. A stdio
+  registration would start a second server that fails on the lock. Stop that
+  server (quit the agent session that started it), or keep it and connect
+  through it: a shared `gbrain serve --http` is wired with
+  `gbrain bootstrap harness --harness claude-code`.
+- `unowned_entry`: the harness configuration already has an entry under the
+  same MCP server name, and its hash is not one this setup recorded (you or
+  another tool wrote it, or you edited it). Setup never overwrites it. Pick
+  another name with `--name`, or remove that entry yourself and run setup
+  again.
+- `other_install`: the connection receipt for this name belongs to a gbrain
+  install with a different `GBRAIN_HOME`. Run setup with `--name <other>` so
+  each install owns its own entries.
+- `harness_lane`: `gbrain bootstrap harness` (or a workspace bootstrap
+  install) already wires gbrain hooks or MCP in this configuration. Keep that
+  wiring, or remove it with `gbrain bootstrap harness --remove` first.
+
+`gbrain setup claude-code --dry-run --json` shows the resolved target and the
+blocking owner without writing anything.
+
+### Setup hosted connection
+
+`setup_hosted_connection`: this machine already reaches a hosted brain (a
+thin-client config from `gbrain init --mcp-only`, a remote `gbrain` entry in
+the harness configuration, or a `gbrain connect --install` receipt), and no
+`gbrain setup` receipt owns it. Setup never falls back to a new local brain,
+because sessions would then read an empty brain while useful memory stays on
+the hosted one. Manage that connection with `gbrain connect <mcp-url>
+--harness claude-code --install`; `gbrain doctor --only harness_wiring` shows
+which brain the registration reaches.
+
 ## Related
 
 - [Write refusal reasons](write-refusals.md) — what a refused write means and the recovery command

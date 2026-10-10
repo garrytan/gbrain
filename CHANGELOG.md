@@ -10,6 +10,25 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.156.0] - 2026-10-10
+
+**`gbrain setup claude-code` gives Claude Code memory in one command.** It finds or creates your brain, wires the MCP server and the read-context hooks, and checks that they answer. A second run changes nothing, and `--remove` takes out only what setup wrote.
+
+### What you get
+
+- **One command after install.** `bun install -g github:garrytan/gbrain`, then `gbrain setup claude-code`. With no brain configured it creates a keyless local one (`gbrain init --pglite --no-embedding`). It then writes the stdio MCP entry to `~/.claude.json` and the `SessionStart` and `UserPromptSubmit` hooks to `~/.claude/settings.json`, and runs the same stdio smoke as `gbrain doctor --only harness_wiring`.
+- **Target first.** Before any write, setup prints the brain, source, launcher, MCP surface and registration owner it chose. `--dry-run` stops there; `--json` prints one document.
+- **Three separate decisions.** Wiring scope (`--scope user|project`, `--no-hooks`), automatic capture (`--capture` adds the `Stop` and `SessionEnd` hooks) and provider use (`--providers`). Capture and providers are off unless you accept them. An existing `memory.auto_writeback: off` or `GBRAIN_HOOKS=0` wins over a flag.
+- **Owned by hash.** A connection receipt beside `~/.claude.json` records the exact hash of each entry setup wrote. An entry you edited afterwards is kept and reported, never overwritten or removed. An interrupted run resumes without duplicating anything. Two installs on one machine each remove only their own entries.
+- **Refuses instead of guessing.** A hosted brain is never shadowed by a new local one (`setup_hosted_connection`). A live PGLite server, an MCP entry setup did not write, another install's receipt or an existing `bootstrap harness` wiring refuses with `setup_owner_conflict` and the exact next step. `codex`, `openclaw` and `hermes` print their per-harness guide (`setup_harness_unsupported`). `gbrain errors <code>` explains each.
+- **Honest states.** Setup reports `configured`, `connection-verified` and `native-pending` separately; it never claims that memory reaches a fresh session on its own until that is observed.
+
+### For contributors
+
+- `writeClaudeHooksAt` and `removeClaudeHooksAt` accept an opt-in `ownedEntryHashes` set (`hookEntryHash`: sha256 over type, command and timeout). With it, a marker match alone never replaces or removes an entry, and edited entries come back in `preserved`. Existing callers are unchanged.
+- `src/core/setup/capabilities.ts` is the versioned harness × transport capability table that setup reads.
+- Guide: `docs/guides/setup.md`. Refusals: `docs/guides/repair.md#setup-refusals`.
+
 ## [0.60.155.0] - 2026-10-10
 
 **The Postgres E2E test for filtered HNSW recall under iterative scan no longer fails at random. It averages four index builds instead of trusting one.** Product code is unchanged.
