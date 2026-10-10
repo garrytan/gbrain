@@ -17,14 +17,13 @@ import type { FenceIssueWire } from './fence-repair/tier1.ts';
 import type { FenceFix } from './fence-repair/types.ts';
 import { classifyStoredType } from './schema-pack/type-usage.ts';
 import { prepareFenceAwareMarkdownChunks } from './markdown-chunks.ts';
-import { prepareCodeChunks, installCodeChunkEdges } from './code-chunks.ts';
+import { prepareCodeChunks, installCodeChunkEdges, mapCodeEdges } from './code-chunks.ts';
 import { detectCodeLanguage, CHUNKER_VERSION, GRAMMAR_REVISIONS, type SupportedCodeLanguage } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { installPageEmbeddings, installPageProjection, preparePageProjection, projectionBelowSafeFence, queuePageProjection, readProjectionSnapshot, resealSafeChunks,
   sealPageTextProjection, stampEmbeddingInputs, type ProjectionSnapshot } from './page-state/projections.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { hasProtectedBody, safeChunksFilter } from './search/safe-chunks.ts';
-import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { planEmbeddingReuse } from './embed-reuse.ts';
 import { reuseStoredChunkVectors } from './import-chunk-reuse.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
@@ -1411,32 +1410,7 @@ export async function importCodeFile(
         };
       });
 
-      const edgeInputs: import('./types.ts').CodeEdgeInput[] = [];
-      for (const e of extractedEdges) {
-        const idx = findChunkForOffset(e.callSiteByteOffset, storageContent, rangeList);
-        if (idx == null) continue;
-        const from = rangeList[idx]!;
-        if (!from.id || !from.symbol_name_qualified) continue;
-        edgeInputs.push({
-          from_chunk_id: from.id,
-          to_chunk_id: null,
-          from_symbol_qualified: from.symbol_name_qualified,
-          to_symbol_qualified: e.toSymbol,
-          edge_type: e.edgeType, ...(e.memberCall ? { edge_metadata: { member_call: true } } : {}),
-          // Stamp the source: getCallersOf/getCalleesOf add
-          // `AND source_id = <scoped>` whenever a worktree pin / --source is
-          // in play, and a NULL here never matches that filter — so every
-          // scoped call-graph query silently returned 0 rows on
-          // multi-source brains even though the edges existed. The fallback
-          // is 'default', NOT null: an unscoped import lands its pages under
-          // the schema default (pages.source_id DEFAULT 'default'), so a
-          // NULL-stamped edge would be invisible to the matching scoped
-          // query getCallersOf(sym, { sourceId: 'default' }) — the same bug
-          // through the other door.
-          source_id: edgeSourceId,
-        });
-      }
-
+      const edgeInputs = mapCodeEdges(extractedEdges, storageContent, rangeList, edgeSourceId);
       if (edgeInputs.length > 0) {
         await engine.addCodeEdges(edgeInputs);
       }
