@@ -3445,7 +3445,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "since": {
         "type": "string",
-        "description": "Start of temporal window (YYYY-MM-DD or YYYY-MM)"
+        "description": "Start of temporal window (YYYY-MM-DD or YYYY-MM). Omit both bounds and a question naming one explicit date (2026-09-15, 2026-09, September 2026) is bounded to it; the result says window_source."
       },
       "until": {
         "type": "string",
