@@ -10,6 +10,29 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.151.0] - 2026-10-10
+
+**A facts-extraction effect on a page its writer cannot see now settles as skipped instead of retrying forever (#6322).**
+
+A page written as private by a principal that cannot see private pages (for example a local stdio writer) queued a `facts-backstop` effect, and every attempt failed with `page_not_found`, which the effect did not treat as a skip. The outbox recorded a failure and rescheduled it indefinitely, and a newer revision of the page did not settle it because authorization runs before the revision check. `dispatchFactsBackstopEffect` and `readFactsBackstopJobPage` now settle that case as `skipped` with reason `page_not_found`, the way `permission_denied` and `source_changed` already are and the way the links effect already treats it. Contributed by @harjothkhara.
+
+**Say to your agent:** *"Check whether any facts-extraction writes are stuck retrying on my brain."*
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `gbrain sources writer status <source> --json` | A `facts-backstop` effect on a page its writer cannot see settles and leaves `blocking_effects`, instead of staying `queued` with a climbing `attempts` count. |
+| `gbrain write-request --brain <id> -- <request-id>` (MCP `get_write_request`) | The write's `facts-backstop` effect reports `state: skipped`, `reason: page_not_found`. |
+
+## To take advantage of v0.60.151.0
+
+Nothing to migrate. An effect already stuck retrying on `page_not_found` settles as skipped on its next attempt after the upgrade. Check it with:
+
+```bash
+gbrain sources writer status <source> --json   # the facts-backstop effect leaves blocking_effects
+```
+
 ## [0.60.149.0] - 2026-10-10
 
 **A keyword search from an MCP or other remote caller that hits a common term now takes about 0.2 s of database time on a 50k-page Postgres brain instead of about 1 s. Full `gbrain doctor` is 1.4–1.6 s faster at 50k on both engines. Import issues about 6% fewer statements per page. Results, doctor output and imported content are unchanged.**

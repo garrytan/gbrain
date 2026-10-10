@@ -102,6 +102,30 @@ test('a superseded page cannot enqueue extraction from an obsolete receipt', () 
   expect((await publicEffectsForRequest(engine, row.id)).find(effect => effect.kind === 'facts-backstop')).toMatchObject({ state: 'skipped', reason: 'superseded' });
 }));
 
+// #6322: a stdio writer's private page is hidden from that writer, so authorizing the stored request raises page_not_found.
+const privateContent = content.replace('type: note', 'type: note\nvisibility: private');
+async function publishPrivateAsStdioWriter() {
+  await registerLocalWriter(engine, 'stdio');
+  const input = await prepare({ remote: true }, { content: privateContent });
+  return publishMutation(engine, input.row, input.prepared);
+}
+
+test('a facts-backstop effect on a page its writer cannot see settles as skipped instead of retrying forever (#6322)', () => fixture(async () => {
+  const row = await publishPrivateAsStdioWriter(); const effect = await claimFacts(row);
+  await dispatchFactsBackstopEffect(engine, effect, localHostId());
+  expect(await jobs()).toHaveLength(0);
+  expect((await publicEffectsForRequest(engine, row.id)).find(effect => effect.kind === 'facts-backstop')).toMatchObject({ state: 'skipped', reason: 'page_not_found' });
+}));
+
+test('a durable extraction job on a page its writer can no longer see is skipped, not failed and retried (#6322)', () => fixture(async () => {
+  await engine.setConfig('search.remote_private_pages', 'visible');
+  const row = await publishPrivateAsStdioWriter(); await dispatchFactsBackstopEffect(engine, await claimFacts(row), localHostId());
+  const data = (await jobs())[0].data;
+  expect('page' in await readFactsBackstopJobPage(engine, data)).toBe(true);
+  await engine.setConfig('search.remote_private_pages', 'hidden');
+  expect(await readFactsBackstopJobPage(engine, data)).toEqual({ skipped: 'page_not_found' });
+}));
+
 test('durable job execution rechecks revocation, grant narrowing, page revision and activation', () => fixture(async () => {
   const row = await publish(); await dispatchFactsBackstopEffect(engine, await claimFacts(row), localHostId());
   const data = (await jobs())[0].data;
