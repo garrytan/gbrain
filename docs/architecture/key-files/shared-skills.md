@@ -14,3 +14,5 @@
 - `src/core/shared-skills/retention.ts` preserves active heads, tombstones, recent history, delivery/pin leases and pending publication references. Publication quota checks use exact scalar source/brain counts instead of operator diagnostics; pending references are materialized once and lease lookups use the complete revision identity index. Pruning and capacity checks stay inside the guarded publication transaction.
 
 The operating guide is `docs/guides/shared-brain-skills.md`. Tests include the shared-skills catalog, membership, adapter/native-router, transport, setup/export and writer-boundary suites plus actual bundle SIGKILL and retained-old-executable tests.
+
+The Hermes installer places the canonical skillpack into one explicit profile (see [agent bootstrap](agent-bootstrap.md)); shared enrollment uses `.gbrain-hermes` and its existing native router. Config writes and skill discovery are not runtime activation proof.

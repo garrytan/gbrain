@@ -1,0 +1,18 @@
+# Submission template only — not a Hermes catalog entry.
+# Replace the placeholder only after this subdirectory is in a published GBrain commit.
+# Hermes maintainer review and merge are still required before calling it listed.
+name: gbrain
+repo: https://github.com/garrytan/gbrain
+sha: <published-40-character-commit-sha>
+subdir: integrations/hermes
+version: "1.0.0"
+description: Shared memory over HTTP MCP; transcript capture is opt-in and server-gated.
+maintainer: garrytan
+tier: community
+category: memory
+capabilities:
+  provides_tools: []
+  provides_hooks: []
+  provides_middleware: []
+  requires_env:
+    - GBRAIN_MCP_TOKEN

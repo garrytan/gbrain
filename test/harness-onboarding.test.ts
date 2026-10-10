@@ -18,13 +18,17 @@ describe('harness identity and private handoff', () => {
     expect(readFileSync(new URL('../docs/guides/harness-adapters.md', import.meta.url), 'utf8')).toBe(renderHarnessReference());
     for (const adapter of HARNESS_ADAPTERS) expect(() => statSync(new URL(`../${adapter.guide.split('#')[0]}`, import.meta.url))).not.toThrow();
   });
-  test('the documented Hermes stdio transport is a manual adapter with no runtime-tested claim (#5292)', async () => {
+  test('Hermes installs its HTTP provider in an explicit profile without claiming native use', async () => {
     const hermes = harnessAdapter('hermes');
-    expect(hermes).toMatchObject({ id: 'hermes', modes: ['stdio'], connection: 'manual', guide: 'docs/mcp/HERMES.md', nativeInstructions: 'manual' });
+    expect(hermes).toMatchObject({ id: 'hermes', modes: ['stdio', 'http'], connection: 'hermes-plugin', guide: 'docs/mcp/HERMES.md', nativeInstructions: 'existing' });
     expect(hermes.evidence.runtimeTestedAt).toBeNull();
-    expect(publicHarnessMetadata().find(a => a.id === 'hermes')?.modes).toEqual(['stdio']);
-    const installed = await installHarnessConnection(creds(), { harness: 'hermes', configPath: join(temp(), 'unused.json') });
-    expect(installed).toMatchObject({ status: 'pending', reason: 'manual_configuration_required', documentation: 'docs/mcp/HERMES.md' });
+    expect(publicHarnessMetadata().find(a => a.id === 'hermes')?.modes).toEqual(['stdio', 'http']);
+    await expect(installHarnessConnection(creds(), { harness: 'hermes' })).rejects.toThrow('--root');
+    const root = temp();
+    const installed = await installHarnessConnection(creds(), { harness: 'hermes', root });
+    expect(installed).toMatchObject({ status: 'installed', native_harness_verified: false });
+    expect(readFileSync(join(root, 'config.yaml'), 'utf8')).toContain('provider: gbrain');
+    expect(readFileSync(join(root, 'plugins/gbrain/plugin.yaml'), 'utf8')).toContain('gbrain');
     expect(readFileSync(new URL('../docs/guides/ambient-writeback.md', import.meta.url), 'utf8')).toContain('| Hermes |');
   });
   test('old grok alias remains Build and personal agents have no asserted native MCP integration', () => {

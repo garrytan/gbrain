@@ -6,7 +6,7 @@ export interface HarnessAdapter {
   label: string;
   aliases: readonly string[];
   modes: readonly HarnessMode[];
-  connection: 'codex-toml' | 'claude-json' | 'opencode-json' | 'thin-cli' | 'manual';
+  connection: 'codex-toml' | 'claude-json' | 'opencode-json' | 'thin-cli' | 'hermes-plugin' | 'manual';
   renewable: boolean;
   /** Compatibility: legacy agent register supports only these adapters. */
   legacyRegister?: boolean;
@@ -46,8 +46,8 @@ export const HARNESS_ADAPTERS: readonly HarnessAdapter[] = [
   { id: 'muse-code', label: 'Muse Code', aliases: [], modes: ['stdio', 'http'], connection: 'manual', renewable: true,
     guide: 'docs/guides/muse.md#muse-code-is-a-different-product', reload: 'Reload Muse Code’s MCP connection.', nativeInstructions: 'manual',
     evidence: dated(['https://dev.meta.ai/docs/muse-code/extending']) },
-  { id: 'hermes', label: 'Hermes', aliases: [], modes: ['stdio'], connection: 'manual', renewable: true,
-    guide: 'docs/mcp/HERMES.md', reload: 'Run `hermes mcp test gbrain` and confirm it lists the gbrain tools.', nativeInstructions: 'manual',
+  { id: 'hermes', label: 'Hermes', aliases: [], modes: ['stdio', 'http'], connection: 'hermes-plugin', renewable: true,
+    guide: 'docs/mcp/HERMES.md', reload: 'Start a new Hermes session in the selected profile; verify memory and `hermes mcp test gbrain`.', nativeInstructions: 'existing',
     evidence: dated([`${repo}docs/mcp/HERMES.md`]) },
   ...(['cursor', 'perplexity', 'chatgpt', 'generic'] as const).map(id => ({
     id, label: id === 'generic' ? 'your agent' : id === 'perplexity' ? 'Perplexity Computer' : id, aliases: [], modes: ['http'] as HarnessMode[],

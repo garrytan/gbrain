@@ -626,7 +626,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "type": {
         "type": "string",
         "required": false,
-        "description": "Page type (default note)."
+        "description": "Schema-pack page type (default note)."
+      },
+      "ambient": {
+        "type": "boolean",
+        "description": "Automatic transcript capture; true requires this brain's memory.auto_writeback opt-in."
       }
     },
     "scope": "write",

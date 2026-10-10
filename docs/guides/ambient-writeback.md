@@ -329,7 +329,7 @@ and reads `memory_writeback`).
 |---|---|---|
 | Claude Code | MCP instructions + managed user CLAUDE.md block | Stop-hook lane (above) |
 | Codex | MCP instructions + managed `$CODEX_HOME/AGENTS.md` block | **No per-turn hook exists** (SessionEnd only, 3s hard-kill). The existing SessionEnd capture → corpus → maintenance-sweep extraction lane is the delayed backstop — whole-session, next-sweep latency. It runs while `memory.auto_writeback` is unset and stops on an explicit `off` ([Capture lanes and the off switch](#capture-lanes-and-the-off-switch)); `facts.extraction_enabled` stops it too. |
-| Hermes | MCP instructions when connected | None wired. |
+| Hermes | Native provider prefetch plus full MCP instructions | Opt-in primary human turn capture through `capture(ambient: true)`; server admission rechecks consent. See [Hermes setup](../mcp/HERMES.md). |
 | opencode / OpenClaw / others | MCP instructions when connected | None wired — follow-ups filed. |
 
 The workspace-bootstrap "same-turn write-back" contract

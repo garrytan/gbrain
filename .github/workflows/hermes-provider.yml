@@ -1,0 +1,82 @@
+name: Hermes provider
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'integrations/hermes/**'
+      - 'test/hermes-python/**'
+      - 'test/hermes-managed-writer.test.ts'
+      - 'test/helpers/**'
+      - 'test/fixtures/transcripts/**'
+      - 'bunfig.toml'
+      - 'scripts/generate-hermes-assets.ts'
+      - 'src/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/hermes-provider.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'integrations/hermes/**'
+      - 'test/hermes-python/**'
+      - 'test/hermes-managed-writer.test.ts'
+      - 'test/helpers/**'
+      - 'test/fixtures/transcripts/**'
+      - 'bunfig.toml'
+      - 'scripts/generate-hermes-assets.ts'
+      - 'src/**'
+      - 'package.json'
+      - 'bun.lock'
+      - '.github/workflows/hermes-provider.yml'
+  merge_group:
+  workflow_dispatch:
+
+# Static run commands and a pinned upstream checkout; no event text is executed.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-provider:
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - name: Pinned real Hermes API
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 46d7718a52ff33accb15dc0501736fbdb6833cab
+          path: _ci/hermes-agent
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.12'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.2
+      - name: Install locked GBrain dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install minimal pinned native Hermes runtime dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          'ruamel.yaml==0.18.16' 'mcp==2.0.0' 'httpx2==2.7.0'
+          'starlette==1.3.1' 'python-dotenv==1.2.2'
+      - name: Native directory discovery and real loopback JSON/SSE contracts
+        env:
+          HERMES_API_CHECKOUT: ${{ github.workspace }}/_ci/hermes-agent
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python test/hermes-python/validate_native.py
+      - name: Managed-writer Hermes transcript reconciliation
+        run: bun test --timeout=60000 test/hermes-managed-writer.test.ts
+      - name: Native Hermes MemoryManager acceptance
+        env:
+          HERMES_API_CHECKOUT: ${{ github.workspace }}/_ci/hermes-agent
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python test/hermes-python/native_manager_acceptance.py
