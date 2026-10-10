@@ -325,6 +325,7 @@ describe('resolveModel — v0.31.12 tier system', () => {
     expect(isOpenRouterSubagentFamily('openrouter:anthropic/claude-haiku-4.5')).toBe(true);
     expect(isOpenRouterSubagentFamily('openrouter:deepseek/deepseek-v4-flash')).toBe(true);
     expect(isOpenRouterSubagentFamily('openrouter:DeepSeek/deepseek-chat')).toBe(true);
+    expect(isOpenRouterSubagentFamily('openrouter:x-ai/grok-4.6')).toBe(true);
     expect(isOpenRouterSubagentFamily('openrouter:openai/gpt-5.2')).toBe(false);
     expect(isOpenRouterSubagentFamily('openrouter:google/gemini-3-flash-preview')).toBe(false);
     expect(isOpenRouterSubagentFamily('deepseek:deepseek-v4-flash')).toBe(false);
