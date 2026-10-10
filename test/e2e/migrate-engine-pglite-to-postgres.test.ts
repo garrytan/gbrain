@@ -378,6 +378,13 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
     expect(fresh.id).toBeGreaterThan(factMaxId);
   });
 
+  test('pages the source had not sealed arrive queued with their verbatim chunks, and do not block the flip (#6286)', async () => {
+    const target = getEngine();
+    const jobs = await target.executeRaw<{ reason: string; n: number | string }>(
+      'SELECT reason, count(*)::int AS n FROM page_projection_jobs GROUP BY reason ORDER BY reason');
+    expect(jobs.map(j => [j.reason, Number(j.n)])).toEqual([['engine_migration_source_unsealed', seeded.pages]]);
+  });
+
   test('DB-plane config rows migrated; engine-local keys did not', async () => {
     const target = getEngine();
     const get = async (key: string): Promise<string | null> => {
