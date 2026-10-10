@@ -1722,16 +1722,19 @@ export function formatResult(
         `Orphan pages: ${h.orphan_pages}`,
       ];
       // gbrain#4147: null = below the small-N floor — say so instead of
-      // rendering a misleading hard 0%/100%.
+      // rendering a misleading hard 0%/100%. #4772: or the pack did not load.
+      const entityNa = h.entity_types_status === 'pack_unavailable'
+        ? 'n/a (entity types unknown: the active schema pack did not load)'
+        : `n/a (${h.entity_page_count} entity page(s) — too few to grade)`;
       if (h.link_coverage != null) {
         lines.push(`Link coverage (entities): ${(h.link_coverage * 100).toFixed(1)}%`);
       } else if (h.entity_page_count !== undefined) {
-        lines.push(`Link coverage (entities): n/a (${h.entity_page_count} entity page(s) — too few to grade)`);
+        lines.push(`Link coverage (entities): ${entityNa}`);
       }
       if (h.timeline_coverage != null) {
         lines.push(`Timeline coverage (entity pages): ${(h.timeline_coverage * 100).toFixed(1)}%`);
       } else if (h.entity_page_count !== undefined) {
-        lines.push(`Timeline coverage (entity pages): n/a (${h.entity_page_count} entity page(s) — too few to grade)`);
+        lines.push(`Timeline coverage (entity pages): ${entityNa}`);
       }
       if (h.timeline_coverage_score !== undefined) {
         lines.push(`Timeline density (entity and event pages): ${h.timeline_coverage_score}/15 (brain-score component)`);
