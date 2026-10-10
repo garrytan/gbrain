@@ -74,6 +74,11 @@ async function sessionEnd(sid: string, harnessHome: string, transcript: string):
 }
 
 const lastHeartbeat = async () => (await readHeartbeatTail(1))[0];
+// #6316: every OpenClaw compaction also appends its own `openclaw-compact` checkpoint entry after the seat entry.
+const openclawHeartbeats = async () => {
+  const tail = await readHeartbeatTail(10);
+  return { lane: tail.filter((e) => e.event !== 'openclaw-compact').at(-1), checkpoint: tail.at(-1) };
+};
 
 describe('seat sidecar on session capture (#4618)', () => {
   test('1. GBRAIN_SEAT: a 0600 env-sourced sidecar is written before the corpus file is renamed into place', async () => {
@@ -235,16 +240,18 @@ describe('seat sidecar on session capture (#4618)', () => {
     mkdirSync(sidecar('oc-fail'), { recursive: true });
     await openclawCompact('oc-fail');
     expect(readdirSync(corpus()).filter((f) => f.startsWith('oc-fail.seg-'))).toHaveLength(1);
-    const hb = await lastHeartbeat();
+    const { lane: hb, checkpoint } = await openclawHeartbeats();
     expect(hb).toMatchObject({ event: 'compact', outcome: 'degraded', reason: 'seat_write_failed' });
+    expect(checkpoint).toMatchObject({ event: 'openclaw-compact', segment: 'banked' });
     expect(hb?.hint).toContain('make the corpus dir');
   });
 
   test('the OpenClaw lane reports an invalid GBRAIN_SEAT like the hook lane does', async () => {
     process.env.GBRAIN_SEAT = 'Not A Seat!';
     await openclawCompact('oc-bad');
-    const hb = await lastHeartbeat();
+    const { lane: hb, checkpoint } = await openclawHeartbeats();
     expect(hb).toMatchObject({ event: 'compact', outcome: 'degraded', reason: 'seat_label_invalid' });
+    expect(checkpoint).toMatchObject({ event: 'openclaw-compact', segment: 'banked' });
     expect(hb?.hint).toContain('gbrain bootstrap hooks --seat');
   });
 });

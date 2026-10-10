@@ -335,7 +335,7 @@ export async function coverageComplete(
 export function readOpenclawBoundaryTail(
   path: string,
   opts: { maxBytes?: number } = {},
-): { turns: WindowTurn[]; boundaryTurnIndexes: number[]; toolCalls: ToolCallRecord[]; toolCallTurnIndexes: number[] } | null {
+): OpenclawBoundaryTail | null {
   const maxBytes = Math.max(1, Math.floor(opts.maxBytes ?? 2 * 1024 * 1024));
   let raw: string;
   try {
@@ -355,6 +355,47 @@ export function readOpenclawBoundaryTail(
   } catch {
     return null;
   }
+  const entries: unknown[] = [];
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      entries.push(JSON.parse(t));
+    } catch {
+      continue; // includes a tail read's partial first line
+    }
+  }
+  return mapOpenclawEntries(entries);
+}
+
+export type OpenclawBoundaryTail = { turns: WindowTurn[]; boundaryTurnIndexes: number[]; toolCalls: ToolCallRecord[]; toolCallTurnIndexes: number[] };
+
+/**
+ * #6316: OpenClaw 2026.9.x keeps transcripts in its SQLite store and passes
+ * compact() a `sessionTarget` instead of a `sessionFile`. The host's
+ * `session-transcript-runtime` returns the same event objects the JSONL file
+ * holds, so this keeps the newest events up to `maxBytes` of serialized JSON
+ * (the file reader's tail bound) and maps them with the same mapper.
+ */
+export function readOpenclawEventsTail(events: unknown[], opts: { maxBytes?: number } = {}): OpenclawBoundaryTail | null {
+  const maxBytes = Math.max(1, Math.floor(opts.maxBytes ?? 2 * 1024 * 1024));
+  let bytes = 0;
+  let start = events.length;
+  while (start > 0) {
+    let size: number;
+    try {
+      size = Buffer.byteLength(JSON.stringify(events[start - 1]) ?? '', 'utf8') + 1;
+    } catch {
+      break;
+    }
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    start--;
+  }
+  return mapOpenclawEntries(events.slice(start));
+}
+
+function mapOpenclawEntries(entries: unknown[]): OpenclawBoundaryTail | null {
   const turns: WindowTurn[] = [];
   const boundaryTurnIndexes: number[] = [];
   // Memorable integration: tool calls stamped with the turn slot they sit at
@@ -365,15 +406,7 @@ export function readOpenclawBoundaryTail(
   const toolCalls: ToolCallRecord[] = [];
   const toolCallTurnIndexes: number[] = [];
   let mappedAnything = false;
-  for (const line of raw.split('\n')) {
-    const t = line.trim();
-    if (!t) continue;
-    let entry: unknown;
-    try {
-      entry = JSON.parse(t);
-    } catch {
-      continue; // includes a tail read's partial first line
-    }
+  for (const entry of entries) {
     const mapped = mapOpenclawLine(entry);
     if (mapped.kind === 'message' || mapped.kind === 'skip') {
       for (const c of mapped.toolCalls ?? []) {
