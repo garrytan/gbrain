@@ -21,7 +21,7 @@ import { parseTakesFence } from '../takes-fence.ts';
 import type { MergeOrigins } from './merge.ts';
 import { planRowRules, type CellText, type RowPlan } from './rules.ts';
 import { extractRawRows, rowNumOf, type RawFence, type RawRow, type RawSection } from './raw-rows.ts';
-import { ALLOWED, BASE_WIDTH, canonicalColumn, CANONICAL_HEADER, collapse, COLUMN_DEFAULTS, COLUMNS, supersededRef } from './schema.ts';
+import { ALLOWED, BASE_WIDTH, canonicalColumn, CANONICAL_HEADER, collapse, COLUMN_DEFAULTS, COLUMNS, supersededRef, WIDE_WIDTH } from './schema.ts';
 import { headerlessMisfit } from './stray-cells.ts';
 import { applyEdits, fenceBlocked, type Edit } from './structure.ts';
 import type { FenceCtx, FenceFix, FenceIssue, FenceKind, FenceReason, FenceSection } from './types.ts';
@@ -149,7 +149,9 @@ function takesShaped(fence: RawFence): boolean {
 function planRewrite(fence: RawFence): Rewrite {
   const { kind } = fence;
   const wide = fence.columns.some(c => c !== null && COLUMNS[kind].indexOf(c) >= BASE_WIDTH[kind]);
-  const target = COLUMNS[kind].slice(0, wide ? COLUMNS[kind].length : BASE_WIDTH[kind]);
+  // #6385: a header naming a column past the typed layout (facts `attributed_to`) keeps it.
+  const width = fence.columns.some(c => c !== null && COLUMNS[kind].indexOf(c) >= WIDE_WIDTH[kind]) ? COLUMNS[kind].length : wide ? WIDE_WIDTH[kind] : BASE_WIDTH[kind];
+  const target = COLUMNS[kind].slice(0, width);
   const defaults = Object.keys(COLUMN_DEFAULTS[kind]).filter(c => !fence.columns.includes(c));
   return { target, defaults };
 }
@@ -288,11 +290,13 @@ function emitFence(pass: Pass, work: FenceWork): void {
 
 function emitRewrite(pass: Pass, fence: RawFence, rewrite: Rewrite): void {
   const header = fence.header!;
-  const wide = rewrite.target.length > BASE_WIDTH[fence.kind];
   const text = CANONICAL_HEADER[fence.kind];
-  pass.edits[fence.section].push({ start: header.start, end: header.end, text: wide ? text.wide : text.narrow });
+  const width = rewrite.target.length;
+  const [headerText, sepText] = width > WIDE_WIDTH[fence.kind] ? [text.attributed!, text.attributedSep!]
+    : width > BASE_WIDTH[fence.kind] ? [text.wide, text.wideSep] : [text.narrow, text.narrowSep];
+  pass.edits[fence.section].push({ start: header.start, end: header.end, text: headerText });
   const sep = fence.separators.find(s => s.line === header.line + 1);
-  if (sep) pass.edits[fence.section].push({ start: sep.start, end: sep.end, text: wide ? text.wideSep : text.narrowSep });
+  if (sep) pass.edits[fence.section].push({ start: sep.start, end: sep.end, text: sepText });
   const at = { fence: fence.kind, section: fence.section, row: null, line: header.line };
   pass.fixes.push({ ...at, column: null, class: 'header_alias' });
   for (const column of rewrite.defaults) pass.fixes.push({ ...at, column, class: 'column_default' });
