@@ -374,7 +374,7 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText }
   // `since` is a placeholder equal to the branch's VERSION until the merge-slot stamp.
   { since: '0.60.151.0', text: '`delta` and `context_pack` called without `include_private`, and the per-turn context block that harness hooks inject, now apply to their facts the same page-visibility rule they already apply to their pages. With `include_private` from the local CLI, `delta` and `context_pack` output is unchanged.' },
   // W3 confidence-gated reranking (memory proof wave 2). `since` is a placeholder equal to the branch's VERSION until the merge-slot stamp.
-  { since: '0.60.152.0', text: '`gbrain search stats --json` and the `search_stats` tool now always include a `rerank_gate` section, all zeros until you set `search.reranker.gate` to `shadow`; search results and ranking are unchanged. The search cache key now includes `search.evidence_cosine_floor` and the new gate keys (the result cache stays disabled).' },
+  { since: '0.60.153.0', text: '`gbrain search stats --json` and the `search_stats` tool now always include a `rerank_gate` section, all zeros until you set `search.reranker.gate` to `shadow`; search results and ranking are unchanged. The search cache key now includes `search.evidence_cosine_floor` and the new gate keys (the result cache stays disabled).' },
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */
