@@ -13,7 +13,7 @@ import type { PublicationHooks } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 
 export type PublicationBoundary = Parameters<NonNullable<PublicationHooks['boundary']>>[0];
-export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${EffectKind}:mid`
+export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${EffectKind}:mid` | 'effect:embedding:settle'
   | 'effect_recovery:before_clear' | 'publication_recovery:before_clear' | 'sync:mid_checkpoint' | 'sync:before_group_admission' | 'sync:mid_waiver_run' | 'consumer:prepared'
   | 'consumer:preparing' | 'lane:applied';
 /**
