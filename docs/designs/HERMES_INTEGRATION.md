@@ -67,8 +67,10 @@ by a new backend process; and same-ID rewind/compression rehydration. The suite 
 6 native-manager tests plus 26 provider/transport tests (credential rotation,
 removal, renewal, revocation with sibling controls) against isolated loopback
 GBrain/PGLite. Hermes is pinned to `46d7718a52ff33accb15dc0501736fbdb6833cab`.
-**These runs predate the rebase; rebased-tree and changed-head CI results are
-pending and must not be inferred.**
+**The native-provider and MemoryManager runs above were taken on the pre-rebase
+and rebased source; changed-head GitHub CI passed on `809fb5609` (see the
+validation record) except for the external-contributor policy gate. Re-verify on
+any later head.**
 
 **Exercised with a real model (published head, bounded, synthetic):** an explicit
 model-directed save, fresh-process recall, `replaces`-based correction, withdrawal,

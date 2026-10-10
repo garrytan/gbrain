@@ -260,7 +260,7 @@ Its limits: canonical-file write-through and embedding deduplication were not
 exercised, model-driven restart, compression/resume and credential renewal are
 unproven, and it does not prove the full MCP catalog or catalog acceptance. See the
 [validation record](../designs/HERMES_VALIDATION.md) for current rebased-tree
-status, including passed native checks and remaining guard repairs/CI, and the
+status, including passed native checks and the changed-head CI result, and the
 [native evidence ledger](../designs/HERMES_INTEGRATION.md#acceptance-status-and-evidence-ledger).
 The adapter registry's `runtimeTestedAt` stays `null` in this draft; that unchanged
 metadata is not a claim that no model-backed session was observed. Qualified
