@@ -1238,17 +1238,56 @@ export async function resolveSourceForDir(
 export async function packDeclaresPhase(
   engine: BrainEngine,
   phase: CyclePhase,
+  sourceId?: string,
 ): Promise<boolean> {
+  return (await resolvePackPhaseGate(engine, phase, sourceId)).declared;
+}
+
+export interface PackPhaseGate {
+  declared: boolean;
+  resolved_pack?: string;
+  source_tier?: string;
+  reason?: 'pack_resolution_failed';
+  /** #6393 (T4): a DB-config pack newly runs this paid phase; it waits for `cycle.<phase>.enabled true`. */
+  consent_required?: boolean;
+}
+
+// #6393: resolve through the same tiers `gbrain schema active` uses (DB
+// config and per-source DB config included). A paid phase that only the DB
+// tiers declare, and that the file-plane resolution this gate used before
+// did not, stays skipped until the operator sets `cycle.<phase>.enabled`.
+export async function resolvePackPhaseGate(
+  engine: BrainEngine,
+  phase: CyclePhase,
+  sourceId?: string,
+): Promise<PackPhaseGate> {
   try {
-    const { loadActivePack } = await import('./schema-pack/load-active.ts');
+    const { engineSchemaInput } = await import('./schema-pack/engine-resolution.ts');
+    const { loadActivePack, resolveActivePackNameOnly } = await import('./schema-pack/load-active.ts');
+    const input = await engineSchemaInput(engine, { remote: false, ...(sourceId ? { sourceId } : {}) });
+    const resolved = await loadActivePack(input);
+    const gate: PackPhaseGate = {
+      declared: (resolved.manifest.phases ?? []).includes(phase),
+      resolved_pack: resolved.manifest.name,
+      source_tier: resolveActivePackNameOnly(input).source,
+    };
+    if (!gate.declared || (gate.source_tier !== 'db-config' && gate.source_tier !== 'per-source-db')) return gate;
     const { loadConfig } = await import('./config.ts');
-    const cfg = loadConfig();
-    const resolved = await loadActivePack({ cfg, remote: false });
-    const phases = resolved.manifest.phases ?? [];
-    return phases.includes(phase);
+    const filePlane = await loadActivePack({ cfg: loadConfig(), remote: false }).catch(() => null);
+    if ((filePlane?.manifest.phases ?? []).includes(phase)) return gate;
+    if ((await engine.getConfig(`cycle.${phase}.enabled`))?.trim() === 'true') return gate;
+    return { ...gate, consent_required: true };
   } catch {
-    return false;
+    return { declared: false, reason: 'pack_resolution_failed' };
   }
+}
+
+function packGateSkipDetails(gate: PackPhaseGate): Record<string, unknown> {
+  const reason = gate.consent_required ? 'consent_required' : gate.reason ?? 'not_in_active_pack';
+  return {
+    reason, pack_gated: true,
+    ...(gate.resolved_pack ? { resolved_pack: gate.resolved_pack, source_tier: gate.source_tier } : {}),
+  };
 }
 
 async function runPhaseSync(
@@ -2408,6 +2447,7 @@ export async function runCycle(
     // or borrow_from targets.
     if (phases.includes('extract_atoms')) {
       checkAborted(cycleSignal);
+      const xaGate = engine ? await resolvePackPhaseGate(engine, 'extract_atoms', cycleSourceId) : null;
       if (!engine) {
         phaseResults.push({
           phase: 'extract_atoms',
@@ -2416,7 +2456,7 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
-      } else if (!(await packDeclaresPhase(engine, 'extract_atoms'))) {
+      } else if (xaGate && (!xaGate.declared || xaGate.consent_required)) {
         // issue #1678: the routine cycle skip stays cheap (no per-tick backlog
         // count), but the detail is greppable — `pack_gated: true` lets the
         // `extract_atoms_backlog` doctor check / log scrapers tell a
@@ -2426,8 +2466,10 @@ export async function runCycle(
           phase: 'extract_atoms',
           status: 'skipped',
           duration_ms: 0,
-          summary: 'extract_atoms: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything); run `gbrain dream --phase extract_atoms --drain` to drain a backlog',
-          details: { reason: 'not_in_active_pack', pack_gated: true },
+          summary: xaGate.consent_required
+            ? `extract_atoms: the active pack ${xaGate.resolved_pack} (from ${xaGate.source_tier}) declares this paid phase, which did not run before; run \`gbrain config set cycle.extract_atoms.enabled true\` to let the cycle run it`
+            : 'extract_atoms: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything); run `gbrain dream --phase extract_atoms --drain` to drain a backlog',
+          details: packGateSkipDetails(xaGate),
         });
       } else {
         progress.start('cycle.extract_atoms');
@@ -2544,6 +2586,7 @@ export async function runCycle(
     // declared. Real body in T6 — synthesize-concepts.ts is a stub today.
     if (phases.includes('synthesize_concepts')) {
       checkAborted(cycleSignal);
+      const scGate = engine ? await resolvePackPhaseGate(engine, 'synthesize_concepts', cycleSourceId) : null;
       if (!engine) {
         phaseResults.push({
           phase: 'synthesize_concepts',
@@ -2552,7 +2595,7 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
-      } else if (!(await packDeclaresPhase(engine, 'synthesize_concepts'))) {
+      } else if (scGate && (!scGate.declared || scGate.consent_required)) {
         // issue #1678: same greppable marker as extract_atoms. (No doctor
         // backlog check for synthesize_concepts this wave — Codex #12: that
         // phase has no real eligibility predicate yet, so a check would be a
@@ -2561,8 +2604,10 @@ export async function runCycle(
           phase: 'synthesize_concepts',
           status: 'skipped',
           duration_ms: 0,
-          summary: 'synthesize_concepts: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything)',
-          details: { reason: 'not_in_active_pack', pack_gated: true },
+          summary: scGate.consent_required
+            ? `synthesize_concepts: the active pack ${scGate.resolved_pack} (from ${scGate.source_tier}) declares this paid phase, which did not run before; run \`gbrain config set cycle.synthesize_concepts.enabled true\` to let the cycle run it`
+            : 'synthesize_concepts: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything)',
+          details: packGateSkipDetails(scGate),
         });
       } else {
         progress.start('cycle.synthesize_concepts');

@@ -373,6 +373,8 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText }
   { since: '0.60.147.0', text: 'In a brain folder with the Git durability hook, a write that arrives while the effect worker commits a backlog of Git effects now publishes after the group in flight, inside its 5 s wait, instead of returning pending after the whole backlog; Git effects still commit in order. A write waiting on a busy worktree is reported as `writer_busy` without a stale preparing phase.' },
   // `since` is a placeholder equal to the branch's VERSION until the merge-slot stamp.
   { since: '0.60.151.0', text: '`delta` and `context_pack` called without `include_private`, and the per-turn context block that harness hooks inject, now apply to their facts the same page-visibility rule they already apply to their pages. With `include_private` from the local CLI, `delta` and `context_pack` output is unchanged.' },
+  // Fix wave 13 PR3 (GBRA-57). `since` is a placeholder equal to the branch's VERSION until the merge-slot stamp.
+  { since: '0.60.152.0', text: 'The dream cycle now reads a schema pack set with `gbrain config set schema_pack` (or `schema_pack.source.<id>`) when it decides whether to run extract_atoms and synthesize_concepts, as `gbrain schema active` already did. A paid phase that only such a database-config pack declares, and that did not run before, is skipped with `consent_required` until you run `gbrain config set cycle.extract_atoms.enabled true` (or `cycle.synthesize_concepts.enabled true`); doctor `extract_atoms_backlog` names the same command.' },
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */

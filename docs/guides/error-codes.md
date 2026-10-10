@@ -582,6 +582,14 @@ More: [docs/guides/write-refusals.md#drain-connection-lost](../../docs/guides/wr
 |---|---|---|---|---|---|---|
 | The connector request no longer matches the stored connector intent. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### consent_required
+
+<a id="consent_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A paid step is waiting for the user's opt-in, so it was skipped and nothing was spent. | A dream-cycle phase that a database-config schema pack newly declares (extract_atoms, synthesize_concepts) did not run before this release; resolving the pack correctly must not start paid model calls on its own (#6393). | Ask the user; with their agreement run gbrain config set cycle.<phase>.enabled true (the phase skip names the exact command). Run: gbrain schema active --json | agent | `repeat the read that failed` | 1 | no |
+
 ### consent_timeout
 
 <a id="consent_timeout"></a>
