@@ -177,6 +177,17 @@ describe('minimum guidance (DX-14)', () => {
     });
   }
 
+  test('remember items description names entity and the optional item fields on starter and full (#6363)', () => {
+    for (const surface of ['starter', 'full'] as const) {
+      const op = filterOpsForSurface(operations, surface).find(o => o.name === 'remember')!;
+      const [def] = buildToolDefs([op]);
+      const items = (def.inputSchema.properties as Record<string, { description?: string }>).items;
+      for (const field of ['fact', 'entity', 'provenance', 'kind', 'ttl', 'visibility']) {
+        expect(items.description, `${surface}: ${field}`).toContain(field);
+      }
+    }
+  });
+
   test('every required input of a starter tool is declared in its schema', () => {
     for (const def of buildToolDefs(operations.filter(o => STARTER_OPS.has(o.name)))) {
       for (const key of def.inputSchema.required) expect(def.inputSchema.properties, `${def.name}.${key}`).toHaveProperty(key);

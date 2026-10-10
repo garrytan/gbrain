@@ -21,7 +21,7 @@ import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, isValidHolder, parseTakesFence } fr
 import {
   ALLOWED, BASE_WIDTH, BRAIN_ALIASES, CANONICAL_HEADER, COLUMN_DEFAULTS, COLUMNS, FACT_KIND_SYNONYMS, FACTS_COLUMNS,
   HEADER_ALIASES, MIN_CELLS, NAMED_COLUMNS, NOTABILITY_SYNONYMS, PRIVATE_SYNONYMS, TAKE_KIND_SYNONYMS, TAKES_COLUMNS,
-  TOLERATED_TRAILING, appendOriginalKind, confidenceFormat, holderAlias,
+  TOLERATED_TRAILING, WIDE_WIDTH, appendOriginalKind, confidenceFormat, holderAlias,
 } from '../src/core/fence-repair/schema.ts';
 import { FENCE_REASON_CODES, FENCE_REASONS, GATE_REASONS } from '../src/core/fence-repair/reasons.ts';
 import type { FenceKind, FenceTier, FixClass, GateLetter } from '../src/core/fence-repair/types.ts';
@@ -50,6 +50,7 @@ const FACTS_TEXT: Record<(typeof FACTS_COLUMNS)[number], string> = {
   claim_value: 'Value of a typed claim.',
   claim_unit: 'Unit (`USD`, `people`, ...), or empty.',
   claim_period: 'Period (`monthly`, `annual`, ...), or empty.',
+  attributed_to: 'Who asserted the claim, or empty.',
 };
 
 const TAKES_TEXT: Record<(typeof TAKES_COLUMNS)[number], string> = {
@@ -134,7 +135,8 @@ function columnTable(kind: FenceKind): string {
 function layouts(kind: FenceKind): string {
   const all = COLUMNS[kind];
   const dropped = all.slice(MIN_CELLS[kind], BASE_WIDTH[kind]);
-  const wide = all.slice(BASE_WIDTH[kind]);
+  const wide = all.slice(BASE_WIDTH[kind], WIDE_WIDTH[kind]);
+  const { attributed, attributedSep } = CANONICAL_HEADER[kind];
   return [
     `- **Narrow, ${BASE_WIDTH[kind]} cells** (what gbrain writes unless a row needs a wide column):`,
     '',
@@ -143,13 +145,22 @@ function layouts(kind: FenceKind): string {
     `  ${CANONICAL_HEADER[kind].narrowSep}`,
     '  ```',
     '',
-    `- **Wide, ${all.length} cells** (adds ${codes(wide)}):`,
+    `- **Wide, ${WIDE_WIDTH[kind]} cells** (adds ${codes(wide)}):`,
     '',
     '  ```text',
     `  ${CANONICAL_HEADER[kind].wide}`,
     `  ${CANONICAL_HEADER[kind].wideSep}`,
     '  ```',
     '',
+    ...(attributed && attributedSep ? [
+      `- **Attributed, ${all.length} cells** (adds ${codes(all.slice(WIDE_WIDTH[kind]))}; written when a row records who asserted it, and rows without it may stop at ${WIDE_WIDTH[kind]} cells):`,
+      '',
+      '  ```text',
+      `  ${attributed}`,
+      `  ${attributedSep}`,
+      '  ```',
+      '',
+    ] : []),
     `- **Shortest row, ${MIN_CELLS[kind]} cells:** the narrow row without ${codes(dropped)}. A row that is short anywhere else is \`short_row\`.`,
   ].join('\n');
 }
@@ -228,7 +239,7 @@ export function renderFenceFormatRegion(): string {
     '<a id="facts-columns"></a>',
     '## Facts columns',
     '',
-    'Facts cells are read by position.',
+    'Facts cells are read by the column the header names, in any order. A header with a column that is not one of these names, a column named twice, or no column for a row that cannot be left off reads no rows: the fence is held until it is repaired (the repair maps the [header spellings](#header-spellings) and the order). A header in canonical order may be shorter than its rows: the cells after it keep their canonical position. A row may leave off only trailing columns marked below, and a cell past the last column must be empty.',
     '',
     columnTable('facts'),
     '',

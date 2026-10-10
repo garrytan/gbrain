@@ -48,6 +48,13 @@ export interface ApprovedSetKey {
   hash: string;
   /** The read-only command that prints a fresh preview, filled with the caller's real flags. */
   previewCommand: string;
+  /**
+   * #6351: the hash a preview of the same selection prints when it finds
+   * nothing, computed from current state (source incarnations included). A
+   * preview that found nothing saves no set; its hash still approves applying
+   * nothing while that state holds.
+   */
+  emptyHash?: () => Promise<string>;
 }
 
 export interface ApprovedSet<T> {
@@ -92,6 +99,9 @@ export async function loadApprovedSet<T>(engine: BrainEngine, key: ApprovedSetKe
        FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
     [PREVIEW_APPROVAL_OP, fingerprint(key.command, key.hash), String(APPROVAL_MAX_AGE_DAYS)]);
   const saved = row?.completed_keys?.[0];
+  if (!row && key.emptyHash && await key.emptyHash() === key.hash) {
+    return { command: key.command, hash: key.hash, items: [], approved_at: new Date().toISOString() };
+  }
   if (!row || row.fresh !== true || saved?.command !== key.command || saved.hash !== key.hash || !Array.isArray(saved.items)) {
     throw previewChangedError(key.hash, key.previewCommand);
   }

@@ -19,6 +19,7 @@ import type { WriteRequest } from './model.ts';
 import type { ManagedFactIntent, FrozenExtractedFact } from './facts-maintenance.ts';
 import { assertManagedFactsEmbedding } from './facts-maintenance.ts';
 import { normalizeTargetFences } from '../fence-repair/import-step.ts';
+import { refuseUnparsedRewrite } from '../fence-repair/refusal.ts';
 import { fenceAppendPendingTier, withPendingFenceRows } from '../eligibility/fence-overlay.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
@@ -164,12 +165,14 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
       input: derivedGateInput(taint.trust, row.id), cfg: gateCfg! }) : undefined;
     if (gate && gate.action !== 'insert') { blocked.push(gate); continue; }
     const rowNum = fact.entity_slug !== null && !fallback(fact) ? nextRow++ : undefined;
-    if (rowNum !== undefined) body = upsertFactRow(body, { rowNum, claim: fact.fact, kind: fact.kind, visibility: fact.visibility,
+    // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
+    if (rowNum !== undefined) body = refuseUnparsedRewrite({ compiled_truth: body, timeline: target!.page.timeline }, row.slug, row.source_id, () => upsertFactRow(body, {
+      rowNum, claim: fact.fact, kind: fact.kind, visibility: fact.visibility,
       confidence: fact.confidence ?? 1, notability: fact.notability ?? 'medium', source: fact.source, context: fact.context ?? undefined,
       validFrom: formatFenceDate(fact.valid_from!), validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
       claimMetric: fact.claim_metric ?? undefined, claimValue: fact.claim_value ?? undefined,
       claimUnit: fact.claim_unit ?? undefined, claimPeriod: fact.claim_period ?? undefined,
-      ...(fact.attributed_to ? { attributedTo: fact.attributed_to } : {}) }).body;
+      ...(fact.attributed_to ? { attributedTo: fact.attributed_to } : {}) }).body);
     // Strike the superseded row in this page's fence, as the remember mutation does.
     if (supersedes && rowNum !== undefined && supersedes.source_markdown_slug === row.slug && supersedes.row_num != null) {
       body = replaceOrInsertFactsFence(body, renderFactsTable(parseFactsFence(body).facts.map(f => f.rowNum === Number(supersedes.row_num)

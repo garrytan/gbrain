@@ -91,6 +91,7 @@ const CORPUS_WINDOW_SKIP = {
   contended: 'corpus_in_progress',
   partial: 'corpus_windows_pending',
   changed: 'corpus_changed',
+  source_changed: 'corpus_source_changed',
 } as const;
 
 export interface SweepOpts {
@@ -600,7 +601,7 @@ async function runCorpusIngestPass(
     log: (msg: string) => void;
   },
 ): Promise<void> {
-  const { sourceId, batchLimit, overBudget, signal, report, skip, log } = ctx;
+  const { batchLimit, overBudget, signal, report, skip, log } = ctx;
 
   // Corpus dir: dream's session corpus (transcripts.ts:66 precedent);
   // default ~/.gbrain/transcripts/corpus (GBRAIN_HOME-aware via configDir).
@@ -610,23 +611,31 @@ async function runCorpusIngestPass(
     dir = join(configDir(), 'transcripts', 'corpus');
   }
 
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return; // no corpus dir = nothing to ingest (not an error)
-  }
-
-  // ONE readdir feeds both the .txt listing and the sidecar checks (the old
-  // shape ran two existsSync probes per file on top of the readdir).
-  const entrySet = new Set(entries);
-  const txtFiles = entries.filter(n => n.endsWith('.txt')).sort();
-  if (txtFiles.length === 0) return;
-
-  // #5887: finished files re-enter when changed since their `.progress`.
+  // #6268: source-stamped files live in the spool subdirectory (listed
+  // first); top-level files are the legacy, unstamped corpus.
+  const { CORPUS_SPOOL_SUBDIR, corpusSpoolDir, parseWbFileName, selfCaptureSidecarJson, corpusFileSessionId, corpusTextForExtraction } = await import('./context/corpus-segments.ts');
+  const spoolDir = corpusSpoolDir(dir);
   const windows = await import('./context/corpus-windows.ts');
-  const { candidates, alreadyIngested } = await windows.selectCorpusCandidates(dir, txtFiles, entrySet, batchLimit, overBudget);
-  skip('already_ingested', alreadyIngested);
+  type Candidate = { base: string; name: string; location: 'spool' | 'legacy'; label: string };
+  const candidates: Candidate[] = [];
+  for (const [base, location] of [[spoolDir, 'spool'], [dir, 'legacy']] as const) {
+    let entries: string[];
+    try {
+      entries = await readdir(base);
+    } catch {
+      continue; // no corpus dir = nothing to ingest (not an error)
+    }
+    // ONE readdir feeds both the .txt listing and the sidecar checks.
+    const entrySet = new Set(entries);
+    const txtFiles = entries.filter(n => n.endsWith('.txt')).sort();
+    if (txtFiles.length === 0) continue;
+    // #5887: finished files re-enter when changed since their `.progress`.
+    const picked = await windows.selectCorpusCandidates(base, txtFiles, entrySet, batchLimit - candidates.length, overBudget);
+    skip('already_ingested', picked.alreadyIngested);
+    for (const name of picked.candidates) {
+      candidates.push({ base, name, location, label: location === 'spool' ? join(CORPUS_SPOOL_SUBDIR, name) : name });
+    }
+  }
   if (candidates.length === 0) return;
 
   // #6091: every corpus file answers to the capture gate, resolved once per
@@ -639,18 +648,17 @@ async function runCorpusIngestPass(
   // keyless/kill-switch short-circuits so an operator's OFF retires banked
   // files even when the brain cannot extract — otherwise they linger eligible
   // and a later re-enable would extract text the operator already revoked.
-  const { parseWbFileName, selfCaptureSidecarJson, corpusFileSessionId, corpusTextForExtraction } = await import('./context/corpus-segments.ts');
   const { applyCaptureGate, captureLaneForFile, resolveCaptureGate } = await import('./context/capture-consent.ts');
-  const { isValidSourceId } = await import('./source-id.ts');
+  const { resolveCorpusFileSource } = await import('./context/corpus-source.ts');
   const gate = await resolveCaptureGate(engine);
   const retireCandidatesIfOff = async (): Promise<Set<string>> => {
     const retired = new Set<string>();
-    for (const name of candidates) {
+    for (const { base, name, label } of candidates) {
       const decision = gate[captureLaneForFile(name)];
       if (decision.action !== 'retire') continue;
       try {
-        if ((await applyCaptureGate(join(dir, name), decision)).action !== 'retire') continue;
-        retired.add(name);
+        if ((await applyCaptureGate(join(base, name), decision)).action !== 'retire') continue;
+        retired.add(label);
         skip('writeback_off');
       } catch { /* per-file best effort — the next sweep retries */ }
     }
@@ -690,8 +698,8 @@ async function runCorpusIngestPass(
       skip('corpus_window_cap', candidates.length - i);
       break;
     }
-    const name = candidates[i];
-    const full = join(dir, name);
+    const { base, name, location, label } = candidates[i];
+    const full = join(base, name);
 
     // Atomic claim BEFORE any spend — the losing sweep skips, never re-pays.
     const claimPath = full + CORPUS_CLAIM_SUFFIX;
@@ -746,17 +754,18 @@ async function runCorpusIngestPass(
         continue;
       }
 
-      // Source fidelity (adversarial review, this wave): wb files bank the
-      // session's GBRAIN_SOURCE in their NAME, so the sweep fallback files
-      // the turn into the SAME source the prompt-time IPC lane would have —
-      // never the pass's source. Validated before use (source-isolation
-      // invariant); a legacy/invalid segment falls back to the pass source.
-      const wbSourceId = wbMeta?.sourceId && isValidSourceId(wbMeta.sourceId)
-        ? wbMeta.sourceId
-        : sourceId;
+      // #6268 source fidelity: every corpus file's facts, links and manifest
+      // go to the source its NAME (or its session's frozen record) carries,
+      // never the pass's source. A file with no evidence of its source is
+      // held: no sidecar, a typed skip, an operator mapping releases it.
+      const fileSource = await resolveCorpusFileSource(engine, dir, name, location);
+      if (!fileSource.ok) {
+        skip(fileSource.reason);
+        continue;
+      }
       const pipelineCtx: FactsBackstopCtx = {
         engine,
-        sourceId: wbMeta ? wbSourceId : sourceId,
+        sourceId: fileSource.sourceId,
         sessionId: wbMeta ? wbMeta.sessionId : `sweep:corpus:${name}`,
         // Writeback turn files keep their lane's provenance + salient
         // notability filter so batch-extracted turns are indistinguishable
@@ -781,11 +790,12 @@ async function runCorpusIngestPass(
       } else {
         const run = await windows.runCorpusWindows({
           full, raw, fileStat, overBudget, signal,
+          source: { id: fileSource.sourceId, incarnation: fileSource.incarnation },
           maxWindows: Math.min(windows.CORPUS_WINDOWS_PER_SWEEP, windowsLeft),
           extract: text => runFactsPipeline(text, pipelineCtx),
         });
         windowsLeft -= run.windowsDone;
-        report.corpus_files.push({ file: name, windows_done: run.windowsDone, windows_remaining: run.windowsRemaining });
+        report.corpus_files.push({ file: label, windows_done: run.windowsDone, windows_remaining: run.windowsRemaining });
         if (run.status !== 'complete') {
           abortLoop = run.status === 'aborted';
           skip(CORPUS_WINDOW_SKIP[run.status], abortLoop ? candidates.length - i : 1);
@@ -821,16 +831,16 @@ async function runCorpusIngestPass(
             const verified: Array<{ slug: string; title: string }> = [];
             for (const slug of r.entity_slugs) {
               try {
-                const page = await engine.getPage(slug, { sourceId });
+                const page = await engine.getPage(slug, { sourceId: fileSource.sourceId });
                 if (page) verified.push({ slug, title: page.title || slug });
               } catch { /* a non-resolvable link is never banked */ }
             }
             if (verified.length) {
               const ss = await import('./context/session-state.ts');
-              const ledger = segs.readSegmentLedger(dir, parsed.sessionId);
+              const ledger = segs.readSegmentLedger(base, parsed.sessionId);
               const n = Math.max(1, ledger.findIndex((e) => e.hash === parsed.hash) + 1);
               const ok = await ss.appendCheckpointManifest(
-                engine, sourceId, null, parsed.sessionId, verified,
+                engine, fileSource.sourceId, null, parsed.sessionId, verified,
                 { seg: parsed.hash, n },
               );
               if (ok) linksBanked = verified.length;
@@ -976,9 +986,13 @@ async function corpusHasPendingFiles(engine: BrainEngine): Promise<boolean> {
     const { configDir } = await import('./config.ts');
     dir = join(configDir(), 'transcripts', 'corpus');
   }
-  const names = await readdir(dir).catch(() => [] as string[]);
-  const present = new Set(names);
-  return names.some(n => n.endsWith('.txt') && !present.has(n + CORPUS_INGESTED_SUFFIX));
+  const { corpusSpoolDir } = await import('./context/corpus-segments.ts');
+  for (const base of [corpusSpoolDir(dir), dir]) {
+    const names = await readdir(base).catch(() => [] as string[]);
+    const present = new Set(names);
+    if (names.some(n => n.endsWith('.txt') && !present.has(n + CORPUS_INGESTED_SUFFIX))) return true;
+  }
+  return false;
 }
 
 /**

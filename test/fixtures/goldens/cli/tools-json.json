@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 227640,
-    "stdoutSha256": "16c270d5e53097660f179d20c4e5588d0c5e459c76ac28458fba52e7a186abb4",
+    "stdoutBytes": 227643,
+    "stdoutSha256": "32e9ab5fcaa61f303094c8f793d22fd60ab645885e6578806a38a03566d14847",
     "toolNames": [
       "remember",
       "entity",
@@ -178,7 +178,7 @@
     ],
     "tools": [
       {
-        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` (the subject) or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
+        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` (the subject) or recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -213,7 +213,7 @@
               "type": "string"
             },
             "entity": {
-              "description": "Subject name or slug.",
+              "description": "Name or slug.",
               "type": "string"
             },
             "expected_revision": {
@@ -233,7 +233,7 @@
               "type": "boolean"
             },
             "items": {
-              "description": "≤20 facts: [{fact, provenance}]",
+              "description": "≤20 of {fact,entity,provenance,kind,ttl,visibility}",
               "items": {
                 "type": "object"
               },
@@ -267,7 +267,7 @@
               "type": "string"
             },
             "ttl": {
-              "description": "\"30d\", \"12h\" or ISO; omit = never.",
+              "description": "\"30d\", \"12h\", ISO; omit = never.",
               "type": "string"
             },
             "valid_from": {

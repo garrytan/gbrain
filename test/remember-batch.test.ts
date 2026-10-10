@@ -29,12 +29,37 @@ describe('remember items[] batch', () => {
 
   test('saves each item with shared provenance and child request ids', async () => {
     const { handler, writes } = fakeSingle();
-    const out = await runRememberBatch(ctx, { request_id: 'r1', provenance: 'session', items: [{ fact: 'a' }, { fact: 'b', provenance: 'own' }] }, handler, ve);
+    const rid = '22222222-2222-4222-8222-222222222222';
+    const out = await runRememberBatch(ctx, { request_id: rid, provenance: 'session', items: [{ fact: 'a' }, { fact: 'b', provenance: 'own' }] }, handler, ve);
     expect(out.saved).toBe(2);
     expect(out.partial).toBe(false);
     expect(writes.map(w => w.provenance)).toEqual(['session', 'own']);
-    expect(writes[0].request_id).toBe(childRequestId('r1', 0));
-    expect(writes[1].request_id).toBe(childRequestId('r1', 1));
+    expect(writes[0].request_id).toBe(childRequestId(rid, 0));
+    expect(writes[1].request_id).toBe(childRequestId(rid, 1));
+  });
+
+  test('a non-UUID request_id refuses the batch before any write (#6280)', async () => {
+    for (const request_id of ['not-a-uuid', 'r1', '', 42]) {
+      const { handler, writes } = fakeSingle();
+      let err: unknown;
+      try { await runRememberBatch(ctx, { request_id, provenance: 'p', items: [{ fact: 'a' }] }, handler, ve); } catch (e) { err = e; }
+      expect(err).toBeInstanceOf(OperationError);
+      expect((err as OperationError).code).toBe('invalid_params');
+      expect((err as Error).message).toContain('request_id must be a UUID');
+      expect(writes).toHaveLength(0);
+    }
+  });
+
+  test('a UUID in either case or an omitted request_id is accepted; children keep the caller spelling', async () => {
+    const lower = 'abcdefab-cdef-4abc-8def-abcdefabcdef';
+    for (const request_id of [lower, lower.toUpperCase()]) {
+      const { handler, writes } = fakeSingle();
+      await runRememberBatch(ctx, { request_id, provenance: 'p', items: [{ fact: 'a' }] }, handler, ve);
+      expect(writes[0].request_id).toBe(childRequestId(request_id, 0));
+    }
+    const { handler, writes } = fakeSingle();
+    await runRememberBatch(ctx, { provenance: 'p', items: [{ fact: 'a' }] }, handler, ve);
+    expect(writes).toHaveLength(1);
   });
 
   test('one invalid item refuses the whole batch before any write', async () => {

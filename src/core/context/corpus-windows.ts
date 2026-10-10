@@ -80,11 +80,22 @@ export interface CorpusProgress {
   skipped_reason?: string;
   /** #6091: hashes of turns captured or retired under writeback off; never extracted wherever they sit. */
   retired_turns?: string[];
+  /**
+   * #6268: the source (and its incarnation) this file's windows were
+   * extracted into, bound by the first window run. A resume under another
+   * source or a recreated source is refused (`source_changed`).
+   */
+  source?: CorpusProgressSource | null;
   lease: { owner: string; at: number } | null;
 }
 
+export interface CorpusProgressSource {
+  id: string;
+  incarnation: string;
+}
+
 export interface CorpusWindowRun {
-  status: 'complete' | 'partial' | 'aborted' | 'contended' | 'changed';
+  status: 'complete' | 'partial' | 'aborted' | 'contended' | 'changed' | 'source_changed';
   windowsDone: number;
   windowsRemaining: number;
   /** Cumulative across every sweep that worked on this file. */
@@ -213,6 +224,7 @@ function parseProgress(text: string): CorpusProgress | null {
     && Number.isSafeInteger(p.continuation.stripped_offset))) return null;
   if (p.finished !== null && !isFileStat(p.finished)) return null;
   if (!p.totals || !Array.isArray(p.entity_slugs)) return null;
+  if (p.source != null && !(typeof p.source.id === 'string' && typeof p.source.incarnation === 'string')) return null;
   return p;
 }
 
@@ -435,19 +447,26 @@ export async function runCorpusWindows(opts: {
   extract: (text: string) => Promise<PipelineResult>;
   overBudget: () => boolean;
   signal: AbortSignal;
+  /** #6268: the file's resolved source; binds on the first run, refuses a resume under another. */
+  source?: CorpusProgressSource;
 }): Promise<CorpusWindowRun> {
-  const { full, fileStat, signal } = opts;
+  const { full, fileStat, signal, source } = opts;
   const owner = `${process.pid}:${randomUUID()}`;
   const now = Date.now();
+  let sourceChanged = false;
   let state = await updateProgress(full, (cur) => {
+    if (source && cur?.source && (cur.source.id !== source.id || cur.source.incarnation !== source.incarnation)) {
+      sourceChanged = true;
+      return null;
+    }
     if (cur?.lease && cur.lease.owner !== owner && now - cur.lease.at < CORPUS_PROGRESS_LEASE_STALE_MS) return null;
-    return { ...(cur ?? freshProgress()), lease: { owner, at: now } };
+    return { ...(cur ?? freshProgress()), ...(source && !cur?.source ? { source } : {}), lease: { owner, at: now } };
   });
   const turns = parseCorpusTurns(opts.raw);
   if (!state) {
     const cur = await readCorpusProgress(full).catch(() => null);
     const remaining = planCorpusWindows(turns, resumePoint(turns, cur), MAX_TURN_TEXT_CHARS, retiredTurns(cur)).filter((w) => w.text).length;
-    return { status: 'contended', windowsDone: 0, windowsRemaining: remaining, result: resultOf(cur ?? { ...freshProgress(), generation: 0 }) };
+    return { status: sourceChanged ? 'source_changed' : 'contended', windowsDone: 0, windowsRemaining: remaining, result: resultOf(cur ?? { ...freshProgress(), generation: 0 }) };
   }
 
   let cursor = resumePoint(turns, state);
