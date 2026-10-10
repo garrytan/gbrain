@@ -23,7 +23,8 @@ intentionally need managed writers/shared-content publication, use the reviewed
 [claim and activate runbook](../architecture/topologies.md#claim-and-activate-runbook)
 after its quiescence and backup checks. A source claimed before activation can
 block classic sync; resolve it with the [pre-activation claim runbook](../architecture/topologies.md#pre-activation-claims),
-not by deleting owner files. For PGLite lock, backup and restoration details, see
+not by deleting owner files. There is no GBrain verb to release a source that was
+claimed but never activated; follow that runbook. For PGLite lock, backup and restoration details, see
 [serve and sync concurrency](../architecture/serve-sync-concurrency.md) and the
 [engine guide](../ENGINES.md).
 Follow [hosted access](../guides/hosted-harness-access.md) to obtain a scoped private
@@ -69,8 +70,10 @@ harmless synthetic world-visible test fact for connected agents; never widen rea
 private data just to make remote recall succeed. Also ask a new conversation to
 perform one relevant task using a canonical installed skill; a listed skill or a
 successful MCP smoke test is not proof the model selected it. Record profile and
-Hermes version with the result. These are manual model-facing acceptance checks;
-the automated native `MemoryManager` coverage below does not replace them.
+Hermes version with the result. These are manual model-facing acceptance checks
+for your own installation; the automated native `MemoryManager` coverage and the
+bounded model smoke recorded in the [validation record](../designs/HERMES_VALIDATION.md)
+do not replace them.
 
 ```sh
 HERMES_HOME=/absolute/hermes-profile hermes mcp test gbrain
@@ -188,14 +191,19 @@ no sibling lock IDs and partial rather than complete housekeeping status.
 An explicit enrichment retry may process previously imported pending conversations
 even when the current import changes no pages. The shared synthesis phase uses
 its durable completion records to avoid repeating completed work; the runner
-never loops to reset the invocation's deadline or spending limits.
+never loops to reset the invocation's deadline or spending limits. This path retains
+the existing dream-generated, privacy, opt-out and quarantine gates; it does not
+bypass them or extract generated summaries as facts just to empty a queue.
 No scheduler is installed. Schedule this command only after explicit opt-in to
 recurring transcript imports and any paid processing. Each invocation is one
 bounded attempt, not a promise that the backlog is drained; inspect JSON
 `status`, `reasons`, ingest counts and any reported backlog before treating it as
-complete. A partial result may require a later retry, but never run an unbounded
-loop that resets the time/spend budget. The deadline is cooperative, and a
-synchronous SQLite snapshot operation may exceed it. Omit `--enrich` for import
+complete. A partial result may require a later retry. The command never resumes
+automatically or resets its budget, and it keeps no cumulative spend ledger across
+external repeats; if you repeat it, you own one aggregate authorization and budget,
+and must never run an unbounded loop that resets the time/spend limits. The
+deadline is cooperative (cancellation is checked between steps), and a synchronous
+SQLite snapshot operation or the synthesis phase-end embedding step may exceed it. Omit `--enrich` for import
 and validation only; `--enrich` invokes existing brain-wide drain controls and
 requires the unrestricted local writer grant described above.
 
@@ -240,18 +248,30 @@ available for static project context.
 
 ## Compatibility and verification
 
-This exercises the selected profile through Hermes' native `MemoryManager` and
-provider loader, but it does not start the full Hermes agent or call a model.
-It does not prove model use of `brain-ops`, the full MCP catalog, or catalog
-acceptance; see the [native evidence ledger](../designs/HERMES_INTEGRATION.md#acceptance-status-and-evidence-ledger).
-Keep `runtimeTestedAt` unset until a fresh model-backed Hermes conversation is
-observed. A separate
+Automated coverage uses Hermes' native `MemoryManager` and provider loader with
+the selected profile (6 native-manager tests plus 26 provider tests: file-backed
+PGLite reopened by a new backend process, same-ID rewind/compression rehydration,
+and scoped credential rotation, removal, renewal and revocation with sibling
+controls). Those suites do not themselves start the full Hermes agent or call a
+model. A separate, bounded smoke on the published draft head used a real Hermes
+host and model against a synthetic backend: explicit save, fresh-process recall,
+correction, withdrawal and selection of the installed canonical `query` skill.
+Its limits: canonical-file write-through and embedding deduplication were not
+exercised, model-driven restart, compression/resume and credential renewal are
+unproven, and it does not prove the full MCP catalog or catalog acceptance. See the
+[validation record](../designs/HERMES_VALIDATION.md) for current rebased-tree
+status (typecheck, repository and native checks and CI are pending there) and the
+[native evidence ledger](../designs/HERMES_INTEGRATION.md#acceptance-status-and-evidence-ledger).
+The adapter registry's `runtimeTestedAt` stays `null` in this draft; that unchanged
+metadata is not a claim that no model-backed session was observed. Qualified
+runtime evidence is recorded separately rather than assigning a broad certification date. A separate
 [`test/hermes-managed-writer.test.ts`](../../test/hermes-managed-writer.test.ts)
 acceptance proves a single claimed/activated synthetic source's resident-owner
 import, provenance readback, stale multipart removal and reimport tombstone.
 That test does not make managed persistence a requirement for ordinary Hermes
 provider use or establish every managed-writer lifecycle. The standalone provider
-remains a candidate, not an accepted catalog entry; see the [provider package](../../integrations/hermes/README.md#catalog-submission).
+remains a candidate, not an accepted catalog entry; see the
+[provider package](../../integrations/hermes/README.md#catalog-submission).
 
 The provider and transcript schema target Hermes commit
 `46d7718a52ff33accb15dc0501736fbdb6833cab`. The schema contract is verified for
@@ -261,5 +281,7 @@ if either pin or interpreter configuration is missing. This is not a claim of
 compatibility with other Hermes revisions or unexamined production stores.
 See the [provider package](../../integrations/hermes/README.md) for contract tests and the
 [parity checklist](../designs/HERMES_INTEGRATION.md) for native gates. Catalog
-publication needs a reviewed published commit and Hermes catalog approval;
-a package in a draft PR is not an accepted catalog listing.
+publication needs a reviewed published commit, an eligible owner/major-contributor
+submission or maintainer-curated sweep, and Hermes maintainer approval; a package in a
+draft PR is not an accepted catalog listing. Optional Codex OAuth passthrough and a
+metadata-only recall mode are not part of this integration.

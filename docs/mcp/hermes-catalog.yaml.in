@@ -6,7 +6,12 @@ repo: https://github.com/garrytan/gbrain
 sha: <published-40-character-commit-sha>
 subdir: integrations/hermes
 version: "1.0.0"
-description: Shared memory over HTTP MCP; transcript capture is opt-in and server-gated.
+description: >-
+  Native memory over HTTP MCP; capture is opt-in and server-gated.
+  Disclosure — retrieval queries, standing entities, session identifiers and
+  explicit tool arguments go to the configured GBrain endpoint. Before-turn
+  queries are sent even with capture off; opted-in capture also sends paired
+  user/assistant text. The bearer token comes from the profile secret scope.
 maintainer: garrytan
 tier: community
 category: memory
