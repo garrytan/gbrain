@@ -146,15 +146,17 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
   });
 
   it('returns unusable:no_subagent_loop when tools work but the recipe declares the loop unsupported', () => {
-    // moonshot + mistral + minimax declare supports_tools: true, supports_subagent_loop: false.
+    // moonshot + mistral declare supports_tools: true, supports_subagent_loop: false.
     expect(classifyCapabilities('moonshot:kimi-k2.5')).toBe('unusable:no_subagent_loop');
     expect(classifyCapabilities('mistral:mistral-large-latest')).toBe('unusable:no_subagent_loop');
-    // #4782: MiniMax M2+/M3 tool calling is live-verified; the loop is not.
-    expect(classifyCapabilities('minimax:MiniMax-M3')).toBe('unusable:no_subagent_loop');
+    // MiniMax-M3 alone has a live replay pin; adjacent MiniMax models stay
+    // fail-closed until individually proven replay-safe.
+    expect(classifyCapabilities('minimax:MiniMax-M3')).toBe('degraded:no_caching');
+    expect(classifyCapabilities('minimax:MiniMax-M2.7')).toBe('unusable:no_subagent_loop');
     const minimax = getProviderCapabilities('minimax:MiniMax-M3');
     expect(minimax.supportsToolCalling).toBe(true);
     expect(minimax.supportsParallelTools).toBe(true);
-    expect(minimax.supportsSubagentLoop).toBe(false);
+    expect(minimax.supportsSubagentLoop).toBe(true);
   });
 
   it('keeps unusable:no_tools precedence when tool calling is missing too', () => {
