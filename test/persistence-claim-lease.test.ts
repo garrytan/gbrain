@@ -22,10 +22,15 @@ const lostWithin = (lease: { lost: Promise<void> }, ms: number) =>
 
 describe('startClaimLease', () => {
   test('healthy renewals keep the claim held and whileHeld yields the work result', async () => {
+    // Event-driven: the work finishes once the third renewal has run, so a
+    // loaded runner that fires the interval late slows the test, never fails it.
     let renewals = 0;
-    const lease = startClaimLease(async () => { renewals++; return true; }, FAST);
+    let thirdRenewal!: () => void;
+    const renewedThrice = new Promise<void>(resolve => { thirdRenewal = resolve; });
+    const lease = startClaimLease(async () => { if (++renewals === 3) thirdRenewal(); return true; }, FAST);
     try {
-      const result = await lease.whileHeld(sleep(80).then(() => 'prepared'));
+      const work = Promise.race([renewedThrice.then(() => 'prepared'), sleep(5_000).then(() => 'renewals stopped')]);
+      const result = await lease.whileHeld(work);
       expect(result).toBe('prepared');
       expect(lease.held).toBe(true);
       expect(renewals).toBeGreaterThan(2);

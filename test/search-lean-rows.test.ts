@@ -22,7 +22,7 @@ import { withEnv } from './helpers/with-env.ts';
 
 const REMOTE: DispatchOpts = { remote: true, transport: 'http', sourceId: 'default' };
 const LEAN_ALWAYS = ['id', 'slug', 'title', 'type', 'chunk_text', 'score', 'source_id', 'chunk_id', 'evidence', 'create_safety'];
-const DIAGNOSTICS = ['page_id', 'chunk_index', 'chunk_source', 'keyword_hit', 'effective_date_source', 'stale'];
+const DIAGNOSTICS = ['page_id', 'chunk_index', 'chunk_source', 'keyword_hit', 'stale'];
 
 let engine: PGLiteEngine;
 
@@ -50,6 +50,8 @@ describe('lean rows for remote callers', () => {
         for (const key of LEAN_ALWAYS) expect(row, key).toHaveProperty(key);
         for (const key of DIAGNOSTICS) expect(row, key).not.toHaveProperty(key);
         expect(row).toHaveProperty('effective_date');
+        // Cat 40 Hard F4: a dated row says what kind of date it is.
+        if (row.effective_date !== null) expect(typeof row.effective_date_source).toBe('string');
       }
       expect(meta?.rows).toBe('lean');
     });
@@ -167,6 +169,15 @@ describe('leanRow field contract', () => {
     expect(marked.stale).toBe(true);
     expect(marked.modality).toBe('image');
     expect(marked.delivered).toEqual({ truncated: true });
+  });
+
+  test('effective_date_source and provenance: generated survive; ordinary rows carry neither, nor matched_alias', () => {
+    const dated = leanRow({ ...full, effective_date: '2026-03-01', effective_date_source: 'event_date', provenance: 'generated' });
+    expect(dated.effective_date_source).toBe('event_date');
+    expect(dated.provenance).toBe('generated');
+    const ordinary = leanRow(full);
+    for (const key of ['effective_date_source', 'provenance', 'matched_alias']) expect(ordinary).not.toHaveProperty(key);
+    expect(leanRow({ ...full, provenance: 'auto-extracted' })).not.toHaveProperty('provenance');
   });
 
   test('absent sparse fields stay absent', () => {

@@ -13,7 +13,9 @@
  *  - Response parsing: `{results: [{index, relevance_score}]}` →
  *    `RerankResult[]` with `{index, relevanceScore}`.
  *  - Error classification: 401/403 → auth, 429 → rate_limit, 5xx → network,
- *    other 4xx → unknown; AbortError on timeout → timeout.
+ *    other 4xx → unknown, no HTTP response (fetch reject) → unreachable; the
+ *    timeout path is pinned on the real wire in
+ *    test/rerank-failure-reason.serial.test.ts.
  *  - Pre-flight payload guard: body over `max_payload_bytes` throws
  *    payload_too_large BEFORE any HTTP call (no transport invocation).
  *  - Empty documents → empty result, no HTTP call.
@@ -229,7 +231,7 @@ describe('gateway.rerank() — error classification', () => {
     }
   });
 
-  test('network exception (fetch reject) → network', async () => {
+  test('network exception (fetch reject) → unreachable', async () => {
     __setRerankTransportForTests(async () => {
       throw new Error('ECONNREFUSED');
     });
@@ -237,7 +239,7 @@ describe('gateway.rerank() — error classification', () => {
       await rerank({ query: 'q', documents: ['d'] });
       throw new Error('should have thrown');
     } catch (err) {
-      expect((err as RerankError).reason).toBe('network');
+      expect((err as RerankError).reason).toBe('unreachable');
     }
   });
 

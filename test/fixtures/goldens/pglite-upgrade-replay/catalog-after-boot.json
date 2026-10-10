@@ -2777,7 +2777,8 @@
           "38 published_at timestamp with time zone/timestamptz NULL",
           "39 error_detail jsonb/jsonb NULL",
           "40 claim_phase jsonb/jsonb NULL",
-          "41 preparation_attempts integer/int4 NOT NULL DEFAULT 0"
+          "41 preparation_attempts integer/int4 NOT NULL DEFAULT 0",
+          "42 client_request_id text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

@@ -39,8 +39,13 @@ import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
 import { probeProjectionReadiness } from '../search/projection-readiness.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../search/source-boost.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
-import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION } from '../operations-descriptions.ts';
+import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION, SEARCH_MATCH_DESCRIPTION } from '../operations-descriptions.ts';
 import { declaredNames, titleName } from '../mentions/aliases.ts';
+import { aliasPhrase, wholeQueryEntityNames, withAliasFanOut, type FanoutMeta, type ResolvedEntity } from '../search/alias-fanout.ts';
+import { entitySavedFacts } from '../search/entity-facts.ts';
+import { mentionCoverageNotice, readMentionCoverage } from '../mentions/coverage.ts';
+import { keepEnumeratedRows, keywordCountMeta, parseSearchPaging, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
+import { searchLimitCap } from '../search/eval-pool-depth.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
@@ -127,11 +132,11 @@ const FIELDS_PARAM = {
 const RETURN_UNIT_PARAM = {
   type: 'string' as const,
   enum: ['chunk', 'window', 'section', 'page', 'auto'],
-  description: 'auto (default) returns whole conversations.',
+  description: 'Default auto: whole conversations.',
 };
 const RETURN_WINDOW_PARAM = {
   type: 'number' as const,
-  description: 'Neighbor chunks each side for window (1-3).',
+  description: 'Window radius 1-3.',
 };
 
 /**
@@ -168,10 +173,23 @@ async function withEvidence(ctx: OperationContext, p: Record<string, unknown>, r
 
 /** withEvidence + the response meta for the rows actually returned + searchOutput. */
 async function evidenceOutput(ctx: OperationContext, p: Record<string, unknown>, results: SearchResult[], plan: EvidencePlan | null, scope: DeliveryScope,
-  meta: HybridSearchMeta | null, snippetCap: number, buildMeta: (rows: SearchResult[]) => Promise<Record<string, unknown>>): Promise<SearchResult[]> {
+  meta: HybridSearchMeta | null, snippetCap: number, buildMeta: (rows: SearchResult[]) => Promise<Record<string, unknown>>, keepEnumerated = false): Promise<SearchResult[]> {
   const ev = await withEvidence(ctx, p, results, plan, scope, meta);
-  ev.rows = await stampPageTrust(ctx.engine, ev.rows, scope.minTrust);
-  return searchOutput(ctx, p, ev.rows, await buildMeta(ev.rows), snippetCap, ev.evidence);
+  const rows = await stampPageTrust(ctx.engine, keepEnumerated ? keepEnumeratedRows(results, ev.rows) : ev.rows, scope.minTrust);
+  return searchOutput(ctx, p, rows, await buildMeta(rows), snippetCap, ev.evidence);
+}
+
+/** Keyword rows (every one a direct FTS hit): the markers hybridSearch would stamp, then bookkeeping. */
+async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], scope: SourceScope & { excludePrivate: boolean }, queryText: string, startedAt: number): Promise<void> {
+  // #3783: mark before stamping so evidence still reads keyword_exact.
+  markKeywordHits(results);
+  stampDeepResearchIds(results);
+  stampEvidenceSafe(results);
+  // #1699 / #160: the content_flag channel and the unverified-stub marker still surface off the hybrid path.
+  await stampContentFlags(ctx.engine, results, scope);
+  await stampUnverifiedExtractions(ctx.engine, results, scope);
+  bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
+  maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
 }
 
 /**
@@ -316,28 +334,22 @@ export class DeclarationMemo {
 }
 
 /**
- * When the evidence declares another name for the entity the query names,
- * also search under that name and splice the new pages in after the top two
- * results, so documents that use only the other name are not left for the
- * agent to discover (most agents did not act on the notice alone). Nothing is
- * dropped: cutting the tail to make room lost the page that answered
- * (gbrain-evals Cat 40, family B).
+ * Notices for an alias fan-out: the model-visible line when it stopped at its
+ * cap (the skipped names can be searched directly), and the `mention_index`
+ * notice when the resolved entity's source is not fully indexed yet (its
+ * aliases may be incomplete until the catch-up sweep finishes).
  */
-async function withDeclaredNameFanOut(results: SearchResult[], queryText: string, memo: DeclarationMemo,
-  run: (query: string, limit: number) => Promise<SearchResult[]>): Promise<SearchResult[]> {
-  const [first] = memo.scan(results, queryText);
-  if (!first) return results;
-  const nameAt = indexOfName(queryText, first.name, false);
-  const [from, to, at] = nameAt >= 0
-    ? [first.name, first.alias, nameAt]
-    : [first.alias, first.name, indexOfName(queryText, first.alias, true)];
-  const alt = queryText.slice(0, at) + to + queryText.slice(at + from.length);
-  let extra: SearchResult[];
-  try { extra = await run(alt, 5); } catch { return results; }
-  const seen = new Set(results.map(r => `${r.source_id ?? ''}\u0000${r.slug}`));
-  const fresh = extra.filter(r => !seen.has(`${r.source_id ?? ''}\u0000${r.slug}`));
-  if (fresh.length === 0) return results;
-  return [...results.slice(0, 2), ...fresh, ...results.slice(2)];
+async function emitFanoutNotices(ctx: OperationContext, fanout: FanoutMeta | undefined, scope: SourceScope): Promise<void> {
+  if (!fanout) return;
+  if (fanout.truncated) {
+    const notice: Notice = { code: 'alias_fanout', kind: 'info',
+      why: `Also searched ${fanout.aliases_searched.map(a => `"${a.alias}"`).join(', ')}; not searched (cap reached): ${fanout.aliases_skipped.map(a => `"${a}"`).join(', ')}. Search those names directly before a history or as-of answer.` };
+    ctx.emitNotice?.(notice);
+  }
+  if (!fanout.resolved_entity) return;
+  const coverage = await readMentionCoverage(ctx.engine, scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default']).catch(() => null);
+  const notice = coverage ? mentionCoverageNotice(coverage) : null;
+  if (notice) ctx.emitNotice?.(notice);
 }
 
 export interface SavedFactMatch { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string; source: string }
@@ -421,7 +433,7 @@ async function buildRetrievalResponseMeta(
   queryText: string,
   results: unknown[],
   meta: HybridSearchMeta | null,
-  opts: { conceptHint?: boolean; types?: string[]; typeFilterNotice?: string; declarations?: DeclarationMemo; feedbackOp?: 'query' | 'search' } = {},
+  opts: { conceptHint?: boolean; types?: string[]; typeFilterNotice?: string; declarations?: DeclarationMemo; feedbackOp?: 'query' | 'search'; entity?: ResolvedEntity } = {},
 ): Promise<Record<string, unknown>> {
   const m = meta as (HybridSearchMeta & { degraded?: unknown[]; retrieved_count?: number }) | null;
   const hint = opts.conceptHint && looksConceptShaped(queryText)
@@ -439,7 +451,9 @@ async function buildRetrievalResponseMeta(
     excludeSlugPrefixes,
   });
   const aliases = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
-  const savedFacts = await matchingSavedFacts(ctx, scope, queryText, aliases);
+  // Facts saved about the entity the query names come first (newest first, one hop through entities they name).
+  const entityFacts = opts.entity && ctx.emitResponseMeta ? await entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate }) : [];
+  const savedFacts = [...entityFacts, ...(await matchingSavedFacts(ctx, scope, queryText, aliases)).filter(m => !entityFacts.some(e => e.id === m.id))];
   const heldFiles = await stampHeldHits(ctx.engine, results as SearchResult[], scope, ctx).catch(() => []);
   const heldNotice = heldFilesNotice(heldFiles, ctx.remote !== false);
   if (heldNotice) ctx.emitNotice?.(heldNotice);
@@ -518,7 +532,7 @@ function normalizeTypesParam(ctx: OperationContext, tool: 'search' | 'query', ra
 const TYPES_PARAM_DESCRIPTION = "Page types, e.g. ['person'].";
 
 const SOURCE_ID_PARAM_DESCRIPTION = "One source, or '__all__'.";
-const SALIENCE_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'], description: 'Boost emotional pages (default: auto).' };
+const SALIENCE_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'], description: 'Boost emotional pages.' };
 
 /**
  * Ranking explanation params, declared on `query` only and advertised on the
@@ -594,9 +608,9 @@ function finishExplainTarget(
   const { fix: _fix, ...wire } = diag;
   return wire as ExplainTargetDiagnosis;
 }
-const RECENCY_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'], description: "Boost recent pages (default: auto)." };
+const RECENCY_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'], description: "Boost recent pages." };
 
-const SNIPPET_CHARS_PARAM_DESCRIPTION = 'Max chars per chunk_text (0 = full).';
+const SNIPPET_CHARS_PARAM_DESCRIPTION = 'Chars per row (0 = full).';
 
 /** The query op's image branch embed; a brain that opted out of embedding refuses before the image reaches a provider. */
 async function embedSearchImage(ctx: OperationContext, data: string, mime: string): Promise<Float32Array> {
@@ -636,8 +650,10 @@ const search: Operation = {
   description: SEARCH_DESCRIPTION,
   params: {
     query: { type: 'string', required: true, description: "Exact tokens or names, e.g. 'acme-example series A'." },
-    limit: { type: 'number', description: 'Max results (default 20).' },
+    limit: { type: 'number', description: 'Default 20.' },
     offset: { type: 'number', description: 'Rows to skip.' },
+    match: { type: 'string', enum: ['hybrid', 'keyword'], description: SEARCH_MATCH_DESCRIPTION },
+    cursor: { type: 'string', description: 'From next.' },
     mode: { type: 'string', description: 'Local callers only.' },
     // #4398: per-call source scope, mirroring `query` — MCP clients passed it
     // here, got 'unknown parameter ignored', and read UNSCOPED results.
@@ -648,7 +664,7 @@ const search: Operation = {
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: 'Evidence token cap (default 6000).' },
+    token_budget: { type: 'number', description: 'Default 6000.' },
     // #4415: explicit ranking-axis overrides (the same knobs `query` has had
     // since v0.29.1). The auto-detect banks are English regex, so on a
     // non-English brain the recency/salience stages never fire — these flags
@@ -663,7 +679,9 @@ const search: Operation = {
     const startedAt = Date.now();
     const queryText = p.query as string;
     const limit = (p.limit as number) || 20;
-    const offset = (p.offset as number) || 0;
+    // F2: match / cursor / offset cap / remote mode, refused before any search runs.
+    const paging = parseSearchPaging(ctx, p);
+    const offset = paging.offset;
     // #3985: validated multi-type filter, threaded into both branches below.
     let types = normalizeTypesParam(ctx, 'search', p.types);
     // #3800: snippet cap (param > subagent config default > full text).
@@ -693,38 +711,41 @@ const search: Operation = {
     // hybrid `search` contract (privacy/cost: no query text to an embedding
     // provider). Defaults to cheap-hybrid (D4/D15).
     const keywordOnly = (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true';
+    const readOpts = { excludePrivate, requireSafeChunks: ctx.remote !== false, ...scope };
 
-    if (keywordOnly) {
+    if (keywordOnly || paging.match === 'keyword') {
       if (types) {
         types = (await expandEngineTypeFilters(ctx.engine, { types, ...scope })).types;
         if (types?.length === 0) return [];
       }
       const sourceBoosts = resolveBoostMap(undefined, await ctx.engine.getConfig(SOURCE_BOOSTS_KEY));
-      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, excludePrivate, requireSafeChunks: ctx.remote !== false, source_boosts: sourceBoosts, ...(types ? { types } : {}), ...scope });
-      const results = dedupResults(raw).map(r => ({ ...r }));
-      // #3783 — every row here IS a keyword hit (direct FTS path); mark
-      // before stamping so evidence still reads keyword_exact.
-      markKeywordHits(results);
-      stampDeepResearchIds(results);
-      stampEvidenceSafe(results);
-      // #1699: the keyword-only opt-out must STILL surface the content_flag
-      // agent-warning channel (hybridSearch stamps it; this branch bypasses
-      // hybridSearch, so stamp explicitly). Fail-open inside the helper.
-      await stampContentFlags(ctx.engine, results, { ...scope, excludePrivate });
-      // #160: same for the unverified auto-extracted stub marker (no boost
-      // to cancel on this path — keyword-only never applies the compiled-
-      // truth boost — but the provenance marker must still surface).
-      await stampUnverifiedExtractions(ctx.engine, results, { ...scope, excludePrivate });
-      bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
-      maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
+      const keywordOpts = { ...readOpts, source_boosts: sourceBoosts, ...(types ? { types } : {}) };
+      // F2 `match: "keyword"`: page-grain enumeration, no diversity pruning, every page keeps a row.
+      // A query that is one entity's name lists records filed under any of its names (the agent no longer walks each alias).
+      const names = paging.match === 'keyword' && !paging.cursor ? await wholeQueryEntityNames(ctx.engine, queryText, { ...scope, excludePrivate }) : null;
+      const pageParams = names ? { ...p, query: names.map(aliasPhrase).join(' OR ') } : p;
+      const page = paging.match === 'keyword' ? await readKeywordPage(ctx.engine, pageParams, keywordOpts, paging, Math.min(limit, searchLimitCap())) : null;
+      if (page && names) {
+        page.meta.match_names = names;
+        for (const row of page.rows) {
+          const text = (row.chunk_text ?? '').toLowerCase();
+          const hit = names.slice(1).find(n => text.includes(n.toLowerCase()));
+          if (hit && !text.includes(names[0]!.toLowerCase())) row.matched_alias = hit;
+        }
+      }
+      const keywordCount = page ? null : startKeywordCount(ctx.engine, queryText, undefined, keywordOpts);
+      const results = (page ? page.rows : dedupResults(await ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts }))).map(r => ({ ...r }));
+      await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt);
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, null, snippetCap,
-        rows => buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice }));
+        async rows => withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice }),
+          page ?? keywordCountMeta(await keywordCount!, offset + limit)), page !== null);
     }
 
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
     // expansion OFF (no per-call LLM cost). `query` op is the full-control variant.
     let capturedMeta: HybridSearchMeta | null = null;
+    const keywordCount = startKeywordCount(ctx.engine, queryText, types, readOpts);
     const explainPrep = await prepareExplainTarget(ctx, p, scope, excludePrivate, 'search');
     const searchOpts = {
       limit,
@@ -745,15 +766,20 @@ const search: Operation = {
       ...searchOpts, onMeta: (m) => { capturedMeta = m; }, explain: p.explain === true, explainTarget: explainPrep?.trace,
     });
     const declarations = new DeclarationMemo();
-    const results = (await withDeclaredNameFanOut(primary, queryText, declarations,
-      (alt, altLimit) => hybridSearchCached(ctx.engine, alt, { ...searchOpts, limit: altLimit, offset: 0 }))).map(r => ({ ...r }));
+    const fanned = offset === 0
+      ? await withAliasFanOut(ctx.engine, primary, queryText, { ...scope, excludePrivate },
+        { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...scope }, () => declarations.scan(primary, queryText))
+      : { results: primary };
+    const results = fanned.results.map(r => ({ ...r }));
+    await emitFanoutNotices(ctx, fanned.fanout, scope);
     stampDeepResearchIds(results);
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap,
-      async rows => withExplainTarget(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search' }), finishExplainTarget(ctx, p, explainPrep, results, 'search')));
+      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search', entity: fanned.entity })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search')),
+        keywordCountMeta(await keywordCount, offset + limit)));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'search', positional: ['query'] },
@@ -819,8 +845,8 @@ const query: Operation = {
     source_id: { type: 'string', description: SOURCE_ID_PARAM_DESCRIPTION },
     cross_modal: { type: 'string', enum: ['text', 'image', 'both', 'auto'], description: 'Default auto.' },
     embedding_column: { type: 'string', description: 'Registered embedding column.' },
-    adaptive_return: { type: 'boolean', description: 'true when one answer is wanted (fewer rows; never returns empty); omit for breadth.' },
-    autocut: { type: 'boolean', description: 'Default on (never returns empty); false gives full top-K for breadth, unlike adaptive_return.' },
+    adaptive_return: { type: 'boolean', description: 'true for one answer (fewer rows, never empty); omit for breadth.' },
+    autocut: { type: 'boolean', description: 'Default on (never empty); false: full top-K for breadth.' },
     relational: { type: 'boolean', description: 'Relationship-graph arm (default on).' },
     min_trust: MIN_TRUST_PARAM,
     ...EXPLAIN_PARAMS,
@@ -990,10 +1016,11 @@ const query: Operation = {
       explain: p.explain === true, explainTarget: explainPrep?.trace,
     });
     const declarations = new DeclarationMemo();
-    results = await withDeclaredNameFanOut(results, queryText, declarations, (alt, altLimit) => hybridSearchCached(ctx.engine, alt, {
-      limit: altLimit, excludePrivate, requireSafeChunks: ctx.remote !== false, takesHoldersAllowList: readHolders(ctx),
-      expansion: false, types, ...querySourceScope,
-    }));
+    const primaryRows = results;
+    const fanned = await withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
+      { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...querySourceScope }, () => declarations.scan(primaryRows, queryText));
+    results = fanned.results;
+    await emitFanoutNotices(ctx, fanned.fanout, querySourceScope);
     // #1663 — CRAG confidence gate. Grade what retrieval returned (zero-LLM;
     // reads the stamped honesty signals: evidence, exact_lookup, rerank
     // score), attach grade + query shape to the retrieval meta on EVERY call,
@@ -1153,7 +1180,7 @@ const query: Operation = {
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
     return evidenceOutput(ctx, p, results, plan, { ...querySourceScope, excludePrivate, detail }, capturedMeta, snippetCap,
-      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query' })), crag }, finishExplainTarget(ctx, p, explainPrep, results, 'query')));
+      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query')));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },

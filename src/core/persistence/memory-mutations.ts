@@ -2,6 +2,7 @@ import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { guardRemoteForget, remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { randomUUID } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
+import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError, verbError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, validatePageSlug } from '../ops/context.ts';
@@ -19,7 +20,7 @@ import { claimWorktree } from './ownership.ts';
 import { declareDurablePersistence } from './protocol.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
-import { parseMutationPrecondition } from './preconditions.ts';
+import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { requestAttribution } from './attribution.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
@@ -58,7 +59,7 @@ async function submission(ctx: OperationContext, operation: string, params: Reco
     await authorizeStoredRequest(ctx.engine, prior);
     assertReplayIntent(prior, intentDigest({ operation, sourceId, slug: prior.slug, callerIntent }));
   }
-  return { p, requestId, sourceId, principal, callerIntent, prior };
+  return { p, requestId, clientRequestId: clientRequestIdOf(params.request_id), sourceId, principal, callerIntent, prior };
 }
 
 type RememberSource = { incarnation: string; archived: boolean; local_path: string | null; kind: string | null };
@@ -147,7 +148,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   registerMutationPreparer('remember', prepareMemoryMutation);
   const sub = await submission(ctx, 'remember', params);
   if (sub.prior) return throwIfHeld(writeResponse(await waitForWrite(ctx.engine, sub.prior, ctx.config, waitMs ?? ctx.writeWaitMs)));
-  const { p, sourceId, principal, callerIntent, requestId } = sub;
+  const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
   const [source] = await ctx.engine.executeRaw<RememberSource>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) throw sourceInactive(sourceId);
@@ -162,14 +163,15 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   // A source-scoped absent identity serializes subjectless facts. Bound writers
   // cannot use it to escape their namespace grant.
   const { slug, authority, snapshot, fence, binding, writeThrough } = linked?.target ?? await planRememberTarget(ctx, sourceId, source, entitySlug, null);
+  const { assertFactNotWithdrawn, decideReplacement } = await import('../facts/single-prepare.ts');
+  const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility: (p.visibility ?? 'world') as never, entity_slug: entitySlug };
+  // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
   if (p.replaces !== undefined && p.replaces !== null) {
-    // Fail fast on an invalid target; the coordinator re-checks it under the row lock before publishing.
-    const { decideReplacement } = await import('../facts/single-prepare.ts');
-    await decideReplacement(ctx.engine, sourceId, { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never,
-      visibility: (p.visibility ?? 'world') as never, entity_slug: entitySlug }, Number(p.replaces), { pageSlug: slug, remote: ctx.remote !== false });
+    await decideReplacement(ctx.engine, sourceId, factIntent, Number(p.replaces), { pageSlug: slug, remote: ctx.remote !== false });
   }
+  await assertFactNotWithdrawn(ctx.engine, sourceId, factIntent);
   const row = await admitWrite(ctx.engine, { principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,
-    slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent,
+    slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId, callerIntent,
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
     // it, so recall's session_id filter finds single facts too. Identity only — never a trust surface.
     intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
@@ -183,11 +185,31 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
 
 interface WithdrawalTarget { id: number; entity_slug: string | null; source_markdown_slug: string | null; expired_at: Date | null; trust_tier?: string | null; }
 
+/**
+ * A fact saved without an entity says nothing about whom it concerns, so its
+ * withdrawal reaches the claim under every entity. When that claim is active
+ * on entity-linked facts, forgetting the unlinked copy would silently withdraw
+ * them too, and a withdrawn claim cannot be remembered again; refuse and name them.
+ */
+async function refuseUnlinkedForgetOfLinkedClaim(tx: BrainEngine, sourceId: string, id: number, remote: boolean): Promise<void> {
+  const linked = await tx.executeRaw<{ id: number; entity_slug: string }>(`SELECT l.id,l.entity_slug FROM facts u
+    JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.entity_slug IS NOT NULL AND l.id<>u.id
+      AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
+      AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
+    WHERE u.id=$1 AND u.source_id=$2 AND ($3::boolean=false OR l.visibility='world')
+    ORDER BY l.id LIMIT 5`, [id, sourceId, remote]);
+  if (!linked.length) return;
+  const named = linked.map(row => `#${row.id} (${row.entity_slug})`).join(', ');
+  throw verbError('invalid_params',
+    `claim_linked: fact #${id} was saved without an entity, and the same claim is active as ${named}. Forgetting #${id} would withdraw those facts too, so nothing was forgotten.`,
+    `Keep the linked ${linked.length === 1 ? 'fact' : 'facts'}: the copy without an entity needs no cleanup (remember the claim with entity and replaces: "${id}" retires it). To withdraw the claim everywhere, forget ${linked.map(row => `#${row.id}`).join(', ')} first, then #${id}.`);
+}
+
 /** Withdrawal commits independently of filesystem ownership and request FIFO. */
 export async function submitForgetMutation(ctx: OperationContext, operation: 'forget' | 'forget_fact', params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const sub = await submission(ctx, operation, params);
   if (sub.prior) return withSimilarActive(ctx, operation, sub.sourceId, sub.p, writeResponse(sub.prior));
-  const { p, sourceId, principal, callerIntent, requestId } = sub;
+  const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
   const semanticReview = p.semantic_review !== false;
   const id = Number(p.id);
   const rawId = String(p.id).trim();
@@ -220,11 +242,12 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     if (!fact) throw verbError(operation === 'forget' ? 'not_found' : 'fact_not_found',
       `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
     if (ctx.remote !== false && supersessionGuarded('agent_written', fact.trust_tier)) throw remoteForgetRaced(id);
+    if (fact.entity_slug === null) await refuseUnlinkedForgetOfLinkedClaim(tx, sourceId, id, ctx.remote !== false);
     const slug = fact.source_markdown_slug ?? fact.entity_slug ?? 'memory/unattributed';
     enforceClientSlugFence(ctx, slug, operation); enforceSubagentSlugFence(ctx, slug, operation);
     const authority = await submissionAuthority({ ...ctx, engine: tx }, operation, sourceId, source.incarnation, slug);
     const row = await admitWriteInTransaction(tx, { principal, operation, sourceId, sourceIncarnation: source.incarnation,
-      slug, requestId, callerIntent, intent: { ...callerIntent, reason }, authority });
+      slug, requestId, clientRequestId, callerIntent, intent: { ...callerIntent, reason }, authority });
     if (isTerminal(row)) return row;
     return withCoordinatedWrite(tx, [sourceId], async () => {
       // Even an expired legacy fact acquires a ledger so a stale import cannot

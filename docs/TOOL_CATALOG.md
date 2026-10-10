@@ -15,7 +15,7 @@ Every non-localOnly operation on the MCP surface: 144 tools across 24 areas. **S
 | `get_status_snapshot` | Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. | admin |  |  |
 | `get_usage` | Aggregate chat usage + cost from the chat_usage_log ledger (per-model and per-phase token counts, cache reads/writes, USD estimates) with explicit coverage fields. | admin |  |  |
 | `get_write_attribution` | Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. | admin |  |  |
-| `mute_notice` | Stop a coaching or info notice (or first_run_decisions) from appearing for this client; muted: false unmutes. | write | yes |  |
+| `mute_notice` | Mute a coaching or info notice (or first_run_decisions) for this client; muted: false unmutes. | write | yes |  |
 | `quarantine_list` | List quarantined (hidden) and optionally content-flagged pages by scanning page frontmatter, newest-updated first. | admin |  |  |
 | `run_doctor` | Run brain health checks and return a structured DoctorReport (thin-client doctor surface). | admin |  |  |
 | `run_onboard` | Probe brain health + optionally submit onboard remediations. | admin |  |  |
@@ -52,7 +52,7 @@ Every non-localOnly operation on the MCP surface: 144 tools across 24 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `request_tools` | More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} widens it (per OAuth client; stdio: this session). | read | yes |  |
+| `request_tools` | More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} widens it (per OAuth client or stdio session). | read | yes |  |
 
 ## entities
 
@@ -168,7 +168,7 @@ Every non-localOnly operation on the MCP surface: 144 tools across 24 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `cancel_write_request` | Cancel your accepted write before it publishes. | write | yes |  |
-| `capture` | Quick note ("just remember this"): auto-slugged under inbox/ by date + content hash, so recapturing is idempotent. | write | yes |  |
+| `capture` | Quick note ("just remember this"): slugged under inbox/ by date + content hash, so recapturing is idempotent. | write | yes |  |
 | `delete_page` | Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). | write |  |  |
 | `edit_page` | Change part of a page: prefer this over put_page for small changes. | write | yes |  |
 | `fetch` | Fetch the full text of one search result by its opaque, source-qualified `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
@@ -208,9 +208,9 @@ Every non-localOnly operation on the MCP surface: 144 tools across 24 areas. **S
 |---|---|---|---|---|
 | `assemble_evidence` | Deliver whole evidence for an ordered list of search hits (each {source_id, slug, chunk_id} from a prior search/query result): the same windows, sections or pages `query` returns with return_unit, packed into token_budget. | read |  |  |
 | `cache_stats` | Semantic query-cache introspection: resolved knobs (enabled, similarity threshold, TTL) plus row counts and total hits. | admin |  |  |
-| `query` | Hybrid search plus multi-query expansion for concept or landscape questions (expansion recovers synonym-phrased matches). | read | yes |  |
+| `query` | Hybrid search plus multi-query expansion for concept or landscape questions (expansion recovers synonyms). | read | yes |  |
 | `rate_answer` | Rate how useful an answer's retrieved evidence was, so this brain ranks better next time (zero LLM calls). | write |  |  |
-| `search` | Cheap hybrid search (vector + keyword), no LLM expansion, top 20: for exact tokens, names, field values. | read | yes |  |
+| `search` | Cheap hybrid search, no LLM expansion, top 20: exact tokens, names, field values. | read | yes |  |
 | `search_by_image` | Image-as-query retrieval. | read |  |  |
 | `search_modes` | Read-only search-mode dashboard: active mode, EVERY mode-bundle knob resolved with attribution (mode default vs config override), the three frozen bundles, and a reranker_readiness verdict (whether the resolved reranker will actually run; remote callers get the verdict without the host key inventory). | read |  |  |
 | `search_stats` | Search observability over a window: cache hit rate, intent/mode mix, budget drops, rank-1 score drift, graph-signals failure counts. | admin |  |  |

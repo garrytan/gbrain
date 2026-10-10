@@ -41,7 +41,7 @@ describe('engine-free local persistence routing', () => {
     await withEnv({ GBRAIN_HOME: dir }, () => {
       expect(() => readPersistenceCliRegistration(BRAIN)).toThrow('no readable durable writer registration');
       expect(() => readFileSync(join(dir, '.gbrain', 'persistence', `${BRAIN}.cli.json`))).toThrow();
-      expect(() => readPersistenceCliRegistration('../other')).toThrow('UUID');
+      expect(() => readPersistenceCliRegistration('../other')).toThrow('Missing durable brain identity');
     });
   });
 

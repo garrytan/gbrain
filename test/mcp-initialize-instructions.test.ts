@@ -37,7 +37,14 @@ function namedTools(text: string): string[] {
 const PRE_F1_BYTES = 4042;
 /** #6007: the issue's acceptance criteria require write guidance (put_pages, wait_ms) in initialize. */
 const WRITING_CLAUSE_BYTES = 240;
-const LANE_I_CEILING = Math.floor(PRE_F1_BYTES * 1.15) + WRITING_CLAUSE_BYTES;
+/**
+ * Cat 40 Hard round 4 (fa520b72b): instruction 7's batching clause (resolve many
+ * names or codes in one call, issue independent calls together) added 194 bytes
+ * on every surface serving `entity` and `search`; measured in DEV-RECORD.md on
+ * gbrain-evals#93 (round 4, pooled +4.9 points over fs).
+ */
+const BATCHING_CLAUSE_BYTES = 200;
+const LANE_I_CEILING = Math.floor(PRE_F1_BYTES * 1.15) + WRITING_CLAUSE_BYTES + BATCHING_CLAUSE_BYTES;
 /** Claude Code reads only the first 2,048 characters of a server's initialize instructions. */
 const HARNESS_READ_LIMIT = 2_048;
 
@@ -84,7 +91,8 @@ describe('F1 generated instructions', () => {
   test('recorded tail-free instruction sizes per surface', () => {
     // #6007: starter +140 and full +230 for the write guidance (wait_ms; put_pages where it is served), within WRITING_CLAUSE_BYTES.
     // #6170: the error clause was shortened and the forget caveat moved; every surface shrank (2_243 / 4_686 / 4_837 before).
-    const recorded = { verbs: 2_186, starter: 4_630, full: 4_781 };
+    // Cat 40 Hard round 4: instruction 7's batching clause (BATCHING_CLAUSE_BYTES); starter 4_630 -> 4_824 and full 4_781 -> 4_975.
+    const recorded = { verbs: 2_186, starter: 4_824, full: 4_975 };
     for (const surface of SURFACES) {
       const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
       const size = buildMcpInstructions({ tools: { callable: n => listed.has(n) } }).length;

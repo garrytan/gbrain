@@ -41,10 +41,12 @@ function candidateState(value: Awaited<ReturnType<typeof decideSingleFact>>): st
   return JSON.stringify([value.status, c?.id, c?.fact, c?.kind, c?.visibility,
     c?.valid_until ? new Date(c.valid_until).toISOString() : null, c?.source_markdown_slug, c?.row_num, c?.trust_tier ?? null]);
 }
-export const NO_ENTITY_HINT = 'Saved without an entity, so entity-scoped recall will not find it. Pass `entity` (the person, company or project this fact is about) to link it.';
-function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', entitySlug: string | null, validUntil: Date | string | null, degraded: boolean, p: Record<string, unknown>, supersededId?: number) {
+export const NO_ENTITY_HINT = 'Saved without an entity, so entity-scoped recall will not find it. To link it, remember the same claim again with `entity` (the person, company or project it is about): that replaces this copy, so there is nothing to forget. Do not forget it: a claim forgotten without an entity is withdrawn for every entity and cannot be saved again.';
+function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', entitySlug: string | null, validUntil: Date | string | null, degraded: boolean, p: Record<string, unknown>, supersededId?: number, linkedCopy = false) {
   const statusText = status === 'inserted' ? `remembered as fact #${id}` : status === 'duplicate'
-    ? `already knew this — kept fact #${id}` : `updated — fact #${id} supersedes the previous version`;
+    ? `already knew this — kept fact #${id}` : linkedCopy
+      ? `linked — fact #${id} replaces #${supersededId}, the same claim saved without an entity; nothing to forget`
+      : `updated — fact #${id} supersedes the previous version`;
   return { id: String(id), status, status_text: statusText, entity_slug: entitySlug,
     ...(status === 'superseded' && supersededId !== undefined ? { superseded_fact_id: String(supersededId) } : {}),
     ...(status === 'superseded' && p.replaces !== undefined && p.replaces !== null ? { replaced_by_caller: true } : {}),
@@ -53,6 +55,15 @@ function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', en
     ...(entitySlug !== null && p.entity_inferred ? { entity_inferred: p.entity_inferred as InferredVia } : {}),
     ...(entitySlug === null ? { warnings: [p.entity_warning === 'ENTITY_LINK_FAILED' ? 'ENTITY_LINK_FAILED' : 'NO_ENTITY'], hint: NO_ENTITY_HINT } : {}),
     protocol_version: 1 };
+}
+
+/** The newest active fact in this source and visibility that states the same normalized claim without an entity. */
+async function activeUnlinkedCopy(engine: BrainEngine, sourceId: string, input: SingleFactIntent): Promise<number | null> {
+  const [row] = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts
+    WHERE source_id=$1 AND visibility=$2 AND entity_slug IS NULL AND expired_at IS NULL
+      AND (valid_until IS NULL OR valid_until > now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)
+    ORDER BY id DESC LIMIT 1`, [sourceId, input.visibility, input.fact]);
+  return row ? Number(row.id) : null;
 }
 
 /** Every retry renders the semantic append from the latest coherent snapshot. */
@@ -80,9 +91,19 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const dedupEmbedding = p.entity_inferred ? null : embedding;
   // `replaces`: the caller names the fact this one replaces (checked; the cosine rule does not apply).
   const replaces = p.replaces !== undefined && p.replaces !== null ? Number(p.replaces) : null;
-  const decide = (e: BrainEngine, lock = false) => replaces !== null
-    ? decideReplacement(e, row.source_id, input, replaces, { pageSlug: row.slug, remote: row.authority.remote === true, lock })
-    : decideSingleFact(e, row.source_id, input, dedupEmbedding, embedding_model);
+  const replace = (e: BrainEngine, target: number, lock: boolean) =>
+    decideReplacement(e, row.source_id, input, target, { pageSlug: row.slug, remote: row.authority.remote === true, lock });
+  const decide = async (e: BrainEngine, lock = false) => {
+    if (replaces !== null) return replace(e, replaces, lock);
+    // The same claim saved earlier without an entity is this fact unlinked: linking it supersedes that copy,
+    // so no subjectless duplicate is left whose forget would withdraw the claim from every entity.
+    const unlinked = input.entity_slug === null ? null : await activeUnlinkedCopy(e, row.source_id, input);
+    if (unlinked !== null) {
+      const linked = await replace(e, unlinked, lock).catch(() => null);
+      if (linked) return linked;
+    }
+    return decideSingleFact(e, row.source_id, input, dedupEmbedding, embedding_model);
+  };
   const decision = await decide(engine);
   // #5575 I3: a lower-tier write never supersedes; it is inserted contested and the owner decides (re-checked under lock by validate).
   const writerTier = requestChannelTrust(row)?.tier ?? 'unknown';
@@ -164,7 +185,9 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       oldTier: storedTrustTier(contestedOld.trust_tier), newId: id, newTier: writerTier,
       guard: replaces !== null ? 'remember.replaces' : contested ? 'conflict_slot' : 'conflict_slot_lexical' }) : null;
     const flagged = gateField(gate.assessment, `f${id}`, await recordFlaggedRow(tx, gate, { table: 'facts', id, sourceId: row.source_id }));
-    return { ...outcome(id, status, input.entity_slug, validUntil, degraded, p, status === 'superseded' ? decision.candidate!.id : undefined), ...fencesNormalized,
+    const superseded = status === 'superseded' ? decision.candidate! : undefined;
+    return { ...outcome(id, status, input.entity_slug, validUntil, degraded, p, superseded?.id,
+      superseded !== undefined && superseded.entity_slug == null && input.entity_slug !== null), ...fencesNormalized,
       ...(contestedBy ? { contested: contestedBy } : {}), ...(flagged ? { gate: flagged } : {}) };
   } };
 }

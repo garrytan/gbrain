@@ -286,9 +286,9 @@ describe('applyReranker — a hard failure reports onFailure (read-path audit #5
     return seen;
   };
 
-  test('HTTP / network / unknown errors report provider_error', async () => {
+  test('HTTP / network / unknown errors report provider_error; auth keeps its own reason', async () => {
     expect(await failWith(new RerankError('HTTP 503 upstream', 'network', 503))).toEqual(['provider_error']);
-    expect(await failWith(new RerankError('forced', 'auth', 401))).toEqual(['provider_error']);
+    expect(await failWith(new RerankError('forced', 'auth', 401))).toEqual(['auth']);
     expect(await failWith(new Error('arbitrary'))).toEqual(['provider_error']);
   });
 

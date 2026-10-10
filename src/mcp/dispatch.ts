@@ -17,8 +17,10 @@ import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, orderNotices, redactForTransport, renderNotice, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
 import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
-import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
+import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger, type NoticeAudience } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
+import { searchCountLine } from '../core/search/keyword-paging.ts';
+import { dateLabelLine } from '../core/search/date-labels.ts';
 import { localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
 import { hiddenToolHint } from './hidden-tool-hint.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
@@ -371,7 +373,7 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
 /**
  * Model-visible notices the search/query ops attach to `_meta.retrieval`: the
  * D8 empty-retrieval diagnosis, a reconciled type filter, other names declared in the evidence, and saved
- * facts that match the query. Each rides as its own text block after the
+ * facts that match the query, search's keyword count line and the row-date label. Each rides as its own text block after the
  * results (content[0] stays the bare result array for thin clients).
  */
 export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): string[] {
@@ -380,7 +382,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   const r = retrieval as {
     type_filter_notice?: unknown;
     other_names?: Array<{ name: string; alias: string; slug: string }>;
-    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string }>;
+    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string }>;
     answer_id?: unknown;
     feedback?: { rateable?: boolean; how_to_rate?: string };
   };
@@ -392,11 +394,17 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
     blocks.push(`${text}${more ? ` (+${more} more)` : ''}.`);
   }
   if (r.saved_facts?.length) {
-    const { text, more } = wholeItemsWithin('Saved facts (remember) matching this query, newest first; recall returns more:\n',
-      r.saved_facts.map(f => `- ${f.fact} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}]`),
+    const { text, more } = wholeItemsWithin('Saved facts (remember): about the entity this query names (newest first), then facts those point to, then matches for its words; recall returns more:\n',
+      r.saved_facts.map(f => `- ${f.fact} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}]`),
       '\n', SAVED_FACTS_NOTICE_MAX_CHARS);
     blocks.push(more ? `${text}\n(+${more} more; recall returns them)` : text);
   }
+  // F2: which set the rows are and which set the keyword count covers, on every search call.
+  const countLine = searchCountLine(result, retrieval);
+  if (countLine) blocks.push(countLine);
+  // F4: what each row's effective_date is (document, event or fallback date), never contractual validity.
+  const dateLine = dateLabelLine(result);
+  if (dateLine) blocks.push(dateLine);
   if (typeof r.answer_id === 'string' && r.feedback?.rateable === true) blocks.push(rateLine(r.answer_id, typeof r.feedback.how_to_rate === 'string'));
   return blocks;
 }
@@ -588,15 +596,37 @@ export function localCallErrorEnvelope(tool: string, e: unknown) {
  * ServeHttpContext ledger. Session identity is the transport-resolved id only.
  * Fail-open: a ledger fault delivers every notice.
  */
+function noticeAudience(opts: DispatchOpts): NoticeAudience {
+  return { transport: opts.transport === 'stdio' ? 'stdio' : opts.remote === false ? 'cli' : 'http', principal: opts.auth?.clientId, sessionId: opts.sessionId };
+}
+
 function admitNotices(notices: Notice[], opts: DispatchOpts): Notice[] {
   if (notices.length === 0) return notices;
   try {
-    const principal = opts.auth?.clientId;
-    const transport = opts.transport === 'stdio' ? 'stdio' : opts.remote === false ? 'cli' : 'http';
-    return (opts.noticeLedger ?? processNoticeLedger()).admit(notices,
-      { transport, principal, sessionId: opts.sessionId }, mutedNoticeCodes(principal ?? (transport === 'stdio' ? 'stdio' : undefined)));
+    const audience = noticeAudience(opts);
+    return (opts.noticeLedger ?? processNoticeLedger()).admit(notices, audience,
+      mutedNoticeCodes(audience.principal ?? (audience.transport === 'stdio' ? 'stdio' : undefined)));
   } catch {
     return notices;
+  }
+}
+
+/**
+ * Cat 40 R0: a search/query whose reranker failed counts toward this
+ * session's reranker-degraded calls, and its own `_meta.retrieval` records
+ * the reason, the fallback and that count (no `fields: "full"` needed).
+ * Returns the session count, or undefined when the reranker did not fail.
+ */
+function recordRerankDegradation(responseMeta: Record<string, unknown>, opts: DispatchOpts): number | undefined {
+  try {
+    const retrieval = responseMeta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
+    const failed = retrieval?.degraded?.find(d => d.stage === 'rerank_failed');
+    if (!retrieval || !failed) return undefined;
+    const calls = (opts.noticeLedger ?? processNoticeLedger()).tally(noticeAudience(opts), 'rerank_failed');
+    responseMeta.retrieval = { ...retrieval, rerank_degraded: { reason: failed.reason ?? 'provider_error', fallback: 'fused_order', calls_this_session: calls } };
+    return calls;
+  } catch {
+    return undefined;
   }
 }
 
@@ -947,8 +977,9 @@ export async function dispatchToolCall(
       notices.push({ code: 'unknown_param', kind: 'info', why: buildUnknownParamWarnBlock([w]) });
     }
     // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
+    const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
-      { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding }));
+      { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding, rerankDegradedCalls }));
     // Monthly backup-coverage: one AGGREGATE notice per process (counts only —
     // never a local path or source id). The refresher runs on the stdio
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or

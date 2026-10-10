@@ -117,7 +117,7 @@ const ROWS: readonly Row[] = [
   ['persistence_graduation', 'out_of_scope', 'probed_reported', 'role state source_data_dir trigger_bypass table_receipts replay_probe timings doctor rollback', 'table_receipts'],
   ['persistence_host_bindings', 'out_of_scope', 'no_memory_text', 'local_path coordination_path'],
   ['persistence_local_writers', 'out_of_scope', 'secret_material', 'lane credential_hash grant_ceiling'],
-  ['persistence_requests', 'swept', 'request_intent', 'principal_kind principal_id operation source_id slug digest intent authority state recovery outcome error_code error_message blocked_reason target_kind admitter_version consumer_version error_detail claim_phase'],
+  ['persistence_requests', 'swept', 'request_intent', 'principal_kind principal_id operation source_id slug digest intent authority state recovery outcome error_code error_message blocked_reason target_kind admitter_version consumer_version error_detail claim_phase client_request_id'],
   ['persistence_source_bindings', 'out_of_scope', 'no_memory_text', 'source_id relative_path'],
   ['persistence_topology_changes', 'out_of_scope', 'probed_reported', 'digest operation source_id state recovery outcome', 'recovery outcome'],
   ['persistence_worktree_refreshes', 'out_of_scope', 'probed_reported', 'source_ids state old_head target_head upstream_ref preserved_uncommitted outcome', 'outcome'],

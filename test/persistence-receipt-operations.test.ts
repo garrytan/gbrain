@@ -258,6 +258,10 @@ describe('own-principal write receipt operations', () => {
     for (const params of [{ limit: 0 }, { limit: 101 }, { limit: 1.5 }, { source_id: '__all__' }, { before: '-1' }, { before: '9999999999999999999' }]) {
       await expect(call('list_write_requests', params)).rejects.toMatchObject({ code: 'invalid_params' });
     }
-    await expect(call('get_write_request', { request_id: '../other' })).rejects.toMatchObject({ code: 'invalid_params' });
+    // F6: any 1-128 printable ASCII id is a client request id (mapped to its UUIDv5), so only ids outside that set refuse.
+    for (const request_id of ['', 'two words', 'x'.repeat(129), 42]) {
+      await expect(call('get_write_request', { request_id })).rejects.toMatchObject({ code: 'invalid_params' });
+    }
+    await expect(call('get_write_request', { request_id: '../other' })).rejects.toMatchObject({ code: 'not_found' });
   });
 });

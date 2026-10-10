@@ -4,6 +4,7 @@ import { pendingWriteHint } from './health.ts';
 import { UNBOUND_COLLISION_MESSAGE, UNBOUND_PUBLICATION_MESSAGE } from './unbound-source.ts';
 import { isFrontmatterHoldMessage } from '../markdown.ts';
 import { fenceLocationFromMessage, fenceWhere } from '../fence-repair/refusal.ts';
+import { FACT_WITHDRAWN_SUGGESTION } from '../facts/withdrawal.ts';
 
 const FRONTMATTER_SLUG_CONFLICT = /^The frontmatter slug "[^"\n]{1,300}" in [^/"\n][^"\n]{0,1000} conflicts with its path, which expects slug "[^"\n]{1,300}"\. Remove `slug:` or make it match the path\.$/;
 
@@ -108,17 +109,19 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
   // #5575: a purged claim or page content is refused for good; the owner alone can clear its tombstone.
   if (code === 'purged_content') return { reason: code, message: 'This content was purged from this source and cannot be saved again.',
     suggestion: PURGED_SUGGESTION };
-  const replaces = code === 'invalid_params' ? REPLACES_REFUSAL.exec(message ?? '') : null;
-  if (replaces) return { reason: code, message: message!, suggestion: REPLACES_SUGGESTION[replaces[1]!]! };
-  return { reason: isWriteErrorCode(code) ? code : 'storage_error', message: 'The write did not commit. Inspect its durable request on the source host.',
+  const memory = code === 'invalid_params' ? MEMORY_REFUSAL.exec(message ?? '') : null;
+  if (memory) return { reason: code, message: message!, suggestion: MEMORY_REFUSAL_SUGGESTION[memory[1]!]! };
+  const reason = isWriteErrorCode(code) ? code : 'storage_error';
+  return { reason, message: `The write did not commit: it ended with ${reason}, and nothing was saved.`,
     suggestion: 'Resolve the reported write failure before starting a corrected attempt.' };
 }
 
 const PURGED_SUGGESTION = 'Do not retry the same content. If it is still true, write it in new words; only the owner can clear a purge tombstone on the brain host.';
 
-/** `remember.replaces` refusals decided under the target row lock keep their code and next step. */
-const REPLACES_REFUSAL = /^(target_superseded|target_withdrawn|target_expired|replaces_entity_mismatch|replaces_cross_page|replaces_duplicate): /;
-const REPLACES_SUGGESTION: Record<string, string> = {
+/** `remember` refusals decided at preparation (withdrawal, `replaces` under the target row lock) keep their code and next step. */
+const MEMORY_REFUSAL = /^(fact_withdrawn|target_superseded|target_withdrawn|target_expired|replaces_entity_mismatch|replaces_cross_page|replaces_duplicate): /;
+const MEMORY_REFUSAL_SUGGESTION: Record<string, string> = {
+  fact_withdrawn: FACT_WITHDRAWN_SUGGESTION,
   target_superseded: 'Recall the entity to check the current fact, then pass replaces with the fact id named here if the new claim replaces that one.',
   target_withdrawn: 'Remember the new claim without replaces; the forgotten claim stays withdrawn.',
   target_expired: 'Remember the new claim without replaces.',
@@ -150,6 +153,7 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
     const diagnostic = error.code === 'source_changed' ? writeFailureDiagnostic(error.code, error.message) : null;
     const frozen = verbError(code,diagnostic?.message ?? error.message,diagnostic?.suggestion ?? error.suggestion ?? 'Inspect writer status before retrying.');
     if (diagnostic) frozen.detail = diagnostic.reason;
+    if (error.code === 'idempotency_conflict' && error.fix) frozen.fix = error.fix;
     if (isWriteErrorCode(error.code)) frozen.writeError=error.code;
     throw frozen;
   }

@@ -3,6 +3,9 @@
 Each accepted mutation has a durable request UUID scoped to one brain and one
 authenticated principal. A response distinguishes acceptance from commitment.
 Keep the UUID and original arguments until the request reaches a terminal state.
+A caller may send any `request_id` of 1 to 128 printable ASCII characters; a
+non-UUID id maps to a deterministic UUID, receipts echo the original as
+`client_request_id`, and the receipt helpers accept either.
 
 **Say to your agent:** *"Update this page without overwriting a newer revision;
 use `get_page` and `put_page`, then check the durable receipt."* Or: *"Inspect my
@@ -13,8 +16,8 @@ the setup."*
 
 Read an existing page with `get_page` and `include_content: true`. Preserve its
 complete `content`, `revision`, and source. Send the edited complete content to
-`put_page` with `expected_revision` equal to that revision and a newly generated
-`request_id` UUID. Capture replacements, delete, restore, and version revert also
+`put_page` with `expected_revision` equal to that revision and a new
+`request_id` (or none). Capture replacements, delete, restore, and version revert also
 accept the revision precondition. `force: true` is an explicit overwrite choice;
 it is mutually exclusive with `expected_revision`.
 

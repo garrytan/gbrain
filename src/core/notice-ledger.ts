@@ -23,7 +23,7 @@ export const COACHING_BUDGET_PER_SESSION = 2;
 /** Notices that describe THIS call's result (never deduped): the diagnosis must ride every affected call. */
 /** The one muteable `ask`: an unanswered first-run bundle must stay dismissible. Every other ask always shows. */
 export const MUTEABLE_ASK_CODES: ReadonlySet<string> = new Set(['first_run_decisions']);
-export const PER_CALL_NOTICE_CODES: ReadonlySet<string> = new Set(['empty_retrieval', 'unknown_param', 'listing_truncated', 'former_relationships_hidden', 'source_binding_narrowed', 'local_transcripts', 'held_files', 'relational_chain', 'mention_index', 'delta_incomplete']);
+export const PER_CALL_NOTICE_CODES: ReadonlySet<string> = new Set(['empty_retrieval', 'unknown_param', 'listing_truncated', 'former_relationships_hidden', 'source_binding_narrowed', 'local_transcripts', 'held_files', 'relational_chain', 'mention_index', 'delta_incomplete', 'identity_siblings_capped', 'alias_fanout']);
 
 export interface NoticeAudience {
   transport: Transport;
@@ -36,6 +36,7 @@ export interface NoticeAudience {
 export class NoticeLedger {
   private seen = new Map<string, number>();
   private coaching = new Map<string, { count: number; at: number }>();
+  private tallies = new Map<string, { n: number; at: number }>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -49,6 +50,16 @@ export class NoticeLedger {
       if (at(v) >= cutoff && map.size <= MAX_KEYS) break;
       map.delete(k);
     }
+  }
+
+  /** Count one more `key` event in this audience's session (e.g. a reranker-degraded call) and return the session total. */
+  tally(audience: NoticeAudience, key: string): number {
+    const k = `${this.session(audience)}|${key}`;
+    const n = (this.tallies.get(k)?.n ?? 0) + 1;
+    this.tallies.delete(k);
+    this.tallies.set(k, { n, at: this.now() });
+    this.prune(this.tallies, v => v.at);
+    return n;
   }
 
   /** Filter one call's notices: mute, dedupe and the coaching budget. Never throws. */

@@ -3342,10 +3342,11 @@
       }
     },
     "static": {
-      "callSites": 23,
+      "callSites": 25,
       "directMethods": {
         "_searchKeywordCJK": 1,
         "countChunklessPagesWithContent": 1,
+        "countKeywordPages": 1,
         "countStaleChunks": 1,
         "countStalePagesForExtraction": 1,
         "findDuplicatePage": 1,
@@ -3365,6 +3366,7 @@
         "runVectorAttempt": 1,
         "searchKeyword": 1,
         "searchKeywordChunks": 1,
+        "searchKeywordPages": 1,
         "searchTitles": 1,
         "searchVector": 1
       },
@@ -3388,6 +3390,7 @@
         "connect": "none",
         "consolidateFact": "none",
         "countChunklessPagesWithContent": "direct",
+        "countKeywordPages": "direct",
         "countStaleChunks": "direct",
         "countStalePagesForExtraction": "direct",
         "countStaleTakes": "none",
@@ -3527,6 +3530,7 @@
         "runVectorAttempt": "direct",
         "searchKeyword": "direct",
         "searchKeywordChunks": "direct",
+        "searchKeywordPages": "direct",
         "searchTakes": "none",
         "searchTakesVector": "none",
         "searchTitles": "direct",

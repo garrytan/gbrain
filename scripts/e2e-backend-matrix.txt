@@ -60,4 +60,5 @@ test/e2e/trust-generation-postgres.test.ts
 test/e2e/fence-chunk-overlay-postgres.test.ts
 test/e2e/fence-chunk-trust-read-postgres.test.ts
 test/e2e/trust-cross-session-parity.test.ts
+test/e2e/search-keyword-paging-parity.test.ts
 test/e2e/single-write-group-parity-postgres.test.ts

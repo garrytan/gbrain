@@ -19,6 +19,7 @@ mock.module('../src/core/search/hybrid.ts', () => ({
 const { dispatchToolCall } = await import('../src/mcp/dispatch.ts');
 const engine = {
   getConfig: async () => null,
+  countKeywordPages: async () => 0,
   executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
 } as unknown as BrainEngine;
 
@@ -33,8 +34,9 @@ describe('HTTP MCP dispatch preserves bounded-vector incompleteness', () => {
     expect(retrieval.degraded).toContainEqual({ stage: 'vector_candidates_incomplete', reason: 'candidate_budget' });
     expect(retrieval.vector_pool_underfilled).toEqual({ escalations: 3, innerLimit: 1600, candidatePool: 0, incomplete: true });
     if (!nonempty) {
-      expect(response.content[1].text).toContain('vector_candidates_incomplete');
-      expect(response.content[1].text).not.toContain('clean miss');
+      // content[1] is F2's keyword count line; the empty-retrieval diagnosis follows it.
+      expect(response.content[2].text).toContain('vector_candidates_incomplete');
+      expect(response.content[2].text).not.toContain('clean miss');
     }
   });
 });

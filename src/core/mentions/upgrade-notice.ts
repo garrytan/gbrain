@@ -1,7 +1,9 @@
 /**
- * `gbrain post-upgrade`: while mention-due pages exist, an `[AGENT]` block
- * names the catch-up sweep and how long it takes, so an upgraded brain gets
- * its entity mention index without waiting for autopilot cycles.
+ * `gbrain post-upgrade`: while index-due pages exist (including every page
+ * behind the binary's mention or alias version on an otherwise unchanged
+ * brain), an `[AGENT]` block names the catch-up sweep and how long it takes,
+ * so an upgraded brain gets its entity mention index without waiting for
+ * autopilot cycles (each cycle's extract phase also continues the sweep).
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -25,7 +27,7 @@ export async function mentionIndexUpgradeNotice(engine: BrainEngine): Promise<st
   return [
     '',
     agentBlock({
-      why: `${preview.due} page(s) have not been scanned for entity names. Until they are, entity cards list only explicit links ` +
+      why: `${preview.due} page(s) have not been scanned for entity names by this version. Until they are, entity cards list only explicit links ` +
         '(coverage: pending) and documents that name an account, person or company by name or code are not linked to it.',
       consent: 'none (free: no model calls, no egress)',
       actor: 'agent',

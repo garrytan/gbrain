@@ -2,6 +2,7 @@ import { searchAnswerFeedback } from '../feedback/record.ts';
 import { parseRelationalPlan } from '../search/relational-plan.ts';
 import { loadSearchModeConfig, resolveSearchMode } from '../search/mode.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
+import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, type DeliveryMeta, type EvidencePlan } from '../search/evidence-delivery.ts';
 import { randomUUID } from 'node:crypto';
 import { readHolders } from './context.ts';
@@ -128,7 +129,7 @@ const extract_facts: Operation = {
     const r = await runFactsPipeline(p.turn_text as string, {
       engine: ctx.engine,
       operationContext: ctx,
-      requestId: typeof p.request_id === 'string' ? p.request_id : randomUUID(),
+      requestId: parseWriteRequestId(p.request_id) ?? randomUUID(),
       requestIntent: { ...p, request_id: undefined },
       sourceId,
       sessionId: typeof p.session_id === 'string' ? p.session_id : null,
@@ -362,22 +363,22 @@ const recall: Operation = {
       // in this session) since T" is a question about when the underlying
       // events occurred, not about when a batch extraction wrote the rows.
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
-      const lists = await Promise.all(factSources.map(async (src) => {
-        const entitySlug = entityParam
-          ? ((await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam)
-          : undefined;
-        return ctx.engine.listFactsSince(src, since, { ...listOpts, eventTime: true, entitySlug, sessionId: sessionParam ?? undefined });
+      const resolvedLists = await Promise.all(factSources.map(async (src) => {
+        const entitySlug = entityParam ? ((await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam) : undefined;
+        const rows = await readEntityFacts(ctx, src, entitySlug, limit,
+          s => ctx.engine.listFactsSince(src, since, { ...listOpts, eventTime: true, entitySlug: s, sessionId: sessionParam ?? undefined }));
+        return { slug: entitySlug, rows };
       }));
-      ambiguousEntity = entityParam ? await unlinkedNamesakes(ctx.engine, lists) : null;
-      rows = ambiguousEntity ? [] : mergeNewest(lists, byEventTime);
+      ambiguousEntity = entityParam ? await unlinkedNamesakes(ctx.engine, resolvedLists.map(l => l.rows.map(r => ({ ...r, entity_slug: l.slug ?? r.entity_slug })))) : null;
+      rows = ambiguousEntity ? [] : mergeNewest(resolvedLists.map(l => l.rows), byEventTime);
     } else if (entityParam) {
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
-      const lists = await Promise.all(factSources.map(async (src) => {
+      const resolvedLists = await Promise.all(factSources.map(async (src) => {
         const slug = (await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam;
-        return ctx.engine.listFactsByEntity(src, slug, listOpts);
+        return { slug, rows: await readEntityFacts(ctx, src, slug, limit, s => ctx.engine.listFactsByEntity(src, s!, listOpts)) };
       }));
-      ambiguousEntity = await unlinkedNamesakes(ctx.engine, lists);
-      rows = ambiguousEntity ? [] : mergeNewest(lists, (rec) => rec.valid_from ?? rec.created_at);
+      ambiguousEntity = await unlinkedNamesakes(ctx.engine, resolvedLists.map(l => l.rows.map(r => ({ ...r, entity_slug: l.slug }))));
+      rows = ambiguousEntity ? [] : mergeNewest(resolvedLists.map(l => l.rows), (rec) => rec.valid_from ?? rec.created_at);
     } else if (sessionParam) {
       rows = mergeNewest(
         await Promise.all(factSources.map(src =>
@@ -587,6 +588,19 @@ const recall: Operation = {
     };
   },
 };
+
+/**
+ * One source's facts about an entity, read under every slug they may be saved
+ * under (the page, its identity siblings and its bare subject slug,
+ * mentions/siblings.ts), newest event first, cut at `limit`.
+ */
+async function readEntityFacts<R extends { valid_from?: Date | string | null; created_at?: Date | string | null }>(ctx: OperationContext, src: string,
+  slug: string | undefined, limit: number, read: (slug: string | undefined) => Promise<R[]>): Promise<R[]> {
+  const { factEntitySlugs } = await import('../mentions/siblings.ts');
+  const slugs = slug ? await factEntitySlugs(ctx.engine, src, slug, { excludePrivate: ctx.remote !== false }).catch(() => [slug]) : [undefined];
+  const time = (r: R) => { const v = r.valid_from ?? r.created_at; return (v instanceof Date ? v.getTime() : v ? Date.parse(String(v)) : 0) || 0; };
+  return (await Promise.all(slugs.map(read))).flat().sort((a, b) => time(b) - time(a)).slice(0, limit);
+}
 
 type EntityCandidate = { source_id: string; entity_slug: string };
 const AMBIGUOUS_ENTITY_SUGGESTION = 'These are different entities in different sources. Pass source_id to read one, or link them with entity_identity_link if they are the same.';

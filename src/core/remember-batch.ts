@@ -10,8 +10,9 @@
  *    deterministic child request_id derived from the caller's request_id and
  *    the item index, so replaying the same request_id replays each child
  *    (committed children return their receipt, nothing is written twice);
- *  - each item's receipt is compact (status, fact id, entity, warnings, and
- *    the write state only when it is not committed); repeated hints appear
+ *  - each item's receipt is compact (status, fact id, entity, the fact it
+ *    superseded, warnings, and the write state only when it is not
+ *    committed); repeated hints appear
  *    once at the top level;
  *  - publication is per item: the response reports each item's status and
  *    `partial: true` when some failed. Replaying the same request_id returns
@@ -21,6 +22,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { OperationContext } from './operations.ts';
 import { OperationError } from './ops/contract.ts';
+import { clientRequestIdOf, parseWriteRequestId } from './persistence/preconditions.ts';
 
 export const REMEMBER_BATCH_MAX = 20;
 const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'replaces']);
@@ -76,11 +78,14 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
     }
   }
   if (ctx.dryRun) return { dry_run: true, action: 'remember', items: normalized.length, protocol_version: 1 };
-  const requestId = typeof p.request_id === 'string' && p.request_id ? p.request_id : randomUUID();
+  // F6: child ids derive from the root string the client sent (as before the upgrade), so an accepted batch replays to the same receipts.
+  const rootId = typeof p.request_id === 'string' && p.request_id ? p.request_id : randomUUID();
+  const requestId = parseWriteRequestId(rootId)!;
+  const clientRequestId = clientRequestIdOf(rootId);
   const results: BatchItemResult[] = [];
   const hints = new Set<string>();
   for (const [index, item] of normalized.entries()) {
-    const child = childRequestId(requestId, index);
+    const child = childRequestId(rootId, index);
     try {
       const out = await single(ctx, { ...item, request_id: child }) as Record<string, unknown>;
       // Compact per-item receipt: a batch lands in the agent's context, so it carries what the agent acts on, not the full single-fact envelope.
@@ -89,19 +94,21 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
         index, request_id: child, status: String(out?.status ?? 'saved'),
         ...(out?.id !== undefined ? { id: out.id } : {}),
         ...(out?.entity_slug !== undefined ? { entity_slug: out.entity_slug } : {}),
+        ...(out?.superseded_fact_id !== undefined ? { superseded_fact_id: out.superseded_fact_id } : {}),
         ...(Array.isArray(out?.warnings) && out.warnings.length ? { warnings: out.warnings } : {}),
         ...(out?.valid_until ? { valid_until: out.valid_until } : {}),
         ...(typeof out?.state === 'string' && out.state !== 'committed' ? { state: out.state, retry_after_ms: out.retry_after_ms ?? null } : {}),
       });
     } catch (e) {
       if (!(e instanceof OperationError)) throw e;
-      results.push({ index, request_id: child, status: 'failed', error: { code: e.code, message: e.message, ...(e.detail ? { detail: e.detail } : {}) } });
+      results.push({ index, request_id: child, status: 'failed', error: { code: e.code, message: e.message, ...(e.detail ? { detail: e.detail } : {}), ...(e.suggestion ? { suggestion: e.suggestion } : {}) } });
     }
   }
   const failed = results.filter(r => r.status === 'failed').length;
   return {
     protocol_version: 1,
     request_id: requestId,
+    ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
     items: results,
     saved: results.length - failed,
     failed,
