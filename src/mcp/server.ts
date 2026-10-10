@@ -580,20 +580,23 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       // final checkpoint flush and row-lock release need the live engine.
       .then(() => import('../core/serve-sync-runner.ts').then((m) => m.shutdownDelegatedSync()))
       .catch(() => {})
+      .then(() => import('../core/serve-hermes-runner.ts').then((m) => m.shutdownDelegatedHermesMaintenance(engine)))
+      .catch(() => {})
       .then(() => Promise.resolve(engine.disconnect?.()))
       .catch(() => {})
       .finally(() => process.exit(code));
   };
-  // v0.34.1 (#870): when MCP_STDIO=1, the wrapping gateway (OpenClaw's
-  // bundle-mcp layer, others) often pipes the JSON-RPC handshake then
-  // closes its stdin half. Treating that as a permanent disconnect kills
-  // the server before the first tool call arrives. Signal handlers and
-  // transport.onclose still cover the legitimate shutdown paths.
+  bindMcpShutdownHandlers(transport, shutdown);
+}
+
+/** Keep transport EOF policy and signal registration identical for every serve. */
+function bindMcpShutdownHandlers(transport: { onclose?: () => void }, shutdown: (reason: string) => void): void {
+  // A wrapping gateway may close stdin after its handshake while the transport
+  // stays live; MCP_STDIO keeps signals and transport close authoritative.
   if (process.env.MCP_STDIO !== '1') {
     process.stdin.on('end', () => shutdown('stdin end'));
     process.stdin.on('close', () => shutdown('stdin close'));
   }
-  // @ts-ignore — SDK exposes onclose on transport
   transport.onclose = () => shutdown('transport close');
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));

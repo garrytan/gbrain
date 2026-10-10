@@ -18,9 +18,12 @@ import { assertNoSymlinks, checkedRoot, confinedPath, sha256, privateWrite } fro
 import { installSharedSkillsConnection } from './shared-skills.ts';
 import type { SharedSkillsToolCaller } from '../shared-skills/adapter.ts';
 import { harnessSharedSkillsRoot } from './status.ts';
+import { installHermesPlugin } from './hermes.ts';
 
 export interface InstallOptions { harness: string; name?: string; root?: string; configPath?: string; remove?: boolean;
   sharedSkills?: HarnessCredentials['shared_skills']; toolCaller?: SharedSkillsToolCaller; nativeSkillsDir?: string; credentialsFile?: string; freshToken?: boolean }
+/** Every successful installer branch returns a receipt with a stable status field. */
+export interface HarnessInstallResult extends Record<string, any> { status: string }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const readJson = (path: string): Record<string, any> => {
   assertNoSymlinks(path);
@@ -78,13 +81,24 @@ function assertEntryOwned(entry: unknown, prior: Record<string, any>) {
 }
 
 /** Install only in the current environment. Foreign entries are never adopted. */
-export async function installHarnessConnection(c: HarnessCredentials, opts: InstallOptions) {
+export async function installHarnessConnection(c: HarnessCredentials, opts: InstallOptions): Promise<HarnessInstallResult> {
   // A cached unexpired token may be the invalidated one; every later step (config and shared skills) uses the new token.
   if (opts.freshToken && !opts.remove) c = { ...c, access_token: await credentialAccessToken({ ...c, access_token: undefined }), expires_at: undefined };
   const adapter = harnessAdapter(opts.harness);
   const name = opts.name ?? 'gbrain';
   if (!isValidName(name)) throw new Error('Invalid connection name');
   const common = { ...credentialReceipt(c), harness: adapter.id, native_harness_verified: false, next_action: adapter.reload };
+  if (adapter.connection === 'hermes-plugin') {
+    if (!opts.root) throw new Error('storage_root_unverified: pass --root with the intended absolute Hermes profile home');
+    if (name !== 'gbrain' || opts.configPath) throw new Error('Hermes installation uses the gbrain connection in --root/config.yaml; custom names/config paths are unsupported');
+    const home = checkedRoot(opts.root);
+    const installed = await installHermesPlugin({ home, url: c.mcp_url, clientId: c.client_id,
+      ...(opts.remove ? { remove: true } : { token: await credentialAccessToken(c) }) });
+    const shared_skills = await installSharedSkillsConnection(c, { ...opts,
+      root: join(home, '.gbrain-hermes'), nativeSkillsDir: join(home, 'skills') });
+    return { ...common, ...installed, shared_skills,
+      remote_membership_pending: 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true };
+  }
   let deactivated: Awaited<ReturnType<typeof installSharedSkillsConnection>> | undefined;
   if (opts.remove || (opts.sharedSkills ?? c.shared_skills)?.follow === false) {
     const root = harnessSharedSkillsRoot(opts);
@@ -158,7 +172,7 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
   } finally { lock.release(); }
 }
 
-async function installThinClient(c: HarnessCredentials, opts: InstallOptions, common: Record<string, unknown>) {
+async function installThinClient(c: HarnessCredentials, opts: InstallOptions, common: Record<string, unknown>): Promise<HarnessInstallResult> {
   if (!opts.root) throw new Error('storage_root_unverified: pass --root with a verified absolute persistent directory');
   const root = checkedRoot(opts.root);
   if (!opts.remove && !c.client_secret) throw new Error('Thin CLI installation requires a renewable client credential');

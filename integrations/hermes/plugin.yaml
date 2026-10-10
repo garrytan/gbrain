@@ -1,0 +1,8 @@
+name: gbrain
+kind: exclusive
+version: 1.0.0
+description: Shared GBrain memory over HTTP MCP; automatic capture is opt-in.
+requires_env:
+  - name: GBRAIN_MCP_TOKEN
+    description: Bearer token for the shared GBrain MCP server
+    secret: true

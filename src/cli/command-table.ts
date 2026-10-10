@@ -235,6 +235,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // CX9).
   // thin client: v0.31.1 (CDX-2 op coverage matrix): more local-only commands
   { name: 'dream', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, json: 'document', routes_source: true, load: () => import('./commands/dream.ts') },
+  // Setup is engine-free on local and thin-client installs; maintain applies its
+  // trusted-local refusal inside the handler before delegation or connection.
+  { name: 'hermes', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, json: 'document', routes_source: true, load: () => import('./commands/hermes.ts') },
   // System One decide: local CLI only (calibrate, receipts and proposals are trusted-local); help and a
   // key-only probe answer without a brain, so the module opens its own engine.
   { name: 'decide', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/decide.ts') },
