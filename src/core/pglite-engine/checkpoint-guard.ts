@@ -37,9 +37,25 @@ export function checkpointGuardThreshold(maxWalBytes: number, segmentBytes: numb
   return Math.min(CHECKPOINT_GUARD_MAX_BYTES, Math.max(segmentBytes, (segments - 1) * segmentBytes) / 2);
 }
 
+/**
+ * A probe is reused for this long, so a run of small writes reads
+ * pg_control_checkpoint() about once per window instead of once per statement
+ * (an effects drain issued four probes per effect).
+ */
+export const CHECKPOINT_PROBE_REUSE_MS = 50;
+/**
+ * The WAL rate the reuse window assumes PGLite never exceeds: about 5x the
+ * peak measured for bulk chunk and vector inserts (205 MB/s; one 2,000-row
+ * vector insert writes 15.7 MB). A probe is reused only while its reading plus
+ * a full window at this rate stays under the threshold, so no write can cross
+ * the threshold unprobed.
+ */
+export const PGLITE_WAL_BYTES_PER_SECOND_BOUND = 1024 ** 3;
+
 export class PgliteCheckpointGuard {
   private threshold: number | undefined;
   private warned = false;
+  private lastProbe: { at: number; walSinceRedo: number } | undefined;
   private tail: Promise<void> = Promise.resolve();
   private outermost = 0;
 
@@ -74,21 +90,22 @@ export class PgliteCheckpointGuard {
    */
   async runStatement<T>(query: Query, statement: () => Promise<T>): Promise<T> {
     const result = statement();
-    if (this.outermost > 0) return result;
+    if (this.outermost > 0 || this.probeFresh()) return result;
     const probe = this.issueProbe(this.override ?? query);
     let value: T;
     try { value = await result; } catch (error) { void probe.catch(() => undefined); throw error; }
     if (await this.overThreshold(probe)) {
       // The write committed; a failed CHECKPOINT here warns instead of failing it, and the next probe retries.
-      try { await (this.override ?? query)('CHECKPOINT'); } catch (error) { this.warnOnce(error); }
+      try { await (this.override ?? query)('CHECKPOINT'); this.lastProbe = undefined; } catch (error) { this.warnOnce(error); }
     }
     return value;
   }
 
   private async beforeOutermostTransaction(query: Query): Promise<void> {
-    if (!await this.overThreshold(this.issueProbe(query))) return;
+    if (this.probeFresh() || !await this.overThreshold(this.issueProbe(query))) return;
     try {
       await query('CHECKPOINT');
+      this.lastProbe = undefined;
     } catch (error) {
       throw new GBrainError('PGLite checkpoint failed',
         `a top-level CHECKPOINT before the next write transaction failed (${error instanceof Error ? error.message : String(error)}); the transaction was not started`,
@@ -114,11 +131,19 @@ export class PgliteCheckpointGuard {
       }
       const walSinceRedo = Number(since!.since_redo);
       if (!Number.isFinite(walSinceRedo)) throw new Error('WAL position is unavailable');
+      this.lastProbe = { at: Date.now(), walSinceRedo };
       return walSinceRedo >= this.threshold;
     } catch (error) {
       this.warnOnce(error);
       return false;
     }
+  }
+
+  /** The last probe is recent and leaves a full window of WAL at the bound under the threshold, so this write needs no new probe. */
+  private probeFresh(): boolean {
+    const last = this.lastProbe;
+    return last !== undefined && this.threshold !== undefined && Date.now() - last.at < CHECKPOINT_PROBE_REUSE_MS
+      && last.walSinceRedo + PGLITE_WAL_BYTES_PER_SECOND_BOUND * CHECKPOINT_PROBE_REUSE_MS / 1000 < this.threshold;
   }
 
   private warnOnce(error: unknown): void {

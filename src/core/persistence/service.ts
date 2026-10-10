@@ -121,7 +121,7 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     return prior.consumer;
   }
   const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,
-    { onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
+    { drainNotice: claimOwnerKind() === 'serve', onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
   const kind = claimOwnerKind();
   const service: Service = kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres'
     ? { consumer: new WaiterOnlyConsumer(engine, config, full, { kind, hostId: localHostId(), pool: () => enginePoolStats(engine) }), stopping: false }

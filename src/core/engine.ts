@@ -130,6 +130,24 @@ export interface BatchOpts {
   signal?: AbortSignal;
 }
 
+/**
+ * Options for `transaction` / `transactionDirect`.
+ *
+ * `signal`: aborting it cancels the transaction. An already-aborted signal
+ * rejects before `BEGIN` is sent. On Postgres an abort while the transaction
+ * runs discards its connection (the socket closes, so the server rolls the
+ * transaction back whether or not a statement is in flight, directly or
+ * through a transaction-mode pooler) and the transaction rejects with an
+ * `AbortError` whose `cause` is the driver's `CONNECTION_CLOSED` error; the
+ * pool reconnects on its next checkout. Every `finally` on the way out runs.
+ * A nested transaction (savepoint) shares its parent's connection, so
+ * aborting it aborts the parent too. PGLite's single in-process connection
+ * cannot interrupt a statement: only the pre-`BEGIN` check applies there.
+ */
+export interface TransactionOptions {
+  signal?: AbortSignal;
+}
+
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
 export interface LinkBatchInput {
   from_slug: string;
@@ -789,9 +807,9 @@ export interface BrainEngine {
    */
   reconnect(ctx?: { error?: unknown }): Promise<void>;
   initSchema(): Promise<void>;
-  transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;
+  transaction<T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T>;
   /** Short control transaction on the existing direct route; honors nested transaction scope. */
-  transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;
+  transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T>;
   /** Mandatory resident-consumer stop barrier before datastore/pool shutdown. */
   registerBeforeDisconnect(stop: () => Promise<void>): () => void;
   /**

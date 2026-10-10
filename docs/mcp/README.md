@@ -8,6 +8,7 @@ different credentials.
 | Run an HTTP MCP server | [Deployment](DEPLOY.md) | Access to the brain host and its service configuration |
 | Open the admin panel or manage clients | [MCP administration](ADMIN.md) | The running server's separate owner bootstrap credential |
 | Connect an existing agent | [Hosted harness setup](../guides/hosted-harness-access.md) | Native OAuth/PKCE, or a private machine-client handoff |
+| Wire Claude Code to a local brain in one command | [`gbrain setup claude-code`](../guides/setup.md) | A local GBrain installation; setup resolves the brain, writes MCP and read-context hooks, and verifies them |
 | Run a local MCP pipe | [Local stdio](DEPLOY.md#local-stdio-zero-setup) | A local GBrain installation; no HTTP admin panel is created |
 | Diagnose a failed connection | [Recovery table](ADMIN.md#recover-a-failed-step) | Start with the failed stage and the authority you actually hold |
 | A tool call returned an error | [A tool call returned an error](#a-tool-call-returned-an-error) | None: the error says who acts |

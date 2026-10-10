@@ -7,6 +7,7 @@ import { preparationBudgetMs } from '../../../core/persistence/preparation-budge
 import { readPreparationPolicy } from '../../../core/persistence/switches.ts';
 import { resolvePrepare, resolveSessionTimeouts } from '../../../core/db.ts';
 import { agentFix, checkError } from '../check-fix.ts';
+import { lostCallerWrites } from '../../../core/repair/failed-writes.ts';
 
 const WINDOW_DAYS = 7;
 const SAMPLE = 10_000;
@@ -191,5 +192,40 @@ export async function sessionTimeoutsCheck(engine: BrainEngine): Promise<Check> 
         + `until it finishes. To restore the session default, set it on the role: ALTER ROLE <gbrain role> SET statement_timeout = '${configured}' (the pooler cannot be told to keep it).${poolerNote}` };
   } catch (error) {
     return checkError('persistence_session_timeouts', 'read the session statement_timeout', error, { details: { configured, health: 'unknown', docs } });
+  }
+}
+
+/**
+ * #6429: caller writes (`remember`, `put_page`, `add_timeline_entry`) that
+ * ended `conflict` with `source_changed` (the page's file and database
+ * differed at publication) or that the managed writer guard refused, whose
+ * receipt still holds the intent. The caller saw an error and nothing landed:
+ * on the reported brain 68 `remember` writes were lost this way while a
+ * database-only grandfather stamp made every file look edited, and only a
+ * query on `persistence_requests` showed it. Names the explicit-only replay's
+ * preview per source. Read-only.
+ */
+export async function lostCallerWritesCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
+  const docs = 'docs/guides/repair.md#failed-writes';
+  try {
+    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const { lost, compacted } = await lostCallerWrites(engine, sources);
+    const count = lost.reduce((sum, row) => sum + row.count, 0);
+    const details = { count, writes: lost, compacted_unreplayable: compacted, repair: 'failed-writes', docs };
+    const compactedNote = compacted ? ` ${compacted} older refused receipt(s) were compacted (persistence.receipt_retention_days) and cannot be replayed.` : '';
+    if (!count) return { name: 'lost_caller_writes', status: 'ok', details, message: `Every caller write with a retained receipt committed or was superseded.${compactedNote}` };
+    const bySource = new Map<string, number>();
+    for (const row of lost) bySource.set(row.source_id, (bySource.get(row.source_id) ?? 0) + row.count);
+    const first = [...bySource.keys()][0]!;
+    const drift = lost.filter(row => row.reason === 'source_changed').reduce((sum, row) => sum + row.count, 0);
+    const memory = lost.filter(row => row.operation === 'remember').reduce((sum, row) => sum + row.count, 0);
+    return { name: 'lost_caller_writes', status: 'warn', details,
+      message: `${count} caller write(s) never landed (${memory} remember; ${drift} refused source_changed because the page's canonical file did not match its database copy `
+        + `or was missing, ${count - drift} refused by the managed writer guard): ${[...bySource].map(([source, n]) => `${source}: ${n}`).join(', ')}. The callers saw an error and `
+        + `the fact or page edit was dropped. Preview the replay on the brain host: gbrain repair failed-writes --source ${first} — then run the apply command it prints after the user agrees.${compactedNote}`,
+      fix: agentFix(['gbrain', 'repair', 'failed-writes', '--source', first],
+        'Read-only preview: lists each lost write with its disposition (replay, already_written, duplicate, superseded) and prints the apply command.', 'lost_caller_writes', { docs }) };
+  } catch (error) {
+    return checkError('lost_caller_writes', 'inspect refused caller writes', error, { details: { count: 'unknown', docs } });
   }
 }

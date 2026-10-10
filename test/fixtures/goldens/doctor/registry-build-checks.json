@@ -395,6 +395,10 @@
       },
       {
         "category": "ops",
+        "name": "lost_caller_writes"
+      },
+      {
+        "category": "ops",
         "name": "persistence_session_timeouts"
       },
       {
