@@ -43,11 +43,14 @@ test('legacy extraction deduplicates exact old facts without inferring their vec
     expect(visible).toMatchObject({ inserted: 1, duplicate: 0 });
     expect(visible.fact_ids).not.toContain(old.id);
     extractedEntity = null;
-    for (const sourceSlug of ['notes/first', 'notes/second']) {
-      const unparented = await runFactsPipeline('Synthetic unparented extraction input.', { engine, sourceId: 'default', sessionId: null,
-        source: 'mcp:extract_facts', sourceSlug, visibility: 'private' });
-      expect(unparented).toMatchObject({ inserted: 1, duplicate: 0 });
-    }
-    expect(await engine.executeRaw('SELECT context FROM facts WHERE entity_slug IS NULL ORDER BY id')).toEqual([{ context: 'notes/first' }, { context: 'notes/second' }]);
+    // #5275: the exact check no longer skips facts with no resolved entity, so the same unparented claim extracted
+    // from a second page is a duplicate of the first (the managed path already decided it that way).
+    const firstUnparented = await runFactsPipeline('Synthetic unparented extraction input.', { engine, sourceId: 'default', sessionId: null,
+      source: 'mcp:extract_facts', sourceSlug: 'notes/first', visibility: 'private' });
+    expect(firstUnparented).toMatchObject({ inserted: 1, duplicate: 0 });
+    const secondUnparented = await runFactsPipeline('Synthetic unparented extraction input.', { engine, sourceId: 'default', sessionId: null,
+      source: 'mcp:extract_facts', sourceSlug: 'notes/second', visibility: 'private' });
+    expect(secondUnparented).toMatchObject({ inserted: 0, duplicate: 1, fact_ids: firstUnparented.fact_ids });
+    expect(await engine.executeRaw('SELECT context FROM facts WHERE entity_slug IS NULL ORDER BY id')).toEqual([{ context: 'notes/first' }]);
   }
 }), 120_000);

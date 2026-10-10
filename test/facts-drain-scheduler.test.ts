@@ -166,7 +166,9 @@ describe('acceptance: a resident serve on a real PGLite brain', () => {
     await engine.setConfig('facts.extraction_model', 'anthropic:claude-sonnet-4-6');
     __resetFactsDrainNoticesForTests();
     configureGateway({ embedding_disabled: true, env: KEYS } as never);
-    __setChatTransportForTests(async () => ({ text: JSON.stringify({ facts: [{ fact: 'Acme Example shipped the beta in 2026', kind: 'fact', entity: 'companies/acme-example', confidence: 0.9, notability: 'high' }] }),
+    // #5275: an exact repeat with no resolved entity is a duplicate, so each extraction yields a distinct claim.
+    let extraction = 0;
+    __setChatTransportForTests(async () => ({ text: JSON.stringify({ facts: [{ fact: `Acme Example shipped the beta in 2026 (extraction ${++extraction})`, kind: 'fact', entity: 'companies/acme-example', confidence: 0.9, notability: 'high' }] }),
       blocks: [], stopReason: 'end', model: 'anthropic:claude-sonnet-4-6', providerId: 'anthropic',
       usage: { input_tokens: 900, output_tokens: 120, cache_read_tokens: 0, cache_creation_tokens: 0 } } as ChatResult));
   });

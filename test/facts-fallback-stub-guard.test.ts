@@ -99,7 +99,9 @@ describe('writeSingleFact × resolution provenance (#4108 matrix)', () => {
     });
 
     expect(r.status).toBe('inserted');
-    expect(r.entity_slug).toBe('companies/zeta-widgets-nonexistent');
+    // #5504: a slug the resolver could only invent is not an entity; the row
+    // carries NULL (the backstop convention) instead of the fallback slug.
+    expect(r.entity_slug).toBeNull();
 
     // The pre-#4108 bug: this exact write minted
     // companies/zeta-widgets-nonexistent.md as a canonical stub page that a
@@ -107,7 +109,7 @@ describe('writeSingleFact × resolution provenance (#4108 matrix)', () => {
     expect(existsSync(join(brainDir, 'companies/zeta-widgets-nonexistent.md'))).toBe(false);
 
     const row = await factRow(r.id);
-    expect(row.entity_slug).toBe('companies/zeta-widgets-nonexistent');
+    expect(row.entity_slug).toBeNull();
     // DB-only insert — no fence file backs the row.
     expect(row.source_markdown_slug).toBeNull();
   });
@@ -120,7 +122,8 @@ describe('writeSingleFact × resolution provenance (#4108 matrix)', () => {
     });
 
     expect(r.status).toBe('inserted');
-    expect(r.entity_slug).toBe('zetaperson');
+    // #5504: no unprefixed holding slug; the stub guard has nothing to refuse.
+    expect(r.entity_slug).toBeNull();
     expect(existsSync(join(brainDir, 'zetaperson.md'))).toBe(false);
 
     const row = await factRow(r.id);
