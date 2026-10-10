@@ -3498,8 +3498,8 @@
         "idempotent": true,
         "name": "oauth_client_registered_via",
         "sql": {
-          "length": 119,
-          "sha256": "13fc89cb57e1c37195c776b832dbec7c5180b0be8a6e881406fe3280b09c066c"
+          "length": 489,
+          "sha256": "5767fc58a79405b9ff3bbcc291a988f42e6f41553a1bbf062c132b3306f04ba3"
         },
         "sqlFor": "absent",
         "transaction": "absent",

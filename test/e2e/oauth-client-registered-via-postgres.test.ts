@@ -73,7 +73,7 @@ describePg('oauth_client_registered_via migration on Postgres (#6202)', () => {
       expect(await editable(clientId)).toBe(false);
       await oldServerInsert('pre-migration-example');
     } finally {
-      await engine.executeRaw(migration.sql);
+      await engine.runMigration(migration.version, migration.sql);
     }
     expect(await hasColumn()).toBe(true);
   });
@@ -81,7 +81,7 @@ describePg('oauth_client_registered_via migration on Postgres (#6202)', () => {
   test('rows from before the migration stay NULL and read-only; a repeat run changes nothing', async () => {
     expect(await marker('pre-migration-example')).toBeNull();
     expect(await editable('pre-migration-example')).toBe(false);
-    await engine.executeRaw(migration.sql);
+    await engine.runMigration(migration.version, migration.sql);
     expect(await marker('pre-migration-example')).toBeNull();
   });
 
