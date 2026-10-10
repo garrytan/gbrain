@@ -21,7 +21,7 @@ import type { PageReadScope, SearchResult } from '../types.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
-import { privateProvenanceFilterFragment } from './private-visibility.ts';
+import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from './private-visibility.ts';
 import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
 import { namedEntity } from './entity-anchor.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
@@ -92,9 +92,10 @@ async function collectFactCandidates(engine: BrainEngine, query: string, scope: 
   const terms = queryTerms(query);
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'];
   const params: unknown[] = [sources, [...AUDIT_ROW_SOURCES]];
+  const excludePrivate = await resolveExcludePrivatePages(engine, scope.remote);
   const base = `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
     AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[]) AND ${quarantinedProvenanceFilterFragment('f')}
-    ${scope.remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : ''}
+    ${scope.remote ? `AND f.visibility = 'world'` : ''} ${excludePrivate ? `AND ${privateProvenanceFilterFragment('f')}` : ''}
     AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust, suppressFlagged: scope.suppressFlagged })}`;
   const cols = 'f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period';
   const found = new Map<number, ScoredCandidate>();
@@ -124,7 +125,7 @@ async function collectFactCandidates(engine: BrainEngine, query: string, scope: 
        ORDER BY f.embedding <=> $3::vector LIMIT ${limits.cosine}`, [...params, lit, model, queryEmbedding.length]).catch(() => []);
     for (const r of rows) add(r);
   }
-  const entity = await namedEntity(engine, query, { sourceIds: sources, excludePrivate: scope.remote }).catch(() => null);
+  const entity = await namedEntity(engine, query, { sourceIds: sources, excludePrivate }).catch(() => null);
   if (entity) {
     const rows = await engine.executeRaw<FactCandidate>(
       `SELECT ${cols} FROM facts f WHERE ${base} AND f.entity_slug = $3 ORDER BY f.valid_from DESC, f.id DESC LIMIT ${limits.entity}`,

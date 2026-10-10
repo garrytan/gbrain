@@ -359,8 +359,8 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
     .filter(t => t.length >= 3 && !FACT_MATCH_STOPWORDS.has(t)).slice(0, 12);
   if (terms.length === 0 || !ctx.emitResponseMeta) return [];
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'];
-  const remote = ctx.remote !== false;
-  const visibility = `${remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : ''}
+  const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+  const visibility = `${ctx.remote !== false ? `AND f.visibility = 'world'` : ''} ${excludePrivate ? `AND ${privateProvenanceFilterFragment('f')}` : ''}
          AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   try {
     // Most searches have no saved fact to find: one indexed probe (idx_facts_since) with the
