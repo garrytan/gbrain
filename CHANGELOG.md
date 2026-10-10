@@ -10,6 +10,36 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.146.0] - 2026-10-10
+
+**On PGLite at 50,000 pages, the vector index now builds (11 minutes, where it used to run out of memory) and vector search drops from 1.7 s to 27 ms. A 50,000-page import no longer leaves about 30,000 Git effects queued, so `gbrain serve`'s first call is 189 ms instead of 640 ms and the first write after it 266 ms instead of 758 ms. The first sync of an already-imported 3,700-file source takes 22 s instead of 96 s on Postgres and 28 s instead of 60 s on PGLite.**
+
+Efficiency wave 8 (GBRA-75). Base is master at wave 7 (97497f68e); the import, serve and first-write rows compare against master 1a3adfe99 with one fresh import per side and restored copies. Synthetic brains on 4-vCPU AMD EPYC / 16 GiB machines with Bun 1.4.2: 5k = 5,001 pages, 50k = 50,010 pages / 248,802 vector(1024) chunks. Base and branch were interleaved on the same machine and are shown as p50 / p95.
+
+| Path | Engine, brain, N | Before | After |
+|---|---|---|---|
+| first sync of an already-imported 3,700-file source | Postgres 5k, N=2 | 96,210 / 96,313 ms | 22,092 / 22,539 ms |
+| same | PGLite 5k, N=2 | 60,191 / 62,327 ms | 27,995 / 30,109 ms |
+| statements per skipped file in that sync | Postgres 5k | 172 | 82 |
+| 1-page sync / no-change sync (guards) | Postgres 5k, N=10 | 1,334 / 733 ms | 1,421 / 687 ms |
+| Git effects still open after `gbrain import` of every source | PGLite 50k, N=1 | 30,070 | 2 |
+| `gbrain import` of every source, wall | PGLite 50k, N=1 | 1,377 s | 1,380 s |
+| `gbrain serve` first call on a copy of the fresh import, cold | PGLite 50k, N=3 | 640 / 642 ms | 189 / 201 ms |
+| `gbrain serve` start to first answer, same runs | PGLite 50k, N=3 | 1,324 / 1,609 ms | 976 / 985 ms |
+| first fact write (`writeSingleFact`) on a copy of the fresh import, then 200 timed | PGLite 50k, N=3 | 758 / 782 ms, then 71 / 98 ms | 266 / 282 ms, then 53 / 75 ms |
+| Git effects finished in 60 s of `gbrain serve` on a backlogged brain | PGLite 50k, N=2 | 37,832 and 41,760 of 50,010 | 50,010 and 50,010 |
+| HNSW build of every vector index (`gbrain reindex --vectors`) | PGLite 50k | out of memory at 1 GB `maintenance_work_mem`; wedged after the index write at 1.5 GB | 663 s, chunk index 1.9 GB |
+| warm `searchVector`, limit 10 / limit 50 | PGLite 50k, N=20 ×2 | 1,716 / 1,768 and 1,713 / 1,761 ms (exact scan) | 27.5 / 32.4 and 52.0 / 58.0 ms |
+
+No first write threw `write_pending` on either side on this machine. On a Postgres 5k import, neither side leaves a backlog: 145/146 s on base, 160/149 s on the branch (N=2), with all 5,001 Git effects committed.
+
+### Itemized changes
+
+- **Batched sync waivers now cover imports** (`persistence/sync-prepare.ts`, `sync-waivers.ts`). A first sync already batched runs of unchanged entries, up to 64 per waiver transaction with one cursor write. In practice only deletes ever used it: each unchanged import's screen refused because the cursor did not yet name it, so every file fell back to its own pending save, second preparation and transaction. A waiver screen (`prepareManagedSyncMutation(..., { unsaved: true })`) now also accepts the run's own cursor with nothing pending. Every real publication still requires the cursor to name its request. Inside its lock, the waiver transaction re-reads the owner epoch (a change sends the run back to the per-entry path) and re-hashes each file (an edited file ends the waived prefix before it). The cursor and waived counts advance in the transaction that validates the prefix, so a crash resumes from the same cursor. Cursor checkpoint writes drop from 7.4k to 59.
+- **Git effects without the durability hook finish as a group** (`persistence/effects.ts`). In a folder without the hook, a single-file Git effect runs no git command and only records `durability_not_enabled`, but each one still took its own worktree lock, guard transaction and update. A coalesced group of up to 100 now takes each root's lock once, guards each source incarnation once, validates every path as before (escape, replaced file, db_only, read-only mirror) and records the plain outcomes in one update bound to each effect's claim token. A failed guard or path fails only the effects it covers.
+- **PGLite vector index builds fit** (`pglite-embedded-assets.ts`, `vector-index.ts` `withHnswBuildMemory`, `embedding-ann-build.ts`, `commands/reindex-vectors.ts`). pglite.wasm caps its heap at 2 GiB. PGLite runs no workers, but its default `max_parallel_maintenance_workers=2` still made pgvector reserve all of `maintenance_work_mem` up front. The build also WAL-logs the whole index (1.9 GB) in one statement, past the automatic checkpoint trigger (539 MB), and that checkpoint wedged inside the statement. PGLite now starts with `max_parallel_maintenance_workers=0` and `max_wal_size=8GB`; the between-statement guard still checkpoints at 256 MB. The deferred ANN build and `reindex --vectors` size `maintenance_work_mem` to the graph (rows × (vector + 640 B) × 1.1, floor 64 MB). Above a 1.5 GiB graph (about 308k 1024-dim chunks), they refuse before building with `pglite_vector_index_too_large`, a read-only `gbrain migrate --to postgres --plan --json` fix and a doctor verify. Postgres is unchanged.
+- Tests: `sync-waiver-run-imports.test.ts` covers twelve unchanged files waived in under 8 transactions (28 on base), an edit during the run, an owner change during the screens, and a crash with resume, on both engines. Two new cases in `persistence-git-coalescing-5530.slow.test.ts` and its Postgres twin: a 33-effect group writes one outcome update and at most 6 transactions (33 and 37 on base), and a mixed group (unsafe path, hand-edited file, replaced source incarnation) keeps every effect's own outcome, identical to base. `pglite-hnsw-build.test.ts` covers the start settings (2 and 1024 on base), the graph estimate, a real sized build that restores the setting, the refusal envelope with no build, and Postgres pass-through. The crash robot ran 600 s on each engine with every seam, PgBouncer and `pooler_disconnect` on Postgres, with 0 violations.
+
 ## [0.60.145.0] - 2026-10-10
 
 **Bulk DB extraction no longer sees purged facts. `gbrain extract --source db` and the batched derived-link write read snapshots with `readPageSnapshotsBatch`, which never read `fact_purges`. A fence row purged for the page, or purged source-wide with a `'*'` tombstone, stayed in the batched body that links and timeline were extracted from, although `get_page` and every per-page read hid it. The batch now applies the same purges and `'*'` purge marker as `readPageSnapshot`, and under `GBRAIN_RLS_SCOPE_BINDING=1` it runs scoped to the batch's sources.**

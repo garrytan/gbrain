@@ -1970,6 +1970,16 @@ More: [docs/guides/troubleshooting.md#persistence-write-stall](../../docs/guides
 
 Reasons: `timeout`, `live_serve`.
 
+### pglite_vector_index_too_large
+
+<a id="pglite_vector_index_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A PGLite vector (HNSW) index build was refused before it started because its in-memory graph would not fit PGLite's WebAssembly heap. | pglite.wasm caps memory at 2 GiB and pgvector keeps the whole HNSW graph in memory while it builds; a build past the budget used to run out of memory or fall back to hours of on-disk inserts. Vector search keeps working with exact scans. | Preview a move to Postgres (read-only): gbrain migrate --to postgres --plan --json Run: gbrain migrate --to postgres --plan --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/ENGINES.md#pglite-vector-index-ceiling](../../docs/ENGINES.md#pglite-vector-index-ceiling)
+
 ### plan_output_failed
 
 <a id="plan_output_failed"></a>

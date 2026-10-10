@@ -309,6 +309,57 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
     expect(new Set((await engine.executeRaw<{ reason: string }>("SELECT outcome->>'reason' AS reason FROM persistence_effects WHERE kind='git'")).map(r => r.reason)))
       .toEqual(new Set(['durability_not_enabled']));
   }), 300_000);
+  // Wave 8: a group without the durability hook guards each source once and records its plain outcomes in one
+  // statement. Every other outcome (a replaced file, an unsafe path, an archived source) is unchanged.
+  test('without the durability hook, a group records its outcomes in one statement and one guard transaction per source', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    mkdirSync(join(repo.root, 'nested'));
+    await bindSource(engine, 'default', repo);
+    await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('nested', 'nested', $1)", [join(repo.root, 'nested')]);
+    await claimWorktree(engine, 'nested', join(repo.root, 'nested'), localHostId());
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    await pauseGitEffects(engine, async () => { await seed(ctx('nested'), 3, 700); await seed(ctx('default'), 30); });
+    await release(engine);
+    const outcomeWrites: string[] = [];
+    let transactions = 0;
+    const executeRaw = engine.executeRaw, transaction = engine.transaction;
+    Object.assign(engine, {
+      executeRaw(this: BrainEngine, ...args: Parameters<BrainEngine['executeRaw']>) { if (/^UPDATE persistence_effects\b[\s\S]*outcome=/.test(args[0])) outcomeWrites.push(args[0]); return executeRaw.apply(this, args); },
+      transaction(this: BrainEngine, ...args: Parameters<BrainEngine['transaction']>) { transactions++; return transaction.apply(this, args); },
+    });
+    try { await pass(engine); } finally { Object.assign(engine, { executeRaw, transaction }); }
+    expect(await gitStates(engine)).toEqual({ committed: 33 });
+    expect(outcomeWrites).toHaveLength(1);
+    // Two guards (one per source) plus the pass's fixed claim transactions; one guard per effect made 37.
+    expect(transactions).toBeLessThanOrEqual(6);
+  }), 300_000);
+  test('without the durability hook, every effect of a mixed group keeps its own outcome', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = makeRepo(home, 'content');
+    mkdirSync(join(repo.root, 'nested'));
+    await bindSource(engine, 'default', repo);
+    await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('nested', 'nested', $1)", [join(repo.root, 'nested')]);
+    await claimWorktree(engine, 'nested', join(repo.root, 'nested'), localHostId());
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    await pauseGitEffects(engine, async () => { await seed(ctx('default'), 6); await seed(ctx('nested'), 2, 700); });
+    await effectSql(engine, `UPDATE persistence_effects SET data=jsonb_set(data,'{relative_path}','"../outside.md"')
+      WHERE id=(SELECT id FROM persistence_effects WHERE kind='git' ORDER BY id LIMIT 1 OFFSET 2)`);
+    writeFileSync(join(repo.root, 'notes', 'page-0004.md'), pageContent(4, ' Edited by hand.'));
+    await effectSql(engine, "UPDATE persistence_effects SET source_incarnation=gen_random_uuid() WHERE kind='git' AND source_id='nested'");
+    await release(engine);
+    await pass(engine);
+    const rows = await engine.executeRaw<{ slug: string; state: string; error_code: string | null; reason: string | null; git: string | null }>(`SELECT data->>'slug' AS slug,
+      state,error_code,outcome->>'reason' AS reason,outcome->>'git' AS git FROM persistence_effects WHERE kind='git' ORDER BY source_id,data->>'slug'`);
+    expect(rows.map(r => [r.slug, r.state, r.error_code, r.reason, r.git])).toEqual([
+      ['notes/page-0000', 'committed', null, 'durability_not_enabled', 'skipped'],
+      ['notes/page-0001', 'committed', null, 'durability_not_enabled', 'skipped'],
+      ['notes/page-0002', 'queued', 'source_changed', null, null],
+      ['notes/page-0003', 'committed', null, 'durability_not_enabled', 'skipped'],
+      ['notes/page-0004', 'committed', null, null, 'superseded'],
+      ['notes/page-0005', 'committed', null, 'durability_not_enabled', 'skipped'],
+      ['notes/page-0700', 'failed', 'source_changed', null, null],
+      ['notes/page-0701', 'failed', 'source_changed', null, null],
+    ]);
+  }), 300_000);
   // Wave 7: the coalesced claim hoists its worktree-wide conditions into one InitPlan. This is the claim's
   // predicate before that change, row by row; every state below must claim exactly the rows it selects.
   test('the coalesced claim takes exactly the rows of the per-row reference predicate', () => withBrain(kind, async ({ engine, home, ctx }) => {

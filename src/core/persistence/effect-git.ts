@@ -219,6 +219,9 @@ export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{
   });
 }
 
+/** The outcome a Git effect records when its root has no durability hook: no git command ran. */
+export const DURABILITY_NOT_ENABLED = { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' } as const;
+
 /**
  * Caller owns the native worktree lock. Never run pull, rebase, or legacy hooks.
  * `hardened` is the caller's durability probe of `root`, taken before it locked
@@ -226,7 +229,7 @@ export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{
  */
 export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal,
   hardened?: boolean, note?: GitCommitNote): Promise<Record<string, unknown>> {
-  if (!(hardened ?? await isDurabilityHardenedAsync(root))) return { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' };
+  if (!(hardened ?? await isDurabilityHardenedAsync(root))) return { ...DURABILITY_NOT_ENABLED };
   const outcome = (await commitGitTargets(root, [relativePath], signal, note ? new Map([[relativePath, note]]) : undefined)).get(relativePath)!;
   if (outcome instanceof OperationError) throw outcome;
   if (outcome.reason === 'target_absent') return outcome;

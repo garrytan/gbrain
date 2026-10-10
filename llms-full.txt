@@ -5379,6 +5379,23 @@ Details in INSTALL_FOR_AGENTS.md ("Engine preference for harness installs").
 - tsvector + ts_rank for full-text search (same as Postgres)
 - pg_trgm for fuzzy slug resolution (same as Postgres)
 
+### PGLite vector index ceiling
+
+PGLite runs Postgres inside WebAssembly, and pglite.wasm caps its memory at
+2 GiB. pgvector holds the whole HNSW graph in `maintenance_work_mem` while it
+builds, about 4.7 KB per 1,024-dimension chunk (1.16 GB at 250k chunks).
+gbrain starts PGLite with `max_parallel_maintenance_workers=0` (PGLite has no
+worker processes, and a planned parallel build reserved all of
+`maintenance_work_mem` up front) and `max_wal_size=8GB` (a build WAL-logs its
+whole index in one statement, and WAL past the automatic checkpoint trigger
+wedges PGLite). The deferred ANN build (`gbrain migrate embeddings`) and
+`gbrain reindex --vectors` size `maintenance_work_mem` to the graph
+(`withHnswBuildMemory` in `src/core/vector-index.ts`): a 248,802-chunk build
+takes about 11 minutes and a 1.9 GB index. A graph past the 1.5 GiB budget,
+about 300k chunks at 1,024 dimensions, is refused before the build with
+`pglite_vector_index_too_large`; vector search keeps working with exact scans,
+and the fix is the read-only `gbrain migrate --to postgres --plan --json`.
+
 **When to use PGLite vs Postgres:**
 
 | Factor | PGLite | PostgresEngine + Supabase |
