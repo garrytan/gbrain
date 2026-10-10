@@ -420,23 +420,8 @@ export async function writeFactsToFence(
           );
           return { inserted: 0, ids: [], stubGuardBlocked: true, ...withdrawnSkipped };
         }
-        // #6398: no file is not no page. A DB-only page (a row with no file, a
-        // row whose recorded source_path file vanished, or a tombstoned row)
-        // takes the DB-only route: a stub here would be mirrored over the DB
-        // body and timeline, or resurrect a deleted page. An unreadable row
-        // writes nothing.
-        let live: Awaited<ReturnType<BrainEngine['getPage']>>;
-        try {
-          live = await engine.getPage(target.slug, { sourceId: target.sourceId, includeDeleted: true });
-        } catch (err) {
-          console.warn(`[facts.fence] FACTS_PAGE_READ_FAILED: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; nothing written`);
-          return { inserted: 0, ids: [], fenceWriteFailed: true, ...withdrawnSkipped };
-        }
-        if (live) {
-          logStubGuardEvent({ slug: target.slug, source_id: target.sourceId, fact_count: facts.length, reason: 'db_only_page' });
-          console.warn(`[facts] page ${target.slug} (source ${target.sourceId}) has no file${live.deleted_at ? ' and is deleted' : ''} — routing facts to the legacy DB-only path instead of creating a stub that would overwrite it.`);
-          return { inserted: 0, ids: [], stubGuardBlocked: true, ...withdrawnSkipped };
-        }
+        const dbOnly = await dbOnlyPageRoute(engine, target, facts.length);
+        if (dbOnly) return { ...dbOnly, ...withdrawnSkipped };
         // Stub-create the parent directory if it doesn't exist.
         mkdirSync(dirname(filePath), { recursive: true });
         const activePack = await loadActivePackBestEffort({ engine } as never);
@@ -622,6 +607,27 @@ async function insertFenceRows(engine: BrainEngine, sourceId: string, rows: Para
     }
     return inserted;
   }, derivation?.trust);
+}
+
+/**
+ * #6398: no file is not no page. A DB-only page (a row with no file, a row
+ * whose recorded source_path file vanished, or a tombstoned row) takes the
+ * DB-only route: a stub would be mirrored over the DB body and timeline, or
+ * resurrect a deleted page. An unreadable row writes nothing. Null: no row,
+ * the stub may be created.
+ */
+async function dbOnlyPageRoute(engine: BrainEngine, target: FenceTarget, factCount: number): Promise<FenceWriteResult | null> {
+  let live: Awaited<ReturnType<BrainEngine['getPage']>>;
+  try {
+    live = await engine.getPage(target.slug, { sourceId: target.sourceId, includeDeleted: true });
+  } catch (err) {
+    console.warn(`[facts.fence] FACTS_PAGE_READ_FAILED: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; nothing written`);
+    return { inserted: 0, ids: [], fenceWriteFailed: true };
+  }
+  if (!live) return null;
+  logStubGuardEvent({ slug: target.slug, source_id: target.sourceId, fact_count: factCount, reason: 'db_only_page' });
+  console.warn(`[facts] page ${target.slug} (source ${target.sourceId}) has no file${live.deleted_at ? ' and is deleted' : ''} — routing facts to the legacy DB-only path instead of creating a stub that would overwrite it.`);
+  return { inserted: 0, ids: [], stubGuardBlocked: true };
 }
 
 /**
