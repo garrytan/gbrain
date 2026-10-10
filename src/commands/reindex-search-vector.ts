@@ -51,6 +51,8 @@ import { checkpointKey } from '../core/backfill-base.ts';
 import { consentGate } from '../core/consent-cli.ts';
 import type { ConsentEnv } from '../core/consent.ts';
 import { createProgress } from '../core/progress.ts';
+import { pageSearchVectorSql } from '../core/page-state/projections.ts';
+import { sanitizeRemoteBody } from '../core/remote-body.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 
 export interface ReindexSearchVectorOpts {
@@ -93,7 +95,7 @@ const CHECKPOINT_NAME = { pages: 'fts_pages', content_chunks: 'fts_content_chunk
  */
 async function batchedBackfill(
   engine: BrainEngine,
-  table: 'pages' | 'content_chunks',
+  table: 'content_chunks',
   setClause: string,
   tick: (n: number) => void
 ): Promise<void> {
@@ -112,6 +114,45 @@ async function batchedBackfill(
       RETURNING id
     `);
     if (rows.length === 0) break;
+    tick(rows.length);
+    cursor = rows.reduce((m, r) => Math.max(m, Number(r.id)), cursor);
+    await engine.setConfig(key, String(cursor));
+    if (rows.length < BACKFILL_BATCH_SIZE) break;
+  }
+}
+
+/**
+ * #6374: page vectors rebuilt with the seal's own expression. The pages
+ * trigger fires only on `UPDATE OF title,timeline` and indexes the RAW
+ * timeline, so neither an UPDATE-to-self nor re-firing it is right. Each batch
+ * reads its rows through an UPDATE-to-self (row locks held for that statement
+ * only, never across the TypeScript sanitize), sanitizes the timeline exactly
+ * as the seal does, then writes `search_vector` guarded by the knowledge
+ * revision it read: a page edited in between is skipped, and its own seal
+ * indexes it under the new trigger language. The cursor is persisted after
+ * every batch, as for chunks.
+ */
+async function backfillPageVectors(engine: BrainEngine, lang: string, tick: (n: number) => void): Promise<void> {
+  const key = checkpointKey(CHECKPOINT_NAME.pages);
+  const saved = Number(await engine.getConfig(key));
+  let cursor = Number.isFinite(saved) && saved > 0 ? saved : 0;
+  for (;;) {
+    const rows = await engine.executeRaw<{ id: number; timeline: string | null; knowledge_revision: string }>(`
+      UPDATE pages SET id = id
+      WHERE id IN (
+        SELECT id FROM pages
+        WHERE search_vector IS NOT NULL AND id > ${cursor}
+        ORDER BY id
+        LIMIT ${BACKFILL_BATCH_SIZE}
+      )
+      RETURNING id, timeline, knowledge_revision::text AS knowledge_revision
+    `);
+    if (rows.length === 0) break;
+    await engine.executeRaw(`
+      UPDATE pages p SET search_vector = ${pageSearchVectorSql('p.title', 'v.timeline', lang)}
+      FROM unnest($1::int[], $2::text[], $3::uuid[]) AS v(id, timeline, revision)
+      WHERE p.id = v.id AND p.knowledge_revision = v.revision
+    `, [rows.map(r => Number(r.id)), rows.map(r => sanitizeRemoteBody(r.timeline ?? '')), rows.map(r => r.knowledge_revision)]);
     tick(rows.length);
     cursor = rows.reduce((m, r) => Math.max(m, Number(r.id)), cursor);
     await engine.setConfig(key, String(cursor));
@@ -255,11 +296,11 @@ export async function runReindexSearchVector(
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
-  // Backfill: UPDATE-to-self forces the pages trigger to re-fire
-  // (Postgres re-fires on UPDATE-to-same-value); content_chunks gets a
-  // direct vector compute since the column itself is what we want.
+  // Backfill: pages through the seal's expression over the sanitized
+  // timeline (backfillPageVectors); content_chunks gets a direct vector
+  // compute since the column itself is what we want.
   progress.start('reindex_search_vector.pages', pagesCount);
-  await batchedBackfill(engine, 'pages', 'id = id', n => progress.tick(n));
+  await backfillPageVectors(engine, lang, n => progress.tick(n));
   progress.finish();
 
   progress.start('reindex_search_vector.chunks', chunksCount);

@@ -18,6 +18,17 @@ import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, s
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
 
 /**
+ * The page keyword vector every sealed writer stores: the title (weight A) and
+ * the SANITIZED timeline (weight C, bound by the caller; never the raw column,
+ * which can hold private or withdrawn fence text). `title` and `timeline` are
+ * SQL expressions. Shared by the seal, the import seal and
+ * `reindex-search-vector`, so the three cannot drift.
+ */
+export function pageSearchVectorSql(title: string, timeline: string, lang: string = getFtsLanguage()): string {
+  return `setweight(to_tsvector('${lang}',COALESCE(${title},'')),'A') || setweight(to_tsvector('${lang}',${timeline}::text),'C')`;
+}
+
+/**
  * Complete the searchable snapshot only after its sanitized chunks are installed.
  * `guarded` is this transaction's own read of the page under its guard, when
  * the caller has one and has not changed the page's revision or timeline since.
@@ -26,8 +37,7 @@ export async function sealPageTextProjection(engine: BrainEngine, slug: string, 
   const current = guarded ?? await engine.readPageSnapshot(slug, { sourceId });
   if (!current) return;
   await engine.executeRaw(`UPDATE pages SET text_projection_revision=knowledge_revision,
-    search_vector=setweight(to_tsvector('${getFtsLanguage()}',COALESCE(title,'')),'A') ||
-      setweight(to_tsvector('${getFtsLanguage()}',$3::text),'C')
+    search_vector=${pageSearchVectorSql('title', '$3')}
     WHERE source_id=$1 AND slug=$2 AND knowledge_revision=$4::uuid`,
   [sourceId, slug, sanitizeRemoteBody(current.page.timeline), current.revision]);
 }
@@ -42,8 +52,7 @@ export async function sealImportedPage(engine: BrainEngine, slug: string, source
   chunkerSeal: number, pageId?: number): Promise<void> {
   const rows = await engine.executeRaw<{ id: number }>(`UPDATE pages SET chunker_version=$5,
     text_projection_revision=CASE WHEN knowledge_revision=$4::uuid THEN knowledge_revision ELSE text_projection_revision END,
-    search_vector=CASE WHEN knowledge_revision=$4::uuid THEN setweight(to_tsvector('${getFtsLanguage()}',COALESCE(title,'')),'A') ||
-      setweight(to_tsvector('${getFtsLanguage()}',$3::text),'C') ELSE search_vector END
+    search_vector=CASE WHEN knowledge_revision=$4::uuid THEN ${pageSearchVectorSql('title', '$3')} ELSE search_vector END
     WHERE source_id=$1 AND slug=$2 RETURNING id`,
   [sourceId, slug, live ? sanitizeRemoteBody(live.page.timeline) : '', live?.revision ?? null, chunkerSeal]);
   if (rows.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
